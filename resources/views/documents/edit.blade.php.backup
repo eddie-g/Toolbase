@@ -1,0 +1,2032 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="csrf-token" content="{{ csrf_token() }}">
+        <title>Edit PDF</title>
+        <style>
+            :root {
+                color-scheme: light;
+                --bg: #070b12;
+                --panel: #111824;
+                --ink: #e9f0ff;
+                --muted: #93a4bf;
+                --accent: #6ee7b7;
+                --accent-dark: #2c8f6e;
+                --danger: #ff6b6b;
+            }
+            * { box-sizing: border-box; }
+            body {
+                margin: 0;
+                font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+                background: radial-gradient(circle at top, #152034, var(--bg));
+                color: var(--ink);
+                min-height: 100vh;
+            }
+            header {
+                padding: 20px 24px;
+                border-bottom: 1px solid rgba(255,255,255,0.08);
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 16px;
+            }
+            header a {
+                color: var(--muted);
+                text-decoration: none;
+            }
+            .zoom-controls {
+                display: inline-flex;
+                align-items: center;
+                gap: 10px;
+                color: var(--muted);
+                font-size: 13px;
+            }
+            .zoom-controls button {
+                border: 1px solid rgba(255,255,255,0.2);
+                background: transparent;
+                color: var(--ink);
+                width: 28px;
+                height: 28px;
+                border-radius: 8px;
+                cursor: pointer;
+                font-size: 16px;
+            }
+            .zoom-controls input[type="range"] {
+                width: 140px;
+            }
+            .top-actions {
+                display: inline-flex;
+                align-items: center;
+                gap: 12px;
+            }
+            .mode-btn {
+                border: 1px solid rgba(255,255,255,0.2);
+                background: transparent;
+                color: var(--ink);
+                padding: 8px 14px;
+                border-radius: 999px;
+                cursor: pointer;
+                font-weight: 600;
+            }
+            .mode-btn.active {
+                background: var(--accent);
+                color: #0b2d20;
+                border-color: transparent;
+            }
+            .layout {
+                display: grid;
+                grid-template-columns: 320px 1fr;
+                min-height: calc(100vh - 64px);
+            }
+            .sidebar {
+                background: var(--panel);
+                padding: 20px;
+                border-right: 1px solid rgba(255,255,255,0.08);
+            }
+            .sidebar h2 {
+                margin: 0 0 12px;
+                font-size: 18px;
+            }
+            .sidebar label {
+                display: block;
+                margin-top: 16px;
+                color: var(--muted);
+                font-size: 13px;
+            }
+            .sidebar input, .sidebar textarea, .sidebar select {
+                width: 100%;
+                margin-top: 6px;
+                background: #0c1220;
+                border: 1px solid rgba(255,255,255,0.12);
+                color: var(--ink);
+                padding: 10px;
+                border-radius: 10px;
+            }
+            .sidebar button {
+                width: 100%;
+                margin-top: 16px;
+                border: none;
+                padding: 12px;
+                border-radius: 999px;
+                font-weight: 700;
+                cursor: pointer;
+            }
+            .primary {
+                background: var(--accent);
+                color: #0b2d20;
+            }
+            .ghost {
+                background: transparent;
+                color: var(--muted);
+                border: 1px solid rgba(255,255,255,0.2);
+            }
+            .status {
+                margin-top: 12px;
+                font-size: 13px;
+                color: var(--muted);
+            }
+            .status.ok { color: var(--accent); }
+            .status.err { color: var(--danger); }
+            .viewer-wrap {
+                display: flex;
+                flex-direction: column;
+                min-height: calc(100vh - 64px);
+            }
+            .sticky-tools {
+                position: sticky;
+                top: 0;
+                z-index: 5;
+                background: linear-gradient(180deg, rgba(7,11,18,0.98), rgba(7,11,18,0.92));
+                border-bottom: 1px solid rgba(255,255,255,0.08);
+                backdrop-filter: blur(6px);
+            }
+            .sticky-tools .mode-bar,
+            .sticky-tools .toolbar {
+                margin: 0;
+                border-radius: 0;
+            }
+            .toolbar {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 12px;
+                align-items: center;
+                padding: 14px 20px;
+                border-bottom: 1px solid rgba(255,255,255,0.08);
+                background: rgba(16, 24, 36, 0.9);
+            }
+            .toolbar .label {
+                color: var(--muted);
+                font-size: 13px;
+            }
+            .toolbar-controls {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 10px;
+                align-items: center;
+            }
+            .toolbar select,
+            .toolbar input[type="number"] {
+                background: #0c1220;
+                border: 1px solid rgba(255,255,255,0.12);
+                color: var(--ink);
+                border-radius: 8px;
+                padding: 6px 8px;
+            }
+            .toolbar button {
+                border: none;
+                padding: 8px 12px;
+                border-radius: 999px;
+                cursor: pointer;
+                font-weight: 700;
+            }
+            .toolbar button.icon-btn {
+                width: 32px;
+                height: 32px;
+                padding: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 18px;
+                font-weight: normal;
+            }
+            .toolbar .pill {
+                background: rgba(110,231,183,0.16);
+                color: var(--ink);
+                border: 1px solid rgba(110,231,183,0.4);
+            }
+            .toolbar .pill-active {
+                background: var(--accent);
+                color: #0b2d20;
+                border-color: var(--accent);
+            }
+            .toolbar .danger {
+                background: #ff6b6b;
+                color: white;
+            }
+            .toolbar .disabled {
+                opacity: 0.5;
+                pointer-events: none;
+            }
+            .mode-bar {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                padding: 10px 20px;
+                border-bottom: 1px solid rgba(255,255,255,0.08);
+                background: rgba(12, 20, 32, 0.95);
+            }
+            .mode-bar .divider {
+                width: 1px;
+                height: 24px;
+                background: rgba(255,255,255,0.12);
+            }
+            .mode-bar button {
+                border: none;
+                padding: 8px 14px;
+                border-radius: 10px;
+                cursor: pointer;
+                background: #1a2636;
+                color: var(--ink);
+                font-weight: 600;
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .mode-bar button.active {
+                background: var(--accent);
+                color: #0b2d20;
+            }
+            .mode-bar .icon {
+                font-weight: 800;
+                font-size: 16px;
+            }
+            .viewer {
+                padding: 24px;
+                overflow: auto;
+                flex: 1;
+            }
+            .pdf-text-layer {
+                position: absolute;
+                inset: 0;
+                pointer-events: none;
+                z-index: 50;
+            }
+            .pdf-text-item {
+                position: absolute;
+                pointer-events: auto;
+                cursor: text;
+                user-select: text;
+                white-space: nowrap;
+                transition: all 0.2s;
+            }
+            .editable-text {
+                pointer-events: auto !important;
+            }
+            .pdf-text {
+                position: absolute;
+                pointer-events: auto;
+                cursor: text;
+                user-select: text;
+                white-space: pre;
+                transition: all 0.2s;
+            }
+            /* Form mode: Show text as input fields */
+            .viewer.form-mode .pdf-text {
+                background: white;
+                color: #111;
+                border: 1px solid rgba(0, 0, 0, 0.25);
+                border-radius: 4px;
+                padding: 6px 10px;
+                box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
+                min-height: 28px;
+                min-width: 80px;
+                display: inline-block;
+                line-height: 1.4;
+            }
+            .viewer.form-mode .pdf-text:hover {
+                background-color: rgba(110, 231, 183, 0.08);
+                border-color: var(--accent);
+                box-shadow: inset 0 1px 3px rgba(0,0,0,0.1), 0 0 0 1px rgba(110, 231, 183, 0.3);
+            }
+            .viewer.form-mode .pdf-text:focus {
+                outline: none;
+                background-color: white;
+                border-color: var(--accent);
+                box-shadow: 0 0 0 3px rgba(110, 231, 183, 0.2);
+            }
+            .viewer.form-mode .pdf-text.modified {
+                background-color: rgba(110, 231, 183, 0.12);
+                border-color: var(--accent);
+                font-weight: 500;
+                box-shadow: inset 0 1px 3px rgba(0,0,0,0.08), 0 0 0 1px var(--accent);
+            }
+            /* Non-form mode: Hide text by default */
+            .viewer:not(.text-editing):not(.form-mode) .pdf-text,
+            .viewer:not(.text-editing):not(.form-mode) .pdf-text-item {
+                opacity: 0;
+                pointer-events: none;
+            }
+            .viewer:not(.text-editing):not(.form-mode) .pdf-text-layer {
+                display: none;
+            }
+            .viewer.text-editing .pdf-text-layer {
+                display: block !important;
+            }
+            .viewer.text-editing .pdf-text-item {
+                opacity: 1 !important;
+                pointer-events: auto !important;
+            }
+            .viewer.text-editing .pdf-text {
+                color: rgba(0,0,0,0.55);
+            }
+            .viewer.text-editing .pdf-text:hover {
+                background-color: rgba(110, 231, 183, 0.15);
+                outline: 1px dashed rgba(110, 231, 183, 0.4);
+            }
+            .pdf-text.editing {
+                outline: 2px solid var(--accent);
+                background-color: rgba(110, 231, 183, 0.2);
+            }
+            .page {
+                position: relative;
+                margin: 0 auto 24px;
+                width: fit-content;
+                box-shadow: 0 12px 30px rgba(0,0,0,0.35);
+                border-radius: 8px;
+                overflow: hidden;
+                background: #0f1522;
+            }
+            .page canvas {
+                display: block;
+            }
+            .overlay {
+                position: absolute;
+                inset: 0;
+            }
+            .annotation {
+                position: absolute;
+                color: #111;
+                background: transparent;
+                padding: 2px 6px;
+                border-radius: 6px;
+                cursor: move;
+                user-select: none;
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+                border: 1px solid transparent;
+            }
+            .annotation.dragging {
+                cursor: grabbing;
+                opacity: 0.9;
+            }
+            .annotation.selected {
+                background: rgba(255,255,255,0.82);
+                border-color: var(--accent-dark);
+                box-shadow: 0 0 0 2px rgba(110,231,183,0.35);
+            }
+            .annotation:hover {
+                background: rgba(255,255,255,0.95);
+            }
+            .annotation .delete-btn {
+                background: #ff6b6b;
+                color: white;
+                border: none;
+                border-radius: 50%;
+                width: 18px;
+                height: 18px;
+                cursor: pointer;
+                font-size: 12px;
+                line-height: 1;
+                display: none;
+                align-items: center;
+                justify-content: center;
+                margin-left: 4px;
+            }
+            .annotation.selected .delete-btn {
+                display: flex;
+            }
+            .annotation .delete-btn:hover {
+                background: #ff4444;
+            }
+            .text-editor {
+                position: absolute;
+                background: white;
+                color: #111;
+                border: 2px solid var(--accent);
+                border-radius: 6px;
+                padding: 6px 10px;
+                min-width: 120px;
+                min-height: 32px;
+                outline: none;
+                font-family: inherit;
+                z-index: 100;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                resize: both;
+            }
+            /* Field group styling */
+            .field-group {
+                position: absolute;
+                border: 2px dashed rgba(110, 231, 183, 0.4);
+                background: rgba(110, 231, 183, 0.03);
+                border-radius: 12px;
+                pointer-events: none;
+                z-index: 1;
+                box-shadow: inset 0 0 20px rgba(110, 231, 183, 0.08);
+            }
+            .viewer.form-mode .field-group {
+                display: block;
+            }
+            .viewer:not(.form-mode) .field-group {
+                display: none;
+            }
+            .modal {
+                position: fixed;
+                inset: 0;
+                background: rgba(5, 8, 14, 0.75);
+                display: none;
+                align-items: center;
+                justify-content: center;
+                z-index: 200;
+            }
+            .modal.active {
+                display: flex;
+            }
+            .modal-card {
+                background: #0f1726;
+                border: 1px solid rgba(255,255,255,0.1);
+                border-radius: 16px;
+                padding: 20px;
+                width: min(520px, 92vw);
+                box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+            }
+            .modal-card h3 {
+                margin: 0 0 12px;
+            }
+            .signature-canvas {
+                width: 100%;
+                height: 200px;
+                background: white;
+                border-radius: 10px;
+                border: 1px solid rgba(0,0,0,0.15);
+                cursor: crosshair;
+            }
+            .modal-actions {
+                display: flex;
+                justify-content: flex-end;
+                gap: 10px;
+                margin-top: 12px;
+            }
+            .hint {
+                margin-top: 12px;
+                color: var(--muted);
+                font-size: 13px;
+            }
+            @media (max-width: 980px) {
+                .layout {
+                    grid-template-columns: 1fr;
+                }
+                .sidebar {
+                    border-right: none;
+                    border-bottom: 1px solid rgba(255,255,255,0.08);
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <header>
+            <div>
+                <strong>Edit:</strong> {{ $document->original_name }}
+            </div>
+            <div class="top-actions">
+                <button type="button" id="edit-mode-top" class="mode-btn">Edit mode</button>
+                <div class="zoom-controls">
+                    <span>Zoom</span>
+                    <button type="button" id="zoom-out" aria-label="Zoom out">−</button>
+                    <input id="zoom-range" type="range" min="50" max="200" value="100">
+                    <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
+                    <span id="zoom-label">100%</span>
+                </div>
+            </div>
+            <a href="{{ route('documents.index') }}">Back to uploads</a>
+        </header>
+        <div class="layout">
+            <aside class="sidebar">
+                <h2>Edit Settings</h2>
+                <label for="edit-mode-select">Edit Mode</label>
+                <select id="edit-mode-select">
+                    <option value="form">Form (All fields editable)</option>
+                    <option value="replace">Replace (Click to edit)</option>
+                    <option value="overlay">Overlay (Add text on top)</option>
+                </select>
+                <div id="replace-mode-hint" class="hint" style="margin-top: 8px; display: none; color: var(--accent);">
+                    ✓ Replace mode: Original PDF text will be removed and replaced with your edits.
+                </div>
+                <div id="form-mode-hint" class="hint" style="margin-top: 8px; display: none; color: var(--accent);">
+                    ✓ Form mode: <span id="field-count">0</span> editable fields detected.
+                </div>
+                
+                <h2 style="margin-top: 20px;">Text Settings</h2>
+                <label for="font-family">Font</label>
+                <select id="font-family">
+                    <option value="Helvetica">Helvetica</option>
+                    <option value="TimesRoman">Times</option>
+                    <option value="Courier">Courier</option>
+                </select>
+                <label for="font-size">Font size (px)</label>
+                <input id="font-size" type="number" min="8" max="48" value="16">
+                <button id="save-btn" class="primary">Save PDF</button>
+                <button id="clear-btn" class="ghost">Clear All Changes</button>
+                <div class="status" id="status"></div>
+                <div class="hint">
+                    <strong>Form mode:</strong> All text fields visible and editable.<br>
+                    <strong>Replace mode:</strong> Click text to edit it.<br>
+                    <strong>Overlay mode:</strong> Add new text anywhere.
+                </div>
+            </aside>
+            <main class="viewer-wrap">
+                <div class="sticky-tools">
+                    <div class="mode-bar">
+                        <button type="button" id="mode-select" class="active">
+                            <span class="icon">↖</span>
+                            Select
+                        </button>
+                        <button type="button" id="mode-text">
+                            <span class="icon">T</span>
+                            Text
+                        </button>
+                        <button type="button" id="mode-sign">
+                            <span class="icon">✒</span>
+                            Sign
+                        </button>
+                    </div>
+                    <div class="toolbar">
+                        <div class="toolbar-controls">
+                            <span class="label">Insert:</span>
+                            <button id="insert-x" class="pill" type="button">Add X</button>
+                            <button id="insert-checkbox" class="pill" type="button">Add Checkbox</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="toolbar" id="selection-bar">
+                    <span class="label" id="selection-label">No text selected</span>
+                    <div class="toolbar-controls" id="selection-controls">
+                        <label class="label" for="selected-font">Font</label>
+                        <select id="selected-font">
+                            <option value="Helvetica">Helvetica</option>
+                            <option value="TimesRoman">Times</option>
+                            <option value="Courier">Courier</option>
+                        </select>
+                        <label class="label" for="selected-size">Size</label>
+                        <button id="size-down" class="pill icon-btn" type="button" title="Decrease size">−</button>
+                        <input id="selected-size" type="number" min="8" max="48" value="16" style="width: 60px;">
+                        <button id="size-up" class="pill icon-btn" type="button" title="Increase size">+</button>
+                        <label class="label" for="selected-text">Text</label>
+                        <input id="selected-text" type="text" placeholder="Edit text">
+                        <button id="selected-delete" class="danger" type="button">Delete</button>
+                    </div>
+                </div>
+                <div class="viewer" id="viewer"></div>
+            </main>
+        </div>
+
+        <div class="modal" id="signature-modal" aria-hidden="true">
+            <div class="modal-card">
+                <h3>Add Signature</h3>
+                <canvas id="signature-canvas" class="signature-canvas" width="900" height="300"></canvas>
+                <div class="modal-actions">
+                    <button id="signature-clear" class="ghost" type="button">Clear</button>
+                    <button id="signature-cancel" class="ghost" type="button">Cancel</button>
+                    <button id="signature-save" class="primary" type="button">Use Signature</button>
+                </div>
+            </div>
+        </div>
+
+        <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+        <script>
+            const pdfUrl = "{{ route('documents.file', $document) }}";
+            const saveUrl = "{{ route('documents.save', $document) }}";
+            const extractionDataUrl = "{{ route('documents.extractionData', $document) }}";
+            const rebuildOcrUrl = "{{ route('documents.rebuildOcr', $document) }}";
+            const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
+            let pdfVersion = Date.now();
+
+            const pdfUrlWithVersion = () => `${pdfUrl}?v=${pdfVersion}`;
+            const documentId = "{{ $document->id }}";
+            const annotationsStorageKey = `pdf-annotations-${documentId}`;
+            const viewer = document.getElementById('viewer');
+            const fontSizeInput = document.getElementById('font-size');
+            const fontFamilyInput = document.getElementById('font-family');
+            const status = document.getElementById('status');
+            const zoomRange = document.getElementById('zoom-range');
+            const zoomLabel = document.getElementById('zoom-label');
+            const zoomOutBtn = document.getElementById('zoom-out');
+            const zoomInBtn = document.getElementById('zoom-in');
+
+            const selectionLabel = document.getElementById('selection-label');
+            const selectionControls = document.getElementById('selection-controls');
+            const selectedFont = document.getElementById('selected-font');
+            const selectedSize = document.getElementById('selected-size');
+            const selectedText = document.getElementById('selected-text');
+            const selectedDelete = document.getElementById('selected-delete');
+            const sizeUp = document.getElementById('size-up');
+            const sizeDown = document.getElementById('size-down');
+            const insertX = document.getElementById('insert-x');
+            const insertCheckbox = document.getElementById('insert-checkbox');
+            const modeSelect = document.getElementById('mode-select');
+            const modeText = document.getElementById('mode-text');
+            const modeSign = document.getElementById('mode-sign');
+            const signatureModal = document.getElementById('signature-modal');
+            const signatureCanvas = document.getElementById('signature-canvas');
+            const signatureClear = document.getElementById('signature-clear');
+            const signatureCancel = document.getElementById('signature-cancel');
+            const signatureSave = document.getElementById('signature-save');
+            const editModeTop = document.getElementById('edit-mode-top');
+            const editModeSelect = document.getElementById('edit-mode-select');
+            const replaceModeHint = document.getElementById('replace-mode-hint');
+            const formModeHint = document.getElementById('form-mode-hint');
+            const fieldCount = document.getElementById('field-count');
+
+            const annotations = [];
+            let originalPdfBytes = null;
+            let activeEditor = null;
+            let selectedAnnotation = null;
+            let currentScale = 1.35;
+            const baseScale = 1.35;
+            const fontMap = {
+                Helvetica: { css: '"Helvetica", Arial, sans-serif', pdf: PDFLib.StandardFonts.Helvetica },
+                TimesRoman: { css: '"Times New Roman", Times, serif', pdf: PDFLib.StandardFonts.TimesRoman },
+                Courier: { css: '"Courier New", Courier, monospace', pdf: PDFLib.StandardFonts.Courier },
+            };
+
+            let insertMode = null;
+            let toolMode = 'select';
+            let signatureDataUrl = null;
+            const annotationsStorageKey = 'pdf-annotations-' + documentId;
+            const fontMap = {
+                Helvetica: { css: '"Helvetica", Arial, sans-serif', pdf: PDFLib.StandardFonts.Helvetica },
+                TimesRoman: { css: '"Times New Roman", Times, serif', pdf: PDFLib.StandardFonts.TimesRoman },
+                Courier: { css: '"Courier New", Courier, monospace', pdf: PDFLib.StandardFonts.Courier },
+            };
+
+            let insertMode = null;
+            let toolMode = 'select';
+            let signatureDataUrl = null;
+            let editMode = 'overlay'; // 'overlay', 'replace', or 'form'
+
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+
+            function serializeAnnotations() {
+                return annotations.map((annotation) => {
+                    const { element, ...rest } = annotation;
+                    return rest;
+                });
+            }
+
+            function persistAnnotations() {
+                try {
+                    if (!annotations.length) {
+                        sessionStorage.removeItem(annotationsStorageKey);
+                        return;
+                    }
+                    sessionStorage.setItem(annotationsStorageKey, JSON.stringify(serializeAnnotations()));
+                } catch (err) {
+                    console.warn('Failed to store annotations', err);
+                }
+            }
+
+            function loadAnnotationsFromStorage() {
+                try {
+                    const stored = sessionStorage.getItem(annotationsStorageKey);
+                    if (!stored) {
+                        return;
+                    }
+                    const parsed = JSON.parse(stored);
+                    if (!Array.isArray(parsed)) {
+                        return;
+                    }
+                    parsed.forEach((annotation) => {
+                        annotations.push({
+                            ...annotation,
+                            pageIndex: Number(annotation.pageIndex) || 0,
+                            pdfX: Number(annotation.pdfX) || 0,
+                            pdfY: Number(annotation.pdfY) || 0,
+                            fontSize: Number(annotation.fontSize) || 12,
+                            pdfWidth: Number(annotation.pdfWidth) || 0,
+                            pdfHeight: Number(annotation.pdfHeight) || 0,
+                        });
+                    });
+                } catch (err) {
+                    console.warn('Failed to read annotations', err);
+                }
+            }
+
+            async function loadPdf() {
+                try {
+                    setStatus('Loading PDF...', '');
+                    loadAnnotationsFromStorage();
+                    await rerenderPdf();
+                    setStatus('PDF loaded successfully.', 'ok');
+                } catch (err) {
+                    setStatus('Failed to load PDF: ' + err.message, 'err');
+                }
+            }
+
+            async function loadOriginalPdfBytes() {
+                if (originalPdfBytes) {
+                    return;
+                }
+                const response = await fetch(pdfUrlWithVersion());
+                originalPdfBytes = await response.arrayBuffer();
+            }
+
+            function setStatus(message, type) {
+                status.textContent = message;
+                status.className = 'status' + (type ? ' ' + type : '');
+            }
+
+            function setSelection(annotation) {
+                if (selectedAnnotation && selectedAnnotation.element) {
+                    selectedAnnotation.element.classList.remove('selected');
+                }
+                selectedAnnotation = annotation;
+                if (selectedAnnotation && selectedAnnotation.element) {
+                    selectedAnnotation.element.classList.add('selected');
+                }
+                updateSelectionBar();
+            }
+
+            function updateTopEditButton() {
+                if (!editModeTop) {
+                    return;
+                }
+                editModeTop.classList.toggle('active', toolMode === 'text');
+            }
+
+            function updateTextLayerVisibility() {
+                viewer.classList.toggle('text-editing', toolMode === 'text');
+                viewer.classList.toggle('form-mode', editMode === 'form');
+            }
+
+            function updateSelectionBar() {
+                if (!selectedAnnotation) {
+                    selectionLabel.textContent = 'No text selected';
+                    selectionControls.classList.add('disabled');
+                    selectedFont.value = 'Helvetica';
+                    selectedSize.value = 16;
+                    selectedText.value = '';
+                    selectedFont.disabled = true;
+                    selectedSize.disabled = true;
+                    selectedText.disabled = true;
+                    sizeUp.disabled = true;
+                    sizeDown.disabled = true;
+                    return;
+                }
+
+                selectionLabel.textContent = 'Selected text';
+                selectionControls.classList.remove('disabled');
+                const isText = selectedAnnotation.type !== 'signature';
+                selectedFont.disabled = !isText;
+                selectedSize.disabled = !isText;
+                selectedText.disabled = !isText;
+                sizeUp.disabled = !isText;
+                sizeDown.disabled = !isText;
+                if (isText) {
+                    selectedFont.value = selectedAnnotation.fontFamily;
+                    selectedSize.value = Math.round(selectedAnnotation.fontSize * currentScale);
+                    selectedText.value = selectedAnnotation.text;
+                } else {
+                    selectedFont.value = 'Helvetica';
+                    selectedSize.value = 16;
+                    selectedText.value = '';
+                }
+            }
+
+            function applyAnnotationStyle(annotation) {
+                if (!annotation || !annotation.element) {
+                    return;
+                }
+                if (annotation.type !== 'signature') {
+                    annotation.element.style.fontFamily = fontMap[annotation.fontFamily]?.css || 'inherit';
+                    annotation.element.style.fontSize = (annotation.fontSize * currentScale) + 'px';
+                    const span = annotation.element.querySelector('span');
+                    if (span) {
+                        span.textContent = annotation.text;
+                    }
+                }
+            }
+
+            function applyTextItemStyle(item, pageInfo) {
+                if (!item || !item.element) {
+                    return;
+                }
+                const x = item.pdfX * pageInfo.scale;
+                const height = (item.height || item.fontSize) * pageInfo.scale;
+                const y = pageInfo.canvasHeight - item.pdfY * pageInfo.scale - height;
+                item.element.style.left = x + 'px';
+                item.element.style.top = y + 'px';
+                item.element.style.fontSize = (item.fontSize * pageInfo.scale) + 'px';
+                item.element.textContent = item.text;
+                
+                // Update contentEditable based on mode
+                item.element.contentEditable = editMode === 'form';
+                
+                // Highlight modified text
+                if (item.modified) {
+                    item.element.classList.add('modified');
+                } else {
+                    item.element.classList.remove('modified');
+                }
+            }
+
+            function startTextItemEdit(wrapper, item) {
+                removeActiveEditor();
+                const overlay = wrapper.querySelector('.overlay');
+                const pageInfo = {
+                    scale: currentScale,
+                    canvasHeight: wrapper.querySelector('canvas').height,
+                };
+                const x = item.pdfX * pageInfo.scale;
+                const height = (item.height || item.fontSize) * pageInfo.scale;
+                const y = pageInfo.canvasHeight - item.pdfY * pageInfo.scale - height;
+
+                const editor = document.createElement('textarea');
+                editor.className = 'text-editor';
+                editor.style.left = x + 'px';
+                editor.style.top = y + 'px';
+                editor.style.fontSize = (item.fontSize * pageInfo.scale) + 'px';
+                editor.style.width = Math.max(140, (item.width || 0) * pageInfo.scale + 24) + 'px';
+                editor.style.height = Math.max(36, height + 16) + 'px';
+                editor.value = item.text;
+                editor.dataset.textItemId = item.id;
+
+                activeEditor = editor;
+
+                let finished = false;
+                const finishEditing = () => {
+                    if (finished) {
+                        return;
+                    }
+                    finished = true;
+                    const text = editor.value;
+                    item.text = text;
+                    item.modified = true;
+                    if (item.element) {
+                        item.element.textContent = text;
+                    }
+                    persistTextItems();
+                    setStatus('Text updated. Click Save to keep changes.', 'ok');
+                    removeActiveEditor();
+                };
+
+                editor.addEventListener('blur', finishEditing);
+                editor.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        finishEditing();
+                    } else if (e.key === 'Escape') {
+                        removeActiveEditor();
+                    }
+                });
+
+                overlay.appendChild(editor);
+                editor.focus();
+            }
+
+            function sanitizeTextForPdf(text) {
+                if (!text) {
+                    return text;
+                }
+                let sanitized = text
+                    .replace(/✕/g, 'X')
+                    .replace(/×/g, 'x')
+                    .replace(/☐/g, '[ ]')
+                    .replace(/☑/g, '[x]')
+                    .replace(/☒/g, '[x]');
+                sanitized = sanitized.replace(/[^\x20-\x7E]/g, '?');
+                return sanitized;
+            }
+
+            function rerenderPdf() {
+                removeActiveEditor();
+                viewer.innerHTML = '';
+                renderPdf().catch(() => {
+                    setStatus('Failed to load PDF.', 'err');
+                });
+            }
+
+            function removeActiveEditor() {
+                if (!activeEditor) {
+                    return;
+                }
+
+                if (activeEditor.isConnected && activeEditor.parentNode) {
+                    activeEditor.parentNode.removeChild(activeEditor);
+                }
+                activeEditor = null;
+            }
+
+            function startInlineEdit(wrapper, annotation) {
+                if (annotation.type === 'signature') {
+                    return;
+                }
+                removeActiveEditor();
+                const overlay = wrapper.querySelector('.overlay');
+                const x = annotation.pdfX * currentScale;
+                const y = (annotation.pdfY * currentScale);
+                const fontSizePx = Math.round(annotation.fontSize * currentScale);
+
+                const editor = document.createElement('input');
+                editor.type = 'text';
+                editor.className = 'text-editor';
+                editor.style.left = x + 'px';
+                editor.style.top = (overlay.clientHeight - y) + 'px';
+                editor.style.fontSize = fontSizePx + 'px';
+                editor.style.fontFamily = fontMap[annotation.fontFamily]?.css || 'inherit';
+                editor.value = annotation.text;
+
+                activeEditor = editor;
+
+                let finished = false;
+                const finishEditing = () => {
+                    if (finished) {
+                        return;
+                    }
+                    finished = true;
+                    const text = editor.value.trim();
+                    if (text) {
+                        annotation.text = text;
+                        applyAnnotationStyle(annotation);
+                        setSelection(annotation);
+                        persistAnnotations();
+                        setStatus('Text updated. Click Save to keep changes.', 'ok');
+                    }
+                    removeActiveEditor();
+                };
+
+                editor.addEventListener('blur', finishEditing);
+                editor.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        finishEditing();
+                    } else if (e.key === 'Escape') {
+                        removeActiveEditor();
+                    }
+                });
+
+                overlay.appendChild(editor);
+                editor.focus();
+            }
+
+            function addAnnotationElement(wrapper, annotation, pageInfo) {
+                const label = document.createElement('div');
+                label.className = 'annotation';
+                let textSpan = null;
+                let signatureImg = null;
+                if (annotation.type === 'signature') {
+                    signatureImg = document.createElement('img');
+                    signatureImg.src = annotation.dataUrl;
+                    signatureImg.alt = 'Signature';
+                    signatureImg.style.display = 'block';
+                } else {
+                    textSpan = document.createElement('span');
+                    textSpan.textContent = annotation.text;
+                }
+
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'delete-btn';
+                deleteBtn.innerHTML = '×';
+                deleteBtn.title = 'Delete this text';
+                deleteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    wrapper.querySelector('.overlay').removeChild(label);
+                    const idx = annotations.indexOf(annotation);
+                    if (idx >= 0) {
+                        annotations.splice(idx, 1);
+                        if (selectedAnnotation === annotation) {
+                            selectedAnnotation = null;
+                        }
+                        updateSelectionBar();
+                        persistAnnotations();
+                        setStatus('Text deleted. Click Save to keep changes.', 'ok');
+                    }
+                });
+
+                if (textSpan) {
+                    label.appendChild(textSpan);
+                }
+                if (signatureImg) {
+                    label.appendChild(signatureImg);
+                }
+                label.appendChild(deleteBtn);
+                if (annotation.type !== 'signature') {
+                    label.style.fontFamily = fontMap[annotation.fontFamily]?.css || 'inherit';
+                }
+
+                const overlay = wrapper.querySelector('.overlay');
+                const updatePosition = () => {
+                    const x = annotation.pdfX * pageInfo.scale;
+                    if (annotation.type === 'signature') {
+                        const width = annotation.pdfWidth * pageInfo.scale;
+                        const height = annotation.pdfHeight * pageInfo.scale;
+                        label.style.left = x + 'px';
+                        label.style.top = (pageInfo.canvasHeight - (annotation.pdfY + annotation.pdfHeight) * pageInfo.scale) + 'px';
+                        if (signatureImg) {
+                            signatureImg.style.width = width + 'px';
+                            signatureImg.style.height = height + 'px';
+                        }
+                    } else {
+                        const y = pageInfo.canvasHeight - annotation.pdfY * pageInfo.scale;
+                        label.style.left = x + 'px';
+                        label.style.top = y + 'px';
+                        label.style.fontSize = (annotation.fontSize * pageInfo.scale) + 'px';
+                    }
+                };
+                updatePosition();
+
+                let dragStart = null;
+                let dragMoved = false;
+
+                const onPointerMove = (event) => {
+                    if (!dragStart) {
+                        return;
+                    }
+                    dragMoved = true;
+                    const rect = overlay.getBoundingClientRect();
+                    const x = event.clientX - rect.left - dragStart.offsetX;
+                    const y = event.clientY - rect.top - dragStart.offsetY;
+                    const maxX = rect.width - label.offsetWidth;
+                    const maxY = rect.height - label.offsetHeight;
+                    const clampedX = Math.max(0, Math.min(maxX, x));
+                    const clampedY = Math.max(0, Math.min(maxY, y));
+                    annotation.pdfX = clampedX / pageInfo.scale;
+                    if (annotation.type === 'signature') {
+                        annotation.pdfY = (pageInfo.canvasHeight - clampedY) / pageInfo.scale - annotation.pdfHeight;
+                    } else {
+                        annotation.pdfY = (pageInfo.canvasHeight - clampedY) / pageInfo.scale;
+                    }
+                    label.style.left = clampedX + 'px';
+                    label.style.top = clampedY + 'px';
+                };
+
+                const onPointerUp = () => {
+                    if (!dragStart) {
+                        return;
+                    }
+                    label.classList.remove('dragging');
+                    dragStart = null;
+                    window.removeEventListener('pointermove', onPointerMove);
+                    window.removeEventListener('pointerup', onPointerUp);
+                    if (dragMoved) {
+                        persistAnnotations();
+                        setStatus('Text moved. Click Save to keep changes.', 'ok');
+                    } else {
+                        setSelection(annotation);
+                    }
+                };
+
+                label.addEventListener('dblclick', (event) => {
+                    if (event.target === deleteBtn) {
+                        return;
+                    }
+                    event.preventDefault();
+                    startInlineEdit(wrapper, annotation);
+                });
+
+                label.addEventListener('pointerdown', (event) => {
+                    if (event.target === deleteBtn) {
+                        return;
+                    }
+                    event.preventDefault();
+                    dragMoved = false;
+                    const rect = label.getBoundingClientRect();
+                    dragStart = {
+                        offsetX: event.clientX - rect.left,
+                        offsetY: event.clientY - rect.top,
+                    };
+                    label.classList.add('dragging');
+                    window.addEventListener('pointermove', onPointerMove);
+                    window.addEventListener('pointerup', onPointerUp);
+                });
+
+                annotation.element = label;
+                if (selectedAnnotation === annotation) {
+                    label.classList.add('selected');
+                }
+                overlay.appendChild(label);
+            }
+
+            function renderAllTextItems() {
+                console.log('Rendering all text items as editable elements');
+                const allWrappers = document.querySelectorAll('.page');
+                
+                allWrappers.forEach((wrapper) => {
+                    const pageIndex = parseInt(wrapper.dataset.pageIndex);
+                    const textLayer = wrapper.querySelector('.pdf-text-layer');
+                    if (textLayer) {
+                        renderTextItemsForPage(pageIndex, textLayer, wrapper);
+                    }
+                });
+                
+                setStatus('Text extraction complete. All text is now editable.', '');
+            }
+            
+            function renderTextItemsForPage(pageIndex, textLayer, wrapper) {
+                // Clear existing text elements
+                textLayer.innerHTML = '';
+                
+                // Get all text items for this page
+                const pageItems = extractedTextItems.filter(item => item.pageIndex === pageIndex);
+                
+                console.log(`Rendering ${pageItems.length} text items for page ${pageIndex + 1}`);
+                
+                // Get page info for positioning
+                const canvas = wrapper.querySelector('canvas');
+                const pageInfo = {
+                    scale: currentScale,
+                    canvasHeight: canvas.height,
+                };
+                
+                pageItems.forEach(item => {
+                    const textElement = document.createElement('div');
+                    textElement.className = 'pdf-text editable-text';
+                    textElement.contentEditable = editMode === 'form';
+                    textElement.textContent = item.text;
+                    textElement.dataset.itemId = item.id;
+                    
+                    // Position and style the text element
+                    const scale = currentScale;
+                    const yPos = pageInfo.canvasHeight - item.pdfY * scale - item.height * scale;
+                    
+                    textElement.style.position = 'absolute';
+                    textElement.style.left = `${item.pdfX * scale}px`;
+                    textElement.style.top = `${yPos}px`;
+                    textElement.style.fontSize = `${item.fontSize * scale}px`;
+                    textElement.style.minWidth = `${item.width * scale}px`;
+                    textElement.style.minHeight = `${item.height * scale}px`;
+                    textElement.style.whiteSpace = 'nowrap';
+                    textElement.style.background = 'rgba(255, 255, 255, 0.9)';
+                    textElement.style.padding = '2px 4px';
+                    textElement.style.border = '1px solid transparent';
+                    textElement.style.outline = 'none';
+                    textElement.style.fontFamily = 'Arial, sans-serif';
+                    textElement.style.color = '#000';
+                    textElement.style.cursor = 'text';
+                    textElement.style.borderRadius = '3px';
+                    textElement.classList.toggle('modified', item.modified);
+
+                    textElement.addEventListener('click', (event) => {
+                        if (editMode !== 'form' && toolMode === 'text') {
+                            event.stopPropagation();
+                            startTextItemEdit(wrapper, item);
+                        }
+                    });
+                    
+                    // Hover and focus effects
+                    textElement.addEventListener('mouseenter', function() {
+                        this.style.border = '1px solid #4CAF50';
+                        this.style.background = 'rgba(255, 255, 255, 1)';
+                    });
+                    
+                    textElement.addEventListener('mouseleave', function() {
+                        if (document.activeElement !== this) {
+                            this.style.border = '1px solid transparent';
+                            this.style.background = 'rgba(255, 255, 255, 0.9)';
+                        }
+                    });
+                    
+                    textElement.addEventListener('focus', function() {
+                        this.style.border = '1px solid #2196F3';
+                        this.style.background = 'rgba(255, 255, 255, 1)';
+                        this.style.boxShadow = '0 0 5px rgba(33, 150, 243, 0.5)';
+                    });
+                    
+                    textElement.addEventListener('blur', function() {
+                        this.style.border = '1px solid transparent';
+                        this.style.background = 'rgba(255, 255, 255, 0.9)';
+                        this.style.boxShadow = 'none';
+                        
+                        // Update the text item when editing is done
+                        const itemId = this.dataset.itemId;
+                        const textItem = extractedTextItems.find(i => i.id === itemId);
+                        if (textItem) {
+                            textItem.text = this.textContent;
+                            textItem.modified = true;
+                            persistTextItems();
+                            console.log(`Updated text item: "${textItem.text}"`);
+                        }
+                    });
+                    
+                    textLayer.appendChild(textElement);
+                });
+            }
+
+            function createFieldGroups(wrapper, pageIndex, pageInfo) {
+                const pageItems = extractedTextItems.filter(item => item.pageIndex === pageIndex);
+                if (pageItems.length === 0) return;
+
+                // Group items by vertical proximity (within 100px)
+                const groups = [];
+                const sorted = [...pageItems].sort((a, b) => {
+                    const yDiff = Math.abs(a.pdfY - b.pdfY);
+                    if (yDiff < 20) return a.pdfX - b.pdfX;
+                    return b.pdfY - a.pdfY; // Top to bottom
+                });
+
+                sorted.forEach(item => {
+                    let addedToGroup = false;
+                    for (const group of groups) {
+                        const avgY = group.reduce((sum, i) => sum + i.pdfY, 0) / group.length;
+                        if (Math.abs(item.pdfY - avgY) < 100) {
+                            group.push(item);
+                            addedToGroup = true;
+                            break;
+                        }
+                    }
+                    if (!addedToGroup) {
+                        groups.push([item]);
+                    }
+                });
+
+                // Draw boxes around groups with 3+ items
+                const overlay = wrapper.querySelector('.overlay');
+                groups.forEach(group => {
+                    if (group.length < 3) return;
+
+                    let minX = Infinity, minY = Infinity;
+                    let maxX = -Infinity, maxY = -Infinity;
+
+                    group.forEach(item => {
+                        const x = item.pdfX * pageInfo.scale;
+                        const y = pageInfo.canvasHeight - item.pdfY * pageInfo.scale - (item.height || item.fontSize) * pageInfo.scale;
+                        const width = (item.width || item.text.length * item.fontSize * 0.5) * pageInfo.scale;
+                        const height = (item.height || item.fontSize) * pageInfo.scale;
+
+                        minX = Math.min(minX, x);
+                        minY = Math.min(minY, y);
+                        maxX = Math.max(maxX, x + width);
+                        maxY = Math.max(maxY, y + height);
+                    });
+
+                    const groupBox = document.createElement('div');
+                    groupBox.className = 'field-group';
+                    groupBox.style.left = (minX - 12) + 'px';
+                    groupBox.style.top = (minY - 12) + 'px';
+                    groupBox.style.width = (maxX - minX + 24) + 'px';
+                    groupBox.style.height = (maxY - minY + 24) + 'px';
+                    overlay.appendChild(groupBox);
+                });
+            }
+
+            function renderAllTextItems() {
+                console.log('=== RENDERING ALL TEXT ITEMS AS EDITABLE ===');
+                const allWrappers = document.querySelectorAll('.page');
+                
+                allWrappers.forEach((wrapper) => {
+                    const pageIndex = parseInt(wrapper.dataset.pageIndex);
+                    const textLayer = wrapper.querySelector('.pdf-text-layer');
+                    if (textLayer) {
+                        renderTextItemsForPage(pageIndex, textLayer, wrapper);
+                    }
+                });
+                
+                setStatus('All text is now editable. Click any text to edit it.', 'ok');
+            }
+            
+            function renderTextItemsForPage(pageIndex, textLayer, wrapper) {
+                // Clear existing text elements
+                textLayer.innerHTML = '';
+                
+                // Get all text items for this page
+                const pageItems = extractedTextItems.filter(item => item.pageIndex === pageIndex);
+                
+                console.log(`Rendering ${pageItems.length} text items for page ${pageIndex + 1}`);
+                
+                // Get page info for positioning
+                const canvas = wrapper.querySelector('canvas');
+                const pageInfo = {
+                    scale: currentScale,
+                    canvasHeight: canvas.height,
+                };
+                
+                pageItems.forEach(item => {
+                    const textElement = document.createElement('div');
+                    textElement.className = 'pdf-text editable-text';
+                    textElement.contentEditable = editMode === 'form';
+                    textElement.textContent = item.text;
+                    textElement.dataset.itemId = item.id;
+                    
+                    // Position and style the text element
+                    const scale = currentScale;
+                    const yPos = pageInfo.canvasHeight - item.pdfY * scale - item.height * scale;
+                    
+                    textElement.style.position = 'absolute';
+                    textElement.style.left = `${item.pdfX * scale}px`;
+                    textElement.style.top = `${yPos}px`;
+                    textElement.style.fontSize = `${item.fontSize * scale}px`;
+                    textElement.style.minWidth = `${item.width * scale}px`;
+                    textElement.style.minHeight = `${item.height * scale}px`;
+                    textElement.style.whiteSpace = 'nowrap';
+                    textElement.style.background = 'rgba(255, 255, 255, 0.9)';
+                    textElement.style.padding = '2px 4px';
+                    textElement.style.border = '1px solid transparent';
+                    textElement.style.outline = 'none';
+                    textElement.style.fontFamily = 'Arial, sans-serif';
+                    textElement.style.color = '#000';
+                    textElement.style.cursor = 'text';
+                    textElement.style.borderRadius = '3px';
+                    textElement.classList.toggle('modified', item.modified);
+
+                    textElement.addEventListener('click', (event) => {
+                        if (editMode !== 'form' && toolMode === 'text') {
+                            event.stopPropagation();
+                            startTextItemEdit(wrapper, item);
+                        }
+                    });
+                    
+                    // Hover and focus effects
+                    textElement.addEventListener('mouseenter', function() {
+                        this.style.border = '1px solid #4CAF50';
+                        this.style.background = 'rgba(255, 255, 255, 1)';
+                    });
+                    
+                    textElement.addEventListener('mouseleave', function() {
+                        if (document.activeElement !== this) {
+                            this.style.border = '1px solid transparent';
+                            this.style.background = 'rgba(255, 255, 255, 0.9)';
+                        }
+                    });
+                    
+                    textElement.addEventListener('focus', function() {
+                        this.style.border = '1px solid #2196F3';
+                        this.style.background = 'rgba(255, 255, 255, 1)';
+                        this.style.boxShadow = '0 0 5px rgba(33, 150, 243, 0.5)';
+                    });
+                    
+                    textElement.addEventListener('blur', function() {
+                        this.style.border = '1px solid transparent';
+                        this.style.background = 'rgba(255, 255, 255, 0.9)';
+                        this.style.boxShadow = 'none';
+                        
+                        // Update the text item when editing is done
+                        const itemId = this.dataset.itemId;
+                        const textItem = extractedTextItems.find(i => i.id === itemId);
+                        if (textItem) {
+                            textItem.text = this.textContent;
+                            textItem.modified = true;
+                            persistTextItems();
+                            console.log(`Updated text: "${textItem.text}"`);
+                        }
+                    });
+                    
+                    item.element = textElement;
+                    textLayer.appendChild(textElement);
+                });
+            }
+
+            async function renderPdf() {
+                const loadingTask = pdfjsLib.getDocument(pdfUrlWithVersion());
+                const pdf = await loadingTask.promise;
+
+                for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+                    const page = await pdf.getPage(pageNumber);
+                    const viewport = page.getViewport({ scale: currentScale });
+
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'page';
+                    wrapper.dataset.pageIndex = pageNumber - 1;
+
+                    const canvas = document.createElement('canvas');
+                    const context = canvas.getContext('2d');
+                    canvas.width = viewport.width;
+                    canvas.height = viewport.height;
+
+                    const overlay = document.createElement('div');
+                    overlay.className = 'overlay';
+
+                    wrapper.appendChild(canvas);
+                    wrapper.appendChild(overlay);
+                    viewer.appendChild(wrapper);
+
+                    const renderContext = { canvasContext: context, viewport };
+                    await page.render(renderContext).promise;
+
+                    const pageInfo = {
+                        scale: currentScale,
+                        canvasHeight: canvas.height,
+                    };
+
+                    annotations
+                        .filter((annotation) => annotation.pageIndex === pageNumber - 1)
+                        .forEach((annotation) => addAnnotationElement(wrapper, annotation, pageInfo));
+
+                    const textLayer = document.createElement('div');
+                    textLayer.className = 'pdf-text-layer';
+                    overlay.appendChild(textLayer);
+
+                    // Render text items if they exist (from database extraction)
+                    if (extractedTextLoaded) {
+                        renderTextItemsForPage(pageNumber - 1, textLayer, wrapper);
+                    }
+
+                    // Create field groups in form mode
+                    if (editMode === 'form') {
+                        createFieldGroups(wrapper, pageNumber - 1, pageInfo);
+                    }
+
+                    overlay.addEventListener('click', (event) => {
+                        if (event.target !== overlay) {
+                            return;
+                        }
+                        setSelection(null);
+                        removeActiveEditor();
+
+                        const rect = overlay.getBoundingClientRect();
+                        const x = event.clientX - rect.left;
+                        const y = event.clientY - rect.top;
+                        const fontSizePx = Math.max(8, Math.min(48, parseInt(fontSizeInput.value || '16', 10)));
+                        const fontFamily = fontFamilyInput.value;
+
+                        if (insertMode === 'x' || insertMode === 'checkbox') {
+                            const symbol = insertMode === 'x' ? 'X' : '[ ]';
+                            const annotation = {
+                                text: symbol,
+                                pageIndex: pageNumber - 1,
+                                pdfX: x / currentScale,
+                                pdfY: (canvas.height - y) / currentScale,
+                                fontSize: fontSizePx / currentScale,
+                                fontFamily,
+                                type: insertMode,
+                            };
+                            annotations.push(annotation);
+                            persistAnnotations();
+                            addAnnotationElement(wrapper, annotation, pageInfo);
+                            setSelection(annotation);
+                            setStatus('Symbol added. Click Save to keep changes.', 'ok');
+                            return;
+                        }
+
+                        if (toolMode === 'sign') {
+                            if (!signatureDataUrl) {
+                                openSignatureModal();
+                                return;
+                            }
+                            const signatureWidthPx = 180;
+                            const signatureAspect = signatureCanvas.width / signatureCanvas.height;
+                            const signatureHeightPx = signatureWidthPx / signatureAspect;
+                            const annotation = {
+                                type: 'signature',
+                                pageIndex: pageNumber - 1,
+                                pdfX: x / currentScale,
+                                pdfY: (canvas.height - y) / currentScale - (signatureHeightPx / currentScale),
+                                pdfWidth: signatureWidthPx / currentScale,
+                                pdfHeight: signatureHeightPx / currentScale,
+                                dataUrl: signatureDataUrl,
+                            };
+                            annotations.push(annotation);
+                            persistAnnotations();
+                            addAnnotationElement(wrapper, annotation, pageInfo);
+                            setSelection(annotation);
+                            setStatus('Signature added. Click Save to keep changes.', 'ok');
+                            return;
+                        }
+
+                        if (toolMode !== 'text') {
+                            return;
+                        }
+
+                        const editor = document.createElement('input');
+                        editor.type = 'text';
+                        editor.className = 'text-editor';
+                        editor.style.left = x + 'px';
+                        editor.style.top = y + 'px';
+                        editor.style.fontSize = fontSizePx + 'px';
+                        editor.style.fontFamily = fontMap[fontFamily]?.css || 'inherit';
+                        editor.placeholder = 'Type text here...';
+
+                        activeEditor = editor;
+
+                        let finished = false;
+                        const finishEditing = () => {
+                            if (finished) {
+                                return;
+                            }
+                            finished = true;
+                            const text = editor.value.trim();
+                            if (text) {
+                                const annotation = {
+                                    text,
+                                    pageIndex: pageNumber - 1,
+                                    pdfX: x / currentScale,
+                                    pdfY: (canvas.height - y) / currentScale,
+                                    fontSize: fontSizePx / currentScale,
+                                    fontFamily,
+                                    type: 'text',
+                                };
+
+                                annotations.push(annotation);
+                                persistAnnotations();
+                                addAnnotationElement(wrapper, annotation, pageInfo);
+                                setSelection(annotation);
+                                setStatus('Text added. Click Save to keep changes.', 'ok');
+                            }
+                            removeActiveEditor();
+                        };
+
+                        editor.addEventListener('blur', finishEditing);
+                        editor.addEventListener('keydown', (e) => {
+                            if (e.key === 'Enter') {
+                                finishEditing();
+                            } else if (e.key === 'Escape') {
+                                removeActiveEditor();
+                            }
+                        });
+
+                        overlay.appendChild(editor);
+                        editor.focus();
+                    });
+                }
+                
+                // Log all extracted text after all pages are rendered
+                console.log('=== EXTRACTED TEXT FROM PDF ===');
+                console.log('Total items:', extractedTextItems.length);
+                console.log('Full JSON:', JSON.stringify(extractedTextItems, null, 2));
+                
+                // Also log just the text for readability
+                console.log('=== EXTRACTED TEXT (READABLE) ===');
+                const textByPage = {};
+                extractedTextItems.forEach(item => {
+                    if (!textByPage[item.pageIndex]) {
+                        textByPage[item.pageIndex] = [];
+                    }
+                    textByPage[item.pageIndex].push(item.text);
+                });
+                
+                Object.keys(textByPage).forEach(pageIndex => {
+                    console.log(`\n--- PAGE ${parseInt(pageIndex) + 1} ---`);
+                    console.log(textByPage[pageIndex].join(' '));
+                });
+            }
+
+            async function savePdf() {
+                if (!annotations.length && !extractedTextItems.some(item => item.modified)) {
+                    setStatus('No text changes to save.', 'err');
+                    return;
+                }
+
+                setStatus('Saving...', '');
+
+                await loadOriginalPdfBytes();
+                const pdfDoc = await PDFLib.PDFDocument.load(originalPdfBytes.slice(0));
+                const fontCache = {};
+
+                // In replace mode, remove ALL original text and redraw all extracted text
+                if (editMode === 'replace') {
+                    // First pass: Cover all original text with white rectangles
+                    for (const item of extractedTextItems) {
+                        const page = pdfDoc.getPage(item.pageIndex);
+                        const height = item.height || item.fontSize;
+                        const width = item.width || (item.text.length * item.fontSize * 0.5);
+                        
+                        page.drawRectangle({
+                            x: item.pdfX,
+                            y: item.pdfY - height,
+                            width: width,
+                            height: height,
+                            color: PDFLib.rgb(1, 1, 1),
+                            borderWidth: 0,
+                        });
+                    }
+                    
+                    // Second pass: Redraw all text (edited or not)
+                    for (const item of extractedTextItems) {
+                        const page = pdfDoc.getPage(item.pageIndex);
+                        const font = await pdfDoc.embedFont(PDFLib.StandardFonts.Helvetica);
+                        const safeText = sanitizeTextForPdf(item.text);
+                        
+                        page.drawText(safeText, {
+                            x: item.pdfX,
+                            y: item.pdfY - item.fontSize,
+                            size: item.fontSize,
+                            font,
+                            color: PDFLib.rgb(0, 0, 0),
+                        });
+                        item.text = safeText;
+                        item.modified = false; // Reset modified flag after saving
+                    }
+                } else {
+                    // Overlay mode: Only cover and replace modified text
+                    for (const item of extractedTextItems) {
+                        if (!item.modified) {
+                            continue;
+                        }
+                        const page = pdfDoc.getPage(item.pageIndex);
+                        const font = await pdfDoc.embedFont(PDFLib.StandardFonts.Helvetica);
+                        const safeText = sanitizeTextForPdf(item.text);
+                        const height = item.height || item.fontSize;
+                        page.drawRectangle({
+                            x: item.pdfX,
+                            y: item.pdfY - height,
+                            width: item.width || (safeText.length * item.fontSize * 0.5),
+                            height,
+                            color: PDFLib.rgb(1, 1, 1),
+                        });
+                        page.drawText(safeText, {
+                            x: item.pdfX,
+                            y: item.pdfY - item.fontSize,
+                            size: item.fontSize,
+                            font,
+                            color: PDFLib.rgb(0, 0, 0),
+                        });
+                        item.text = safeText;
+                        item.modified = false;
+                    }
+                }
+
+                const dataUrlToUint8 = (dataUrl) => {
+                    const base64 = dataUrl.split(',')[1];
+                    const binary = atob(base64);
+                    const bytes = new Uint8Array(binary.length);
+                    for (let i = 0; i < binary.length; i++) {
+                        bytes[i] = binary.charCodeAt(i);
+                    }
+                    return bytes;
+                };
+
+                for (const annotation of annotations) {
+                    const page = pdfDoc.getPage(annotation.pageIndex);
+                    if (annotation.type === 'signature') {
+                        const pngBytes = dataUrlToUint8(annotation.dataUrl);
+                        const pngImage = await pdfDoc.embedPng(pngBytes);
+                        page.drawImage(pngImage, {
+                            x: annotation.pdfX,
+                            y: annotation.pdfY,
+                            width: annotation.pdfWidth,
+                            height: annotation.pdfHeight,
+                        });
+                        continue;
+                    }
+
+                    if (!fontCache[annotation.fontFamily]) {
+                        const fontKey = fontMap[annotation.fontFamily]?.pdf || PDFLib.StandardFonts.Helvetica;
+                        fontCache[annotation.fontFamily] = await pdfDoc.embedFont(fontKey);
+                    }
+                    const font = fontCache[annotation.fontFamily];
+                    const safeText = sanitizeTextForPdf(annotation.text);
+                    if (safeText !== annotation.text) {
+                        annotation.text = safeText;
+                        applyAnnotationStyle(annotation);
+                        persistAnnotations();
+                    }
+                    const baselineY = Math.max(0, annotation.pdfY - annotation.fontSize);
+                    page.drawText(annotation.text, {
+                        x: annotation.pdfX,
+                        y: baselineY,
+                        size: annotation.fontSize,
+                        font,
+                        color: PDFLib.rgb(0, 0, 0),
+                    });
+                }
+
+                const pdfBytes = await pdfDoc.save();
+                const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+                const formData = new FormData();
+                formData.append('edited_pdf', blob, 'edited.pdf');
+
+                const response = await fetch(saveUrl, {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRF-TOKEN': csrfToken,
+                    },
+                    body: formData,
+                });
+
+                if (response.ok) {
+                    setStatus('Saved! Refreshing preview...', 'ok');
+                    setSelection(null);
+                    persistAnnotations();
+                    persistTextItems();
+                    viewer.innerHTML = '';
+                    pdfVersion = Date.now();
+                    await renderPdf();
+                } else {
+                    setStatus('Save failed. Please try again.', 'err');
+                }
+            }
+
+            document.getElementById('save-btn').addEventListener('click', savePdf);
+            
+            document.getElementById('clear-btn').addEventListener('click', () => {
+                if (!confirm('Clear all unsaved changes including text edits?')) {
+                    return;
+                }
+                annotations.length = 0;
+                selectedAnnotation = null;
+                
+                // Reset all modified flags on extracted text
+                extractedTextItems.forEach(item => {
+                    item.modified = false;
+                });
+                
+                viewer.innerHTML = '';
+                updateSelectionBar();
+                persistAnnotations();
+                persistTextItems();
+                renderPdf();
+                setStatus('Cleared all unsaved changes.', 'ok');
+            });
+
+            selectedFont.addEventListener('change', () => {
+                if (!selectedAnnotation) {
+                    return;
+                }
+                selectedAnnotation.fontFamily = selectedFont.value;
+                applyAnnotationStyle(selectedAnnotation);
+                persistAnnotations();
+                setStatus('Font updated. Click Save to keep changes.', 'ok');
+            });
+
+            selectedSize.addEventListener('change', () => {
+                if (!selectedAnnotation) {
+                    return;
+                }
+                const sizePx = Math.max(8, Math.min(48, parseInt(selectedSize.value || '16', 10)));
+                selectedAnnotation.fontSize = sizePx / currentScale;
+                applyAnnotationStyle(selectedAnnotation);
+                persistAnnotations();
+                setStatus('Size updated. Click Save to keep changes.', 'ok');
+            });
+
+            sizeUp.addEventListener('click', () => {
+                if (!selectedAnnotation) {
+                    return;
+                }
+                const currentSize = Math.round(selectedAnnotation.fontSize * currentScale);
+                const newSize = Math.min(48, currentSize + 2);
+                selectedSize.value = newSize;
+                selectedAnnotation.fontSize = newSize / currentScale;
+                applyAnnotationStyle(selectedAnnotation);
+                persistAnnotations();
+                setStatus('Size increased. Click Save to keep changes.', 'ok');
+            });
+
+            sizeDown.addEventListener('click', () => {
+                if (!selectedAnnotation) {
+                    return;
+                }
+                const currentSize = Math.round(selectedAnnotation.fontSize * currentScale);
+                const newSize = Math.max(8, currentSize - 2);
+                selectedSize.value = newSize;
+                selectedAnnotation.fontSize = newSize / currentScale;
+                applyAnnotationStyle(selectedAnnotation);
+                persistAnnotations();
+                setStatus('Size decreased. Click Save to keep changes.', 'ok');
+            });
+
+            selectedText.addEventListener('input', () => {
+                if (!selectedAnnotation) {
+                    return;
+                }
+                selectedAnnotation.text = selectedText.value;
+                applyAnnotationStyle(selectedAnnotation);
+                persistAnnotations();
+            });
+
+            selectedDelete.addEventListener('click', () => {
+                if (!selectedAnnotation) {
+                    return;
+                }
+                const element = selectedAnnotation.element;
+                const idx = annotations.indexOf(selectedAnnotation);
+                if (idx >= 0) {
+                    annotations.splice(idx, 1);
+                }
+                if (element && element.parentNode) {
+                    element.parentNode.removeChild(element);
+                }
+                selectedAnnotation = null;
+                updateSelectionBar();
+                persistAnnotations();
+                setStatus('Text deleted. Click Save to keep changes.', 'ok');
+            });
+
+            insertX.addEventListener('click', () => {
+                insertMode = insertMode === 'x' ? null : 'x';
+                insertCheckbox.classList.remove('pill-active');
+                insertX.classList.toggle('pill-active', insertMode === 'x');
+                toolMode = 'select';
+                updateModeButtons();
+                setStatus(insertMode ? 'Click on the PDF to place an X.' : 'Insert mode cleared.', 'ok');
+            });
+
+            insertCheckbox.addEventListener('click', () => {
+                insertMode = insertMode === 'checkbox' ? null : 'checkbox';
+                insertX.classList.remove('pill-active');
+                insertCheckbox.classList.toggle('pill-active', insertMode === 'checkbox');
+                toolMode = 'select';
+                updateModeButtons();
+                setStatus(insertMode ? 'Click on the PDF to place a checkbox.' : 'Insert mode cleared.', 'ok');
+            });
+
+            const signatureCtx = signatureCanvas.getContext('2d');
+            signatureCtx.lineWidth = 3;
+            signatureCtx.lineCap = 'round';
+            signatureCtx.lineJoin = 'round';
+            signatureCtx.strokeStyle = '#111';
+            signatureCtx.fillStyle = '#fff';
+            signatureCtx.fillRect(0, 0, signatureCanvas.width, signatureCanvas.height);
+
+            let drawing = false;
+            const getSignaturePoint = (event) => {
+                const rect = signatureCanvas.getBoundingClientRect();
+                const scaleX = signatureCanvas.width / rect.width;
+                const scaleY = signatureCanvas.height / rect.height;
+                return {
+                    x: (event.clientX - rect.left) * scaleX,
+                    y: (event.clientY - rect.top) * scaleY,
+                };
+            };
+
+            const startSignature = (event) => {
+                drawing = true;
+                const point = getSignaturePoint(event);
+                signatureCtx.beginPath();
+                signatureCtx.moveTo(point.x, point.y);
+            };
+
+            const drawSignature = (event) => {
+                if (!drawing) {
+                    return;
+                }
+                const point = getSignaturePoint(event);
+                signatureCtx.lineTo(point.x, point.y);
+                signatureCtx.stroke();
+            };
+
+            const endSignature = () => {
+                drawing = false;
+            };
+
+            signatureCanvas.addEventListener('pointerdown', startSignature);
+            signatureCanvas.addEventListener('pointermove', drawSignature);
+            signatureCanvas.addEventListener('pointerup', endSignature);
+            signatureCanvas.addEventListener('pointerleave', endSignature);
+
+            function openSignatureModal() {
+                signatureModal.classList.add('active');
+                signatureModal.setAttribute('aria-hidden', 'false');
+            }
+
+            function closeSignatureModal() {
+                signatureModal.classList.remove('active');
+                signatureModal.setAttribute('aria-hidden', 'true');
+            }
+
+            signatureClear.addEventListener('click', () => {
+                signatureCtx.clearRect(0, 0, signatureCanvas.width, signatureCanvas.height);
+                signatureCtx.fillStyle = '#fff';
+                signatureCtx.fillRect(0, 0, signatureCanvas.width, signatureCanvas.height);
+            });
+
+            signatureCancel.addEventListener('click', () => {
+                closeSignatureModal();
+            });
+
+            signatureSave.addEventListener('click', () => {
+                signatureDataUrl = signatureCanvas.toDataURL('image/png');
+                closeSignatureModal();
+                toolMode = 'sign';
+                updateModeButtons();
+                setStatus('Signature ready. Click on the PDF to place it.', 'ok');
+            });
+
+            const updateModeButtons = () => {
+                modeSelect.classList.toggle('active', toolMode === 'select');
+                modeText.classList.toggle('active', toolMode === 'text');
+                modeSign.classList.toggle('active', toolMode === 'sign');
+                updateTopEditButton();
+                updateTextLayerVisibility();
+            };
+
+            const applyEditMode = async (mode, forceOcr = false) => {
+                editMode = mode;
+                if (editModeSelect && editModeSelect.value !== mode) {
+                    editModeSelect.value = mode;
+                }
+                if (replaceModeHint) {
+                    replaceModeHint.style.display = editMode === 'replace' ? 'block' : 'none';
+                }
+                if (formModeHint) {
+                    formModeHint.style.display = editMode === 'form' ? 'block' : 'none';
+                }
+                if (editMode === 'form' && fieldCount) {
+                    fieldCount.textContent = extractedTextItems.length;
+                }
+
+                updateTextLayerVisibility();
+
+                if (editMode === 'form' || editMode === 'replace') {
+                    if (forceOcr || !ocrLoaded) {
+                        const rebuilt = await rebuildPdfFromOcr();
+                        if (!rebuilt) {
+                            rerenderPdf();
+                            return;
+                        }
+                        const loaded = await loadOcrExtractionData();
+                        if (!loaded) {
+                            rerenderPdf();
+                            return;
+                        }
+                    }
+                    rerenderPdf();
+                } else {
+                    rerenderPdf();
+                }
+
+                let statusMessage = '';
+                if (editMode === 'form') {
+                    statusMessage = `Form mode: ${extractedTextItems.length} text fields are now editable.`;
+                } else if (editMode === 'replace') {
+                    statusMessage = 'Replace mode: Click text to edit it directly.';
+                } else {
+                    statusMessage = 'Overlay mode: Adding text on top of PDF.';
+                }
+                setStatus(statusMessage, 'ok');
+            };
+
+            modeSelect.addEventListener('click', () => {
+                toolMode = 'select';
+                insertMode = null;
+                insertX.classList.remove('pill-active');
+                insertCheckbox.classList.remove('pill-active');
+                updateModeButtons();
+                setStatus('Select mode active.', 'ok');
+            });
+
+            modeText.addEventListener('click', () => {
+                toolMode = 'text';
+                insertMode = null;
+                insertX.classList.remove('pill-active');
+                insertCheckbox.classList.remove('pill-active');
+                updateModeButtons();
+                setStatus('Text mode active. Click on the PDF to add text.', 'ok');
+            });
+
+            editModeTop.addEventListener('click', async () => {
+                toolMode = 'text';
+                insertMode = null;
+                insertX.classList.remove('pill-active');
+                insertCheckbox.classList.remove('pill-active');
+                updateModeButtons();
+                await applyEditMode('form', true);
+            });
+
+            modeSign.addEventListener('click', () => {
+                toolMode = 'sign';
+                insertMode = null;
+                insertX.classList.remove('pill-active');
+                insertCheckbox.classList.remove('pill-active');
+                updateModeButtons();
+                openSignatureModal();
+            });
+
+            const updateZoom = (value) => {
+                const zoomValue = Math.max(50, Math.min(200, parseInt(value, 10)));
+                zoomRange.value = zoomValue;
+                zoomLabel.textContent = zoomValue + '%';
+                currentScale = baseScale * (zoomValue / 100);
+                rerenderPdf();
+                updateSelectionBar();
+                // Re-render text items after zoom if they're already extracted
+                if (extractedTextLoaded) {
+                    setTimeout(() => renderAllTextItems(), 100);
+                }
+            };
+
+            // Edit mode change handler
+            if (editModeSelect) {
+                editModeSelect.addEventListener('change', () => {
+                    applyEditMode(editModeSelect.value);
+                });
+            }
+
+            if (zoomRange) {
+                zoomRange.addEventListener('input', (e) => updateZoom(e.target.value));
+            }
+            if (zoomOutBtn) {
+                zoomOutBtn.addEventListener('click', () => updateZoom(parseInt(zoomRange.value, 10) - 10));
+            }
+            if (zoomInBtn) {
+                zoomInBtn.addEventListener('click', () => updateZoom(parseInt(zoomRange.value, 10) + 10));
+            }
+
+            loadAnnotationsFromStorage();
+            loadOriginalPdfBytes().catch((err) => {
+                console.warn('Failed to cache original PDF bytes', err);
+            });
+            updateModeButtons();
+            updateSelectionBar();
+            
+            // Show form mode hint on initial load
+            if (editMode === 'form' && formModeHint) {
+                formModeHint.style.display = 'block';
+                setTimeout(() => {
+                    if (fieldCount) {
+                        fieldCount.textContent = extractedTextItems.length;
+                    }
+                }, 500);
+            } else {
+                // Hide form mode hint by default
+                if (formModeHint) {
+                    formModeHint.style.display = 'none';
+                }
+            }
+            
+            renderPdf().catch(() => {
+                setStatus('Failed to load PDF.', 'err');
+            });
+        </script>
+    </body>
+</html>
