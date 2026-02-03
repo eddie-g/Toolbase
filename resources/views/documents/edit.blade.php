@@ -6324,6 +6324,12 @@
                         throw new Error(result.message || 'Failed to add page');
                     }
 
+                    // Clear all annotations when replacing PDF with blank page
+                    annotations.length = 0;
+                    updateAnnotationsList();
+                    persistAnnotations();
+                    setSelection(null);
+
                     pdfVersion = Date.now();
                     pdfjsDocument = null;
                     await populateOrganizePagesModal();
