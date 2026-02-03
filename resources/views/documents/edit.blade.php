@@ -5608,10 +5608,7 @@
                         </div>
                         
                         <div style="display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap;">
-                            ${['#000000', '#FF0000', '#0000FF', '#00A86B', '#FFD700', '#E0E0E0', '#FFFFFF', 'rainbow'].map(c => {
-                                if (c === 'rainbow') {
-                                    return `<button class="color-swatch" data-color="custom" style="width: 32px; height: 32px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.3); cursor: pointer; background: conic-gradient(red, yellow, lime, cyan, blue, magenta, red);"></button>`;
-                                }
+                            ${['#000000', '#FF0000', '#0000FF', '#00A86B', '#FFD700', '#E0E0E0', '#FFFFFF'].map(c => {
                                 const isSelected = (currentTab === 'fill' ? annotation.fillColor : annotation.strokeColor) === c;
                                 return `<button class="color-swatch" data-color="${c}" style="width: 32px; height: 32px; border-radius: 50%; background: ${c}; border: 3px solid ${isSelected ? 'var(--accent)' : (c === '#FFFFFF' ? '#000' : 'rgba(255,255,255,0.3)')}; cursor: pointer; box-shadow: ${isSelected ? '0 0 0 2px rgba(110, 231, 183, 0.3)' : 'none'};"></button>`;
                             }).join('')}
@@ -5647,10 +5644,13 @@
                 
                 // Get elements
                 const colorGradient = picker.querySelector('#color-gradient');
+                const colorPickerThumb = picker.querySelector('#color-picker-thumb');
                 const hueSlider = picker.querySelector('#hue-slider');
                 const hueThumb = picker.querySelector('#hue-thumb');
                 
                 let currentHue = 0; // Store current hue value (0-360)
+                let currentSaturation = 1; // Store current saturation (0-1)
+                let currentValue = 1; // Store current value/brightness (0-1)
                 
                 // Helper function to convert HSV to RGB
                 const hsvToRgb = (h, s, v) => {
@@ -5714,9 +5714,88 @@
                     return h * 360;
                 };
                 
-                currentHue = hexToHue(currentColor);
+                // Convert hex to HSV to get saturation and value for thumb positioning
+                const hexToHsv = (hex) => {
+                    const r = parseInt(hex.slice(1, 3), 16) / 255;
+                    const g = parseInt(hex.slice(3, 5), 16) / 255;
+                    const b = parseInt(hex.slice(5, 7), 16) / 255;
+                    const max = Math.max(r, g, b);
+                    const min = Math.min(r, g, b);
+                    const delta = max - min;
+                    
+                    let h = 0;
+                    if (delta !== 0) {
+                        if (max === r) {
+                            h = ((g - b) / delta + (g < b ? 6 : 0)) / 6;
+                        } else if (max === g) {
+                            h = ((b - r) / delta + 2) / 6;
+                        } else {
+                            h = ((r - g) / delta + 4) / 6;
+                        }
+                    }
+                    
+                    const s = max === 0 ? 0 : delta / max;
+                    const v = max;
+                    
+                    return { h: h * 360, s, v };
+                };
+                
+                // Initialize with current color
+                const hsv = hexToHsv(currentColor);
+                currentHue = hsv.h;
+                currentSaturation = hsv.s;
+                currentValue = hsv.v;
+                
                 updateColorGradient(currentHue);
                 hueThumb.style.left = (currentHue / 360 * 100) + '%';
+                
+                // Position the color picker thumb based on saturation and value
+                const rect = colorGradient.getBoundingClientRect();
+                const thumbX = currentSaturation * rect.width;
+                const thumbY = (1 - currentValue) * rect.height;
+                colorPickerThumb.style.left = thumbX + 'px';
+                colorPickerThumb.style.top = thumbY + 'px';
+                
+                // Color gradient interaction
+                const updateColorFromGradient = (e) => {
+                    const rect = colorGradient.getBoundingClientRect();
+                    const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+                    const y = Math.max(0, Math.min(e.clientY - rect.top, rect.height));
+                    
+                    currentSaturation = x / rect.width;
+                    currentValue = 1 - (y / rect.height);
+                    
+                    // Update thumb position
+                    colorPickerThumb.style.left = x + 'px';
+                    colorPickerThumb.style.top = y + 'px';
+                    
+                    // Calculate color from HSV
+                    const rgb = hsvToRgb(currentHue / 360, currentSaturation, currentValue);
+                    currentColor = rgbToHex(rgb.r, rgb.g, rgb.b);
+                    picker.querySelector('#hex-input').value = currentColor;
+                    highlightSelectedSwatch();
+                    updateShapePreview();
+                };
+                
+                let isGradientDragging = false;
+                colorGradient.addEventListener('mousedown', (e) => {
+                    isGradientDragging = true;
+                    updateColorFromGradient(e);
+                    e.preventDefault();
+                    e.stopPropagation();
+                });
+                
+                document.addEventListener('mousemove', (e) => {
+                    if (isGradientDragging) {
+                        updateColorFromGradient(e);
+                    }
+                });
+                
+                document.addEventListener('mouseup', () => {
+                    if (isGradientDragging) {
+                        isGradientDragging = false;
+                    }
+                });
                 
                 // Hue slider interaction
                 const updateHueFromEvent = (e) => {
@@ -5840,8 +5919,27 @@
                                 t.style.color = 'var(--ink)';
                             }
                         });
+                        
+                        // Update currentColor based on the active tab
                         currentColor = currentTab === 'fill' ? annotation.fillColor : annotation.strokeColor;
                         picker.querySelector('#hex-input').value = currentColor;
+                        
+                        // Update hue and gradient based on new color
+                        const hsv = hexToHsv(currentColor);
+                        currentHue = hsv.h;
+                        currentSaturation = hsv.s;
+                        currentValue = hsv.v;
+                        
+                        updateColorGradient(currentHue);
+                        hueThumb.style.left = (currentHue / 360 * 100) + '%';
+                        
+                        // Position the color picker thumb
+                        const rect = colorGradient.getBoundingClientRect();
+                        const thumbX = currentSaturation * rect.width;
+                        const thumbY = (1 - currentValue) * rect.height;
+                        colorPickerThumb.style.left = thumbX + 'px';
+                        colorPickerThumb.style.top = thumbY + 'px';
+                        
                         highlightSelectedSwatch();
                     });
                 });
@@ -5850,12 +5948,27 @@
                 picker.querySelectorAll('.color-swatch').forEach(swatch => {
                     swatch.addEventListener('click', () => {
                         const color = swatch.dataset.color;
-                        if (color !== 'custom') {
-                            currentColor = color;
-                            picker.querySelector('#hex-input').value = color;
-                            highlightSelectedSwatch();
-                            updateShapePreview();
-                        }
+                        currentColor = color;
+                        picker.querySelector('#hex-input').value = color;
+                        
+                        // Update hue, saturation, value, and gradient based on new color
+                        const hsv = hexToHsv(currentColor);
+                        currentHue = hsv.h;
+                        currentSaturation = hsv.s;
+                        currentValue = hsv.v;
+                        
+                        updateColorGradient(currentHue);
+                        hueThumb.style.left = (currentHue / 360 * 100) + '%';
+                        
+                        // Position the color picker thumb
+                        const rect = colorGradient.getBoundingClientRect();
+                        const thumbX = currentSaturation * rect.width;
+                        const thumbY = (1 - currentValue) * rect.height;
+                        colorPickerThumb.style.left = thumbX + 'px';
+                        colorPickerThumb.style.top = thumbY + 'px';
+                        
+                        highlightSelectedSwatch();
+                        updateShapePreview();
                     });
                 });
                 
