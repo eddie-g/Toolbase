@@ -4445,8 +4445,27 @@
                             const leftX = annotation.pdfX;
                             const leftY = annotation.pdfY;
                             
+                            // Create graphics state with opacity
+                            const gsName = `GS${Date.now()}`;
+                            const extGState = pdfDoc.context.obj({
+                                Type: 'ExtGState',
+                                CA: opacity, // Stroke alpha
+                                ca: opacity  // Fill alpha
+                            });
+                            const gsRef = pdfDoc.context.register(extGState);
+                            
+                            // Add to page resources
+                            const resources = page.node.Resources();
+                            const existingGS = resources.lookup(PDFLib.PDFName.of('ExtGState'));
+                            const gsDict = existingGS || pdfDoc.context.obj({});
+                            if (!existingGS) {
+                                resources.set(PDFLib.PDFName.of('ExtGState'), gsDict);
+                            }
+                            gsDict.set(PDFLib.PDFName.of(gsName), gsRef);
+                            
                             // Build PDF operators
                             let ops = 'q\n'; // Save graphics state
+                            ops += `/${gsName} gs\n`; // Apply graphics state with opacity
                             
                             // Apply rotation if needed
                             if (pdfRotation !== 0) {
@@ -4496,7 +4515,24 @@
                             const w = annotation.pdfWidth;
                             const h = annotation.pdfHeight;
                             
+                            // Create graphics state with opacity
+                            const gsName = `GS${Date.now()}`;
+                            const extGState = pdfDoc.context.obj({
+                                Type: 'ExtGState',
+                                CA: opacity,
+                                ca: opacity
+                            });
+                            const gsRef = pdfDoc.context.register(extGState);
+                            const resources = page.node.Resources();
+                            const existingGS = resources.lookup(PDFLib.PDFName.of('ExtGState'));
+                            const gsDict = existingGS || pdfDoc.context.obj({});
+                            if (!existingGS) {
+                                resources.set(PDFLib.PDFName.of('ExtGState'), gsDict);
+                            }
+                            gsDict.set(PDFLib.PDFName.of(gsName), gsRef);
+                            
                             let ops = 'q\n';
+                            ops += `/${gsName} gs\n`;
                             
                             if (pdfRotation !== 0) {
                                 const cos = Math.cos(rotationRad);
@@ -4534,7 +4570,24 @@
                             const w = annotation.pdfWidth;
                             const h = annotation.pdfHeight;
                             
+                            // Create graphics state with opacity
+                            const gsName = `GS${Date.now()}`;
+                            const extGState = pdfDoc.context.obj({
+                                Type: 'ExtGState',
+                                CA: opacity,
+                                ca: opacity
+                            });
+                            const gsRef = pdfDoc.context.register(extGState);
+                            const resources = page.node.Resources();
+                            const existingGS = resources.lookup(PDFLib.PDFName.of('ExtGState'));
+                            const gsDict = existingGS || pdfDoc.context.obj({});
+                            if (!existingGS) {
+                                resources.set(PDFLib.PDFName.of('ExtGState'), gsDict);
+                            }
+                            gsDict.set(PDFLib.PDFName.of(gsName), gsRef);
+                            
                             let ops = 'q\n';
+                            ops += `/${gsName} gs\n`;
                             
                             if (pdfRotation !== 0) {
                                 const cos = Math.cos(rotationRad);
@@ -4569,7 +4622,24 @@
                             const w = annotation.pdfWidth;
                             const h = annotation.pdfHeight;
                             
+                            // Create graphics state with opacity
+                            const gsName = `GS${Date.now()}`;
+                            const extGState = pdfDoc.context.obj({
+                                Type: 'ExtGState',
+                                CA: opacity,
+                                ca: opacity
+                            });
+                            const gsRef = pdfDoc.context.register(extGState);
+                            const resources = page.node.Resources();
+                            const existingGS = resources.lookup(PDFLib.PDFName.of('ExtGState'));
+                            const gsDict = existingGS || pdfDoc.context.obj({});
+                            if (!existingGS) {
+                                resources.set(PDFLib.PDFName.of('ExtGState'), gsDict);
+                            }
+                            gsDict.set(PDFLib.PDFName.of(gsName), gsRef);
+                            
                             let ops = 'q\n';
+                            ops += `/${gsName} gs\n`;
                             
                             if (pdfRotation !== 0) {
                                 const cos = Math.cos(rotationRad);
@@ -4624,7 +4694,24 @@
                             const w = annotation.pdfWidth;
                             const h = annotation.pdfHeight;
                             
+                            // Create graphics state with opacity
+                            const gsName = `GS${Date.now()}`;
+                            const extGState = pdfDoc.context.obj({
+                                Type: 'ExtGState',
+                                CA: opacity,
+                                ca: opacity
+                            });
+                            const gsRef = pdfDoc.context.register(extGState);
+                            const resources = page.node.Resources();
+                            const existingGS = resources.lookup(PDFLib.PDFName.of('ExtGState'));
+                            const gsDict = existingGS || pdfDoc.context.obj({});
+                            if (!existingGS) {
+                                resources.set(PDFLib.PDFName.of('ExtGState'), gsDict);
+                            }
+                            gsDict.set(PDFLib.PDFName.of(gsName), gsRef);
+                            
                             let ops = 'q\n';
+                            ops += `/${gsName} gs\n`;
                             
                             if (pdfRotation !== 0) {
                                 const cos = Math.cos(rotationRad);
@@ -4678,7 +4765,24 @@
                             const w = annotation.pdfWidth;
                             const h = annotation.pdfHeight;
                             
+                            // Create graphics state with opacity
+                            const gsName = `GS${Date.now()}`;
+                            const extGState = pdfDoc.context.obj({
+                                Type: 'ExtGState',
+                                CA: opacity,
+                                ca: opacity
+                            });
+                            const gsRef = pdfDoc.context.register(extGState);
+                            const resources = page.node.Resources();
+                            const existingGS = resources.lookup(PDFLib.PDFName.of('ExtGState'));
+                            const gsDict = existingGS || pdfDoc.context.obj({});
+                            if (!existingGS) {
+                                resources.set(PDFLib.PDFName.of('ExtGState'), gsDict);
+                            }
+                            gsDict.set(PDFLib.PDFName.of(gsName), gsRef);
+                            
                             let ops = 'q\n';
+                            ops += `/${gsName} gs\n`;
                             
                             if (pdfRotation !== 0) {
                                 const cos = Math.cos(rotationRad);
@@ -4719,7 +4823,24 @@
                                 const w = annotation.pdfWidth;
                                 const h = annotation.pdfHeight;
                                 
+                                // Create graphics state with opacity
+                                const gsName = `GS${Date.now()}`;
+                                const extGState = pdfDoc.context.obj({
+                                    Type: 'ExtGState',
+                                    CA: opacity,
+                                    ca: opacity
+                                });
+                                const gsRef = pdfDoc.context.register(extGState);
+                                const resources = page.node.Resources();
+                                const existingGS = resources.lookup(PDFLib.PDFName.of('ExtGState'));
+                                const gsDict = existingGS || pdfDoc.context.obj({});
+                                if (!existingGS) {
+                                    resources.set(PDFLib.PDFName.of('ExtGState'), gsDict);
+                                }
+                                gsDict.set(PDFLib.PDFName.of(gsName), gsRef);
+                                
                                 let ops = 'q\n'; // Save graphics state
+                                ops += `/${gsName} gs\n`; // Apply graphics state with opacity
                                 
                                 // Apply rotation
                                 const cos = Math.cos(rotationRad);
