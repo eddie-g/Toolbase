@@ -7197,6 +7197,42 @@
                 return variant.normal || fontMap[family]?.pdf || PDFLib.StandardFonts.Helvetica;
             }
 
+            // Helper: create a PDF ExtGState dictionary with proper PDFName values
+            // CRITICAL: context.obj({Type: 'ExtGState'}) creates string value (ExtGState)
+            // but PDF spec requires name value /ExtGState. MuPDF rejects the string form.
+            function createExtGState(pdfDoc, opacity) {
+                const dict = pdfDoc.context.obj({});
+                dict.set(PDFLib.PDFName.of('Type'), PDFLib.PDFName.of('ExtGState'));
+                dict.set(PDFLib.PDFName.of('CA'), pdfDoc.context.obj(opacity));
+                dict.set(PDFLib.PDFName.of('ca'), pdfDoc.context.obj(opacity));
+                return dict;
+            }
+
+            // Helper: add a content stream to a page's Contents array
+            function appendContentStream(pdfDoc, page, opsString) {
+                const contentBytes = new TextEncoder().encode(opsString);
+                const contentStream = pdfDoc.context.flateStream(contentBytes);
+                const contentStreamRef = pdfDoc.context.register(contentStream);
+                const contents = page.node.Contents();
+                const contentsArray = contents?.asArray?.() || (contents ? [contents] : []);
+                page.node.set(PDFLib.PDFName.of('Contents'), pdfDoc.context.obj([...contentsArray, contentStreamRef]));
+            }
+
+            // Helper: register an ExtGState on a page and return its name for use in content streams
+            function registerExtGState(pdfDoc, page, opacity) {
+                const gsName = `GS${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+                const extGState = createExtGState(pdfDoc, opacity);
+                const gsRef = pdfDoc.context.register(extGState);
+                const resources = page.node.Resources();
+                const existingGS = resources.lookup(PDFLib.PDFName.of('ExtGState'));
+                const gsDict = existingGS || pdfDoc.context.obj({});
+                if (!existingGS) {
+                    resources.set(PDFLib.PDFName.of('ExtGState'), gsDict);
+                }
+                gsDict.set(PDFLib.PDFName.of(gsName), gsRef);
+                return gsName;
+            }
+
             async function savePdf() {
                 const hasTextEdits = pdfTextItems.some((item) => item.modified);
                 const hasRotations = Object.keys(pageRotations).some(pageIndex => pageRotations[pageIndex] !== 0);
@@ -9839,13 +9875,20 @@
 
                 if (!saveResponse.ok) {
                     const errorText = await saveResponse.text();
-                    throw new Error(errorText || `Overlay save failed (${saveResponse.status})`);
+                    let errorMessage;
+                    try {
+                        const errorJson = JSON.parse(errorText);
+                        errorMessage = errorJson.error || errorText;
+                    } catch (e) {
+                        errorMessage = errorText;
+                    }
+                    throw new Error(errorMessage || `Overlay save failed (${saveResponse.status})`);
                 }
 
                 const saveResult = await saveResponse.json();
 
                 if (!saveResult.success) {
-                    throw new Error('Failed to save overlay edits: ' + (saveResult.message || 'Unknown error'));
+                    throw new Error(saveResult.error || saveResult.message || 'Failed to save overlay edits: Unknown error');
                 }
 
                 // CRITICAL: Clear both edited and persisted edits after successful save

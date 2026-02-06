@@ -10,6 +10,8 @@ Route::get('/', function () {
 })->name('home');
 Route::get('/pdf-editor', [DocumentController::class, 'index'])->name('documents.index');
 Route::post('/documents', [DocumentController::class, 'store'])->name('documents.store');
+Route::post('/documents/create-from-template', [DocumentController::class, 'createFromTemplate'])->name('documents.createFromTemplate');
+Route::post('/documents/create-simple-invoice', [DocumentController::class, 'createSimpleInvoice'])->name('documents.createSimpleInvoice');
 Route::get('/documents/{document}/edit', [DocumentController::class, 'edit'])->name('documents.edit');
 Route::get('/documents/{document}/fullscreen', [DocumentController::class, 'fullscreen'])->name('documents.fullscreen');
 Route::get('/documents/{document}/edit-extracted', [DocumentController::class, 'editExtractedText'])->name('documents.editExtracted');

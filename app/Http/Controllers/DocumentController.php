@@ -56,6 +56,141 @@ class DocumentController extends Controller
             ->with('status', 'PDF uploaded. You can edit it below.');
     }
 
+    public function createFromTemplate(Request $request)
+    {
+        $validated = $request->validate([
+            'template' => ['required', 'string', 'in:clean_modern,bold_red,classic_blue'],
+        ]);
+
+        $templateNames = [
+            'clean_modern' => 'Invoice - Clean Modern.pdf',
+            'bold_red'     => 'Invoice - Bold Red.pdf',
+            'classic_blue' => 'Invoice - Classic Blue.pdf',
+        ];
+
+        $templateKey = $validated['template'];
+        $uuid = Str::uuid()->toString();
+        $storedRelative = 'documents/' . $uuid . '.pdf';
+        $storedFull = Storage::path($storedRelative);
+
+        // Ensure directory exists
+        Storage::makeDirectory('documents');
+
+        $script = base_path('python/generate_invoice_template.py');
+        $command = sprintf(
+            'python3 %s %s %s 2>&1',
+            escapeshellarg($script),
+            escapeshellarg($templateKey),
+            escapeshellarg($storedFull)
+        );
+
+        $output = [];
+        $exitCode = 0;
+        exec($command, $output, $exitCode);
+
+        if ($exitCode !== 0 || !file_exists($storedFull)) {
+            Log::error('Template generation failed', [
+                'template' => $templateKey,
+                'output' => implode("\n", $output),
+                'exit_code' => $exitCode,
+            ]);
+            return redirect()
+                ->route('documents.index')
+                ->withErrors('Failed to generate template. Please try again.');
+        }
+
+        $document = Document::create([
+            'original_name' => $templateNames[$templateKey],
+            'path' => $storedRelative,
+            'mime_type' => 'application/pdf',
+            'size_bytes' => filesize($storedFull),
+        ]);
+
+        // Auto-download fonts
+        $fontScript = base_path('python/auto_download_fonts.py');
+        $fontCommand = sprintf(
+            'python3 %s %s > /dev/null 2>&1 &',
+            escapeshellarg($fontScript),
+            escapeshellarg($storedFull)
+        );
+        exec($fontCommand);
+
+        return redirect()
+            ->route('documents.edit', $document)
+            ->with('status', 'Template created. Customize it below.');
+    }
+
+    public function createSimpleInvoice(Request $request)
+    {
+        $validated = $request->validate([
+            'company_name'     => ['nullable', 'string', 'max:200'],
+            'company_address'  => ['nullable', 'string', 'max:500'],
+            'customer_name'    => ['nullable', 'string', 'max:200'],
+            'customer_address' => ['nullable', 'string', 'max:500'],
+            'invoice_number'   => ['nullable', 'string', 'max:50'],
+            'invoice_date'     => ['nullable', 'string', 'max:30'],
+            'due_date'         => ['nullable', 'string', 'max:30'],
+            'items'            => ['nullable', 'array'],
+            'items.*.qty'         => ['nullable', 'numeric', 'min:0'],
+            'items.*.description' => ['nullable', 'string', 'max:200'],
+            'items.*.unit_price'  => ['nullable', 'numeric', 'min:0'],
+            'discount_label'   => ['nullable', 'string', 'max:100'],
+            'discount_amount'  => ['nullable', 'numeric', 'min:0'],
+            'terms'            => ['nullable', 'string', 'max:2000'],
+        ]);
+
+        $uuid = Str::uuid()->toString();
+        $storedRelative = 'documents/' . $uuid . '.pdf';
+        $storedFull = Storage::path($storedRelative);
+
+        Storage::makeDirectory('documents');
+
+        // Build JSON payload for the Python script
+        $payload = json_encode($validated, JSON_UNESCAPED_UNICODE);
+
+        $script = base_path('python/generate_simple_invoice.py');
+        $command = sprintf(
+            'echo %s | python3 %s %s 2>&1',
+            escapeshellarg($payload),
+            escapeshellarg($script),
+            escapeshellarg($storedFull)
+        );
+
+        $output = [];
+        $exitCode = 0;
+        exec($command, $output, $exitCode);
+
+        if ($exitCode !== 0 || !file_exists($storedFull)) {
+            Log::error('Simple invoice generation failed', [
+                'output' => implode("\n", $output),
+                'exit_code' => $exitCode,
+            ]);
+            return redirect()
+                ->route('documents.index')
+                ->withErrors('Failed to generate invoice. Please try again.');
+        }
+
+        $document = Document::create([
+            'original_name' => 'Invoice ' . ($validated['invoice_number'] ?? $uuid) . '.pdf',
+            'path' => $storedRelative,
+            'mime_type' => 'application/pdf',
+            'size_bytes' => filesize($storedFull),
+        ]);
+
+        // Auto-download fonts
+        $fontScript = base_path('python/auto_download_fonts.py');
+        $fontCommand = sprintf(
+            'python3 %s %s > /dev/null 2>&1 &',
+            escapeshellarg($fontScript),
+            escapeshellarg($storedFull)
+        );
+        exec($fontCommand);
+
+        return redirect()
+            ->route('documents.edit', $document)
+            ->with('status', 'Invoice created. Customize it below.');
+    }
+
     public function processOcr(Document $document)
     {
         // Run OCR extraction in background
@@ -326,6 +461,52 @@ class DocumentController extends Controller
         ])->deleteFileAfterSend(true);
     }
 
+    /**
+     * Normalize a PDF file using qpdf to fix structural issues.
+     * pdf-lib (used by the frontend for shapes/annotations) creates PDF structures
+     * (ExtGState dicts, Contents arrays) that PyMuPDF cannot parse.
+     * qpdf rewrites the PDF structure without touching font encodings or glyphs,
+     * unlike Ghostscript which re-encodes fonts and corrupts space characters.
+     *
+     * @param string $pdfPath Absolute path to the PDF file (modified in-place)
+     * @return bool Whether normalization succeeded
+     */
+    private function normalizePdfWithQpdf(string $pdfPath): bool
+    {
+        // qpdf --replace-input rewrites the PDF structure in-place
+        // It fixes cross-reference tables, object numbering, and stream issues
+        // without modifying content streams, fonts, or glyph encodings
+        $command = sprintf(
+            'qpdf --replace-input --normalize-content=n %s 2>&1',
+            escapeshellarg($pdfPath)
+        );
+        
+        $output = [];
+        $returnCode = 0;
+        exec($command, $output, $returnCode);
+        
+        if ($returnCode === 0) {
+            \Log::info('PDF normalized with qpdf', ['path' => $pdfPath]);
+            return true;
+        }
+        
+        // qpdf exit code 3 = warnings but file was still written successfully
+        if ($returnCode === 3) {
+            \Log::info('PDF normalized with qpdf (with warnings)', [
+                'path' => $pdfPath,
+                'warnings' => implode("\n", array_slice($output, -5))
+            ]);
+            return true;
+        }
+        
+        \Log::warning('qpdf normalization failed', [
+            'path' => $pdfPath,
+            'return_code' => $returnCode,
+            'output' => implode("\n", array_slice($output, -10))
+        ]);
+        return false;
+    }
+
     public function save(Request $request, Document $document)
     {
         $validated = $request->validate([
@@ -337,11 +518,22 @@ class DocumentController extends Controller
         
         Storage::put($document->path, file_get_contents($tempPath));
 
+        // CRITICAL: Normalize the PDF with qpdf to fix pdf-lib structural issues.
+        // pdf-lib creates ExtGState dicts and Content stream arrays that PyMuPDF cannot parse,
+        // causing "syntax error: invalid key in dict" and "not a dict (null)" errors.
+        // qpdf rewrites the structure without touching fonts (unlike Ghostscript which
+        // re-encodes fonts to Type0/CID and corrupts space character glyphs).
+        $fullPath = Storage::path($document->path);
+        $this->normalizePdfWithQpdf($fullPath);
+
+        // Re-read file size after normalization (size may have changed)
+        $normalizedSize = file_exists($fullPath) ? filesize($fullPath) : $file->getSize();
+
         // CRITICAL: Use direct DB update to avoid updating 'updated_at' timestamp
         // This prevents prepareOverlay() from auto-refreshing extraction data
         // Shapes/signatures/annotations are visual only and should NOT trigger extraction refresh
         $document->mime_type = $file->getClientMimeType();
-        $document->size_bytes = $file->getSize();
+        $document->size_bytes = $normalizedSize;
         $document->saveQuietly(); // Saves without updating timestamps or firing events
 
         // IMPORTANT: save() should NEVER update pdf_extractions_fitz data
@@ -427,10 +619,41 @@ class DocumentController extends Controller
                 ->orderBy('id', 'desc')
                 ->first();
         } else {
-            // DO NOT auto-refresh extraction based on timestamps
-            // Extraction should ONLY be refreshed by overlay editor's saveEdits()
-            // Shapes/signatures saved via save() route should not trigger re-extraction
-            // If auto-refresh is needed, it should be explicitly requested
+            // Check if PDF has been modified since last extraction
+            // If the file timestamp is newer, we need to re-extract to pick up burned-in annotations
+            $fullPath = Storage::path($document->path);
+            $pdfModifiedTime = file_exists($fullPath) ? filemtime($fullPath) : 0;
+            $extractionTime = strtotime($extraction->created_at);
+            
+            // If PDF is newer than extraction, re-extract
+            if ($pdfModifiedTime > $extractionTime) {
+                \Log::info('PDF modified since extraction, re-extracting', [
+                    'pdf_time' => date('Y-m-d H:i:s', $pdfModifiedTime),
+                    'extraction_time' => $extraction->created_at
+                ]);
+                
+                $pythonScript = base_path('python/extract_pdf_pymupdf.py');
+                $documentId = $document->id;
+                $userEmail = auth()->user()->email ?? 'guest';
+                $sessionId = session()->getId();
+                $command = sprintf(
+                    'python3 %s %s %d %s %s 2>&1',
+                    escapeshellarg($pythonScript),
+                    escapeshellarg($fullPath),
+                    $documentId,
+                    escapeshellarg($userEmail),
+                    escapeshellarg($sessionId)
+                );
+                exec($command, $output, $returnCode);
+                if ($returnCode === 0) {
+                    $extraction = DB::table('pdf_extractions_fitz')
+                        ->where('document_id', $document->id)
+                        ->orderBy('id', 'desc')
+                        ->first();
+                } else {
+                    \Log::error('Failed to re-extract PDF after modification', ['output' => implode("\n", $output)]);
+                }
+            }
 
             // Ensure extraction includes font_xref data (refresh if missing)
             $extractionData = json_decode($extraction->extraction_data, true);
@@ -534,6 +757,69 @@ class DocumentController extends Controller
             'edits.*.rich_html' => ['nullable', 'string'],
             'skip_refresh' => ['nullable', 'boolean'],
         ]);
+
+        // GUARD MECHANISM: Check if any entire page is being nulled out
+        $edits = $validated['edits'];
+        $pageTextCounts = [];
+        
+        // Get current extraction to know original text per page
+        $extraction = DB::table('pdf_extractions_fitz')
+            ->where('document_id', $document->id)
+            ->orderBy('id', 'desc')
+            ->first();
+            
+        if ($extraction) {
+            $extractionData = json_decode($extraction->extraction_data, true);
+            if (is_array($extractionData)) {
+                foreach ($extractionData as $page) {
+                    $pageNum = $page['page_number'] ?? 0;
+                    $wordCount = count($page['words'] ?? []);
+                    $pageTextCounts[$pageNum] = [
+                        'original' => $wordCount,
+                        'remaining' => $wordCount, // Start with all text
+                        'nulled' => 0
+                    ];
+                }
+            }
+        }
+        
+        // Count how many text blocks are being nulled or removed per page
+        foreach ($edits as $edit) {
+            $pageNum = $edit['page_number'];
+            $newText = trim($edit['new_text'] ?? '');
+            $originalText = trim($edit['original_text'] ?? '');
+            
+            // If text is being removed (becomes empty when it wasn't)
+            if (!empty($originalText) && empty($newText)) {
+                if (isset($pageTextCounts[$pageNum])) {
+                    $pageTextCounts[$pageNum]['nulled']++;
+                    $pageTextCounts[$pageNum]['remaining']--;
+                }
+            }
+        }
+        
+        // Check if any page is being completely nulled out (all text removed)
+        $nulledPages = [];
+        foreach ($pageTextCounts as $pageNum => $counts) {
+            // If we have original text and are trying to remove all of it
+            if ($counts['original'] > 0 && $counts['remaining'] <= 0) {
+                $nulledPages[] = $pageNum;
+            }
+        }
+        
+        if (!empty($nulledPages)) {
+            $pageList = implode(', ', $nulledPages);
+            \Log::warning('Prevented complete page text deletion', [
+                'document_id' => $document->id,
+                'pages' => $nulledPages,
+                'page_text_counts' => $pageTextCounts
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'error' => "Cannot save: You are attempting to delete all text from page(s) {$pageList}. This operation has been blocked to prevent data loss. Please ensure at least some text remains on each page, or use the page deletion feature if you want to remove the entire page."
+            ], 400);
+        }
 
         // Save edits to temporary file
         $editsFile = storage_path('app/temp_edits_' . $document->id . '.json');

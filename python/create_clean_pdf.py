@@ -30,24 +30,57 @@ def create_clean_pdf(pdf_path, extraction_data, output_path):
 
     try:
         # Normalize the PDF first to avoid structural issues after PDF-lib saves.
-        # This rebuilds the xref table and cleans object structure.
+        # IMPORTANT: Do NOT use clean=True — pdf-lib generates PDF structures
+        # (e.g., Form XObjects with Transparency Groups) that cause MuPDF's
+        # clean pass to crash with "not a dict (null)".
         doc = fitz.open(pdf_path)
         print(f"✓ PDF opened: {doc.page_count} pages")
         try:
             temp_dir = os.path.dirname(output_path) or "."
             with tempfile.NamedTemporaryFile(prefix="normalized_", suffix=".pdf", dir=temp_dir, delete=False) as tmp:
                 normalized_path = tmp.name
-            doc.save(normalized_path, garbage=4, deflate=True, clean=True)
+            doc.save(normalized_path, garbage=3, deflate=True)
             doc.close()
             doc = fitz.open(normalized_path)
             print(f"✓ Normalized PDF saved: {normalized_path}")
         except Exception as norm_error:
-            print(f"⚠ Normalization failed, proceeding with original PDF: {norm_error}")
+            print(f"⚠ PyMuPDF normalization failed: {norm_error}")
             try:
                 doc.close()
             except Exception:
                 pass
-            doc = fitz.open(pdf_path)
+            
+            # Fallback: use qpdf to normalize the PDF.
+            # pdf-lib creates structures (ExtGState dicts, Contents arrays)
+            # that PyMuPDF cannot save. qpdf rewrites the structure cleanly
+            # without touching font encodings (unlike Ghostscript which
+            # re-encodes fonts and corrupts space character glyphs).
+            import subprocess
+            import shutil
+            qpdf_path = shutil.which('qpdf')
+            if qpdf_path:
+                qpdf_output = normalized_path  # Reuse the temp path
+                qpdf_cmd = [
+                    qpdf_path, '--normalize-content=n',
+                    pdf_path, qpdf_output
+                ]
+                try:
+                    result = subprocess.run(qpdf_cmd, capture_output=True, text=True, timeout=60)
+                    # qpdf: 0=success, 3=warnings (file still written)
+                    if result.returncode in (0, 3) and os.path.exists(qpdf_output) and os.path.getsize(qpdf_output) > 0:
+                        doc = fitz.open(qpdf_output)
+                        print(f"✓ qpdf normalization succeeded")
+                    else:
+                        print(f"⚠ qpdf failed (code {result.returncode}), using original")
+                        if result.stderr:
+                            print(f"  stderr: {result.stderr[:200]}")
+                        doc = fitz.open(pdf_path)
+                except Exception as qpdf_err:
+                    print(f"⚠ qpdf error: {qpdf_err}, using original")
+                    doc = fitz.open(pdf_path)
+            else:
+                print(f"⚠ qpdf not available, using original PDF")
+                doc = fitz.open(pdf_path)
         
         total_redactions = 0
         
@@ -84,9 +117,29 @@ def create_clean_pdf(pdf_path, extraction_data, output_path):
             page.apply_redactions(images=0)
             print(f"    ✓ Redacted {total_redactions} text spans")
         
-        # Save the clean PDF
-        doc.save(output_path, garbage=4, deflate=True, clean=True)
+        # Save the clean PDF — use fallback strategy if initial save fails
+        # NEVER use clean=True — it crashes on pdf-lib generated PDFs
+        saved = False
+        for save_label, save_kwargs in [
+            ("deflate", dict(garbage=3, deflate=True)),
+            ("minimal", dict(deflate=True)),
+            ("default", dict()),
+        ]:
+            try:
+                doc.save(output_path, **save_kwargs)
+                saved = True
+                print(f"  ✓ Saved with strategy: {save_label}")
+                break
+            except Exception as save_err:
+                print(f"  ⚠ Save strategy '{save_label}' failed: {save_err}")
+        
         doc.close()
+        
+        if not saved:
+            print(f"✗ All save strategies failed")
+            if normalized_path and os.path.exists(normalized_path):
+                os.remove(normalized_path)
+            return False
 
         if normalized_path and os.path.exists(normalized_path):
             os.remove(normalized_path)

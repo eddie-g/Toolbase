@@ -64,8 +64,8 @@ def reorder_pdf_pages(input_path, output_path, page_order):
         for page_idx in page_order:
             output_pdf.insert_pdf(pdf_document, from_page=page_idx, to_page=page_idx)
         
-        # Save the reordered PDF with proper parameters
-        output_pdf.save(output_path, garbage=4, deflate=True, clean=True)
+        # Save the reordered PDF — avoid clean=True which crashes on pdf-lib PDFs
+        output_pdf.save(output_path, garbage=3, deflate=True)
         output_pdf.close()
         pdf_document.close()
         

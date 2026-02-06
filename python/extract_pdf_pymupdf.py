@@ -123,7 +123,22 @@ def _merge_same_row_lines(line_items):
         y_overlap = min(row_y1, item_y1) - max(row_y0, item_y0)
         min_h = min(row_y1 - row_y0, item_y1 - item_y0)
 
-        if min_h > 0 and y_overlap / min_h > 0.3:
+        should_merge = min_h > 0 and y_overlap / min_h > 0.3
+
+        # Don't merge items with very different font sizes, even on same visual row.
+        # This prevents e.g. a large "$39.60" (37.5pt) from merging with nearby
+        # small address text (15pt) just because the tall glyph overlaps vertically.
+        if should_merge:
+            row_max_size = max(
+                (it['max_size'] for it in row if it['max_size'] > 0), default=0
+            )
+            item_size = item['max_size']
+            if row_max_size > 0 and item_size > 0:
+                size_ratio = min(row_max_size, item_size) / max(row_max_size, item_size)
+                if size_ratio < 0.6:
+                    should_merge = False
+
+        if should_merge:
             rows[-1].append(item)
         else:
             rows.append([item])
@@ -246,10 +261,36 @@ def _merge_adjacent_page_blocks(page_blocks, page_width, page_words, page_lines)
                     if size_ratio < 0.7:
                         continue
 
-                # Horizontal gap must be reasonable (not separate columns)
+                # CRITICAL FIX: Much stricter horizontal gap threshold
+                # Elements must be very close together to merge (max 3x font size)
                 h_gap = max(b_left - a_right, a_left - b_right, 0)
-                if h_gap > page_width * 0.15:
+                max_font = max(a_size, b_size) if max(a_size, b_size) > 0 else 12
+                
+                # Adaptive threshold based on font size, but with hard limits
+                # - Small gap: 3x font size (for closely spaced text)
+                # - Hard maximum: 40 points (~0.5 inches) to prevent cross-column merging
+                # - Percentage maximum: 5% of page width (much stricter than before)
+                adaptive_threshold = min(
+                    max_font * 3,  # 3x font size
+                    40.0,          # Hard limit: 40 points
+                    page_width * 0.05  # 5% of page width (was 15%, way too high!)
+                )
+                
+                if h_gap > adaptive_threshold:
                     continue
+                
+                # ADDITIONAL SAFETY: Check if blocks are in significantly different horizontal zones
+                # If one block is clearly "left-aligned" and another is "right-aligned", don't merge
+                page_mid = page_width / 2
+                a_center = (a_left + a_right) / 2
+                b_center = (b_left + b_right) / 2
+                
+                # If centers are on opposite sides of page midpoint AND far apart, don't merge
+                if (a_center < page_mid < b_center or b_center < page_mid < a_center):
+                    # They're on opposite sides of the page
+                    center_distance = abs(a_center - b_center)
+                    if center_distance > page_width * 0.3:  # Centers are >30% of page width apart
+                        continue
 
                 merge_target = j
                 break
