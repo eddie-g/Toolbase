@@ -7,6 +7,7 @@ use App\Models\PdfState;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
@@ -84,13 +85,17 @@ class DocumentController extends Controller
         $fullPath = Storage::path($document->path);
         $pythonScript = base_path('python/extract_pdf_pymupdf.py');
         $documentId = $document->id;
+        $userEmail = auth()->user()->email ?? 'guest';
+        $sessionId = session()->getId();
         
         // Execute Python script in background (non-blocking)
         $command = sprintf(
-            'python3 %s %s %d > /dev/null 2>&1 &',
+            'python3 %s %s %d %s %s > /dev/null 2>&1 &',
             escapeshellarg($pythonScript),
             escapeshellarg($fullPath),
-            $documentId
+            $documentId,
+            escapeshellarg($userEmail),
+            escapeshellarg($sessionId)
         );
         
         exec($command);
@@ -103,10 +108,31 @@ class DocumentController extends Controller
 
     public function getFitzExtractionData(Document $document)
     {
-        $extraction = DB::table('pdf_extractions_fitz')
-            ->where('document_id', $document->id)
-            ->orderBy('id', 'desc')
-            ->first();
+        $userEmail = auth()->user()->email ?? 'guest';
+        $sessionId = session()->getId();
+        
+        // Prioritize user_email over session_id for authenticated users
+        if ($userEmail !== 'guest') {
+            $extraction = DB::table('pdf_extractions_fitz')
+                ->where('document_id', $document->id)
+                ->where('user_email', $userEmail)
+                ->orderBy('id', 'desc')
+                ->first();
+        } else {
+            $extraction = DB::table('pdf_extractions_fitz')
+                ->where('document_id', $document->id)
+                ->where('session_id', $sessionId)
+                ->orderBy('id', 'desc')
+                ->first();
+        }
+
+        // Fallback to any extraction if no user/session-specific one exists
+        if (!$extraction) {
+            $extraction = DB::table('pdf_extractions_fitz')
+                ->where('document_id', $document->id)
+                ->orderBy('id', 'desc')
+                ->first();
+        }
 
         if (!$extraction) {
             return response()->json([
@@ -140,11 +166,31 @@ class DocumentController extends Controller
 
     public function editExtractedText(Document $document)
     {
-        // Get the latest PyMuPDF extraction data
-        $extraction = DB::table('pdf_extractions_fitz')
-            ->where('document_id', $document->id)
-            ->orderBy('id', 'desc')
-            ->first();
+        $userEmail = auth()->user()->email ?? 'guest';
+        $sessionId = session()->getId();
+        
+        // Get the latest PyMuPDF extraction data - prioritize user_email over session_id
+        if ($userEmail !== 'guest') {
+            $extraction = DB::table('pdf_extractions_fitz')
+                ->where('document_id', $document->id)
+                ->where('user_email', $userEmail)
+                ->orderBy('id', 'desc')
+                ->first();
+        } else {
+            $extraction = DB::table('pdf_extractions_fitz')
+                ->where('document_id', $document->id)
+                ->where('session_id', $sessionId)
+                ->orderBy('id', 'desc')
+                ->first();
+        }
+
+        // Fallback to any extraction if no user/session-specific one exists
+        if (!$extraction) {
+            $extraction = DB::table('pdf_extractions_fitz')
+                ->where('document_id', $document->id)
+                ->orderBy('id', 'desc')
+                ->first();
+        }
 
         if (!$extraction) {
             return redirect()->back()->with('error', 'No extraction data found. Please wait for processing to complete.');
@@ -162,14 +208,122 @@ class DocumentController extends Controller
     public function file(Document $document)
     {
         $fullPath = Storage::path($document->path);
+        
+        // Get file modification time for ETag
+        $lastModified = filemtime($fullPath);
+        $etag = md5($lastModified . filesize($fullPath));
 
         return response()->file($fullPath, [
             'Content-Type' => $document->mime_type,
             'Content-Disposition' => 'inline; filename="' . $document->original_name . '"',
-            'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+            'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0, post-check=0, pre-check=0',
             'Pragma' => 'no-cache',
-            'Expires' => '0',
+            'Expires' => 'Thu, 01 Jan 1970 00:00:00 GMT',
+            'ETag' => $etag,
+            'Last-Modified' => gmdate('D, d M Y H:i:s', $lastModified) . ' GMT',
         ]);
+    }
+
+    public function flattenRotations(Request $request, Document $document)
+    {
+        $validated = $request->validate([
+            'pdf' => ['required', 'file', 'mimes:pdf', 'max:20480'],
+        ]);
+
+        $file = $validated['pdf'];
+        $tempPath = $file->getPathname();
+        $outputPath = tempnam(sys_get_temp_dir(), 'flattened_') . '.pdf';
+        
+        $pythonScript = base_path('python/flatten_pdf_rotations.py');
+        
+        $command = sprintf(
+            'python3 %s %s %s 2>&1',
+            escapeshellarg($pythonScript),
+            escapeshellarg($tempPath),
+            escapeshellarg($outputPath)
+        );
+        
+        exec($command, $output, $returnCode);
+        
+        if ($returnCode !== 0) {
+            Log::error('Rotation flattening failed', [
+                'document_id' => $document->id,
+                'output' => implode("\n", $output)
+            ]);
+            
+            if (file_exists($outputPath)) {
+                unlink($outputPath);
+            }
+            
+            return response()->json(['error' => 'Failed to flatten rotations'], 500);
+        }
+        
+        // Return the flattened PDF
+        return response()->file($outputPath, [
+            'Content-Type' => 'application/pdf',
+        ])->deleteFileAfterSend(true);
+    }
+
+    public function applyRotations(Request $request, Document $document)
+    {
+        $validated = $request->validate([
+            'pdf' => ['required', 'file', 'mimes:pdf', 'max:20480'],
+            'rotations' => ['required', 'string'], // JSON string
+        ]);
+
+        $file = $validated['pdf'];
+        $tempPath = $file->getPathname();
+        $rotations = json_decode($validated['rotations'], true);
+        
+        if (json_last_error() !== JSON_ERROR_NONE || empty($rotations)) {
+            return response()->json(['error' => 'Invalid rotation data'], 400);
+        }
+        
+        $pythonScript = base_path('python/rotate_pdf_page.py');
+        
+        // Apply rotations one by one
+        foreach ($rotations as $pageIndex => $rotation) {
+            if ($rotation == 0) continue;
+            
+            $pageNumber = (int)$pageIndex + 1;
+            $tempOutputPath = tempnam(sys_get_temp_dir(), 'rotated_') . '.pdf';
+            
+            $command = sprintf(
+                'python3 %s %s %s %d %d 2>&1',
+                escapeshellarg($pythonScript),
+                escapeshellarg($tempPath),
+                escapeshellarg($tempOutputPath),
+                $pageNumber,
+                (int)$rotation
+            );
+            
+            exec($command, $output, $returnCode);
+            
+            if ($returnCode !== 0) {
+                Log::error('Rotation failed', [
+                    'document_id' => $document->id,
+                    'page_number' => $pageNumber,
+                    'output' => implode("\n", $output)
+                ]);
+                
+                if (file_exists($tempOutputPath)) {
+                    unlink($tempOutputPath);
+                }
+                
+                return response()->json(['error' => 'Rotation failed'], 500);
+            }
+            
+            // Replace input with output for next rotation
+            if (file_exists($tempOutputPath)) {
+                copy($tempOutputPath, $tempPath);
+                unlink($tempOutputPath);
+            }
+        }
+        
+        // Return the rotated PDF
+        return response()->file($tempPath, [
+            'Content-Type' => 'application/pdf',
+        ])->deleteFileAfterSend(true);
     }
 
     public function save(Request $request, Document $document)
@@ -179,12 +333,20 @@ class DocumentController extends Controller
         ]);
 
         $file = $validated['edited_pdf'];
-        Storage::put($document->path, $file->getContent());
+        $tempPath = $file->getPathname();
+        
+        Storage::put($document->path, file_get_contents($tempPath));
 
-        $document->update([
-            'mime_type' => $file->getClientMimeType(),
-            'size_bytes' => $file->getSize(),
-        ]);
+        // CRITICAL: Use direct DB update to avoid updating 'updated_at' timestamp
+        // This prevents prepareOverlay() from auto-refreshing extraction data
+        // Shapes/signatures/annotations are visual only and should NOT trigger extraction refresh
+        $document->mime_type = $file->getClientMimeType();
+        $document->size_bytes = $file->getSize();
+        $document->saveQuietly(); // Saves without updating timestamps or firing events
+
+        // IMPORTANT: save() should NEVER update pdf_extractions_fitz data
+        // Extraction data should ONLY be updated by the overlay editor via saveEdits()
+        // Shapes, signatures, and text annotations are visual stamps that don't affect extraction
 
         return response()->json([
             'ok' => true,
@@ -209,24 +371,48 @@ class DocumentController extends Controller
 
     public function prepareOverlay(Document $document)
     {
-        // Check if extraction data exists
-        $extraction = DB::table('pdf_extractions_fitz')
-            ->where('document_id', $document->id)
-            ->orderBy('id', 'desc')
-            ->first();
+        $userEmail = auth()->user()->email ?? 'guest';
+        $sessionId = session()->getId();
+        
+        // Check if extraction data exists - prioritize user_email over session_id
+        if ($userEmail !== 'guest') {
+            $extraction = DB::table('pdf_extractions_fitz')
+                ->where('document_id', $document->id)
+                ->where('user_email', $userEmail)
+                ->orderBy('id', 'desc')
+                ->first();
+        } else {
+            $extraction = DB::table('pdf_extractions_fitz')
+                ->where('document_id', $document->id)
+                ->where('session_id', $sessionId)
+                ->orderBy('id', 'desc')
+                ->first();
+        }
+
+        // Fallback to any extraction if no user/session-specific one exists
+        if (!$extraction) {
+            $extraction = DB::table('pdf_extractions_fitz')
+                ->where('document_id', $document->id)
+                ->orderBy('id', 'desc')
+                ->first();
+        }
 
         if (!$extraction) {
             // Run extraction automatically
             $fullPath = Storage::path($document->path);
             $pythonScript = base_path('python/extract_pdf_pymupdf.py');
             $documentId = $document->id;
+            $userEmail = auth()->user()->email ?? 'guest';
+            $sessionId = session()->getId();
             
             // Execute Python script synchronously (wait for it to complete)
             $command = sprintf(
-                'python3 %s %s %d 2>&1',
+                'python3 %s %s %d %s %s 2>&1',
                 escapeshellarg($pythonScript),
                 escapeshellarg($fullPath),
-                $documentId
+                $documentId,
+                escapeshellarg($userEmail),
+                escapeshellarg($sessionId)
             );
             
             exec($command, $output, $returnCode);
@@ -241,36 +427,10 @@ class DocumentController extends Controller
                 ->orderBy('id', 'desc')
                 ->first();
         } else {
-            // Refresh extraction if PDF was updated after the last extraction
-            $needsRefresh = false;
-            if (!empty($extraction->updated_at) && !empty($document->updated_at)) {
-                try {
-                    $extractionUpdated = \Carbon\Carbon::parse($extraction->updated_at);
-                    if ($extractionUpdated->lt($document->updated_at)) {
-                        $needsRefresh = true;
-                    }
-                } catch (\Exception $e) {
-                    $needsRefresh = true;
-                }
-            }
-            if ($needsRefresh) {
-                $fullPath = Storage::path($document->path);
-                $pythonScript = base_path('python/extract_pdf_pymupdf.py');
-                $documentId = $document->id;
-                $command = sprintf(
-                    'python3 %s %s %d 2>&1',
-                    escapeshellarg($pythonScript),
-                    escapeshellarg($fullPath),
-                    $documentId
-                );
-                exec($command, $output, $returnCode);
-                if ($returnCode === 0) {
-                    $extraction = DB::table('pdf_extractions_fitz')
-                        ->where('document_id', $document->id)
-                        ->orderBy('id', 'desc')
-                        ->first();
-                }
-            }
+            // DO NOT auto-refresh extraction based on timestamps
+            // Extraction should ONLY be refreshed by overlay editor's saveEdits()
+            // Shapes/signatures saved via save() route should not trigger re-extraction
+            // If auto-refresh is needed, it should be explicitly requested
 
             // Ensure extraction includes font_xref data (refresh if missing)
             $extractionData = json_decode($extraction->extraction_data, true);
@@ -290,11 +450,15 @@ class DocumentController extends Controller
                 $fullPath = Storage::path($document->path);
                 $pythonScript = base_path('python/extract_pdf_pymupdf.py');
                 $documentId = $document->id;
+                $userEmail = auth()->user()->email ?? 'guest';
+                $sessionId = session()->getId();
                 $command = sprintf(
-                    'python3 %s %s %d 2>&1',
+                    'python3 %s %s %d %s %s 2>&1',
                     escapeshellarg($pythonScript),
                     escapeshellarg($fullPath),
-                    $documentId
+                    $documentId,
+                    escapeshellarg($userEmail),
+                    escapeshellarg($sessionId)
                 );
                 exec($command, $output, $returnCode);
                 if ($returnCode === 0) {
@@ -363,6 +527,9 @@ class DocumentController extends Controller
             'edits.*.font_xref' => ['nullable', 'integer'],
             'edits.*.font' => ['required', 'string'],
             'edits.*.font_size' => ['required', 'numeric'],
+            'edits.*.font_weight' => ['nullable', 'string'],
+            'edits.*.font_style' => ['nullable', 'string'],
+            'edits.*.line_height' => ['nullable', 'numeric'],
             'edits.*.color' => ['nullable', 'string'],
             'edits.*.rich_html' => ['nullable', 'string'],
             'skip_refresh' => ['nullable', 'boolean'],
@@ -374,6 +541,18 @@ class DocumentController extends Controller
 
         // Run Python script to apply edits (using simple version)
         $fullPath = Storage::path($document->path);
+        
+        // CRITICAL: Create a backup of the PDF before applying destructive edits
+        // This allows recovery if the edit process corrupts or loses content
+        $backupPath = Storage::path('documents/backup_' . pathinfo($document->path, PATHINFO_FILENAME) . '.pdf');
+        if (file_exists($fullPath)) {
+            copy($fullPath, $backupPath);
+            \Log::info('Created pre-edit backup', [
+                'document_id' => $document->id,
+                'backup_path' => $backupPath,
+            ]);
+        }
+        
         $pythonScript = base_path('python/apply_pdf_edits_simple.py');
         
         // Log the command for debugging
@@ -408,11 +587,15 @@ class DocumentController extends Controller
             // Skip refresh if requested (e.g., during page reordering)
             if (!($validated['skip_refresh'] ?? false)) {
                 $extractScript = base_path('python/extract_pdf_pymupdf.py');
+                $userEmail = auth()->user()->email ?? 'guest';
+                $sessionId = session()->getId();
                 $refreshCommand = sprintf(
-                    'python3 %s %s %d 2>&1',
+                    'python3 %s %s %d %s %s 2>&1',
                     escapeshellarg($extractScript),
                     escapeshellarg($fullPath),
-                    $document->id
+                    $document->id,
+                    escapeshellarg($userEmail),
+                    escapeshellarg($sessionId)
                 );
                 $refreshOutput = [];
                 $refreshCode = 0;
@@ -714,6 +897,40 @@ class DocumentController extends Controller
             // Clean up temp file
             unlink($tempOutputPath);
             
+            // Always re-extract the PDF after page reordering to update extraction data
+            \Log::info('Re-extracting PDF after reorder', [
+                'document_id' => $document->id,
+                'deleted_pages' => $deletedPages,
+                'new_page_count' => count($pageOrder)
+            ]);
+            
+            $pythonScript = base_path('python/extract_pdf_pymupdf.py');
+            $userEmail = auth()->user()->email ?? 'guest';
+            $currentSessionId = session()->getId();
+            
+            $extractCommand = sprintf(
+                'python3 %s %s %d %s %s 2>&1',
+                escapeshellarg($pythonScript),
+                escapeshellarg($inputPath),
+                $document->id,
+                escapeshellarg($userEmail),
+                escapeshellarg($currentSessionId)
+            );
+            
+            exec($extractCommand, $extractOutput, $extractReturnCode);
+            
+            if ($extractReturnCode === 0) {
+                \Log::info('Re-extraction completed successfully', [
+                    'document_id' => $document->id
+                ]);
+            } else {
+                \Log::error('Failed to re-extract PDF after reordering', [
+                    'document_id' => $document->id,
+                    'return_code' => $extractReturnCode,
+                    'output' => implode("\n", $extractOutput)
+                ]);
+            }
+            
             return response()->json([
                 'success' => true,
                 'message' => 'Pages reordered successfully',
@@ -753,19 +970,35 @@ class DocumentController extends Controller
         );
 
         exec($command, $output, $returnCode);
-        $output = implode("\n", $output);
+        $outputStr = implode("\n", $output);
 
-        $result = json_decode($output, true);
+        // Try to find JSON in the output (last line should be JSON)
+        $lines = array_filter($output, function($line) {
+            return !empty(trim($line));
+        });
+        $jsonLine = end($lines);
+        
+        $result = json_decode($jsonLine, true);
 
         if (!$result || !isset($result['success'])) {
             if (file_exists($tempOutputPath)) {
                 unlink($tempOutputPath);
             }
 
+            \Log::error('Add blank page - Failed to parse output', [
+                'output' => $outputStr,
+                'json_line' => $jsonLine,
+                'return_code' => $returnCode
+            ]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to parse add-page output',
-                'output' => $output
+                'output' => $outputStr,
+                'debug' => [
+                    'json_line' => $jsonLine,
+                    'return_code' => $returnCode
+                ]
             ], 500);
         }
 
@@ -777,7 +1010,7 @@ class DocumentController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => $result['error'] ?? 'Unknown error occurred',
-                'output' => $output
+                'output' => $outputStr
             ], 500);
         }
 
@@ -786,6 +1019,29 @@ class DocumentController extends Controller
             copy($inputPath, $backupPath);
             copy($tempOutputPath, $inputPath);
             unlink($tempOutputPath);
+            
+            // Re-extract the PDF to update extraction data after adding page
+            $pythonScript = base_path('python/extract_pdf_pymupdf.py');
+            $userEmail = auth()->user()->email ?? 'guest';
+            $currentSessionId = session()->getId();
+            
+            $extractCommand = sprintf(
+                'python3 %s %s %d %s %s 2>&1',
+                escapeshellarg($pythonScript),
+                escapeshellarg($inputPath),
+                $document->id,
+                escapeshellarg($userEmail),
+                escapeshellarg($currentSessionId)
+            );
+            
+            exec($extractCommand, $extractOutput, $extractReturnCode);
+            
+            if ($extractReturnCode !== 0) {
+                \Log::warning('Failed to re-extract PDF after adding blank page', [
+                    'document_id' => $document->id,
+                    'output' => implode("\n", $extractOutput)
+                ]);
+            }
 
             return response()->json([
                 'success' => true,
@@ -797,6 +1053,119 @@ class DocumentController extends Controller
         return response()->json([
             'success' => false,
             'message' => 'Updated PDF file not found'
+        ], 500);
+    }
+    
+    public function rotatePage(Request $request, Document $document)
+    {
+        try {
+            \Log::info('Rotate page request', [
+                'document_id' => $document->id,
+                'request_data' => $request->all()
+            ]);
+            
+            $validated = $request->validate([
+                'page_number' => ['required', 'integer', 'min:1'],
+                'rotation' => ['nullable', 'integer', 'in:90,180,270,-90'],
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Rotation validation failed', [
+                'document_id' => $document->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error: ' . $e->getMessage()
+            ], 500);
+        }
+
+        $pageNumber = $validated['page_number'];
+        $rotation = $validated['rotation'] ?? 90;
+
+        $inputPath = Storage::path($document->path);
+        $tempOutputPath = Storage::path('documents/temp_rotate_page_' . Str::uuid() . '.pdf');
+
+        $pythonScript = base_path('python/rotate_pdf_page.py');
+
+        $command = sprintf(
+            'python3 %s %s %s %s %s 2>&1',
+            escapeshellarg($pythonScript),
+            escapeshellarg($inputPath),
+            escapeshellarg($tempOutputPath),
+            escapeshellarg((string) $pageNumber),
+            escapeshellarg((string) $rotation)
+        );
+
+        exec($command, $output, $returnCode);
+        $outputStr = implode("\n", $output);
+
+        // Check for SUCCESS message
+        $success = false;
+        foreach ($output as $line) {
+            if (strpos($line, 'SUCCESS:') === 0) {
+                $success = true;
+                break;
+            }
+        }
+
+        if (!$success || $returnCode !== 0) {
+            if (file_exists($tempOutputPath)) {
+                unlink($tempOutputPath);
+            }
+            
+            // Check if error message indicates corruption
+            $errorMessage = 'Failed to rotate page';
+            if (strpos($outputStr, 'corrupted') !== false) {
+                $errorMessage = 'PDF file is corrupted. Please re-upload or use a different document.';
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => $errorMessage,
+                'output' => $outputStr
+            ], 500);
+        }
+
+        if (file_exists($tempOutputPath)) {
+            $backupPath = Storage::path('documents/backup_' . basename($document->path));
+            copy($inputPath, $backupPath);
+            copy($tempOutputPath, $inputPath);
+            unlink($tempOutputPath);
+            
+            // Re-extract the PDF to update extraction data after rotation
+            $pythonScript = base_path('python/extract_pdf_pymupdf.py');
+            $userEmail = auth()->user()->email ?? 'guest';
+            $currentSessionId = session()->getId();
+            
+            $extractCommand = sprintf(
+                'python3 %s %s %d %s %s 2>&1',
+                escapeshellarg($pythonScript),
+                escapeshellarg($inputPath),
+                $document->id,
+                escapeshellarg($userEmail),
+                escapeshellarg($currentSessionId)
+            );
+            
+            exec($extractCommand, $extractOutput, $extractReturnCode);
+            
+            if ($extractReturnCode !== 0) {
+                \Log::warning('Failed to re-extract PDF after rotating page', [
+                    'document_id' => $document->id,
+                    'output' => implode("\n", $extractOutput)
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Page rotated successfully'
+            ]);
+        }
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Rotated PDF file not found'
         ], 500);
     }
     

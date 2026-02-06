@@ -37,9 +37,10 @@ import os
 import fitz  # PyMuPDF
 import re
 import html
+import tempfile
 
-# Font file mapping - ALWAYS use full font files for TextWriter
-# Subsetted fonts from PDFs don't work properly with TextWriter (produces Noto Serif fallback)
+# Font file mapping - prefer full font files for TextWriter
+# If no local file is available, embedded fonts from the PDF are used as fallback
 FONT_FILES = {
     # Arimo variants
     'Arimo': 'fonts/Arimo-Regular.ttf',
@@ -68,15 +69,24 @@ FONT_FILES = {
     'Montserrat_100wght': 'fonts/Montserrat-Thin.ttf',  # 100 weight = Thin
     'MontserratThin': 'fonts/Montserrat-Thin.ttf',
     'MontserratThin_700wght': 'fonts/Montserrat-Bold.ttf',  # Montserrat Thin family with 700 weight = Bold
+    
+    # Lato variants
+    'Lato': 'fonts/Lato-Regular.ttf',
+    'Lato-Regular': 'fonts/Lato-Regular.ttf',
+    'Lato-Bold': 'fonts/Lato-Bold.ttf',
+    'Lato_700wght': 'fonts/Lato-Bold.ttf',
 }
 
-def get_font_file(font_name, script_dir):
+def get_font_file(font_name, script_dir, font_weight=None):
     """
     Get the full font file path for a given font name.
     
-    CRITICAL: Always prefer full font files over extracted subsetted fonts!
-    Subsetted fonts from PDFs don't work properly with TextWriter - they produce
-    "Noto Serif Regular" fallback instead of the actual font glyphs.
+    Prefers full font files from the fonts/ directory. If no local file is found,
+    the caller should use get_embedded_font() to try extracting the font from the PDF.
+    
+    If font_weight is provided (e.g., '700', '400'), it takes priority over
+    inferring boldness from the font name. This handles ambiguous names like
+    "MontserratThin_700wght" where the family contains 'Thin' but the weight is bold.
     """
     if not font_name:
         return None
@@ -96,8 +106,14 @@ def get_font_file(font_name, script_dir):
         if os.path.exists(path):
             return path
     
-    # Determine if this is a bold font
-    is_bold = any(x in font_name.lower() for x in ['bold', '700', 'black'])
+    # Determine if this is a bold font - use explicit font_weight if provided
+    if font_weight is not None:
+        try:
+            is_bold = int(font_weight) >= 600
+        except (ValueError, TypeError):
+            is_bold = any(x in font_name.lower() for x in ['bold', '700', 'black'])
+    else:
+        is_bold = any(x in font_name.lower() for x in ['bold', '700', 'black'])
     
     # Try to match font family with proper weight
     for key, rel in FONT_FILES.items():
@@ -172,6 +188,68 @@ def extract_font_buffer(doc, xref):
     except Exception:
         pass
     return None
+
+
+# Cache for embedded fonts extracted to temp files
+_embedded_font_tempfiles = []
+_embedded_font_cache = {}
+
+def get_embedded_font(doc, font_xref, font_name=None, page_num=None):
+    """
+    Extract an embedded font from the PDF and write it to a temp file.
+    Returns a fitz.Font object or None.
+    Uses font_xref first, falls back to name-based lookup.
+    """
+    global _embedded_font_tempfiles, _embedded_font_cache
+    
+    # Try by xref first
+    if font_xref is not None:
+        if font_xref in _embedded_font_cache:
+            return _embedded_font_cache[font_xref]
+        buf = extract_font_buffer(doc, font_xref)
+        if buf and len(buf) > 100:
+            try:
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.ttf')
+                tmp.write(buf)
+                tmp.close()
+                _embedded_font_tempfiles.append(tmp.name)
+                font_obj = fitz.Font(fontfile=tmp.name)
+                _embedded_font_cache[font_xref] = font_obj
+                print(f"  ℹ Extracted embedded font from xref {font_xref}")
+                return font_obj
+            except Exception as e:
+                print(f"  ⚠ Embedded font xref {font_xref} failed: {e}")
+    
+    # Try name-based lookup
+    if font_name and page_num is not None:
+        found_xref = find_font_xref_by_name(doc, page_num, font_name)
+        if found_xref and found_xref not in _embedded_font_cache:
+            buf = extract_font_buffer(doc, found_xref)
+            if buf and len(buf) > 100:
+                try:
+                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.ttf')
+                    tmp.write(buf)
+                    tmp.close()
+                    _embedded_font_tempfiles.append(tmp.name)
+                    font_obj = fitz.Font(fontfile=tmp.name)
+                    _embedded_font_cache[found_xref] = font_obj
+                    print(f"  ℹ Extracted embedded font '{font_name}' from xref {found_xref}")
+                    return font_obj
+                except Exception as e:
+                    print(f"  ⚠ Embedded font '{font_name}' failed: {e}")
+    
+    return None
+
+
+def cleanup_embedded_fonts():
+    """Remove all temp font files."""
+    for path in _embedded_font_tempfiles:
+        try:
+            os.unlink(path)
+        except Exception:
+            pass
+    _embedded_font_tempfiles.clear()
+    _embedded_font_cache.clear()
 
 
 def find_font_xref_by_name(doc, page_num, font_name):
@@ -250,6 +328,37 @@ def find_font_xref_by_name(doc, page_num, font_name):
         print(f"  ⚠ Font lookup error: {e}")
     
     return None
+
+def normalize_smart_quotes(text):
+    """
+    Replace smart/curly quotes and other typographic characters with their
+    ASCII equivalents. Many PDF fonts (especially subsetted ones) don't include
+    glyphs for Unicode curly quotes, causing PyMuPDF to render them as '?'.
+    """
+    if not text:
+        return text
+    replacements = {
+        '\u2018': "'",   # LEFT SINGLE QUOTATION MARK
+        '\u2019': "'",   # RIGHT SINGLE QUOTATION MARK (curly apostrophe)
+        '\u201A': "'",   # SINGLE LOW-9 QUOTATION MARK
+        '\u201B': "'",   # SINGLE HIGH-REVERSED-9 QUOTATION MARK
+        '\u201C': '"',   # LEFT DOUBLE QUOTATION MARK
+        '\u201D': '"',   # RIGHT DOUBLE QUOTATION MARK
+        '\u201E': '"',   # DOUBLE LOW-9 QUOTATION MARK
+        '\u201F': '"',   # DOUBLE HIGH-REVERSED-9 QUOTATION MARK
+        '\u2013': '-',   # EN DASH
+        '\u2014': '-',   # EM DASH
+        '\u2026': '...', # HORIZONTAL ELLIPSIS
+        '\u00A0': ' ',   # NON-BREAKING SPACE
+        '\u2032': "'",   # PRIME
+        '\u2033': '"',   # DOUBLE PRIME
+        '\ufb01': 'fi',  # LATIN SMALL LIGATURE FI
+        '\ufb02': 'fl',  # LATIN SMALL LIGATURE FL
+    }
+    for smart, ascii_char in replacements.items():
+        text = text.replace(smart, ascii_char)
+    return text
+
 
 def apply_edits(pdf_path, edits_json):
     """
@@ -411,13 +520,15 @@ def apply_edits(pdf_path, edits_json):
                         constrained_y1 + 1
                     )
                 else:
-                    # Multi-line text block: expand slightly to ensure full coverage
-                    # Frontend bbox might not perfectly match actual PDF text bounds
-                    print(f"    ℹ Multi-line block ({estimated_lines:.1f} lines), expanding bbox for full coverage")
+                    # Multi-line text block: expand minimally to ensure coverage
+                    # CRITICAL: Do NOT over-expand right side - in multi-column layouts
+                    # a large expansion wipes out text from adjacent columns!
+                    # The original_bbox from the frontend already captures the block bounds.
+                    print(f"    ℹ Multi-line block ({estimated_lines:.1f} lines), using bbox with minimal expansion")
                     rect = fitz.Rect(
                         original_bbox[0] - 2,
                         original_bbox[1] - 2,
-                        original_bbox[2] + 25,  # Extra width for text that might extend beyond
+                        original_bbox[2] + 2,   # Minimal expansion - do NOT extend into adjacent columns
                         original_bbox[3] + 2
                     )
                 
@@ -450,6 +561,7 @@ def apply_edits(pdf_path, edits_json):
 
         for edit in page_edits:
             new_text = (edit.get('new_text') or '')
+            new_text = normalize_smart_quotes(new_text)
             if not new_text and not edit.get('rich_html'):
                 print("  - Skipping empty/deleted block")
                 continue
@@ -464,6 +576,8 @@ def apply_edits(pdf_path, edits_json):
             font_size = edit.get('font_size', 12)
             font_name = edit.get('font', 'Arimo')
             font_xref = edit.get('font_xref')
+            font_weight = edit.get('font_weight')
+            font_style = edit.get('font_style')
             block_num = edit.get('block_num')
             line_height = edit.get('line_height')
             rich_html = edit.get('rich_html')
@@ -516,6 +630,19 @@ def apply_edits(pdf_path, edits_json):
                                         scale_ratio = font_size_px / float(font_size)
                                     break
 
+                        # Extract wrapper <div> font info as fallback for spans without their own styles
+                        wrapper_font_family = None
+                        wrapper_font_weight = None
+                        div_m = re.search(r'<div[^>]*style=\"([^\"]*)\"', rich_html, re.IGNORECASE)
+                        if div_m:
+                            div_style = div_m.group(1)
+                            fm = re.search(r'font-family\s*:\s*([^;]+)', div_style)
+                            if fm:
+                                wrapper_font_family = fm.group(1).strip().split(',')[0].strip().strip('"').strip("'")
+                            wm = re.search(r'font-weight\s*:\s*(\d+)', div_style)
+                            if wm:
+                                wrapper_font_weight = int(wm.group(1))
+
                         # Create TextWriter for this page
                         tw = fitz.TextWriter(page.rect)
                         
@@ -549,6 +676,12 @@ def apply_edits(pdf_path, edits_json):
                             if m:
                                 span_font_weight = int(m.group(1))
                             
+                            # Fall back to wrapper div font info if span doesn't have its own
+                            if not span_font_family and wrapper_font_family:
+                                span_font_family = wrapper_font_family
+                            if span_font_weight is None and wrapper_font_weight is not None:
+                                span_font_weight = wrapper_font_weight
+                            
                             # Determine the actual font to use for this span
                             span_font_name = None
                             if span_font_family and span_font_weight:
@@ -581,14 +714,20 @@ def apply_edits(pdf_path, edits_json):
                                 font_label = "fallback"
                                 
                                 # Try full font file
-                                font_file = get_font_file(span_font_name, script_dir)
+                                font_file = get_font_file(span_font_name, script_dir, font_weight=span_font_weight)
                                 if font_file and os.path.exists(font_file):
                                     font_obj = fitz.Font(fontfile=font_file)
                                     font_label = f"file-{os.path.basename(font_file)}"
                                     print(f"  ℹ Span font: {span_font_name} → {font_file}")
                                 
                                 if not font_obj:
-                                    # Fallback to helvetica
+                                    # Try extracting the embedded font from the PDF
+                                    font_obj = get_embedded_font(doc, font_xref, font_name=span_font_name or font_name, page_num=page_num)
+                                    if font_obj:
+                                        font_label = f"embedded-{span_font_name or font_name}"
+                                
+                                if not font_obj:
+                                    # Last resort: Helvetica fallback
                                     font_obj = fitz.Font("helv")
                                     font_label = "helv"
                                     print(f"  ⚠ No font file for '{span_font_name}', using Helvetica")
@@ -596,6 +735,7 @@ def apply_edits(pdf_path, edits_json):
                                 span_font_cache[cache_key] = (font_obj, font_label)
                             
                             clean_text = html.unescape(re.sub(r'<[^>]+>', '', text))
+                            clean_text = normalize_smart_quotes(clean_text)
                             if not clean_text:
                                 continue
                             x = bbox[0] + (left_px / scale_ratio if scale_ratio else left_px)
@@ -628,7 +768,8 @@ def apply_edits(pdf_path, edits_json):
                 insert_font_name = None
                 
                 # Try full font file FIRST (reliable)
-                font_file = get_font_file(font_name, script_dir)
+                # Pass font_weight so bold/regular is chosen correctly even for ambiguous names
+                font_file = get_font_file(font_name, script_dir, font_weight=font_weight)
                 if font_file and os.path.exists(font_file):
                     file_key = os.path.basename(font_file)
                     if file_key in inserted_fonts:
@@ -642,6 +783,33 @@ def apply_edits(pdf_path, edits_json):
                         except Exception as e:
                             print(f"  ⚠ Font file insert failed: {e}")
                             insert_font_name = None
+
+                if not insert_font_name:
+                    # Try extracting embedded font from PDF as fallback
+                    embedded_font_obj = get_embedded_font(doc, font_xref, font_name=font_name, page_num=page_num)
+                    if embedded_font_obj:
+                        # Extract to temp file for insert_font
+                        tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.ttf')
+                        buf = extract_font_buffer(doc, font_xref) if font_xref else None
+                        if not buf:
+                            found_xref = find_font_xref_by_name(doc, page_num, font_name)
+                            if found_xref:
+                                buf = extract_font_buffer(doc, found_xref)
+                        if buf:
+                            tmp.write(buf)
+                            tmp.close()
+                            _embedded_font_tempfiles.append(tmp.name)
+                            try:
+                                insert_font_name = f"emb_{font_name[:20]}"
+                                page.insert_font(fontname=insert_font_name, fontfile=tmp.name)
+                                inserted_fonts[font_name] = insert_font_name
+                                print(f"  ℹ Using embedded font for '{font_name}'")
+                            except Exception as e:
+                                print(f"  ⚠ Embedded font insert failed: {e}")
+                                insert_font_name = None
+                        else:
+                            tmp.close()
+                            os.unlink(tmp.name)
 
                 if not insert_font_name:
                     insert_font_name = "helv"
@@ -710,7 +878,19 @@ def apply_edits(pdf_path, edits_json):
                 print(f"  ℹ Using full font file: {font_file}")
             
             if not font_obj:
-                # Fallback to helvetica
+                # Try extracting embedded font from PDF
+                font_obj = get_embedded_font(doc, font_xref, font_name=font_name, page_num=page_num)
+                if font_obj:
+                    font_label = f"embedded-{font_name}"
+                    # Also need the font file path for insert_font later
+                    if font_xref and font_xref in _embedded_font_cache:
+                        for tf in _embedded_font_tempfiles:
+                            if os.path.exists(tf):
+                                font_file = tf
+                                break
+            
+            if not font_obj:
+                # Last resort: Helvetica fallback
                 font_obj = fitz.Font("helv")
                 font_label = "helv"
                 print(f"  ⚠ No font file for '{font_name}', using Helvetica fallback")
@@ -794,6 +974,7 @@ def apply_edits(pdf_path, edits_json):
     doc.save(temp_path, garbage=4, deflate=True, encryption=fitz.PDF_ENCRYPT_KEEP)
     doc.close()
     os.replace(temp_path, pdf_path)
+    cleanup_embedded_fonts()
     print("✓ PDF saved with full garbage collection and encryption preserved")
     return True
 

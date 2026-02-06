@@ -12,6 +12,7 @@ IMPORTANT:
 import sys
 import os
 import json
+import tempfile
 import fitz  # PyMuPDF
 
 
@@ -25,16 +26,40 @@ def create_clean_pdf(pdf_path, extraction_data, output_path):
         output_path: Path where the clean PDF will be saved
     """
     print(f"📄 Opening PDF: {pdf_path}")
-    
+    normalized_path = None
+
     try:
+        # Normalize the PDF first to avoid structural issues after PDF-lib saves.
+        # This rebuilds the xref table and cleans object structure.
         doc = fitz.open(pdf_path)
         print(f"✓ PDF opened: {doc.page_count} pages")
+        try:
+            temp_dir = os.path.dirname(output_path) or "."
+            with tempfile.NamedTemporaryFile(prefix="normalized_", suffix=".pdf", dir=temp_dir, delete=False) as tmp:
+                normalized_path = tmp.name
+            doc.save(normalized_path, garbage=4, deflate=True, clean=True)
+            doc.close()
+            doc = fitz.open(normalized_path)
+            print(f"✓ Normalized PDF saved: {normalized_path}")
+        except Exception as norm_error:
+            print(f"⚠ Normalization failed, proceeding with original PDF: {norm_error}")
+            try:
+                doc.close()
+            except Exception:
+                pass
+            doc = fitz.open(pdf_path)
         
         total_redactions = 0
         
         # Process each page
         for page_data in extraction_data:
             page_num = page_data['page_number']
+            
+            # Skip if page doesn't exist (e.g., after page deletion)
+            if page_num > doc.page_count:
+                print(f"  ⚠ Skipping page {page_num}: not in document (only {doc.page_count} pages)")
+                continue
+            
             page = doc[page_num - 1]  # Convert to 0-indexed
             
             words = page_data.get('words', [])
@@ -60,8 +85,20 @@ def create_clean_pdf(pdf_path, extraction_data, output_path):
             print(f"    ✓ Redacted {total_redactions} text spans")
         
         # Save the clean PDF
-        doc.save(output_path, garbage=4, deflate=True)
+        doc.save(output_path, garbage=4, deflate=True, clean=True)
         doc.close()
+
+        if normalized_path and os.path.exists(normalized_path):
+            os.remove(normalized_path)
+
+        # Validate the output PDF to catch structural issues early
+        try:
+            test_doc = fitz.open(output_path)
+            _ = test_doc.page_count
+            test_doc.close()
+        except Exception as validate_error:
+            print(f"✗ Clean PDF validation failed: {validate_error}")
+            return False
         
         print(f"✓ Clean PDF created: {output_path}")
         print(f"  Total redactions: {total_redactions}")
@@ -71,6 +108,8 @@ def create_clean_pdf(pdf_path, extraction_data, output_path):
         print(f"✗ Error creating clean PDF: {e}")
         import traceback
         traceback.print_exc()
+        if normalized_path and os.path.exists(normalized_path):
+            os.remove(normalized_path)
         return False
 
 

@@ -8,6 +8,11 @@ Example: python reorder_pdf_pages.py input.pdf output.pdf "2,0,1" (moves page 3 
 import sys
 import json
 import pymupdf as fitz
+import tempfile
+import os
+
+# Suppress MuPDF warnings/errors
+fitz.TOOLS.mupdf_display_errors(False)
 
 def reorder_pdf_pages(input_path, output_path, page_order):
     """
@@ -21,13 +26,15 @@ def reorder_pdf_pages(input_path, output_path, page_order):
     Returns:
         dict with success status and message
     """
+    normalized_path = None
     try:
-        # Open the input PDF
+        # Open the input PDF directly without normalization step
         pdf_document = fitz.open(input_path)
         total_pages = len(pdf_document)
         
         # Validate page order - allow fewer pages (for deletion) but not more
         if len(page_order) > total_pages:
+            pdf_document.close()
             return {
                 'success': False,
                 'error': f'Page order length ({len(page_order)}) exceeds PDF page count ({total_pages})'
@@ -36,6 +43,7 @@ def reorder_pdf_pages(input_path, output_path, page_order):
         # Check all page indices are valid and within range
         for page_idx in page_order:
             if page_idx < 0 or page_idx >= total_pages:
+                pdf_document.close()
                 return {
                     'success': False,
                     'error': f'Invalid page index {page_idx}. Must be between 0 and {total_pages - 1}'
@@ -43,6 +51,7 @@ def reorder_pdf_pages(input_path, output_path, page_order):
         
         # Check for duplicate indices
         if len(page_order) != len(set(page_order)):
+            pdf_document.close()
             return {
                 'success': False,
                 'error': 'Page order contains duplicate page indices'
@@ -55,8 +64,8 @@ def reorder_pdf_pages(input_path, output_path, page_order):
         for page_idx in page_order:
             output_pdf.insert_pdf(pdf_document, from_page=page_idx, to_page=page_idx)
         
-        # Save the reordered PDF
-        output_pdf.save(output_path)
+        # Save the reordered PDF with proper parameters
+        output_pdf.save(output_path, garbage=4, deflate=True, clean=True)
         output_pdf.close()
         pdf_document.close()
         

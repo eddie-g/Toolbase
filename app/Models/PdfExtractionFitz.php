@@ -10,6 +10,8 @@ class PdfExtractionFitz extends Model
 
     protected $fillable = [
         'document_id',
+        'user_email',
+        'session_id',
         'pdf_filename',
         'total_pages',
         'total_words',

@@ -1,0 +1,4 @@
+Help on function wrap_contents in module pymupdf:
+
+wwrraapp__ccoonntteennttss(self)
+    Ensure page is in a balanced graphics state.

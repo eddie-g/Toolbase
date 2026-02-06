@@ -35,4 +35,24 @@ return [
         ],
     ],
 
+    'gemini' => [
+        'api_key' => env('GEMINI_API_KEY'),
+        'model' => env('GEMINI_MODEL', 'gemini-2.0-flash'),
+        'base_url' => env('GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com/v1beta'),
+        'pricing' => [
+            'input_per_million' => 0.075, // $0.075 per 1M input tokens
+            'output_per_million' => 0.30, // $0.30 per 1M output tokens
+        ],
+    ],
+    'openai' => [
+        'api_key' => env('OPENAI_API_KEY'),
+        'image_model' => env('OPENAI_IMAGE_MODEL', 'dall-e-3'),
+        'base_url' => env('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
+        'pricing' => [
+            'dalle3_1024x1024' => 0.040, // $0.040 per standard 1024x1024 image
+            'dalle3_1024x1792' => 0.080, // $0.080 per standard 1024x1792 image
+            'dalle3_1792x1024' => 0.080, // $0.080 per standard 1792x1024 image
+        ],
+    ],
+
 ];

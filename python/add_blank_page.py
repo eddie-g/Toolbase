@@ -13,10 +13,12 @@ import pymupdf as fitz
 
 def add_blank_page(input_path, output_path, insert_after, size_reference):
     try:
-        pdf_document = fitz.open(input_path)
-        total_pages = len(pdf_document)
+        # Open the input PDF
+        input_doc = fitz.open(input_path)
+        total_pages = len(input_doc)
 
         if total_pages == 0:
+            input_doc.close()
             return {
                 'success': False,
                 'error': 'Cannot insert into an empty PDF'
@@ -32,12 +34,29 @@ def add_blank_page(input_path, output_path, insert_after, size_reference):
         if size_reference < 0 or size_reference >= total_pages:
             size_reference = total_pages - 1
 
-        ref_page = pdf_document.load_page(size_reference)
+        # Get the reference page dimensions
+        ref_page = input_doc.load_page(size_reference)
         rect = ref_page.rect
 
-        pdf_document.new_page(pno=insert_at, width=rect.width, height=rect.height)
-        pdf_document.save(output_path)
-        pdf_document.close()
+        # Create a new output document
+        output_doc = fitz.open()
+
+        # Insert all pages before the blank page position
+        if insert_at > 0:
+            output_doc.insert_pdf(input_doc, from_page=0, to_page=insert_at - 1)
+
+        # Insert the blank page
+        output_doc.new_page(width=rect.width, height=rect.height)
+
+        # Insert remaining pages after the blank page position
+        if insert_at < total_pages:
+            output_doc.insert_pdf(input_doc, from_page=insert_at, to_page=total_pages - 1)
+
+        # Save the output document with safer parameters
+        # garbage=0, deflate=False to avoid corruption of rotated pages
+        output_doc.save(output_path, garbage=0, deflate=False)
+        output_doc.close()
+        input_doc.close()
 
         return {
             'success': True,
