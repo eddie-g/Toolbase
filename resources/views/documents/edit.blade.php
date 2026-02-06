@@ -12028,9 +12028,9 @@
 
                 const computeOverlayPaddingPdf = (block) => {
                     const fontSize = Number(block?.font_size) || 12;
-                    const basePad = fontSize * 0.35;
-                    // Clamp to keep boxes visible but not oversized
-                    return Math.max(1.5, Math.min(basePad, 10));
+                    const basePad = fontSize * 0.15;
+                    // Tight padding — just enough for click-targeting
+                    return Math.max(1, Math.min(basePad, 5));
                 };
 
                 const renderOverlayBlocks = () => {
@@ -12222,79 +12222,6 @@
                         return Math.max(0, maxPad);
                     });
 
-                    // ── Left-edge snapping ──
-                    // Find the dominant left margin on the page and snap all nearby
-                    // blocks to it so all left-aligned boxes share the exact same edge.
-                    const LEFT_SNAP_THRESHOLD_PDF = 30; // PDF points tolerance
-                    // Collect non-edited block left positions
-                    const leftPositions = [];
-                    blockBaseRects.forEach((rect, i) => {
-                        const blkKey = `block-${pageData.page_number}-${sortedBlocks[i].block_num}`;
-                        if (getOverlayStoredEdit(blkKey)) return;
-                        leftPositions.push({ idx: i, left: rect.baseL });
-                    });
-                    // Group left positions by proximity using union-find style
-                    const leftGroups = [];
-                    leftPositions.forEach(({ idx, left }) => {
-                        let bestGroup = null;
-                        let bestDist = LEFT_SNAP_THRESHOLD_PDF;
-                        for (const group of leftGroups) {
-                            const dist = Math.abs(left - group.minLeft);
-                            const distMax = Math.abs(left - group.maxLeft);
-                            const closest = Math.min(dist, distMax);
-                            if (closest < bestDist) {
-                                bestDist = closest;
-                                bestGroup = group;
-                            }
-                        }
-                        if (bestGroup) {
-                            bestGroup.indices.push(idx);
-                            bestGroup.minLeft = Math.min(bestGroup.minLeft, left);
-                            bestGroup.maxLeft = Math.max(bestGroup.maxLeft, left);
-                        } else {
-                            leftGroups.push({ minLeft: left, maxLeft: left, indices: [idx] });
-                        }
-                    });
-                    // Find the dominant group (most blocks) — this is the page left margin
-                    let dominantGroup = leftGroups.length ? leftGroups[0] : null;
-                    for (const group of leftGroups) {
-                        if (group.indices.length > (dominantGroup ? dominantGroup.indices.length : 0)) {
-                            dominantGroup = group;
-                        }
-                    }
-                    // Merge any smaller groups that are close to the dominant group
-                    if (dominantGroup && dominantGroup.indices.length >= 2) {
-                        for (const group of leftGroups) {
-                            if (group === dominantGroup) continue;
-                            if (Math.abs(group.minLeft - dominantGroup.minLeft) < LEFT_SNAP_THRESHOLD_PDF ||
-                                Math.abs(group.maxLeft - dominantGroup.minLeft) < LEFT_SNAP_THRESHOLD_PDF) {
-                                dominantGroup.indices.push(...group.indices);
-                                dominantGroup.minLeft = Math.min(dominantGroup.minLeft, group.minLeft);
-                                group.indices = []; // mark as merged
-                            }
-                        }
-                    }
-                    // Build per-block snapped left positions
-                    const blockSnappedLeft = blockBaseRects.map((r) => r.baseL);
-                    const blockSnappedWidthExtra = blockBaseRects.map(() => 0);
-                    // Apply snapping for all groups (including dominant and remaining)
-                    for (const group of leftGroups) {
-                        if (group.indices.length < 2) continue;
-                        const snapTarget = group.minLeft;
-                        group.indices.forEach(i => {
-                            const shift = blockBaseRects[i].baseL - snapTarget;
-                            if (shift > 0) {
-                                blockSnappedLeft[i] = snapTarget;
-                                blockSnappedWidthExtra[i] = shift;
-                            }
-                        });
-                    }
-                    console.log('Left-edge snap groups:', leftGroups.map(g => ({
-                        minLeft: g.minLeft,
-                        count: g.indices.length,
-                        indices: g.indices
-                    })));
-
                     sortedBlocks.forEach((block, blockIndex) => {
                         const key = `block-${pageData.page_number}-${block.block_num}`;
                         const storedEdit = getOverlayStoredEdit(key);
@@ -12439,13 +12366,9 @@
                         const paddingPdf = storedEdit ? 0 : blockClampedPad[blockIndex];
                         const paddingX = paddingPdf * scaleX;
                         const paddingY = paddingPdf * scaleY;
-                        // Use snapped left position for non-edited blocks so left-aligned
-                        // boxes share the same page edge.
-                        const snappedLeft = storedEdit ? storedEdit.bbox[0] : blockSnappedLeft[blockIndex];
-                        const snapWidthExtra = storedEdit ? 0 : blockSnappedWidthExtra[blockIndex];
-                        const baseLeft = snappedLeft;
+                        const baseLeft = storedEdit ? storedEdit.bbox[0] : blockLeft;
                         const baseTop = storedEdit ? storedEdit.bbox[1] : blockTop;
-                        const baseWidth = (storedEdit ? (storedEdit.bbox[2] - storedEdit.bbox[0]) : blockWidth) + snapWidthExtra;
+                        const baseWidth = storedEdit ? (storedEdit.bbox[2] - storedEdit.bbox[0]) : blockWidth;
                         const baseHeight = storedEdit ? (storedEdit.bbox[3] - storedEdit.bbox[1]) : blockHeight;
 
                         field.style.left = ((baseLeft * scaleX) - paddingX) + 'px';
@@ -12462,12 +12385,9 @@
                         if (!storedEdit && blockWords.length > 0) {
                             const bounds = getWordBounds(blockWords);
                             if (bounds) {
-                                // Use snapped left instead of raw bounds.left
-                                const snappedBoundsLeft = blockSnappedLeft[blockIndex];
-                                const boundsWidthExtra = blockSnappedWidthExtra[blockIndex];
-                                const expectedLeft = (snappedBoundsLeft * scaleX) - paddingX;
+                                const expectedLeft = (bounds.left * scaleX) - paddingX;
                                 const expectedTop = (bounds.top * scaleY) - paddingY;
-                                const expectedWidth = ((bounds.width + boundsWidthExtra) * scaleX) + (paddingX * 2);
+                                const expectedWidth = (bounds.width * scaleX) + (paddingX * 2);
                                 const expectedHeight = (bounds.height * scaleY) + (paddingY * 2);
 
                                 field.style.left = expectedLeft + 'px';
