@@ -12043,8 +12043,116 @@
                     const scaleX = pageData.width ? effectiveWidth / pageData.width : 1;
                     const scaleY = pageData.height ? effectiveHeight / pageData.height : 1;
 
+                    // ── Gap-based block splitting ──────────────────────────────
+                    // PyMuPDF merges entire table rows into one block. We detect
+                    // large horizontal gaps between words on the same line and
+                    // split them into separate visual blocks so each table cell
+                    // gets its own bounding box.
+                    const GAP_FACTOR = 3; // gap > GAP_FACTOR × avg font size = column break
+                    let nextSyntheticBlockNum = pageData.blocks.reduce((m, b) => Math.max(m, b.block_num), 0) + 1;
+                    const expandedBlocks = [];
+
+                    pageData.blocks.forEach(block => {
+                        const blockWords = pageData.words
+                            ? pageData.words.filter(w => w.block_num === block.block_num)
+                            : [];
+                        if (blockWords.length < 2) {
+                            expandedBlocks.push(block);
+                            return;
+                        }
+
+                        // Group words by line
+                        const lineMap = new Map();
+                        blockWords.forEach(w => {
+                            const ln = w.line_num ?? 0;
+                            if (!lineMap.has(ln)) lineMap.set(ln, []);
+                            lineMap.get(ln).push(w);
+                        });
+
+                        // For single-line blocks: check for column gaps
+                        // For multi-line blocks: only split if ALL lines have matching column structure
+                        const lineKeys = Array.from(lineMap.keys()).sort((a, b) => a - b);
+
+                        // Determine column breaks from the first line (or longest line)
+                        let refLine = lineMap.get(lineKeys[0]);
+                        lineKeys.forEach(k => {
+                            if (lineMap.get(k).length > refLine.length) refLine = lineMap.get(k);
+                        });
+                        refLine.sort((a, b) => a.left - b.left);
+
+                        // Find gaps in the reference line
+                        const avgFontSize = refLine.reduce((s, w) => s + (w.font_size || 10), 0) / refLine.length;
+                        const gapThreshold = avgFontSize * GAP_FACTOR;
+                        const splitPositions = []; // midpoint x-coords of gaps
+                        for (let i = 1; i < refLine.length; i++) {
+                            const prevRight = refLine[i - 1].left + refLine[i - 1].width;
+                            const curLeft = refLine[i].left;
+                            const gap = curLeft - prevRight;
+                            if (gap > gapThreshold) {
+                                splitPositions.push((prevRight + curLeft) / 2);
+                            }
+                        }
+
+                        if (splitPositions.length === 0) {
+                            // No column gaps found — keep block as-is
+                            expandedBlocks.push(block);
+                            return;
+                        }
+
+                        // Split all words into column groups based on gap positions
+                        const numCols = splitPositions.length + 1;
+                        const columnWords = Array.from({ length: numCols }, () => []);
+                        blockWords.forEach(w => {
+                            const wCenter = w.left + w.width / 2;
+                            let col = 0;
+                            for (let s = 0; s < splitPositions.length; s++) {
+                                if (wCenter > splitPositions[s]) col = s + 1;
+                            }
+                            columnWords[col].push(w);
+                        });
+
+                        // Create a sub-block for each non-empty column
+                        columnWords.forEach(words => {
+                            if (words.length === 0) return;
+                            let minL = Infinity, minT = Infinity, maxR = -Infinity, maxB = -Infinity;
+                            words.forEach(w => {
+                                minL = Math.min(minL, w.left);
+                                minT = Math.min(minT, w.top);
+                                maxR = Math.max(maxR, w.left + w.width);
+                                maxB = Math.max(maxB, w.top + w.height);
+                            });
+                            const subNum = nextSyntheticBlockNum++;
+                            // Re-tag words so they belong to the new sub-block
+                            words.forEach(w => { w.block_num = subNum; });
+
+                            // Build text_lines grouped by line_num
+                            const subLineMap = new Map();
+                            words.forEach(w => {
+                                const ln = w.line_num ?? 0;
+                                if (!subLineMap.has(ln)) subLineMap.set(ln, []);
+                                subLineMap.get(ln).push(w);
+                            });
+                            const textLines = [];
+                            Array.from(subLineMap.keys()).sort((a, b) => a - b).forEach(ln => {
+                                const lineWords = subLineMap.get(ln).sort((a, b) => a.left - b.left);
+                                textLines.push(lineWords.map(w => w.text).join(' '));
+                            });
+
+                            expandedBlocks.push({
+                                ...block,
+                                block_num: subNum,
+                                left: minL,
+                                top: minT,
+                                width: maxR - minL,
+                                height: maxB - minT,
+                                text: textLines.join('\n'),
+                                text_lines: textLines,
+                            });
+                        });
+                    });
+
                     // Sort blocks by vertical position (top to bottom) then horizontal (left to right)
-                    const sortedBlocks = [...pageData.blocks].sort((a, b) => {
+                    const sortedBlocks = [...expandedBlocks].sort((a, b) => {
                         const topDiff = a.top - b.top;
                         if (Math.abs(topDiff) > 5) return topDiff;
                         return a.left - b.left;
