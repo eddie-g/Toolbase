@@ -1586,6 +1586,10 @@
                 background: rgba(255, 107, 107, 0.15);
                 color: #d32f2f;
             }
+            .overlay-field .box-menu .menu-split:hover {
+                background: rgba(156, 39, 176, 0.12);
+                color: #7b1fa2;
+            }
             .overlay-field .box-menu .menu-divider {
                 width: 1px;
                 background: rgba(0,0,0,0.12);
@@ -12485,8 +12489,16 @@
                             dragBtn.innerHTML = '✥ Move';
                             dragBtn.title = 'Drag to move this block';
                             
-                            const divider = document.createElement('div');
-                            divider.className = 'menu-divider';
+                            const divider1 = document.createElement('div');
+                            divider1.className = 'menu-divider';
+                            
+                            const splitBtn = document.createElement('button');
+                            splitBtn.className = 'menu-split';
+                            splitBtn.innerHTML = '✂ Split';
+                            splitBtn.title = 'Split this block into two halves';
+                            
+                            const divider2 = document.createElement('div');
+                            divider2.className = 'menu-divider';
                             
                             const deleteBtn = document.createElement('button');
                             deleteBtn.className = 'menu-delete';
@@ -12494,9 +12506,143 @@
                             deleteBtn.title = 'Delete this text block';
                             
                             boxMenu.appendChild(dragBtn);
-                            boxMenu.appendChild(divider);
+                            boxMenu.appendChild(divider1);
+                            boxMenu.appendChild(splitBtn);
+                            boxMenu.appendChild(divider2);
                             boxMenu.appendChild(deleteBtn);
                             field.appendChild(boxMenu);
+                            
+                            // ── Split handler ─────────────────────────────────
+                            splitBtn.addEventListener('click', function(e) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                pushUndoState();
+
+                                // Get current field bbox in PDF coords
+                                const pad = parseFloat(field.dataset.padding) || 0;
+                                const fLeft  = (parseFloat(field.style.left) / scaleX) + pad;
+                                const fTop   = (parseFloat(field.style.top) / scaleY) + pad;
+                                const fWidth = (parseFloat(field.style.width) / scaleX) - (pad * 2);
+                                const fHeight = (parseFloat(field.style.height) / scaleY) - (pad * 2);
+                                const midX   = fLeft + fWidth / 2;
+
+                                // Partition words into left/right by each word's center-x
+                                const bWords = pageData.words
+                                    ? pageData.words.filter(w => w.block_num === block.block_num)
+                                    : [];
+                                let leftWords = [];
+                                let rightWords = [];
+                                if (bWords.length > 0) {
+                                    bWords.forEach(w => {
+                                        const wCenterX = w.left + w.width / 2;
+                                        if (wCenterX < midX) leftWords.push(w);
+                                        else rightWords.push(w);
+                                    });
+                                } else {
+                                    // No word data — split text string in half
+                                    const mid = Math.ceil(blockText.length / 2);
+                                    leftWords = [{ text: blockText.substring(0, mid), left: fLeft, top: fTop, width: fWidth / 2, height: fHeight }];
+                                    rightWords = [{ text: blockText.substring(mid), left: midX, top: fTop, width: fWidth / 2, height: fHeight }];
+                                }
+
+                                // Compute tight bboxes from actual word positions
+                                const wordBbox = (words) => {
+                                    if (!words.length) return null;
+                                    let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+                                    words.forEach(w => {
+                                        l = Math.min(l, w.left);
+                                        t = Math.min(t, w.top);
+                                        r = Math.max(r, w.left + w.width);
+                                        b = Math.max(b, w.top + w.height);
+                                    });
+                                    return [l, t, r, b];
+                                };
+
+                                const leftBbox  = wordBbox(leftWords) || [fLeft, fTop, midX, fTop + fHeight];
+                                const rightBbox = wordBbox(rightWords) || [midX, fTop, fLeft + fWidth, fTop + fHeight];
+
+                                const leftText  = leftWords.map(w => w.text).join(' ');
+                                const rightText = rightWords.map(w => w.text).join(' ');
+
+                                // Keys for the two halves
+                                const maxBlk = pageData.blocks.reduce((m, b) => Math.max(m, b.block_num), 0);
+                                const leftBlockNum  = maxBlk + 1;
+                                const rightBlockNum = maxBlk + 2;
+                                const leftKey  = `block-${pageData.page_number}-${leftBlockNum}`;
+                                const rightKey = `block-${pageData.page_number}-${rightBlockNum}`;
+
+                                // Build edit entries
+                                const makeEdit = (text, bbox, bNum) => ({
+                                    page_number: pageData.page_number,
+                                    block_num: bNum,
+                                    original_text: blockText,
+                                    new_text: text,
+                                    rich_html: null,
+                                    bbox: bbox,
+                                    original_bbox: [blockLeft, blockTop, blockLeft + blockWidth, blockTop + blockHeight],
+                                    origin_x: bbox[0],
+                                    origin_y: bbox[3],
+                                    font: block.font,
+                                    font_size: block.font_size,
+                                    font_weight: fontWeight,
+                                    font_style: fontStyle,
+                                    font_xref: block.font_xref,
+                                    line_height: lineHeightValue || null,
+                                    color: field.dataset.textColor || '#000000'
+                                });
+
+                                // Delete original block
+                                overlayEditedFields.set(key, {
+                                    page_number: pageData.page_number,
+                                    block_num: block.block_num,
+                                    original_text: blockText,
+                                    new_text: '',
+                                    rich_html: null,
+                                    bbox: [fLeft, fTop, fLeft + fWidth, fTop + fHeight],
+                                    original_bbox: [blockLeft, blockTop, blockLeft + blockWidth, blockTop + blockHeight],
+                                    font_xref: block.font_xref,
+                                    font: block.font,
+                                    font_size: block.font_size,
+                                    font_weight: fontWeight,
+                                    font_style: fontStyle,
+                                    line_height: lineHeightValue || null,
+                                    color: field.dataset.textColor || '#000000'
+                                });
+
+                                // Add two new edit entries
+                                overlayEditedFields.set(leftKey, makeEdit(leftText, leftBbox, leftBlockNum));
+                                overlayEditedFields.set(rightKey, makeEdit(rightText, rightBbox, rightBlockNum));
+
+                                // Inject synthetic blocks into extraction data so re-render sees them
+                                const synBase = { ...block, text: '', text_lines: [] };
+                                pageData.blocks.push({
+                                    ...synBase,
+                                    block_num: leftBlockNum,
+                                    left: leftBbox[0], top: leftBbox[1],
+                                    width: leftBbox[2] - leftBbox[0],
+                                    height: leftBbox[3] - leftBbox[1],
+                                    text: leftText,
+                                    text_lines: [leftText],
+                                });
+                                pageData.blocks.push({
+                                    ...synBase,
+                                    block_num: rightBlockNum,
+                                    left: rightBbox[0], top: rightBbox[1],
+                                    width: rightBbox[2] - rightBbox[0],
+                                    height: rightBbox[3] - rightBbox[1],
+                                    text: rightText,
+                                    text_lines: [rightText],
+                                });
+
+                                // Remove original field and re-render
+                                selectedOverlayField = null;
+                                if (field.parentNode) field.parentNode.removeChild(field);
+
+                                persistOverlayEdits();
+                                updateOverlaySaveButton();
+                                renderPdfWithOverlay(true);
+                                setStatus('Block split into two halves', 'ok');
+                            });
                             
                             deleteBtn.addEventListener('click', function(e) {
                                 console.log('delete clicked');
