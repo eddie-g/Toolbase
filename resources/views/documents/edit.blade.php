@@ -12753,14 +12753,22 @@
                                     const newOriginX = newLeft;
                                     const newOriginY = newTop + height;
                                     
-                                    // Get current text - preserve original formatting if content unchanged
-                                    let currentText = textSpan.innerText;
-                                    // Compare without whitespace to detect if user actually changed content
-                                    const originalClean = blockText.replace(/\s+/g, '');
-                                    const currentClean = currentText.replace(/\s+/g, '');
-                                    // If content is same (just whitespace differences), use original to preserve \n
-                                    if (originalClean === currentClean) {
+                                    // Get current text — if the user hasn't typed anything
+                                    // the spans are still absolutely-positioned so innerText
+                                    // would mangle the spacing. Use the original blockText.
+                                    const hasPositionedSpans = textSpan.querySelector('span[style*="position: absolute"]') ||
+                                        textSpan.querySelector('span[style*="position:absolute"]');
+                                    let currentText;
+                                    if (hasPositionedSpans) {
+                                        // Words are still in positioned spans — text is unedited
                                         currentText = blockText;
+                                    } else {
+                                        currentText = textSpan.innerText;
+                                        const originalClean = blockText.replace(/\s+/g, '');
+                                        const currentClean = currentText.replace(/\s+/g, '');
+                                        if (originalClean === currentClean) {
+                                            currentText = blockText;
+                                        }
                                     }
                                     const computedStyle = window.getComputedStyle(textSpan);
                                     const currentFontSizePx = computedStyle.fontSize;
@@ -12934,14 +12942,22 @@
                                 const newOriginX = newLeft;
                                 const newOriginY = newTop + newHeight;
                                 
-                                // Get current text - preserve original formatting if content unchanged
-                                // normalizeOnce() converts positioned spans to flowing text,
-                                // so innerText always works correctly here
-                                let currentText = textSpan.innerText;
-                                const originalClean = blockText.replace(/\s+/g, '');
-                                const currentClean = currentText.replace(/\s+/g, '');
-                                if (originalClean === currentClean) {
+                                // Get current text — if normalizeOnce() ran, spans are now
+                                // flowing text and innerText works. If not (pure move via
+                                // corner handle without width change), spans are still
+                                // absolutely-positioned and innerText would mangle spacing.
+                                const hasPositionedSpans2 = textSpan.querySelector('span[style*="position: absolute"]') ||
+                                    textSpan.querySelector('span[style*="position:absolute"]');
+                                let currentText;
+                                if (hasPositionedSpans2) {
                                     currentText = blockText;
+                                } else {
+                                    currentText = textSpan.innerText;
+                                    const originalClean = blockText.replace(/\s+/g, '');
+                                    const currentClean = currentText.replace(/\s+/g, '');
+                                    if (originalClean === currentClean) {
+                                        currentText = blockText;
+                                    }
                                 }
                                 const computedStyle = window.getComputedStyle(textSpan);
                                 const currentFontSizePx = computedStyle.fontSize;
