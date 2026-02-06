@@ -12151,6 +12151,11 @@
                         });
                     });
 
+                    // Persist the expanded blocks back into pageData so subsequent
+                    // re-renders (toggle off/on, zoom, etc.) see the already-split
+                    // blocks with matching word block_num values.
+                    pageData.blocks = expandedBlocks;
+
                     // Sort blocks by vertical position (top to bottom) then horizontal (left to right)
                     const sortedBlocks = [...expandedBlocks].sort((a, b) => {
                         const topDiff = a.top - b.top;
