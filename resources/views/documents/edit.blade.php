@@ -3094,8 +3094,20 @@
                 <!-- Invoice Card -->
                 <div id="guided-invoice-card" style="background: #fff; border-radius: 12px; box-shadow: 0 1px 8px rgba(0,0,0,0.08); padding: 40px 48px; color: #1f2937; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;">
 
-                    <!-- Top Row: Company Info + Logo Upload -->
-                    <div style="display: flex; gap: 24px; margin-bottom: 8px;">
+                    <!-- Bold Red Header Block (hidden by default, shown for bold_red style) -->
+                    <div id="gi-bold-header" style="display:none; background:#cc3333; border-radius:8px 8px 0 0; padding:28px 32px 22px; margin:-40px -48px 24px -48px; color:#fff;">
+                        <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                            <div>
+                                <input id="gi-company-name-br" type="text" value="Your Company Inc." placeholder="Your Company Inc." style="width:100%; border:none; font-size:22px; font-weight:800; color:#fff; outline:none; margin-bottom:4px; background:transparent;">
+                                <input id="gi-company-addr1-br" type="text" value="1234 Company St." placeholder="Address line 1" style="width:100%; border:none; font-size:13px; color:rgba(255,255,255,0.85); outline:none; margin-bottom:2px; background:transparent;">
+                                <input id="gi-company-addr2-br" type="text" value="Company Town ST 12345" placeholder="City, State ZIP" style="width:100%; border:none; font-size:13px; color:rgba(255,255,255,0.85); outline:none; background:transparent;">
+                            </div>
+                            <span style="font-size:36px; font-weight:900; letter-spacing:4px; color:#fff; margin-top:4px;">INVOICE</span>
+                        </div>
+                    </div>
+
+                    <!-- Top Row: Company Info + Logo Upload (default style) -->
+                    <div id="gi-default-header" style="display: flex; gap: 24px; margin-bottom: 8px;">
                         <!-- Company Info Box -->
                         <div style="flex: 1; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px;">
                             <input id="gi-company-name" type="text" value="Your Company Inc." placeholder="Your Company Inc." style="width:100%; border:none; font-size:16px; font-weight:600; color:#1f2937; outline:none; margin-bottom:4px; background:transparent;">
@@ -3115,8 +3127,8 @@
                         </div>
                     </div>
 
-                    <!-- INVOICE Title -->
-                    <div style="text-align: right; margin-bottom: 24px;">
+                    <!-- INVOICE Title (default style) -->
+                    <div id="gi-default-title" style="text-align: right; margin-bottom: 24px;">
                         <span style="font-size: 36px; font-weight: 800; color: #1f2937; letter-spacing: 4px;">INVOICE</span>
                     </div>
 
@@ -3124,7 +3136,7 @@
                     <div style="display: flex; gap: 24px; margin-bottom: 32px;">
                         <!-- Bill To -->
                         <div style="flex: 1;">
-                            <div style="font-size: 12px; font-weight: 700; color: #1f2937; text-transform: uppercase; margin-bottom: 8px;">Bill To</div>
+                            <div id="gi-bill-to-label" style="font-size: 12px; font-weight: 700; color: #1f2937; text-transform: uppercase; margin-bottom: 8px;">Bill To</div>
                             <div style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px;">
                                 <input id="gi-customer-name" type="text" value="Customer Name" placeholder="Customer Name" style="width:100%; border:none; font-size:15px; font-weight:500; color:#1f2937; outline:none; margin-bottom:4px; background:transparent;">
                                 <input id="gi-customer-addr1" type="text" value="1234 Customer St." placeholder="Address line 1" style="width:100%; border:none; font-size:13px; color:#6b7280; outline:none; margin-bottom:2px; background:transparent;">
@@ -3135,15 +3147,15 @@
                         <div style="flex: 1;">
                             <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 24px;">
                                 <div style="display: flex; align-items: center; justify-content: flex-end; gap: 12px;">
-                                    <span style="font-size: 13px; font-weight: 600; color: #374151;">Invoice #</span>
+                                    <span class="gi-meta-label" style="font-size: 13px; font-weight: 600; color: #374151;">Invoice #</span>
                                     <input id="gi-invoice-num" type="text" value="0001001" style="width: 140px; border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px 10px; font-size: 13px; color: #1f2937; text-align: right; outline:none;">
                                 </div>
                                 <div style="display: flex; align-items: center; justify-content: flex-end; gap: 12px;">
-                                    <span style="font-size: 13px; font-weight: 600; color: #374151;">Invoice Date</span>
+                                    <span class="gi-meta-label" style="font-size: 13px; font-weight: 600; color: #374151;">Invoice Date</span>
                                     <input id="gi-invoice-date" type="text" value="{{ date('m-d-Y') }}" style="width: 140px; border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px 10px; font-size: 13px; color: #1f2937; text-align: right; outline:none;">
                                 </div>
                                 <div style="display: flex; align-items: center; justify-content: flex-end; gap: 12px;">
-                                    <span style="font-size: 13px; font-weight: 600; color: #374151;">Due Date</span>
+                                    <span class="gi-meta-label" style="font-size: 13px; font-weight: 600; color: #374151;">Due Date</span>
                                     <input id="gi-due-date" type="text" value="{{ date('m-d-Y', strtotime('+14 days')) }}" style="width: 140px; border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px 10px; font-size: 13px; color: #1f2937; text-align: right; outline:none;">
                                 </div>
                             </div>
@@ -3153,7 +3165,7 @@
                     <!-- Line Items Table -->
                     <table style="width: 100%; border-collapse: collapse; margin-bottom: 0;" id="gi-line-items-table">
                         <thead>
-                            <tr style="background: #1f2937; color: white;">
+                            <tr id="gi-table-header" style="background: #1f2937; color: white;">
                                 <th style="padding: 10px 14px; text-align: left; font-size: 12px; font-weight: 700; text-transform: uppercase; border-radius: 6px 0 0 0; width: 80px;">QTY</th>
                                 <th style="padding: 10px 14px; text-align: left; font-size: 12px; font-weight: 700; text-transform: uppercase;">Description</th>
                                 <th style="padding: 10px 14px; text-align: right; font-size: 12px; font-weight: 700; text-transform: uppercase; width: 130px;">Unit Price</th>
@@ -3194,8 +3206,8 @@
 
                     <!-- Totals -->
                     <div style="display: flex; justify-content: flex-end;">
-                        <div style="min-width: 280px; border-top: 2px solid #1f2937; padding-top: 10px;">
-                            <div style="display: flex; justify-content: space-between; padding: 6px 0; font-size: 15px; font-weight: 600; color: #1f2937;">
+                        <div id="gi-totals-bar" style="min-width: 280px; border-top: 2px solid #1f2937; padding-top: 10px;">
+                            <div id="gi-total-row" style="display: flex; justify-content: space-between; padding: 6px 0; font-size: 15px; font-weight: 600; color: #1f2937;">
                                 <span>Total (USD)</span>
                                 <span id="gi-total-display">$0.00</span>
                             </div>
@@ -3208,7 +3220,7 @@
                     <!-- Terms & Conditions -->
                     <div style="margin-bottom: 16px;">
                         <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
-                            <span style="font-size: 13px; font-weight: 700; color: #1f2937;">Terms and Conditions</span>
+                            <span id="gi-terms-label" style="font-size: 13px; font-weight: 700; color: #1f2937;">Terms and Conditions</span>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6b7280" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12h8M12 8v8"/></svg>
                         </div>
                         <textarea id="gi-terms" rows="4" placeholder="Payment instructions, etc." style="width: 100%; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 14px; font-size: 13px; color: #6b7280; outline: none; resize: vertical; font-family: inherit; min-height: 80px;">Payment instructions, etc.</textarea>
@@ -16521,6 +16533,10 @@
 
                 if (!lineItemsBody) return; // Safety
 
+                const _urlParams = new URLSearchParams(window.location.search);
+                const _guidedStyle = _urlParams.get('style') || 'default';
+                const _isBoldRed = _guidedStyle === 'bold_red';
+
                 let lineItemIndex = 0;
 
                 function createLineItemRow(qty, desc, price) {
@@ -16697,6 +16713,102 @@
                     const guidedTabBtn = document.getElementById('guided-invoice-tab');
                     if (guidedTabBtn) {
                         setTimeout(() => guidedTabBtn.click(), 300);
+                    }
+                }
+
+                // ─── Style-Aware Theming ─────────────────────────────────────
+                const guidedStyle = urlParams.get('style') || 'default';
+
+                if (guidedStyle === 'bold_red') {
+                    const RED = '#cc3333';
+                    const RED_DARK = '#a82828';
+
+                    // Show bold red header, hide default header + title
+                    const boldHeader = document.getElementById('gi-bold-header');
+                    const defaultHeader = document.getElementById('gi-default-header');
+                    const defaultTitle = document.getElementById('gi-default-title');
+                    if (boldHeader) boldHeader.style.display = '';
+                    if (defaultHeader) defaultHeader.style.display = 'none';
+                    if (defaultTitle) defaultTitle.style.display = 'none';
+
+                    // Sync bold-red header inputs with the default ones (so save still works)
+                    const brName = document.getElementById('gi-company-name-br');
+                    const brAddr1 = document.getElementById('gi-company-addr1-br');
+                    const brAddr2 = document.getElementById('gi-company-addr2-br');
+                    const defName = document.getElementById('gi-company-name');
+                    const defAddr1 = document.getElementById('gi-company-addr1');
+                    const defAddr2 = document.getElementById('gi-company-addr2');
+                    if (brName && defName) {
+                        brName.addEventListener('input', () => defName.value = brName.value);
+                        brAddr1.addEventListener('input', () => defAddr1.value = brAddr1.value);
+                        brAddr2.addEventListener('input', () => defAddr2.value = brAddr2.value);
+                        // Init sync
+                        defName.value = brName.value;
+                        defAddr1.value = brAddr1.value;
+                        defAddr2.value = brAddr2.value;
+                    }
+
+                    // Bill To label → red
+                    const billToLabel = document.getElementById('gi-bill-to-label');
+                    if (billToLabel) billToLabel.style.color = RED;
+
+                    // Invoice meta labels → red
+                    document.querySelectorAll('.gi-meta-label').forEach(el => {
+                        el.style.color = RED;
+                    });
+
+                    // Table header → red background
+                    const tableHeader = document.getElementById('gi-table-header');
+                    if (tableHeader) tableHeader.style.background = RED;
+
+                    // Add Line Item button → red
+                    const addLineBtn2 = document.getElementById('gi-add-line-item');
+                    if (addLineBtn2) {
+                        addLineBtn2.style.background = RED;
+                        addLineBtn2.style.color = '#fff';
+                    }
+
+                    // Add Discount button → red outline
+                    const addDiscBtn = document.getElementById('gi-add-discount');
+                    if (addDiscBtn) {
+                        addDiscBtn.style.color = RED;
+                        addDiscBtn.style.borderColor = RED;
+                    }
+
+                    // Totals bar → red border, red total row with white text on red bg
+                    const totalsBar = document.getElementById('gi-totals-bar');
+                    if (totalsBar) {
+                        totalsBar.style.borderTopColor = RED;
+                    }
+                    const totalRow = document.getElementById('gi-total-row');
+                    if (totalRow) {
+                        totalRow.style.background = RED;
+                        totalRow.style.color = '#fff';
+                        totalRow.style.padding = '10px 14px';
+                        totalRow.style.borderRadius = '6px';
+                        totalRow.style.marginTop = '4px';
+                    }
+
+                    // Terms label → red
+                    const termsLabel = document.getElementById('gi-terms-label');
+                    if (termsLabel) termsLabel.style.color = RED;
+
+                    // Save button → red
+                    if (saveBtn) {
+                        saveBtn.style.background = RED;
+                    }
+
+                    // Card top border-radius flush with header
+                    const card = document.getElementById('guided-invoice-card');
+                    if (card) {
+                        card.style.paddingTop = '0';
+                        card.style.overflow = 'hidden';
+                    }
+
+                    // Update the bold header padding to account for card padding removal
+                    if (boldHeader) {
+                        boldHeader.style.margin = '0 -48px 24px -48px';
+                        boldHeader.style.borderRadius = '12px 12px 0 0';
                     }
                 }
             })();
