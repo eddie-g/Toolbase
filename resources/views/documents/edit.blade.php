@@ -12241,12 +12241,14 @@
                         field.className = 'overlay-field';
                         field.style.position = 'absolute';
                         field.style.background = 'transparent';
-                        field.style.border = '1px dashed rgba(66, 133, 244, 0.5)';
+                        field.style.border = 'none';
+                        field.style.outline = '1px dashed rgba(66, 133, 244, 0.5)';
+                        field.style.outlineOffset = '0px';
                         field.style.pointerEvents = 'auto';
                         field.style.cursor = 'move';
                         field.style.padding = '0';
-                        field.style.minWidth = '40px';
-                        field.style.minHeight = '20px';
+                        field.style.minWidth = '20px';
+                        field.style.minHeight = '10px';
                         field.style.boxSizing = 'border-box';
                         field.style.overflow = 'visible';
 
@@ -12265,7 +12267,7 @@
                         textSpan.style.userSelect = 'text';
                         textSpan.style.padding = '0';
                         textSpan.style.margin = '0';
-                        textSpan.style.overflow = 'hidden';
+                        textSpan.style.overflow = 'visible';
                         
                         // Apply font styling from block data directly to the field for inheritance
                         const fontFamily = getCssFontFamily(block.font);

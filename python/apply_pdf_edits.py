@@ -88,6 +88,23 @@ def apply_edits_to_pdf(pdf_path, edits_data):
                 # This is more reliable than using frontend coordinates
                 text_instances = page.search_for(original_text)
                 
+                # CRITICAL: Filter search results to only the instance at the correct
+                # position. search_for() returns ALL instances on the page.
+                # For table data, the same value can appear in multiple cells.
+                original_bbox = edit.get('original_bbox')
+                if text_instances and original_bbox and len(text_instances) > 1:
+                    ob = fitz.Rect(original_bbox)
+                    def rect_overlap_score(r):
+                        overlap = r & ob
+                        if overlap.is_empty:
+                            cx1, cy1 = (r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2
+                            cx2, cy2 = (ob.x0 + ob.x1) / 2, (ob.y0 + ob.y1) / 2
+                            return -((cx1 - cx2)**2 + (cy1 - cy2)**2)
+                        return overlap.get_area()
+                    best = max(text_instances, key=rect_overlap_score)
+                    print(f"    ℹ Filtered {len(text_instances)} instances → 1 nearest original_bbox")
+                    text_instances = [best]
+                
                 if text_instances:
                     print(f"    Found {len(text_instances)} instance(s) of '{original_text[:30]}...'")
                     search_success_count += 1

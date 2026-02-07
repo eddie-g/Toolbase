@@ -423,6 +423,27 @@ def apply_edits(pdf_path, edits_json):
             # This is more reliable than using frontend coordinates
             text_instances = page.search_for(original_text)
             
+            # CRITICAL: Filter search results to only the instance at the correct
+            # position. search_for() returns ALL instances of the text on the page.
+            # For table data, the same value (e.g., "$2,500.00") can appear in
+            # multiple cells. We must only redact the one matching original_bbox.
+            if text_instances and original_bbox and len(text_instances) > 1:
+                ob = fitz.Rect(original_bbox)
+                def rect_overlap_score(r):
+                    """How much does this search result overlap with the original bbox?"""
+                    overlap = r & ob  # intersection
+                    if overlap.is_empty:
+                        # No overlap — use center distance as tiebreaker
+                        cx1, cy1 = (r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2
+                        cx2, cy2 = (ob.x0 + ob.x1) / 2, (ob.y0 + ob.y1) / 2
+                        return -((cx1 - cx2)**2 + (cy1 - cy2)**2)  # negative = farther is worse
+                    return overlap.get_area()
+                
+                # Pick the single best match (highest overlap or nearest center)
+                best = max(text_instances, key=rect_overlap_score)
+                print(f"  ℹ Filtered {len(text_instances)} instances → 1 nearest original_bbox")
+                text_instances = [best]
+            
             # If exact search fails, try searching for individual words
             # This handles PDFs where "Drylab News" is split into separate spans
             # BUT: Only do word-by-word for SHORT text (single line) to avoid matching
@@ -439,9 +460,12 @@ def apply_edits(pdf_path, edits_json):
                             word_rects = page.search_for(word)
                             # Filter to only rects near the original_bbox if available
                             if word_rects and original_bbox:
+                                ob = fitz.Rect(original_bbox)
                                 for wr in word_rects:
-                                    # Check if this word rect is near the original location
-                                    if abs(wr.y0 - original_bbox[1]) < 50:  # Within 50 points vertically
+                                    # Must be within vertical AND horizontal range of original bbox
+                                    vert_ok = abs(wr.y0 - ob.y0) < 20  # Within 20pt vertically
+                                    horiz_ok = wr.x0 >= (ob.x0 - 20) and wr.x1 <= (ob.x1 + 20)
+                                    if vert_ok and horiz_ok:
                                         all_word_rects.append(wr)
                             elif word_rects:
                                 all_word_rects.extend(word_rects)
