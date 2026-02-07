@@ -324,6 +324,9 @@
                 overflow-y: auto;
                 background: #f3f4f6;
             }
+            #pdf-editor {
+                position: relative;
+            }
             header a {
                 color: var(--muted);
                 text-decoration: none;
@@ -2759,6 +2762,19 @@
         </nav>
         
         <div class="tab-content active" id="pdf-editor">
+
+        <!-- Guided waiting overlay (hidden by default) -->
+        <div id="guided-waiting-overlay" style="display:none; position:absolute; inset:0; z-index:50; background:#111827; display:none; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:40px;">
+            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="color:#4dd0a8; margin-bottom:20px;">
+                <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/>
+                <rect x="9" y="3" width="6" height="4" rx="1"/>
+                <path d="M9 14l2 2 4-4"/>
+            </svg>
+            <h2 style="color:#e9f0ff; font-size:22px; font-weight:700; margin:0 0 8px;">Waiting on Guided completion</h2>
+            <p style="color:#a9b7cf; font-size:15px; margin:0 0 24px; max-width:400px;">Fill out the invoice form in the <strong style="color:#4dd0a8;">Guided</strong> tab, then click <strong style="color:#4dd0a8;">Save &amp; Generate PDF</strong> to build your document.</p>
+            <button type="button" id="guided-waiting-go-btn" style="background:#4dd0a8; color:#053322; font-weight:700; padding:12px 28px; border-radius:999px; border:none; cursor:pointer; font-size:15px;">Go to Guided Tab &rarr;</button>
+        </div>
+
         <div class="flex flex-col lg:flex-row min-h-[calc(100vh-196px)]">
             <!-- Mobile Sidebar Backdrop -->
             <div id="sidebar-backdrop" class="fixed inset-0 bg-black/50 z-30 lg:hidden hidden"></div>
@@ -13974,6 +13990,19 @@
             
             const pdfModeBar = document.getElementById('pdf-mode-bar');
             const selectionToolbar = document.getElementById('selection-toolbar');
+            const guidedWaitingOverlay = document.getElementById('guided-waiting-overlay');
+            const floatingZoomBar = document.getElementById('floating-zoom-bar');
+            const pdfEditorContent = document.querySelector('#pdf-editor > .flex');
+            const sidebarEl = document.getElementById('sidebar');
+
+            // "Go to Guided Tab" button in the waiting overlay
+            const guidedWaitingGoBtn = document.getElementById('guided-waiting-go-btn');
+            if (guidedWaitingGoBtn) {
+                guidedWaitingGoBtn.addEventListener('click', () => {
+                    const guidedTabBtn = document.getElementById('guided-invoice-tab');
+                    if (guidedTabBtn) guidedTabBtn.click();
+                });
+            }
             
             function updateTabStyles(activeButton) {
                 tabButtons.forEach(btn => {
@@ -13982,6 +14011,22 @@
                 });
                 activeButton.classList.add('active', 'text-white', 'border-blue-500');
                 activeButton.classList.remove('text-gray-400', 'border-transparent');
+            }
+
+            // Track whether guided mode is engaged (hides the PDF viewer)
+            let guidedModeActive = false;
+
+            function setGuidedOverlay(show) {
+                guidedModeActive = show;
+                if (guidedWaitingOverlay) {
+                    guidedWaitingOverlay.style.display = show ? 'flex' : 'none';
+                }
+                if (pdfEditorContent) {
+                    pdfEditorContent.style.display = show ? 'none' : '';
+                }
+                if (floatingZoomBar) {
+                    floatingZoomBar.style.display = show ? 'none' : '';
+                }
             }
             
             tabButtons.forEach(button => {
@@ -13999,6 +14044,8 @@
                     if (tabId === 'pdf-editor') {
                         if (pdfModeBar) pdfModeBar.style.display = '';
                         if (selectionToolbar) selectionToolbar.style.display = '';
+                        // If guided mode is engaged, keep the overlay up
+                        // (user switches back to editor but invoice not generated yet)
                     } else if (tabId === 'extracted-text' || tabId === 'guided-invoice') {
                         if (pdfModeBar) pdfModeBar.style.display = 'none';
                         if (selectionToolbar) selectionToolbar.style.display = 'none';
@@ -16614,6 +16661,10 @@
 
                         // Refresh the PDF viewer
                         pdfVersion = Date.now();
+
+                        // Clear the guided overlay so the PDF viewer is visible
+                        setGuidedOverlay(false);
+
                         await renderPdf();
 
                         // Switch to the editor tab to show the result
@@ -16640,6 +16691,8 @@
                 // Auto-activate Guided tab if ?guided=1 in URL
                 const urlParams = new URLSearchParams(window.location.search);
                 if (urlParams.get('guided') === '1') {
+                    // Show the waiting overlay on the editor tab
+                    setGuidedOverlay(true);
                     const guidedTabBtn = document.getElementById('guided-invoice-tab');
                     if (guidedTabBtn) {
                         setTimeout(() => guidedTabBtn.click(), 300);
