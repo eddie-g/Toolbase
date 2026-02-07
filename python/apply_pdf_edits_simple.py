@@ -396,6 +396,75 @@ def apply_edits(pdf_path, edits_json):
         page = doc[page_num - 1]
         page.clean_contents()
         print(f"  ✓ Page {page_num}: Cleaned contents")
+
+    # ── PRE-EDIT SNAPSHOT ──────────────────────────────────────────────
+    # Capture every text span on edited pages BEFORE we redact anything.
+    # This is the ground truth we'll verify against after Phase B.
+    # Structure: { page_num: [ {text, bbox, font, size, color, flags}, ... ] }
+    print("\n" + "="*50)
+    print("SNAPSHOT: Capturing pre-edit text for verification")
+    print("="*50)
+    pre_edit_spans = {}
+    for page_num in edits_by_page.keys():
+        page = doc[page_num - 1]
+        spans = []
+        blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+        for block in blocks:
+            if block.get("type") != 0:  # skip image blocks
+                continue
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    text = span.get("text", "").strip()
+                    if not text:
+                        continue
+                    spans.append({
+                        "text": text,
+                        "bbox": list(span["bbox"]),
+                        "origin": list(span["origin"]),
+                        "font": span.get("font", ""),
+                        "size": span.get("size", 12),
+                        "color": span.get("color", 0),
+                        "flags": span.get("flags", 0),
+                    })
+        pre_edit_spans[page_num] = spans
+        print(f"  Page {page_num}: captured {len(spans)} text spans")
+
+    # Build a set of texts that are being INTENTIONALLY edited or deleted.
+    # We key by (page_num, normalised_text) so we know what the user touched.
+    edited_texts_by_page = {}
+    for page_num, page_edits in edits_by_page.items():
+        touched = set()
+        for edit in page_edits:
+            orig = (edit.get("original_text") or "").strip()
+            if orig:
+                # Add the full block text AND each individual line
+                touched.add(orig)
+                for line in orig.split("\n"):
+                    line = line.strip()
+                    if line:
+                        touched.add(line)
+                # Also add individual words for finer matching
+                for word in orig.split():
+                    word = word.strip()
+                    if len(word) > 1:  # skip single chars
+                        touched.add(word)
+        edited_texts_by_page[page_num] = touched
+    
+    # Also build a set of redaction rects per page so we know exactly
+    # which areas are being redacted (to detect collateral damage).
+    redaction_rects_by_page = {}
+    for page_num, page_edits in edits_by_page.items():
+        rects = []
+        for edit in page_edits:
+            original_bbox = edit.get("original_bbox")
+            if original_bbox:
+                rects.append(fitz.Rect(
+                    original_bbox[0] - 1,
+                    original_bbox[1] - 1,
+                    original_bbox[2] + 1,
+                    original_bbox[3] + 1,
+                ))
+        redaction_rects_by_page[page_num] = rects
     
     # PHASE A: SCRUB PHASE - Remove text from ORIGINAL locations only
     # This phase ONLY handles where text USED TO BE, never where it IS NOW
@@ -892,6 +961,112 @@ def apply_edits(pdf_path, edits_json):
                 tw.append((origin_x, origin_y), new_text, font=font_obj, fontsize=font_size)
                 tw.write_text(page, color=text_color, overlay=True)
                 print(f"  ✓ Text at ({origin_x:.1f}, {origin_y:.1f}) font='{font_label}' [TextWriter overlay]")
+
+    # ── PHASE C: COLLATERAL DAMAGE RECOVERY ───────────────────────────
+    # Compare post-edit text against the pre-edit snapshot.
+    # Any span that:
+    #   1. existed before edits
+    #   2. is now missing from the PDF
+    #   3. was NOT part of any intentional edit/deletion
+    # … is "collateral damage" from an overlapping redaction rect and
+    # must be re-inserted at its original position to prevent data loss.
+    print("\n" + "="*50)
+    print("PHASE C (VERIFY): Checking for collateral text loss")
+    print("="*50)
+
+    recovered_count = 0
+    for page_num in edits_by_page.keys():
+        page = doc[page_num - 1]
+        touched_texts = edited_texts_by_page.get(page_num, set())
+        redact_rects = redaction_rects_by_page.get(page_num, [])
+        pre_spans = pre_edit_spans.get(page_num, [])
+
+        if not pre_spans:
+            continue
+
+        # Collect current (post-edit) span texts for this page
+        post_texts = set()
+        post_blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+        for block in post_blocks:
+            if block.get("type") != 0:
+                continue
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    t = span.get("text", "").strip()
+                    if t:
+                        post_texts.add(t)
+
+        # Check each pre-edit span
+        for span_info in pre_spans:
+            span_text = span_info["text"]
+
+            # Already present in post-edit PDF → no loss
+            if span_text in post_texts:
+                continue
+
+            # Was this span part of an intentional edit/deletion?
+            # Check if the span text appears in any of the touched texts
+            is_intentional = False
+            for touched in touched_texts:
+                if span_text in touched or touched in span_text:
+                    is_intentional = True
+                    break
+            if is_intentional:
+                continue
+
+            # Was this span inside a redaction rectangle? (collateral damage)
+            span_rect = fitz.Rect(span_info["bbox"])
+            was_in_redaction = False
+            for r_rect in redact_rects:
+                if not (span_rect & r_rect).is_empty:
+                    was_in_redaction = True
+                    break
+
+            if not was_in_redaction:
+                # Text disappeared but wasn't in a redaction zone → unusual
+                # Could be coordinate-system shift or font issue; still recover it
+                print(f"  ⚠ '{span_text}' missing (not in redaction zone) – recovering anyway")
+
+            # ── Re-insert the lost span ──
+            origin = span_info["origin"]
+            font_size_s = span_info["size"]
+            span_color_int = span_info["color"]
+
+            # Convert integer color (sRGB packed) to (r, g, b) 0-1
+            if isinstance(span_color_int, int):
+                r = ((span_color_int >> 16) & 0xFF) / 255.0
+                g = ((span_color_int >>  8) & 0xFF) / 255.0
+                b = ( span_color_int        & 0xFF) / 255.0
+                span_color = (r, g, b)
+            else:
+                span_color = (0, 0, 0)
+
+            # Try to use the original font
+            span_font_name = span_info.get("font", "")
+            font_obj = None
+
+            # Try full font file
+            font_file = get_font_file(span_font_name, script_dir)
+            if font_file and os.path.exists(font_file):
+                font_obj = fitz.Font(fontfile=font_file)
+
+            if not font_obj:
+                # Try embedded font by name
+                font_obj = get_embedded_font(doc, None, font_name=span_font_name, page_num=page_num)
+
+            if not font_obj:
+                font_obj = fitz.Font("helv")
+
+            tw = fitz.TextWriter(page.rect)
+            tw.append((origin[0], origin[1]), span_text, font=font_obj, fontsize=font_size_s)
+            tw.write_text(page, color=span_color, overlay=True)
+            recovered_count += 1
+            print(f"  ✓ Recovered '{span_text}' at ({origin[0]:.1f}, {origin[1]:.1f})")
+
+    if recovered_count > 0:
+        print(f"\n  ★ Recovered {recovered_count} collateral-damage span(s)")
+    else:
+        print("  ✓ No collateral text loss detected")
 
     print("\n" + "="*50)
     print("PHASE 3: Saving with cleanup")
