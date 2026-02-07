@@ -9843,8 +9843,8 @@
                     edits.push({
                         page_number: editData.page_number,
                         block_num: editData.block_num,              // IMPORTANT: Include block_num for proper line handling
-                        original_text: editData.original_text || '',
-                        new_text: editData.new_text || '',
+                        original_text: String(editData.original_text || ''),
+                        new_text: String(editData.new_text || ''),
                         bbox: editData.bbox || [0, 0, 100, 100],
                         original_bbox: editData.original_bbox || editData.bbox || [0, 0, 100, 100],
                         origin_x: editData.origin_x || (editData.bbox ? editData.bbox[0] : 0),
@@ -9861,6 +9861,16 @@
                 }
                 
                 console.log('Sending edits to server:', edits);
+                
+                // Validate edits before sending
+                edits.forEach((edit, idx) => {
+                    if (typeof edit.original_text !== 'string') {
+                        console.error(`Edit ${idx} has non-string original_text:`, typeof edit.original_text, edit.original_text);
+                    }
+                    if (typeof edit.new_text !== 'string') {
+                        console.error(`Edit ${idx} has non-string new_text:`, typeof edit.new_text, edit.new_text);
+                    }
+                });
 
                 const saveResponse = await fetch('{{ route("documents.saveEdits", $document) }}', {
                     method: 'POST',
