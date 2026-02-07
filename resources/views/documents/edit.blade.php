@@ -3154,7 +3154,7 @@
                     <table style="width: 100%; border-collapse: collapse; margin-bottom: 0;" id="gi-line-items-table">
                         <thead>
                             <tr style="background: #1f2937; color: white;">
-                                <th style="padding: 10px 14px; text-align: left; font-size: 12px; font-weight: 700; text-transform: uppercase; border-radius: 6px 0 0 0; width: 60px;">QTY</th>
+                                <th style="padding: 10px 14px; text-align: left; font-size: 12px; font-weight: 700; text-transform: uppercase; border-radius: 6px 0 0 0; width: 80px;">QTY</th>
                                 <th style="padding: 10px 14px; text-align: left; font-size: 12px; font-weight: 700; text-transform: uppercase;">Description</th>
                                 <th style="padding: 10px 14px; text-align: right; font-size: 12px; font-weight: 700; text-transform: uppercase; width: 130px;">Unit Price</th>
                                 <th style="padding: 10px 14px; text-align: right; font-size: 12px; font-weight: 700; text-transform: uppercase; border-radius: 0 6px 0 0; width: 110px;">Amount</th>
@@ -16633,6 +16633,7 @@
                         discount_label: document.getElementById('gi-discount-label')?.value || '',
                         discount_amount: parseFloat(discountAmountInput.value) || 0,
                         terms: document.getElementById('gi-terms').value,
+                        style: new URLSearchParams(window.location.search).get('style') || 'default',
                     };
 
                     saveBtn.disabled = true;

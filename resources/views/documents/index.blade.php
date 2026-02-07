@@ -281,7 +281,7 @@
                         <input type="hidden" name="due_date" value="{{ date('m-d-Y', strtotime('+14 days')) }}">
                         <input type="hidden" name="terms" value="">
                         <input type="hidden" name="_guided" value="1">
-                        <input type="hidden" name="_template_style" value="bold_red">
+                        <input type="hidden" name="style" value="bold_red">
                         <button type="submit" class="tpl-card" style="background:rgba(255,255,255,0.04);font:inherit;color:inherit;padding:0;width:100%;text-align:left;border-radius:14px;">
                             <div class="tpl-preview">
                                 <svg viewBox="0 0 300 210" fill="none" xmlns="http://www.w3.org/2000/svg">

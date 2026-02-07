@@ -137,6 +137,7 @@ class DocumentController extends Controller
             'discount_label'   => ['nullable', 'string', 'max:100'],
             'discount_amount'  => ['nullable', 'numeric', 'min:0'],
             'terms'            => ['nullable', 'string', 'max:2000'],
+            'style'            => ['nullable', 'string', 'in:default,bold_red'],
         ]);
 
         $uuid = Str::uuid()->toString();
@@ -148,17 +149,22 @@ class DocumentController extends Controller
         // Build JSON payload for the Python script
         $payload = json_encode($validated, JSON_UNESCAPED_UNICODE);
 
+        // Write payload to temp file to avoid shell escaping issues with newlines
+        $tmpPayload = tempnam(sys_get_temp_dir(), 'inv_');
+        file_put_contents($tmpPayload, $payload);
+
         $script = base_path('python/generate_simple_invoice.py');
         $command = sprintf(
-            'echo %s | python3 %s %s 2>&1',
-            escapeshellarg($payload),
+            'python3 %s %s < %s 2>&1',
             escapeshellarg($script),
-            escapeshellarg($storedFull)
+            escapeshellarg($storedFull),
+            escapeshellarg($tmpPayload)
         );
 
         $output = [];
         $exitCode = 0;
         exec($command, $output, $exitCode);
+        @unlink($tmpPayload);
 
         if ($exitCode !== 0 || !file_exists($storedFull)) {
             Log::error('Simple invoice generation failed', [
@@ -189,6 +195,9 @@ class DocumentController extends Controller
         $editUrl = route('documents.edit', $document);
         if ($request->input('_guided')) {
             $editUrl .= '?guided=1';
+            if ($validated['style'] ?? null) {
+                $editUrl .= '&style=' . urlencode($validated['style']);
+            }
         }
 
         return redirect($editUrl)
@@ -215,23 +224,29 @@ class DocumentController extends Controller
             'discount_label'   => ['nullable', 'string', 'max:100'],
             'discount_amount'  => ['nullable', 'numeric', 'min:0'],
             'terms'            => ['nullable', 'string', 'max:2000'],
+            'style'            => ['nullable', 'string', 'in:default,bold_red'],
         ]);
 
         $storedFull = Storage::path($document->path);
 
         $payload = json_encode($validated, JSON_UNESCAPED_UNICODE);
 
+        // Write payload to temp file to avoid shell escaping issues with newlines
+        $tmpPayload = tempnam(sys_get_temp_dir(), 'inv_');
+        file_put_contents($tmpPayload, $payload);
+
         $script = base_path('python/generate_simple_invoice.py');
         $command = sprintf(
-            'echo %s | python3 %s %s 2>&1',
-            escapeshellarg($payload),
+            'python3 %s %s < %s 2>&1',
             escapeshellarg($script),
-            escapeshellarg($storedFull)
+            escapeshellarg($storedFull),
+            escapeshellarg($tmpPayload)
         );
 
         $output = [];
         $exitCode = 0;
         exec($command, $output, $exitCode);
+        @unlink($tmpPayload);
 
         if ($exitCode !== 0) {
             Log::error('Invoice regeneration failed', [
