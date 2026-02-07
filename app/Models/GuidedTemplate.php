@@ -8,6 +8,7 @@ class GuidedTemplate extends Model
 {
     protected $fillable = [
         'name',
+        'type',
         'slug',
         'description',
         'preview_html',

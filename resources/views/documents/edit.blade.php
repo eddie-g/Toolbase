@@ -3226,6 +3226,36 @@
                         <textarea id="gi-terms" rows="4" placeholder="Payment instructions, etc." style="width: 100%; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 14px; font-size: 13px; color: #6b7280; outline: none; resize: vertical; font-family: inherit; min-height: 80px;">Payment instructions, etc.</textarea>
                     </div>
 
+                    <!-- Mark as Paid Toggle -->
+                    <div id="gi-paid-section" style="margin-top: 24px;">
+                        <button type="button" id="gi-paid-toggle" style="display: inline-flex; align-items: center; gap: 10px; background: transparent; border: 2px solid #d1d5db; border-radius: 10px; padding: 12px 20px; cursor: pointer; transition: all 0.2s; font-family: inherit;">
+                            <span id="gi-paid-check" style="width: 22px; height: 22px; border-radius: 6px; border: 2px solid #d1d5db; display: flex; align-items: center; justify-content: center; transition: all 0.2s; flex-shrink: 0;">
+                                <svg id="gi-paid-check-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" style="display: none;"><polyline points="20 6 9 17 4 12"/></svg>
+                            </span>
+                            <span style="font-size: 14px; font-weight: 700; color: #374151;">Mark as <span style="color: #dc2626;">PAID IN FULL</span></span>
+                        </button>
+                    </div>
+
+                    <!-- PAID IN FULL Stamp (hidden by default) -->
+                    <div id="gi-paid-stamp" style="display: none; position: relative; margin: 28px 0 0; padding: 28px 0; border-top: 2px dashed #fca5a5;">
+                        <div style="display: flex; align-items: center; justify-content: center; margin-bottom: 28px;">
+                            <div style="border: 4px solid #dc2626; border-radius: 12px; padding: 12px 36px; transform: rotate(-6deg); position: relative;">
+                                <span style="font-size: 32px; font-weight: 900; color: #dc2626; letter-spacing: 6px; text-transform: uppercase; font-family: 'Arial Black', 'Segoe UI', sans-serif;">PAID IN FULL</span>
+                            </div>
+                        </div>
+                        <!-- Signature Line -->
+                        <div style="display: flex; justify-content: space-between; align-items: flex-end; gap: 40px; margin-top: 32px;">
+                            <div style="flex: 1;">
+                                <div style="border-bottom: 2px solid #374151; margin-bottom: 6px; min-height: 40px;"></div>
+                                <span style="font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 1px;">Authorized Signature</span>
+                            </div>
+                            <div style="flex: 1;">
+                                <div style="border-bottom: 2px solid #374151; margin-bottom: 6px; min-height: 40px;"></div>
+                                <span style="font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 1px;">Date</span>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Save Button -->
                     <div style="display: flex; justify-content: flex-end; margin-top: 24px;">
                         <button type="button" id="gi-save-btn" style="background: #059669; color: white; font-size: 15px; font-weight: 700; padding: 12px 32px; border-radius: 10px; border: none; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.15s;">
@@ -16603,6 +16633,34 @@
                 });
                 discountAmountInput.addEventListener('input', recalcAll);
 
+                // Mark as Paid toggle
+                const paidToggle = document.getElementById('gi-paid-toggle');
+                const paidCheck = document.getElementById('gi-paid-check');
+                const paidCheckIcon = document.getElementById('gi-paid-check-icon');
+                const paidStamp = document.getElementById('gi-paid-stamp');
+                if (paidToggle) {
+                    paidToggle.addEventListener('click', () => {
+                        const isActive = !paidToggle.dataset.active;
+                        if (isActive) {
+                            paidToggle.dataset.active = '1';
+                            paidToggle.style.borderColor = '#dc2626';
+                            paidToggle.style.background = '#fef2f2';
+                            paidCheck.style.background = '#dc2626';
+                            paidCheck.style.borderColor = '#dc2626';
+                            paidCheckIcon.style.display = '';
+                            paidStamp.style.display = '';
+                        } else {
+                            delete paidToggle.dataset.active;
+                            paidToggle.style.borderColor = '#d1d5db';
+                            paidToggle.style.background = 'transparent';
+                            paidCheck.style.background = 'transparent';
+                            paidCheck.style.borderColor = '#d1d5db';
+                            paidCheckIcon.style.display = 'none';
+                            paidStamp.style.display = 'none';
+                        }
+                    });
+                }
+
                 // Logo upload
                 logoInput.addEventListener('change', (e) => {
                     const file = e.target.files[0];
@@ -16650,6 +16708,7 @@
                         discount_amount: parseFloat(discountAmountInput.value) || 0,
                         terms: document.getElementById('gi-terms').value,
                         style: new URLSearchParams(window.location.search).get('style') || 'default',
+                        paid_in_full: !!document.getElementById('gi-paid-toggle')?.dataset.active,
                     };
 
                     saveBtn.disabled = true;

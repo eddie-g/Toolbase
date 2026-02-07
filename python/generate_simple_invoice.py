@@ -210,6 +210,10 @@ def _generate_default(data, page, W, H):
     y = tot_bar_y + 44
     _draw_terms_boxed(data, page, M, W, H, y, BLACK, WHITE, BORDER, GREY)
 
+    # Paid stamp + signature
+    if data.get("paid_in_full"):
+        _draw_paid_stamp(page, M, W, H, GREEN)
+
 
 # ===================================================================
 #  BOLD RED STYLE  (red header block, red table, subtotal/tax/total)
@@ -344,7 +348,8 @@ def _generate_bold_red(data, page, W, H):
         shape.finish(color=BORDER, width=0.5)
         shape.commit()
 
-        d = desc if len(desc) <= 42 else desc[:39] + "..."
+        desc_str = str(desc) if desc else ""
+        d = desc_str if len(desc_str) <= 42 else desc_str[:39] + "..."
         page.insert_text(fitz.Point(col_desc + 10, y + 18), d,
                          fontsize=9.5, fontname="helv", color=DARK)
         qty_str = str(int(qty)) if qty == int(qty) else str(qty)
@@ -426,10 +431,87 @@ def _generate_bold_red(data, page, W, H):
                              fontsize=9, fontname="helv", color=GREY)
             y += 14
 
+    # Paid stamp + signature
+    if data.get("paid_in_full"):
+        _draw_paid_stamp(page, M, W, H, RED)
+
 
 # ===================================================================
 #  SHARED HELPERS
 # ===================================================================
+
+def _draw_paid_stamp(page, M, W, H, accent_color):
+    """Draw a PAID IN FULL stamp and signature line at the bottom of the page."""
+    DARK  = (0.22, 0.22, 0.26)
+    GREY  = (0.52, 0.52, 0.56)
+    RED   = (0.86, 0.15, 0.15)
+
+    # Position the stamp area from the bottom
+    stamp_y = H - 180
+
+    # ── Dashed separator line ──
+    shape = page.new_shape()
+    shape.draw_line(fitz.Point(M, stamp_y), fitz.Point(W - M, stamp_y))
+    shape.finish(color=(0.82, 0.82, 0.84), width=1, dashes="[4 3]")
+    shape.commit()
+
+    # ── PAID IN FULL stamp (rotated, bordered) ──
+    stamp_cx = W / 2
+    stamp_cy = stamp_y + 48
+    stamp_text = "PAID IN FULL"
+
+    # Draw border rectangle for the stamp
+    bw, bh = 200, 40
+    stamp_rect = fitz.Rect(stamp_cx - bw/2, stamp_cy - bh/2,
+                           stamp_cx + bw/2, stamp_cy + bh/2)
+
+    # Rotate the stamp slightly using a morph
+    import math
+    pivot = fitz.Point(stamp_cx, stamp_cy)
+
+    shape = page.new_shape()
+    shape.draw_rect(stamp_rect)
+    shape.finish(color=RED, width=3, fill=None,
+                 morph=(pivot, fitz.Matrix(math.cos(math.radians(-6)),
+                                           math.sin(math.radians(-6)),
+                                           -math.sin(math.radians(-6)),
+                                           math.cos(math.radians(-6)), 0, 0)))
+    shape.commit()
+
+    # Stamp text
+    tw = fitz.get_text_length(stamp_text, fontname="helv", fontsize=22)
+    text_x = stamp_cx - tw / 2
+    text_y = stamp_cy + 8
+    page.insert_text(fitz.Point(text_x, text_y), stamp_text,
+                     fontsize=22, fontname="helv", color=RED,
+                     morph=(pivot, fitz.Matrix(math.cos(math.radians(-6)),
+                                               math.sin(math.radians(-6)),
+                                               -math.sin(math.radians(-6)),
+                                               math.cos(math.radians(-6)), 0, 0)))
+
+    # ── Signature line ──
+    sig_y = stamp_cy + 58
+    sig_left = M
+    sig_mid = W / 2 - 20
+    sig_right_start = W / 2 + 20
+    sig_right_end = W - M
+
+    # "Authorized Signature" line
+    shape = page.new_shape()
+    shape.draw_line(fitz.Point(sig_left, sig_y), fitz.Point(sig_mid, sig_y))
+    shape.finish(color=DARK, width=1.5)
+    shape.commit()
+    page.insert_text(fitz.Point(sig_left, sig_y + 14), "Authorized Signature",
+                     fontsize=8, fontname="helv", color=GREY)
+
+    # "Date" line
+    shape = page.new_shape()
+    shape.draw_line(fitz.Point(sig_right_start, sig_y), fitz.Point(sig_right_end, sig_y))
+    shape.finish(color=DARK, width=1.5)
+    shape.commit()
+    page.insert_text(fitz.Point(sig_right_start, sig_y + 14), "Date",
+                     fontsize=8, fontname="helv", color=GREY)
+
 
 def _draw_terms_boxed(data, page, M, W, H, y, BLACK, WHITE, BORDER, GREY):
     terms = data.get("terms", "")

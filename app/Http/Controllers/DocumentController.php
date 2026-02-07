@@ -230,6 +230,7 @@ class DocumentController extends Controller
             'discount_amount'  => ['nullable', 'numeric', 'min:0'],
             'terms'            => ['nullable', 'string', 'max:2000'],
             'style'            => ['nullable', 'string', 'in:default,bold_red'],
+            'paid_in_full'     => ['nullable', 'boolean'],
         ]);
 
         $storedFull = Storage::path($document->path);
