@@ -12701,7 +12701,6 @@
                                 
                                 // Mark as edited by storing empty text
                                 const deleteKey = field.dataset.wordIndex || key;
-                                const originalText = field.dataset.originalText || '';
                                 if (deleteKey) {
                                     const computedStyle = window.getComputedStyle(textSpan);
                                     const currentFontSizePx = computedStyle.fontSize;
@@ -12712,7 +12711,7 @@
                                     overlayEditedFields.set(deleteKey, {
                                         page_number: pageData.page_number,
                                         block_num: block.block_num,
-                                        original_text: originalText,
+                                        original_text: safeBlockText,
                                         new_text: '',
                                         rich_html: richHtml,
                                         original_bbox: [blockLeft, blockTop, blockLeft + blockWidth, blockTop + blockHeight],
