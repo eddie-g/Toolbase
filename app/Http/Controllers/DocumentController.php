@@ -741,7 +741,7 @@ class DocumentController extends Controller
         $validated = $request->validate([
             'edits' => ['required', 'array'],
             'edits.*.page_number' => ['required', 'integer'],
-            'edits.*.original_text' => ['required', 'string'],
+            'edits.*.original_text' => ['present', 'string'],  // Changed from 'required' to 'present' - allow empty strings
             'edits.*.new_text' => ['nullable', 'string'],
             'edits.*.bbox' => ['required', 'array'],
             'edits.*.original_bbox' => ['nullable', 'array'],
