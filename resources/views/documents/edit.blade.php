@@ -12228,6 +12228,8 @@
                         const blockText = (block.text_lines && block.text_lines.length)
                             ? block.text_lines.join('\n')
                             : (block.text || '');
+                        // Ensure blockText is always a string, never undefined
+                        const safeBlockText = String(blockText || '');
                         if (storedEdit && storedEdit.new_text === '') {
                             return;
                         }
@@ -12399,7 +12401,7 @@
                             }
                         }
 
-                        field.dataset.originalText = blockText;
+                        field.dataset.originalText = safeBlockText;
                         field.dataset.originalLeft = blockLeft;
                         field.dataset.originalTop = blockTop;
                         field.dataset.originalWidth = blockWidth;
@@ -12420,7 +12422,7 @@
                         field.dataset.padding = paddingPdf;
 
                         // Add tooltip on hover to show what text is in this block
-                        field.title = blockText;
+                        field.title = safeBlockText;
 
 
                         // Track changes to the text content
@@ -12452,7 +12454,7 @@
                             overlayEditedFields.set(editKey, {
                                 page_number: pageData.page_number,
                                 block_num: block.block_num,
-                                original_text: blockText,           // ORIGINAL PDF TEXT
+                                original_text: safeBlockText,       // ORIGINAL PDF TEXT
                                 new_text: userTypedText,            // USER TYPED TEXT
                                 rich_html: richHtml,
                                 bbox: [currentLeft, currentTop, currentLeft + currentWidth, currentTop + currentHeight],
@@ -12610,7 +12612,7 @@
                                 const makeEdit = (text, bbox, bNum) => ({
                                     page_number: pageData.page_number,
                                     block_num: bNum,
-                                    original_text: blockText,
+                                    original_text: safeBlockText,
                                     new_text: text,
                                     rich_html: null,
                                     bbox: bbox,
@@ -12630,7 +12632,7 @@
                                 overlayEditedFields.set(key, {
                                     page_number: pageData.page_number,
                                     block_num: block.block_num,
-                                    original_text: blockText,
+                                    original_text: safeBlockText,
                                     new_text: '',
                                     rich_html: null,
                                     bbox: [fLeft, fTop, fLeft + fWidth, fTop + fHeight],
@@ -12815,7 +12817,7 @@
                                     overlayEditedFields.set(key, {
                                         page_number: pageData.page_number,
                                         block_num: block.block_num,
-                                        original_text: blockText,              // ORIGINAL PDF TEXT
+                                        original_text: safeBlockText,          // ORIGINAL PDF TEXT
                                         new_text: currentText,                 // TEXT WITH PRESERVED NEWLINES
                                         rich_html: richHtml,
                                         bbox: [newLeft, newTop, newLeft + width, newTop + height],
@@ -13004,7 +13006,7 @@
                                 overlayEditedFields.set(key, {
                                     page_number: pageData.page_number,
                                     block_num: block.block_num,
-                                    original_text: blockText,                   // ORIGINAL PDF TEXT
+                                    original_text: safeBlockText,               // ORIGINAL PDF TEXT
                                     new_text: currentText,                      // TEXT WITH PRESERVED NEWLINES
                                     rich_html: richHtml,
                                     bbox: [newLeft, newTop, newLeft + newWidth, newTop + newHeight],
