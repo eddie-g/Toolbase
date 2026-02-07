@@ -111,17 +111,16 @@
                 background: rgba(255, 255, 255, 0.98) !important;
                 border-color: rgba(0, 0, 0, 0.1) !important;
             }
-            body.light-theme #tab-nav .tab-btn {
+            body.light-theme #tab-nav .page-nav-link {
                 background: transparent !important;
                 color: #6b7280 !important;
                 border-bottom-color: transparent !important;
             }
-            body.light-theme #tab-nav .tab-btn:hover {
+            body.light-theme #tab-nav .page-nav-link:hover {
                 color: #1a202c !important;
                 background: transparent !important;
             }
-            body.light-theme #tab-nav .tab-btn.active,
-            body.light-theme #tab-nav .tab-btn.text-white {
+            body.light-theme #tab-nav .page-nav-link.text-white {
                 color: #1a202c !important;
                 border-bottom-color: #2563eb !important;
                 background: transparent !important;
@@ -149,18 +148,12 @@
             body.light-theme .viewer {
                 background: #f3f4f6 !important;
             }
-            body.light-theme button,
-            body.light-theme .tab-btn {
+            body.light-theme button {
                 background: #e5e7eb !important;
                 color: #1a202c !important;
             }
             body.light-theme button:hover {
                 background: #d1d5db !important;
-            }
-            body.light-theme .tab-btn.active {
-                background: rgba(255, 255, 255, 0.95) !important;
-                border-color: #10b981 !important;
-                color: #10b981 !important;
             }
             body.light-theme .bg-emerald-500 {
                 background: #10b981 !important;
@@ -2737,42 +2730,42 @@
             </div>
         </header>
         
-        <!-- Tab Navigation -->
+        <!-- Page Navigation -->
         <nav id="tab-nav" class="bg-gray-800/95 border-b border-gray-700/50 backdrop-blur-sm">
             <div class="flex gap-8 px-4">
-                <button class="tab-btn flex items-center gap-2.5 py-3.5 text-base font-medium text-white border-b-2 border-blue-500 -mb-px transition-all duration-200" data-tab="pdf-editor">
+                <a href="{{ route('documents.edit', $document) }}" class="page-nav-link flex items-center gap-2.5 py-3.5 text-base font-medium {{ ($activeTab ?? 'pdf-editor') === 'pdf-editor' ? 'text-white border-b-2 border-blue-500' : 'text-gray-400 border-b-2 border-transparent hover:text-white' }} -mb-px transition-all duration-200" style="text-decoration:none;">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                     </svg>
                     Editor
-                </button>
-                <button class="tab-btn flex items-center gap-2.5 py-3.5 text-base font-medium text-gray-400 border-b-2 border-transparent hover:text-white -mb-px transition-all duration-200" data-tab="extracted-text" id="extracted-text-tab">
+                </a>
+                <a href="{{ route('documents.ai', $document) }}" class="page-nav-link flex items-center gap-2.5 py-3.5 text-base font-medium {{ ($activeTab ?? 'pdf-editor') === 'extracted-text' ? 'text-white border-b-2 border-blue-500' : 'text-gray-400 border-b-2 border-transparent hover:text-white' }} -mb-px transition-all duration-200" style="text-decoration:none;" id="extracted-text-tab">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
                     </svg>
                     AI
-                </button>
-                <button class="tab-btn flex items-center gap-2.5 py-3.5 text-base font-medium text-gray-400 border-b-2 border-transparent hover:text-white -mb-px transition-all duration-200" data-tab="guided-invoice" id="guided-invoice-tab">
+                </a>
+                <a href="{{ route('documents.guided', $document) }}{{ request('style') ? '?style=' . request('style') : '' }}" class="page-nav-link flex items-center gap-2.5 py-3.5 text-base font-medium {{ ($activeTab ?? 'pdf-editor') === 'guided-invoice' ? 'text-white border-b-2 border-blue-500' : 'text-gray-400 border-b-2 border-transparent hover:text-white' }} -mb-px transition-all duration-200" style="text-decoration:none;" id="guided-invoice-tab">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path>
                     </svg>
                     Guided
-                </button>
+                </a>
             </div>
         </nav>
         
-        <div class="tab-content active" id="pdf-editor">
+        <div class="tab-content active" id="pdf-editor" @if(($activeTab ?? 'pdf-editor') !== 'pdf-editor') style="display:none;" @endif>
 
         <!-- Guided waiting overlay (hidden by default) -->
-        <div id="guided-waiting-overlay" style="display:none; position:absolute; inset:0; z-index:50; background:#111827; display:none; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:40px;">
+        <div id="guided-waiting-overlay" style="display:none; position:absolute; inset:0; z-index:50; background:#111827; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:40px;">
             <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="color:#4dd0a8; margin-bottom:20px;">
                 <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/>
                 <rect x="9" y="3" width="6" height="4" rx="1"/>
                 <path d="M9 14l2 2 4-4"/>
             </svg>
             <h2 style="color:#e9f0ff; font-size:22px; font-weight:700; margin:0 0 8px;">Waiting on Guided completion</h2>
-            <p style="color:#a9b7cf; font-size:15px; margin:0 0 24px; max-width:400px;">Fill out the invoice form in the <strong style="color:#4dd0a8;">Guided</strong> tab, then click <strong style="color:#4dd0a8;">Save &amp; Generate PDF</strong> to build your document.</p>
-            <button type="button" id="guided-waiting-go-btn" style="background:#4dd0a8; color:#053322; font-weight:700; padding:12px 28px; border-radius:999px; border:none; cursor:pointer; font-size:15px;">Go to Guided Tab &rarr;</button>
+            <p style="color:#a9b7cf; font-size:15px; margin:0 0 24px; max-width:400px;">Fill out the invoice form on the <strong style="color:#4dd0a8;">Guided</strong> page, then click <strong style="color:#4dd0a8;">Save &amp; Generate PDF</strong> to build your document.</p>
+            <a href="{{ route('documents.guided', $document) }}{{ request('style') ? '?style=' . request('style') : '' }}" style="background:#4dd0a8; color:#053322; font-weight:700; padding:12px 28px; border-radius:999px; border:none; cursor:pointer; font-size:15px; text-decoration:none; display:inline-block;">Go to Guided Page &rarr;</a>
         </div>
 
         <div class="flex flex-col lg:flex-row min-h-[calc(100vh-196px)]">
@@ -3012,7 +3005,7 @@
             </main>
         </div>
         </div>
-        <div class="tab-content" id="extracted-text">
+        <div class="tab-content{{ ($activeTab ?? '') === 'extracted-text' ? ' active' : '' }}" id="extracted-text" @if(($activeTab ?? 'pdf-editor') !== 'extracted-text') style="display:none;" @endif>
         <div class="layout">
             <!-- AI Chat Sidebar -->
             <aside class="ai-chat-sidebar">
@@ -3089,7 +3082,7 @@
         </div>
 
         <!-- Guided Invoice Builder Tab -->
-        <div class="tab-content" id="guided-invoice">
+        <div class="tab-content{{ ($activeTab ?? '') === 'guided-invoice' ? ' active' : '' }}" id="guided-invoice" @if(($activeTab ?? 'pdf-editor') !== 'guided-invoice') style="display:none;" @endif>
             <div style="max-width: 820px; margin: 0 auto; padding: 32px 16px 64px;">
                 <!-- Invoice Card -->
                 <div id="guided-invoice-card" style="background: #fff; border-radius: 12px; box-shadow: 0 1px 8px rgba(0,0,0,0.08); padding: 40px 48px; color: #1f2937; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;">
@@ -14025,9 +14018,7 @@
                 setStatus('Failed to load PDF.', 'err');
             });
 
-            // Tab switching
-            const tabButtons = document.querySelectorAll('.tab-btn');
-            const tabContents = document.querySelectorAll('.tab-content');
+            // Page navigation (separate pages instead of tabs)
             let aiViewerRendered = false;
             
             const pdfModeBar = document.getElementById('pdf-mode-bar');
@@ -14036,24 +14027,6 @@
             const floatingZoomBar = document.getElementById('floating-zoom-bar');
             const pdfEditorContent = document.querySelector('#pdf-editor > .flex');
             const sidebarEl = document.getElementById('sidebar');
-
-            // "Go to Guided Tab" button in the waiting overlay
-            const guidedWaitingGoBtn = document.getElementById('guided-waiting-go-btn');
-            if (guidedWaitingGoBtn) {
-                guidedWaitingGoBtn.addEventListener('click', () => {
-                    const guidedTabBtn = document.getElementById('guided-invoice-tab');
-                    if (guidedTabBtn) guidedTabBtn.click();
-                });
-            }
-            
-            function updateTabStyles(activeButton) {
-                tabButtons.forEach(btn => {
-                    btn.classList.remove('active', 'text-white', 'border-blue-500');
-                    btn.classList.add('text-gray-400', 'border-transparent');
-                });
-                activeButton.classList.add('active', 'text-white', 'border-blue-500');
-                activeButton.classList.remove('text-gray-400', 'border-transparent');
-            }
 
             // Track whether guided mode is engaged (hides the PDF viewer)
             let guidedModeActive = false;
@@ -14070,38 +14043,18 @@
                     floatingZoomBar.style.display = show ? 'none' : '';
                 }
             }
-            
-            tabButtons.forEach(button => {
-                button.addEventListener('click', async () => {
-                    const tabId = button.dataset.tab;
-                    
-                    // Update active tab button styles
-                    updateTabStyles(button);
-                    
-                    // Update active tab content
-                    tabContents.forEach(content => content.classList.remove('active'));
-                    document.getElementById(tabId).classList.add('active');
-                    
-                    // Show/hide toolbars based on active tab
-                    if (tabId === 'pdf-editor') {
-                        if (pdfModeBar) pdfModeBar.style.display = '';
-                        if (selectionToolbar) selectionToolbar.style.display = '';
-                        // If guided mode is engaged, keep the overlay up
-                        // (user switches back to editor but invoice not generated yet)
-                    } else if (tabId === 'extracted-text' || tabId === 'guided-invoice') {
-                        if (pdfModeBar) pdfModeBar.style.display = 'none';
-                        if (selectionToolbar) selectionToolbar.style.display = 'none';
-                    }
-                    
-                    // Render PDF in AI Generator tab when clicked
-                    if (tabId === 'extracted-text' && !aiViewerRendered) {
-                        aiViewerRendered = true;
-                        // Don't render PDF pages in AI Generator tab
-                        // Load saved sections from database and recreate template
-                        loadSectionsFromDatabase();
-                    }
-                });
-            });
+
+            // Auto-init: if on AI page, load sections
+            const _currentTab = @json($activeTab ?? 'pdf-editor');
+            if (_currentTab === 'extracted-text') {
+                aiViewerRendered = true;
+                loadSectionsFromDatabase();
+            }
+            // Auto-init: hide editor toolbars on non-editor pages
+            if (_currentTab !== 'pdf-editor') {
+                if (pdfModeBar) pdfModeBar.style.display = 'none';
+                if (selectionToolbar) selectionToolbar.style.display = 'none';
+            }
             
             async function renderAIViewer() {
                 // Function disabled - AI Generator tab doesn't show PDF pages
@@ -16741,14 +16694,9 @@
                         // Clear the guided overlay so the PDF viewer is visible
                         setGuidedOverlay(false);
 
-                        await renderPdf();
-
-                        // Switch to the editor tab to show the result
-                        const editorTab = document.querySelector('[data-tab="pdf-editor"]');
-                        if (editorTab) {
-                            editorTab.click();
-                        }
-                        setStatus('Invoice generated successfully!', 'ok');
+                        // Navigate to the editor page to show the result
+                        window.location.href = @json(route('documents.edit', $document));
+                        return; // page will reload
                     } catch (err) {
                         console.error('Invoice generation error:', err);
                         alert('Error: ' + err.message);
@@ -16764,18 +16712,8 @@
                     }
                 });
 
-                // Auto-activate Guided tab if ?guided=1 in URL
+                // Style-aware theming (read style from URL query param)
                 const urlParams = new URLSearchParams(window.location.search);
-                if (urlParams.get('guided') === '1') {
-                    // Show the waiting overlay on the editor tab
-                    setGuidedOverlay(true);
-                    const guidedTabBtn = document.getElementById('guided-invoice-tab');
-                    if (guidedTabBtn) {
-                        setTimeout(() => guidedTabBtn.click(), 300);
-                    }
-                }
-
-                // ─── Style-Aware Theming ─────────────────────────────────────
                 const guidedStyle = urlParams.get('style') || 'default';
 
                 if (guidedStyle === 'bold_red') {

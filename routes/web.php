@@ -13,6 +13,8 @@ Route::post('/documents', [DocumentController::class, 'store'])->name('documents
 Route::post('/documents/create-from-template', [DocumentController::class, 'createFromTemplate'])->name('documents.createFromTemplate');
 Route::post('/documents/create-simple-invoice', [DocumentController::class, 'createSimpleInvoice'])->name('documents.createSimpleInvoice');
 Route::get('/documents/{document}/edit', [DocumentController::class, 'edit'])->name('documents.edit');
+Route::get('/documents/{document}/ai', [DocumentController::class, 'ai'])->name('documents.ai');
+Route::get('/documents/{document}/guided', [DocumentController::class, 'guided'])->name('documents.guided');
 Route::get('/documents/{document}/fullscreen', [DocumentController::class, 'fullscreen'])->name('documents.fullscreen');
 Route::get('/documents/{document}/edit-extracted', [DocumentController::class, 'editExtractedText'])->name('documents.editExtracted');
 Route::get('/documents/{document}/file', [DocumentController::class, 'file'])->name('documents.file');

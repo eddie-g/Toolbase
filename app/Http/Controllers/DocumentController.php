@@ -197,12 +197,9 @@ class DocumentController extends Controller
         );
         exec($fontCommand);
 
-        $editUrl = route('documents.edit', $document);
-        if ($request->input('_guided')) {
-            $editUrl .= '?guided=1';
-            if ($validated['style'] ?? null) {
-                $editUrl .= '&style=' . urlencode($validated['style']);
-            }
+        $editUrl = route('documents.guided', $document);
+        if ($validated['style'] ?? null) {
+            $editUrl .= '?style=' . urlencode($validated['style']);
         }
 
         return redirect($editUrl)
@@ -376,6 +373,23 @@ class DocumentController extends Controller
     {
         return view('documents.edit', [
             'document' => $document,
+            'activeTab' => 'pdf-editor',
+        ]);
+    }
+
+    public function ai(Document $document)
+    {
+        return view('documents.edit', [
+            'document' => $document,
+            'activeTab' => 'extracted-text',
+        ]);
+    }
+
+    public function guided(Document $document)
+    {
+        return view('documents.edit', [
+            'document' => $document,
+            'activeTab' => 'guided-invoice',
         ]);
     }
 
