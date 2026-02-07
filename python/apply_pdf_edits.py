@@ -81,77 +81,57 @@ def apply_edits_to_pdf(pdf_path, edits_data):
             
             for edit in page_edits:
                 original_text = edit.get('original_text', '')
+                new_text = edit.get('new_text', '')
                 if not original_text or not original_text.strip():
                     continue
-                
-                # SEARCH & DESTROY: Let PyMuPDF find the text in the data stream
-                # This is more reliable than using frontend coordinates
-                text_instances = page.search_for(original_text)
-                
-                # CRITICAL: Filter search results to only the instance at the correct
-                # position. search_for() returns ALL instances on the page.
-                # For table data, the same value can appear in multiple cells.
+
+                # SKIP NO-OP EDITS
                 original_bbox = edit.get('original_bbox')
-                if text_instances and original_bbox and len(text_instances) > 1:
-                    ob = fitz.Rect(original_bbox)
-                    def rect_overlap_score(r):
-                        overlap = r & ob
-                        if overlap.is_empty:
-                            cx1, cy1 = (r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2
-                            cx2, cy2 = (ob.x0 + ob.x1) / 2, (ob.y0 + ob.y1) / 2
-                            return -((cx1 - cx2)**2 + (cy1 - cy2)**2)
-                        return overlap.get_area()
-                    best = max(text_instances, key=rect_overlap_score)
-                    print(f"    ℹ Filtered {len(text_instances)} instances → 1 nearest original_bbox")
-                    text_instances = [best]
-                
-                if text_instances:
-                    print(f"    Found {len(text_instances)} instance(s) of '{original_text[:30]}...'")
-                    search_success_count += 1
-                    
-                    for inst_rect in text_instances:
-                        # Expand slightly to ensure complete coverage
+                bbox = edit.get('bbox')
+                if original_text.strip() == new_text.strip() and original_bbox and bbox:
+                    pos_unchanged = (abs(original_bbox[0] - bbox[0]) < 2 and
+                                     abs(original_bbox[1] - bbox[1]) < 2 and
+                                     abs(original_bbox[2] - bbox[2]) < 2 and
+                                     abs(original_bbox[3] - bbox[3]) < 2)
+                    if pos_unchanged:
+                        print(f"    ⊘ Skipping no-op edit for '{original_text[:30]}...'")
+                        edit['_skip_insert'] = True
+                        continue
+
+                # PRIMARY: Use original_bbox for reliable scrub
+                if original_bbox:
+                    rect = fitz.Rect(
+                        original_bbox[0] - 1,
+                        original_bbox[1] - 1,
+                        original_bbox[2] + 1,
+                        original_bbox[3] + 1
+                    )
+                    overlaps_image = any(rect.intersects(img_rect) for img_rect in image_rects)
+                    if overlaps_image:
+                        page.add_redact_annot(rect, fill=None)
+                        image_overlap_count += 1
+                    else:
+                        page.add_redact_annot(rect, fill=(1, 1, 1))
+                    redaction_count += 1
+                    print(f"    ✓ Redacting '{original_text[:30]}...' via original_bbox")
+                else:
+                    # FALLBACK: No original_bbox — try search_for
+                    text_instances = page.search_for(original_text)
+                    if text_instances:
+                        inst_rect = text_instances[0]
                         expanded_rect = fitz.Rect(
-                            inst_rect.x0 - 1,
-                            inst_rect.y0 - 1,
-                            inst_rect.x1 + 1,
-                            inst_rect.y1 + 1
+                            inst_rect.x0 - 1, inst_rect.y0 - 1,
+                            inst_rect.x1 + 1, inst_rect.y1 + 1
                         )
-                        
-                        # IMAGE-AWARE REDACTION:
-                        # Check if this instance overlaps an image
                         overlaps_image = any(expanded_rect.intersects(img_rect) for img_rect in image_rects)
-                        
                         if overlaps_image:
-                            # Over image: Remove text WITHOUT painting white rectangle
                             page.add_redact_annot(expanded_rect, fill=None)
                             image_overlap_count += 1
                         else:
-                            # Not over image: Use white fill for clean removal
                             page.add_redact_annot(expanded_rect, fill=(1, 1, 1))
-                        
-                        redaction_count += 1
-                else:
-                    # Fallback: If search fails, try using original_bbox as last resort
-                    original_bbox = edit.get('original_bbox')
-                    if original_bbox:
-                        print(f"    ⚠ Search failed for '{original_text[:30]}...', using original_bbox fallback")
-                        rect = fitz.Rect(
-                            original_bbox[0] - 1,
-                            original_bbox[1] - 1,
-                            original_bbox[2] + 1,
-                            original_bbox[3] + 1
-                        )
-                        
-                        overlaps_image = any(rect.intersects(img_rect) for img_rect in image_rects)
-                        if overlaps_image:
-                            page.add_redact_annot(rect, fill=None)
-                            image_overlap_count += 1
-                        else:
-                            page.add_redact_annot(rect, fill=(1, 1, 1))
                         redaction_count += 1
                     else:
-                        print(f"    ✗ Cannot redact '{original_text[:30]}...' - not found and no bbox provided")
+                        print(f"    ✗ Cannot redact '{original_text[:30]}...' - no original_bbox and search failed")
             
             # Apply all redactions at once to physically purge the character streams
             page.apply_redactions()
@@ -167,6 +147,11 @@ def apply_edits_to_pdf(pdf_path, edits_data):
             page = doc[page_num - 1]
             
             for edit in page_edits:
+                # Skip no-op edits (flagged in Phase A)
+                if edit.get('_skip_insert'):
+                    print(f"    - Skipping no-op edit (text unchanged)")
+                    continue
+
                 new_text = edit.get('new_text', '')
                 if not new_text or not new_text.strip():
                     print(f"    - Skipping empty text (deletion)")

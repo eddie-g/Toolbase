@@ -9840,6 +9840,24 @@
                 for (const [key, editData] of overlayEditedFields.entries()) {
                     console.log('Preparing edit:', key, editData);
                     
+                    // SKIP NO-OP EDITS: If text is unchanged and position hasn't moved,
+                    // don't send to server at all. This prevents duplication bugs where
+                    // the scrub phase fails to remove old text and insertion adds a copy.
+                    const origText = String(editData.original_text || '').trim();
+                    const newText = String(editData.new_text || '').trim();
+                    if (origText === newText && editData.original_bbox && editData.bbox) {
+                        const ob = editData.original_bbox;
+                        const nb = editData.bbox;
+                        const posUnchanged = Math.abs(ob[0] - nb[0]) < 2 &&
+                                             Math.abs(ob[1] - nb[1]) < 2 &&
+                                             Math.abs(ob[2] - nb[2]) < 2 &&
+                                             Math.abs(ob[3] - nb[3]) < 2;
+                        if (posUnchanged) {
+                            console.log('Skipping no-op edit (text & position unchanged):', key);
+                            continue;
+                        }
+                    }
+                    
                     // Ensure color has # prefix
                     let color = editData.color || '#000000';
                     if (!color.startsWith('#')) {

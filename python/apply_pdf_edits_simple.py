@@ -408,166 +408,67 @@ def apply_edits(pdf_path, edits_json):
         page = doc[page_num - 1]
         
         redaction_count = 0
-        search_success_count = 0
 
         for edit in page_edits:
             original_text = edit.get('original_text', '')
-            if not original_text or not original_text.strip():
-                continue
-            
-            # Get the ORIGINAL bbox - where the text USED TO BE
+            new_text = edit.get('new_text', '')
             original_bbox = edit.get('original_bbox')
             edit_font_size = edit.get('font_size', 12)
-            
-            # SEARCH & DESTROY: Let PyMuPDF find the text in the data stream
-            # This is more reliable than using frontend coordinates
-            text_instances = page.search_for(original_text)
-            
-            # CRITICAL: Filter search results to only the instance at the correct
-            # position. search_for() returns ALL instances of the text on the page.
-            # For table data, the same value (e.g., "$2,500.00") can appear in
-            # multiple cells. We must only redact the one matching original_bbox.
-            if text_instances and original_bbox and len(text_instances) > 1:
-                ob = fitz.Rect(original_bbox)
-                def rect_overlap_score(r):
-                    """How much does this search result overlap with the original bbox?"""
-                    overlap = r & ob  # intersection
-                    if overlap.is_empty:
-                        # No overlap — use center distance as tiebreaker
-                        cx1, cy1 = (r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2
-                        cx2, cy2 = (ob.x0 + ob.x1) / 2, (ob.y0 + ob.y1) / 2
-                        return -((cx1 - cx2)**2 + (cy1 - cy2)**2)  # negative = farther is worse
-                    return overlap.get_area()
-                
-                # Pick the single best match (highest overlap or nearest center)
-                best = max(text_instances, key=rect_overlap_score)
-                print(f"  ℹ Filtered {len(text_instances)} instances → 1 nearest original_bbox")
-                text_instances = [best]
-            
-            # If exact search fails, try searching for individual words
-            # This handles PDFs where "Drylab News" is split into separate spans
-            # BUT: Only do word-by-word for SHORT text (single line) to avoid matching
-            # text from other locations on the page
-            if not text_instances and ' ' in original_text:
-                # Only use word-by-word for short text (roughly 1-2 lines)
-                word_count = len(original_text.split())
-                if word_count <= 10:  # Short text, safe to search by words
-                    print(f"  Exact search failed for '{original_text[:30]}...', trying word-by-word")
-                    words = original_text.split()
-                    all_word_rects = []
-                    for word in words:
-                        if len(word) >= 2:  # Skip very short words
-                            word_rects = page.search_for(word)
-                            # Filter to only rects near the original_bbox if available
-                            if word_rects and original_bbox:
-                                ob = fitz.Rect(original_bbox)
-                                for wr in word_rects:
-                                    # Must be within vertical AND horizontal range of original bbox
-                                    vert_ok = abs(wr.y0 - ob.y0) < 20  # Within 20pt vertically
-                                    horiz_ok = wr.x0 >= (ob.x0 - 20) and wr.x1 <= (ob.x1 + 20)
-                                    if vert_ok and horiz_ok:
-                                        all_word_rects.append(wr)
-                            elif word_rects:
-                                all_word_rects.extend(word_rects)
-                    if all_word_rects:
-                        text_instances = all_word_rects
-                        print(f"    Found {len(text_instances)} word rect(s) via word-by-word search")
-                else:
-                    # For long multi-line text blocks, skip word search - too risky
-                    # We'll fall back to original_bbox below
-                    print(f"  Exact search failed for multi-line text ({word_count} words), using bbox fallback")
-            
-            if text_instances:
-                print(f"  Found {len(text_instances)} instance(s) of '{original_text[:30]}...'")
-                search_success_count += 1
-                
-                for inst_rect in text_instances:
-                    # CRITICAL FIX: search_for() returns rects that include descender space.
-                    # This can cause accidental deletion of adjacent text below.
-                    #
-                    # We constrain the rect height to just the font_size (main text body).
-                    # This excludes the descender area where other text might be placed.
-                    # Using y0 + font_size gives us the baseline + ascender area only.
-                    max_height = edit_font_size  # Just the font size, no descender space
-                    actual_height = inst_rect.y1 - inst_rect.y0
-                    
-                    if actual_height > max_height:
-                        # The rect extends into descender space - constrain it
-                        print(f"    ⚠ Constraining rect height: {actual_height:.1f} → {max_height:.1f} (font_size={edit_font_size})")
-                        constrained_y1 = inst_rect.y0 + max_height
-                    else:
-                        constrained_y1 = inst_rect.y1
-                    
-                    # Expand slightly to ensure complete coverage
+
+            # Skip entirely empty original text — nothing to remove
+            if not original_text or not original_text.strip():
+                continue
+
+            # SKIP NO-OP EDITS: If text is identical and position hasn't moved,
+            # there's nothing to scrub or re-insert. This prevents duplication.
+            bbox = edit.get('bbox')
+            if original_text.strip() == new_text.strip() and original_bbox and bbox:
+                # Check if position essentially unchanged (within 2pt tolerance)
+                pos_unchanged = (abs(original_bbox[0] - bbox[0]) < 2 and
+                                 abs(original_bbox[1] - bbox[1]) < 2 and
+                                 abs(original_bbox[2] - bbox[2]) < 2 and
+                                 abs(original_bbox[3] - bbox[3]) < 2)
+                if pos_unchanged:
+                    print(f"  ⊘ Skipping no-op edit for '{original_text[:30]}...' (text & position unchanged)")
+                    edit['_skip_insert'] = True  # Flag to skip Phase B too
+                    continue
+
+            # PRIMARY SCRUB METHOD: Use original_bbox directly.
+            # This is the most reliable approach because:
+            # 1. search_for() fails for multi-line text
+            # 2. search_for() can match text at WRONG locations (duplicates)
+            # 3. original_bbox is the exact known location from extraction data
+            if original_bbox:
+                rect = fitz.Rect(
+                    original_bbox[0] - 1,
+                    original_bbox[1] - 1,
+                    original_bbox[2] + 1,
+                    original_bbox[3] + 1
+                )
+                page.add_redact_annot(rect, fill=None)
+                redaction_count += 1
+                print(f"  ✓ Redacting '{original_text[:30]}...' via original_bbox [{original_bbox[0]:.0f},{original_bbox[1]:.0f},{original_bbox[2]:.0f},{original_bbox[3]:.0f}]")
+            else:
+                # FALLBACK: No original_bbox — try search_for for single-line text only
+                text_instances = page.search_for(original_text)
+                if text_instances:
+                    # Only use the first/best match
+                    inst_rect = text_instances[0]
                     expanded_rect = fitz.Rect(
                         inst_rect.x0 - 1,
                         inst_rect.y0 - 1,
                         inst_rect.x1 + 1,
-                        constrained_y1 + 1
+                        inst_rect.y1 + 1
                     )
-                    
-                    # BACKGROUND PRESERVATION RULE:
-                    # ALWAYS use fill=None for redactions!
-                    # - fill=None removes text "ink" without adding any fill color
-                    # - This preserves whatever is behind the text (images, colored backgrounds, patterns)
-                    # - Using fill=(1,1,1) creates visible white boxes on non-white backgrounds
-                    # - The new text will be overlaid on top anyway
                     page.add_redact_annot(expanded_rect, fill=None)
-                    
                     redaction_count += 1
-            elif original_bbox:
-                # Fallback: If search fails, use original_bbox directly
-                print(f"  ⚠ Search failed for '{original_text[:30]}...', using original_bbox fallback")
-                
-                # For bbox fallback, determine if this is a single-line or multi-line block
-                # Single-line: constrain to font_size to avoid catching descenders
-                # Multi-line: use full bbox height (the text block spans multiple lines)
-                edit_font_size = edit.get('font_size', 12)
-                actual_height = original_bbox[3] - original_bbox[1]
-                
-                # Estimate number of lines based on height vs font size
-                estimated_lines = actual_height / (edit_font_size * 1.2) if edit_font_size else 1
-                
-                if estimated_lines <= 1.5:
-                    # Single line: constrain to font_size to avoid descender issues
-                    max_height = edit_font_size
-                    if actual_height > max_height:
-                        print(f"    ⚠ Constraining single-line bbox height: {actual_height:.1f} → {max_height:.1f}")
-                        constrained_y1 = original_bbox[1] + max_height
-                    else:
-                        constrained_y1 = original_bbox[3]
-                    
-                    rect = fitz.Rect(
-                        original_bbox[0] - 1,
-                        original_bbox[1] - 1,
-                        original_bbox[2] + 1,
-                        constrained_y1 + 1
-                    )
+                    print(f"  ✓ Redacting '{original_text[:30]}...' via search_for (no original_bbox)")
                 else:
-                    # Multi-line text block: expand minimally to ensure coverage
-                    # CRITICAL: Do NOT over-expand right side - in multi-column layouts
-                    # a large expansion wipes out text from adjacent columns!
-                    # The original_bbox from the frontend already captures the block bounds.
-                    print(f"    ℹ Multi-line block ({estimated_lines:.1f} lines), using bbox with minimal expansion")
-                    rect = fitz.Rect(
-                        original_bbox[0] - 2,
-                        original_bbox[1] - 2,
-                        original_bbox[2] + 2,   # Minimal expansion - do NOT extend into adjacent columns
-                        original_bbox[3] + 2
-                    )
-                
-                # BACKGROUND PRESERVATION RULE: Always use fill=None
-                # This removes text without adding white boxes over colored backgrounds
-                page.add_redact_annot(rect, fill=None)
-                redaction_count += 1
-            else:
-                print(f"  ✗ Cannot redact '{original_text[:30]}...' - not found and no original_bbox")
+                    print(f"  ✗ Cannot redact '{original_text[:30]}...' - no original_bbox and search failed")
 
-        # Apply ALL redactions for this page at once to physically purge character streams
-        # ALWAYS use images=0 to preserve underlying images when removing text
-        # Combined with fill=None, this removes only the text ink layer
+        # Apply ALL redactions for this page at once
         page.apply_redactions(images=0)
-        print(f"  ✓ Scrubbed {redaction_count} original locations ({search_success_count} by search) [fill=None, images=0]")
+        print(f"  ✓ Scrubbed {redaction_count} locations [fill=None, images=0]")
 
     print("\n" + "="*50)
     print("PHASE B (INSERTION): Overlaying text at NEW locations")
@@ -584,6 +485,10 @@ def apply_edits(pdf_path, edits_json):
         page = doc[page_num - 1]
 
         for edit in page_edits:
+            # Skip no-op edits flagged in Phase A
+            if edit.get('_skip_insert'):
+                continue
+
             new_text = (edit.get('new_text') or '')
             new_text = normalize_smart_quotes(new_text)
             if not new_text and not edit.get('rich_html'):
