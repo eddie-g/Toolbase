@@ -33,6 +33,7 @@ Route::post('/documents/{document}/match-fonts', [DocumentController::class, 'ma
 Route::post('/documents/{document}/reorder-pages', [DocumentController::class, 'reorderPages'])->name('documents.reorderPages');
 Route::post('/documents/{document}/add-blank-page', [DocumentController::class, 'addBlankPage'])->name('documents.addBlankPage');
 Route::post('/documents/{document}/rotate-page', [DocumentController::class, 'rotatePage'])->name('documents.rotatePage');
+Route::post('/documents/{document}/regenerate-invoice', [DocumentController::class, 'regenerateInvoice'])->name('documents.regenerateInvoice');
 Route::post('/documents/{document}/screenshot', [DocumentController::class, 'takeScreenshot'])->name('documents.takeScreenshot');
 Route::get('/loaded-fonts.css', function() {
     $path = storage_path('app/public/loaded_fonts.css');

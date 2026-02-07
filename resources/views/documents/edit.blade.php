@@ -320,6 +320,10 @@
             .tab-content.active {
                 display: block;
             }
+            #guided-invoice {
+                overflow-y: auto;
+                background: #f3f4f6;
+            }
             header a {
                 color: var(--muted);
                 text-decoration: none;
@@ -2294,6 +2298,9 @@
             @keyframes spin {
                 to { transform: rotate(360deg); }
             }
+            .spin-icon {
+                animation: spin 1s linear infinite;
+            }
             .hint {
                 margin-top: 12px;
                 color: var(--muted);
@@ -2742,6 +2749,12 @@
                     </svg>
                     AI
                 </button>
+                <button class="tab-btn flex items-center gap-2.5 py-3.5 text-base font-medium text-gray-400 border-b-2 border-transparent hover:text-white -mb-px transition-all duration-200" data-tab="guided-invoice" id="guided-invoice-tab">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path>
+                    </svg>
+                    Guided
+                </button>
             </div>
         </nav>
         
@@ -3057,6 +3070,143 @@
                 <div class="viewer" id="ai-viewer"></div>
             </main>
         </div>
+        </div>
+
+        <!-- Guided Invoice Builder Tab -->
+        <div class="tab-content" id="guided-invoice">
+            <div style="max-width: 820px; margin: 0 auto; padding: 32px 16px 64px;">
+                <!-- Invoice Card -->
+                <div id="guided-invoice-card" style="background: #fff; border-radius: 12px; box-shadow: 0 1px 8px rgba(0,0,0,0.08); padding: 40px 48px; color: #1f2937; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;">
+
+                    <!-- Top Row: Company Info + Logo Upload -->
+                    <div style="display: flex; gap: 24px; margin-bottom: 8px;">
+                        <!-- Company Info Box -->
+                        <div style="flex: 1; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px;">
+                            <input id="gi-company-name" type="text" value="Your Company Inc." placeholder="Your Company Inc." style="width:100%; border:none; font-size:16px; font-weight:600; color:#1f2937; outline:none; margin-bottom:4px; background:transparent;">
+                            <input id="gi-company-addr1" type="text" value="1234 Company St." placeholder="Address line 1" style="width:100%; border:none; font-size:13px; color:#6b7280; outline:none; margin-bottom:2px; background:transparent;">
+                            <input id="gi-company-addr2" type="text" value="Company Town ST 12345" placeholder="City, State ZIP" style="width:100%; border:none; font-size:13px; color:#6b7280; outline:none; background:transparent;">
+                        </div>
+                        <!-- Logo Upload -->
+                        <div style="flex: 1; border: 1px solid #e5e7eb; border-radius: 8px; display: flex; align-items: center; justify-content: center; min-height: 100px; cursor: pointer; position: relative; overflow: hidden;" id="gi-logo-area">
+                            <div id="gi-logo-placeholder" style="text-align: center; color: #9ca3af;">
+                                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin: 0 auto 6px; display: block; color: #9ca3af;">
+                                    <path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                                </svg>
+                                <span style="font-size: 14px; font-weight: 500;">Upload Logo</span>
+                            </div>
+                            <img id="gi-logo-preview" src="" style="display:none; max-width:100%; max-height:100%; object-fit:contain; padding:8px;">
+                            <input type="file" id="gi-logo-input" accept="image/*" style="position:absolute; inset:0; opacity:0; cursor:pointer;">
+                        </div>
+                    </div>
+
+                    <!-- INVOICE Title -->
+                    <div style="text-align: right; margin-bottom: 24px;">
+                        <span style="font-size: 36px; font-weight: 800; color: #1f2937; letter-spacing: 4px;">INVOICE</span>
+                    </div>
+
+                    <!-- Bill To + Invoice Details Row -->
+                    <div style="display: flex; gap: 24px; margin-bottom: 32px;">
+                        <!-- Bill To -->
+                        <div style="flex: 1;">
+                            <div style="font-size: 12px; font-weight: 700; color: #1f2937; text-transform: uppercase; margin-bottom: 8px;">Bill To</div>
+                            <div style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px;">
+                                <input id="gi-customer-name" type="text" value="Customer Name" placeholder="Customer Name" style="width:100%; border:none; font-size:15px; font-weight:500; color:#1f2937; outline:none; margin-bottom:4px; background:transparent;">
+                                <input id="gi-customer-addr1" type="text" value="1234 Customer St." placeholder="Address line 1" style="width:100%; border:none; font-size:13px; color:#6b7280; outline:none; margin-bottom:2px; background:transparent;">
+                                <input id="gi-customer-addr2" type="text" value="Customer Town ST 12345" placeholder="City, State ZIP" style="width:100%; border:none; font-size:13px; color:#6b7280; outline:none; background:transparent;">
+                            </div>
+                        </div>
+                        <!-- Invoice Details -->
+                        <div style="flex: 1;">
+                            <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 24px;">
+                                <div style="display: flex; align-items: center; justify-content: flex-end; gap: 12px;">
+                                    <span style="font-size: 13px; font-weight: 600; color: #374151;">Invoice #</span>
+                                    <input id="gi-invoice-num" type="text" value="0001001" style="width: 140px; border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px 10px; font-size: 13px; color: #1f2937; text-align: right; outline:none;">
+                                </div>
+                                <div style="display: flex; align-items: center; justify-content: flex-end; gap: 12px;">
+                                    <span style="font-size: 13px; font-weight: 600; color: #374151;">Invoice Date</span>
+                                    <input id="gi-invoice-date" type="text" value="{{ date('m-d-Y') }}" style="width: 140px; border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px 10px; font-size: 13px; color: #1f2937; text-align: right; outline:none;">
+                                </div>
+                                <div style="display: flex; align-items: center; justify-content: flex-end; gap: 12px;">
+                                    <span style="font-size: 13px; font-weight: 600; color: #374151;">Due Date</span>
+                                    <input id="gi-due-date" type="text" value="{{ date('m-d-Y', strtotime('+14 days')) }}" style="width: 140px; border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px 10px; font-size: 13px; color: #1f2937; text-align: right; outline:none;">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Line Items Table -->
+                    <table style="width: 100%; border-collapse: collapse; margin-bottom: 0;" id="gi-line-items-table">
+                        <thead>
+                            <tr style="background: #1f2937; color: white;">
+                                <th style="padding: 10px 14px; text-align: left; font-size: 12px; font-weight: 700; text-transform: uppercase; border-radius: 6px 0 0 0; width: 60px;">QTY</th>
+                                <th style="padding: 10px 14px; text-align: left; font-size: 12px; font-weight: 700; text-transform: uppercase;">Description</th>
+                                <th style="padding: 10px 14px; text-align: right; font-size: 12px; font-weight: 700; text-transform: uppercase; width: 130px;">Unit Price</th>
+                                <th style="padding: 10px 14px; text-align: right; font-size: 12px; font-weight: 700; text-transform: uppercase; border-radius: 0 6px 0 0; width: 110px;">Amount</th>
+                                <th style="width: 36px; background: transparent;"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="gi-line-items-body">
+                            <!-- Rows added by JS -->
+                        </tbody>
+                    </table>
+
+                    <!-- Add Buttons -->
+                    <div style="display: flex; gap: 10px; margin: 14px 0 20px;">
+                        <button type="button" id="gi-add-line-item" style="background: #166534; color: white; font-size: 13px; font-weight: 600; padding: 8px 16px; border-radius: 8px; border: none; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+                            Add Line Item
+                        </button>
+                        <button type="button" id="gi-add-discount" style="background: transparent; color: #166534; font-size: 13px; font-weight: 600; padding: 8px 16px; border-radius: 8px; border: 1px solid #166534; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+                            Add Discount
+                        </button>
+                    </div>
+
+                    <!-- Discount Row (hidden by default) -->
+                    <div id="gi-discount-row" style="display: none; margin-bottom: 16px;">
+                        <div style="display: flex; gap: 12px; align-items: flex-end;">
+                            <div style="flex: 2;">
+                                <label style="font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase; display: block; margin-bottom: 4px;">Discount Label</label>
+                                <input id="gi-discount-label" type="text" placeholder="e.g. 10% Early-pay Discount" style="width:100%; border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px 10px; font-size: 13px; color: #1f2937; outline: none;">
+                            </div>
+                            <div style="flex: 1;">
+                                <label style="font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase; display: block; margin-bottom: 4px;">Amount ($)</label>
+                                <input id="gi-discount-amount" type="number" value="0" min="0" step="0.01" style="width:100%; border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px 10px; font-size: 13px; color: #1f2937; outline: none;">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Totals -->
+                    <div style="display: flex; justify-content: flex-end;">
+                        <div style="min-width: 280px; border-top: 2px solid #1f2937; padding-top: 10px;">
+                            <div style="display: flex; justify-content: space-between; padding: 6px 0; font-size: 15px; font-weight: 600; color: #1f2937;">
+                                <span>Total (USD)</span>
+                                <span id="gi-total-display">$0.00</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Divider -->
+                    <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 28px 0 20px;">
+
+                    <!-- Terms & Conditions -->
+                    <div style="margin-bottom: 16px;">
+                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
+                            <span style="font-size: 13px; font-weight: 700; color: #1f2937;">Terms and Conditions</span>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6b7280" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12h8M12 8v8"/></svg>
+                        </div>
+                        <textarea id="gi-terms" rows="4" placeholder="Payment instructions, etc." style="width: 100%; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 14px; font-size: 13px; color: #6b7280; outline: none; resize: vertical; font-family: inherit; min-height: 80px;">Payment instructions, etc.</textarea>
+                    </div>
+
+                    <!-- Save Button -->
+                    <div style="display: flex; justify-content: flex-end; margin-top: 24px;">
+                        <button type="button" id="gi-save-btn" style="background: #059669; color: white; font-size: 15px; font-weight: 700; padding: 12px 32px; border-radius: 10px; border: none; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.15s;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                            Save &amp; Generate PDF
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <div class="floating-zoom-bar" id="floating-zoom-bar">
@@ -13849,7 +13999,7 @@
                     if (tabId === 'pdf-editor') {
                         if (pdfModeBar) pdfModeBar.style.display = '';
                         if (selectionToolbar) selectionToolbar.style.display = '';
-                    } else if (tabId === 'extracted-text') {
+                    } else if (tabId === 'extracted-text' || tabId === 'guided-invoice') {
                         if (pdfModeBar) pdfModeBar.style.display = 'none';
                         if (selectionToolbar) selectionToolbar.style.display = 'none';
                     }
@@ -16307,6 +16457,196 @@
                     }
                 });
             }
+
+            // ─── Guided Invoice Builder ──────────────────────────────────────
+            (function guidedInvoiceInit() {
+                const lineItemsBody = document.getElementById('gi-line-items-body');
+                const addLineBtn = document.getElementById('gi-add-line-item');
+                const addDiscountBtn = document.getElementById('gi-add-discount');
+                const discountRow = document.getElementById('gi-discount-row');
+                const discountAmountInput = document.getElementById('gi-discount-amount');
+                const totalDisplay = document.getElementById('gi-total-display');
+                const saveBtn = document.getElementById('gi-save-btn');
+                const logoArea = document.getElementById('gi-logo-area');
+                const logoInput = document.getElementById('gi-logo-input');
+                const logoPreview = document.getElementById('gi-logo-preview');
+                const logoPlaceholder = document.getElementById('gi-logo-placeholder');
+
+                if (!lineItemsBody) return; // Safety
+
+                let lineItemIndex = 0;
+
+                function createLineItemRow(qty, desc, price) {
+                    const tr = document.createElement('tr');
+                    tr.style.borderBottom = '1px solid #f3f4f6';
+                    tr.dataset.lineItem = 'true';
+                    const idx = lineItemIndex++;
+                    tr.innerHTML = `
+                        <td style="padding:10px 14px;">
+                            <input type="number" class="gi-qty" value="${qty}" min="0" step="1"
+                                   style="width:100%; border:1px solid #e5e7eb; border-radius:5px; padding:6px 8px; font-size:13px; text-align:center; outline:none; background:#fff; color:#1f2937;">
+                        </td>
+                        <td style="padding:10px 14px;">
+                            <input type="text" class="gi-desc" value="${desc}" placeholder="Item description"
+                                   style="width:100%; border:1px solid #e5e7eb; border-radius:5px; padding:6px 8px; font-size:13px; outline:none; background:#fff; color:#1f2937;">
+                        </td>
+                        <td style="padding:10px 14px;">
+                            <input type="number" class="gi-unit-price" value="${price}" min="0" step="0.01"
+                                   style="width:100%; border:1px solid #e5e7eb; border-radius:5px; padding:6px 8px; font-size:13px; text-align:right; outline:none; background:#fff; color:#1f2937;">
+                        </td>
+                        <td style="padding:10px 14px; text-align:right; font-size:14px; font-weight:500; color:#1f2937;" class="gi-amount">
+                            $0.00
+                        </td>
+                        <td style="padding:6px 4px; vertical-align:middle;">
+                            <button type="button" class="gi-remove-row" style="background:none; border:none; cursor:pointer; color:#9ca3af; font-size:18px; padding:4px;" title="Remove">
+                                &times;
+                            </button>
+                        </td>
+                    `;
+                    // Events
+                    tr.querySelector('.gi-qty').addEventListener('input', recalcAll);
+                    tr.querySelector('.gi-unit-price').addEventListener('input', recalcAll);
+                    tr.querySelector('.gi-remove-row').addEventListener('click', () => {
+                        tr.remove();
+                        recalcAll();
+                    });
+                    return tr;
+                }
+
+                function recalcAll() {
+                    let subtotal = 0;
+                    lineItemsBody.querySelectorAll('tr[data-line-item]').forEach(tr => {
+                        const qty = parseFloat(tr.querySelector('.gi-qty').value) || 0;
+                        const price = parseFloat(tr.querySelector('.gi-unit-price').value) || 0;
+                        const amount = qty * price;
+                        tr.querySelector('.gi-amount').textContent = '$' + amount.toFixed(2);
+                        subtotal += amount;
+                    });
+                    const discount = parseFloat(discountAmountInput.value) || 0;
+                    const total = Math.max(subtotal - discount, 0);
+                    totalDisplay.textContent = '$' + total.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+                }
+
+                // Add first row
+                lineItemsBody.appendChild(createLineItemRow(1, '', 0));
+                recalcAll();
+
+                addLineBtn.addEventListener('click', () => {
+                    lineItemsBody.appendChild(createLineItemRow(1, '', 0));
+                });
+
+                addDiscountBtn.addEventListener('click', () => {
+                    discountRow.style.display = discountRow.style.display === 'none' ? '' : 'none';
+                });
+                discountAmountInput.addEventListener('input', recalcAll);
+
+                // Logo upload
+                logoInput.addEventListener('change', (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                        logoPreview.src = ev.target.result;
+                        logoPreview.style.display = '';
+                        logoPlaceholder.style.display = 'none';
+                    };
+                    reader.readAsDataURL(file);
+                });
+
+                // Save & Generate PDF
+                saveBtn.addEventListener('click', async () => {
+                    const items = [];
+                    lineItemsBody.querySelectorAll('tr[data-line-item]').forEach(tr => {
+                        items.push({
+                            qty: parseFloat(tr.querySelector('.gi-qty').value) || 0,
+                            description: tr.querySelector('.gi-desc').value || '',
+                            unit_price: parseFloat(tr.querySelector('.gi-unit-price').value) || 0,
+                        });
+                    });
+
+                    const companyAddr = [
+                        document.getElementById('gi-company-addr1').value,
+                        document.getElementById('gi-company-addr2').value,
+                    ].filter(Boolean).join('\n');
+
+                    const customerAddr = [
+                        document.getElementById('gi-customer-addr1').value,
+                        document.getElementById('gi-customer-addr2').value,
+                    ].filter(Boolean).join('\n');
+
+                    const payload = {
+                        company_name: document.getElementById('gi-company-name').value,
+                        company_address: companyAddr,
+                        customer_name: document.getElementById('gi-customer-name').value,
+                        customer_address: customerAddr,
+                        invoice_number: document.getElementById('gi-invoice-num').value,
+                        invoice_date: document.getElementById('gi-invoice-date').value,
+                        due_date: document.getElementById('gi-due-date').value,
+                        items: items,
+                        discount_label: document.getElementById('gi-discount-label')?.value || '',
+                        discount_amount: parseFloat(discountAmountInput.value) || 0,
+                        terms: document.getElementById('gi-terms').value,
+                    };
+
+                    saveBtn.disabled = true;
+                    saveBtn.innerHTML = `
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin-icon">
+                            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+                        </svg>
+                        Generating…`;
+
+                    try {
+                        const docId = @json($document->id);
+                        const resp = await fetch(`/documents/${docId}/regenerate-invoice`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                                'Accept': 'application/json',
+                            },
+                            body: JSON.stringify(payload),
+                        });
+
+                        if (!resp.ok) {
+                            const err = await resp.json().catch(() => ({}));
+                            throw new Error(err.error || 'Generation failed');
+                        }
+
+                        // Refresh the PDF viewer
+                        pdfVersion = Date.now();
+                        await renderPdf();
+
+                        // Switch to the editor tab to show the result
+                        const editorTab = document.querySelector('[data-tab="pdf-editor"]');
+                        if (editorTab) {
+                            editorTab.click();
+                        }
+                        setStatus('Invoice generated successfully!', 'ok');
+                    } catch (err) {
+                        console.error('Invoice generation error:', err);
+                        alert('Error: ' + err.message);
+                    } finally {
+                        saveBtn.disabled = false;
+                        saveBtn.innerHTML = `
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/>
+                                <polyline points="17 21 17 13 7 13 7 21"/>
+                                <polyline points="7 3 7 8 15 8"/>
+                            </svg>
+                            Save &amp; Generate PDF`;
+                    }
+                });
+
+                // Auto-activate Guided tab if ?guided=1 in URL
+                const urlParams = new URLSearchParams(window.location.search);
+                if (urlParams.get('guided') === '1') {
+                    const guidedTabBtn = document.getElementById('guided-invoice-tab');
+                    if (guidedTabBtn) {
+                        setTimeout(() => guidedTabBtn.click(), 300);
+                    }
+                }
+            })();
+
         </script>
         
         <!-- Bootstrap 5.3.3 JS Bundle -->

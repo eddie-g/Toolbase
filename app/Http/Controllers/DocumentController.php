@@ -186,9 +186,75 @@ class DocumentController extends Controller
         );
         exec($fontCommand);
 
-        return redirect()
-            ->route('documents.edit', $document)
+        $editUrl = route('documents.edit', $document);
+        if ($request->input('_guided')) {
+            $editUrl .= '?guided=1';
+        }
+
+        return redirect($editUrl)
             ->with('status', 'Invoice created. Customize it below.');
+    }
+
+    /**
+     * Regenerate the invoice PDF in-place from the guided form.
+     */
+    public function regenerateInvoice(Request $request, Document $document)
+    {
+        $validated = $request->validate([
+            'company_name'     => ['nullable', 'string', 'max:200'],
+            'company_address'  => ['nullable', 'string', 'max:500'],
+            'customer_name'    => ['nullable', 'string', 'max:200'],
+            'customer_address' => ['nullable', 'string', 'max:500'],
+            'invoice_number'   => ['nullable', 'string', 'max:50'],
+            'invoice_date'     => ['nullable', 'string', 'max:30'],
+            'due_date'         => ['nullable', 'string', 'max:30'],
+            'items'            => ['nullable', 'array'],
+            'items.*.qty'         => ['nullable', 'numeric', 'min:0'],
+            'items.*.description' => ['nullable', 'string', 'max:200'],
+            'items.*.unit_price'  => ['nullable', 'numeric', 'min:0'],
+            'discount_label'   => ['nullable', 'string', 'max:100'],
+            'discount_amount'  => ['nullable', 'numeric', 'min:0'],
+            'terms'            => ['nullable', 'string', 'max:2000'],
+        ]);
+
+        $storedFull = Storage::path($document->path);
+
+        $payload = json_encode($validated, JSON_UNESCAPED_UNICODE);
+
+        $script = base_path('python/generate_simple_invoice.py');
+        $command = sprintf(
+            'echo %s | python3 %s %s 2>&1',
+            escapeshellarg($payload),
+            escapeshellarg($script),
+            escapeshellarg($storedFull)
+        );
+
+        $output = [];
+        $exitCode = 0;
+        exec($command, $output, $exitCode);
+
+        if ($exitCode !== 0) {
+            Log::error('Invoice regeneration failed', [
+                'output' => implode("\n", $output),
+                'exit_code' => $exitCode,
+            ]);
+            return response()->json(['error' => 'Failed to generate invoice.'], 500);
+        }
+
+        $document->update([
+            'size_bytes' => filesize($storedFull),
+        ]);
+
+        // Auto-download fonts
+        $fontScript = base_path('python/auto_download_fonts.py');
+        $fontCommand = sprintf(
+            'python3 %s %s > /dev/null 2>&1 &',
+            escapeshellarg($fontScript),
+            escapeshellarg($storedFull)
+        );
+        exec($fontCommand);
+
+        return response()->json(['success' => true]);
     }
 
     public function processOcr(Document $document)
