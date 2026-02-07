@@ -4209,7 +4209,9 @@
             }
 
             function updateSelectionBar() {
+                console.log('updateSelectionBar called - selectedAnnotation:', selectedAnnotation, 'selectedOverlayField:', selectedOverlayField);
                 if (!selectedAnnotation && !selectedOverlayField) {
+                    console.log('No selection, disabling toolbar');
                     if (selectionLabel) selectionLabel.textContent = 'No text selected';
                     if (selectionControls) selectionControls.classList.add('disabled');
                     if (selectedFont) {
@@ -4283,6 +4285,7 @@
                 }
 
                 if (selectedOverlayField) {
+                    console.log('Updating toolbar for overlay field');
                     const textEl = getOverlayTextElement(selectedOverlayField);
                     const styles = window.getComputedStyle(textEl);
                     if (selectedFont) selectedFont.disabled = false;
@@ -4296,6 +4299,7 @@
                     if (selectedAlign) selectedAlign.disabled = false;
                     if (selectedOpacity) selectedOpacity.disabled = false;
                     if (selectedDelete) selectedDelete.disabled = false;
+                    console.log('Toolbar controls enabled for overlay field');
 
                     if (selectedFont) {
                         const mappedFont = mapFontFamilyToKey(styles.fontFamily);
@@ -4341,12 +4345,14 @@
                 if (!field) {
                     return;
                 }
+                console.log('setOverlaySelection called with field:', field);
                 if (selectedAnnotation) {
                     setSelection(null);
                 }
                 clearOverlaySelection();
                 selectedOverlayField = field;
                 selectedOverlayField.classList.add('selected');
+                console.log('Calling updateSelectionBar from setOverlaySelection');
                 updateSelectionBar();
             }
 
