@@ -219,12 +219,12 @@ def _generate_bold_red(data, page, W, H):
     WHITE   = (1, 1, 1)
     BLACK   = (0.12, 0.12, 0.14)
     DARK    = (0.22, 0.22, 0.26)
-    GREY    = (0.42, 0.42, 0.46)
+    GREY    = (0.52, 0.52, 0.56)
     LGREY   = (0.72, 0.72, 0.74)
     RED     = (0.78, 0.18, 0.18)
-    RED_D   = (0.70, 0.14, 0.14)
+    RED_D   = (0.75, 0.16, 0.16)
     RED_L   = (0.99, 0.94, 0.94)
-    BORDER  = (0.84, 0.84, 0.86)
+    BORDER  = (0.88, 0.88, 0.88)
 
     M = 50
 
@@ -234,7 +234,7 @@ def _generate_bold_red(data, page, W, H):
     shape.finish(fill=WHITE, color=WHITE)
     shape.commit()
 
-    # -- Red header block --
+    # ── Red header block ──────────────────────────────────────
     hdr_h = 100
     shape = page.new_shape()
     shape.draw_rect(fitz.Rect(0, 0, W, hdr_h))
@@ -244,24 +244,27 @@ def _generate_bold_red(data, page, W, H):
     company_name = data.get("company_name", "Your Company Name")
     company_addr = data.get("company_address",
                             "123 Business Avenue, New York, NY 10001\n(555) 123-4567  |  billing@yourcompany.com")
-    page.insert_text(fitz.Point(M, 38), company_name,
-                     fontsize=20, fontname="helv", color=WHITE)
+
+    # Company name – large white, left
+    page.insert_text(fitz.Point(M, 42), company_name,
+                     fontsize=22, fontname="helv", color=WHITE)
+    # Company address lines – lighter pink, left
     for i, line in enumerate(company_addr.split("\n")[:3]):
-        page.insert_text(fitz.Point(M, 58 + i * 15), line.strip(),
-                         fontsize=9.5, fontname="helv", color=(0.95, 0.8, 0.8))
+        page.insert_text(fitz.Point(M, 62 + i * 15), line.strip(),
+                         fontsize=9, fontname="helv", color=(0.95, 0.8, 0.8))
 
-    # "INVOICE" label (right side, below header)
-    page.insert_text(fitz.Point(W - M - 152, hdr_h + 38), "INVOICE",
-                     fontsize=30, fontname="helv", color=RED)
+    # "INVOICE" – large white text, inside header, right side
+    page.insert_text(fitz.Point(W - M - 148, 55), "INVOICE",
+                     fontsize=32, fontname="helv", color=WHITE)
 
-    # -- Horizontal divider --
-    div_y = hdr_h + 56
+    # ── Horizontal divider below header ───────────────────────
+    div_y = hdr_h + 20
     shape = page.new_shape()
     shape.draw_line(fitz.Point(M, div_y), fitz.Point(W - M, div_y))
     shape.finish(color=LGREY, width=0.75)
     shape.commit()
 
-    # -- Bill To (left) --
+    # ── Bill To (left side) ───────────────────────────────────
     y_sect = div_y + 20
     page.insert_text(fitz.Point(M, y_sect), "BILL TO",
                      fontsize=9, fontname="helv", color=RED)
@@ -271,19 +274,19 @@ def _generate_bold_red(data, page, W, H):
     customer_addr = data.get("customer_address",
                              "456 Client Street\nLos Angeles, CA 90001")
     page.insert_text(fitz.Point(M, y_sect), customer_name,
-                     fontsize=13, fontname="helv", color=BLACK)
-    y_sect += 17
-    for i, line in enumerate(customer_addr.split("\n")[:3]):
+                     fontsize=12, fontname="helv", color=BLACK)
+    y_sect += 16
+    for i, line in enumerate(customer_addr.split("\n")[:4]):
         page.insert_text(fitz.Point(M, y_sect + i * 14), line.strip(),
                          fontsize=9.5, fontname="helv", color=GREY)
 
-    # -- Invoice meta (right) --
+    # ── Invoice meta (right side) ─────────────────────────────
     inv_number = data.get("invoice_number", "INV-2026-001")
-    inv_date   = data.get("invoice_date", "February 6, 2026")
-    due_date   = data.get("due_date", "March 8, 2026")
+    inv_date   = data.get("invoice_date", "February 3, 2026")
+    due_date   = data.get("due_date", "February 23, 2026")
 
     meta_label_x = W - M - 250
-    meta_val_x   = W - M - 120
+    meta_val_x   = W - M - 115
 
     meta_y = div_y + 20
     for i, (label, val) in enumerate([
@@ -291,37 +294,37 @@ def _generate_bold_red(data, page, W, H):
         ("Invoice Date", inv_date),
         ("Due Date", due_date),
     ]):
-        ry = meta_y + i * 24
+        ry = meta_y + i * 22
         page.insert_text(fitz.Point(meta_label_x, ry), label,
-                         fontsize=9, fontname="helv", color=RED)
+                         fontsize=9, fontname="helv", color=GREY)
         page.insert_text(fitz.Point(meta_val_x, ry), val,
                          fontsize=9, fontname="helv", color=DARK)
 
-    # -- Line-items table --
-    table_y = y_sect + 54
+    # ── Line-items table ──────────────────────────────────────
+    table_top = max(y_sect + 60, meta_y + 80)
     col_desc  = M
-    col_qty   = M + 250
-    col_price = M + 330
-    col_amt   = W - M - 72
+    col_qty   = M + 265
+    col_price = M + 340
+    col_amt   = W - M - 68
 
-    hdr_row_h = 28
+    hdr_row_h = 26
     shape = page.new_shape()
-    shape.draw_rect(fitz.Rect(M, table_y, W - M, table_y + hdr_row_h))
+    shape.draw_rect(fitz.Rect(M, table_top, W - M, table_top + hdr_row_h))
     shape.finish(fill=RED_D, color=RED_D)
     shape.commit()
 
-    page.insert_text(fitz.Point(col_desc + 10, table_y + 18), "Description",
+    page.insert_text(fitz.Point(col_desc + 10, table_top + 17), "Description",
                      fontsize=9, fontname="helv", color=WHITE)
-    page.insert_text(fitz.Point(col_qty + 16, table_y + 18), "Qty",
+    page.insert_text(fitz.Point(col_qty + 10, table_top + 17), "Qty",
                      fontsize=9, fontname="helv", color=WHITE)
-    page.insert_text(fitz.Point(col_price + 10, table_y + 18), "Unit Price",
+    page.insert_text(fitz.Point(col_price + 6, table_top + 17), "Unit Price",
                      fontsize=9, fontname="helv", color=WHITE)
-    page.insert_text(fitz.Point(col_amt + 4, table_y + 18), "Amount",
+    page.insert_text(fitz.Point(col_amt + 2, table_top + 17), "Amount",
                      fontsize=9, fontname="helv", color=WHITE)
 
     items = data.get("items", [])
-    row_h = 30
-    y = table_y + hdr_row_h
+    row_h = 28
+    y = table_top + hdr_row_h
     subtotal = 0.0
 
     for idx, item in enumerate(items):
@@ -331,54 +334,57 @@ def _generate_bold_red(data, page, W, H):
         amount = round(qty * price, 2)
         subtotal += amount
 
-        # Row background
-        bg = WHITE if idx % 2 == 0 else RED_L
+        # Row background – white base, faint border at bottom
         shape = page.new_shape()
         shape.draw_rect(fitz.Rect(M, y, W - M, y + row_h))
-        shape.finish(fill=bg, color=bg)
+        shape.finish(fill=WHITE, color=WHITE)
         shape.commit()
-
-        # Row bottom border
         shape = page.new_shape()
         shape.draw_line(fitz.Point(M, y + row_h), fitz.Point(W - M, y + row_h))
         shape.finish(color=BORDER, width=0.5)
         shape.commit()
 
         d = desc if len(desc) <= 42 else desc[:39] + "..."
-        page.insert_text(fitz.Point(col_desc + 10, y + 19), d,
+        page.insert_text(fitz.Point(col_desc + 10, y + 18), d,
                          fontsize=9.5, fontname="helv", color=DARK)
         qty_str = str(int(qty)) if qty == int(qty) else str(qty)
-        page.insert_text(fitz.Point(col_qty + 22, y + 19), qty_str,
+        page.insert_text(fitz.Point(col_qty + 18, y + 18), qty_str,
                          fontsize=9.5, fontname="helv", color=DARK)
-        page.insert_text(fitz.Point(col_price + 10, y + 19), _fmt(price),
+        page.insert_text(fitz.Point(col_price + 6, y + 18), _fmt(price) if price else "",
                          fontsize=9.5, fontname="helv", color=DARK)
-        page.insert_text(fitz.Point(col_amt + 4, y + 19), _fmt(amount),
+        page.insert_text(fitz.Point(col_amt + 2, y + 18), _fmt(amount),
                          fontsize=9.5, fontname="helv", color=DARK)
         y += row_h
 
-    # -- Subtotal / Tax / Total --
+    # bottom border of last row
+    shape = page.new_shape()
+    shape.draw_line(fitz.Point(M, y), fitz.Point(W - M, y))
+    shape.finish(color=BORDER, width=0.75)
+    shape.commit()
+
+    # ── Subtotal / Tax / Total Due ────────────────────────────
     discount_label  = data.get("discount_label", "")
     discount_amount = float(data.get("discount_amount", 0))
     tax_rate = 0.08
 
-    y += 18
-    label_x = col_price - 20
-    val_x   = col_amt + 4
+    y += 20
+    label_x = col_price - 30
+    val_x   = col_amt + 2
 
     # Subtotal
     page.insert_text(fitz.Point(label_x, y), "Subtotal",
                      fontsize=9.5, fontname="helv", color=GREY)
     page.insert_text(fitz.Point(val_x, y), _fmt(subtotal),
                      fontsize=9.5, fontname="helv", color=DARK)
-    y += 22
+    y += 20
 
-    # Discount
+    # Discount (if any)
     if discount_label and discount_amount > 0:
         page.insert_text(fitz.Point(label_x, y), discount_label,
-                         fontsize=9.5, fontname="helv", color=GREY)
+                         fontsize=9, fontname="helv", color=GREY)
         page.insert_text(fitz.Point(val_x, y), "-" + _fmt(discount_amount),
-                         fontsize=9.5, fontname="helv", color=RED)
-        y += 22
+                         fontsize=9, fontname="helv", color=RED)
+        y += 20
         subtotal -= discount_amount
 
     # Tax
@@ -387,12 +393,12 @@ def _generate_bold_red(data, page, W, H):
                      fontsize=9.5, fontname="helv", color=GREY)
     page.insert_text(fitz.Point(val_x, y), _fmt(tax),
                      fontsize=9.5, fontname="helv", color=DARK)
-    y += 26
+    y += 24
 
-    # TOTAL DUE red box
+    # TOTAL DUE – red bar
     total = max(round(subtotal + tax, 2), 0.0)
-    tot_box_h = 30
-    tot_box_w = 250
+    tot_box_h = 28
+    tot_box_w = 240
     tot_x = W - M - tot_box_w
 
     shape = page.new_shape()
@@ -400,14 +406,14 @@ def _generate_bold_red(data, page, W, H):
     shape.finish(fill=RED_D, color=RED_D)
     shape.commit()
 
-    page.insert_text(fitz.Point(tot_x + 16, y + 20), "TOTAL DUE",
+    page.insert_text(fitz.Point(tot_x + 14, y + 19), "TOTAL DUE",
                      fontsize=10, fontname="helv", color=WHITE)
-    page.insert_text(fitz.Point(val_x, y + 20), _fmt(total),
-                     fontsize=14, fontname="helv", color=WHITE)
+    page.insert_text(fitz.Point(val_x, y + 19), _fmt(total),
+                     fontsize=13, fontname="helv", color=WHITE)
 
-    y += tot_box_h + 34
+    y += tot_box_h + 36
 
-    # Terms
+    # ── Terms / Notes ─────────────────────────────────────────
     terms = data.get("terms", "") or data.get("notes", "")
     if terms:
         page.insert_text(fitz.Point(M, y), "Terms and Conditions",

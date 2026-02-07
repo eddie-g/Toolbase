@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Document;
+use App\Models\GuidedTemplate;
 use App\Models\PdfState;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -16,9 +17,13 @@ class DocumentController extends Controller
     public function index()
     {
         $documents = Document::latest()->get();
+        $guidedTemplates = GuidedTemplate::where('is_active', true)
+            ->orderBy('sort_order')
+            ->get();
 
         return view('documents.index', [
             'documents' => $documents,
+            'guidedTemplates' => $guidedTemplates,
         ]);
     }
 

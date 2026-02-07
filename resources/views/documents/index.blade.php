@@ -214,113 +214,35 @@
                 <h2 style="margin: 0 0 8px;">Guided Invoice Builder</h2>
                 <p style="margin: 0 0 24px; font-size: 14px;">Choose a template, then fill out the interactive invoice form in the editor.</p>
 
-                <div class="template-grid" style="grid-template-columns: repeat(2, 1fr);">
-
-                    {{-- Template 1 — Default (Clean) --}}
+                <div class="template-grid" style="grid-template-columns: repeat({{ min(count($guidedTemplates), 3) }}, 1fr);">
+                    @foreach ($guidedTemplates as $tpl)
                     <form action="{{ route('documents.createSimpleInvoice') }}" method="POST" style="margin:0;">
                         @csrf
-                        <input type="hidden" name="company_name" value="Your Company Inc.">
-                        <input type="hidden" name="company_address" value="1234 Company St.\nCompany Town ST 12345">
-                        <input type="hidden" name="customer_name" value="Customer Name">
-                        <input type="hidden" name="customer_address" value="1234 Customer St.\nCustomer Town ST 12345">
-                        <input type="hidden" name="invoice_number" value="0001001">
-                        <input type="hidden" name="invoice_date" value="{{ date('m-d-Y') }}">
-                        <input type="hidden" name="due_date" value="{{ date('m-d-Y', strtotime('+14 days')) }}">
-                        <input type="hidden" name="terms" value="">
-                        <input type="hidden" name="_guided" value="1">
+                        @php $defaults = $tpl->defaults ?? []; @endphp
+                        <input type="hidden" name="company_name"     value="{{ $defaults['company_name'] ?? 'Your Company Inc.' }}">
+                        <input type="hidden" name="company_address"  value="{{ $defaults['company_address'] ?? '' }}">
+                        <input type="hidden" name="customer_name"    value="{{ $defaults['customer_name'] ?? 'Customer Name' }}">
+                        <input type="hidden" name="customer_address" value="{{ $defaults['customer_address'] ?? '' }}">
+                        <input type="hidden" name="invoice_number"   value="{{ $defaults['invoice_number'] ?? '0001001' }}">
+                        <input type="hidden" name="invoice_date"     value="{{ date('m-d-Y') }}">
+                        <input type="hidden" name="due_date"         value="{{ date('m-d-Y', strtotime('+14 days')) }}">
+                        <input type="hidden" name="terms"            value="{{ $defaults['terms'] ?? '' }}">
+                        <input type="hidden" name="_guided"          value="1">
+                        @if ($tpl->slug !== 'default')
+                        <input type="hidden" name="style" value="{{ $tpl->slug }}">
+                        @endif
                         <button type="submit" class="tpl-card" style="background:rgba(255,255,255,0.04);font:inherit;color:inherit;padding:0;width:100%;text-align:left;border-radius:14px;">
                             <div class="tpl-preview">
-                                <svg viewBox="0 0 300 210" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                    <rect width="300" height="210" fill="#f8f9fa"/>
-                                    {{-- Dark header bar --}}
-                                    <rect y="0" width="300" height="3" fill="#1f2937"/>
-                                    {{-- Company name --}}
-                                    <rect x="24" y="20" width="120" height="10" rx="2" fill="#1f2937"/>
-                                    <rect x="24" y="34" width="90" height="5" rx="1" fill="#aaa"/>
-                                    {{-- INVOICE label --}}
-                                    <text x="210" y="29" font-size="12" fill="#1f2937" font-weight="bold" font-family="sans-serif">INVOICE</text>
-                                    {{-- Bill To block --}}
-                                    <rect x="24" y="58" width="40" height="5" rx="1" fill="#1f2937"/>
-                                    <rect x="24" y="68" width="80" height="6" rx="1" fill="#444"/>
-                                    <rect x="24" y="78" width="70" height="4" rx="1" fill="#bbb"/>
-                                    {{-- Table header --}}
-                                    <rect x="24" y="100" width="252" height="14" rx="2" fill="#1f2937"/>
-                                    <text x="30" y="110" font-size="6" fill="white" font-family="sans-serif">QTY</text>
-                                    <text x="70" y="110" font-size="6" fill="white" font-family="sans-serif">Description</text>
-                                    <text x="200" y="110" font-size="6" fill="white" font-family="sans-serif">Price</text>
-                                    <text x="248" y="110" font-size="6" fill="white" font-family="sans-serif">Amount</text>
-                                    {{-- Table rows --}}
-                                    <rect x="24" y="118" width="252" height="0.5" fill="#e8e8e8"/>
-                                    <rect x="30" y="123" width="20" height="5" rx="1" fill="#777"/>
-                                    <rect x="70" y="123" width="100" height="5" rx="1" fill="#555"/>
-                                    <rect x="248" y="123" width="28" height="5" rx="1" fill="#555"/>
-                                    <rect x="24" y="134" width="252" height="0.5" fill="#e8e8e8"/>
-                                    {{-- Total --}}
-                                    <rect x="200" y="162" width="76" height="1.5" fill="#1f2937"/>
-                                    <text x="204" y="176" font-size="7" fill="#1f2937" font-family="sans-serif">Total</text>
-                                    <text x="248" y="176" font-size="8" fill="#333" font-weight="bold" font-family="sans-serif">$0.00</text>
-                                </svg>
+                                {!! $tpl->preview_html !!}
                                 <span class="tpl-badge">Guided</span>
                             </div>
                             <div class="tpl-info">
-                                <h3>Clean Modern</h3>
-                                <p>Dark header, clean layout — guided form</p>
+                                <h3>{{ $tpl->name }}</h3>
+                                <p>{{ $tpl->description }}</p>
                             </div>
                         </button>
                     </form>
-
-                    {{-- Template 2 — Bold Red (Guided) --}}
-                    <form action="{{ route('documents.createSimpleInvoice') }}" method="POST" style="margin:0;">
-                        @csrf
-                        <input type="hidden" name="company_name" value="Your Company Inc.">
-                        <input type="hidden" name="company_address" value="1234 Company St.\nCompany Town ST 12345">
-                        <input type="hidden" name="customer_name" value="Customer Name">
-                        <input type="hidden" name="customer_address" value="1234 Customer St.\nCustomer Town ST 12345">
-                        <input type="hidden" name="invoice_number" value="0001001">
-                        <input type="hidden" name="invoice_date" value="{{ date('m-d-Y') }}">
-                        <input type="hidden" name="due_date" value="{{ date('m-d-Y', strtotime('+14 days')) }}">
-                        <input type="hidden" name="terms" value="">
-                        <input type="hidden" name="_guided" value="1">
-                        <input type="hidden" name="style" value="bold_red">
-                        <button type="submit" class="tpl-card" style="background:rgba(255,255,255,0.04);font:inherit;color:inherit;padding:0;width:100%;text-align:left;border-radius:14px;">
-                            <div class="tpl-preview">
-                                <svg viewBox="0 0 300 210" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                    <rect width="300" height="210" fill="#f8f9fa"/>
-                                    {{-- Red header --}}
-                                    <rect y="0" width="300" height="55" fill="#cc3333"/>
-                                    <rect x="24" y="16" width="110" height="10" rx="2" fill="white"/>
-                                    <rect x="24" y="30" width="160" height="5" rx="1" fill="rgba(255,255,255,0.6)"/>
-                                    <text x="210" y="34" font-size="12" fill="white" font-weight="bold" font-family="sans-serif">INVOICE</text>
-                                    {{-- Bill To --}}
-                                    <rect x="24" y="70" width="32" height="5" rx="1" fill="#cc3333"/>
-                                    <rect x="24" y="80" width="80" height="6" rx="1" fill="#444"/>
-                                    <rect x="24" y="90" width="70" height="4" rx="1" fill="#bbb"/>
-                                    {{-- Table header --}}
-                                    <rect x="24" y="110" width="252" height="14" rx="2" fill="#cc3333"/>
-                                    <text x="30" y="120" font-size="6" fill="white" font-family="sans-serif">QTY</text>
-                                    <text x="70" y="120" font-size="6" fill="white" font-family="sans-serif">Description</text>
-                                    <text x="210" y="120" font-size="6" fill="white" font-family="sans-serif">Price</text>
-                                    <text x="248" y="120" font-size="6" fill="white" font-family="sans-serif">Amount</text>
-                                    {{-- Rows with alternating tint --}}
-                                    <rect x="24" y="126" width="252" height="14" fill="#fdf0f0"/>
-                                    <rect x="30" y="130" width="100" height="5" rx="1" fill="#555"/>
-                                    <rect x="248" y="130" width="28" height="5" rx="1" fill="#555"/>
-                                    <rect x="30" y="146" width="80" height="5" rx="1" fill="#555"/>
-                                    <rect x="248" y="146" width="28" height="5" rx="1" fill="#555"/>
-                                    {{-- Total box --}}
-                                    <rect x="200" y="178" width="76" height="18" rx="3" fill="#cc3333"/>
-                                    <text x="206" y="190" font-size="7" fill="white" font-family="sans-serif">TOTAL</text>
-                                    <text x="242" y="190" font-size="8" fill="white" font-weight="bold" font-family="sans-serif">$0.00</text>
-                                </svg>
-                                <span class="tpl-badge">Guided</span>
-                            </div>
-                            <div class="tpl-info">
-                                <h3>Bold Red</h3>
-                                <p>Corporate style with red header — guided form</p>
-                            </div>
-                        </button>
-                    </form>
-
+                    @endforeach
                 </div>
             </div>
 
