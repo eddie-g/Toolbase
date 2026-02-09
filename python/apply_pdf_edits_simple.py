@@ -362,6 +362,7 @@ def normalize_smart_quotes(text):
     # tofu boxes in the overlay editor (e.g. "", "□").
     text = re.sub(r'[\u200B\u200C\u200D\u2060\uFEFF]', '', text)
     text = re.sub(r'[\uE000-\uF8FF]', '', text)
+    text = text.replace('\uFFFD', '')
     text = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', text)
     return text
 
@@ -514,15 +515,52 @@ def apply_edits(pdf_path, edits_json):
             # 2. search_for() can match text at WRONG locations (duplicates)
             # 3. original_bbox is the exact known location from extraction data
             if original_bbox:
+                # Add adaptive padding around the original block before redaction.
+                # Some PDFs contain trailing symbol/private-use glyphs that sit just
+                # outside extraction bboxes; tight boxes leave visual "tofu" artifacts.
+                try:
+                    font_size_num = float(edit_font_size or 12)
+                except Exception:
+                    font_size_num = 12.0
+                pad_left = max(1.0, font_size_num * 0.15)
+                pad_top = max(1.0, font_size_num * 0.15)
+                pad_right = max(2.0, font_size_num * 0.9)
+                pad_bottom = max(1.0, font_size_num * 0.15)
+
                 rect = fitz.Rect(
-                    original_bbox[0] - 1,
-                    original_bbox[1] - 1,
-                    original_bbox[2] + 1,
-                    original_bbox[3] + 1
+                    original_bbox[0] - pad_left,
+                    original_bbox[1] - pad_top,
+                    original_bbox[2] + pad_right,
+                    original_bbox[3] + pad_bottom
                 )
                 page.add_redact_annot(rect, fill=None)
                 redaction_count += 1
-                print(f"  ✓ Redacting '{original_text[:30]}...' via original_bbox [{original_bbox[0]:.0f},{original_bbox[1]:.0f},{original_bbox[2]:.0f},{original_bbox[3]:.0f}]")
+                print(
+                    f"  ✓ Redacting '{original_text[:30]}...' via original_bbox "
+                    f"[{original_bbox[0]:.0f},{original_bbox[1]:.0f},{original_bbox[2]:.0f},{original_bbox[3]:.0f}] "
+                    f"pad(L={pad_left:.1f},R={pad_right:.1f},T={pad_top:.1f},B={pad_bottom:.1f})"
+                )
+
+                # Secondary scrub: remove adjacent symbol/replacement glyph spans that
+                # often survive when they are encoded as separate tiny runs.
+                special_spans = pre_edit_spans.get(page_num, [])
+                for span in special_spans:
+                    span_text = span.get("text", "")
+                    if not span_text:
+                        continue
+                    if not re.search(r'[\uFFFD\uE000-\uF8FF]', span_text):
+                        continue
+                    sb = span.get("bbox")
+                    if not sb or len(sb) != 4:
+                        continue
+                    span_rect = fitz.Rect(sb)
+                    same_row = not (span_rect.y1 < rect.y0 or span_rect.y0 > rect.y1)
+                    near_right_edge = span_rect.x0 <= (rect.x1 + (font_size_num * 1.25)) and span_rect.x1 >= (rect.x0 - 2)
+                    if same_row and near_right_edge:
+                        cleanup_rect = fitz.Rect(span_rect.x0 - 1, span_rect.y0 - 1, span_rect.x1 + 1, span_rect.y1 + 1)
+                        page.add_redact_annot(cleanup_rect, fill=None)
+                        redaction_count += 1
+                        print(f"    ↳ Redacting adjacent special span '{span_text.encode('unicode_escape').decode()}' at {list(cleanup_rect)}")
             else:
                 # FALLBACK: No original_bbox — try search_for for single-line text only
                 text_instances = page.search_for(original_text)
@@ -1005,6 +1043,17 @@ def apply_edits(pdf_path, edits_json):
         # Check each pre-edit span
         for span_info in pre_spans:
             span_text = span_info["text"]
+            normalized_span_text = normalize_smart_quotes(span_text).strip()
+
+            # Never recover artifact glyphs (replacement chars, private-use symbols,
+            # zero-width/control chars). These are typically encoding debris and
+            # should be removed during scrub, not re-inserted.
+            if (
+                not normalized_span_text
+                or re.search(r'[\uFFFD\uE000-\uF8FF\u200B\u200C\u200D\u2060\uFEFF]', span_text)
+                or re.search(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', span_text)
+            ):
+                continue
 
             # Already present in post-edit PDF → no loss
             if span_text in post_texts:

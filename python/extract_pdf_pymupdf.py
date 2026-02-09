@@ -30,6 +30,7 @@ def sanitize_extracted_text(text):
         return ''
 
     cleaned = text.replace('\u00A0', ' ')
+    cleaned = cleaned.replace('\uFFFD', '')
     cleaned = _EXTRACTION_ZERO_WIDTH_RE.sub('', cleaned)
     cleaned = _EXTRACTION_PRIVATE_USE_RE.sub('', cleaned)
     cleaned = _EXTRACTION_CONTROL_RE.sub('', cleaned)

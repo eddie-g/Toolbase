@@ -13932,6 +13932,7 @@
                     if (value == null) return '';
                     return String(value)
                         .replace(/\u00A0/g, ' ')
+                        .replace(/\uFFFD/g, '')
                         .replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, '')
                         .replace(/[\uE000-\uF8FF]/g, '')
                         .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');

@@ -83,6 +83,20 @@ def parse_level(level_str):
     return level_map[level_str]
 
 
+def _font_has_embedded_program(doc, xref):
+    """Check if a font xref actually has an embedded font program by inspecting its FontDescriptor."""
+    try:
+        obj_str = doc.xref_object(xref)
+        m = re.search(r'/FontDescriptor\s+(\d+)\s+0\s+R', obj_str)
+        if not m:
+            return False
+        desc_str = doc.xref_object(int(m.group(1)))
+        # FontFile = Type1, FontFile2 = TrueType, FontFile3 = CFF/OpenType
+        return '/FontFile' in desc_str
+    except:
+        return False
+
+
 def check_font_embedding(doc):
     """
     Check all pages for fonts and report which are/aren't embedded.
@@ -100,10 +114,16 @@ def check_font_embedding(doc):
             font_name = font[3] if len(font) > 3 else "Unknown"
             font_type = font[2] if len(font) > 2 else "Unknown"
             
-            # A font is considered embedded if it has a valid xref and 
-            # its type indicates embedding (Type1C, TrueType, CIDFontType2, etc.)
-            # Fonts with xref=0 or type containing "Type3" are special cases
-            is_embedded = xref > 0 and font_type not in ('Type1',)
+            # A font is embedded if:
+            # - It has a valid xref
+            # - For Type1: check if FontDescriptor contains FontFile/FontFile2/FontFile3
+            # - For other types (TrueType, Type1C, CIDFontType2): assumed embedded if xref > 0
+            if xref <= 0:
+                is_embedded = False
+            elif font_type == 'Type1':
+                is_embedded = _font_has_embedded_program(doc, xref)
+            else:
+                is_embedded = True
             
             if not is_embedded:
                 all_embedded = False
@@ -126,12 +146,28 @@ def check_font_embedding(doc):
 # Google Fonts substitutes (Arimo, Cousine, Tinos).
 
 BASE14_SUBSTITUTES = {
-    'helvetica': {'regular': 'Arimo-Regular.ttf', 'bold': 'Arimo-Bold.ttf', 'google': 'Arimo'},
-    'arial':     {'regular': 'Arimo-Regular.ttf', 'bold': 'Arimo-Bold.ttf', 'google': 'Arimo'},
-    'courier':   {'regular': 'Cousine-Regular.ttf', 'bold': 'Cousine-Bold.ttf', 'google': 'Cousine'},
-    'times':     {'regular': 'Tinos-Regular.ttf', 'bold': 'Tinos-Bold.ttf', 'google': 'Tinos'},
-    'symbol':    {'regular': 'Arimo-Regular.ttf', 'bold': 'Arimo-Bold.ttf', 'google': 'Arimo'},
-    'zapfdingbats': {'regular': 'Arimo-Regular.ttf', 'bold': 'Arimo-Bold.ttf', 'google': 'Arimo'},
+    'helvetica': {'regular': 'Arimo-Regular.ttf', 'bold': 'Arimo-Bold.ttf',
+                  'italic': 'Arimo-Italic.ttf', 'bolditalic': 'Arimo-BoldItalic.ttf', 'google': 'Arimo'},
+    'arial':     {'regular': 'Arimo-Regular.ttf', 'bold': 'Arimo-Bold.ttf',
+                  'italic': 'Arimo-Italic.ttf', 'bolditalic': 'Arimo-BoldItalic.ttf', 'google': 'Arimo'},
+    'courier':   {'regular': 'Cousine-Regular.ttf', 'bold': 'Cousine-Bold.ttf',
+                  'italic': 'Cousine-Italic.ttf', 'bolditalic': 'Cousine-BoldItalic.ttf', 'google': 'Cousine'},
+    'times':     {'regular': 'Tinos-Regular.ttf', 'bold': 'Tinos-Bold.ttf',
+                  'italic': 'Tinos-Italic.ttf', 'bolditalic': 'Tinos-BoldItalic.ttf', 'google': 'Tinos'},
+    'symbol':    {'regular': 'Arimo-Regular.ttf', 'bold': 'Arimo-Bold.ttf',
+                  'italic': 'Arimo-Italic.ttf', 'bolditalic': 'Arimo-BoldItalic.ttf', 'google': 'Arimo'},
+    'zapfdingbats': {'regular': 'Arimo-Regular.ttf', 'bold': 'Arimo-Bold.ttf',
+                     'italic': 'Arimo-Italic.ttf', 'bolditalic': 'Arimo-BoldItalic.ttf', 'google': 'Arimo'},
+}
+
+# Fallback substitutes for non-base14 unembedded fonts (by broad category)
+FALLBACK_SUBSTITUTES = {
+    'sans':  {'regular': 'Arimo-Regular.ttf', 'bold': 'Arimo-Bold.ttf',
+              'italic': 'Arimo-Italic.ttf', 'bolditalic': 'Arimo-BoldItalic.ttf', 'google': 'Arimo'},
+    'serif': {'regular': 'Tinos-Regular.ttf', 'bold': 'Tinos-Bold.ttf',
+              'italic': 'Tinos-Italic.ttf', 'bolditalic': 'Tinos-BoldItalic.ttf', 'google': 'Tinos'},
+    'mono':  {'regular': 'Cousine-Regular.ttf', 'bold': 'Cousine-Bold.ttf',
+              'italic': 'Cousine-Italic.ttf', 'bolditalic': 'Cousine-BoldItalic.ttf', 'google': 'Cousine'},
 }
 
 
@@ -148,9 +184,14 @@ def download_substitute_font(google_name, filename, fonts_dir):
         return filepath
 
     os.makedirs(fonts_dir, exist_ok=True)
-    # Determine weight from filename
-    weight = '700' if 'Bold' in filename else '400'
-    css_url = f"https://fonts.googleapis.com/css2?family={google_name}:wght@{weight}"
+    # Determine weight and style from filename
+    is_bold = 'Bold' in filename
+    is_italic = 'Italic' in filename
+    weight = '700' if is_bold else '400'
+    if is_italic:
+        css_url = f"https://fonts.googleapis.com/css2?family={google_name}:ital,wght@1,{weight}"
+    else:
+        css_url = f"https://fonts.googleapis.com/css2?family={google_name}:wght@{weight}"
 
     try:
         req = urllib.request.Request(css_url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -177,12 +218,14 @@ def ensure_substitute_fonts(needed_families):
     result = {}
 
     for family in needed_families:
-        info = BASE14_SUBSTITUTES.get(family)
+        info = BASE14_SUBSTITUTES.get(family) or FALLBACK_SUBSTITUTES.get(family)
         if not info:
             continue
         paths = {}
-        for variant in ('regular', 'bold'):
-            filename = info[variant]
+        for variant in ('regular', 'bold', 'italic', 'bolditalic'):
+            filename = info.get(variant)
+            if not filename:
+                continue
             full_path = os.path.join(fonts_dir, filename)
             if os.path.exists(full_path):
                 paths[variant] = full_path
@@ -290,17 +333,73 @@ def embed_type1_as_truetype(doc, old_xref, font_path):
     ))
 
 
+def _guess_font_category(basefont, doc=None, xref=None):
+    """Guess the font category (sans/serif/mono) from the font name or descriptor flags."""
+    name_lower = basefont.lower()
+    # Check name hints
+    if any(k in name_lower for k in ('mono', 'courier', 'consol', 'fixed', 'typewriter')):
+        return 'mono'
+    if any(k in name_lower for k in ('serif', 'times', 'roman', 'garamond', 'georgia', 'palat', 'bookman', 'cambria')):
+        return 'serif'
+    if any(k in name_lower for k in ('sans', 'arial', 'helv', 'verdana', 'calibri', 'lucid', 'gothic', 'futura', 'tahoma')):
+        return 'sans'
+    # Check font descriptor flags if available
+    if doc and xref:
+        try:
+            obj_str = doc.xref_object(xref)
+            m = re.search(r'/FontDescriptor\s+(\d+)\s+0\s+R', obj_str)
+            if m:
+                desc_str = doc.xref_object(int(m.group(1)))
+                fm = re.search(r'/Flags\s+(\d+)', desc_str)
+                if fm:
+                    flags = int(fm.group(1))
+                    if flags & 1:  # FixedPitch
+                        return 'mono'
+                    if flags & 2:  # Serif
+                        return 'serif'
+        except:
+            pass
+    return 'sans'  # Default fallback
+
+
+def _is_italic_font(basefont, doc=None, xref=None):
+    """Detect if a font is italic/oblique from name or descriptor flags."""
+    name_lower = basefont.lower()
+    if any(k in name_lower for k in ('italic', 'oblique', 'slant')):
+        return True
+    if doc and xref:
+        try:
+            obj_str = doc.xref_object(xref)
+            m = re.search(r'/FontDescriptor\s+(\d+)\s+0\s+R', obj_str)
+            if m:
+                desc_str = doc.xref_object(int(m.group(1)))
+                fm = re.search(r'/Flags\s+(\d+)', desc_str)
+                if fm:
+                    flags = int(fm.group(1))
+                    if flags & 64:  # Italic flag
+                        return True
+                # Also check ItalicAngle
+                am = re.search(r'/ItalicAngle\s+(-?\d+)', desc_str)
+                if am and int(am.group(1)) != 0:
+                    return True
+        except:
+            pass
+    return False
+
+
 def replace_base14_fonts(doc):
     """
-    Replace unembedded base14 Type1 fonts with embedded TrueType substitutes.
+    Replace unembedded Type1 fonts with embedded TrueType substitutes.
+    Handles both base14 fonts (Helvetica, Courier, Times) and non-base14 fonts
+    (like LuciduxSans) using a category-based fallback system.
     Downloads substitute fonts from Google Fonts if not already cached locally.
     
     Uses in-place xref replacement to convert the Type1 font dict into an embedded
     TrueType font dict with the same WinAnsiEncoding, so existing content streams
     continue to work without any text re-encoding.
     """
-    # Pass 1: Scan all pages to find unembedded base14 fonts (collect unique xrefs)
-    unembedded_xrefs = {}  # xref -> (basefont, family)
+    # Pass 1: Scan all pages to find unembedded Type1 fonts (collect unique xrefs)
+    unembedded_xrefs = {}  # xref -> (basefont, family, is_italic)
     needed_families = set()
 
     for page_idx in range(len(doc)):
@@ -312,9 +411,13 @@ def replace_base14_fonts(doc):
                 continue  # Already collected
             if is_base14_unembedded(doc, xref, ftype, basefont):
                 family = get_base14_family(basefont)
-                if family:
-                    needed_families.add(family)
-                    unembedded_xrefs[xref] = (basefont, family)
+                italic = _is_italic_font(basefont, doc, xref)
+                if not family:
+                    # Non-base14 font: use category-based fallback
+                    family = _guess_font_category(basefont, doc, xref)
+                    print(f"  Non-base14 font '{basefont}' -> fallback category: {family}", file=sys.stderr)
+                needed_families.add(family)
+                unembedded_xrefs[xref] = (basefont, family, italic)
 
     if not unembedded_xrefs:
         return
@@ -326,18 +429,27 @@ def replace_base14_fonts(doc):
         return
 
     # Pass 3: Replace each unembedded font xref in-place
-    for xref, (basefont, family) in unembedded_xrefs.items():
+    for xref, (basefont, family, italic) in unembedded_xrefs.items():
         if family not in available:
             continue
 
         is_bold = 'bold' in basefont.lower()
-        variant = 'bold' if is_bold and 'bold' in available[family] else 'regular'
+        # Pick the best variant: bolditalic > bold/italic > regular
+        if is_bold and italic:
+            variant = 'bolditalic' if 'bolditalic' in available[family] else ('bold' if 'bold' in available[family] else 'regular')
+        elif is_bold:
+            variant = 'bold' if 'bold' in available[family] else 'regular'
+        elif italic:
+            variant = 'italic' if 'italic' in available[family] else 'regular'
+        else:
+            variant = 'regular'
         font_path = available[family].get(variant)
         if not font_path:
             continue
 
         try:
             embed_type1_as_truetype(doc, xref, font_path)
+            print(f"  Embedded substitute for '{basefont}': {os.path.basename(font_path)} ({variant})", file=sys.stderr)
         except Exception as e:
             print(f"Warning: Could not embed substitute for '{basefont}' (xref {xref}): {e}", file=sys.stderr)
 
@@ -615,7 +727,13 @@ def generate_compliance_report(doc_path, part, conformance):
             seen_fonts.add(key)
 
             total_fonts += 1
-            is_embedded = xref > 0 and font_type not in ('Type1',)
+            # For Type1 fonts, check the FontDescriptor for actual font data
+            if xref <= 0:
+                is_embedded = False
+            elif font_type == 'Type1':
+                is_embedded = _font_has_embedded_program(doc, xref)
+            else:
+                is_embedded = True
             if is_embedded:
                 embedded_fonts += 1
             font_details.append({
