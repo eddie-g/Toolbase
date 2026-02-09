@@ -607,6 +607,211 @@ def create_minimal_srgb_profile():
     return bytes(profile)
 
 
+# Action types prohibited in PDF/A
+PROHIBITED_ACTIONS = {
+    'Launch', 'Sound', 'Movie', 'ResetForm', 'ImportData',
+    'Hide', 'SetState', 'NOP', 'JavaScript',
+}
+
+# Named actions allowed in PDF/A (all others are prohibited)
+ALLOWED_NAMED_ACTIONS = {'NextPage', 'PrevPage', 'FirstPage', 'LastPage'}
+
+# Annotation types prohibited in PDF/A
+PROHIBITED_ANNOT_TYPES = {'FileAttachment', 'Sound', 'Movie'}
+
+
+def _is_prohibited_action(doc, xref):
+    """
+    Check if an action object at the given xref is prohibited in PDF/A.
+    Returns True if the action should be removed.
+    """
+    try:
+        obj_str = doc.xref_object(xref)
+    except Exception:
+        return False
+
+    import re
+    s_match = re.search(r'/S\s*/([A-Za-z]+)', obj_str)
+    if not s_match:
+        return False
+    action_type = s_match.group(1)
+
+    if action_type in PROHIBITED_ACTIONS:
+        return True
+    if action_type == 'Named':
+        n_match = re.search(r'/N\s*/([A-Za-z]+)', obj_str)
+        if n_match and n_match.group(1) not in ALLOWED_NAMED_ACTIONS:
+            return True
+    if action_type in ('GoToR', 'GoToE', 'SubmitForm'):
+        return True  # External-referencing action types
+    if action_type == 'URI':
+        return True  # URI actions reference external resources
+    return False
+
+
+def _remove_pdf_key(doc, xref, key):
+    """
+    Truly remove a key from a PDF object by rewriting the object string.
+    xref_set_key(xref, key, 'null') leaves '/Key null' in the dict which
+    some checks still detect. This function rewrites the entire object
+    without the key.
+    """
+    import re
+    obj_str = doc.xref_object(xref)
+    # Match /Key followed by: an indirect ref, an inline dict, an inline array, or a simple value
+    patterns = [
+        rf'\s*/{re.escape(key)}\s+\d+\s+\d+\s+R',           # indirect ref
+        rf'\s*/{re.escape(key)}\s*<<(?:[^<>]|<<[^>]*>>)*>>', # inline dict (nested one level)
+        rf'\s*/{re.escape(key)}\s*\[[^\]]*\]',               # inline array
+        rf'\s*/{re.escape(key)}\s+null',                      # null value
+        rf'\s*/{re.escape(key)}\s+/[A-Za-z]+',               # name value
+        rf'\s*/{re.escape(key)}\s+\S+',                       # other simple value
+    ]
+    for pat in patterns:
+        new_str, n = re.subn(pat, ' ', obj_str, count=1)
+        if n > 0:
+            doc.update_object(xref, new_str)
+            return True
+    return False
+
+
+def strip_prohibited_actions(doc):
+    """
+    Remove all PDF/A-prohibited actions, AA entries, and prohibited annotations.
+
+    PDF/A forbids:
+    - Additional Actions (AA) on pages and catalog
+    - Prohibited action types (Launch, Sound, Movie, JS, etc.)
+    - External-referencing actions (GoToR, GoToE, URI, SubmitForm)
+    - Named actions other than NextPage/PrevPage/FirstPage/LastPage
+    - Prohibited annotation types (FileAttachment, Sound, Movie)
+    - Annotation-level AA entries
+    - JavaScript in Names dict
+    """
+    import re
+    catalog_xref = doc.pdf_catalog()
+
+    # 1. Remove AA from catalog
+    try:
+        keys = doc.xref_get_keys(catalog_xref)
+        if 'AA' in keys:
+            _remove_pdf_key(doc, catalog_xref, 'AA')
+    except Exception:
+        pass
+
+    # 2. Remove prohibited OpenAction from catalog
+    try:
+        keys = doc.xref_get_keys(catalog_xref)
+        if 'OpenAction' in keys:
+            oa_type, oa_val = doc.xref_get_key(catalog_xref, 'OpenAction')
+            if oa_type == 'xref':
+                oa_xref = int(re.search(r'(\d+)', oa_val).group(1))
+                if _is_prohibited_action(doc, oa_xref):
+                    _remove_pdf_key(doc, catalog_xref, 'OpenAction')
+    except Exception:
+        pass
+
+    # 3. Remove JavaScript Names tree from catalog
+    try:
+        keys = doc.xref_get_keys(catalog_xref)
+        if 'Names' in keys:
+            names_type, names_val = doc.xref_get_key(catalog_xref, 'Names')
+            if names_type == 'xref':
+                names_xref = int(re.search(r'(\d+)', names_val).group(1))
+                names_keys = doc.xref_get_keys(names_xref)
+                if 'JavaScript' in names_keys:
+                    _remove_pdf_key(doc, names_xref, 'JavaScript')
+            elif names_type == 'dict':
+                # Inline Names dict — need to check for JavaScript key inside
+                if '/JavaScript' in names_val:
+                    _remove_pdf_key(doc, catalog_xref, 'Names')
+    except Exception:
+        pass
+
+    # 4. Nullify all prohibited action objects so they become inert
+    for x in range(1, doc.xref_length()):
+        try:
+            obj_str = doc.xref_object(x)
+            if '/S ' not in obj_str and '/S/' not in obj_str:
+                continue
+            if _is_prohibited_action(doc, x):
+                # Replace the action with an empty dict
+                doc.update_object(x, '<<>>')
+        except Exception:
+            pass
+
+    # 5. Process each page
+    for page in doc:
+        page_xref = page.xref
+        try:
+            page_keys = doc.xref_get_keys(page_xref)
+        except Exception:
+            continue
+
+        # 5a. Remove AA from page
+        if 'AA' in page_keys:
+            _remove_pdf_key(doc, page_xref, 'AA')
+
+        # 5b. Process annotations on this page
+        if 'Annots' in page_keys:
+            annots_type, annots_val = doc.xref_get_key(page_xref, 'Annots')
+            # Parse annotation xrefs from the array
+            annot_xrefs = [int(m) for m in re.findall(r'(\d+)\s+0\s+R', annots_val)]
+            keep_annots = []
+
+            for ax in annot_xrefs:
+                try:
+                    annot_obj = doc.xref_object(ax)
+                except Exception:
+                    keep_annots.append(ax)
+                    continue
+
+                # Check if this is a prohibited annotation type
+                subtype_match = re.search(r'/Subtype\s*/([A-Za-z]+)', annot_obj)
+                if subtype_match and subtype_match.group(1) in PROHIBITED_ANNOT_TYPES:
+                    continue  # Drop this annotation
+
+                # Remove AA from annotation
+                try:
+                    annot_keys = doc.xref_get_keys(ax)
+                    if 'AA' in annot_keys:
+                        _remove_pdf_key(doc, ax, 'AA')
+                except Exception:
+                    pass
+
+                # Check if annotation's A (action) is prohibited — remove the A key
+                try:
+                    annot_keys = doc.xref_get_keys(ax)
+                    if 'A' in annot_keys:
+                        a_type, a_val = doc.xref_get_key(ax, 'A')
+                        if a_type == 'xref':
+                            a_xref = int(re.search(r'(\d+)', a_val).group(1))
+                            if _is_prohibited_action(doc, a_xref):
+                                _remove_pdf_key(doc, ax, 'A')
+                        elif a_type == 'dict':
+                            # Inline action dict — check /S type
+                            s_match = re.search(r'/S\s*/([A-Za-z]+)', a_val)
+                            if s_match:
+                                act_type = s_match.group(1)
+                                if act_type in PROHIBITED_ACTIONS or act_type in ('GoToR', 'GoToE', 'SubmitForm', 'URI'):
+                                    _remove_pdf_key(doc, ax, 'A')
+                                elif act_type == 'Named':
+                                    n_match = re.search(r'/N\s*/([A-Za-z]+)', a_val)
+                                    if n_match and n_match.group(1) not in ALLOWED_NAMED_ACTIONS:
+                                        _remove_pdf_key(doc, ax, 'A')
+                except Exception:
+                    pass
+
+                keep_annots.append(ax)
+
+            # Update or remove the Annots array
+            if not keep_annots:
+                _remove_pdf_key(doc, page_xref, 'Annots')
+            elif len(keep_annots) != len(annot_xrefs):
+                new_annots = '[' + ' '.join(f'{x} 0 R' for x in keep_annots) + ']'
+                doc.xref_set_key(page_xref, 'Annots', new_annots)
+
+
 def convert_to_pdfa(input_path, output_path, level='2b', embed_fonts=True, srgb_profile=True):
     """
     Convert a PDF file to PDF/A format.
@@ -667,6 +872,12 @@ def convert_to_pdfa(input_path, output_path, level='2b', embed_fonts=True, srgb_
     # (PDF/A-2 and above allow transparency)
     if part == 1:
         warnings.append("PDF/A-1 does not support transparency. Some visual elements may change.")
+    
+    # Step 5.5: Strip prohibited actions, AA entries, and prohibited annotations
+    try:
+        strip_prohibited_actions(doc)
+    except Exception as e:
+        warnings.append(f"Action stripping warning: {str(e)}")
     
     # Step 6: Save with optimal settings for archival
     doc.save(
@@ -816,24 +1027,61 @@ def generate_compliance_report(doc_path, part, conformance):
         'detail': 'sRGB IEC61966-2.1 output intent present' if has_output_intent else 'No output intent found'
     })
 
-    # --- Check 7: No External References ---
-    # PDF/A prohibits external content references (Launch, URI actions on page open, etc.)
-    has_external = False
+    # --- Check 7: No External References / Prohibited Actions ---
+    # PDF/A prohibits: AA on pages/catalog, prohibited action types, external refs
+    import re as _re
+    prohibited_found = []
+    _prohibited_set = {
+        'Launch', 'Sound', 'Movie', 'ResetForm', 'ImportData',
+        'Hide', 'SetState', 'NOP', 'JavaScript', 'GoToR', 'GoToE',
+        'SubmitForm', 'URI',
+    }
+    _allowed_named = {'NextPage', 'PrevPage', 'FirstPage', 'LastPage'}
+
+    # Check catalog for AA
+    try:
+        cat_keys = doc.xref_get_keys(catalog_xref)
+        if 'AA' in cat_keys:
+            prohibited_found.append('AA on catalog')
+    except:
+        pass
+
+    # Check pages for AA
     for page_idx in range(len(doc)):
         page = doc[page_idx]
-        # Check for AA (Additional Actions) on pages  
         try:
             keys = doc.xref_get_keys(page.xref)
             if 'AA' in keys:
-                has_external = True
-                break
+                prohibited_found.append(f'AA on page {page_idx + 1}')
         except:
             pass
+
+    # Scan all objects for prohibited action types
+    for x in range(1, doc.xref_length()):
+        try:
+            obj = doc.xref_object(x)
+            if '/S ' not in obj and '/S/' not in obj:
+                continue
+            s_match = _re.search(r'/S\s*/([A-Za-z]+)', obj)
+            if not s_match:
+                continue
+            action_type = s_match.group(1)
+            if action_type in _prohibited_set:
+                prohibited_found.append(f'{action_type} action')
+            elif action_type == 'Named':
+                n_match = _re.search(r'/N\s*/([A-Za-z]+)', obj)
+                if n_match and n_match.group(1) not in _allowed_named:
+                    prohibited_found.append(f'Named/{n_match.group(1)} action')
+        except:
+            pass
+
+    has_external = len(prohibited_found) > 0
+    detail_text = 'No external references found' if not has_external else f'Prohibited: {", ".join(prohibited_found[:3])}'
     report['checks'].append({
         'item': 'No External References',
         'description': 'PDF/A prohibits external content dependencies',
         'result': 'PASS' if not has_external else 'FAIL',
-        'detail': 'No external references found' if not has_external else 'External references detected'
+        'detail': detail_text
     })
 
     doc.close()
