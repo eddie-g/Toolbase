@@ -1460,6 +1460,10 @@
                 position: absolute;
                 background: rgba(66, 133, 244, 0.8);
                 z-index: 10;
+                display: none;
+            }
+            .overlay-field.active .resize-handle {
+                display: block;
             }
 
             /* Shape type buttons (modern grid) */
