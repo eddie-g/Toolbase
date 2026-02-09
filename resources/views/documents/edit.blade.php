@@ -1558,12 +1558,12 @@
             }
             .overlay-field .box-menu {
                 position: absolute;
-                top: -38px;
-                right: -1px;
+                top: 2px;
+                right: 2px;
                 display: none;
                 flex-direction: row;
                 gap: 0;
-                background: #fff;
+                background: rgba(255, 255, 255, 0.97);
                 border: 1px solid rgba(66, 133, 244, 0.5);
                 border-radius: 6px;
                 padding: 2px;
@@ -9651,30 +9651,57 @@
                         return;
                     }
                     if (selectedOverlayField) {
-                        const field = selectedOverlayField;
-                        const pageNumber = parseInt(field.dataset.pageNumber || '0', 10);
-                        const key = field.dataset.wordIndex || `${pageNumber}-0`;
-                        const textEl = getOverlayTextElement(field);
-                        const originalWord = buildOriginalWordFromField(field, textEl ? textEl.textContent : '');
-                        overlayEditedFields.set(key, {
-                            page_number: pageNumber,
-                            original_text: originalWord.text,
-                            new_text: '',
-                            original_bbox: [originalWord.left, originalWord.top, originalWord.left + originalWord.width, originalWord.top + originalWord.height],
-                            bbox: [originalWord.left, originalWord.top, originalWord.left + originalWord.width, originalWord.top + originalWord.height],
-                            font_xref: field.dataset.fontXref ? parseInt(field.dataset.fontXref, 10) : null,
-                            font: originalWord.font,
-                            font_size: originalWord.font_size,
-                            color: field.dataset.textColor || '#000000'
-                        });
-                        field.remove();
-                        clearOverlaySelection();
-                        updateSelectionBar();
-                        updateOverlaySaveButton();
-                        persistOverlayEdits();
+                        try {
+                            pushUndoState();
+                            const field = selectedOverlayField;
+                            const pageNumber = parseInt(field.dataset.pageNumber || '0', 10);
+                            const key = field.dataset.wordIndex || `${pageNumber}-0`;
+                            const textEl = getOverlayTextElement(field);
+                            const originalWord = buildOriginalWordFromField(field, textEl ? textEl.textContent : '');
+                            overlayEditedFields.set(key, {
+                                page_number: pageNumber,
+                                block_num: parseInt(key.replace(/^block-\d+-/, ''), 10) || 0,
+                                original_text: originalWord.text,
+                                new_text: '',
+                                rich_html: null,
+                                original_bbox: [originalWord.left, originalWord.top, originalWord.left + originalWord.width, originalWord.top + originalWord.height],
+                                bbox: [originalWord.left, originalWord.top, originalWord.left + originalWord.width, originalWord.top + originalWord.height],
+                                font_xref: field.dataset.fontXref ? parseInt(field.dataset.fontXref, 10) : null,
+                                font: originalWord.font,
+                                font_size: originalWord.font_size,
+                                font_weight: field.dataset.fontWeight || null,
+                                font_style: field.dataset.fontStyle || null,
+                                color: field.dataset.textColor || '#000000'
+                            });
+                            field.remove();
+                            clearOverlaySelection();
+                            updateSelectionBar();
+                            updateOverlaySaveButton();
+                            persistOverlayEdits();
+                            setStatus('Text block deleted', 'ok');
+                        } catch (err) {
+                            console.error('Selection bar delete error:', err);
+                            setStatus('Delete failed: ' + err.message, 'err');
+                        }
                     }
                 });
             }
+
+            // ── Keyboard Delete for overlay fields ──────────────────────────
+            document.addEventListener('keydown', (e) => {
+                if (!overlayEditorActive) return;
+                if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+                // Only act when a field is selected but text is NOT being edited
+                // (if contenteditable has focus, Delete/Backspace should edit text normally)
+                if (!selectedOverlayField) return;
+                const activeEl = document.activeElement;
+                if (activeEl && (activeEl.isContentEditable || activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'SELECT')) return;
+
+                e.preventDefault();
+                if (selectedDelete && !selectedDelete.disabled) {
+                    selectedDelete.click();
+                }
+            });
 
             // ── Edit Text Banner Controls ──────────────────────────────────
             (function wireEditTextBanner() {
@@ -14724,51 +14751,55 @@
                             });
                             
                             deleteBtn.addEventListener('click', function(e) {
-                                console.log('delete clicked');
                                 e.preventDefault();
                                 e.stopPropagation();
                                 
-                                // Save state before deletion
-                                pushUndoState();
-                                
-                                // Mark as edited by storing empty text
-                                const deleteKey = field.dataset.wordIndex || key;
-                                if (deleteKey) {
-                                    const computedStyle = window.getComputedStyle(textSpan);
-                                    const currentFontSizePx = computedStyle.fontSize;
-                                    const currentLineHeightPx = computedStyle.lineHeight !== 'normal' ? computedStyle.lineHeight : '';
-                                    const currentFontSizePdf = parseFloat(field.dataset.fontSize || (parseFloat(currentFontSizePx) / scaleY) || block.font_size);
-                                    const currentTextColor = field.dataset.textColor || computedStyle.color || '#000000';
-                                    const richHtml = buildBlockRichHtml(textSpan, fontFamily, fontWeight, fontStyle, currentFontSizePx, currentLineHeightPx, currentTextColor);
-                                    overlayEditedFields.set(deleteKey, {
-                                        page_number: pageData.page_number,
-                                        block_num: block.block_num,
-                                        original_text: safeBlockText,
-                                        new_text: '',
-                                        rich_html: richHtml,
-                                        original_bbox: [blockLeft, blockTop, blockLeft + blockWidth, blockTop + blockHeight],
-                                        bbox: [blockLeft, blockTop, blockLeft + blockWidth, blockTop + blockHeight],
-                                    font_xref: field.dataset.fontXref ? parseInt(field.dataset.fontXref, 10) : null,
-                                    font: block.font,
-                                    font_size: currentFontSizePdf,
-                                    font_weight: fontWeight,
-                                    font_style: fontStyle,
-                                    line_height: lineHeightValue || null,
-                                    color: field.dataset.textColor || '#000000'
-                                });
+                                try {
+                                    // Save state before deletion
+                                    pushUndoState();
+                                    
+                                    // Mark as edited by storing empty text
+                                    const deleteKey = field.dataset.wordIndex || key;
+                                    if (deleteKey) {
+                                        const currentFontSizePdf = parseFloat(field.dataset.fontSize || block.font_size || 12);
+                                        overlayEditedFields.set(deleteKey, {
+                                            page_number: pageData.page_number,
+                                            block_num: block.block_num,
+                                            original_text: safeBlockText,
+                                            new_text: '',
+                                            rich_html: null,
+                                            original_bbox: [blockLeft, blockTop, blockLeft + blockWidth, blockTop + blockHeight],
+                                            bbox: [blockLeft, blockTop, blockLeft + blockWidth, blockTop + blockHeight],
+                                            font_xref: field.dataset.fontXref ? parseInt(field.dataset.fontXref, 10) : null,
+                                            font: block.font,
+                                            font_size: currentFontSizePdf,
+                                            font_weight: fontWeight,
+                                            font_style: fontStyle,
+                                            line_height: lineHeightValue || null,
+                                            color: field.dataset.textColor || '#000000'
+                                        });
+                                    }
+                                    
+                                    // Remove field from DOM
+                                    field.classList.remove('active');
+                                    if (field.parentNode) {
+                                        field.parentNode.removeChild(field);
+                                    }
+                                    
+                                    // Clear selection and update UI
+                                    clearOverlaySelection();
+                                    updateSelectionBar();
+                                    updateOverlaySaveButton();
+                                    persistOverlayEdits();
+                                    setStatus('Text block deleted', 'ok');
+                                } catch (err) {
+                                    console.error('Delete handler error:', err);
+                                    // Still try to remove the field even if something failed
+                                    if (field.parentNode) field.parentNode.removeChild(field);
+                                    clearOverlaySelection();
+                                    updateSelectionBar();
+                                    setStatus('Delete failed: ' + err.message, 'err');
                                 }
-                                
-                                // Clear selection immediately
-                                selectedOverlayField = null;
-                                console.log(field.parentNode);
-                                // Remove the entire field element (including bounding box) completely
-                                if (field.parentNode) {
-                                    field.parentNode.removeChild(field);
-                                }
-                                
-                                updateOverlaySaveButton();
-                                persistOverlayEdits();
-                                setStatus('Text block deleted', 'ok');
                             });
                             
                             const startDrag = (e) => {
