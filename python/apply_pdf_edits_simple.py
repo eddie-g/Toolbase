@@ -75,6 +75,7 @@ FONT_FILES = {
     'Lato-Regular': 'fonts/Lato-Regular.ttf',
     'Lato-Bold': 'fonts/Lato-Bold.ttf',
     'Lato_700wght': 'fonts/Lato-Bold.ttf',
+
 }
 
 def get_font_file(font_name, script_dir, font_weight=None):
@@ -460,11 +461,14 @@ def apply_edits(pdf_path, edits_json):
     # Also build a set of redaction rects per page so we know exactly
     # which areas are being redacted (to detect collateral damage).
     redaction_rects_by_page = {}
+    intentional_edit_rects_by_page = {}
     for page_num, page_edits in edits_by_page.items():
         rects = []
+        intentional_rects = []
         for edit in page_edits:
             original_bbox = edit.get("original_bbox")
             if original_bbox:
+                intentional_rects.append(fitz.Rect(original_bbox))
                 rects.append(fitz.Rect(
                     original_bbox[0] - 1,
                     original_bbox[1] - 1,
@@ -472,6 +476,7 @@ def apply_edits(pdf_path, edits_json):
                     original_bbox[3] + 1,
                 ))
         redaction_rects_by_page[page_num] = rects
+        intentional_edit_rects_by_page[page_num] = intentional_rects
     
     # PHASE A: SCRUB PHASE - Remove text from ORIGINAL locations only
     # This phase ONLY handles where text USED TO BE, never where it IS NOW
@@ -1023,6 +1028,7 @@ def apply_edits(pdf_path, edits_json):
         page = doc[page_num - 1]
         touched_texts = edited_texts_by_page.get(page_num, set())
         redact_rects = redaction_rects_by_page.get(page_num, [])
+        intentional_rects = intentional_edit_rects_by_page.get(page_num, [])
         pre_spans = pre_edit_spans.get(page_num, [])
 
         if not pre_spans:
@@ -1071,6 +1077,26 @@ def apply_edits(pdf_path, edits_json):
 
             # Was this span inside a redaction rectangle? (collateral damage)
             span_rect = fitz.Rect(span_info["bbox"])
+
+            # If the span is inside one of the user's intentional edit boxes,
+            # never recover it. Recovery is only for accidental neighboring loss.
+            is_inside_intentional_edit = False
+            for i_rect in intentional_rects:
+                inter = span_rect & i_rect
+                if inter.is_empty:
+                    continue
+                span_area = max(1e-6, span_rect.get_area())
+                overlap_ratio = inter.get_area() / span_area
+                center_x = (span_rect.x0 + span_rect.x1) / 2.0
+                center_y = (span_rect.y0 + span_rect.y1) / 2.0
+                center_inside = (i_rect.x0 <= center_x <= i_rect.x1 and i_rect.y0 <= center_y <= i_rect.y1)
+                if overlap_ratio >= 0.5 or center_inside:
+                    is_inside_intentional_edit = True
+                    break
+
+            if is_inside_intentional_edit:
+                continue
+
             was_in_redaction = False
             for r_rect in redact_rects:
                 if not (span_rect & r_rect).is_empty:
