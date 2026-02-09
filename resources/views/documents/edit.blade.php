@@ -11674,7 +11674,8 @@
                         font_style: editData.font_style || null,    // Explicit style (normal, italic)
                         line_height: editData.line_height || null,   // Include line height
                         color: color,
-                        rich_html: editData.rich_html || null        // Always send rich_html for per-word font info
+                        rich_html: editData.rich_html || null,        // Always send rich_html for per-word font info
+                        word_styles: editData.word_styles || null     // Per-word formatting (font, size, italic, etc.)
                     });
                 }
                 
@@ -14431,6 +14432,11 @@
                         field.dataset.pageHeight = pageData.height;
                         field.dataset.padding = paddingPdf;
 
+                        // Store per-word style data for preserving formatting on save
+                        if (blockWords.length > 0) {
+                            field._blockWords = blockWords;
+                        }
+
                         // Add tooltip on hover to show what text is in this block
                         field.title = safeBlockText;
 
@@ -14461,12 +14467,34 @@
                             const currentOriginX = currentLeft;
                             const currentOriginY = currentTop + currentHeight;
                             
+                            // Build per-word style data for preserving formatting on save
+                            const wordStylesArr = (field._blockWords || []).map(w => ({
+                                text: w.text,
+                                font: w.font,
+                                font_xref: w.font_xref || null,
+                                font_size: w.font_size,
+                                font_weight: w.font_weight || 400,
+                                italic: !!w.italic,
+                                bold: !!w.bold,
+                                color: w.color,
+                                hex_color: w.hex_color || '#000000',
+                                left: w.left,
+                                top: w.top,
+                                width: w.width,
+                                height: w.height,
+                                origin_x: w.origin_x,
+                                origin_y: w.origin_y,
+                                ascender: w.ascender,
+                                descender: w.descender
+                            }));
+
                             overlayEditedFields.set(editKey, {
                                 page_number: pageData.page_number,
                                 block_num: block.block_num,
                                 original_text: safeBlockText,       // ORIGINAL PDF TEXT
                                 new_text: userTypedText,            // USER TYPED TEXT
                                 rich_html: richHtml,
+                                word_styles: wordStylesArr,          // PER-WORD FORMATTING
                                 bbox: [currentLeft, currentTop, currentLeft + currentWidth, currentTop + currentHeight],
                                 original_bbox: [blockLeft, blockTop, blockLeft + blockWidth, blockTop + blockHeight],
                                 origin_x: currentOriginX,           // CURRENT POSITION X

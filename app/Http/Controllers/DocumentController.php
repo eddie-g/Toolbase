@@ -1183,6 +1183,8 @@ class DocumentController extends Controller
             'edits.*.line_height' => ['nullable', 'numeric'],
             'edits.*.color' => ['nullable', 'string'],
             'edits.*.rich_html' => ['nullable', 'string'],
+            'edits.*.word_styles' => ['nullable', 'array'],
+            'edits.*.word_styles.*' => ['nullable', 'array'],
             'skip_refresh' => ['nullable', 'boolean'],
         ]);
 
@@ -1277,13 +1279,13 @@ class DocumentController extends Controller
             'edits_count' => count($validated['edits'])
         ]);
         
-        // Pass edits as JSON argument instead of file
-        $editsJson = json_encode($validated['edits']);
+        // Pass edits via temp file to avoid command-line length limits
+        // (word_styles arrays can be large)
         $command = sprintf(
             'python3 %s %s %s 2>&1',
             escapeshellarg($pythonScript),
             escapeshellarg($fullPath),
-            escapeshellarg($editsJson)
+            escapeshellarg('@' . $editsFile)
         );
         
         $output = [];

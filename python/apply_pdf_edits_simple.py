@@ -658,6 +658,184 @@ def apply_edits(pdf_path, edits_json):
                     except Exception:
                         text_color = (0, 0, 0)
 
+            # ── WORD-STYLES HANDLING ───────────────────────────────────────
+            # When the frontend sends per-word style data (font, size, italic,
+            # color, position), we re-insert each word individually using
+            # TextWriter so that subscripts, superscripts, italic spans, and
+            # mixed-font blocks survive the edit cycle.
+            word_styles = edit.get('word_styles')
+            if word_styles and isinstance(word_styles, list) and len(word_styles) > 0:
+                try:
+                    original_text = (edit.get('original_text') or '').strip()
+                    new_text_stripped = (new_text or '').strip()
+
+                    def _build_word_edits(word_styles, original_text, new_text):
+                        """
+                        Map original per-word styles onto new_text.
+                        
+                        Strategy: build an output token stream from SequenceMatcher opcodes.
+                        Each output token inherits the style of the nearest original token.
+                        Then group consecutive tokens by their word_style index to produce
+                        the final list of word_style dicts.
+                        
+                        Returns a list of word_style dicts with potentially updated 'text'.
+                        """
+                        import difflib
+
+                        # Build token list from word_styles
+                        # Each token tracks which word_style index it came from
+                        orig_tokens = []  # (token_text, ws_idx)
+                        
+                        for ws_idx, ws in enumerate(word_styles):
+                            wt = ws.get('text', '').strip()
+                            if not wt:
+                                continue
+                            for tok in wt.split():
+                                tok = tok.strip()
+                                if tok:
+                                    orig_tokens.append((tok, ws_idx))
+                        
+                        # Tokenize new text
+                        new_tokens = new_text.split()
+                        orig_token_texts = [t[0] for t in orig_tokens]
+                        
+                        # If tokens are identical, return all words unchanged
+                        if orig_token_texts == new_tokens:
+                            return [dict(ws) for ws in word_styles]
+                        
+                        # Use SequenceMatcher to find changed regions
+                        sm = difflib.SequenceMatcher(None, orig_token_texts, new_tokens)
+                        
+                        # Build output token stream: list of (token_text, ws_idx)
+                        # Each output token inherits a word_style from the original.
+                        output_tokens = []  # (token_text, ws_idx)
+                        
+                        for tag, i1, i2, j1, j2 in sm.get_opcodes():
+                            if tag == 'equal':
+                                # Keep original tokens with their styles
+                                for k in range(i1, i2):
+                                    output_tokens.append((orig_tokens[k][0], orig_tokens[k][1]))
+                            elif tag == 'replace':
+                                # New tokens inherit style from first affected original
+                                style_ws = orig_tokens[i1][1] if i1 < len(orig_tokens) else 0
+                                for new_tok in new_tokens[j1:j2]:
+                                    output_tokens.append((new_tok, style_ws))
+                            elif tag == 'insert':
+                                # New tokens — inherit style from nearest preceding token
+                                if i1 > 0:
+                                    style_ws = orig_tokens[i1 - 1][1]
+                                elif orig_tokens:
+                                    style_ws = orig_tokens[0][1]
+                                else:
+                                    style_ws = 0
+                                for new_tok in new_tokens[j1:j2]:
+                                    output_tokens.append((new_tok, style_ws))
+                            elif tag == 'delete':
+                                # Tokens removed — nothing added to output
+                                pass
+                        
+                        # Group consecutive tokens by word_style index
+                        # Each group becomes one word_style entry with joined text
+                        if not output_tokens:
+                            return []
+                        
+                        result = []
+                        current_ws_idx = output_tokens[0][1]
+                        current_toks = [output_tokens[0][0]]
+                        
+                        for tok_text, ws_idx in output_tokens[1:]:
+                            if ws_idx == current_ws_idx:
+                                current_toks.append(tok_text)
+                            else:
+                                # Flush current group
+                                new_ws = dict(word_styles[current_ws_idx])
+                                new_ws['text'] = ' '.join(current_toks)
+                                result.append(new_ws)
+                                current_ws_idx = ws_idx
+                                current_toks = [tok_text]
+                        
+                        # Flush last group
+                        new_ws = dict(word_styles[current_ws_idx])
+                        new_ws['text'] = ' '.join(current_toks)
+                        result.append(new_ws)
+                        
+                        return result
+
+                    mapped_words = _build_word_edits(word_styles, original_text, new_text_stripped)
+
+                    # Re-insert each word with its own font/size/style
+                    tw = fitz.TextWriter(page.rect)
+                    ws_font_cache = {}
+
+                    for mw in mapped_words:
+                        mw_text = mw.get('text', '')
+                        if not mw_text:
+                            continue
+                        mw_text = normalize_smart_quotes(mw_text)
+
+                        mw_font_name = mw.get('font', font_name)
+                        mw_font_size = mw.get('font_size', font_size)
+                        mw_font_weight = mw.get('font_weight')
+                        mw_italic = mw.get('italic', False)
+                        mw_font_xref = mw.get('font_xref')
+
+                        # Color
+                        mw_hex = mw.get('hex_color') or mw.get('color', '#000000')
+                        mw_color = (0, 0, 0)
+                        if isinstance(mw_hex, str):
+                            nh = mw_hex.strip().lstrip('#')
+                            if len(nh) == 6:
+                                try:
+                                    mw_color = (
+                                        int(nh[0:2], 16) / 255.0,
+                                        int(nh[2:4], 16) / 255.0,
+                                        int(nh[4:6], 16) / 255.0,
+                                    )
+                                except Exception:
+                                    mw_color = text_color
+
+                        # Position
+                        mw_origin_x = mw.get('origin_x', mw.get('left', bbox[0]))
+                        mw_origin_y = mw.get('origin_y')
+                        if mw_origin_y is None:
+                            # Fallback: bottom of word bbox
+                            mw_origin_y = mw.get('top', bbox[1]) + mw.get('height', mw_font_size)
+
+                        # Font resolution (with caching)
+                        cache_key = f"{mw_font_name}_{mw_font_weight}_{mw_italic}"
+                        if cache_key in ws_font_cache:
+                            mw_font_obj = ws_font_cache[cache_key]
+                        else:
+                            mw_font_obj = None
+                            # Try full font file
+                            ff = get_font_file(mw_font_name, script_dir, font_weight=mw_font_weight)
+                            if ff and os.path.exists(ff):
+                                mw_font_obj = fitz.Font(fontfile=ff)
+                            if not mw_font_obj:
+                                # Try embedded font
+                                mw_font_obj = get_embedded_font(doc, mw_font_xref, font_name=mw_font_name, page_num=page_num)
+                            if not mw_font_obj:
+                                mw_font_obj = fitz.Font("helv")
+                            ws_font_cache[cache_key] = mw_font_obj
+
+                        tw.append(
+                            (mw_origin_x, mw_origin_y),
+                            mw_text,
+                            font=mw_font_obj,
+                            fontsize=mw_font_size,
+                        )
+                        # TextWriter.write_text only takes one color, but we need
+                        # per-word colors.  Flush after each word with its own color.
+                        tw.write_text(page, color=mw_color, overlay=True)
+                        tw = fitz.TextWriter(page.rect)
+
+                    print(f"  ✓ Inserted block via word_styles at ({bbox[0]:.1f}, {bbox[1]:.1f}) with {len(mapped_words)} styled words [TextWriter overlay]")
+                    continue
+                except Exception as e:
+                    print(f"  ⚠ word_styles handling failed: {e}, falling back to rich_html/textbox")
+                    import traceback
+                    traceback.print_exc()
+
             # Rich HTML handling (for formatted text)
             # CRITICAL: Use FULL FONT FILES, not extracted subsetted font buffers!
             # Subsetted fonts from PDFs don't work with TextWriter - they produce
@@ -1165,11 +1343,17 @@ def apply_edits(pdf_path, edits_json):
 
 if __name__ == '__main__':
     if len(sys.argv) != 3:
-        print("Usage: apply_pdf_edits_simple.py <pdf_path> <edits_json>")
+        print("Usage: apply_pdf_edits_simple.py <pdf_path> <edits_json_or_@file>")
         sys.exit(1)
 
     try:
-        apply_edits(sys.argv[1], sys.argv[2])
+        edits_arg = sys.argv[2]
+        # Support @filename convention: read JSON from file instead of CLI arg
+        if edits_arg.startswith('@'):
+            edits_file = edits_arg[1:]
+            with open(edits_file, 'r') as f:
+                edits_arg = f.read()
+        apply_edits(sys.argv[1], edits_arg)
         print("\nSUCCESS")
     except Exception as e:
         print(f"ERROR: {e}", file=sys.stderr)
