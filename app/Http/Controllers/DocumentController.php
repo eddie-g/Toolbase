@@ -5,7 +5,9 @@ namespace App\Http\Controllers;
 use App\Models\Document;
 use App\Models\GuidedTemplate;
 use App\Models\PdfState;
+use App\Models\UserActivity;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -21,9 +23,12 @@ class DocumentController extends Controller
             ->orderBy('sort_order')
             ->get();
 
+        $guidedTemplatesByType = $guidedTemplates->groupBy('type');
+
         return view('documents.index', [
             'documents' => $documents,
             'guidedTemplates' => $guidedTemplates,
+            'guidedTemplatesByType' => $guidedTemplatesByType,
         ]);
     }
 
@@ -145,6 +150,23 @@ class DocumentController extends Controller
             'style'            => ['nullable', 'string', 'in:default,bold_red'],
         ]);
 
+        $style = $validated['style'] ?? 'default';
+
+        // Enforce one template per type: redirect to existing if found
+        $existing = Document::where('mode', 'guided')
+            ->where('template_type', 'invoice')
+            ->where('template_slug', $style)
+            ->first();
+
+        if ($existing) {
+            $editUrl = route('documents.guided', $existing);
+            if ($style !== 'default') {
+                $editUrl .= '?style=' . urlencode($style);
+            }
+            return redirect($editUrl)
+                ->with('status', 'You already have this invoice template. Editing existing one.');
+        }
+
         $uuid = Str::uuid()->toString();
         $storedRelative = 'documents/' . $uuid . '.pdf';
         $storedFull = Storage::path($storedRelative);
@@ -186,6 +208,10 @@ class DocumentController extends Controller
             'path' => $storedRelative,
             'mime_type' => 'application/pdf',
             'size_bytes' => filesize($storedFull),
+            'mode' => 'guided',
+            'template_type' => 'invoice',
+            'template_slug' => $validated['style'] ?? 'default',
+            'form_data' => $payload, // Save initial payload as form data
         ]);
 
         // Auto-download fonts
@@ -204,6 +230,102 @@ class DocumentController extends Controller
 
         return redirect($editUrl)
             ->with('status', 'Invoice created. Customize it below.');
+    }
+
+    /**
+     * Create a document from a guided template (newsletter, NDA, purchase order, etc.).
+     */
+    public function createFromGuidedTemplate(Request $request)
+    {
+        $validated = $request->validate([
+            '_template_type' => ['required', 'string', 'in:newsletter,business'],
+            '_template_slug' => ['required', 'string', 'max:100'],
+        ]);
+
+        $templateType = $validated['_template_type'];
+        $templateSlug = $validated['_template_slug'];
+
+        // Enforce one template per type: redirect to existing if found
+        $existing = Document::where('mode', 'guided')
+            ->where('template_type', $templateType)
+            ->where('template_slug', $templateSlug)
+            ->first();
+
+        if ($existing) {
+            return redirect()
+                ->route('documents.guided', ['document' => $existing, 'template_type' => $templateType, 'template_slug' => $templateSlug])
+                ->with('status', 'You already have this template. Editing existing one.');
+        }
+
+        // Look up the template to get defaults
+        $template = GuidedTemplate::where('slug', $templateSlug)->where('is_active', true)->first();
+        if (!$template) {
+            return redirect()->route('documents.index')->withErrors('Template not found.');
+        }
+
+        $uuid = Str::uuid()->toString();
+        $storedRelative = 'documents/' . $uuid . '.pdf';
+        $storedFull = Storage::path($storedRelative);
+
+        Storage::makeDirectory('documents');
+
+        // Build payload from template defaults
+        $payload = array_merge($template->defaults ?? [], [
+            'template_type' => $templateType,
+            'template_slug' => $templateSlug,
+        ]);
+
+        $tmpPayload = tempnam(sys_get_temp_dir(), 'tpl_');
+        file_put_contents($tmpPayload, json_encode($payload, JSON_UNESCAPED_UNICODE));
+
+        $script = base_path('python/generate_template.py');
+        $command = sprintf(
+            'python3 %s %s < %s 2>&1',
+            escapeshellarg($script),
+            escapeshellarg($storedFull),
+            escapeshellarg($tmpPayload)
+        );
+
+        $output = [];
+        $exitCode = 0;
+        exec($command, $output, $exitCode);
+        @unlink($tmpPayload);
+
+        if ($exitCode !== 0 || !file_exists($storedFull)) {
+            Log::error('Guided template generation failed', [
+                'template_type' => $templateType,
+                'template_slug' => $templateSlug,
+                'output' => implode("\n", $output),
+                'exit_code' => $exitCode,
+            ]);
+            return redirect()
+                ->route('documents.index')
+                ->withErrors('Failed to generate template. Please try again.');
+        }
+
+        $document = Document::create([
+            'original_name' => $template->name . '.pdf',
+            'path' => $storedRelative,
+            'mime_type' => 'application/pdf',
+            'size_bytes' => filesize($storedFull),
+            'mode' => 'guided',
+            'template_type' => $templateType,
+            'template_slug' => $templateSlug,
+            'form_data' => $payload,
+        ]);
+
+        // Auto-download fonts
+        $fontScript = base_path('python/auto_download_fonts.py');
+        $fontCommand = sprintf(
+            'python3 %s %s > /dev/null 2>&1 &',
+            escapeshellarg($fontScript),
+            escapeshellarg($storedFull)
+        );
+        exec($fontCommand);
+
+        return redirect()
+            ->route('documents.guided', ['document' => $document, 'template_type' => $templateType, 'template_slug' => $templateSlug])
+            ->with('status', $template->name . ' created. Customize it below.');
     }
 
     /**
@@ -271,6 +393,133 @@ class DocumentController extends Controller
             escapeshellarg($storedFull)
         );
         exec($fontCommand);
+
+        return response()->json(['success' => true]);
+    }
+
+    /**
+     * Regenerate a guided template PDF in-place (newsletter, NDA, purchase order).
+     */
+    public function regenerateTemplate(Request $request, Document $document)
+    {
+        $data = $request->all();
+        $templateType = $data['template_type'] ?? '';
+        $templateSlug = $data['template_slug'] ?? '';
+
+        if (!in_array($templateType, ['newsletter', 'business'])) {
+            return response()->json(['error' => 'Invalid template type.'], 422);
+        }
+
+        $storedFull = Storage::path($document->path);
+
+        $payload = json_encode($data, JSON_UNESCAPED_UNICODE);
+
+        $tmpPayload = tempnam(sys_get_temp_dir(), 'tpl_');
+        file_put_contents($tmpPayload, $payload);
+
+        $script = base_path('python/generate_template.py');
+        $command = sprintf(
+            'python3 %s %s < %s 2>&1',
+            escapeshellarg($script),
+            escapeshellarg($storedFull),
+            escapeshellarg($tmpPayload)
+        );
+
+        $output = [];
+        $exitCode = 0;
+        exec($command, $output, $exitCode);
+        @unlink($tmpPayload);
+
+        if ($exitCode !== 0) {
+            Log::error('Template regeneration failed', [
+                'template_type' => $templateType,
+                'template_slug' => $templateSlug,
+                'output' => implode("\n", $output),
+                'exit_code' => $exitCode,
+            ]);
+            return response()->json(['error' => 'Failed to regenerate template.'], 500);
+        }
+
+        $document->update([
+            'size_bytes' => filesize($storedFull),
+        ]);
+
+        // Auto-download fonts
+        $fontScript = base_path('python/auto_download_fonts.py');
+        $fontCommand = sprintf(
+            'python3 %s %s > /dev/null 2>&1 &',
+            escapeshellarg($fontScript),
+            escapeshellarg($storedFull)
+        );
+        exec($fontCommand);
+
+        return response()->json(['success' => true]);
+    }
+
+    /**
+     * Save guided form data without generating PDF.
+     */
+    public function saveGuidedFormData(Request $request, Document $document)
+    {
+        $formData = $request->input('form_data', null);
+
+        if (!$formData || !is_array($formData)) {
+            return response()->json(['error' => 'No form data provided.'], 422);
+        }
+
+        $document->update(['form_data' => $formData]);
+
+        return response()->json(['success' => true, 'message' => 'Form data saved.']);
+    }
+
+    /**
+     * Convert HTML content to PDF using fitz.Story (PyMuPDF).
+     */
+    public function convertHtmlToPdf(Request $request, Document $document)
+    {
+        $html = $request->input('html', '');
+        $css  = $request->input('css', '');
+        $formData = $request->input('form_data', null); // New: Allow saving form state
+
+        if (empty(trim($html))) {
+            return response()->json(['error' => 'No HTML content provided.'], 422);
+        }
+
+        // If form data provided, save it to the document
+        if ($formData) {
+            $document->update(['form_data' => $formData]);
+        }
+
+        $storedFull = Storage::path($document->path);
+
+        $payload = json_encode(['html' => $html, 'css' => $css], JSON_UNESCAPED_UNICODE);
+        $tmpPayload = tempnam(sys_get_temp_dir(), 'html_');
+        file_put_contents($tmpPayload, $payload);
+
+        $script = base_path('python/html_to_pdf.py');
+        $command = sprintf(
+            'python3 %s %s < %s 2>&1',
+            escapeshellarg($script),
+            escapeshellarg($storedFull),
+            escapeshellarg($tmpPayload)
+        );
+
+        $output = [];
+        $exitCode = 0;
+        exec($command, $output, $exitCode);
+        @unlink($tmpPayload);
+
+        if ($exitCode !== 0) {
+            Log::error('HTML-to-PDF conversion failed', [
+                'output' => implode("\n", $output),
+                'exit_code' => $exitCode,
+            ]);
+            return response()->json(['error' => 'Failed to convert HTML to PDF.'], 500);
+        }
+
+        $document->update([
+            'size_bytes' => filesize($storedFull),
+        ]);
 
         return response()->json(['success' => true]);
     }
@@ -357,7 +606,7 @@ class DocumentController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'No extraction data found. Processing may still be in progress.'
-            ], 404);
+            ], 200); // Return 200 so clients parse JSON easily
         }
 
         return response()->json([
@@ -377,19 +626,71 @@ class DocumentController extends Controller
         ]);
     }
 
-    public function ai(Document $document)
+    public function ai($id)
     {
-        return view('documents.edit', [
-            'document' => $document,
-            'activeTab' => 'extracted-text',
-        ]);
+        // Check for AiDocument first (User requested URL behavior)
+        $aiDocument = \App\Models\AiDocument::with('document')->find($id);
+        if ($aiDocument) {
+             return view('documents.edit', [
+                'document' => $aiDocument->document,
+                'aiDocument' => $aiDocument,
+                'activeTab' => 'extracted-text',
+            ]);
+        }
+
+        // Fallback to standard Document
+        $document = Document::find($id);
+        if ($document) {
+            return view('documents.edit', [
+                'document' => $document,
+                'activeTab' => 'extracted-text',
+            ]);
+        }
+
+        abort(404);
     }
+
+    public function createAi(Request $request)
+    {
+        $validated = $request->validate([
+            'document_id' => 'required|exists:documents,id',
+        ]);
+
+        $aiDocument = \App\Models\AiDocument::create([
+            'document_id' => $validated['document_id'],
+            'session_id' => Str::uuid(),
+            'email' => auth()->user() ? auth()->user()->email : null,
+        ]);
+
+        return redirect()->to(route('documents.ai', ['document' => $aiDocument->id]));
+    }
+
 
     public function guided(Document $document)
     {
+        // Use saved template metadata if available, otherwise fallback to query params or default
+        $templateType = $document->template_type ?? request('template_type', 'invoice');
+        $templateSlug = $document->template_slug ?? request('template_slug', 'default');
+        
+        // Pass saved form data if available
+        $formData = $document->form_data ?? [];
+
+        // If no saved data, maybe we can load defaults from the template definition
+        $templateDefaults = [];
+        if (empty($formData) && $templateSlug) {
+            $template = GuidedTemplate::where('slug', $templateSlug)->first();
+            if ($template) {
+                $templateDefaults = $template->defaults ?? [];
+            }
+        }
+
         return view('documents.edit', [
             'document' => $document,
-            'activeTab' => 'guided-invoice',
+            'activeTab' => 'guided-' . $templateType, // Dynamically activate the correct tab
+            'templateType' => $templateType,
+            'templateSlug' => $templateSlug,
+            'templateDefaults' => $templateDefaults, // Only used if no form_data
+            'formData' => $formData,                 // New: saved input values
         ]);
     }
 
@@ -660,6 +961,32 @@ class DocumentController extends Controller
         return redirect()
             ->route('documents.index')
             ->with('status', 'Document deleted.');
+    }
+
+    public function bulkDestroy(Request $request)
+    {
+        $validated = $request->validate([
+            'ids' => 'required|array',
+            'ids.*' => 'exists:documents,id',
+        ]);
+
+        $documents = Document::whereIn('id', $validated['ids'])->get();
+        $count = 0;
+
+        foreach ($documents as $document) {
+            // Delete related extraction data
+            DB::table('pdf_extractions_fitz')
+                ->where('document_id', $document->id)
+                ->delete();
+            
+            Storage::delete($document->path);
+            $document->delete();
+            $count++;
+        }
+
+        return redirect()
+            ->route('documents.index')
+            ->with('status', "$count documents deleted.");
     }
 
     public function prepareOverlay(Document $document)
@@ -1808,5 +2135,191 @@ class DocumentController extends Controller
             'success' => true,
             'message' => 'Annotations marked as saved',
         ]);
+    }
+
+    public function convertToPdfA(Request $request, Document $document)
+    {
+        $validated = $request->validate([
+            'level' => ['required', 'string', 'in:1b,2b,3b,2u'],
+            'embed_fonts' => ['boolean'],
+            'srgb_profile' => ['boolean'],
+        ]);
+
+        $level = $validated['level'];
+        $embedFonts = $validated['embed_fonts'] ?? true;
+        $srgbProfile = $validated['srgb_profile'] ?? true;
+
+        $inputPath = Storage::path($document->path);
+        $tempOutputPath = Storage::path('documents/temp_pdfa_' . Str::uuid() . '.pdf');
+        $pythonScript = base_path('python/convert_to_pdfa.py');
+
+        // Build command
+        $command = sprintf(
+            'python3 %s %s %s --level %s %s %s --json 2>&1',
+            escapeshellarg($pythonScript),
+            escapeshellarg($inputPath),
+            escapeshellarg($tempOutputPath),
+            escapeshellarg($level),
+            $embedFonts ? '--embed-fonts' : '--no-embed-fonts',
+            $srgbProfile ? '--srgb' : '--no-srgb'
+        );
+
+        $output = shell_exec($command);
+
+        // Parse the JSON output from the Python script
+        $result = null;
+        if ($output) {
+            // Find the JSON line in the output (skip any stderr warnings)
+            $lines = explode("\n", trim($output));
+            foreach ($lines as $line) {
+                $decoded = json_decode(trim($line), true);
+                if ($decoded !== null) {
+                    $result = $decoded;
+                    break;
+                }
+            }
+        }
+
+        if (!$result || !($result['success'] ?? false)) {
+            // Clean up temp file if it exists
+            if (file_exists($tempOutputPath)) {
+                unlink($tempOutputPath);
+            }
+
+            // Log failed PDF/A export
+            if (Auth::check()) {
+                UserActivity::create([
+                    'user_id' => Auth::id(),
+                    'action' => "Convert to PDF/A-" . strtoupper($level),
+                    'category' => 'pdfa_export',
+                    'details' => ['level' => $level, 'embed_fonts' => $embedFonts, 'srgb_profile' => $srgbProfile, 'error' => $result['error'] ?? 'Unknown error'],
+                    'document_id' => $document->id,
+                    'status' => 'failed',
+                    'ip_address' => $request->ip(),
+                    'user_agent' => $request->userAgent(),
+                ]);
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => $result['error'] ?? 'PDF/A conversion failed. Output: ' . ($output ?? 'none'),
+            ], 500);
+        }
+
+        if (!file_exists($tempOutputPath)) {
+            // Log failed PDF/A export
+            if (Auth::check()) {
+                UserActivity::create([
+                    'user_id' => Auth::id(),
+                    'action' => "Convert to PDF/A-" . strtoupper($level),
+                    'category' => 'pdfa_export',
+                    'details' => ['level' => $level, 'embed_fonts' => $embedFonts, 'srgb_profile' => $srgbProfile, 'error' => 'Output file not created'],
+                    'document_id' => $document->id,
+                    'status' => 'failed',
+                    'ip_address' => $request->ip(),
+                    'user_agent' => $request->userAgent(),
+                ]);
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => 'PDF/A output file was not created',
+            ], 500);
+        }
+
+        // Generate a download token and store temp file path in session
+        $downloadToken = Str::uuid()->toString();
+        $baseName = pathinfo($document->original_name, PATHINFO_FILENAME);
+        $downloadName = $baseName . '_PDFA-' . strtoupper($level) . '.pdf';
+
+        session()->put("pdfa_download_{$downloadToken}", [
+            'path' => $tempOutputPath,
+            'name' => $downloadName,
+            'expires' => now()->addMinutes(10),
+        ]);
+
+        // Log successful PDF/A export
+        if (Auth::check()) {
+            UserActivity::create([
+                'user_id' => Auth::id(),
+                'action' => "Convert to PDF/A-" . strtoupper($level),
+                'category' => 'pdfa_export',
+                'details' => [
+                    'level' => $level,
+                    'embed_fonts' => $embedFonts,
+                    'srgb_profile' => $srgbProfile,
+                    'file_size' => filesize($tempOutputPath),
+                    'compliance_status' => $result['report']['status'] ?? null,
+                ],
+                'document_id' => $document->id,
+                'status' => 'success',
+                'ip_address' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+            ]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'download_token' => $downloadToken,
+            'download_name' => $downloadName,
+            'report' => $result['report'] ?? null,
+            'warnings' => $result['warnings'] ?? [],
+            'label' => $result['label'] ?? "PDF/A-{$level}",
+        ]);
+    }
+
+    public function downloadPdfA(Request $request)
+    {
+        $token = $request->query('token');
+        if (!$token) {
+            abort(400, 'Missing download token');
+        }
+
+        $data = session()->pull("pdfa_download_{$token}");
+        if (!$data || !isset($data['path'])) {
+            abort(404, 'Download expired or not found');
+        }
+
+        if (now()->greaterThan($data['expires'])) {
+            if (file_exists($data['path'])) {
+                unlink($data['path']);
+            }
+            abort(410, 'Download link has expired');
+        }
+
+        if (!file_exists($data['path'])) {
+            abort(404, 'File not found');
+        }
+
+        return response()->download($data['path'], $data['name'], [
+            'Content-Type' => 'application/pdf',
+        ])->deleteFileAfterSend(true);
+    }
+
+    public function logExportActivity(Request $request, Document $document)
+    {
+        if (!Auth::check()) {
+            return response()->json(['success' => false, 'message' => 'Not authenticated'], 401);
+        }
+
+        $validated = $request->validate([
+            'action' => ['required', 'string', 'max:255'],
+            'category' => ['required', 'string', 'max:50'],
+            'details' => ['nullable', 'array'],
+            'status' => ['required', 'string', 'in:success,failed'],
+        ]);
+
+        UserActivity::create([
+            'user_id' => Auth::id(),
+            'action' => $validated['action'],
+            'category' => $validated['category'],
+            'details' => $validated['details'] ?? null,
+            'document_id' => $document->id,
+            'status' => $validated['status'],
+            'ip_address' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+        ]);
+
+        return response()->json(['success' => true]);
     }
 }

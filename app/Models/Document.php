@@ -11,6 +11,14 @@ class Document extends Model
         'path',
         'mime_type',
         'size_bytes',
+        'mode',
+        'template_type',
+        'template_slug',
+        'form_data',
+    ];
+
+    protected $casts = [
+        'form_data' => 'array',
     ];
 
     public function pdfExtractionsFitz()

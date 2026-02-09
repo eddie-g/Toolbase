@@ -8,11 +8,18 @@ class AiSection extends Model
 {
     protected $fillable = [
         'document_id',
+        'ai_document_id',
         'session',
         'sections_data',
         'page_width',
         'page_height',
     ];
+
+    public function aiDocument()
+    {
+        return $this->belongsTo(AiDocument::class);
+    }
+
 
     protected $casts = [
         'sections_data' => 'array',

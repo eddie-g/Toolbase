@@ -3,15 +3,29 @@
 use App\Http\Controllers\DocumentController;
 use App\Http\Controllers\DeveloperChatController;
 use App\Http\Controllers\AIController;
+use App\Http\Controllers\ComplianceController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
     return view('home');
 })->name('home');
+
+Route::get('/fix-migration-3', function () {
+    \Illuminate\Support\Facades\Artisan::call('migrate', ['--force' => true]);
+    return 'Migrated: ' . \Illuminate\Support\Facades\Artisan::output();
+});
+
+Route::get('auth/google', [\App\Http\Controllers\SocialAuthController::class, 'redirectToGoogle'])->name('auth.google');
+Route::get('auth/google/callback', [\App\Http\Controllers\SocialAuthController::class, 'handleGoogleCallback']);
+
+
+
 Route::get('/pdf-editor', [DocumentController::class, 'index'])->name('documents.index');
 Route::post('/documents', [DocumentController::class, 'store'])->name('documents.store');
+Route::post('/documents/create-ai', [DocumentController::class, 'createAi'])->name('documents.createAi');
 Route::post('/documents/create-from-template', [DocumentController::class, 'createFromTemplate'])->name('documents.createFromTemplate');
 Route::post('/documents/create-simple-invoice', [DocumentController::class, 'createSimpleInvoice'])->name('documents.createSimpleInvoice');
+Route::post('/documents/create-guided-template', [DocumentController::class, 'createFromGuidedTemplate'])->name('documents.createFromGuidedTemplate');
 Route::get('/documents/{document}/edit', [DocumentController::class, 'edit'])->name('documents.edit');
 Route::get('/documents/{document}/ai', [DocumentController::class, 'ai'])->name('documents.ai');
 Route::get('/documents/{document}/guided', [DocumentController::class, 'guided'])->name('documents.guided');
@@ -36,7 +50,13 @@ Route::post('/documents/{document}/reorder-pages', [DocumentController::class, '
 Route::post('/documents/{document}/add-blank-page', [DocumentController::class, 'addBlankPage'])->name('documents.addBlankPage');
 Route::post('/documents/{document}/rotate-page', [DocumentController::class, 'rotatePage'])->name('documents.rotatePage');
 Route::post('/documents/{document}/regenerate-invoice', [DocumentController::class, 'regenerateInvoice'])->name('documents.regenerateInvoice');
+Route::post('/documents/{document}/regenerate-template', [DocumentController::class, 'regenerateTemplate'])->name('documents.regenerateTemplate');
+Route::post('/documents/{document}/convert-html-to-pdf', [DocumentController::class, 'convertHtmlToPdf'])->name('documents.convertHtmlToPdf');
+Route::post('/documents/{document}/save-guided-form', [DocumentController::class, 'saveGuidedFormData'])->name('documents.saveGuidedForm');
 Route::post('/documents/{document}/screenshot', [DocumentController::class, 'takeScreenshot'])->name('documents.takeScreenshot');
+Route::post('/documents/{document}/convert-to-pdfa', [DocumentController::class, 'convertToPdfA'])->name('documents.convertToPdfA');
+Route::get('/documents/download-pdfa', [DocumentController::class, 'downloadPdfA'])->name('documents.downloadPdfA');
+Route::post('/documents/{document}/log-export', [DocumentController::class, 'logExportActivity'])->name('documents.logExport');
 Route::get('/loaded-fonts.css', function() {
     $path = storage_path('app/public/loaded_fonts.css');
     if (!file_exists($path)) {
@@ -47,7 +67,11 @@ Route::get('/loaded-fonts.css', function() {
         'Cache-Control' => 'no-cache, must-revalidate'
     ]);
 })->name('loadedFonts');
+Route::post('/compliance/run-tests', [ComplianceController::class, 'runTests'])->name('compliance.runTests');
+Route::get('/compliance/test-files', [ComplianceController::class, 'getTestFiles'])->name('compliance.testFiles');
+Route::post('/compliance/run-single-test', [ComplianceController::class, 'runSingleTest'])->name('compliance.runSingleTest');
 Route::delete('/documents/{document}', [DocumentController::class, 'destroy'])->name('documents.destroy');
+Route::post('/documents/bulk-destroy', [DocumentController::class, 'bulkDestroy'])->name('documents.bulkDestroy');
 
 Route::post('/developer-chat', [DeveloperChatController::class, 'chat'])->name('developerChat.chat');
 Route::post('/developer-chat/file-analyze', [DeveloperChatController::class, 'geminiFileAnalyze'])->name('developerChat.fileAnalyze');

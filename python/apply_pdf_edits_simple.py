@@ -479,8 +479,8 @@ def apply_edits(pdf_path, edits_json):
         redaction_count = 0
 
         for edit in page_edits:
-            original_text = edit.get('original_text', '')
-            new_text = edit.get('new_text', '')
+            original_text = edit.get('original_text') or ''
+            new_text = edit.get('new_text') or ''
             original_bbox = edit.get('original_bbox')
             edit_font_size = edit.get('font_size', 12)
 

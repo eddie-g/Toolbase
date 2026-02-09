@@ -9,6 +9,10 @@
         <!-- Bootstrap 5.3.3 CSS -->
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
         
+        <!-- Flatpickr Datepicker -->
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+        <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+        
         <!-- Tailwind CSS -->
         <script src="https://cdn.tailwindcss.com"></script>
         
@@ -417,11 +421,20 @@
             }
             #extracted-text .layout {
                 display: flex;
-                min-height: 100vh;
+                height: calc(100vh - 100px);
+                overflow: hidden;
             }
             #extracted-text .viewer-wrap {
                 margin-left: 0;
                 flex: 1;
+                display: flex;
+                flex-direction: column;
+                height: 100%;
+                overflow: hidden;
+            }
+            #extracted-text .viewer-wrap .viewer {
+                flex: 1;
+                overflow-y: auto;
             }
             .extracted-text-view {
                 background: white;
@@ -437,7 +450,7 @@
                 border-right: 1px solid #374151;
                 display: flex;
                 flex-direction: column;
-                height: calc(100vh - 114px);
+                height: 100%;
             }
             .ai-chat-header {
                 padding: 16px 20px;
@@ -2682,9 +2695,47 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>
                             </svg>
                         </button>
-                        <a href="/admin/login" class="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition">
-                            Login
-                        </a>
+                        
+                        @guest
+                            <a href="{{ route('filament.admin.auth.login') }}" class="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition">
+                                Login
+                            </a>
+                        @endguest
+
+                        @auth
+                            <div class="relative ml-2">
+                                <button type="button" class="flex items-center justify-center w-10 h-10 rounded-full bg-gray-700 text-white hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-white transition" id="user-menu-button" aria-expanded="false" aria-haspopup="true" onclick="const menu = document.getElementById('user-menu'); menu.classList.toggle('hidden');">
+                                    <span class="sr-only">Open user menu</span>
+                                    @if(Auth::user()->avatar)
+                                        <img class="h-9 w-9 rounded-full object-cover border-2 border-gray-600" src="{{ Auth::user()->avatar }}" alt="">
+                                    @else
+                                        <svg class="h-6 w-6 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                                    @endif
+                                </button>
+
+                                <div class="hidden absolute right-0 z-50 mt-2 w-48 origin-top-right rounded-xl bg-[#1a2332] py-2 shadow-2xl ring-1 ring-white/10 focus:outline-none border border-gray-700/50 backdrop-blur-xl" role="menu" aria-orientation="vertical" aria-labelledby="user-menu-button" tabindex="-1" id="user-menu">
+                                    <div class="px-4 py-3 border-b border-gray-700/50 mb-1">
+                                        <p class="text-xs text-gray-400">Signed in as</p>
+                                        <p class="text-sm font-medium text-white truncate">{{ Auth::user()->name }}</p>
+                                    </div>
+                                    <a href="/admin" class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-700/50 hover:text-white transition-colors" role="menuitem" tabindex="-1">Dashboard</a>
+                                    <a href="{{ route('filament.admin.pages.security') }}" class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-700/50 hover:text-white transition-colors" role="menuitem" tabindex="-1">Security</a>
+                                    <form method="POST" action="{{ route('filament.admin.auth.logout') }}">
+                                        @csrf
+                                        <button type="submit" class="block w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-gray-700/50 hover:text-red-300 transition-colors" role="menuitem" tabindex="-1">Sign out</button>
+                                    </form>
+                                </div>
+                            </div>
+                            <script>
+                                document.addEventListener('click', function(event) {
+                                    const menu = document.getElementById('user-menu');
+                                    const button = document.getElementById('user-menu-button');
+                                    if (menu && button && !button.contains(event.target) && !menu.contains(event.target)) {
+                                        menu.classList.add('hidden');
+                                    }
+                                });
+                            </script>
+                        @endauth
                     </div>
                 </div>
             </div>
@@ -2733,24 +2784,30 @@
         <!-- Page Navigation -->
         <nav id="tab-nav" class="bg-gray-800/95 border-b border-gray-700/50 backdrop-blur-sm">
             <div class="flex gap-8 px-4">
+                @if (!str_starts_with($activeTab ?? 'pdf-editor', 'guided-') && ($activeTab ?? 'pdf-editor') !== 'extracted-text')
                 <a href="{{ route('documents.edit', $document) }}" class="page-nav-link flex items-center gap-2.5 py-3.5 text-base font-medium {{ ($activeTab ?? 'pdf-editor') === 'pdf-editor' ? 'text-white border-b-2 border-blue-500' : 'text-gray-400 border-b-2 border-transparent hover:text-white' }} -mb-px transition-all duration-200" style="text-decoration:none;">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                     </svg>
                     Editor
                 </a>
-                <a href="{{ route('documents.ai', $document) }}" class="page-nav-link flex items-center gap-2.5 py-3.5 text-base font-medium {{ ($activeTab ?? 'pdf-editor') === 'extracted-text' ? 'text-white border-b-2 border-blue-500' : 'text-gray-400 border-b-2 border-transparent hover:text-white' }} -mb-px transition-all duration-200" style="text-decoration:none;" id="extracted-text-tab">
+                @endif
+                @if (($activeTab ?? 'pdf-editor') === 'extracted-text')
+                <a href="{{ route('documents.ai', $document) }}" class="page-nav-link flex items-center gap-2.5 py-3.5 text-base font-medium text-white border-b-2 border-blue-500 -mb-px transition-all duration-200" style="text-decoration:none;" id="extracted-text-tab">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
                     </svg>
                     AI
                 </a>
-                <a href="{{ route('documents.guided', $document) }}{{ request('style') ? '?style=' . request('style') : '' }}" class="page-nav-link flex items-center gap-2.5 py-3.5 text-base font-medium {{ ($activeTab ?? 'pdf-editor') === 'guided-invoice' ? 'text-white border-b-2 border-blue-500' : 'text-gray-400 border-b-2 border-transparent hover:text-white' }} -mb-px transition-all duration-200" style="text-decoration:none;" id="guided-invoice-tab">
+                @endif
+                @if (($activeTab ?? 'pdf-editor') !== 'pdf-editor' && ($activeTab ?? 'pdf-editor') !== 'extracted-text')
+                <a href="{{ route('documents.guided', $document) }}{{ request('style') ? '?style=' . request('style') : (($document->template_slug && $document->template_slug !== 'default') ? '?style=' . $document->template_slug : (request('template_type') ? '?template_type=' . request('template_type') . '&template_slug=' . request('template_slug') : '')) }}" class="page-nav-link flex items-center gap-2.5 py-3.5 text-base font-medium {{ str_starts_with($activeTab ?? 'pdf-editor', 'guided-') ? 'text-white border-b-2 border-blue-500' : 'text-gray-400 border-b-2 border-transparent hover:text-white' }} -mb-px transition-all duration-200" style="text-decoration:none;" id="guided-invoice-tab">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path>
                     </svg>
                     Guided
                 </a>
+                @endif
             </div>
         </nav>
         
@@ -2764,7 +2821,7 @@
                 <path d="M9 14l2 2 4-4"/>
             </svg>
             <h2 style="color:#e9f0ff; font-size:22px; font-weight:700; margin:0 0 8px;">Waiting on Guided completion</h2>
-            <p style="color:#a9b7cf; font-size:15px; margin:0 0 24px; max-width:400px;">Fill out the invoice form on the <strong style="color:#4dd0a8;">Guided</strong> page, then click <strong style="color:#4dd0a8;">Save &amp; Generate PDF</strong> to build your document.</p>
+            <p style="color:#a9b7cf; font-size:15px; margin:0 0 24px; max-width:400px;">Fill out the invoice form on the <strong style="color:#4dd0a8;">Guided</strong> page, then click <strong style="color:#4dd0a8;">Generate PDF</strong> to build your document.</p>
             <a href="{{ route('documents.guided', $document) }}{{ request('style') ? '?style=' . request('style') : '' }}" style="background:#4dd0a8; color:#053322; font-weight:700; padding:12px 28px; border-radius:999px; border:none; cursor:pointer; font-size:15px; text-decoration:none; display:inline-block;">Go to Guided Page &rarr;</a>
         </div>
 
@@ -2827,6 +2884,10 @@
                                     <span class="sm:hidden">Save</span>
                                 </button>
                                 <button id="clear-btn" class="px-4 py-2 bg-transparent border border-gray-600 hover:bg-gray-700/50 rounded-lg text-sm font-medium transition hidden sm:block" type="button">Clear All</button>
+                                <button id="convert-btn" class="px-3 py-2 bg-transparent border border-gray-600 hover:bg-gray-700/50 rounded-lg text-sm transition flex items-center gap-1.5" type="button" title="Convert PDF to Images">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14"/><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>
+                                    <span class="hidden sm:inline">Convert</span>
+                                </button>
                                 <div style="position: relative;">
                                     <button id="settings-gear-btn" class="px-2 py-2 bg-transparent border border-gray-600 hover:bg-gray-700/50 rounded-lg text-sm transition" type="button" title="Settings">
                                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -2993,6 +3054,8 @@
                     </button>
                 </div>
                 
+            
+
                 <div class="viewer bg-gray-900 p-2 sm:p-4 overflow-auto flex-1" id="viewer" style="overflow-x: auto;"></div>
                 <div class="viewer-footer" id="viewer-footer">
                     <button id="load-more-pages" type="button">Load more pages</button>
@@ -3006,7 +3069,28 @@
         </div>
         </div>
         <div class="tab-content{{ ($activeTab ?? '') === 'extracted-text' ? ' active' : '' }}" id="extracted-text" @if(($activeTab ?? 'pdf-editor') !== 'extracted-text') style="display:none;" @endif>
-        <div class="layout">
+            @guest
+                <div class="absolute inset-0 z-50 flex items-center justify-center backdrop-blur-sm bg-gray-900/50">
+                    <div class="p-8 text-center bg-gray-800 border border-gray-700 shadow-2xl rounded-2xl max-w-md mx-4">
+                        <div class="mb-4 inline-flex items-center justify-center w-16 h-16 rounded-full bg-emerald-500/10">
+                            <svg class="w-8 h-8 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+                            </svg>
+                        </div>
+                        <h3 class="mb-2 text-2xl font-bold text-white">Sign in required</h3>
+                        <p class="mb-6 text-gray-400">Please sign in to your account to use the AI Generator features.</p>
+                        <div class="flex flex-col gap-3">
+                            <a href="{{ route('filament.admin.auth.login') }}" class="px-6 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-semibold rounded-lg transition-colors">
+                                Sign In
+                            </a>
+                            <a href="{{ route('filament.admin.auth.register') }}" class="px-6 py-2.5 bg-gray-700 hover:bg-gray-600 text-white font-semibold rounded-lg transition-colors">
+                                Create Account
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            @endguest
+        <div class="layout" @guest style="pointer-events: none; opacity: 0.5;" @endguest>
             <!-- AI Chat Sidebar -->
             <aside class="ai-chat-sidebar">
                 <div class="ai-chat-header">AI Assistant</div>
@@ -3081,9 +3165,73 @@
         </div>
         </div>
 
-        <!-- Guided Invoice Builder Tab -->
-        <div class="tab-content{{ ($activeTab ?? '') === 'guided-invoice' ? ' active' : '' }}" id="guided-invoice" @if(($activeTab ?? 'pdf-editor') !== 'guided-invoice') style="display:none;" @endif>
+        <!-- Guided Templates Tab -->
+        <div class="tab-content{{ str_starts_with($activeTab ?? '', 'guided-') ? ' active' : '' }}" id="guided-invoice" @if(!str_starts_with($activeTab ?? 'pdf-editor', 'guided-')) style="display:none;" @endif>
+
+            <!-- ═══ Guided Toolbar: Font Styles + Sign ═══ -->
+            <div id="guided-toolbar" style="background: #1e293b; border-bottom: 1px solid rgba(255,255,255,0.1); padding: 10px 20px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                <!-- Font Family -->
+                <select id="gt-font-family" style="background: #0f172a; border: 1px solid rgba(255,255,255,0.15); color: #e2e8f0; border-radius: 6px; padding: 6px 10px; font-size: 13px; min-width: 140px; outline: none;">
+                    <option value="Helvetica, sans-serif" selected>Helvetica</option>
+                    <option value="Georgia, serif">Georgia</option>
+                    <option value="'Times New Roman', serif">Times New Roman</option>
+                    <option value="'Courier New', monospace">Courier New</option>
+                    <option value="Arial, sans-serif">Arial</option>
+                    <option value="Verdana, sans-serif">Verdana</option>
+                </select>
+
+                <!-- Font Size -->
+                <select id="gt-font-size" style="background: #0f172a; border: 1px solid rgba(255,255,255,0.15); color: #e2e8f0; border-radius: 6px; padding: 6px 8px; font-size: 13px; width: 64px; outline: none;">
+                    <option value="10">10</option>
+                    <option value="11">11</option>
+                    <option value="12" selected>12</option>
+                    <option value="13">13</option>
+                    <option value="14">14</option>
+                    <option value="16">16</option>
+                    <option value="18">18</option>
+                </select>
+
+                <!-- Divider -->
+                <div style="width: 1px; height: 24px; background: rgba(255,255,255,0.15);"></div>
+
+                <!-- Bold -->
+                <button type="button" id="gt-bold" title="Bold" style="background: transparent; border: 1px solid rgba(255,255,255,0.12); color: #e2e8f0; width: 32px; height: 32px; border-radius: 6px; cursor: pointer; font-weight: 800; font-size: 14px; display: flex; align-items: center; justify-content: center;">B</button>
+
+                <!-- Italic -->
+                <button type="button" id="gt-italic" title="Italic" style="background: transparent; border: 1px solid rgba(255,255,255,0.12); color: #e2e8f0; width: 32px; height: 32px; border-radius: 6px; cursor: pointer; font-style: italic; font-size: 14px; display: flex; align-items: center; justify-content: center;">I</button>
+
+                <!-- Underline -->
+                <button type="button" id="gt-underline" title="Underline" style="background: transparent; border: 1px solid rgba(255,255,255,0.12); color: #e2e8f0; width: 32px; height: 32px; border-radius: 6px; cursor: pointer; text-decoration: underline; font-size: 14px; display: flex; align-items: center; justify-content: center;">U</button>
+
+                <!-- Divider -->
+                <div style="width: 1px; height: 24px; background: rgba(255,255,255,0.15);"></div>
+
+                <!-- Text Color -->
+                <label title="Text Color" style="position: relative; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; cursor: pointer;">
+                    <span style="color: #e2e8f0; font-size: 14px; font-weight: 700; pointer-events: none;">A</span>
+                    <div id="gt-color-indicator" style="position: absolute; bottom: 3px; left: 6px; right: 6px; height: 3px; background: #ef4444; border-radius: 2px; pointer-events: none;"></div>
+                    <input type="color" id="gt-text-color" value="#000000" style="position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;">
+                </label>
+
+                <!-- Spacer -->
+                <div style="flex: 1;"></div>
+
+                <!-- Sign Button -->
+                <button type="button" id="gt-sign-btn" style="background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; border: none; border-radius: 8px; padding: 7px 18px; font-size: 13px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: all 0.15s;" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19c-4 0-7-1.5-7-3.5S8 12 12 12s7 1.5 7 3.5"/><path d="M5 15.5c0 2 3 3.5 7 3.5s7-1.5 7-3.5"/><path d="M17 8c0 2.2-2.2 4-5 4S7 10.2 7 8"/><circle cx="12" cy="5" r="3"/></svg>
+                    Sign
+                </button>
+
+                <!-- Save Button (saves form data only) -->
+                <button type="button" id="gt-save-form-btn" style="background: linear-gradient(135deg, #059669, #10b981); color: white; border: none; border-radius: 8px; padding: 7px 18px; font-size: 13px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: all 0.15s;" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                    Save
+                </button>
+            </div>
+
             <div style="max-width: 820px; margin: 0 auto; padding: 32px 16px 64px;">
+
+                @if (($templateType ?? 'invoice') === 'invoice')
                 <!-- Invoice Card -->
                 <div id="guided-invoice-card" style="background: #fff; border-radius: 12px; box-shadow: 0 1px 8px rgba(0,0,0,0.08); padding: 40px 48px; color: #1f2937; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;">
 
@@ -3249,14 +3397,393 @@
                         </div>
                     </div>
 
-                    <!-- Save Button -->
-                    <div style="display: flex; justify-content: flex-end; margin-top: 24px;">
+                    <!-- Action Buttons -->
+                    <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px;">
+                        <button type="button" id="gi-open-editor-btn" style="background: #374151; color: white; font-size: 15px; font-weight: 700; padding: 12px 32px; border-radius: 10px; border: none; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.15s;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                            Open in Editor
+                        </button>
                         <button type="button" id="gi-save-btn" style="background: #059669; color: white; font-size: 15px; font-weight: 700; padding: 12px 32px; border-radius: 10px; border: none; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.15s;">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-                            Save &amp; Generate PDF
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                            Generate PDF
                         </button>
                     </div>
                 </div>
+                @endif
+
+                @if (($templateType ?? 'invoice') === 'newsletter')
+                @php $td = $templateDefaults ?? []; @endphp
+                <!-- ── Newsletter Card ───────────────────────────────────────── -->
+                <div id="guided-newsletter-card" style="background: #fff; border-radius: 12px; box-shadow: 0 1px 8px rgba(0,0,0,0.08); padding: 40px 48px; color: #1f2937; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;">
+                    <input type="hidden" id="gn-template-type" value="newsletter">
+                    <input type="hidden" id="gn-template-slug" value="{{ $templateSlug ?? 'newsletter_classic' }}">
+
+                    <!-- Header Banner Preview -->
+                    <div id="gn-header-banner" style="background: #2563eb; border-radius: 8px; padding: 24px 28px 20px; margin: -40px -48px 28px -48px; color: #fff; border-radius: 12px 12px 0 0;">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                            <div style="flex: 1;">
+                                <input id="gn-title" type="text" value="{{ $td['newsletter_title'] ?? 'Monthly Newsletter' }}" placeholder="Newsletter Title" style="width:100%; border:none; font-size:22px; font-weight:800; color:#fff; outline:none; margin-bottom:6px; background:transparent;">
+                                <div style="display: flex; gap: 12px;">
+                                    <input id="gn-edition" type="text" value="{{ $td['edition'] ?? 'Vol. 1 — Issue 1' }}" placeholder="Edition" style="width:140px; border:none; font-size:12px; color:rgba(255,255,255,0.8); outline:none; background:transparent;">
+                                    <span style="color:rgba(255,255,255,0.5);">·</span>
+                                    <input id="gn-date" type="text" value="{{ $td['date'] ?? date('F Y') }}" placeholder="Date" style="width:140px; border:none; font-size:12px; color:rgba(255,255,255,0.8); outline:none; background:transparent;">
+                                </div>
+                            </div>
+                            <input id="gn-company" type="text" value="{{ $td['company_name'] ?? 'Your Company Inc.' }}" placeholder="Company Name" style="width:180px; border:none; font-size:12px; font-weight:600; color:rgba(255,255,255,0.9); outline:none; background:transparent; text-align:right; margin-top:8px;">
+                        </div>
+                    </div>
+
+                    <!-- Headline -->
+                    <div style="margin-bottom: 20px;">
+                        <label style="font-size: 11px; font-weight: 700; color: #6b7280; text-transform: uppercase; display: block; margin-bottom: 6px;">Headline</label>
+                        <input id="gn-headline" type="text" value="{{ $td['headline'] ?? 'Big Exciting Headline Goes Here' }}" placeholder="Main headline" style="width:100%; border:1px solid #e5e7eb; border-radius:8px; padding:12px 14px; font-size:18px; font-weight:700; color:#1f2937; outline:none;">
+                    </div>
+
+                    <!-- Intro Text -->
+                    <div style="margin-bottom: 24px;">
+                        <label style="font-size: 11px; font-weight: 700; color: #6b7280; text-transform: uppercase; display: block; margin-bottom: 6px;">Introduction</label>
+                        <textarea id="gn-intro" rows="3" placeholder="Welcome paragraph..." style="width:100%; border:1px solid #e5e7eb; border-radius:8px; padding:12px 14px; font-size:13px; color:#4b5563; outline:none; resize:vertical; font-family:inherit;">{{ $td['intro_text'] ?? "Welcome to this month's newsletter! We're excited to share the latest news, updates, and insights from our team." }}</textarea>
+                    </div>
+
+                    <hr style="border:none; border-top:1px solid #e5e7eb; margin:0 0 24px;">
+
+                    <!-- Section 1 -->
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px;">
+                        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:18px;">
+                            <input id="gn-s1-title" type="text" value="{{ $td['section1_title'] ?? 'Featured Story' }}" placeholder="Section Title" style="width:100%; border:none; font-size:14px; font-weight:700; color:#2563eb; outline:none; margin-bottom:8px; background:transparent;">
+                            <textarea id="gn-s1-body" rows="5" placeholder="Section content..." style="width:100%; border:1px solid #e5e7eb; border-radius:6px; padding:10px; font-size:13px; color:#4b5563; outline:none; resize:vertical; font-family:inherit;">{{ $td['section1_body'] ?? 'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.' }}</textarea>
+                        </div>
+                        <!-- Section 2 -->
+                        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:18px;">
+                            <input id="gn-s2-title" type="text" value="{{ $td['section2_title'] ?? 'Upcoming Events' }}" placeholder="Section Title" style="width:100%; border:none; font-size:14px; font-weight:700; color:#2563eb; outline:none; margin-bottom:8px; background:transparent;">
+                            <textarea id="gn-s2-body" rows="5" placeholder="Section content..." style="width:100%; border:1px solid #e5e7eb; border-radius:6px; padding:10px; font-size:13px; color:#4b5563; outline:none; resize:vertical; font-family:inherit;">{{ $td['section2_body'] ?? "• Annual Company Retreat — March 15\n• Product Launch Webinar — March 22\n• Community Meetup — April 5" }}</textarea>
+                        </div>
+                    </div>
+
+                    <hr style="border:none; border-top:1px solid #e5e7eb; margin:0 0 24px;">
+
+                    <!-- Footer -->
+                    <div style="margin-bottom: 20px;">
+                        <label style="font-size: 11px; font-weight: 700; color: #6b7280; text-transform: uppercase; display: block; margin-bottom: 6px;">Footer Text</label>
+                        <input id="gn-footer" type="text" value="{{ $td['footer_text'] ?? '© ' . date('Y') . ' Your Company Inc. All rights reserved.' }}" placeholder="Footer text" style="width:100%; border:1px solid #e5e7eb; border-radius:8px; padding:10px 14px; font-size:12px; color:#6b7280; outline:none;">
+                    </div>
+
+                    <!-- Action Buttons -->
+                    <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px;">
+                        <button type="button" id="gn-open-editor-btn" style="background: #374151; color: white; font-size: 15px; font-weight: 700; padding: 12px 32px; border-radius: 10px; border: none; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.15s;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                            Open in Editor
+                        </button>
+                        <button type="button" id="gn-save-btn" style="background: #2563eb; color: white; font-size: 15px; font-weight: 700; padding: 12px 32px; border-radius: 10px; border: none; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.15s;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                            Generate PDF
+                        </button>
+                    </div>
+                </div>
+                @endif
+
+                @if (($templateType ?? 'invoice') === 'business' && ($templateSlug ?? '') === 'nda_agreement')
+                @php $td = $templateDefaults ?? []; @endphp
+                <!-- ── NDA Agreement — Formal Legal Document Card ─────────────── -->
+                <div id="guided-nda-card" style="background: #fff; border-radius: 4px; box-shadow: 0 2px 16px rgba(0,0,0,0.12); padding: 60px 64px 48px; color: #1a1a1a; font-family: Georgia, 'Times New Roman', Times, serif; max-width: 760px; margin: 0 auto; line-height: 1.6; font-size: 13px;">
+                    <input type="hidden" id="gnda-template-type" value="business">
+                    <input type="hidden" id="gnda-template-slug" value="nda_agreement">
+
+                    <!-- ═══ Document Title ═══ -->
+                    <div style="text-align: center; margin-bottom: 24px;">
+                        <h1 style="font-family: Georgia, 'Times New Roman', Times, serif; font-size: 18px; font-weight: bold; letter-spacing: 2.5px; color: #000; margin: 0 0 6px; text-transform: uppercase;">Non-Disclosure and Confidentiality Agreement</h1>
+                    </div>
+
+                    <!-- ═══ Effective Date ═══ -->
+                    <div style="text-align: center; margin-bottom: 6px;">
+                        <span style="font-size: 13px; color: #333;">Effective Date:</span>
+                        <input id="gnda-date" type="text" value="{{ $td['effective_date'] ?? date('F j, Y') }}" style="border: none; border-bottom: 1px solid #999; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 13px; color: #000; text-align: center; outline: none; padding: 2px 8px; width: 180px; background: transparent;">
+                    </div>
+
+                    <!-- ═══ Horizontal Rule ═══ -->
+                    <hr style="border: none; border-top: 1px solid #000; margin: 18px 0 22px;">
+
+                    <!-- ═══ Parties Introduction ═══ -->
+                    <p style="margin: 0 0 14px; text-align: justify;">
+                        This Non-Disclosure and Confidentiality Agreement (this &ldquo;Agreement&rdquo;) is entered into
+                        as of the Effective Date above, by and between:
+                    </p>
+
+                    <!-- Party 1 (Disclosing Party) -->
+                    <div style="margin-left: 36px; margin-bottom: 10px;">
+                        <div style="display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;">
+                            <input id="gnda-party1-name" type="text" value="{{ $td['party1_name'] ?? 'Your Company Inc.' }}" placeholder="Disclosing Party name" style="border: none; border-bottom: 1px dashed #3b82f6; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 13px; font-weight: bold; color: #1e40af; outline: none; padding: 2px 4px; width: 220px; background: rgba(59,130,246,0.04);">
+                            <span>(&ldquo;Disclosing Party&rdquo;), with a principal place of business at</span>
+                        </div>
+                        <div style="margin-top: 4px;">
+                            <textarea id="gnda-party1-addr" rows="1" placeholder="Address" style="border: none; border-bottom: 1px dashed #3b82f6; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 12px; color: #1e40af; outline: none; padding: 2px 4px; width: 100%; resize: none; background: rgba(59,130,246,0.04); overflow: hidden;">{{ $td['party1_address'] ?? "1234 Company St.\nCompany Town, ST 12345" }}</textarea>
+                        </div>
+                    </div>
+
+                    <p style="margin: 0 0 10px; font-style: italic;">and</p>
+
+                    <!-- Party 2 (Receiving Party) -->
+                    <div style="margin-left: 36px; margin-bottom: 14px;">
+                        <div style="display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;">
+                            <input id="gnda-party2-name" type="text" value="{{ $td['party2_name'] ?? 'Recipient Name' }}" placeholder="Receiving Party name" style="border: none; border-bottom: 1px dashed #3b82f6; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 13px; font-weight: bold; color: #1e40af; outline: none; padding: 2px 4px; width: 220px; background: rgba(59,130,246,0.04);">
+                            <span>(&ldquo;Receiving Party&rdquo;), with a principal place of business at</span>
+                        </div>
+                        <div style="margin-top: 4px;">
+                            <textarea id="gnda-party2-addr" rows="1" placeholder="Address" style="border: none; border-bottom: 1px dashed #3b82f6; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 12px; color: #1e40af; outline: none; padding: 2px 4px; width: 100%; resize: none; background: rgba(59,130,246,0.04); overflow: hidden;">{{ $td['party2_address'] ?? "5678 Recipient Rd.\nRecipient City, ST 67890" }}</textarea>
+                        </div>
+                    </div>
+
+                    <p style="margin: 0 0 20px; font-style: italic;">Each a &ldquo;Party&rdquo; and collectively, the &ldquo;Parties.&rdquo;</p>
+
+                    <!-- ═══ Recitals ═══ -->
+                    <h2 style="font-family: Georgia, 'Times New Roman', Times, serif; font-size: 13px; font-weight: bold; letter-spacing: 1px; margin: 0 0 10px; text-transform: uppercase;">Recitals</h2>
+
+                    <p style="margin: 0 0 8px; text-indent: 36px; text-align: justify;">
+                        WHEREAS, the Disclosing Party possesses certain confidential and proprietary information
+                        relating to its business, operations, products, services, and technical data; and
+                    </p>
+                    <p style="margin: 0 0 8px; text-indent: 36px; text-align: justify;">
+                        WHEREAS, the Receiving Party desires to receive certain Confidential Information
+                        for the purpose of
+                        <textarea id="gnda-purpose" rows="1" placeholder="purpose of agreement..." style="border: none; border-bottom: 1px dashed #3b82f6; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 13px; color: #1e40af; outline: none; padding: 1px 4px; width: 100%; resize: none; background: rgba(59,130,246,0.04); display: inline; overflow: hidden; margin-top: 2px;">{{ $td['purpose'] ?? 'exploring a potential business relationship between the parties' }}</textarea>; and
+                    </p>
+                    <p style="margin: 0 0 8px; text-indent: 36px; text-align: justify;">
+                        WHEREAS, the Disclosing Party is willing to disclose such Confidential Information
+                        to the Receiving Party subject to the terms and conditions set forth herein;
+                    </p>
+                    <p style="margin: 0 0 22px; text-indent: 36px; text-align: justify; font-weight: bold;">
+                        NOW, THEREFORE, in consideration of the mutual covenants and agreements contained herein,
+                        and for other good and valuable consideration, the receipt and sufficiency of which are hereby
+                        acknowledged, the Parties agree as follows:
+                    </p>
+
+                    <!-- ═══ Agreement Sections (Collapsed Preview) ═══ -->
+                    <div style="border-top: 1px solid #d1d5db; padding-top: 16px;">
+
+                        <div style="margin-bottom: 12px;">
+                            <p style="margin: 0; font-weight: bold; font-size: 13px;">1. DEFINITION OF CONFIDENTIAL INFORMATION</p>
+                            <p style="margin: 4px 0 0; font-size: 12px; color: #555; text-align: justify;">
+                                &ldquo;Confidential Information&rdquo; shall mean any and all non-public, confidential, or proprietary
+                                information disclosed by the Disclosing Party to the Receiving Party, whether disclosed orally,
+                                in writing, electronically, or by inspection of tangible objects&hellip;
+                            </p>
+                        </div>
+
+                        <div style="margin-bottom: 12px;">
+                            <p style="margin: 0; font-weight: bold; font-size: 13px;">2. OBLIGATIONS OF RECEIVING PARTY</p>
+                            <p style="margin: 4px 0 0; font-size: 12px; color: #555;">
+                                The Receiving Party agrees to hold and maintain the Confidential Information in strict confidence&hellip;
+                            </p>
+                        </div>
+
+                        <div style="margin-bottom: 12px;">
+                            <p style="margin: 0; font-weight: bold; font-size: 13px;">3. EXCLUSIONS FROM CONFIDENTIAL INFORMATION</p>
+                            <p style="margin: 4px 0 0; font-size: 12px; color: #555;">
+                                Obligations shall not apply to information that was in the public domain, known to the Receiving Party&hellip;
+                            </p>
+                        </div>
+
+                        <div style="margin-bottom: 12px;">
+                            <p style="margin: 0; font-weight: bold; font-size: 13px;">4. RETURN OF CONFIDENTIAL INFORMATION</p>
+                            <p style="margin: 4px 0 0; font-size: 12px; color: #555;">
+                                Upon written request, the Receiving Party shall promptly return or destroy all documents and materials&hellip;
+                            </p>
+                        </div>
+
+                        <div style="margin-bottom: 12px;">
+                            <p style="margin: 0; font-weight: bold; font-size: 13px;">5. NO LICENSE OR WARRANTY</p>
+                            <p style="margin: 4px 0 0; font-size: 12px; color: #555;">
+                                Nothing in this Agreement is intended to grant any rights under any patent, copyright, or trade secret&hellip;
+                            </p>
+                        </div>
+
+                        <div style="margin-bottom: 12px;">
+                            <p style="margin: 0; font-weight: bold; font-size: 13px;">6. TERM AND TERMINATION</p>
+                            <p style="margin: 4px 0 0; font-size: 12px; color: #333; text-align: justify;">
+                                This Agreement shall remain in effect for a period of
+                                <input id="gnda-term" type="text" value="{{ $td['term_years'] ?? '2' }}" style="border: none; border-bottom: 1px dashed #3b82f6; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 12px; font-weight: bold; color: #1e40af; outline: none; padding: 1px 4px; width: 36px; text-align: center; background: rgba(59,130,246,0.04);">
+                                year(s) from the Effective Date, unless terminated earlier by either Party upon thirty (30) days prior
+                                written notice. Obligations of confidentiality shall survive termination&hellip;
+                            </p>
+                        </div>
+
+                        <div style="margin-bottom: 12px;">
+                            <p style="margin: 0; font-weight: bold; font-size: 13px;">7. REMEDIES</p>
+                            <p style="margin: 4px 0 0; font-size: 12px; color: #555;">
+                                The Receiving Party acknowledges that any breach may cause irreparable harm; equitable relief may be sought&hellip;
+                            </p>
+                        </div>
+
+                        <div style="margin-bottom: 12px;">
+                            <p style="margin: 0; font-weight: bold; font-size: 13px;">8. MISCELLANEOUS</p>
+                            <p style="margin: 4px 0 0; font-size: 12px; color: #333; text-align: justify;">
+                                (a) <strong>Governing Law.</strong> This Agreement shall be governed by the laws of the
+                                <input id="gnda-law" type="text" value="{{ $td['governing_law'] ?? 'State of Delaware' }}" style="border: none; border-bottom: 1px dashed #3b82f6; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 12px; font-weight: bold; color: #1e40af; outline: none; padding: 1px 4px; width: 170px; background: rgba(59,130,246,0.04);">,
+                                without regard to conflict of law principles.
+                                (b) Entire Agreement. (c) Amendment. (d) Severability. (e) Waiver. (f) Assignment.
+                            </p>
+                        </div>
+
+                    </div>
+
+                    <!-- ═══ Signature Block Preview ═══ -->
+                    <div style="border-top: 1px solid #d1d5db; margin-top: 20px; padding-top: 18px;">
+                        <p style="margin: 0 0 18px; font-weight: bold; font-size: 12px; text-align: justify;">
+                            IN WITNESS WHEREOF, the Parties have executed this Non-Disclosure and
+                            Confidentiality Agreement as of the date first written above.
+                        </p>
+
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 48px;">
+                            <!-- Left: Disclosing Party -->
+                            <div>
+                                <p style="margin: 0 0 8px; font-size: 10px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase; color: #555;">Disclosing Party</p>
+                                <div style="border-bottom: 1px solid #000; height: 28px; margin-bottom: 4px;"></div>
+                                <p style="margin: 0 0 6px; font-size: 10px; color: #777;">Signature</p>
+                                <div style="border-bottom: 1px solid #000; height: 22px; margin-bottom: 4px;"></div>
+                                <p style="margin: 0 0 6px; font-size: 10px; color: #777;">Name</p>
+                                <div style="border-bottom: 1px solid #000; height: 22px; margin-bottom: 4px;"></div>
+                                <p style="margin: 0 0 6px; font-size: 10px; color: #777;">Title</p>
+                                <div style="border-bottom: 1px solid #000; height: 22px; margin-bottom: 4px;"></div>
+                                <p style="margin: 0; font-size: 10px; color: #777;">Date</p>
+                            </div>
+                            <!-- Right: Receiving Party -->
+                            <div>
+                                <p style="margin: 0 0 8px; font-size: 10px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase; color: #555;">Receiving Party</p>
+                                <div style="border-bottom: 1px solid #000; height: 28px; margin-bottom: 4px;"></div>
+                                <p style="margin: 0 0 6px; font-size: 10px; color: #777;">Signature</p>
+                                <div style="border-bottom: 1px solid #000; height: 22px; margin-bottom: 4px;"></div>
+                                <p style="margin: 0 0 6px; font-size: 10px; color: #777;">Name</p>
+                                <div style="border-bottom: 1px solid #000; height: 22px; margin-bottom: 4px;"></div>
+                                <p style="margin: 0 0 6px; font-size: 10px; color: #777;">Title</p>
+                                <div style="border-bottom: 1px solid #000; height: 22px; margin-bottom: 4px;"></div>
+                                <p style="margin: 0; font-size: 10px; color: #777;">Date</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ═══ Action Buttons ═══ -->
+                    <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 32px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+                        <button type="button" id="gnda-open-editor-btn" style="background: #374151; color: white; font-size: 15px; font-weight: 700; padding: 12px 32px; border-radius: 10px; border: none; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.15s; font-family: -apple-system, system-ui, sans-serif;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                            Open in Editor
+                        </button>
+                        <button type="button" id="gnda-save-btn" style="background: #1e293b; color: white; font-size: 15px; font-weight: 700; padding: 12px 32px; border-radius: 10px; border: none; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.15s; font-family: -apple-system, system-ui, sans-serif;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                            Generate PDF
+                        </button>
+                    </div>
+                </div>
+                @endif
+
+                @if (($templateType ?? 'invoice') === 'business' && ($templateSlug ?? '') === 'purchase_order')
+                @php $td = $templateDefaults ?? []; @endphp
+                <!-- ── Purchase Order Card ───────────────────────────────────── -->
+                <div id="guided-po-card" style="background: #fff; border-radius: 12px; box-shadow: 0 1px 8px rgba(0,0,0,0.08); padding: 0; color: #1f2937; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; overflow: hidden;">
+                    <input type="hidden" id="gpo-template-type" value="business">
+                    <input type="hidden" id="gpo-template-slug" value="purchase_order">
+
+                    <!-- Teal Header -->
+                    <div style="background: #0f766e; padding: 24px 48px 20px; color: #fff;">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                            <div>
+                                <span style="font-size: 22px; font-weight: 800; letter-spacing: 1px;">PURCHASE ORDER</span>
+                                <div style="margin-top: 6px;">
+                                    <input id="gpo-number" type="text" value="{{ $td['po_number'] ?? 'PO-2026-001' }}" placeholder="PO Number" style="border:none; font-size:13px; color:rgba(255,255,255,0.8); outline:none; background:transparent; width:160px;">
+                                </div>
+                            </div>
+                            <div style="text-align: right;">
+                                <label style="font-size:10px; color:rgba(255,255,255,0.6); text-transform:uppercase;">Date</label>
+                                <input id="gpo-date" type="text" value="{{ $td['po_date'] ?? date('m-d-Y') }}" style="display:block; border:none; font-size:13px; font-weight:600; color:#fff; outline:none; background:transparent; text-align:right; width:120px;">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="padding: 28px 48px 40px;">
+                        <!-- Company & Vendor -->
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px;">
+                            <div style="background:#f0fdfa; border:1px solid #99f6e4; border-radius:10px; padding:18px;">
+                                <div style="font-size:11px; font-weight:700; color:#0f766e; text-transform:uppercase; margin-bottom:10px; letter-spacing:0.5px;">From (Your Company)</div>
+                                <input id="gpo-company-name" type="text" value="{{ $td['company_name'] ?? 'Your Company Inc.' }}" placeholder="Company name" style="width:100%; border:1px solid #e5e7eb; border-radius:6px; padding:8px 10px; font-size:13px; font-weight:600; color:#1f2937; outline:none; margin-bottom:8px;">
+                                <textarea id="gpo-company-addr" rows="2" placeholder="Company address" style="width:100%; border:1px solid #e5e7eb; border-radius:6px; padding:8px 10px; font-size:12px; color:#4b5563; outline:none; resize:vertical; font-family:inherit;">{{ $td['company_address'] ?? "1234 Company St.\nCompany Town, ST 12345" }}</textarea>
+                            </div>
+                            <div style="background:#f0fdfa; border:1px solid #99f6e4; border-radius:10px; padding:18px;">
+                                <div style="font-size:11px; font-weight:700; color:#0f766e; text-transform:uppercase; margin-bottom:10px; letter-spacing:0.5px;">Vendor</div>
+                                <input id="gpo-vendor-name" type="text" value="{{ $td['vendor_name'] ?? 'Vendor Name' }}" placeholder="Vendor name" style="width:100%; border:1px solid #e5e7eb; border-radius:6px; padding:8px 10px; font-size:13px; font-weight:600; color:#1f2937; outline:none; margin-bottom:8px;">
+                                <textarea id="gpo-vendor-addr" rows="2" placeholder="Vendor address" style="width:100%; border:1px solid #e5e7eb; border-radius:6px; padding:8px 10px; font-size:12px; color:#4b5563; outline:none; resize:vertical; font-family:inherit;">{{ $td['vendor_address'] ?? "5678 Vendor Rd.\nVendor City, ST 67890" }}</textarea>
+                            </div>
+                        </div>
+
+                        <!-- Ship To -->
+                        <div style="margin-bottom: 20px;">
+                            <label style="font-size: 11px; font-weight: 700; color: #6b7280; text-transform: uppercase; display: block; margin-bottom: 6px;">Ship To</label>
+                            <textarea id="gpo-ship-to" rows="2" style="width:100%; border:1px solid #e5e7eb; border-radius:8px; padding:10px 14px; font-size:12px; color:#4b5563; outline:none; resize:vertical; font-family:inherit;">{{ $td['ship_to'] ?? "Your Company Inc.\n1234 Company St.\nCompany Town, ST 12345" }}</textarea>
+                        </div>
+
+                        <!-- Terms & Delivery Date -->
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px;">
+                            <div>
+                                <label style="font-size: 11px; font-weight: 700; color: #6b7280; text-transform: uppercase; display: block; margin-bottom: 6px;">Payment Terms</label>
+                                <input id="gpo-terms" type="text" value="{{ $td['terms'] ?? 'Net 30' }}" style="width:100%; border:1px solid #e5e7eb; border-radius:6px; padding:8px 10px; font-size:13px; color:#1f2937; outline:none;">
+                            </div>
+                            <div>
+                                <label style="font-size: 11px; font-weight: 700; color: #6b7280; text-transform: uppercase; display: block; margin-bottom: 6px;">Expected Delivery</label>
+                                <input id="gpo-delivery-date" type="text" value="{{ $td['delivery_date'] ?? date('m-d-Y', strtotime('+30 days')) }}" style="width:100%; border:1px solid #e5e7eb; border-radius:6px; padding:8px 10px; font-size:13px; color:#1f2937; outline:none;">
+                            </div>
+                        </div>
+
+                        <!-- Line Items Table -->
+                        <table style="width: 100%; border-collapse: collapse; margin-bottom: 0;" id="gpo-line-items-table">
+                            <thead>
+                                <tr style="background: #0f766e; color: white;">
+                                    <th style="padding: 10px 14px; text-align: left; font-size: 12px; font-weight: 700; text-transform: uppercase; border-radius: 6px 0 0 0;">Item / Description</th>
+                                    <th style="padding: 10px 14px; text-align: center; font-size: 12px; font-weight: 700; text-transform: uppercase; width: 80px;">QTY</th>
+                                    <th style="padding: 10px 14px; text-align: right; font-size: 12px; font-weight: 700; text-transform: uppercase; width: 130px;">Unit Price</th>
+                                    <th style="padding: 10px 14px; text-align: right; font-size: 12px; font-weight: 700; text-transform: uppercase; border-radius: 0 6px 0 0; width: 110px;">Amount</th>
+                                    <th style="width: 36px; background: transparent;"></th>
+                                </tr>
+                            </thead>
+                            <tbody id="gpo-line-items-body">
+                                <!-- Rows added by JS -->
+                            </tbody>
+                        </table>
+
+                        <!-- Add Line Item -->
+                        <div style="margin: 14px 0 20px;">
+                            <button type="button" id="gpo-add-line-item" style="background: #0f766e; color: white; font-size: 13px; font-weight: 600; padding: 8px 16px; border-radius: 8px; border: none; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+                                Add Line Item
+                            </button>
+                        </div>
+
+                        <!-- Total -->
+                        <div style="display: flex; justify-content: flex-end;">
+                            <div style="background: #0f766e; color: #fff; padding: 12px 20px; border-radius: 8px; min-width: 200px; display: flex; justify-content: space-between; align-items: center;">
+                                <span style="font-weight: 700; font-size: 14px;">TOTAL</span>
+                                <span id="gpo-total-display" style="font-weight: 800; font-size: 16px;">$0.00</span>
+                            </div>
+                        </div>
+
+                        <!-- Notes -->
+                        <div style="margin-top: 24px; margin-bottom: 16px;">
+                            <label style="font-size: 11px; font-weight: 700; color: #6b7280; text-transform: uppercase; display: block; margin-bottom: 6px;">Notes</label>
+                            <textarea id="gpo-notes" rows="3" placeholder="Additional notes..." style="width:100%; border:1px solid #e5e7eb; border-radius:8px; padding:12px 14px; font-size:13px; color:#4b5563; outline:none; resize:vertical; font-family:inherit;"></textarea>
+                        </div>
+
+                        <!-- Action Buttons -->
+                        <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px;">
+                            <button type="button" id="gpo-open-editor-btn" style="background: #374151; color: white; font-size: 15px; font-weight: 700; padding: 12px 32px; border-radius: 10px; border: none; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.15s;">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                Open in Editor
+                            </button>
+                            <button type="button" id="gpo-save-btn" style="background: #0f766e; color: white; font-size: 15px; font-weight: 700; padding: 12px 32px; border-radius: 10px; border: none; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.15s;">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                                Generate PDF
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                @endif
+
             </div>
         </div>
 
@@ -3632,8 +4159,8 @@
                         <div style="display: grid; grid-template-columns: 200px 1fr; gap: 24px;">
                             <!-- Section Blocks Palette -->
                             <div>
-                                <label style="display: block; font-weight: 600; margin-bottom: 8px; font-size: 14px;">Section Blocks</label>
-                                <p style="margin: 0 0 12px; font-size: 11px; color: #6b7280;">Drag blocks onto the page preview</p>
+                                <label style="display: block; font-weight: 600; margin-bottom: 8px; font-size: 14px; color: #e2e8f0;">Section Blocks</label>
+                                <p style="margin: 0 0 12px; font-size: 11px; color: #6b7280;">Drag blocks onto a column zone</p>
                                 <div id="section-blocks-palette" style="display: flex; flex-direction: column; gap: 8px;">
                                     <div class="section-block" draggable="true" data-section-type="title">
                                         <span class="block-icon">📄</span>
@@ -3654,30 +4181,31 @@
                                 </div>
                                 
                                 <!-- Column presets -->
-                                <label style="display: block; font-weight: 600; margin: 20px 0 8px; font-size: 14px;">Quick Columns</label>
+                                <label style="display: block; font-weight: 600; margin: 20px 0 8px; font-size: 14px; color: #e2e8f0;">Layout</label>
                                 <div style="display: flex; flex-direction: column; gap: 6px;">
-                                    <button class="builder-preset-btn" data-preset="1col" style="padding: 8px 12px; background: rgba(59,130,246,0.1); border: 1px solid rgba(59,130,246,0.3); border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; color: #e5e7eb; transition: all 0.2s; text-align: left;">
-                                        <span style="margin-right: 6px;">▐</span> 1 Column
+                                    <button class="builder-preset-btn" data-preset="1col" style="padding: 10px 12px; background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.25); border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600; color: #93c5fd; transition: all 0.2s; text-align: left; display: flex; align-items: center; gap: 8px;">
+                                        <span style="display: inline-flex; gap: 2px;"><span style="width: 20px; height: 14px; background: rgba(59,130,246,0.3); border-radius: 2px; display: inline-block;"></span></span> 1 Column
                                     </button>
-                                    <button class="builder-preset-btn" data-preset="2col" style="padding: 8px 12px; background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.3); border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; color: #e5e7eb; transition: all 0.2s; text-align: left;">
-                                        <span style="margin-right: 6px;">▐▐</span> 2 Columns
+                                    <button class="builder-preset-btn" data-preset="2col" style="padding: 10px 12px; background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.25); border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600; color: #6ee7b7; transition: all 0.2s; text-align: left; display: flex; align-items: center; gap: 8px;">
+                                        <span style="display: inline-flex; gap: 2px;"><span style="width: 10px; height: 14px; background: rgba(16,185,129,0.3); border-radius: 2px; display: inline-block;"></span><span style="width: 10px; height: 14px; background: rgba(16,185,129,0.3); border-radius: 2px; display: inline-block;"></span></span> 2 Columns
                                     </button>
-                                    <button class="builder-preset-btn" data-preset="3col" style="padding: 8px 12px; background: rgba(236,72,153,0.1); border: 1px solid rgba(236,72,153,0.3); border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; color: #e5e7eb; transition: all 0.2s; text-align: left;">
-                                        <span style="margin-right: 6px;">▐▐▐</span> 3 Columns
+                                    <button class="builder-preset-btn" data-preset="3col" style="padding: 10px 12px; background: rgba(236,72,153,0.08); border: 1px solid rgba(236,72,153,0.25); border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600; color: #f9a8d4; transition: all 0.2s; text-align: left; display: flex; align-items: center; gap: 8px;">
+                                        <span style="display: inline-flex; gap: 2px;"><span style="width: 7px; height: 14px; background: rgba(236,72,153,0.3); border-radius: 2px; display: inline-block;"></span><span style="width: 7px; height: 14px; background: rgba(236,72,153,0.3); border-radius: 2px; display: inline-block;"></span><span style="width: 7px; height: 14px; background: rgba(236,72,153,0.3); border-radius: 2px; display: inline-block;"></span></span> 3 Columns
                                     </button>
                                 </div>
                             </div>
                             
-                            <!-- Visual Page Canvas -->
+                            <!-- Visual Page Canvas with Column Drop Zones -->
                             <div>
                                 <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-                                    <label style="font-weight: 600; font-size: 14px;">Page Preview</label>
-                                    <button id="builder-clear-btn" style="padding: 4px 10px; background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.3); border-radius: 4px; color: #fca5a5; font-size: 11px; font-weight: 600; cursor: pointer; transition: all 0.2s;">Clear All</button>
+                                    <label style="font-weight: 600; font-size: 14px; color: #e2e8f0;">Page Preview</label>
+                                    <button id="builder-clear-btn" style="padding: 4px 10px; background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.25); border-radius: 6px; color: #fca5a5; font-size: 11px; font-weight: 600; cursor: pointer; transition: all 0.2s;">Clear All</button>
                                 </div>
-                                <div id="page-builder-canvas" style="background: #ffffff; border: 2px solid rgba(59,130,246,0.4); border-radius: 8px; aspect-ratio: 8.5/11; position: relative; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.2);">
+                                <div id="page-builder-canvas" style="background: #ffffff; border: 2px solid rgba(59,130,246,0.3); border-radius: 8px; aspect-ratio: 8.5/11; position: relative; overflow: hidden; box-shadow: 0 8px 32px rgba(0,0,0,0.25);">
                                     <div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #9ca3af; pointer-events: none; font-size: 13px; text-align: center; padding: 20px;" id="builder-empty-state">
-                                        Drag section blocks here<br><span style="font-size: 11px; opacity: 0.7;">or use Quick Columns to get started</span>
+                                        Choose a layout, then drag blocks<br>onto the column drop zones
                                     </div>
+                                    <!-- Column drop zones rendered dynamically by JS -->
                                 </div>
                             </div>
                         </div>
@@ -3821,6 +4349,205 @@
             <div class="save-spinner-card">
                 <div class="save-spinner-ring" aria-hidden="true"></div>
                 <div class="save-spinner-text" id="save-spinner-text">Saving and refreshing...</div>
+            </div>
+        </div>
+
+        <!-- Login Required Modal -->
+        <div id="login-required-modal" style="display:none; position:fixed; inset:0; z-index:100000; background:rgba(0,0,0,0.6); backdrop-filter:blur(4px); align-items:center; justify-content:center;">
+            <div style="background:#1a1a2e; border:1px solid rgba(255,255,255,0.1); border-radius:16px; box-shadow:0 24px 80px rgba(0,0,0,0.6); width:420px; max-width:95vw; color:#e5e7eb; padding:32px; text-align:center;">
+                <div style="width:56px; height:56px; border-radius:14px; background:linear-gradient(135deg, #f59e0b, #d97706); display:flex; align-items:center; justify-content:center; margin:0 auto 16px;">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+                </div>
+                <h3 style="font-size:18px; font-weight:700; margin:0 0 8px; color:#fff;">Login Required</h3>
+                <p style="font-size:13px; color:rgba(255,255,255,0.5); margin:0 0 24px; line-height:1.5;">You need to be logged in to use the export and conversion features. Sign in to unlock full functionality.</p>
+                <div style="display:flex; gap:10px; justify-content:center;">
+                    <button id="login-required-close" style="padding:10px 20px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:#e5e7eb; font-size:13px; cursor:pointer; transition:all .15s;">Cancel</button>
+                    <a href="{{ route('filament.admin.auth.login') }}" style="display:inline-flex; align-items:center; gap:6px; padding:10px 24px; border-radius:10px; border:none; background:linear-gradient(135deg, #3b82f6, #2563eb); color:#fff; font-size:13px; font-weight:600; cursor:pointer; text-decoration:none; transition:all .15s;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+                        Sign In
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Convert Modal (at body level, before scripts, to avoid stacking context issues) -->
+        <div id="convert-modal" style="display:none; position:fixed; inset:0; z-index:99999; background:rgba(0,0,0,0.6); backdrop-filter:blur(4px); align-items:center; justify-content:center;">
+            <div id="convert-modal-inner" style="background:#1a1a2e; border:1px solid rgba(255,255,255,0.1); border-radius:16px; box-shadow:0 24px 80px rgba(0,0,0,0.6); width:540px; max-width:95vw; max-height:90vh; overflow-y:auto; color:#e5e7eb;">
+                <!-- Header -->
+                <div style="padding:20px 24px 16px; border-bottom:1px solid rgba(255,255,255,0.08); display:flex; align-items:center; justify-content:space-between;">
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <div id="convert-modal-icon" style="width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg, #3b82f6, #8b5cf6); display:flex; align-items:center; justify-content:center;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14"/><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>
+                        </div>
+                        <div>
+                            <div id="convert-modal-title" style="font-size:16px; font-weight:700; color:#e5e7eb;">Export to Images</div>
+                            <div id="convert-modal-subtitle" style="font-size:12px; color:rgba(255,255,255,0.4);">Convert PDF pages to image files</div>
+                        </div>
+                    </div>
+                    <button id="convert-modal-close" style="background:none; border:none; color:rgba(255,255,255,0.5); cursor:pointer; padding:4px; border-radius:6px; transition:all 0.15s;" onmouseenter="this.style.color='#fff';this.style.background='rgba(255,255,255,0.1)'" onmouseleave="this.style.color='rgba(255,255,255,0.5)';this.style.background='none'">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+                <!-- Tab Switcher -->
+                <div style="padding:12px 24px 0; display:flex; gap:4px; border-bottom:1px solid rgba(255,255,255,0.06);">
+                    <button id="convert-tab-images" class="convert-tab active" style="padding:10px 20px; border:none; border-bottom:2px solid #3b82f6; background:transparent; color:#e5e7eb; cursor:pointer; font-size:13px; font-weight:600; transition:all 0.15s; display:flex; align-items:center; gap:6px;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14"/><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>
+                        Images
+                    </button>
+                    <button id="convert-tab-pdfa" class="convert-tab" style="padding:10px 20px; border:none; border-bottom:2px solid transparent; background:transparent; color:rgba(255,255,255,0.4); cursor:pointer; font-size:13px; font-weight:600; transition:all 0.15s; display:flex; align-items:center; gap:6px;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15l2 2 4-4"/></svg>
+                        PDF/A
+                    </button>
+                </div>
+                <!-- Body -->
+                <div style="padding:20px 24px;">
+                    <!-- ========== IMAGE SETTINGS TAB ========== -->
+                    <div id="convert-image-settings">
+                    <!-- Format Selection -->
+                    <div style="margin-bottom:20px;">
+                        <label style="font-size:12px; font-weight:600; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:8px;">Image Format</label>
+                        <div id="convert-format-grid" style="display:grid; grid-template-columns:repeat(5, 1fr); gap:6px;">
+                            <button class="cvt-fmt-btn active" data-format="jpg" style="padding:10px 4px; border-radius:8px; border:2px solid #3b82f6; background:rgba(59,130,246,0.12); color:#e5e7eb; cursor:pointer; text-align:center; transition:all 0.15s; font-size:0;"><div style="font-size:13px; font-weight:600;">JPG</div><div style="font-size:10px; color:rgba(255,255,255,0.4); margin-top:2px;">Compressed</div></button>
+                            <button class="cvt-fmt-btn" data-format="png" style="padding:10px 4px; border-radius:8px; border:2px solid rgba(255,255,255,0.1); background:transparent; color:#e5e7eb; cursor:pointer; text-align:center; transition:all 0.15s; font-size:0;"><div style="font-size:13px; font-weight:600;">PNG</div><div style="font-size:10px; color:rgba(255,255,255,0.4); margin-top:2px;">Lossless</div></button>
+                            <button class="cvt-fmt-btn" data-format="bmp" style="padding:10px 4px; border-radius:8px; border:2px solid rgba(255,255,255,0.1); background:transparent; color:#e5e7eb; cursor:pointer; text-align:center; transition:all 0.15s; font-size:0;"><div style="font-size:13px; font-weight:600;">BMP</div><div style="font-size:10px; color:rgba(255,255,255,0.4); margin-top:2px;">Raw</div></button>
+                            <button class="cvt-fmt-btn" data-format="gif" style="padding:10px 4px; border-radius:8px; border:2px solid rgba(255,255,255,0.1); background:transparent; color:#e5e7eb; cursor:pointer; text-align:center; transition:all 0.15s; font-size:0;"><div style="font-size:13px; font-weight:600;">GIF</div><div style="font-size:10px; color:rgba(255,255,255,0.4); margin-top:2px;">Web</div></button>
+                            <button class="cvt-fmt-btn" data-format="tiff" style="padding:10px 4px; border-radius:8px; border:2px solid rgba(255,255,255,0.1); background:transparent; color:#e5e7eb; cursor:pointer; text-align:center; transition:all 0.15s; font-size:0;"><div style="font-size:13px; font-weight:600;">TIFF</div><div style="font-size:10px; color:rgba(255,255,255,0.4); margin-top:2px;">Print</div></button>
+                        </div>
+                    </div>
+                    <!-- Page Selection -->
+                    <div style="margin-bottom:20px;">
+                        <label style="font-size:12px; font-weight:600; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:8px;">Pages</label>
+                        <div style="display:flex; gap:6px; margin-bottom:8px;">
+                            <button class="cvt-page-btn active" data-mode="all" style="flex:1; padding:8px; border-radius:8px; border:2px solid #3b82f6; background:rgba(59,130,246,0.12); color:#e5e7eb; cursor:pointer; font-size:13px; font-weight:500; transition:all 0.15s;">All Pages</button>
+                            <button class="cvt-page-btn" data-mode="range" style="flex:1; padding:8px; border-radius:8px; border:2px solid rgba(255,255,255,0.1); background:transparent; color:#e5e7eb; cursor:pointer; font-size:13px; font-weight:500; transition:all 0.15s;">Page Range</button>
+                            <button class="cvt-page-btn" data-mode="custom" style="flex:1; padding:8px; border-radius:8px; border:2px solid rgba(255,255,255,0.1); background:transparent; color:#e5e7eb; cursor:pointer; font-size:13px; font-weight:500; transition:all 0.15s;">Custom</button>
+                        </div>
+                        <div id="convert-page-range-row" style="display:none; gap:8px; align-items:center;">
+                            <div style="flex:1; display:flex; align-items:center; gap:6px;"><label style="font-size:12px; color:rgba(255,255,255,0.5); white-space:nowrap;">From</label><input id="convert-page-from" type="number" min="1" value="1" style="width:100%; padding:7px 10px; border-radius:6px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.05); color:#e5e7eb; font-size:13px; outline:none;"></div>
+                            <div style="flex:1; display:flex; align-items:center; gap:6px;"><label style="font-size:12px; color:rgba(255,255,255,0.5); white-space:nowrap;">To</label><input id="convert-page-to" type="number" min="1" value="1" style="width:100%; padding:7px 10px; border-radius:6px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.05); color:#e5e7eb; font-size:13px; outline:none;"></div>
+                        </div>
+                        <div id="convert-page-custom-row" style="display:none;">
+                            <input id="convert-page-custom" type="text" placeholder="e.g. 1, 3, 5-8, 12" style="width:100%; padding:7px 10px; border-radius:6px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.05); color:#e5e7eb; font-size:13px; outline:none; box-sizing:border-box;">
+                            <div style="font-size:11px; color:rgba(255,255,255,0.35); margin-top:4px;">Enter page numbers or ranges separated by commas</div>
+                        </div>
+                    </div>
+                    <!-- Two columns: DPI + Color Model -->
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:20px;">
+                        <div>
+                            <label style="font-size:12px; font-weight:600; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:8px;">Resolution (DPI)</label>
+                            <div style="display:flex; align-items:center; gap:8px;"><input id="convert-dpi" type="range" min="12" max="2400" value="150" step="1" style="flex:1; accent-color:#3b82f6; height:6px;"><input id="convert-dpi-val" type="number" min="12" max="2400" value="150" style="width:64px; padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.05); color:#e5e7eb; font-size:13px; text-align:center; outline:none;"></div>
+                            <div style="display:flex; justify-content:space-between; margin-top:4px;"><span style="font-size:10px; color:rgba(255,255,255,0.3);">12</span><div style="display:flex; gap:6px;"><button class="cvt-dpi-preset" data-dpi="72" style="font-size:10px; padding:1px 6px; border-radius:4px; border:1px solid rgba(255,255,255,0.12); background:transparent; color:rgba(255,255,255,0.4); cursor:pointer;">72</button><button class="cvt-dpi-preset" data-dpi="150" style="font-size:10px; padding:1px 6px; border-radius:4px; border:1px solid rgba(255,255,255,0.12); background:transparent; color:rgba(255,255,255,0.4); cursor:pointer;">150</button><button class="cvt-dpi-preset" data-dpi="300" style="font-size:10px; padding:1px 6px; border-radius:4px; border:1px solid rgba(255,255,255,0.12); background:transparent; color:rgba(255,255,255,0.4); cursor:pointer;">300</button><button class="cvt-dpi-preset" data-dpi="600" style="font-size:10px; padding:1px 6px; border-radius:4px; border:1px solid rgba(255,255,255,0.12); background:transparent; color:rgba(255,255,255,0.4); cursor:pointer;">600</button></div><span style="font-size:10px; color:rgba(255,255,255,0.3);">2400</span></div>
+                        </div>
+                        <div>
+                            <label style="font-size:12px; font-weight:600; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:8px;">Color Model</label>
+                            <select id="convert-color-model" style="width:100%; padding:8px 10px; border-radius:6px; border:1px solid rgba(255,255,255,0.12); background:#1e1e3a; color:#e5e7eb; font-size:13px; outline:none; cursor:pointer; appearance:auto;"><option value="rgb">RGB — Screen / Web</option><option value="rgba">RGBA — With Transparency</option><option value="grayscale">Grayscale</option><option value="cmyk">CMYK — Print</option><option value="lab">Lab — Perceptual</option></select>
+                            <div id="convert-color-hint" style="font-size:11px; color:rgba(255,255,255,0.35); margin-top:6px;">Best for digital screens and web use</div>
+                        </div>
+                    </div>
+                    <!-- Quality & Smoothing row -->
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:20px;">
+                        <div id="convert-quality-section">
+                            <label style="font-size:12px; font-weight:600; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:8px;">JPG Quality</label>
+                            <div style="display:flex; align-items:center; gap:8px;"><input id="convert-quality" type="range" min="1" max="100" value="92" style="flex:1; accent-color:#f59e0b; height:6px;"><span id="convert-quality-val" style="font-size:13px; min-width:36px; text-align:center; color:#f59e0b; font-weight:600;">92</span></div>
+                            <div style="display:flex; justify-content:space-between; font-size:10px; color:rgba(255,255,255,0.3); margin-top:2px;"><span>Smaller file</span><span>Better quality</span></div>
+                        </div>
+                        <div>
+                            <label style="font-size:12px; font-weight:600; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:8px;">Image Smoothing</label>
+                            <div style="display:flex; align-items:center; gap:12px; padding:8px 0;"><label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px; color:#e5e7eb;"><input id="convert-smoothing" type="checkbox" checked style="accent-color:#3b82f6; width:16px; height:16px; cursor:pointer;"> Anti-aliasing</label></div>
+                            <div style="font-size:11px; color:rgba(255,255,255,0.35);">Smooths edges for a cleaner look</div>
+                        </div>
+                    </div>
+                    </div><!-- END convert-image-settings -->
+
+                    <!-- ========== PDF/A SETTINGS TAB ========== -->
+                    <div id="convert-pdfa-options" style="display:none;">
+                        <div style="margin-bottom:20px; padding:16px; border-radius:10px; background:rgba(16,185,129,0.06); border:1px solid rgba(16,185,129,0.15);">
+                            <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15l2 2 4-4"/></svg>
+                                <span style="font-size:13px; font-weight:600; color:#10b981;">PDF/A Archival Format</span>
+                            </div>
+                            <p style="font-size:12px; color:rgba(255,255,255,0.5); margin:0; line-height:1.5;">PDF/A is an ISO-standardized format for long-term digital preservation. It embeds all fonts, removes external dependencies, and ensures the document is self-contained.</p>
+                        </div>
+                        <!-- Conformance Level -->
+                        <div style="margin-bottom:20px;">
+                            <label style="font-size:12px; font-weight:600; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:8px;">Conformance Level</label>
+                            <select id="convert-pdfa-level" style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:#1e1e3a; color:#e5e7eb; font-size:13px; outline:none; cursor:pointer; appearance:auto;">
+                                <option value="1b">PDF/A-1b — Basic (ISO 19005-1)</option>
+                                <option value="2b" selected>PDF/A-2b — Recommended (ISO 19005-2)</option>
+                                <option value="3b">PDF/A-3b — With Attachments (ISO 19005-3)</option>
+                            </select>
+                            <div style="font-size:11px; color:rgba(255,255,255,0.35); margin-top:6px;">PDF/A-2b is recommended for most archival purposes</div>
+                        </div>
+                        <!-- Options -->
+                        <div style="margin-bottom:20px;">
+                            <label style="font-size:12px; font-weight:600; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:12px;">Options</label>
+                            <div style="display:flex; flex-direction:column; gap:12px;">
+                                <label style="display:flex; align-items:center; gap:10px; cursor:pointer; padding:10px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.02); transition:all 0.15s;" onmouseenter="this.style.background='rgba(255,255,255,0.04)'" onmouseleave="this.style.background='rgba(255,255,255,0.02)'">
+                                    <input id="convert-pdfa-embed-fonts" type="checkbox" checked style="accent-color:#10b981; width:16px; height:16px; cursor:pointer;">
+                                    <div>
+                                        <div style="font-size:13px; color:#e5e7eb; font-weight:500;">Embed All Fonts</div>
+                                        <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px;">Subset and embed all fonts used in the document</div>
+                                    </div>
+                                </label>
+                                <label style="display:flex; align-items:center; gap:10px; cursor:pointer; padding:10px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.02); transition:all 0.15s;" onmouseenter="this.style.background='rgba(255,255,255,0.04)'" onmouseleave="this.style.background='rgba(255,255,255,0.02)'">
+                                    <input id="convert-pdfa-srgb" type="checkbox" checked style="accent-color:#10b981; width:16px; height:16px; cursor:pointer;">
+                                    <div>
+                                        <div style="font-size:13px; color:#e5e7eb; font-weight:500;">sRGB Color Profile</div>
+                                        <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px;">Attach sRGB ICC output intent for color consistency</div>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+                    </div><!-- END convert-pdfa-options -->
+
+                    <!-- Progress bar -->
+                    <div id="convert-progress-wrap" style="display:none; margin-bottom:16px;">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:6px;"><span id="convert-progress-label" style="font-size:12px; color:rgba(255,255,255,0.5);">Exporting...</span><span id="convert-progress-pct" style="font-size:12px; color:#3b82f6; font-weight:600;">0%</span></div>
+                        <div style="height:6px; background:rgba(255,255,255,0.08); border-radius:3px; overflow:hidden;"><div id="convert-progress-bar" style="height:100%; width:0%; background:linear-gradient(90deg, #3b82f6, #8b5cf6); border-radius:3px; transition:width 0.3s;"></div></div>
+                    </div>
+                </div>
+                <!-- Footer -->
+                <div style="padding:16px 24px 20px; border-top:1px solid rgba(255,255,255,0.08); display:flex; align-items:center; justify-content:space-between;">
+                    <div id="convert-page-count" style="font-size:12px; color:rgba(255,255,255,0.4);">All pages will be exported</div>
+                    <div style="display:flex; gap:8px;">
+                        <button id="convert-cancel-btn" style="padding:9px 20px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:transparent; color:#e5e7eb; cursor:pointer; font-size:13px; font-weight:500; transition:all 0.15s;" onmouseenter="this.style.background='rgba(255,255,255,0.06)'" onmouseleave="this.style.background='transparent'">Cancel</button>
+                        <button id="convert-export-btn" style="padding:9px 24px; border-radius:8px; border:none; background:linear-gradient(135deg, #3b82f6, #8b5cf6); color:#fff; cursor:pointer; font-size:13px; font-weight:600; transition:all 0.15s; display:flex; align-items:center; gap:6px;" onmouseenter="this.style.opacity='0.9'" onmouseleave="this.style.opacity='1'"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Export</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- PDF/A Compliance Report Modal -->
+        <div id="pdfa-report-modal" style="display:none; position:fixed; inset:0; z-index:100000; background:rgba(0,0,0,0.7); backdrop-filter:blur(6px); align-items:center; justify-content:center;">
+            <div style="background:#1a1a2e; border:1px solid rgba(255,255,255,0.1); border-radius:16px; box-shadow:0 24px 80px rgba(0,0,0,0.6); width:580px; max-width:95vw; max-height:90vh; overflow-y:auto; color:#e5e7eb;">
+                <!-- Report Header -->
+                <div id="pdfa-report-header" style="padding:20px 24px 16px; border-bottom:1px solid rgba(255,255,255,0.08);">
+                    <div style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">
+                        <div id="pdfa-report-icon" style="width:44px; height:44px; border-radius:12px; display:flex; align-items:center; justify-content:center; font-size:22px;"></div>
+                        <div>
+                            <div id="pdfa-report-title" style="font-size:18px; font-weight:700;"></div>
+                            <div id="pdfa-report-subtitle" style="font-size:12px; color:rgba(255,255,255,0.4); margin-top:2px;"></div>
+                        </div>
+                    </div>
+                </div>
+                <!-- Report Summary Bar -->
+                <div style="padding:12px 24px; background:rgba(255,255,255,0.02); border-bottom:1px solid rgba(255,255,255,0.06);">
+                    <div style="display:flex; gap:16px; flex-wrap:wrap;">
+                        <div style="display:flex; align-items:center; gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 7h10M7 12h10M7 17h6"/></svg><span id="pdfa-report-pages" style="font-size:12px; color:rgba(255,255,255,0.5);"></span></div>
+                        <div style="display:flex; align-items:center; gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span id="pdfa-report-size" style="font-size:12px; color:rgba(255,255,255,0.5);"></span></div>
+                        <div style="display:flex; align-items:center; gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span id="pdfa-report-time" style="font-size:12px; color:rgba(255,255,255,0.5);"></span></div>
+                    </div>
+                </div>
+                <!-- Checks List -->
+                <div id="pdfa-report-checks" style="padding:16px 24px;"></div>
+                <!-- Footer -->
+                <div style="padding:16px 24px 20px; border-top:1px solid rgba(255,255,255,0.08); display:flex; align-items:center; justify-content:space-between;">
+                    <div id="pdfa-report-summary" style="font-size:12px; color:rgba(255,255,255,0.4);"></div>
+                    <div style="display:flex; gap:8px;">
+                        <button id="pdfa-report-close-btn" style="padding:9px 20px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:transparent; color:#e5e7eb; cursor:pointer; font-size:13px; font-weight:500; transition:all 0.15s;" onmouseenter="this.style.background='rgba(255,255,255,0.06)'" onmouseleave="this.style.background='transparent'">Close</button>
+                        <button id="pdfa-report-download-btn" style="padding:9px 24px; border-radius:8px; border:none; background:linear-gradient(135deg, #10b981, #059669); color:#fff; cursor:pointer; font-size:13px; font-weight:600; transition:all 0.15s; display:flex; align-items:center; gap:6px;" onmouseenter="this.style.opacity='0.9'" onmouseleave="this.style.opacity='1'"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download PDF/A</button>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -4843,7 +5570,7 @@
                     return;
                 }
                 const thumb = document.createElement('div');
-                thumb.className = 'relative p-3 bg-gray-700/30 rounded-lg border border-gray-600/50 cursor-pointer transition-all hover:border-emerald-500/50 hover:transform hover:scale-[1.02] group';
+                thumb.className = 'relative p-3 rounded-lg border border-gray-600/50 cursor-pointer transition-all hover:border-emerald-500/50 group';
                 thumb.dataset.pageIndex = String(pageNumber - 1);
 
                 const thumbCanvas = document.createElement('canvas');
@@ -4977,17 +5704,33 @@
                             updateAnnotationsList();
                             setStatus('Pending page removed.', 'ok');
                         });
+
+                        // Click on pending thumbnail scrolls to it in main viewer
+                        wrapper.addEventListener('click', () => {
+                            const mainPageEl = viewer.querySelector(`.page[data-page-index="${pendingPageId}"], .page-wrapper[data-pending-id="${pendingPageId}"]`);
+                            if (!mainPageEl) {
+                                // Also try without the page-wrapper selector
+                                const alt = viewer.querySelector(`[data-page-index="${pendingPageId}"]`);
+                                if (alt) { alt.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+                            }
+                            if (mainPageEl) mainPageEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        });
+                        wrapper.style.cursor = 'pointer';
                         
                         // Also add blank page to main viewer with interactive canvas
                         const scaledViewport = refPage.getViewport({ scale: currentScale });
                         const mainViewer = viewer;
-                        const existingPages = mainViewer.querySelectorAll('.page[data-page-index]');
+                        // Fix: Select both standard pages and overlay pages
+                        const existingPages = mainViewer.querySelectorAll('.page[data-page-index], .page-wrapper[data-page-number]');
                         const insertAfterMainPage = existingPages[refPageIndex];
                         
                         // Create blank page element for main viewer with proper canvas structure
                         const blankPageEl = document.createElement('div');
-                        blankPageEl.className = 'page pending-page';
+                        // Fix: Add page-wrapper class
+                        blankPageEl.className = 'page page-wrapper pending-page';
                         blankPageEl.dataset.pageIndex = pendingPageId;
+                        // Add pageNumber data attribute
+                        blankPageEl.dataset.pageNumber = 'pending'; 
                         blankPageEl.style.cssText = `
                             position: relative;
                             width: ${scaledViewport.width}px;
@@ -5018,6 +5761,16 @@
                         ctx.textAlign = 'center';
                         ctx.textBaseline = 'middle';
                         ctx.fillText('New Page', blankCanvas.width / 2, blankCanvas.height / 2);
+
+                        // Add generation options (Temporary Overlay)
+                        const genOptions = document.createElement('div');
+                        genOptions.className = 'new-page-options';
+                        genOptions.style.cssText = 'position: absolute; top: 60%; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; z-index: 20; pointer-events: auto;';
+                        genOptions.innerHTML = `
+                            <a href="{{ route('documents.guided', $document) }}" class="btn btn-sm btn-success text-white shadow-sm" style="text-decoration: none;">Generate from Guided</a>
+                            <button class="btn btn-sm btn-primary shadow-sm" onclick="document.querySelector('[data-tab-target=\\'#ai-generator\\']')?.click()">Generate from AI</button>
+                        `;
+                        blankPageEl.appendChild(genOptions);
                         
                         blankPageEl.appendChild(blankCanvas);
                         
@@ -5951,10 +6704,13 @@
                             editAnnotation.opacity = curOpacity;
                             const boxW = box.offsetWidth;
                             const boxH = box.offsetHeight;
+                            /* 
+                            // Removed to fix user issue: Text box should size to content, not initial drag
                             if (dragW || dragH) {
                                 editAnnotation.pdfWidth = boxW / currentScale;
                                 editAnnotation.pdfHeight = boxH / currentScale;
                             }
+                            */
                             if (editAnnotation.element) {
                                 editAnnotation.element.style.visibility = '';
                             }
@@ -5987,10 +6743,13 @@
                             // Store bounding box size if the box was drag-sized
                             const boxW = box.offsetWidth;
                             const boxH = box.offsetHeight;
+                            /*
+                            // Removed to fix user issue: Text box should size to content, not initial drag
                             if (dragW || dragH) {
                                 annotation.pdfWidth = boxW / currentScale;
                                 annotation.pdfHeight = boxH / currentScale;
                             }
+                            */
                             normalizeTextAnnotation(annotation);
                             annotations.push(annotation);
                             persistAnnotations();
@@ -6038,7 +6797,27 @@
                 }, 100);
                 
                 okBtn.addEventListener('click', (e) => { e.stopPropagation(); commitText(); });
-                deleteBtn.addEventListener('click', (e) => { e.stopPropagation(); cancelBox(); });
+                deleteBtn.addEventListener('click', (e) => { 
+                    e.stopPropagation();
+                    if (editAnnotation) {
+                        finished = true;
+                        const idx = annotations.findIndex(a => a.id === editAnnotation.id);
+                        if (idx !== -1) {
+                            annotations.splice(idx, 1);
+                            persistAnnotations();
+                            updateAnnotationsList(); 
+                            if (editAnnotation.element) {
+                                editAnnotation.element.remove();
+                            }
+                            setStatus('Text deleted.', 'ok');
+                        }
+                        box.remove();
+                        if (activeEditor === box) activeEditor = null;
+                        document.removeEventListener('pointerdown', outsideClickHandler, true);
+                    } else {
+                        cancelBox();
+                    }
+                });
                 
                 input.addEventListener('keydown', (e) => {
                     e.stopPropagation();
@@ -9289,6 +10068,820 @@
             const gridlinesOpacityInput = document.getElementById('settings-gridlines-opacity');
             const settingsGearBtn = document.getElementById('settings-gear-btn');
             const settingsPopover = document.getElementById('settings-popover');
+            const convertBtn = document.getElementById('convert-btn');
+            const convertModal = document.getElementById('convert-modal');
+            const convertModalInner = document.getElementById('convert-modal-inner');
+            const convertModalClose = document.getElementById('convert-modal-close');
+            const convertCancelBtn = document.getElementById('convert-cancel-btn');
+            const convertExportBtn = document.getElementById('convert-export-btn');
+            const convertDpi = document.getElementById('convert-dpi');
+            const convertDpiVal = document.getElementById('convert-dpi-val');
+            const convertQuality = document.getElementById('convert-quality');
+            const convertQualityVal = document.getElementById('convert-quality-val');
+            const convertQualitySection = document.getElementById('convert-quality-section');
+            const convertSmoothing = document.getElementById('convert-smoothing');
+            const convertColorModel = document.getElementById('convert-color-model');
+            const convertColorHint = document.getElementById('convert-color-hint');
+            const convertProgressWrap = document.getElementById('convert-progress-wrap');
+            const convertProgressBar = document.getElementById('convert-progress-bar');
+            const convertProgressLabel = document.getElementById('convert-progress-label');
+            const convertProgressPct = document.getElementById('convert-progress-pct');
+            const convertPageCount = document.getElementById('convert-page-count');
+            const convertPageFrom = document.getElementById('convert-page-from');
+            const convertPageTo = document.getElementById('convert-page-to');
+            const convertPageCustom = document.getElementById('convert-page-custom');
+            const convertPageRangeRow = document.getElementById('convert-page-range-row');
+            const convertPageCustomRow = document.getElementById('convert-page-custom-row');
+            const convertPdfaOptions = document.getElementById('convert-pdfa-options');
+            const convertPdfaLevel = document.getElementById('convert-pdfa-level');
+            const convertPdfaEmbedFonts = document.getElementById('convert-pdfa-embed-fonts');
+            const convertPdfaSrgb = document.getElementById('convert-pdfa-srgb');
+            const convertImageSettings = document.getElementById('convert-image-settings');
+            const convertModalTitle = document.getElementById('convert-modal-title');
+            const convertModalSubtitle = document.getElementById('convert-modal-subtitle');
+            const convertToPdfAUrl = "{{ route('documents.convertToPdfA', $document) }}";
+            const downloadPdfABaseUrl = "{{ route('documents.downloadPdfA') }}";
+            const logExportUrl = "{{ route('documents.logExport', $document) }}";
+            const pdfaReportModal = document.getElementById('pdfa-report-modal');
+            const pdfaReportIcon = document.getElementById('pdfa-report-icon');
+            const pdfaReportTitle = document.getElementById('pdfa-report-title');
+            const pdfaReportSubtitle = document.getElementById('pdfa-report-subtitle');
+            const pdfaReportPages = document.getElementById('pdfa-report-pages');
+            const pdfaReportSize = document.getElementById('pdfa-report-size');
+            const pdfaReportTime = document.getElementById('pdfa-report-time');
+            const pdfaReportChecks = document.getElementById('pdfa-report-checks');
+            const pdfaReportSummary = document.getElementById('pdfa-report-summary');
+            const pdfaReportCloseBtn = document.getElementById('pdfa-report-close-btn');
+            const pdfaReportDownloadBtn = document.getElementById('pdfa-report-download-btn');
+            let pdfaDownloadUrl = null;
+
+            // Auth status for gating features
+            const isAuthenticated = @json(Auth::check());
+            const loginUrl = "{{ route('filament.admin.auth.login') }}";
+
+            // PDF base name for filenames
+            const pdfBaseName = @json(pathinfo($document->original_name, PATHINFO_FILENAME));
+
+            let cvtFormat = 'jpg';
+            let cvtPageMode = 'all';
+            let cvtExporting = false;
+
+            // Color model hints
+            const colorHints = {
+                rgb: 'Best for digital screens and web use',
+                rgba: 'Preserves transparency (PNG/TIFF only)',
+                grayscale: 'Reduces file size, ideal for documents',
+                cmyk: 'Professional print color space',
+                lab: 'Device-independent perceptual color'
+            };
+
+            // Tab switching
+            const convertTabImages = document.getElementById('convert-tab-images');
+            const convertTabPdfa = document.getElementById('convert-tab-pdfa');
+            const convertModalIcon = document.getElementById('convert-modal-icon');
+
+            function switchConvertTab(tab) {
+                if (tab === 'images') {
+                    cvtFormat = 'jpg';
+                    // Reset image format selection to JPG
+                    document.querySelectorAll('.cvt-fmt-btn').forEach(b => {
+                        b.style.borderColor = 'rgba(255,255,255,0.1)';
+                        b.style.background = 'transparent';
+                        b.classList.remove('active');
+                    });
+                    const jpgBtn = document.querySelector('.cvt-fmt-btn[data-format="jpg"]');
+                    if (jpgBtn) { jpgBtn.style.borderColor = '#3b82f6'; jpgBtn.style.background = 'rgba(59,130,246,0.12)'; jpgBtn.classList.add('active'); }
+                    if (convertImageSettings) convertImageSettings.style.display = 'block';
+                    if (convertPdfaOptions) convertPdfaOptions.style.display = 'none';
+                    if (convertModalTitle) convertModalTitle.textContent = 'Export to Images';
+                    if (convertModalSubtitle) convertModalSubtitle.textContent = 'Convert PDF pages to image files';
+                    if (convertModalIcon) convertModalIcon.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14"/><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>';
+                    if (convertModalIcon) convertModalIcon.style.background = 'linear-gradient(135deg, #3b82f6, #8b5cf6)';
+                    if (convertExportBtn) convertExportBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Export';
+                    if (convertExportBtn) convertExportBtn.style.background = 'linear-gradient(135deg, #3b82f6, #8b5cf6)';
+                    convertTabImages.style.borderBottomColor = '#3b82f6';
+                    convertTabImages.style.color = '#e5e7eb';
+                    convertTabPdfa.style.borderBottomColor = 'transparent';
+                    convertTabPdfa.style.color = 'rgba(255,255,255,0.4)';
+                    if (convertQualitySection) {
+                        convertQualitySection.style.opacity = '1';
+                        convertQualitySection.style.pointerEvents = 'auto';
+                    }
+                } else {
+                    cvtFormat = 'pdfa';
+                    if (convertImageSettings) convertImageSettings.style.display = 'none';
+                    if (convertPdfaOptions) convertPdfaOptions.style.display = 'block';
+                    if (convertModalTitle) convertModalTitle.textContent = 'Export as PDF/A';
+                    if (convertModalSubtitle) convertModalSubtitle.textContent = 'Convert to archival format (ISO 19005)';
+                    if (convertModalIcon) convertModalIcon.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15l2 2 4-4"/></svg>';
+                    if (convertModalIcon) convertModalIcon.style.background = 'linear-gradient(135deg, #10b981, #059669)';
+                    if (convertExportBtn) convertExportBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15l2 2 4-4"/></svg> Convert to PDF/A';
+                    if (convertExportBtn) convertExportBtn.style.background = 'linear-gradient(135deg, #10b981, #059669)';
+                    convertTabPdfa.style.borderBottomColor = '#10b981';
+                    convertTabPdfa.style.color = '#e5e7eb';
+                    convertTabImages.style.borderBottomColor = 'transparent';
+                    convertTabImages.style.color = 'rgba(255,255,255,0.4)';
+                }
+            }
+
+            if (convertTabImages) convertTabImages.addEventListener('click', () => switchConvertTab('images'));
+            if (convertTabPdfa) convertTabPdfa.addEventListener('click', () => switchConvertTab('pdfa'));
+
+            // Login required modal
+            const loginRequiredModal = document.getElementById('login-required-modal');
+            const loginRequiredCloseBtn = document.getElementById('login-required-close');
+            function showLoginRequiredModal() {
+                if (loginRequiredModal) loginRequiredModal.style.display = 'flex';
+            }
+            if (loginRequiredCloseBtn) loginRequiredCloseBtn.addEventListener('click', () => { loginRequiredModal.style.display = 'none'; });
+            if (loginRequiredModal) loginRequiredModal.addEventListener('click', (e) => { if (e.target === loginRequiredModal) loginRequiredModal.style.display = 'none'; });
+
+            // Log export activity (fire-and-forget)
+            function logExportActivity(action, category, details, status) {
+                if (!isAuthenticated) return;
+                fetch(logExportUrl, {
+                    method: 'POST',
+                    headers: { 'X-CSRF-TOKEN': csrfToken, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                    body: JSON.stringify({ action, category, details, status })
+                }).catch(() => {});
+            }
+
+            // Open modal
+            if (convertBtn && convertModal) {
+                convertBtn.addEventListener('click', () => {
+                    // Auth gate – must be logged in to use Convert
+                    if (!isAuthenticated) {
+                        showLoginRequiredModal();
+                        return;
+                    }
+                    if (settingsPopover) settingsPopover.style.display = 'none';
+                    // Set page count info
+                    if (pdfjsDocument) {
+                        const total = pdfjsDocument.numPages;
+                        if (convertPageTo) convertPageTo.max = total;
+                        if (convertPageTo) convertPageTo.value = total;
+                        if (convertPageFrom) convertPageFrom.max = total;
+                        updateConvertPageInfo();
+                    }
+                    convertModal.style.display = 'flex';
+                    convertProgressWrap.style.display = 'none';
+                    convertExportBtn.disabled = false;
+                    convertExportBtn.style.opacity = '1';
+                });
+
+                // Close handlers
+                const closeConvertModal = () => {
+                    if (cvtExporting) return;
+                    convertModal.style.display = 'none';
+                };
+                convertModalClose.addEventListener('click', closeConvertModal);
+                convertCancelBtn.addEventListener('click', closeConvertModal);
+                convertModal.addEventListener('click', (e) => {
+                    if (e.target === convertModal) closeConvertModal();
+                });
+
+                // Format selection
+                document.querySelectorAll('.cvt-fmt-btn').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        document.querySelectorAll('.cvt-fmt-btn').forEach(b => {
+                            b.style.borderColor = 'rgba(255,255,255,0.1)';
+                            b.style.background = 'transparent';
+                            b.classList.remove('active');
+                        });
+                        btn.style.borderColor = '#3b82f6';
+                        btn.style.background = 'rgba(59,130,246,0.12)';
+                        btn.classList.add('active');
+                        cvtFormat = btn.dataset.format;
+                        // Show/hide JPG quality section
+                        if (convertQualitySection) {
+                            convertQualitySection.style.opacity = cvtFormat === 'jpg' ? '1' : '0.35';
+                            convertQualitySection.style.pointerEvents = cvtFormat === 'jpg' ? 'auto' : 'none';
+                        }
+                        // RGBA only for PNG/TIFF
+                        updateColorModelOptions();
+                    });
+                });
+
+                // Page mode selection
+                document.querySelectorAll('.cvt-page-btn').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        document.querySelectorAll('.cvt-page-btn').forEach(b => {
+                            b.style.borderColor = 'rgba(255,255,255,0.1)';
+                            b.style.background = 'transparent';
+                            b.classList.remove('active');
+                        });
+                        btn.style.borderColor = '#3b82f6';
+                        btn.style.background = 'rgba(59,130,246,0.12)';
+                        btn.classList.add('active');
+                        cvtPageMode = btn.dataset.mode;
+                        convertPageRangeRow.style.display = cvtPageMode === 'range' ? 'flex' : 'none';
+                        convertPageCustomRow.style.display = cvtPageMode === 'custom' ? 'block' : 'none';
+                        updateConvertPageInfo();
+                    });
+                });
+
+                // DPI sync
+                convertDpi.addEventListener('input', () => { convertDpiVal.value = convertDpi.value; });
+                convertDpiVal.addEventListener('change', () => {
+                    let v = Math.min(2400, Math.max(12, parseInt(convertDpiVal.value) || 150));
+                    convertDpiVal.value = v;
+                    convertDpi.value = v;
+                });
+
+                // DPI presets
+                document.querySelectorAll('.cvt-dpi-preset').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        convertDpi.value = btn.dataset.dpi;
+                        convertDpiVal.value = btn.dataset.dpi;
+                    });
+                });
+
+                // Quality slider
+                convertQuality.addEventListener('input', () => { convertQualityVal.textContent = convertQuality.value; });
+
+                // Color model hints
+                convertColorModel.addEventListener('change', () => {
+                    convertColorHint.textContent = colorHints[convertColorModel.value] || '';
+                });
+
+                // Page range change -> update info
+                if (convertPageFrom) convertPageFrom.addEventListener('change', updateConvertPageInfo);
+                if (convertPageTo) convertPageTo.addEventListener('change', updateConvertPageInfo);
+                if (convertPageCustom) convertPageCustom.addEventListener('input', updateConvertPageInfo);
+            }
+
+            function updateColorModelOptions() {
+                const rgbaOpt = convertColorModel.querySelector('option[value="rgba"]');
+                if (rgbaOpt) {
+                    if (cvtFormat === 'png' || cvtFormat === 'tiff') {
+                        rgbaOpt.disabled = false;
+                        rgbaOpt.textContent = 'RGBA — With Transparency';
+                    } else {
+                        rgbaOpt.disabled = true;
+                        rgbaOpt.textContent = 'RGBA — PNG/TIFF only';
+                        if (convertColorModel.value === 'rgba') convertColorModel.value = 'rgb';
+                    }
+                }
+            }
+
+            function updateConvertPageInfo() {
+                if (!pdfjsDocument || !convertPageCount) return;
+                const total = pdfjsDocument.numPages;
+                const pages = parseConvertPages(total);
+                const count = pages.length;
+                convertPageCount.textContent = count === total ? `All ${total} pages will be exported` : `${count} of ${total} pages will be exported`;
+            }
+
+            function parseConvertPages(totalPages) {
+                if (cvtPageMode === 'all') {
+                    return Array.from({ length: totalPages }, (_, i) => i + 1);
+                }
+                if (cvtPageMode === 'range') {
+                    const from = Math.max(1, Math.min(totalPages, parseInt(convertPageFrom?.value) || 1));
+                    const to = Math.max(from, Math.min(totalPages, parseInt(convertPageTo?.value) || totalPages));
+                    return Array.from({ length: to - from + 1 }, (_, i) => from + i);
+                }
+                // Custom
+                const input = (convertPageCustom?.value || '').trim();
+                if (!input) return Array.from({ length: totalPages }, (_, i) => i + 1);
+                const pages = new Set();
+                input.split(',').forEach(part => {
+                    part = part.trim();
+                    const rangeMatch = part.match(/^(\d+)\s*-\s*(\d+)$/);
+                    if (rangeMatch) {
+                        const start = Math.max(1, parseInt(rangeMatch[1]));
+                        const end = Math.min(totalPages, parseInt(rangeMatch[2]));
+                        for (let i = start; i <= end; i++) pages.add(i);
+                    } else {
+                        const num = parseInt(part);
+                        if (num >= 1 && num <= totalPages) pages.add(num);
+                    }
+                });
+                return [...pages].sort((a, b) => a - b);
+            }
+
+            // ---- Encoding helpers ----
+            function imageToBmp(imageData, width, height) {
+                const rowSize = Math.floor((24 * width + 31) / 32) * 4;
+                const pixelArraySize = rowSize * height;
+                const fileSize = 54 + pixelArraySize;
+                const buffer = new ArrayBuffer(fileSize);
+                const view = new DataView(buffer);
+                view.setUint8(0, 0x42);
+                view.setUint8(1, 0x4D);
+                view.setUint32(2, fileSize, true);
+                view.setUint32(10, 54, true);
+                view.setUint32(14, 40, true);
+                view.setInt32(18, width, true);
+                view.setInt32(22, -height, true);
+                view.setUint16(26, 1, true);
+                view.setUint16(28, 24, true);
+                view.setUint32(30, 0, true);
+                view.setUint32(34, pixelArraySize, true);
+                view.setUint32(38, 2835, true);
+                view.setUint32(42, 2835, true);
+                let offset = 54;
+                const data = imageData.data;
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < width; x++) {
+                        const i = (y * width + x) * 4;
+                        view.setUint8(offset++, data[i + 2]);
+                        view.setUint8(offset++, data[i + 1]);
+                        view.setUint8(offset++, data[i]);
+                    }
+                    offset = 54 + (y + 1) * rowSize;
+                }
+                return new Blob([buffer], { type: 'image/bmp' });
+            }
+
+            function imageToTiff(imageData, width, height) {
+                // Minimal uncompressed TIFF encoder (RGB)
+                const data = imageData.data;
+                const stripSize = width * height * 3;
+                const ifdOffset = 8;
+                const numEntries = 11;
+                const ifdSize = 2 + numEntries * 12 + 4;
+                const stripOffset = ifdOffset + ifdSize;
+                const fileSize = stripOffset + stripSize;
+                const buf = new ArrayBuffer(fileSize);
+                const v = new DataView(buf);
+                const u8 = new Uint8Array(buf);
+                // Header (little-endian)
+                v.setUint16(0, 0x4949, false); // 'II'
+                v.setUint16(2, 42, true);
+                v.setUint32(4, ifdOffset, true);
+                // IFD
+                let off = ifdOffset;
+                v.setUint16(off, numEntries, true); off += 2;
+                const writeTag = (tag, type, count, value) => {
+                    v.setUint16(off, tag, true); off += 2;
+                    v.setUint16(off, type, true); off += 2;
+                    v.setUint32(off, count, true); off += 4;
+                    v.setUint32(off, value, true); off += 4;
+                };
+                writeTag(256, 3, 1, width);           // ImageWidth
+                writeTag(257, 3, 1, height);          // ImageLength
+                writeTag(258, 3, 1, 8);               // BitsPerSample (8 per channel, simplified)
+                writeTag(259, 3, 1, 1);               // Compression (none)
+                writeTag(262, 3, 1, 2);               // PhotometricInterp (RGB)
+                writeTag(273, 4, 1, stripOffset);     // StripOffsets
+                writeTag(277, 3, 1, 3);               // SamplesPerPixel
+                writeTag(278, 4, 1, height);          // RowsPerStrip
+                writeTag(279, 4, 1, stripSize);       // StripByteCounts
+                writeTag(282, 3, 1, 150);             // XResolution (simplified)
+                writeTag(283, 3, 1, 150);             // YResolution (simplified)
+                v.setUint32(off, 0, true); // next IFD (none)
+                // Strip data (RGBA -> RGB)
+                let sOff = stripOffset;
+                for (let i = 0; i < width * height; i++) {
+                    u8[sOff++] = data[i * 4];
+                    u8[sOff++] = data[i * 4 + 1];
+                    u8[sOff++] = data[i * 4 + 2];
+                }
+                return new Blob([buf], { type: 'image/tiff' });
+            }
+
+            function imageToGif(canvas) {
+                // GIF89a encoder for a single frame (256-color quantized)
+                const ctx = canvas.getContext('2d');
+                const w = canvas.width, h = canvas.height;
+                const imgData = ctx.getImageData(0, 0, w, h).data;
+                // Simple median-cut quantization to 256 colors
+                const palette = [];
+                const colorMap = new Map();
+                const indexed = new Uint8Array(w * h);
+                // Sample pixels to build a palette
+                const step = Math.max(1, Math.floor((w * h) / 10000));
+                const samples = [];
+                for (let i = 0; i < w * h; i += step) {
+                    samples.push([imgData[i*4], imgData[i*4+1], imgData[i*4+2]]);
+                }
+                // Simple uniform quantization (6 bits per channel = 216 + extras)
+                const colorKey = (r, g, b) => ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4);
+                for (let i = 0; i < samples.length && palette.length < 256; i++) {
+                    const k = colorKey(samples[i][0], samples[i][1], samples[i][2]);
+                    if (!colorMap.has(k)) {
+                        colorMap.set(k, palette.length);
+                        palette.push(samples[i]);
+                    }
+                }
+                // Fill remaining palette slots
+                while (palette.length < 256) palette.push([0, 0, 0]);
+                // Map all pixels to nearest palette color
+                for (let i = 0; i < w * h; i++) {
+                    const k = colorKey(imgData[i*4], imgData[i*4+1], imgData[i*4+2]);
+                    if (colorMap.has(k)) {
+                        indexed[i] = colorMap.get(k);
+                    } else {
+                        // Find nearest
+                        let bestDist = Infinity, bestIdx = 0;
+                        const r = imgData[i*4], g = imgData[i*4+1], b = imgData[i*4+2];
+                        for (let j = 0; j < palette.length; j++) {
+                            const dr = r - palette[j][0], dg = g - palette[j][1], db = b - palette[j][2];
+                            const d = dr*dr + dg*dg + db*db;
+                            if (d < bestDist) { bestDist = d; bestIdx = j; }
+                        }
+                        indexed[i] = bestIdx;
+                        colorMap.set(k, bestIdx);
+                    }
+                }
+                // LZW compress
+                const minCodeSize = 8;
+                const lzwEncode = (indexed) => {
+                    const clearCode = 1 << minCodeSize;
+                    const eoiCode = clearCode + 1;
+                    let codeSize = minCodeSize + 1;
+                    let nextCode = eoiCode + 1;
+                    let table = new Map();
+                    for (let i = 0; i < clearCode; i++) table.set(String(i), i);
+                    const output = [];
+                    let buffer = 0, bitsInBuffer = 0;
+                    const writeBits = (code, size) => {
+                        buffer |= (code << bitsInBuffer);
+                        bitsInBuffer += size;
+                        while (bitsInBuffer >= 8) {
+                            output.push(buffer & 0xff);
+                            buffer >>= 8;
+                            bitsInBuffer -= 8;
+                        }
+                    };
+                    writeBits(clearCode, codeSize);
+                    let current = String(indexed[0]);
+                    for (let i = 1; i < indexed.length; i++) {
+                        const next = String(indexed[i]);
+                        const combined = current + ',' + next;
+                        if (table.has(combined)) {
+                            current = combined;
+                        } else {
+                            writeBits(table.get(current), codeSize);
+                            if (nextCode < 4096) {
+                                table.set(combined, nextCode++);
+                                if (nextCode > (1 << codeSize) && codeSize < 12) codeSize++;
+                            } else {
+                                writeBits(clearCode, codeSize);
+                                table = new Map();
+                                for (let j = 0; j < clearCode; j++) table.set(String(j), j);
+                                nextCode = eoiCode + 1;
+                                codeSize = minCodeSize + 1;
+                            }
+                            current = next;
+                        }
+                    }
+                    writeBits(table.get(current), codeSize);
+                    writeBits(eoiCode, codeSize);
+                    if (bitsInBuffer > 0) output.push(buffer & 0xff);
+                    return new Uint8Array(output);
+                };
+                const lzwData = lzwEncode(indexed);
+                // Build GIF
+                const parts = [];
+                // Header
+                parts.push(new Uint8Array([0x47,0x49,0x46,0x38,0x39,0x61])); // GIF89a
+                // LSD
+                const lsd = new Uint8Array(7);
+                lsd[0] = w & 0xff; lsd[1] = (w >> 8) & 0xff;
+                lsd[2] = h & 0xff; lsd[3] = (h >> 8) & 0xff;
+                lsd[4] = 0xf7; // GCT flag, 8 bits, 256 colors
+                lsd[5] = 0; // bg
+                lsd[6] = 0; // aspect
+                parts.push(lsd);
+                // GCT (256 * 3 bytes)
+                const gct = new Uint8Array(768);
+                for (let i = 0; i < 256; i++) {
+                    gct[i*3] = palette[i][0];
+                    gct[i*3+1] = palette[i][1];
+                    gct[i*3+2] = palette[i][2];
+                }
+                parts.push(gct);
+                // Image descriptor
+                const imd = new Uint8Array([0x2c, 0,0,0,0, w&0xff,(w>>8)&0xff, h&0xff,(h>>8)&0xff, 0]);
+                parts.push(imd);
+                // LZW min code size
+                parts.push(new Uint8Array([minCodeSize]));
+                // Sub-blocks
+                let pos = 0;
+                while (pos < lzwData.length) {
+                    const blockLen = Math.min(255, lzwData.length - pos);
+                    parts.push(new Uint8Array([blockLen]));
+                    parts.push(lzwData.slice(pos, pos + blockLen));
+                    pos += blockLen;
+                }
+                parts.push(new Uint8Array([0])); // block terminator
+                parts.push(new Uint8Array([0x3b])); // trailer
+                return new Blob(parts, { type: 'image/gif' });
+            }
+
+            function applyColorModel(ctx, width, height, model) {
+                if (model === 'rgb' || model === 'rgba') return; // already correct
+                const imageData = ctx.getImageData(0, 0, width, height);
+                const d = imageData.data;
+                if (model === 'grayscale') {
+                    for (let i = 0; i < d.length; i += 4) {
+                        const gray = Math.round(0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2]);
+                        d[i] = d[i+1] = d[i+2] = gray;
+                    }
+                } else if (model === 'cmyk') {
+                    // Simulate CMYK via subtractive transform (visual approximation on RGB canvas)
+                    for (let i = 0; i < d.length; i += 4) {
+                        const r = d[i]/255, g = d[i+1]/255, b = d[i+2]/255;
+                        const k = 1 - Math.max(r, g, b);
+                        if (k === 1) { d[i] = d[i+1] = d[i+2] = 0; continue; }
+                        const c = (1-r-k)/(1-k), m = (1-g-k)/(1-k), y = (1-b-k)/(1-k);
+                        // Convert back to RGB for display
+                        d[i]   = Math.round(255 * (1-c) * (1-k));
+                        d[i+1] = Math.round(255 * (1-m) * (1-k));
+                        d[i+2] = Math.round(255 * (1-y) * (1-k));
+                    }
+                } else if (model === 'lab') {
+                    // Approximate Lab by desaturating slightly and adjusting gamma
+                    for (let i = 0; i < d.length; i += 4) {
+                        let r = d[i]/255, g = d[i+1]/255, b = d[i+2]/255;
+                        // Simple sRGB to linear
+                        r = r > 0.04045 ? Math.pow((r+0.055)/1.055, 2.4) : r/12.92;
+                        g = g > 0.04045 ? Math.pow((g+0.055)/1.055, 2.4) : g/12.92;
+                        b = b > 0.04045 ? Math.pow((b+0.055)/1.055, 2.4) : b/12.92;
+                        // Linear back to sRGB
+                        const toSrgb = v => v > 0.0031308 ? 1.055 * Math.pow(v, 1/2.4) - 0.055 : 12.92 * v;
+                        d[i]   = Math.round(255 * Math.max(0, Math.min(1, toSrgb(r))));
+                        d[i+1] = Math.round(255 * Math.max(0, Math.min(1, toSrgb(g))));
+                        d[i+2] = Math.round(255 * Math.max(0, Math.min(1, toSrgb(b))));
+                    }
+                }
+                ctx.putImageData(imageData, 0, 0);
+            }
+
+            // ---- Export handler ----
+            if (convertExportBtn) {
+                convertExportBtn.addEventListener('click', async () => {
+                    if (cvtExporting) return;
+                    if (!pdfjsDocument) {
+                        setStatus('No PDF loaded.', 'err');
+                        return;
+                    }
+                    cvtExporting = true;
+                    convertExportBtn.disabled = true;
+                    convertExportBtn.style.opacity = '0.6';
+                    convertProgressWrap.style.display = 'block';
+
+                    // --- PDF/A export (server-side) ---
+                    if (cvtFormat === 'pdfa') {
+                        try {
+                            convertProgressBar.style.width = '20%';
+                            convertProgressPct.textContent = '20%';
+                            convertProgressLabel.textContent = 'Sending to server for PDF/A conversion...';
+
+                            const pdfaLevel = document.getElementById('convert-pdfa-level')?.value || '2b';
+                            const embedFonts = document.getElementById('convert-pdfa-embed-fonts')?.checked ?? true;
+                            const srgb = document.getElementById('convert-pdfa-srgb')?.checked ?? true;
+
+                            const resp = await fetch(convertToPdfAUrl, {
+                                method: 'POST',
+                                headers: { 'X-CSRF-TOKEN': csrfToken, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                                body: JSON.stringify({ level: pdfaLevel, embed_fonts: embedFonts, srgb_profile: srgb })
+                            });
+
+                            convertProgressBar.style.width = '70%';
+                            convertProgressPct.textContent = '70%';
+                            convertProgressLabel.textContent = 'Processing PDF/A conversion...';
+
+                            const data = await resp.json();
+                            if (!resp.ok || !data.success) throw new Error(data.message || 'PDF/A conversion failed');
+
+                            convertProgressBar.style.width = '100%';
+                            convertProgressPct.textContent = '100%';
+                            convertProgressLabel.textContent = 'Complete!';
+
+                            // Store download URL
+                            pdfaDownloadUrl = downloadPdfABaseUrl + '?token=' + encodeURIComponent(data.download_token);
+
+                            // Hide convert modal, show compliance report
+                            setTimeout(() => {
+                                convertModal.style.display = 'none';
+                                showComplianceReport(data.report, data.label, data.download_name);
+                            }, 400);
+
+                        } catch (err) {
+                            console.error('PDF/A conversion error:', err);
+                            setStatus('PDF/A export error: ' + err.message, 'err');
+                        } finally {
+                            cvtExporting = false;
+                            convertExportBtn.disabled = false;
+                            convertExportBtn.style.opacity = '1';
+                            convertProgressWrap.style.display = 'none';
+                            convertProgressBar.style.width = '0%';
+                        }
+                        return;
+                    }
+
+                    const format = cvtFormat;
+                    const dpi = parseInt(convertDpi.value) || 150;
+                    const quality = parseInt(convertQuality.value) || 92;
+                    const colorModel = convertColorModel.value;
+                    const smooth = convertSmoothing.checked;
+                    const totalPages = pdfjsDocument.numPages;
+                    const pages = parseConvertPages(totalPages);
+                    const scale = dpi / 72; // PDF is 72 DPI native
+
+                    try {
+                        const files = [];
+                        for (let idx = 0; idx < pages.length; idx++) {
+                            const pageNum = pages[idx];
+                            const pct = Math.round(((idx) / pages.length) * 100);
+                            convertProgressBar.style.width = pct + '%';
+                            convertProgressPct.textContent = pct + '%';
+                            convertProgressLabel.textContent = `Rendering page ${pageNum} of ${totalPages}...`;
+
+                            const pg = await pdfjsDocument.getPage(pageNum);
+                            const vp = pg.getViewport({ scale });
+                            const cvs = document.createElement('canvas');
+                            cvs.width = vp.width;
+                            cvs.height = vp.height;
+                            const ctx = cvs.getContext('2d');
+                            ctx.imageSmoothingEnabled = smooth;
+                            ctx.imageSmoothingQuality = 'high';
+
+                            // Fill bg for opaque formats
+                            if (format !== 'png' && format !== 'tiff') {
+                                ctx.fillStyle = '#ffffff';
+                                ctx.fillRect(0, 0, cvs.width, cvs.height);
+                            } else if (colorModel !== 'rgba') {
+                                ctx.fillStyle = '#ffffff';
+                                ctx.fillRect(0, 0, cvs.width, cvs.height);
+                            }
+
+                            await pg.render({ canvasContext: ctx, viewport: vp }).promise;
+
+                            // Apply color model
+                            applyColorModel(ctx, cvs.width, cvs.height, colorModel);
+
+                            const baseName = pdfBaseName || 'document';
+                            const pageSuffix = pages.length === 1 ? '' : `_page-${pageNum}`;
+                            const fileName = `${baseName}${pageSuffix}.${format === 'jpg' ? 'jpg' : format}`;
+
+                            let blob;
+                            if (format === 'bmp') {
+                                const imgData = ctx.getImageData(0, 0, cvs.width, cvs.height);
+                                blob = imageToBmp(imgData, cvs.width, cvs.height);
+                            } else if (format === 'tiff') {
+                                const imgData = ctx.getImageData(0, 0, cvs.width, cvs.height);
+                                blob = imageToTiff(imgData, cvs.width, cvs.height);
+                            } else if (format === 'gif') {
+                                blob = imageToGif(cvs);
+                            } else if (format === 'jpg') {
+                                blob = await new Promise(resolve => cvs.toBlob(resolve, 'image/jpeg', quality / 100));
+                            } else {
+                                // png
+                                blob = await new Promise(resolve => cvs.toBlob(resolve, 'image/png'));
+                            }
+                            files.push({ blob, name: fileName });
+                        }
+
+                        convertProgressBar.style.width = '100%';
+                        convertProgressPct.textContent = '100%';
+                        convertProgressLabel.textContent = 'Downloading...';
+
+                        // Download all files
+                        for (let i = 0; i < files.length; i++) {
+                            const url = URL.createObjectURL(files[i].blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = files[i].name;
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                            URL.revokeObjectURL(url);
+                            if (files.length > 1) await new Promise(r => setTimeout(r, 300));
+                        }
+
+                        setStatus(`Exported ${files.length} ${format.toUpperCase()} image${files.length > 1 ? 's' : ''} at ${dpi} DPI.`, 'ok');
+                        logExportActivity(
+                            `Export to ${format.toUpperCase()}`,
+                            'image_export',
+                            { format, dpi, quality, color_model: colorModel, smoothing: smooth, pages: pages.length, page_numbers: pages },
+                            'success'
+                        );
+                        setTimeout(() => {
+                            convertModal.style.display = 'none';
+                        }, 600);
+                    } catch (err) {
+                        console.error('Conversion error:', err);
+                        setStatus('Export error: ' + err.message, 'err');
+                        logExportActivity(
+                            `Export to ${format.toUpperCase()}`,
+                            'image_export',
+                            { format, dpi, quality, color_model: colorModel, smoothing: smooth, error: err.message },
+                            'failed'
+                        );
+                    } finally {
+                        cvtExporting = false;
+                        convertExportBtn.disabled = false;
+                        convertExportBtn.style.opacity = '1';
+                        convertProgressWrap.style.display = 'none';
+                        convertProgressBar.style.width = '0%';
+                    }
+                });
+            }
+
+            // ---- PDF/A Compliance Report ----
+            function showComplianceReport(report, label, downloadName) {
+                if (!pdfaReportModal || !report) return;
+
+                const isCompliant = report.status === 'Compliant';
+
+                // Header
+                pdfaReportIcon.style.background = isCompliant
+                    ? 'linear-gradient(135deg, #10b981, #059669)'
+                    : 'linear-gradient(135deg, #ef4444, #dc2626)';
+                pdfaReportIcon.innerHTML = isCompliant
+                    ? '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>'
+                    : '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
+                pdfaReportTitle.textContent = isCompliant ? 'PDF/A Compliance Verified' : 'PDF/A Compliance Issues';
+                pdfaReportTitle.style.color = isCompliant ? '#10b981' : '#ef4444';
+                pdfaReportSubtitle.textContent = `${label} — ${report.iso || 'ISO 19005'}`;
+
+                // Summary bar
+                pdfaReportPages.textContent = `${report.page_count || 0} pages`;
+                const sizeKb = ((report.file_size || 0) / 1024).toFixed(1);
+                const sizeMb = ((report.file_size || 0) / 1048576).toFixed(2);
+                pdfaReportSize.textContent = report.file_size > 1048576 ? `${sizeMb} MB` : `${sizeKb} KB`;
+                const ts = report.timestamp ? new Date(report.timestamp) : new Date();
+                pdfaReportTime.textContent = ts.toLocaleString();
+
+                // Build checks list
+                let checksHtml = '';
+                (report.checks || []).forEach(check => {
+                    const pass = check.result === 'PASS';
+                    const icon = pass
+                        ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>'
+                        : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
+                    const badge = pass
+                        ? '<span style="font-size:10px; font-weight:700; padding:2px 8px; border-radius:4px; background:rgba(16,185,129,0.15); color:#10b981;">PASS</span>'
+                        : '<span style="font-size:10px; font-weight:700; padding:2px 8px; border-radius:4px; background:rgba(239,68,68,0.15); color:#ef4444;">FAIL</span>';
+
+                    // Font details sub-list
+                    let subDetail = '';
+                    if (check.fonts && check.fonts.length > 0) {
+                        const fontLines = check.fonts.slice(0, 8).map(f => {
+                            const fIcon = f.embedded ? '✓' : '✗';
+                            const fColor = f.embedded ? '#10b981' : '#ef4444';
+                            return `<div style="display:flex;align-items:center;gap:6px;padding:2px 0;"><span style="color:${fColor};font-weight:700;font-size:11px;">${fIcon}</span><span style="font-size:11px;color:rgba(255,255,255,0.5);">${f.name} <span style='color:rgba(255,255,255,0.25);'>(${f.type})</span></span></div>`;
+                        }).join('');
+                        const moreCount = check.fonts.length - 8;
+                        subDetail = `<div style="margin-top:4px;padding-left:24px;">${fontLines}${moreCount > 0 ? `<div style='font-size:11px;color:rgba(255,255,255,0.3);'>...and ${moreCount} more</div>` : ''}</div>`;
+                    }
+
+                    checksHtml += `
+                        <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.04);">
+                            <div style="flex-shrink:0;margin-top:1px;">${icon}</div>
+                            <div style="flex:1;min-width:0;">
+                                <div style="display:flex;align-items:center;gap:8px;">
+                                    <span style="font-size:13px;font-weight:600;color:#e5e7eb;">${check.item}</span>
+                                    ${badge}
+                                </div>
+                                <div style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:2px;">${check.description || ''}</div>
+                                <div style="font-size:12px;color:rgba(255,255,255,0.5);margin-top:3px;">${check.detail || ''}</div>
+                                ${subDetail}
+                            </div>
+                        </div>`;
+                });
+                pdfaReportChecks.innerHTML = checksHtml;
+
+                // Summary
+                pdfaReportSummary.textContent = report.summary || '';
+
+                // Download button
+                pdfaReportDownloadBtn.textContent = '';
+                pdfaReportDownloadBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download ' + (downloadName || 'PDF/A');
+                pdfaReportDownloadBtn.style.background = isCompliant
+                    ? 'linear-gradient(135deg, #10b981, #059669)'
+                    : 'linear-gradient(135deg, #f59e0b, #d97706)';
+
+                // Show modal
+                pdfaReportModal.style.display = 'flex';
+            }
+
+            // Report modal event handlers
+            if (pdfaReportCloseBtn) {
+                pdfaReportCloseBtn.addEventListener('click', () => {
+                    pdfaReportModal.style.display = 'none';
+                });
+            }
+            if (pdfaReportDownloadBtn) {
+                pdfaReportDownloadBtn.addEventListener('click', () => {
+                    if (pdfaDownloadUrl) {
+                        window.location.href = pdfaDownloadUrl;
+                        setTimeout(() => {
+                            pdfaReportModal.style.display = 'none';
+                            setStatus('PDF/A file downloaded successfully.', 'ok');
+                        }, 800);
+                    }
+                });
+            }
+            if (pdfaReportModal) {
+                pdfaReportModal.addEventListener('click', (e) => {
+                    if (e.target === pdfaReportModal) pdfaReportModal.style.display = 'none';
+                });
+            }
 
             // Gear button toggle
             if (settingsGearBtn && settingsPopover) {
@@ -10438,15 +12031,16 @@
                                     thumbnailContainer.appendChild(thumbWrapper);
                                 }
                             }
-                            
-                            // Add blank page to main viewer
-                            const mainViewer = viewer;
-                            const existingPages = mainViewer.querySelectorAll('.page[data-page-index]');
+                            // Fix: Select both standard pages and overlay pages to ensure correct insertion point
+                            const existingPages = mainViewer.querySelectorAll('.page[data-page-index], .page-wrapper[data-page-number]');
                             const insertAfterMainPage = insertAfterIndex >= 0 ? existingPages[insertAfterIndex] : null;
                             
                             const blankPageEl = document.createElement('div');
-                            blankPageEl.className = 'page pending-page';
+                            // Fix: Add page-wrapper class so it can be found by future selectors
+                            blankPageEl.className = 'page page-wrapper pending-page';
                             blankPageEl.dataset.pageIndex = pendingPageId;
+                            // Add pageNumber data attribute for compatibility with overlay editor selector
+                            blankPageEl.dataset.pageNumber = 'pending'; 
                             blankPageEl.style.cssText = `
                                 position: relative;
                                 width: ${scaledViewport.width}px;
@@ -11443,6 +13037,15 @@
 
                 // Enter overlay mode (always with block mode enabled)
                 
+                // Block overlay editor if there are unsaved pending pages
+                if (pendingNewPages && pendingNewPages.length > 0) {
+                    setStatus('You have unsaved new pages. Please save the document first before entering the overlay editor.', 'err');
+                    // Reset the toggle
+                    if (modeOverlay) modeOverlay.checked = false;
+                    if (modeOverlayToggle) modeOverlayToggle.checked = false;
+                    return;
+                }
+
                 overlayEditorActive = true;
                 basePdfUrl = cleanPdfUrl;
                 pdfVersion = Date.now();
@@ -11583,8 +13186,29 @@
                     renderedPages = 0;
                     
                     // Render all pages with overlay
-                    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+                    const totalMainPages = pdf.numPages;
+                    // Prepare pending pages map
+                    const pagesToInsert = {}; 
+                    if (window.pendingNewPages) {
+                        window.pendingNewPages.forEach(p => {
+                            const idx = p.insertAfter;
+                            if (!pagesToInsert[idx]) pagesToInsert[idx] = [];
+                            pagesToInsert[idx].push(p);
+                        });
+                    }
+                    
+                    // Render pending pages before Page 1 (index -1)
+                    if (pagesToInsert[-1]) {
+                         for (const pendingPage of pagesToInsert[-1]) renderPendingPageOverlay(pendingPage);
+                    }
+
+                    for (let pageNumber = 1; pageNumber <= totalMainPages; pageNumber++) {
                         await renderPageWithOverlay(pdf, pageNumber);
+                        
+                        // Render pending pages after this page (index = pageNumber - 1)
+                        if (pagesToInsert[pageNumber - 1]) {
+                             for (const pendingPage of pagesToInsert[pageNumber - 1]) renderPendingPageOverlay(pendingPage);
+                        }
                     }
                 } catch (error) {
                     console.error('Error rendering PDF with overlay:', error);
@@ -11592,6 +13216,120 @@
                 }
             }
             
+            function renderPendingPageOverlay(pendingPage) {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'page-wrapper overlay-page pending-page';
+                wrapper.dataset.pageIndex = pendingPage.id;
+                wrapper.dataset.pageNumber = 'pending';
+                wrapper.style.position = 'relative';
+                wrapper.style.margin = '0 auto';
+                wrapper.style.width = (pendingPage.width * currentScale) + 'px';
+                wrapper.style.height = (pendingPage.height * currentScale) + 'px';
+                
+                const canvas = document.createElement('canvas');
+                canvas.width = pendingPage.width * currentScale;
+                canvas.height = pendingPage.height * currentScale;
+                canvas.style.display = 'block';
+                const context = canvas.getContext('2d');
+                context.fillStyle = 'white';
+                context.fillRect(0, 0, canvas.width, canvas.height);
+                
+                context.strokeStyle = '#28a745';
+                context.lineWidth = 2;
+                context.setLineDash([10, 5]);
+                context.strokeRect(10, 10, canvas.width - 20, canvas.height - 20);
+                context.setLineDash([]);
+                context.fillStyle = 'rgba(40, 167, 69, 0.15)';
+                context.font = 'bold 48px Arial';
+                context.textAlign = 'center';
+                context.textBaseline = 'middle';
+                context.fillText('New Page', canvas.width / 2, canvas.height / 2);
+
+                const overlay = document.createElement('div');
+                overlay.className = 'pdf-overlay overlay';
+                overlay.style.position = 'absolute';
+                overlay.style.inset = '0';
+                overlay.style.pointerEvents = 'auto';
+                
+                overlay.addEventListener('click', (event) => {
+                    if (event.target === overlay) {
+                        clearOverlaySelection();
+                        overlay.querySelectorAll('.overlay-field.active').forEach(f => f.classList.remove('active'));
+                        updateSelectionBar();
+                        if (toolMode !== 'text') {
+                            setSelection(null);
+                            removeActiveEditor();
+                        }
+                    }
+                });
+
+                const pageInfo = {
+                    scale: currentScale,
+                    canvasHeight: canvas.height,
+                };
+                
+                (function setupPendingTextDrag(ov, pid, cv, wr, pi) {
+                    let dragState = null;
+                    ov.addEventListener('pointerdown', (e) => {
+                        if (toolMode !== 'text') return;
+                        if (e.target !== ov) return;
+                        e.preventDefault();
+                        ov.setPointerCapture(e.pointerId);
+                        const rect = ov.getBoundingClientRect();
+                        const sx = e.clientX - rect.left;
+                        const sy = e.clientY - rect.top;
+                        const sel = document.createElement('div');
+                        sel.className = 'text-drag-selection';
+                        sel.style.left = sx + 'px';
+                        sel.style.top = sy + 'px';
+                        sel.style.width = '0';
+                        sel.style.height = '0';
+                        ov.appendChild(sel);
+                        dragState = { startX: sx, startY: sy, sel, rect, moved: false };
+                    });
+                    ov.addEventListener('pointermove', (e) => {
+                        if (!dragState) return;
+                        const cx = e.clientX - dragState.rect.left;
+                        const cy = e.clientY - dragState.rect.top;
+                        const lx = Math.min(dragState.startX, cx);
+                        const ly = Math.min(dragState.startY, cy);
+                        const w = Math.abs(cx - dragState.startX);
+                        const h = Math.abs(cy - dragState.startY);
+                        dragState.sel.style.left = lx + 'px';
+                        dragState.sel.style.top = ly + 'px';
+                        dragState.sel.style.width = w + 'px';
+                        dragState.sel.style.height = h + 'px';
+                        if (w > 5 || h > 5) dragState.moved = true;
+                    });
+                    ov.addEventListener('pointerup', (e) => {
+                        if (!dragState) return;
+                        const ds = dragState;
+                        dragState = null;
+                        const cx = e.clientX - ds.rect.left;
+                        const cy = e.clientY - ds.rect.top;
+                        const bx = Math.min(ds.startX, cx);
+                        const by = Math.min(ds.startY, cy);
+                        const bw = Math.abs(cx - ds.startX);
+                        const bh = Math.abs(cy - ds.startY);
+                        ds.sel.remove();
+                        const opts = readBannerOpts();
+                        if (ds.moved && bw > 20 && bh > 10) {
+                            createTextBoxCreator(ov, bx, by, pid, cv, wr, pi, opts, bw, bh);
+                        } else {
+                            createTextBoxCreator(ov, bx, by, pid, cv, wr, pi, opts);
+                        }
+                    });
+                })(overlay, pendingPage.id, canvas, wrapper, pageInfo);
+
+                wrapper.appendChild(canvas);
+                wrapper.appendChild(overlay);
+                viewer.appendChild(wrapper);
+
+                annotations
+                    .filter((annotation) => annotation.pageIndex === pendingPage.id)
+                    .forEach((annotation) => addAnnotationElement(wrapper, annotation, pageInfo));
+            }
+
             async function renderPageWithOverlay(pdf, pageNumber) {
                 const page = await pdf.getPage(pageNumber);
                 const viewport = page.getViewport({ scale: currentScale });
@@ -11624,6 +13362,15 @@
                 overlay.style.height = '100%';
                 overlay.style.pointerEvents = 'auto';
                 overlay.addEventListener('click', (event) => {
+                    // Check for rotation - if rotated, block interaction
+                    const pIdx = pageNumber - 1;
+                    if (typeof pageRotations !== 'undefined' && pageRotations[pIdx] && (pageRotations[pIdx] % 360 !== 0)) {
+                        event.stopPropagation();
+                        event.preventDefault();
+                        showRotationModal();
+                        return;
+                    }
+
                     if (event.target === overlay) {
                         clearOverlaySelection();
                         overlay.querySelectorAll('.overlay-field.active').forEach(f => f.classList.remove('active'));
@@ -11645,6 +13392,15 @@
                 (function setupLMTextDrag(ov, pn, cv, wr, pi) {
                     let dragState = null;
                     ov.addEventListener('pointerdown', (e) => {
+                         // Check for rotation
+                        const pIdx = pn - 1;
+                        if (typeof pageRotations !== 'undefined' && pageRotations[pIdx] && (pageRotations[pIdx] % 360 !== 0)) {
+                             e.preventDefault();
+                             e.stopPropagation();
+                             showRotationModal();
+                             return;
+                        }
+                        
                         if (toolMode !== 'text') return;
                         if (e.target !== ov) return;
                         e.preventDefault();
@@ -11698,6 +13454,14 @@
                 // Setup shape drawing for this overlay (same as in renderPdf)
                 let drawingShape = null;
                 overlay.addEventListener('pointerdown', (event) => {
+                    const pIdx = pageNumber - 1;
+                    if (typeof pageRotations !== 'undefined' && pageRotations[pIdx] && (pageRotations[pIdx] % 360 !== 0)) {
+                         event.preventDefault();
+                         event.stopPropagation();
+                         showRotationModal();
+                         return;
+                    }
+
                     if (toolMode !== 'shape') {
                         return;
                     }
@@ -13937,6 +15701,21 @@
                 const zoomValue = Math.max(50, Math.min(200, parseInt(value, 10)));
                 zoomLabel.textContent = zoomValue + '%';
                 currentScale = baseScale * (zoomValue / 100);
+
+                // Check if AI tab is active — zoom generated pages in #ai-viewer
+                const aiTab = document.getElementById('extracted-text');
+                if (aiTab && aiTab.style.display !== 'none') {
+                    const aiViewer = document.getElementById('ai-viewer');
+                    if (aiViewer) {
+                        const scaleFactor = zoomValue / 100;
+                        aiViewer.querySelectorAll('.generated-page').forEach(page => {
+                            page.style.transform = `scale(${scaleFactor})`;
+                            page.style.transformOrigin = 'top center';
+                        });
+                    }
+                    return;
+                }
+
                 if (basePdfUrl === cleanPdfUrl && overlayExtractionData) {
                     renderPdfWithOverlay(true);
                 } else {
@@ -14300,7 +16079,7 @@
                 });
             }
             
-            // Custom Builder - Visual Page Preview
+            // Custom Builder - Visual Page Preview with Column Drop Zones
             const sectionBlocksPalette = document.getElementById('section-blocks-palette');
             const pageBuilderCanvas = document.getElementById('page-builder-canvas');
             const builderEmptyState = document.getElementById('builder-empty-state');
@@ -14308,14 +16087,134 @@
             
             let draggedBlock = null;
             let draggedCanvasSection = null;
+            let builderColumnLayout = null; // Track current column layout: null, '1col', '2col', '3col'
+            let builderColumnZones = []; // Column zone definitions
             
             // Section type colors for visual distinction
             const sectionColors = {
-                title: { bg: 'rgba(59,130,246,0.15)', border: 'rgba(59,130,246,0.6)' },
-                paragraph: { bg: 'rgba(16,185,129,0.15)', border: 'rgba(16,185,129,0.6)' },
-                chart: { bg: 'rgba(139,92,246,0.15)', border: 'rgba(139,92,246,0.6)' },
-                graphic: { bg: 'rgba(245,158,11,0.15)', border: 'rgba(245,158,11,0.6)' }
+                title: { bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.5)', accent: '#3b82f6' },
+                paragraph: { bg: 'rgba(16,185,129,0.12)', border: 'rgba(16,185,129,0.5)', accent: '#10b981' },
+                chart: { bg: 'rgba(139,92,246,0.12)', border: 'rgba(139,92,246,0.5)', accent: '#8b5cf6' },
+                graphic: { bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.5)', accent: '#f59e0b' }
             };
+            
+            // Column zone definitions for each layout
+            function getColumnZones(layout) {
+                if (layout === '1col') {
+                    return [
+                        { id: 'col-0', label: 'Content', x: 0, y: 10, width: 100, height: 90 }
+                    ];
+                } else if (layout === '2col') {
+                    return [
+                        { id: 'col-0', label: 'Left', x: 1, y: 10, width: 48, height: 90 },
+                        { id: 'col-1', label: 'Right', x: 51, y: 10, width: 48, height: 90 }
+                    ];
+                } else if (layout === '3col') {
+                    return [
+                        { id: 'col-0', label: 'Column 1', x: 1, y: 10, width: 31, height: 90 },
+                        { id: 'col-1', label: 'Column 2', x: 34, y: 10, width: 31, height: 90 },
+                        { id: 'col-2', label: 'Column 3', x: 67, y: 10, width: 31, height: 90 }
+                    ];
+                }
+                return [];
+            }
+            
+            // Render column drop zones on the canvas (visual guides only)
+            function renderColumnZones() {
+                // Remove existing zones
+                pageBuilderCanvas.querySelectorAll('.column-drop-zone').forEach(z => z.remove());
+                
+                if (!builderColumnLayout) return;
+                
+                builderColumnZones = getColumnZones(builderColumnLayout);
+                
+                builderColumnZones.forEach((zone, i) => {
+                    const zoneEl = document.createElement('div');
+                    zoneEl.className = 'column-drop-zone';
+                    zoneEl.dataset.colIndex = i;
+                    zoneEl.style.cssText = `
+                        position: absolute;
+                        left: ${zone.x}%;
+                        top: ${zone.y}%;
+                        width: ${zone.width}%;
+                        height: ${zone.height}%;
+                        border: 2px dashed rgba(148, 163, 184, 0.35);
+                        border-radius: 6px;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        transition: all 0.2s;
+                        pointer-events: auto;
+                    `;
+                    // Small subtle label
+                    zoneEl.innerHTML = `<span style="color: rgba(148,163,184,0.5); font-size: 11px; font-weight: 500; pointer-events: none; user-select: none;">Drop here</span>`;
+                    
+                    // Drop zone events
+                    zoneEl.addEventListener('dragover', (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        e.dataTransfer.dropEffect = 'copy';
+                        zoneEl.style.borderColor = 'rgba(59,130,246,0.8)';
+                        zoneEl.style.background = 'rgba(59,130,246,0.06)';
+                    });
+                    zoneEl.addEventListener('dragleave', () => {
+                        zoneEl.style.borderColor = 'rgba(148, 163, 184, 0.35)';
+                        zoneEl.style.background = 'transparent';
+                    });
+                    zoneEl.addEventListener('drop', (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        zoneEl.style.borderColor = 'rgba(148, 163, 184, 0.35)';
+                        zoneEl.style.background = 'transparent';
+                        
+                        if (draggedBlock) {
+                            addSectionToColumn(draggedBlock, i);
+                        }
+                    });
+                    
+                    pageBuilderCanvas.appendChild(zoneEl);
+                });
+            }
+            
+            // Add a section snapped to a specific column zone
+            function addSectionToColumn(sectionType, colIndex) {
+                const zone = builderColumnZones[colIndex];
+                if (!zone) return;
+                
+                const sectionTypes = {
+                    title: { name: 'Title', icon: '📄', defaultHeight: 10 },
+                    paragraph: { name: 'Paragraph', icon: '📝', defaultHeight: 20 },
+                    chart: { name: 'Chart', icon: '📊', defaultHeight: 25 },
+                    graphic: { name: 'Graphic', icon: '🖼️', defaultHeight: 25 }
+                };
+                
+                const sType = sectionTypes[sectionType] || sectionTypes.paragraph;
+                
+                // Calculate Y position: stack below existing items in this column
+                const existingInCol = builderSections.filter(s => s._colIndex === colIndex);
+                let nextY = zone.y;
+                existingInCol.forEach(s => {
+                    nextY = Math.max(nextY, (s.defaultY || 0) + s.defaultHeight);
+                });
+                if (nextY + sType.defaultHeight > zone.y + zone.height) {
+                    nextY = zone.y + zone.height - sType.defaultHeight;
+                }
+                
+                const section = {
+                    type: sectionType,
+                    name: sType.name,
+                    icon: sType.icon,
+                    defaultHeight: sType.defaultHeight,
+                    defaultWidth: zone.width,
+                    defaultX: zone.x,
+                    defaultY: nextY,
+                    _colIndex: colIndex
+                };
+                
+                builderSections.push(section);
+                renderBuilderCanvas();
+                updateGenerateButton();
+            }
             
             // Make palette blocks draggable
             const sectionBlocks = sectionBlocksPalette.querySelectorAll('.section-block');
@@ -14327,30 +16226,29 @@
                 block.addEventListener('dragend', () => { draggedBlock = null; });
             });
             
-            // Canvas drop zone
+            // Canvas-level drop (fallback if not dropped on a specific column zone)
             pageBuilderCanvas.addEventListener('dragover', (e) => {
                 e.preventDefault();
                 e.dataTransfer.dropEffect = 'copy';
-                pageBuilderCanvas.style.borderColor = 'rgba(59,130,246,1)';
-                pageBuilderCanvas.style.boxShadow = '0 0 0 3px rgba(59,130,246,0.2)';
-            });
-            
-            pageBuilderCanvas.addEventListener('dragleave', () => {
-                pageBuilderCanvas.style.borderColor = 'rgba(59,130,246,0.4)';
-                pageBuilderCanvas.style.boxShadow = '0 4px 20px rgba(0,0,0,0.2)';
             });
             
             pageBuilderCanvas.addEventListener('drop', (e) => {
                 e.preventDefault();
-                pageBuilderCanvas.style.borderColor = 'rgba(59,130,246,0.4)';
-                pageBuilderCanvas.style.boxShadow = '0 4px 20px rgba(0,0,0,0.2)';
-                
-                if (draggedBlock) {
-                    // Calculate drop position as percentage of canvas
+                if (draggedBlock && builderColumnLayout) {
+                    // Find closest column zone
                     const rect = pageBuilderCanvas.getBoundingClientRect();
-                    const dropXPct = Math.round(((e.clientX - rect.left) / rect.width) * 100);
-                    const dropYPct = Math.round(((e.clientY - rect.top) / rect.height) * 100);
-                    addSectionToCanvas(draggedBlock, dropXPct, dropYPct);
+                    const dropXPct = ((e.clientX - rect.left) / rect.width) * 100;
+                    let closestCol = 0;
+                    let closestDist = Infinity;
+                    builderColumnZones.forEach((zone, i) => {
+                        const zoneMidX = zone.x + zone.width / 2;
+                        const dist = Math.abs(dropXPct - zoneMidX);
+                        if (dist < closestDist) { closestDist = dist; closestCol = i; }
+                    });
+                    addSectionToColumn(draggedBlock, closestCol);
+                } else if (draggedBlock) {
+                    // No layout selected - add as free-form
+                    addSectionToCanvas(draggedBlock);
                 }
             });
             
@@ -14364,12 +16262,10 @@
                 
                 const section = { type: sectionType, ...sectionTypes[sectionType] };
                 
-                // If dropped at a position, use that position
                 if (dropX !== undefined && dropY !== undefined) {
                     section.defaultX = Math.max(0, Math.min(dropX - section.defaultWidth / 2, 100 - section.defaultWidth));
                     section.defaultY = Math.max(0, Math.min(dropY - section.defaultHeight / 2, 100 - section.defaultHeight));
                 } else {
-                    // Stack below existing sections
                     const totalH = builderSections.reduce((sum, s) => Math.max(sum, (s.defaultY || 0) + s.defaultHeight), 0);
                     section.defaultY = Math.min(totalH, 100 - section.defaultHeight);
                 }
@@ -14380,18 +16276,17 @@
             }
             
             function renderBuilderCanvas() {
-                // Clear existing sections
-                const existingSections = pageBuilderCanvas.querySelectorAll('.canvas-section');
-                existingSections.forEach(s => s.remove());
+                // Clear existing sections (keep column zones)
+                pageBuilderCanvas.querySelectorAll('.canvas-section').forEach(s => s.remove());
                 
-                if (builderSections.length === 0) {
+                if (builderSections.length === 0 && !builderColumnLayout) {
                     builderEmptyState.style.display = 'flex';
                     return;
                 }
                 
                 builderEmptyState.style.display = 'none';
                 
-                // Render sections as positioned blocks on the visual page
+                // Render sections as modern styled blocks
                 builderSections.forEach((section, index) => {
                     const colors = sectionColors[section.type] || sectionColors.paragraph;
                     
@@ -14405,33 +16300,33 @@
                         height: ${section.defaultHeight || 20}%;
                         background: ${colors.bg};
                         border-color: ${colors.border};
+                        border-width: 2px;
+                        border-style: solid;
                     `;
                     
                     sectionEl.innerHTML = `
-                        <div class="canvas-section-label">
-                            <span class="icon">${section.icon}</span>
-                            <span class="name">${section.name}</span>
+                        <div class="canvas-section-label" style="display: flex; align-items: center; gap: 6px;">
+                            <span class="icon" style="font-size: 14px; opacity: 0.8;">${section.icon}</span>
+                            <span class="name" style="font-size: 11px; font-weight: 600; color: ${colors.accent}; opacity: 0.9;">${section.name}</span>
                         </div>
-                        <button class="remove-btn" title="Remove">×</button>
+                        <button class="remove-btn" title="Remove" style="font-size: 14px;">×</button>
                     `;
                     
                     // Remove button handler
-                    const removeBtn = sectionEl.querySelector('.remove-btn');
-                    removeBtn.addEventListener('click', (e) => {
+                    sectionEl.querySelector('.remove-btn').addEventListener('click', (e) => {
                         e.stopPropagation();
                         builderSections.splice(index, 1);
                         renderBuilderCanvas();
                         updateGenerateButton();
                     });
                     
-                    // Drag to move within canvas
+                    // Drag to move within canvas (snap to columns)
                     let isDragMoving = false;
                     let dragStartX, dragStartY, dragStartLeft, dragStartTop;
                     
                     sectionEl.addEventListener('mousedown', (e) => {
                         if (e.target.classList.contains('remove-btn')) return;
                         isDragMoving = true;
-                        const rect = pageBuilderCanvas.getBoundingClientRect();
                         dragStartX = e.clientX;
                         dragStartY = e.clientY;
                         dragStartLeft = section.defaultX || 0;
@@ -14450,11 +16345,26 @@
                         let newX = dragStartLeft + dxPct;
                         let newY = dragStartTop + dyPct;
                         
-                        // Clamp to canvas bounds
                         const w = section.defaultWidth || 100;
                         const h = section.defaultHeight || 20;
                         newX = Math.max(0, Math.min(newX, 100 - w));
                         newY = Math.max(0, Math.min(newY, 100 - h));
+                        
+                        // Snap to column zones
+                        if (builderColumnZones.length > 0) {
+                            const midX = newX + w / 2;
+                            let bestZone = null;
+                            let bestDist = 15; // snap threshold in %
+                            builderColumnZones.forEach(zone => {
+                                const zoneMidX = zone.x + zone.width / 2;
+                                const dist = Math.abs(midX - zoneMidX);
+                                if (dist < bestDist) { bestDist = dist; bestZone = zone; }
+                            });
+                            if (bestZone) {
+                                newX = bestZone.x;
+                                sectionEl.style.width = bestZone.width + '%';
+                            }
+                        }
                         
                         sectionEl.style.left = newX + '%';
                         sectionEl.style.top = newY + '%';
@@ -14466,10 +16376,21 @@
                             sectionEl.style.zIndex = '';
                             sectionEl.classList.remove('dragging');
                             
-                            // Update data from final position
                             section.defaultX = Math.round(parseFloat(sectionEl.style.left));
                             section.defaultY = Math.round(parseFloat(sectionEl.style.top));
-                            renderBuilderCanvas(); // Re-render to update all positions
+                            section.defaultWidth = Math.round(parseFloat(sectionEl.style.width));
+                            
+                            // Update column index based on snapped position
+                            if (builderColumnZones.length > 0) {
+                                const midX = section.defaultX + section.defaultWidth / 2;
+                                builderColumnZones.forEach((zone, zi) => {
+                                    if (midX >= zone.x && midX <= zone.x + zone.width) {
+                                        section._colIndex = zi;
+                                    }
+                                });
+                            }
+                            
+                            renderBuilderCanvas();
                         }
                     });
                     
@@ -14479,9 +16400,15 @@
             
             function clearBuilderCanvas() {
                 builderSections = [];
-                const existingSections = pageBuilderCanvas.querySelectorAll('.canvas-section');
-                existingSections.forEach(s => s.remove());
+                builderColumnLayout = null;
+                builderColumnZones = [];
+                pageBuilderCanvas.querySelectorAll('.canvas-section, .column-drop-zone').forEach(s => s.remove());
                 builderEmptyState.style.display = 'flex';
+                // Deselect preset buttons
+                document.querySelectorAll('.builder-preset-btn').forEach(b => {
+                    b.style.outline = 'none';
+                    b.style.boxShadow = 'none';
+                });
             }
             
             // Clear button handler
@@ -14492,33 +16419,26 @@
                 });
             }
             
-            // Column preset buttons
+            // Column preset buttons — set layout + show column zones
             const presetBtns = document.querySelectorAll('.builder-preset-btn');
             presetBtns.forEach(btn => {
                 btn.addEventListener('click', () => {
                     const preset = btn.dataset.preset;
                     builderSections = [];
+                    builderColumnLayout = preset;
                     
-                    if (preset === '1col') {
-                        builderSections = [
-                            { type: 'title', name: 'Title', icon: '📄', defaultHeight: 10, defaultWidth: 100, defaultX: 0, defaultY: 0 },
-                            { type: 'paragraph', name: 'Content', icon: '📝', defaultHeight: 90, defaultWidth: 100, defaultX: 0, defaultY: 10 }
-                        ];
-                    } else if (preset === '2col') {
-                        builderSections = [
-                            { type: 'title', name: 'Title', icon: '📄', defaultHeight: 10, defaultWidth: 100, defaultX: 0, defaultY: 0 },
-                            { type: 'paragraph', name: 'Left', icon: '📝', defaultHeight: 90, defaultWidth: 48, defaultX: 1, defaultY: 10 },
-                            { type: 'paragraph', name: 'Right', icon: '📝', defaultHeight: 90, defaultWidth: 48, defaultX: 51, defaultY: 10 }
-                        ];
-                    } else if (preset === '3col') {
-                        builderSections = [
-                            { type: 'title', name: 'Title', icon: '📄', defaultHeight: 10, defaultWidth: 100, defaultX: 0, defaultY: 0 },
-                            { type: 'paragraph', name: 'Col 1', icon: '📝', defaultHeight: 90, defaultWidth: 31, defaultX: 1, defaultY: 10 },
-                            { type: 'paragraph', name: 'Col 2', icon: '📝', defaultHeight: 90, defaultWidth: 31, defaultX: 34, defaultY: 10 },
-                            { type: 'paragraph', name: 'Col 3', icon: '📝', defaultHeight: 90, defaultWidth: 31, defaultX: 67, defaultY: 10 }
-                        ];
-                    }
+                    // Title is always full-width at top
+                    builderSections.push({ type: 'title', name: 'Title', icon: '📄', defaultHeight: 10, defaultWidth: 100, defaultX: 0, defaultY: 0, _colIndex: -1 });
                     
+                    // Highlight active preset
+                    document.querySelectorAll('.builder-preset-btn').forEach(b => {
+                        b.style.outline = 'none';
+                        b.style.boxShadow = 'none';
+                    });
+                    btn.style.outline = '2px solid rgba(59,130,246,0.6)';
+                    btn.style.boxShadow = '0 0 0 4px rgba(59,130,246,0.15)';
+                    
+                    renderColumnZones();
                     renderBuilderCanvas();
                     updateGenerateButton();
                 });
@@ -14629,25 +16549,13 @@
                         const sectionX = pageWidth * ((section.defaultX || 0) / 100);
                         const sectionY = pageHeight * ((section.defaultY || 0) / 100);
                         
-                        // Draw section border with different colors
+                        // Draw subtle section border (structure only, no labels)
                         const colors = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981'];
-                        ctx.strokeStyle = colors[i % colors.length];
-                        ctx.lineWidth = 2;
+                        ctx.strokeStyle = colors[i % colors.length] + '40'; // semi-transparent
+                        ctx.lineWidth = 1;
+                        ctx.setLineDash([6, 4]);
                         ctx.strokeRect(sectionX + 10, sectionY + 10, sectionWidth - 20, sectionHeight - 20);
-                        
-                        // Draw section icon and name
-                        ctx.fillStyle = '#000000';
-                        ctx.font = 'bold 24px sans-serif';
-                        ctx.textAlign = 'left';
-                        ctx.fillText(section.icon || '', sectionX + 30, sectionY + 50);
-                        
-                        ctx.font = 'bold 18px sans-serif';
-                        ctx.fillText(section.name || section.type, sectionX + 70, sectionY + 50);
-                        
-                        // Draw section dimensions
-                        ctx.font = '14px sans-serif';
-                        ctx.fillStyle = '#000000';
-                        ctx.fillText(`H: ${section.height}% W: ${section.defaultWidth || 100}%`, sectionX + 30, sectionY + 80);
+                        ctx.setLineDash([]);
                     });
                     
                     // Add the generated page to the AI viewer
@@ -15115,11 +17023,13 @@
                     const sectionX = pageWidth * ((section.defaultX || 0) / 100);
                     const sectionY = pageHeight * ((section.defaultY || 0) / 100);
                     
-                    // Draw section border with different colors
+                    // Draw subtle section border (structure only, no labels)
                     const colors = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981'];
-                    ctx.strokeStyle = colors[i % colors.length];
-                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = colors[i % colors.length] + '40';
+                    ctx.lineWidth = 1;
+                    ctx.setLineDash([6, 4]);
                     ctx.strokeRect(sectionX + 10, sectionY + 10, sectionWidth - 20, sectionHeight - 20);
+                    ctx.setLineDash([]);
                     
                     // Check if this is an image section
                     const isImageSection = ['image', 'graphic', 'chart'].includes(section.type?.toLowerCase());
@@ -15466,11 +17376,13 @@
                         
                         console.log(`Section ${sectionIndex}:`, {section, sectionOrder, generatedSection, generatedImage});
                         
-                        // Draw section border
+                        // Draw subtle section border (hidden structure)
                         const colors = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981'];
-                        ctx.strokeStyle = colors[sectionIndex % colors.length];
-                        ctx.lineWidth = 2;
+                        ctx.strokeStyle = colors[sectionIndex % colors.length] + '30';
+                        ctx.lineWidth = 1;
+                        ctx.setLineDash([6, 4]);
                         ctx.strokeRect(sectionX + 10, sectionY + 10, sectionWidth - 20, sectionHeight - 20);
+                        ctx.setLineDash([]);
                         
                         // Check if this is an image section
                         const isImageSection = ['image', 'graphic', 'chart'].includes(section.type?.toLowerCase());
@@ -16500,7 +18412,223 @@
                 });
             }
 
-            // ─── Guided Invoice Builder ──────────────────────────────────────
+            // ─── Shared: Capture guided card as clean HTML for PDF ─────
+            function captureCardHtml(cardId) {
+                const original = document.getElementById(cardId);
+                if (!original) return '<body><p>Card not found</p></body>';
+
+                // Sync ALL input/textarea values into attributes BEFORE cloning
+                // (cloneNode does not capture user-typed values)
+                original.querySelectorAll('input').forEach(inp => {
+                    if (inp.type === 'checkbox' || inp.type === 'radio') {
+                        if (inp.checked) inp.setAttribute('checked', '');
+                        else inp.removeAttribute('checked');
+                    } else {
+                        inp.setAttribute('value', inp.value);
+                    }
+                });
+                original.querySelectorAll('textarea').forEach(ta => {
+                    ta.textContent = ta.value;
+                });
+                original.querySelectorAll('select').forEach(sel => {
+                    [...sel.options].forEach(opt => {
+                        if (opt.selected) opt.setAttribute('selected', '');
+                        else opt.removeAttribute('selected');
+                    });
+                });
+
+                // Deep clone so we don't touch the live DOM
+                const clone = original.cloneNode(true);
+
+                // 1. Replace every <input> with a <span> showing its value
+                clone.querySelectorAll('input').forEach(inp => {
+                    if (inp.type === 'hidden' || inp.type === 'file') {
+                        inp.remove();
+                        return;
+                    }
+                    const val = inp.getAttribute('value') || '';
+
+                    const span = document.createElement('div'); // Use div to behave like a block/width:100% input
+                    span.textContent = val;
+                    // Carry over the inline styles that matter for appearance
+                    span.style.cssText = inp.style.cssText;
+                    // Remove input-specific styles
+                    span.style.border = 'none';
+                    span.style.outline = 'none';
+                    span.style.background = 'transparent';
+                    span.style.padding = '0';
+                    span.style.minHeight = '1.2em'; // Ensure empty inputs don't collapse
+                    
+                    // Essential for alignment: keep width 100% so text-align works
+                    if (inp.style.width === '100%') {
+                        span.style.width = '100%';
+                        span.style.display = 'block';
+                    } else {
+                        span.style.display = 'inline-block';
+                    }
+                    
+                    inp.replaceWith(span);
+                });
+
+                // 2. Replace every <textarea> with a <div> showing its value
+                clone.querySelectorAll('textarea').forEach(ta => {
+                    const val = ta.textContent || '';
+
+                    const div = document.createElement('div');
+                    // Pre-wrap to preserve newlines
+                    div.style.whiteSpace = 'pre-wrap';
+                    div.textContent = val;
+                    div.style.cssText = ta.style.cssText;
+                    div.style.border = 'none';
+                    div.style.outline = 'none';
+                    div.style.resize = 'none';
+                    div.style.overflow = 'visible';
+                    div.style.height = 'auto';
+                    div.style.minHeight = '1.2em';
+                    ta.replaceWith(div);
+                });
+
+                // 3. Remove all <button> elements (Add Line Item, Save, etc.)
+                clone.querySelectorAll('button').forEach(btn => btn.remove());
+
+                // 4. Remove elements that are display:none (hidden sections)
+                clone.querySelectorAll('[style]').forEach(el => {
+                    if (el.style.display === 'none') el.remove();
+                });
+
+                // 5. Remove file input areas / logo placeholders if no image
+                clone.querySelectorAll('input[type="file"]').forEach(f => f.remove());
+                const logoArea = clone.querySelector('#gi-logo-area');
+                if (logoArea) {
+                    const preview = logoArea.querySelector('#gi-logo-preview');
+                    if (!preview || preview.style.display === 'none' || !preview.src) {
+                        logoArea.remove();
+                    } else {
+                        // Keep just the image
+                        const placeholder = logoArea.querySelector('#gi-logo-placeholder');
+                        if (placeholder) placeholder.remove();
+                    }
+                }
+
+                // 6. Remove the last × (remove row) column cells
+                clone.querySelectorAll('.gi-remove-row, .gpo-remove-row, .gn-remove-row, .gnda-remove-row').forEach(el => {
+                    const td = el.closest('td');
+                    if (td) td.remove();
+                    else el.remove();
+                });
+                // Also remove empty trailing <th> cells used for the × column
+                clone.querySelectorAll('th').forEach(th => {
+                    if (th.style.background === 'transparent' && th.textContent.trim() === '') th.remove();
+                });
+
+                // 7. Remove action button containers (the flex row with Save/Open in Editor)
+                // They are the last div children that contained our buttons (now empty)
+                clone.querySelectorAll('div').forEach(div => {
+                    if (div.children.length === 0 && div.textContent.trim() === '' && div.style.display === 'flex' && div.style.justifyContent) {
+                        div.remove();
+                    }
+                });
+
+                // 8. Remove the discount row add buttons area and paid toggle if still there
+                const paidSection = clone.querySelector('#gi-paid-section');
+                if (paidSection) paidSection.remove();
+
+                // 9. Second pass: remove remaining empty containers left after button removal
+                clone.querySelectorAll('div').forEach(div => {
+                    if (div.children.length === 0 && div.textContent.trim() === '') {
+                        const bg = div.style.background || div.style.backgroundColor;
+                        const hasBorder = div.style.borderBottom || div.style.borderTop;
+                        if ((!bg || bg === 'transparent') && !hasBorder) {
+                            div.remove();
+                        }
+                    }
+                });
+
+                // 10. Replace <select> elements with their selected value
+                clone.querySelectorAll('select').forEach(sel => {
+                    const span = document.createElement('span');
+                    const selectedOpt = sel.querySelector('option[selected]') || sel.options?.[0];
+                    span.textContent = selectedOpt ? selectedOpt.textContent : '';
+                    span.style.cssText = sel.style.cssText;
+                    span.style.border = 'none';
+                    span.style.background = 'transparent';
+                    sel.replaceWith(span);
+                });
+
+                // 11. Strip IDs from the clone (not needed in PDF)
+                clone.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+
+                // Get the computed font family from the card to preserve toolbar changes
+                const computedFont = getComputedStyle(original).fontFamily;
+
+                // Build the final HTML with the card's own styles, minus screen-only decoration
+                let cardStyle = original.getAttribute('style') || '';
+                // Remove screen-only props
+                cardStyle = cardStyle
+                    .replace(/box-shadow:[^;]+;?/gi, '')
+                    .replace(/border-radius:[^;]+;?/gi, '')
+                    .replace(/overflow:[^;]+;?/gi, '')
+                    .replace(/max-width:[^;]+;?/gi, '');
+
+                return '<body style="' + cardStyle.replace(/"/g, "'") + 'font-family:' + computedFont + ';">'
+                     + clone.innerHTML
+                     + '</body>';
+            }
+
+            function collectFormData(cardId) {
+                // Collect the current state of all inputs in the card to save to DB
+                const card = document.getElementById(cardId);
+                if (!card) return {};
+                
+                const data = {};
+                
+                // Collect standard inputs
+                card.querySelectorAll('input, textarea, select').forEach(el => {
+                    if (el.type === 'file') return; // Skip files
+                    if (el.type === 'button' || el.type === 'submit') return;
+                    
+                    const name = el.id || el.name;
+                    if (!name) return;
+                    
+                    if (el.type === 'checkbox' || el.type === 'radio') {
+                        data[name] = el.checked;
+                    } else {
+                        data[name] = el.value;
+                    }
+                });
+
+                // Special handling for dynamic line items which might not have unique global IDs
+                // Maybe store them as an array if needed, but for now our IDs (gi_desc_1 etc) are not fully reliable 
+                // unless we add them. 
+                // For simplicity, let's just make sure we capture everything with an ID.
+                // If line items are recreated dynamically, they need unique IDs to be restored correctly.
+                
+                return data;
+            }
+
+            function restoreFormData(cardId, data) {
+                if (!data) return;
+                const card = document.getElementById(cardId);
+                if (!card) return;
+
+                Object.keys(data).forEach(key => {
+                    const el = document.getElementById(key);
+                    if (el) {
+                        if (el.type === 'checkbox' || el.type === 'radio') {
+                            el.checked = data[key];
+                            // Trigger change events if needed (e.g. for paid toggle)
+                            el.dispatchEvent(new Event('change'));
+                            el.dispatchEvent(new Event('click')); // Some toggles use click
+                        } else {
+                            el.value = data[key];
+                            // Trigger input events for recalc
+                            el.dispatchEvent(new Event('input'));
+                        }
+                    }
+                });
+            }
+
+            // ─── Guided Templates ──────────────────────────────────────────
             (function guidedInvoiceInit() {
                 const lineItemsBody = document.getElementById('gi-line-items-body');
                 const addLineBtn = document.getElementById('gi-add-line-item');
@@ -16517,7 +18645,7 @@
                 if (!lineItemsBody) return; // Safety
 
                 const _urlParams = new URLSearchParams(window.location.search);
-                const _guidedStyle = _urlParams.get('style') || 'default';
+                const _guidedStyle = _urlParams.get('style') || @json($templateSlug ?? 'default');
                 const _isBoldRed = _guidedStyle === 'bold_red';
 
                 let lineItemIndex = 0;
@@ -16627,60 +18755,24 @@
                     reader.readAsDataURL(file);
                 });
 
-                // Save & Generate PDF
-                saveBtn.addEventListener('click', async () => {
-                    const items = [];
-                    lineItemsBody.querySelectorAll('tr[data-line-item]').forEach(tr => {
-                        items.push({
-                            qty: parseFloat(tr.querySelector('.gi-qty').value) || 0,
-                            description: tr.querySelector('.gi-desc').value || '',
-                            unit_price: parseFloat(tr.querySelector('.gi-unit-price').value) || 0,
-                        });
-                    });
-
-                    const companyAddr = [
-                        document.getElementById('gi-company-addr1').value,
-                        document.getElementById('gi-company-addr2').value,
-                    ].filter(Boolean).join('\n');
-
-                    const customerAddr = [
-                        document.getElementById('gi-customer-addr1').value,
-                        document.getElementById('gi-customer-addr2').value,
-                    ].filter(Boolean).join('\n');
-
-                    const payload = {
-                        company_name: document.getElementById('gi-company-name').value,
-                        company_address: companyAddr,
-                        customer_name: document.getElementById('gi-customer-name').value,
-                        customer_address: customerAddr,
-                        invoice_number: document.getElementById('gi-invoice-num').value,
-                        invoice_date: document.getElementById('gi-invoice-date').value,
-                        due_date: document.getElementById('gi-due-date').value,
-                        items: items,
-                        discount_label: document.getElementById('gi-discount-label')?.value || '',
-                        discount_amount: parseFloat(discountAmountInput.value) || 0,
-                        terms: document.getElementById('gi-terms').value,
-                        style: new URLSearchParams(window.location.search).get('style') || 'default',
-                        paid_in_full: !!document.getElementById('gi-paid-toggle')?.dataset.active,
-                    };
-
-                    saveBtn.disabled = true;
-                    saveBtn.innerHTML = `
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin-icon">
-                            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
-                        </svg>
-                        Generating…`;
+                // Collect invoice payload
+                async function generateInvoice(btn, openInEditor) {
+                    const html = captureCardHtml('guided-invoice-card');
+                    const formData = collectFormData('guided-invoice-card');
+                    const origHtml = btn.innerHTML;
+                    btn.disabled = true;
+                    btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin-icon"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg> Generating…`;
 
                     try {
                         const docId = @json($document->id);
-                        const resp = await fetch(`/documents/${docId}/regenerate-invoice`, {
+                        const resp = await fetch(`/documents/${docId}/convert-html-to-pdf`, {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
                                 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
                                 'Accept': 'application/json',
                             },
-                            body: JSON.stringify(payload),
+                            body: JSON.stringify({ html: html, form_data: formData }),
                         });
 
                         if (!resp.ok) {
@@ -16688,33 +18780,33 @@
                             throw new Error(err.error || 'Generation failed');
                         }
 
-                        // Refresh the PDF viewer
-                        pdfVersion = Date.now();
-
-                        // Clear the guided overlay so the PDF viewer is visible
-                        setGuidedOverlay(false);
-
-                        // Navigate to the editor page to show the result
-                        window.location.href = @json(route('documents.edit', $document));
-                        return; // page will reload
+                        if (openInEditor) {
+                            window.location.href = @json(route('documents.edit', $document));
+                        } else {
+                            window.open(`/documents/${docId}/file`, '_blank');
+                        }
+                        return;
                     } catch (err) {
                         console.error('Invoice generation error:', err);
                         alert('Error: ' + err.message);
                     } finally {
-                        saveBtn.disabled = false;
-                        saveBtn.innerHTML = `
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/>
-                                <polyline points="17 21 17 13 7 13 7 21"/>
-                                <polyline points="7 3 7 8 15 8"/>
-                            </svg>
-                            Save &amp; Generate PDF`;
+                        btn.disabled = false;
+                        btn.innerHTML = origHtml;
                     }
-                });
+                }
 
-                // Style-aware theming (read style from URL query param)
+                // Save & Generate PDF → open in new tab
+                saveBtn.addEventListener('click', () => generateInvoice(saveBtn, false));
+
+                // Open in Editor → generate then navigate to editor
+                const giOpenEditorBtn = document.getElementById('gi-open-editor-btn');
+                if (giOpenEditorBtn) {
+                    giOpenEditorBtn.addEventListener('click', () => generateInvoice(giOpenEditorBtn, true));
+                }
+
+                // Style-aware theming (read style from URL query param or saved slug)
                 const urlParams = new URLSearchParams(window.location.search);
-                const guidedStyle = urlParams.get('style') || 'default';
+                const guidedStyle = urlParams.get('style') || @json($templateSlug ?? 'default');
 
                 if (guidedStyle === 'bold_red') {
                     const RED = '#cc3333';
@@ -16810,9 +18902,497 @@
                 }
             })();
 
+            // ─── Guided Toolbar Wiring ──────────────────────────────────────
+            (function guidedToolbarInit() {
+                const toolbar = document.getElementById('guided-toolbar');
+                if (!toolbar) return;
+
+                const fontFamilySel = document.getElementById('gt-font-family');
+                const fontSizeSel = document.getElementById('gt-font-size');
+                const textColorInput = document.getElementById('gt-text-color');
+                const colorIndicator = document.getElementById('gt-color-indicator');
+                const signBtn = document.getElementById('gt-sign-btn');
+
+                // Track the last focused input/textarea in a guided card
+                let lastFocusedEl = null;
+                const guidedContainer = document.getElementById('guided-invoice');
+                if (guidedContainer) {
+                    guidedContainer.addEventListener('focusin', (e) => {
+                        const tag = e.target.tagName;
+                        if (tag === 'INPUT' || tag === 'TEXTAREA') {
+                            lastFocusedEl = e.target;
+                            // Sync toolbar state from element
+                            if (fontFamilySel && e.target.style.fontFamily) {
+                                fontFamilySel.value = e.target.style.fontFamily || fontFamilySel.value;
+                            }
+                            if (fontSizeSel && e.target.style.fontSize) {
+                                fontSizeSel.value = parseInt(e.target.style.fontSize) || fontSizeSel.value;
+                            }
+                        }
+                    });
+                }
+
+                // Apply font family to focused element only
+                if (fontFamilySel) {
+                    fontFamilySel.addEventListener('change', () => {
+                        if (lastFocusedEl) {
+                            lastFocusedEl.style.fontFamily = fontFamilySel.value;
+                            lastFocusedEl.focus();
+                        }
+                    });
+                }
+
+                // Apply font size to focused element only
+                if (fontSizeSel) {
+                    fontSizeSel.addEventListener('change', () => {
+                        if (lastFocusedEl) {
+                            lastFocusedEl.style.fontSize = fontSizeSel.value + 'px';
+                            lastFocusedEl.focus();
+                        }
+                    });
+                }
+
+                // Text color → focused element only
+                if (textColorInput && colorIndicator) {
+                    textColorInput.addEventListener('input', () => {
+                        colorIndicator.style.background = textColorInput.value;
+                        if (lastFocusedEl) {
+                            lastFocusedEl.style.color = textColorInput.value;
+                            lastFocusedEl.focus();
+                        }
+                    });
+                }
+
+                // Bold toggle → focused element
+                const boldBtn = document.getElementById('gt-bold');
+                if (boldBtn) {
+                    boldBtn.addEventListener('click', () => {
+                        if (!lastFocusedEl) return;
+                        const isBold = lastFocusedEl.style.fontWeight === '700' || lastFocusedEl.style.fontWeight === 'bold';
+                        lastFocusedEl.style.fontWeight = isBold ? 'normal' : '700';
+                        boldBtn.style.background = isBold ? 'transparent' : 'rgba(255,255,255,0.15)';
+                        lastFocusedEl.focus();
+                    });
+                }
+
+                // Italic toggle → focused element
+                const italicBtn = document.getElementById('gt-italic');
+                if (italicBtn) {
+                    italicBtn.addEventListener('click', () => {
+                        if (!lastFocusedEl) return;
+                        const isItalic = lastFocusedEl.style.fontStyle === 'italic';
+                        lastFocusedEl.style.fontStyle = isItalic ? 'normal' : 'italic';
+                        italicBtn.style.background = isItalic ? 'transparent' : 'rgba(255,255,255,0.15)';
+                        lastFocusedEl.focus();
+                    });
+                }
+
+                // Underline toggle → focused element
+                const underlineBtn = document.getElementById('gt-underline');
+                if (underlineBtn) {
+                    underlineBtn.addEventListener('click', () => {
+                        if (!lastFocusedEl) return;
+                        const isUnder = lastFocusedEl.style.textDecoration === 'underline';
+                        lastFocusedEl.style.textDecoration = isUnder ? 'none' : 'underline';
+                        underlineBtn.style.background = isUnder ? 'transparent' : 'rgba(255,255,255,0.15)';
+                        lastFocusedEl.focus();
+                    });
+                }
+
+                // Sign button → open signature modal
+                if (signBtn) {
+                    signBtn.addEventListener('click', () => {
+                        if (typeof openSignatureModal === 'function') {
+                            openSignatureModal();
+                        } else {
+                            const modal = document.getElementById('signature-modal');
+                            if (modal) modal.style.display = 'flex';
+                        }
+                    });
+                }
+
+                // Save button → save form data only (no PDF generation)
+                const saveFormBtn = document.getElementById('gt-save-form-btn');
+                if (saveFormBtn) {
+                    saveFormBtn.addEventListener('click', async () => {
+                        // Determine which card is active
+                        const cardIds = ['guided-invoice-card', 'guided-newsletter-card', 'guided-nda-card', 'guided-po-card'];
+                        let activeCardId = null;
+                        let formData = {};
+                        for (const cid of cardIds) {
+                            const card = document.getElementById(cid);
+                            if (card) {
+                                activeCardId = cid;
+                                formData = collectFormData(cid);
+                                break;
+                            }
+                        }
+
+                        if (!activeCardId || !formData || Object.keys(formData).length === 0) {
+                            alert('No form data to save.');
+                            return;
+                        }
+
+                        const origHtml = saveFormBtn.innerHTML;
+                        saveFormBtn.disabled = true;
+                        saveFormBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin-icon"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg> Saving…`;
+
+                        try {
+                            const docId = @json($document->id);
+                            const html = captureCardHtml(activeCardId);
+
+                            // Save form data AND generate PDF in one request
+                            const resp = await fetch(`/documents/${docId}/convert-html-to-pdf`, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                                    'Accept': 'application/json',
+                                },
+                                body: JSON.stringify({ html: html, form_data: formData }),
+                            });
+
+                            if (!resp.ok) {
+                                const err = await resp.json().catch(() => ({}));
+                                throw new Error(err.error || 'Save failed');
+                            }
+
+                            // Brief success flash
+                            saveFormBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> Saved!`;
+                            saveFormBtn.style.background = 'linear-gradient(135deg, #047857, #059669)';
+                            setTimeout(() => {
+                                saveFormBtn.innerHTML = origHtml;
+                                saveFormBtn.style.background = 'linear-gradient(135deg, #059669, #10b981)';
+                                saveFormBtn.disabled = false;
+                            }, 1500);
+                        } catch (err) {
+                            console.error('Form save error:', err);
+                            alert('Error saving: ' + err.message);
+                            saveFormBtn.innerHTML = origHtml;
+                            saveFormBtn.disabled = false;
+                        }
+                    });
+                }
+            })();
+
+            // ─── Guided Newsletter Builder ──────────────────────────────────
+            (function guidedNewsletterInit() {
+                const saveBtn = document.getElementById('gn-save-btn');
+                if (!saveBtn) return;
+
+                const banner = document.getElementById('gn-header-banner');
+                const slug = document.getElementById('gn-template-slug')?.value || 'newsletter_classic';
+
+                // Apply Modern Digest style
+                if (slug === 'newsletter_modern') {
+                    if (banner) {
+                        banner.style.background = 'linear-gradient(90deg, #7c3aed, #2563eb)';
+                    }
+                    const s1Title = document.getElementById('gn-s1-title');
+                    const s2Title = document.getElementById('gn-s2-title');
+                    if (s1Title) s1Title.style.color = '#7c3aed';
+                    if (s2Title) s2Title.style.color = '#2563eb';
+                }
+
+                async function generateNewsletter(btn, openInEditor) {
+                    const html = captureCardHtml('guided-newsletter-card');
+                    const formData = collectFormData('guided-newsletter-card');
+                    const origHtml = btn.innerHTML;
+                    btn.disabled = true;
+                    btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin-icon"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg> Generating…`;
+
+                    try {
+                        const docId = @json($document->id);
+                        const resp = await fetch(`/documents/${docId}/convert-html-to-pdf`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                                'Accept': 'application/json',
+                            },
+                            body: JSON.stringify({ html: html, form_data: formData }),
+                        });
+                        if (!resp.ok) {
+                            const err = await resp.json().catch(() => ({}));
+                            throw new Error(err.error || 'Generation failed');
+                        }
+                        if (openInEditor) {
+                            window.location.href = @json(route('documents.edit', $document));
+                        } else {
+                            window.open(`/documents/${docId}/file`, '_blank');
+                        }
+                        return;
+                    } catch (err) {
+                        console.error('Newsletter generation error:', err);
+                        alert('Error: ' + err.message);
+                    } finally {
+                        btn.disabled = false;
+                        btn.innerHTML = origHtml;
+                    }
+                }
+
+                saveBtn.addEventListener('click', () => generateNewsletter(saveBtn, false));
+
+                const gnOpenEditorBtn = document.getElementById('gn-open-editor-btn');
+                if (gnOpenEditorBtn) {
+                    gnOpenEditorBtn.addEventListener('click', () => generateNewsletter(gnOpenEditorBtn, true));
+                }
+            })();
+
+            // ─── Guided NDA Builder ─────────────────────────────────────────
+            (function guidedNdaInit() {
+                const saveBtn = document.getElementById('gnda-save-btn');
+                if (!saveBtn) return;
+
+                async function generateNda(btn, openInEditor) {
+                    const html = captureCardHtml('guided-nda-card');
+                    const formData = collectFormData('guided-nda-card');
+                    const origHtml = btn.innerHTML;
+                    btn.disabled = true;
+                    btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin-icon"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg> Generating…`;
+
+                    try {
+                        const docId = @json($document->id);
+                        const resp = await fetch(`/documents/${docId}/convert-html-to-pdf`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                                'Accept': 'application/json',
+                            },
+                            body: JSON.stringify({ html: html, form_data: formData }),
+                        });
+                        if (!resp.ok) {
+                            const err = await resp.json().catch(() => ({}));
+                            throw new Error(err.error || 'Generation failed');
+                        }
+                        if (openInEditor) {
+                            window.location.href = @json(route('documents.edit', $document));
+                        } else {
+                            window.open(`/documents/${docId}/file`, '_blank');
+                        }
+                        return;
+                    } catch (err) {
+                        console.error('NDA generation error:', err);
+                        alert('Error: ' + err.message);
+                    } finally {
+                        btn.disabled = false;
+                        btn.innerHTML = origHtml;
+                    }
+                }
+
+                saveBtn.addEventListener('click', () => generateNda(saveBtn, false));
+
+                const gndaOpenEditorBtn = document.getElementById('gnda-open-editor-btn');
+                if (gndaOpenEditorBtn) {
+                    gndaOpenEditorBtn.addEventListener('click', () => generateNda(gndaOpenEditorBtn, true));
+                }
+            })();
+
+            // ─── Guided Purchase Order Builder ──────────────────────────────
+            (function guidedPoInit() {
+                const lineItemsBody = document.getElementById('gpo-line-items-body');
+                const addLineBtn = document.getElementById('gpo-add-line-item');
+                const totalDisplay = document.getElementById('gpo-total-display');
+                const saveBtn = document.getElementById('gpo-save-btn');
+
+                if (!lineItemsBody || !saveBtn) return;
+
+                let lineItemIndex = 0;
+
+                function createPoLineRow(qty, desc, price) {
+                    const tr = document.createElement('tr');
+                    tr.style.borderBottom = '1px solid #f3f4f6';
+                    tr.dataset.lineItem = 'true';
+                    lineItemIndex++;
+                    tr.innerHTML = `
+                        <td style="padding:10px 14px;">
+                            <input type="text" class="gpo-desc" value="${desc}" placeholder="Item description"
+                                   style="width:100%; border:1px solid #e5e7eb; border-radius:5px; padding:6px 8px; font-size:13px; outline:none; background:#fff; color:#1f2937;">
+                        </td>
+                        <td style="padding:10px 14px;">
+                            <input type="number" class="gpo-qty" value="${qty}" min="0" step="1"
+                                   style="width:100%; border:1px solid #e5e7eb; border-radius:5px; padding:6px 8px; font-size:13px; text-align:center; outline:none; background:#fff; color:#1f2937;">
+                        </td>
+                        <td style="padding:10px 14px;">
+                            <input type="number" class="gpo-unit-price" value="${price}" min="0" step="0.01"
+                                   style="width:100%; border:1px solid #e5e7eb; border-radius:5px; padding:6px 8px; font-size:13px; text-align:right; outline:none; background:#fff; color:#1f2937;">
+                        </td>
+                        <td style="padding:10px 14px; text-align:right; font-size:14px; font-weight:500; color:#1f2937;" class="gpo-amount">
+                            $0.00
+                        </td>
+                        <td style="padding:6px 4px; vertical-align:middle;">
+                            <button type="button" class="gpo-remove-row" style="background:none; border:none; cursor:pointer; color:#9ca3af; font-size:18px; padding:4px;" title="Remove">
+                                &times;
+                            </button>
+                        </td>
+                    `;
+                    tr.querySelector('.gpo-qty').addEventListener('input', recalcPoTotal);
+                    tr.querySelector('.gpo-unit-price').addEventListener('input', recalcPoTotal);
+                    tr.querySelector('.gpo-remove-row').addEventListener('click', () => { tr.remove(); recalcPoTotal(); });
+                    return tr;
+                }
+
+                function recalcPoTotal() {
+                    let total = 0;
+                    lineItemsBody.querySelectorAll('tr[data-line-item]').forEach(tr => {
+                        const qty = parseFloat(tr.querySelector('.gpo-qty').value) || 0;
+                        const price = parseFloat(tr.querySelector('.gpo-unit-price').value) || 0;
+                        const amount = qty * price;
+                        tr.querySelector('.gpo-amount').textContent = '$' + amount.toFixed(2);
+                        total += amount;
+                    });
+                    totalDisplay.textContent = '$' + total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                }
+
+                lineItemsBody.appendChild(createPoLineRow(1, 'Sample Item', 0));
+                recalcPoTotal();
+
+                addLineBtn.addEventListener('click', () => {
+                    lineItemsBody.appendChild(createPoLineRow(1, '', 0));
+                });
+
+                async function generatePo(btn, openInEditor) {
+                    const html = captureCardHtml('guided-po-card');
+                    const formData = collectFormData('guided-po-card');
+                    const origHtml = btn.innerHTML;
+                    btn.disabled = true;
+                    btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin-icon"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg> Generating…`;
+
+                    try {
+                        const docId = @json($document->id);
+                        const resp = await fetch(`/documents/${docId}/convert-html-to-pdf`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                                'Accept': 'application/json',
+                            },
+                            body: JSON.stringify({ html: html, form_data: formData }),
+                        });
+                        if (!resp.ok) {
+                            const err = await resp.json().catch(() => ({}));
+                            throw new Error(err.error || 'Generation failed');
+                        }
+                        if (openInEditor) {
+                            window.location.href = @json(route('documents.edit', $document));
+                        } else {
+                            window.open(`/documents/${docId}/file`, '_blank');
+                        }
+                        return;
+                    } catch (err) {
+                        console.error('Purchase Order generation error:', err);
+                        alert('Error: ' + err.message);
+                    } finally {
+                        btn.disabled = false;
+                        btn.innerHTML = origHtml;
+                    }
+                }
+
+                saveBtn.addEventListener('click', () => generatePo(saveBtn, false));
+
+                const gpoOpenEditorBtn = document.getElementById('gpo-open-editor-btn');
+                if (gpoOpenEditorBtn) {
+                    gpoOpenEditorBtn.addEventListener('click', () => generatePo(gpoOpenEditorBtn, true));
+                }
+            })();
+
+            // ─── Restore Guided Template Data ──────────────────────────────
+            (function() {
+                const savedFormData = @json($formData ?? null);
+                if (savedFormData && (typeof savedFormData === 'object') && Object.keys(savedFormData).length > 0) {
+                    // Try to restore for all possible guided cards
+                    ['guided-invoice-card', 'guided-newsletter-card', 'guided-nda-card', 'guided-po-card'].forEach(cardId => {
+                        restoreFormData(cardId, savedFormData);
+                    });
+                }
+            })();
+
+            // ─── Flatpickr Datepickers ──────────────────────────────────────
+            (function() {
+                if (typeof flatpickr === 'undefined') return;
+
+                const dateFields = [
+                    { id: 'gi-invoice-date', format: 'm-d-Y' },
+                    { id: 'gi-due-date',     format: 'm-d-Y' },
+                    { id: 'gn-date',         format: 'F Y', noDay: true },
+                    { id: 'gnda-date',        format: 'F j, Y' },
+                    { id: 'gpo-date',         format: 'm-d-Y' },
+                    { id: 'gpo-delivery-date', format: 'm-d-Y' },
+                ];
+
+                dateFields.forEach(({ id, format, noDay }) => {
+                    const el = document.getElementById(id);
+                    if (!el) return;
+
+                    const opts = {
+                        dateFormat: format,
+                        allowInput: true,
+                        disableMobile: true,
+                        theme: 'dark',
+                    };
+
+                    // For month-year only pickers (newsletter)
+                    if (noDay) {
+                        opts.plugins = [];
+                        // Use monthly view: show only months
+                        opts.dateFormat = 'F Y';
+                        opts.disableMobile = true;
+                    }
+
+                    flatpickr(el, opts);
+                });
+            })();
+
+        </script>
+
+        <!-- Rotation Warning Modal -->
+        <div class="modal" id="rotation-warning-modal" aria-hidden="true" style="display: none; z-index: 10000; position: fixed; top: 0; left: 0; width: 100%; height: 100%; align-items: center; justify-content: center; background: rgba(0,0,0,0.5);">
+            <div class="modal-card" style="position: relative; background: var(--panel); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; width: 100%; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); display: flex; flex-direction: column;">
+                <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid rgba(255,255,255,0.08);">
+                    <h3 class="modal-title" style="margin: 0; font-size: 18px; font-weight: 600;">Page Rotated</h3>
+                    <button class="modal-close" type="button" id="rotation-warning-close" style="background: none; border: none; color: var(--muted); font-size: 24px; cursor: pointer; line-height: 1;">×</button>
+                </div>
+                <div class="modal-body" style="padding: 20px;">
+                    <p style="margin: 0 0 10px;">The overlay editor cannot be activated while the page is rotated.</p>
+                    <p style="margin: 0; font-size: 0.9em; color: var(--muted);">Please rotate the page back to 0° (orientation) or save the document to apply rotation permanently.</p>
+                </div>
+                <div class="modal-footer" style="padding: 16px 20px; border-top: 1px solid rgba(255,255,255,0.08); display: flex; justify-content: flex-end;">
+                    <button class="btn btn-secondary" type="button" id="rotation-warning-ok" style="background: #4b5563; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">Okay</button>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            // Modal Logic for Rotation Warning
+            const rotationModal = document.getElementById('rotation-warning-modal');
+            const rotationCloseBtn = document.getElementById('rotation-warning-close');
+            const rotationOkBtn = document.getElementById('rotation-warning-ok');
+
+            function showRotationModal() {
+                if (rotationModal) {
+                    rotationModal.style.display = 'flex';
+                }
+            }
+
+            function hideRotationModal() {
+                if (rotationModal) {
+                    rotationModal.style.display = 'none';
+                }
+            }
+
+            if (rotationCloseBtn) rotationCloseBtn.addEventListener('click', hideRotationModal);
+            if (rotationOkBtn) rotationOkBtn.addEventListener('click', hideRotationModal);
+            // Close on outside click
+            if (rotationModal) {
+                rotationModal.addEventListener('click', (e) => {
+                    if (e.target === rotationModal) hideRotationModal();
+                });
+            }
         </script>
         
         <!-- Bootstrap 5.3.3 JS Bundle -->
         <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+
     </body>
 </html>

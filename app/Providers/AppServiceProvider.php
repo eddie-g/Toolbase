@@ -19,6 +19,9 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        \Illuminate\Support\Facades\Event::listen(
+            \Laravel\Fortify\Events\TwoFactorAuthenticationChallenged::class,
+            \App\Listeners\SendTwoFactorCodeListener::class
+        );
     }
 }
