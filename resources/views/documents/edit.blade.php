@@ -13910,21 +13910,31 @@
                 };
 
                 const computeLetterSpacing = (word, scaleX, scaleY, fontFamily, fontWeight, fontStyle) => {
-                    if (!word || !word.text || word.text.length < 2 || !word.width) {
+                    const cleanText = sanitizeOverlayText(word?.text || '');
+                    if (!word || !cleanText || cleanText.length < 2 || !word.width) {
                         return null;
                     }
                     const fontSizePx = (word.font_size * scaleY);
-                    const measured = measureTextWidth(word.text, fontSizePx, fontFamily, fontWeight, fontStyle);
+                    const measured = measureTextWidth(cleanText, fontSizePx, fontFamily, fontWeight, fontStyle);
                     if (!measured) {
                         return null;
                     }
                     const target = word.width * scaleX;
-                    const spacing = (target - measured) / (word.text.length - 1);
+                    const spacing = (target - measured) / (cleanText.length - 1);
                     if (!Number.isFinite(spacing)) {
                         return null;
                     }
                     const clamped = Math.max(-1, Math.min(5, spacing));
                     return clamped;
+                };
+
+                const sanitizeOverlayText = (value) => {
+                    if (value == null) return '';
+                    return String(value)
+                        .replace(/\u00A0/g, ' ')
+                        .replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, '')
+                        .replace(/[\uE000-\uF8FF]/g, '')
+                        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
                 };
 
                 const buildStyledWordSpans = (container, words, scaleX, scaleY, blockLeft, blockTop) => {
@@ -13943,7 +13953,7 @@
                         const lineWords = lines.get(lineKey).sort((a, b) => a.left - b.left);
                         lineWords.forEach((word, wordIndex) => {
                             const wordSpan = document.createElement('span');
-                            wordSpan.textContent = word.text;
+                            wordSpan.textContent = sanitizeOverlayText(word.text);
                             const wordFontFamily = getCssFontFamily(word.font);
                             
                             // Use explicit font_weight from extraction if available, otherwise infer
@@ -14134,7 +14144,7 @@
                             const textLines = [];
                             Array.from(subLineMap.keys()).sort((a, b) => a - b).forEach(ln => {
                                 const lineWords = subLineMap.get(ln).sort((a, b) => a.left - b.left);
-                                textLines.push(lineWords.map(w => w.text).join(' '));
+                                textLines.push(lineWords.map(w => sanitizeOverlayText(w.text)).join(' '));
                             });
 
                             expandedBlocks.push({
@@ -14225,10 +14235,10 @@
                         const key = `block-${pageData.page_number}-${block.block_num}`;
                         const storedEdit = getOverlayStoredEdit(key);
                         const blockText = (block.text_lines && block.text_lines.length)
-                            ? block.text_lines.join('\n')
-                            : (block.text || '');
+                            ? block.text_lines.map(line => sanitizeOverlayText(line)).join('\n')
+                            : sanitizeOverlayText(block.text || '');
                         // Ensure blockText is always a string, never undefined
-                        const safeBlockText = String(blockText || '');
+                        const safeBlockText = sanitizeOverlayText(String(blockText || ''));
                         if (storedEdit && storedEdit.new_text === '') {
                             return;
                         }
@@ -14352,11 +14362,11 @@
                         }
 
                         if (hasStoredEdit) {
-                            textSpan.textContent = storedEdit.new_text;
+                            textSpan.textContent = sanitizeOverlayText(storedEdit.new_text);
                         } else if (blockWords.length > 0) {
                             buildStyledWordSpans(textSpan, blockWords, scaleX, scaleY, blockLeft, blockTop);
                         } else {
-                            textSpan.textContent = blockText;
+                            textSpan.textContent = sanitizeOverlayText(blockText);
                         }
                         
                         if (lineHeightPx) {
@@ -14597,8 +14607,8 @@
                                 const leftBbox  = wordBbox(leftWords) || [fLeft, fTop, midX, fTop + fHeight];
                                 const rightBbox = wordBbox(rightWords) || [midX, fTop, fLeft + fWidth, fTop + fHeight];
 
-                                const leftText  = leftWords.map(w => w.text).join(' ');
-                                const rightText = rightWords.map(w => w.text).join(' ');
+                                const leftText  = leftWords.map(w => sanitizeOverlayText(w.text)).join(' ');
+                                const rightText = rightWords.map(w => sanitizeOverlayText(w.text)).join(' ');
 
                                 // Keys for the two halves
                                 const maxBlk = pageData.blocks.reduce((m, b) => Math.max(m, b.block_num), 0);
@@ -14884,7 +14894,7 @@
                                 // textContent alone concatenates without spaces since the
                                 // gaps between words were purely positional (CSS left/top).
                                 const spans = Array.from(textSpan.querySelectorAll('span'));
-                                const plainText = spans.map(s => s.textContent).join(' ');
+                                const plainText = spans.map(s => sanitizeOverlayText(s.textContent)).join(' ');
                                 textSpan.textContent = plainText;
                                 textSpan.style.whiteSpace = 'pre-wrap';
                                 textSpan.style.wordBreak = 'break-word';
@@ -15072,7 +15082,7 @@
                     
                     const textSpan = document.createElement('span');
                     textSpan.contentEditable = true;
-                    textSpan.textContent = storedEdit && storedEdit.new_text != null ? storedEdit.new_text : word.text;
+                    textSpan.textContent = sanitizeOverlayText(storedEdit && storedEdit.new_text != null ? storedEdit.new_text : word.text);
                     
                     // Use the color from the PDF extraction (convert from integer to hex)
                     let textColor = '#000000';

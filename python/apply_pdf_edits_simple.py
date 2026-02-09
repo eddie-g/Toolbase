@@ -331,9 +331,9 @@ def find_font_xref_by_name(doc, page_num, font_name):
 
 def normalize_smart_quotes(text):
     """
-    Replace smart/curly quotes and other typographic characters with their
-    ASCII equivalents. Many PDF fonts (especially subsetted ones) don't include
-    glyphs for Unicode curly quotes, causing PyMuPDF to render them as '?'.
+    Normalize user / extraction text before insertion:
+    - Replace smart typography with ASCII equivalents.
+    - Remove invisible control chars and private-use glyph artifacts.
     """
     if not text:
         return text
@@ -357,6 +357,12 @@ def normalize_smart_quotes(text):
     }
     for smart, ascii_char in replacements.items():
         text = text.replace(smart, ascii_char)
+
+    # Remove invisible and private-use glyph artifacts that often show up as
+    # tofu boxes in the overlay editor (e.g. "", "□").
+    text = re.sub(r'[\u200B\u200C\u200D\u2060\uFEFF]', '', text)
+    text = re.sub(r'[\uE000-\uF8FF]', '', text)
+    text = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', text)
     return text
 
 

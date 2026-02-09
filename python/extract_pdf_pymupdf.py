@@ -8,11 +8,32 @@ Much faster than OCR-based extraction
 import sys
 import os
 import json
+import re
 from pathlib import Path
 import fitz  # PyMuPDF
 import mysql.connector
 from mysql.connector import Error
 from datetime import datetime
+
+
+_EXTRACTION_ZERO_WIDTH_RE = re.compile(r'[\u200B\u200C\u200D\u2060\uFEFF]')
+_EXTRACTION_PRIVATE_USE_RE = re.compile(r'[\uE000-\uF8FF]')
+_EXTRACTION_CONTROL_RE = re.compile(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]')
+
+
+def sanitize_extracted_text(text):
+    """
+    Normalize extracted text to remove invisible/unsupported glyphs that
+    commonly appear from problematic PDF font encodings.
+    """
+    if not text:
+        return ''
+
+    cleaned = text.replace('\u00A0', ' ')
+    cleaned = _EXTRACTION_ZERO_WIDTH_RE.sub('', cleaned)
+    cleaned = _EXTRACTION_PRIVATE_USE_RE.sub('', cleaned)
+    cleaned = _EXTRACTION_CONTROL_RE.sub('', cleaned)
+    return cleaned
 
 
 def _normalize_font_name(font_name):
@@ -586,7 +607,7 @@ def extract_text_with_pymupdf(pdf_path):
                             line_style = None
 
                             for span_num, span in enumerate(line.get("spans", [])):
-                                text = span.get("text", "")
+                                text = sanitize_extracted_text(span.get("text", ""))
                                 if not text:
                                     continue
 
@@ -617,7 +638,6 @@ def extract_text_with_pymupdf(pdf_path):
                                 font_weight = None
                                 
                                 # Check for explicit weight patterns like "_700wght" or "-700"
-                                import re
                                 weight_pattern = re.search(r'[_-](\d{3})w?g?h?t?', font_lower)
                                 if weight_pattern:
                                     parsed_weight = int(weight_pattern.group(1))
