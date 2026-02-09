@@ -673,7 +673,11 @@ def extract_text_with_pymupdf(pdf_path):
                                 font_xref = match_font_xref(font, page_fonts)
 
                                 # Track style frequency to find dominant style
-                                style_key = f"{font}_{size}_{is_bold}_{is_italic}"
+                                # Include hex_color so spans with the same font/size but
+                                # different colors (e.g. red bullet vs black body text) are
+                                # tracked separately.  This prevents a minority-color span
+                                # from becoming the block's dominant color.
+                                style_key = f"{font}_{size}_{is_bold}_{is_italic}_{hex_color}"
                                 style_counts[style_key] = style_counts.get(style_key, 0) + len(text)
 
                                 span_data = {
@@ -706,7 +710,7 @@ def extract_text_with_pymupdf(pdf_path):
                                         'italic': is_italic
                                     }
 
-                                if block_style is None or style_counts.get(style_key, 0) > style_counts.get(f"{block_style.get('font', '')}_{block_style.get('font_size', 0)}_{block_style.get('bold', False)}_{block_style.get('italic', False)}", 0):
+                                if block_style is None or style_counts.get(style_key, 0) > style_counts.get(f"{block_style.get('font', '')}_{block_style.get('font_size', 0)}_{block_style.get('bold', False)}_{block_style.get('italic', False)}_{block_style.get('hex_color', '#000000')}", 0):
                                     block_style = {
                                         'font': font,
                                         'font_xref': font_xref,
