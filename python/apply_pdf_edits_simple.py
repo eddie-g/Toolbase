@@ -688,6 +688,20 @@ def apply_edits(pdf_path, edits_json):
                     original_text = (edit.get('original_text') or '').strip()
                     new_text_stripped = (new_text or '').strip()
 
+                    # ── POSITION OFFSET ────────────────────────────────────
+                    # word_styles contain ABSOLUTE positions from the original
+                    # extraction.  If the block was moved, we need to shift
+                    # every word by the delta between original_bbox and the
+                    # new bbox so text lands at the moved position.
+                    original_bbox = edit.get('original_bbox')
+                    ws_delta_x = 0.0
+                    ws_delta_y = 0.0
+                    if original_bbox and bbox:
+                        ws_delta_x = bbox[0] - original_bbox[0]
+                        ws_delta_y = bbox[1] - original_bbox[1]
+                    if abs(ws_delta_x) > 0.5 or abs(ws_delta_y) > 0.5:
+                        print(f"  ℹ word_styles position offset: dx={ws_delta_x:.1f}, dy={ws_delta_y:.1f}")
+
                     def _build_word_edits(word_styles, original_text, new_text):
                         """
                         Map original per-word styles onto new_text.
@@ -813,12 +827,14 @@ def apply_edits(pdf_path, edits_json):
                                 except Exception:
                                     mw_color = text_color
 
-                        # Position
+                        # Position — apply move delta so words land at the new location
                         mw_origin_x = mw.get('origin_x', mw.get('left', bbox[0]))
                         mw_origin_y = mw.get('origin_y')
                         if mw_origin_y is None:
                             # Fallback: bottom of word bbox
                             mw_origin_y = mw.get('top', bbox[1]) + mw.get('height', mw_font_size)
+                        mw_origin_x += ws_delta_x
+                        mw_origin_y += ws_delta_y
 
                         # Font resolution (with caching)
                         cache_key = f"{mw_font_name}_{mw_font_weight}_{mw_italic}"
