@@ -15274,9 +15274,19 @@
                                 
                                 const currentLeft = parseFloat(field.style.left);
                                 const currentTop = parseFloat(field.style.top);
+                                const fieldWidth = parseFloat(field.style.width) || field.offsetWidth;
+                                const fieldHeight = parseFloat(field.style.height) || field.offsetHeight;
+                                const maxW = parseFloat(field.dataset.canvasWidth || '0') || (field.parentElement ? field.parentElement.clientWidth : Infinity);
+                                const maxH = parseFloat(field.dataset.canvasHeight || '0') || (field.parentElement ? field.parentElement.clientHeight : Infinity);
                                 
-                                field.style.left = (currentLeft + dx) + 'px';
-                                field.style.top = (currentTop + dy) + 'px';
+                                let newLeft = currentLeft + dx;
+                                let newTop = currentTop + dy;
+                                // Clamp to page boundaries
+                                newLeft = Math.max(0, Math.min(newLeft, maxW - fieldWidth));
+                                newTop = Math.max(0, Math.min(newTop, maxH - fieldHeight));
+                                
+                                field.style.left = newLeft + 'px';
+                                field.style.top = newTop + 'px';
                                 
                                 dragStart = { x: e.clientX, y: e.clientY };
                             };
@@ -15834,9 +15844,19 @@
                             
                             const currentLeft = parseFloat(field.style.left);
                             const currentTop = parseFloat(field.style.top);
+                            const fieldWidth = parseFloat(field.style.width) || field.offsetWidth;
+                            const fieldHeight = parseFloat(field.style.height) || field.offsetHeight;
+                            const maxW = parseFloat(field.dataset.canvasWidth || '0') || (field.parentElement ? field.parentElement.clientWidth : Infinity);
+                            const maxH = parseFloat(field.dataset.canvasHeight || '0') || (field.parentElement ? field.parentElement.clientHeight : Infinity);
                             
-                            field.style.left = (currentLeft + dx) + 'px';
-                            field.style.top = (currentTop + dy) + 'px';
+                            let newLeft = currentLeft + dx;
+                            let newTop = currentTop + dy;
+                            // Clamp to page boundaries
+                            newLeft = Math.max(0, Math.min(newLeft, maxW - fieldWidth));
+                            newTop = Math.max(0, Math.min(newTop, maxH - fieldHeight));
+                            
+                            field.style.left = newLeft + 'px';
+                            field.style.top = newTop + 'px';
                             
                             dragStart = { x: e.clientX, y: e.clientY };
                         };
@@ -15892,8 +15912,19 @@
                         const dy = e.clientY - dragStart.y;
                         const currentLeft = parseFloat(field.style.left);
                         const currentTop = parseFloat(field.style.top);
-                        field.style.left = (currentLeft + dx) + 'px';
-                        field.style.top = (currentTop + dy) + 'px';
+                        const fieldWidth = parseFloat(field.style.width) || field.offsetWidth;
+                        const fieldHeight = parseFloat(field.style.height) || field.offsetHeight;
+                        const maxW = parseFloat(field.dataset.canvasWidth || '0') || (field.parentElement ? field.parentElement.clientWidth : Infinity);
+                        const maxH = parseFloat(field.dataset.canvasHeight || '0') || (field.parentElement ? field.parentElement.clientHeight : Infinity);
+                        
+                        let newLeft = currentLeft + dx;
+                        let newTop = currentTop + dy;
+                        // Clamp to page boundaries
+                        newLeft = Math.max(0, Math.min(newLeft, maxW - fieldWidth));
+                        newTop = Math.max(0, Math.min(newTop, maxH - fieldHeight));
+                        
+                        field.style.left = newLeft + 'px';
+                        field.style.top = newTop + 'px';
                         dragStart = { x: e.clientX, y: e.clientY };
                     });
 
