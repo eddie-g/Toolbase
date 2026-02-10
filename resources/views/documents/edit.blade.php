@@ -13150,6 +13150,42 @@
                     // Populate font dropdown with fonts from PDF
                     populateFontDropdown();
 
+                    // Pre-load Google Fonts from extraction data so they start
+                    // downloading before the first overlay render.  This gives
+                    // the browser a head start — by the time renderPdfWithOverlay
+                    // finishes, many fonts will already be cached.
+                    if (overlayExtractionData) {
+                        const preloadFontFamilies = new Set();
+                        overlayExtractionData.forEach(page => {
+                            (page.words || []).forEach(w => {
+                                if (w.font) preloadFontFamilies.add(w.font);
+                            });
+                            (page.blocks || []).forEach(b => {
+                                if (b.font) preloadFontFamilies.add(b.font);
+                            });
+                        });
+                        preloadFontFamilies.forEach(rawFont => {
+                            // Quick normalization (strip subset prefix)
+                            let cleaned = rawFont;
+                            if (cleaned.includes('+')) {
+                                const parts = cleaned.split('+', 2);
+                                if (parts[0].length === 6) cleaned = parts[1];
+                            }
+                            if (/^[A-Za-z]{6}[A-Z]/.test(cleaned) && cleaned.length > 7) {
+                                const rest = cleaned.substring(6);
+                                if (/^[A-Z][a-z]/.test(rest)) cleaned = rest;
+                            }
+                            const family = (cleaned.split(/[-_,]/)[0] || cleaned).trim();
+                            if (family && !overlayLoadedFonts.has(family)) {
+                                overlayLoadedFonts.add(family);
+                                const link = document.createElement('link');
+                                link.rel = 'stylesheet';
+                                link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap`;
+                                document.head.appendChild(link);
+                            }
+                        });
+                    }
+
                     // Load clean PDF
                     await renderPdfWithOverlay();
                     overlayRendered = true;
@@ -13160,6 +13196,38 @@
                     if (typeof renderGridlines === 'function') renderGridlines();
                     
                     setStatus('Overlay editor active. Edit text positions and content.', 'ok');
+                    
+                    // Google Fonts are loaded asynchronously via <link> tags
+                    // added during renderOverlayFields.  The initial render uses
+                    // fallback system fonts, so measureTextWidth / computeLetterSpacing
+                    // produce incorrect metrics until the real fonts arrive.
+                    // Re-render once all pending fonts have loaded so that boxes,
+                    // letter-spacing and word positions are accurate.
+                    //
+                    // Strategy: the Google Font stylesheets (@font-face CSS) need
+                    // to be fetched before document.fonts will even know about
+                    // them. We wait a short moment for the browser to start
+                    // fetching the stylesheets, then await document.fonts.ready.
+                    // A second delayed check handles slow network conditions.
+                    const fontsLoadedToken = loadToken;
+                    let fontReRenderDone = false;
+                    const doFontReRender = () => {
+                        if (fontReRenderDone) return;
+                        if (!overlayEditorActive || fontsLoadedToken !== overlayLoadToken) return;
+                        fontReRenderDone = true;
+                        console.log('Fonts loaded — re-rendering overlay for accurate metrics');
+                        renderPdfWithOverlay(true).then(() => {
+                            if (typeof renderGridlines === 'function') renderGridlines();
+                        });
+                    };
+                    // First check — fires quickly if fonts are already cached
+                    setTimeout(() => {
+                        document.fonts.ready.then(doFontReRender);
+                    }, 100);
+                    // Second check — catches slow network / large font families
+                    setTimeout(() => {
+                        document.fonts.ready.then(doFontReRender);
+                    }, 2000);
                 } catch (error) {
                     console.error('Error loading overlay editor:', error);
                     let errorMessage = error.message;
