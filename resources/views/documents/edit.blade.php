@@ -3043,7 +3043,7 @@
                             <div class="tb-group">
                                 <label class="color-btn" title="Text Color">
                                     <span class="color-swatch" id="selected-color-swatch"></span>
-                                    <input type="color" id="selected-color" value="#111111" disabled />
+                                    <input type="color" id="selected-color" value="#000000" disabled />
                                 </label>
                                 <label class="color-btn" title="Background Color">
                                     <span class="color-swatch" id="selected-bg-swatch"></span>
@@ -3089,7 +3089,7 @@
                     <div class="etb-divider"></div>
                     <!-- Text Color -->
                     <div class="etb-color-wrap" title="Text Color">
-                        <input type="color" id="etb-text-color" value="#111111" />
+                        <input type="color" id="etb-text-color" value="#000000" />
                     </div>
                     <!-- Background Color -->
                     <div class="etb-color-wrap" title="Background Color" style="margin-left: 2px;">
@@ -5267,7 +5267,7 @@
                             selectedWeight.value = ['100','200','300','400','500','600','700','800','900'].includes(annoWeight) ? annoWeight : (annoWeight === 'bold' ? '700' : '400');
                         }
                         if (selectedSize) selectedSize.value = Math.round(selectedAnnotation.fontSize * currentScale);
-                        if (selectedColor) selectedColor.value = selectedAnnotation.textColor || '#111111';
+                        if (selectedColor) selectedColor.value = selectedAnnotation.textColor || '#000000';
                         if (selectedBg) {
                             const background = selectedAnnotation.backgroundColor || 'transparent';
                             selectedBg.value = background === 'transparent' ? '#ffffff' : background;
@@ -5322,7 +5322,7 @@
                         selectedWeight.value = ['100','200','300','400','500','600','700','800','900'].includes(normalizedWeight) ? normalizedWeight : '400';
                     }
                     if (selectedSize) selectedSize.value = Math.round(parseFloat(styles.fontSize) || 16);
-                    if (selectedColor) selectedColor.value = colorToHex(styles.color) || '#111111';
+                    if (selectedColor) selectedColor.value = colorToHex(styles.color) || '#000000';
                     if (selectedBg) {
                         const bgColor = colorToHex(styles.backgroundColor);
                         selectedBg.value = bgColor && bgColor !== 'transparent' ? bgColor : '#ffffff';
@@ -5564,7 +5564,7 @@
 
             function colorToHex(color) {
                 if (!color) {
-                    return '#111111';
+                    return '#000000';
                 }
                 if (color === 'transparent') {
                     return 'transparent';
@@ -5576,7 +5576,7 @@
                 }
                 const match = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
                 if (!match) {
-                    return '#111111';
+                    return '#000000';
                 }
                 if (match[4] !== undefined && parseFloat(match[4]) === 0) {
                     return 'transparent';
@@ -5617,7 +5617,7 @@
                     const span = annotation.element.querySelector('.annotation-text');
                     if (span) {
                         span.textContent = annotation.text;
-                        span.style.color = annotation.textColor || '#111111';
+                        span.style.color = annotation.textColor || '#000000';
                         span.style.backgroundColor = annotation.backgroundColor || 'transparent';
                         span.style.fontWeight = annotation.fontWeight || 'normal';
                         span.style.fontStyle = annotation.fontStyle || 'normal';
@@ -5658,7 +5658,7 @@
                 }
                 annotation.type = annotation.type || 'text';
                 annotation.fontFamily = annotation.fontFamily || 'Helvetica';
-                annotation.textColor = annotation.textColor || '#111111';
+                annotation.textColor = annotation.textColor || '#000000';
                 annotation.backgroundColor = annotation.backgroundColor || 'transparent';
                 annotation.fontWeight = annotation.fontWeight || 'normal';
                 annotation.fontStyle = annotation.fontStyle || 'normal';
@@ -6589,7 +6589,7 @@
                 const opts = {
                     fontFamily: annotation.fontFamily || defaultTextFont,
                     fontSizePx: Math.round(annotation.fontSize * currentScale),
-                    textColor: annotation.textColor || '#111111',
+                    textColor: annotation.textColor || '#000000',
                     bgColor: annotation.backgroundColor || 'transparent',
                     opacityVal: annotation.opacity ?? 1,
                     fontWeight: annotation.fontWeight || 'normal',
@@ -6620,7 +6620,7 @@
                 return {
                     fontFamily: etbFont ? etbFont.value : defaultTextFont,
                     fontSizePx: etbSize ? Math.max(8, Math.min(144, parseInt(etbSize.value, 10))) : defaultTextSize,
-                    textColor: etbTextColor ? etbTextColor.value : '#111111',
+                    textColor: etbTextColor ? etbTextColor.value : '#000000',
                     bgColor: etbBgColor ? etbBgColor.value : '#ffffff',
                     opacityVal: etbOpacity ? parseFloat(etbOpacity.value) : 1,
                     fontWeight: (etbBold && etbBold.classList.contains('active')) ? '700' : 'normal',
@@ -12761,7 +12761,7 @@
                 
                 if (font) font.value = annotation.fontFamily || 'Helvetica';
                 if (size) size.value = Math.round(annotation.fontSize * currentScale) || 16;
-                if (textColor) textColor.value = annotation.textColor || '#111111';
+                if (textColor) textColor.value = annotation.textColor || '#000000';
                 if (bgColor) {
                     const bg = annotation.backgroundColor || 'transparent';
                     bgColor.value = bg === 'transparent' ? '#ffffff' : bg;
@@ -12793,7 +12793,7 @@
                 
                 if (font) font.value = defaultTextFont;
                 if (size) size.value = defaultTextSize;
-                if (textColor) textColor.value = '#111111';
+                if (textColor) textColor.value = '#000000';
                 if (bgColor) bgColor.value = '#ffffff';
                 if (opacity) opacity.value = '1';
                 if (bold) bold.classList.remove('active');
