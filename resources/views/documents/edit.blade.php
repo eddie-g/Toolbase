@@ -1532,6 +1532,38 @@
             .overlay-field.active .resize-handle {
                 display: block;
             }
+            /* ilovepdf-style states: invisible → hover → selected → editing */
+            .overlay-field {
+                outline: none !important;
+                border: 2px solid transparent !important;
+                transition: border-color 0.15s, box-shadow 0.15s;
+            }
+            .overlay-field:hover:not(.active) {
+                border-color: rgba(66, 133, 244, 0.35) !important;
+                background: rgba(66, 133, 244, 0.04) !important;
+            }
+            .overlay-field.active {
+                border-color: rgba(66, 133, 244, 0.8) !important;
+                box-shadow: 0 0 0 1px rgba(66, 133, 244, 0.3) !important;
+            }
+            .overlay-field.active:not(.editing) {
+                cursor: move;
+            }
+            .overlay-field.active:not(.editing) [contenteditable] {
+                cursor: move;
+                pointer-events: none;
+                user-select: none;
+            }
+            .overlay-field.editing {
+                border-color: rgba(66, 133, 244, 1) !important;
+                box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.25) !important;
+                cursor: text;
+            }
+            .overlay-field.editing [contenteditable] {
+                cursor: text;
+                pointer-events: auto;
+                user-select: text;
+            }
 
             /* Shape type buttons (modern grid) */
             .shape-type-btn {
@@ -1763,10 +1795,8 @@
                 display: none !important;
             }
             .viewer.overlay-hidden .overlay-field .resize-handle,
-            .viewer.overlay-hidden .overlay-field .box-menu,
-            .overlay-field.selected {
-                border-color: rgba(66, 133, 244, 0.8) !important;
-                box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.25) !important;
+            .viewer.overlay-hidden .overlay-field .box-menu {
+                display: none !important;
             }
             .annotation {
                 position: absolute;
@@ -7998,6 +8028,14 @@
                             setSelection(null);
                             removeActiveEditor();
                         }
+                        // Deselect all overlay fields when clicking on empty space
+                        overlay.querySelectorAll('.overlay-field.active').forEach(f => {
+                            f.classList.remove('active', 'editing');
+                            const ce = f.querySelector('[contenteditable]');
+                            if (ce) ce.contentEditable = false;
+                        });
+                        clearOverlaySelection();
+                        updateSelectionBar();
                     });
 
                     // Drag-to-create text box (request #1)
@@ -13247,9 +13285,13 @@
                 viewer.classList.remove('overlay-view-mode');
                 viewer.classList.remove('overlay-hidden');
 
-                // Re-enable contentEditable on all text fields
+                // Re-enable text fields but keep contentEditable off (requires double-click to edit)
                 document.querySelectorAll('.overlay-field [contenteditable]').forEach(el => {
-                    el.contentEditable = true;
+                    el.contentEditable = false;
+                });
+                // Reset any editing state
+                document.querySelectorAll('.overlay-field.editing').forEach(f => {
+                    f.classList.remove('editing');
                 });
 
                 updateOverlayShowOriginalToggle();
@@ -14513,11 +14555,7 @@
                         field.className = 'overlay-field';
                         field.style.position = 'absolute';
                         field.style.background = 'transparent';
-                        field.style.border = 'none';
-                        field.style.outline = '1px dashed rgba(66, 133, 244, 0.5)';
-                        field.style.outlineOffset = '0px';
                         field.style.pointerEvents = 'auto';
-                        field.style.cursor = 'move';
                         field.style.padding = '0';
                         field.style.minWidth = '20px';
                         field.style.minHeight = '10px';
@@ -14526,7 +14564,7 @@
 
                         // Render the text content
                         const textSpan = document.createElement('div');
-                        textSpan.contentEditable = true;
+                        textSpan.contentEditable = false;
                         const hasStoredEdit = storedEdit && storedEdit.new_text != null;
                         textSpan.textContent = '';
                         textSpan.style.display = 'block';
@@ -14781,36 +14819,68 @@
                             setOverlaySelection(field);
                         });
                         textSpan.addEventListener('keydown', function(e) {
-                            if (e.key === 'Enter') {
+                            if (e.key === 'Enter' && field.classList.contains('editing')) {
                                 e.preventDefault();
                                 document.execCommand('insertLineBreak');
                             }
+                            // Escape exits edit mode back to selected mode
+                            if (e.key === 'Escape' && field.classList.contains('editing')) {
+                                e.preventDefault();
+                                field.classList.remove('editing');
+                                textSpan.contentEditable = false;
+                                textSpan.blur();
+                                window.getSelection()?.removeAllRanges();
+                            }
                         });
                         textSpan.addEventListener('keyup', function() {
+                            if (field.classList.contains('editing')) {
+                                setOverlaySelection(field);
+                            }
+                        });
+
+                        // ── ilovepdf-style interaction ──
+                        // Single click = SELECT (show handles, enable drag, no text editing)
+                        field.addEventListener('mousedown', function(e) {
+                            if (e.target.closest('.box-menu') || e.target.classList.contains('resize-handle')) return;
+                            // Deactivate other fields
+                            overlay.querySelectorAll('.overlay-field.active').forEach(f => {
+                                if (f !== field) {
+                                    f.classList.remove('active', 'editing');
+                                    const ce = f.querySelector('[contenteditable]');
+                                    if (ce) ce.contentEditable = false;
+                                }
+                            });
+                            if (!field.classList.contains('active')) {
+                                // First click: select only (no text editing)
+                                field.classList.add('active');
+                                setOverlaySelection(field);
+                            }
+                        });
+
+                        // Double click = EDIT (enable text cursor)
+                        field.addEventListener('dblclick', function(e) {
+                            if (e.target.closest('.box-menu') || e.target.classList.contains('resize-handle')) return;
+                            field.classList.add('active', 'editing');
+                            textSpan.contentEditable = true;
+                            textSpan.focus();
+                            // Place cursor at click position
+                            const sel = window.getSelection();
+                            if (sel && e.target === textSpan || textSpan.contains(e.target)) {
+                                const range = document.caretRangeFromPoint(e.clientX, e.clientY);
+                                if (range) {
+                                    sel.removeAllRanges();
+                                    sel.addRange(range);
+                                }
+                            }
                             setOverlaySelection(field);
                         });
-                        // Activate field on click (anywhere on the box)
-                        field.addEventListener('click', function(e) {
-                            if (e.target.closest('.box-menu')) return;
-                            // Deactivate all other fields first
-                            overlay.querySelectorAll('.overlay-field.active').forEach(f => {
-                                if (f !== field) f.classList.remove('active');
-                            });
-                            field.classList.add('active');
-                            setOverlaySelection(field);
-                        });
-                        textSpan.addEventListener('focus', function() {
-                            overlay.querySelectorAll('.overlay-field.active').forEach(f => {
-                                if (f !== field) f.classList.remove('active');
-                            });
-                            field.classList.add('active');
-                        });
+
                         textSpan.addEventListener('blur', function(e) {
-                            // Delay removing active class to allow button clicks to register
+                            // Delay to allow button clicks to register
                             setTimeout(() => {
-                                // Only remove if not clicking on handles/menu
                                 if (!field.contains(document.activeElement) && !field.matches(':hover')) {
-                                    field.classList.remove('active');
+                                    field.classList.remove('active', 'editing');
+                                    textSpan.contentEditable = false;
                                 }
                             }, 250);
                         });
@@ -15042,8 +15112,6 @@
                                 
                                 isDragging = true;
                                 dragStart = { x: e.clientX, y: e.clientY };
-                                field.style.cursor = 'move';
-                                textSpan.style.pointerEvents = 'none'; // Prevent text selection during drag
                                 dragBtn.style.cursor = 'grabbing';
                                 // Hide menu during drag for cleaner UX
                                 boxMenu.style.display = 'none';
@@ -15053,10 +15121,14 @@
                             
                             dragBtn.addEventListener('mousedown', startDrag);
                             
-                            // Allow dragging the box itself (not the text or handles).
+                            // Allow dragging the whole box when in selected (not editing) mode.
                             field.addEventListener('mousedown', (e) => {
                                 if (e.target.closest('.box-menu') || e.target.classList.contains('resize-handle')) {
                                     return;
+                                }
+                                // Only drag if selected but not in text-editing mode
+                                if (field.classList.contains('active') && !field.classList.contains('editing')) {
+                                    startDrag(e);
                                 }
                             });
                             
@@ -15078,10 +15150,8 @@
                             const upHandler = function() {
                                 if (isDragging) {
                                     isDragging = false;
-                                    field.style.cursor = 'move';
                                     dragBtn.style.cursor = 'grab';
                                     boxMenu.style.display = '';
-                                    textSpan.style.pointerEvents = 'auto'; // Re-enable text interaction
                                     
                                     // Save the new position
                                     // Account for CSS padding: field position includes padding offset
@@ -15402,7 +15472,7 @@
                     field.style.alignItems = 'center';
                     
                     const textSpan = document.createElement('span');
-                    textSpan.contentEditable = true;
+                    textSpan.contentEditable = false;
                     textSpan.textContent = sanitizeOverlayText(storedEdit && storedEdit.new_text != null ? storedEdit.new_text : word.text);
                     
                     // Use the color from the PDF extraction (convert from integer to hex)
@@ -15819,7 +15889,8 @@
                     
                     const textSpan = overlayResizingField.querySelector('[contenteditable]');
                     if (textSpan) {
-                        textSpan.contentEditable = true;
+                        // Only re-enable editing if field was in editing mode before resize
+                        textSpan.contentEditable = overlayResizingField.classList.contains('editing');
                     }
                     const pageNumber = parseInt(overlayResizingField.dataset.pageNumber, 10);
                     const index = parseInt(overlayResizingField.dataset.wordIndex, 10);
