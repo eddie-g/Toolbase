@@ -5546,11 +5546,107 @@
                 if (!textEl) return;
 
                 const pageNumber = parseInt(field.dataset.pageNumber || '0', 10);
-                const index = field.dataset.wordIndex || `${pageNumber}-0`;
-                const originalWord = buildOriginalWordFromField(field, textEl.textContent);
-                const pageData = { page_number: pageNumber };
+                const editKey = field.dataset.wordIndex || `${pageNumber}-0`;
 
-                trackOverlayFieldChange(field, textEl, pageData, originalWord, index);
+                // Get current text correctly — if word spans are still absolutely
+                // positioned, textContent concatenates without spaces. Use innerText
+                // which respects visual layout, or join spans manually.
+                const hasPositionedSpans = textEl.querySelector('span') &&
+                    Array.from(textEl.querySelectorAll('span')).some(s => s.style.position === 'absolute');
+                let currentText;
+                if (hasPositionedSpans) {
+                    // Spans still positioned — text hasn't been edited yet, use original
+                    currentText = field.dataset.originalText || '';
+                } else {
+                    currentText = textEl.innerText || textEl.textContent || '';
+                }
+
+                // Compute scale factors from field dataset
+                const pageWidth = parseFloat(field.dataset.pageWidth || '0');
+                const pageHeight = parseFloat(field.dataset.pageHeight || '0');
+                const canvasWidth = parseFloat(field.dataset.canvasWidth || '0');
+                const canvasHeight = parseFloat(field.dataset.canvasHeight || '0');
+                const scaleX = canvasWidth / (pageWidth || 1);
+                const scaleY = canvasHeight / (pageHeight || 1);
+
+                // Convert pixel positions to PDF coordinates
+                const pad = parseFloat(field.dataset.padding || '0');
+                const pdfLeft = (parseFloat(field.style.left) / scaleX) + pad;
+                const pdfTop = (parseFloat(field.style.top) / scaleY) + pad;
+                const pdfWidth = (parseFloat(field.style.width) / scaleX) - (pad * 2);
+                const pdfHeight = (parseFloat(field.style.height) / scaleY) - (pad * 2);
+                const pdfOriginX = pdfLeft;
+                const pdfOriginY = pdfTop + pdfHeight;
+
+                // Original bbox
+                const origLeft = parseFloat(field.dataset.originalLeft || '0');
+                const origTop = parseFloat(field.dataset.originalTop || '0');
+                const origWidth = parseFloat(field.dataset.originalWidth || '0');
+                const origHeight = parseFloat(field.dataset.originalHeight || '0');
+
+                // Font info
+                const fontFamily = field.style.fontFamily || 'Helvetica';
+                const fontWeight = field.dataset.fontWeight || '400';
+                const fontStyle = field.dataset.fontStyle || 'normal';
+                const computedStyle = window.getComputedStyle(textEl);
+                const fontSizePx = computedStyle.fontSize;
+                const lineHeightPx = computedStyle.lineHeight !== 'normal' ? computedStyle.lineHeight : '';
+                const fontSizePdf = parseFloat(field.dataset.fontSize || (parseFloat(fontSizePx) / scaleY) || '12');
+                const textColor = field.dataset.textColor || computedStyle.color || '#000000';
+                const lineHeightValue = parseFloat(field.dataset.lineHeight) || null;
+
+                // Build rich_html and word_styles (same as input handler)
+                const richHtml = buildBlockRichHtml(textEl, fontFamily, fontWeight, fontStyle, fontSizePx, lineHeightPx, textColor);
+
+                // When building word_styles, apply any field-level style overrides
+                // (e.g., user toggled bold on the whole block via toolbar).
+                const fieldFontWeight = parseInt(fontWeight) || 400;
+                const fieldIsBold = fieldFontWeight >= 700;
+                const fieldIsItalic = fontStyle === 'italic';
+
+                const wordStylesArr = (field._blockWords || []).map(w => ({
+                    text: w.text,
+                    font: w.font,
+                    font_xref: w.font_xref || null,
+                    font_size: w.font_size,
+                    font_weight: fieldFontWeight || w.font_weight || 400,
+                    italic: fieldIsItalic || !!w.italic,
+                    bold: fieldIsBold || !!w.bold,
+                    color: w.color,
+                    hex_color: textColor || w.hex_color || '#000000',
+                    left: w.left,
+                    top: w.top,
+                    width: w.width,
+                    height: w.height,
+                    origin_x: w.origin_x,
+                    origin_y: w.origin_y,
+                    ascender: w.ascender,
+                    descender: w.descender
+                }));
+
+                overlayEditedFields.set(editKey, {
+                    page_number: pageNumber,
+                    block_num: field.dataset.blockNum ? parseInt(field.dataset.blockNum, 10) : undefined,
+                    original_text: field.dataset.originalText || '',
+                    new_text: currentText,
+                    rich_html: richHtml,
+                    word_styles: wordStylesArr,
+                    bbox: [pdfLeft, pdfTop, pdfLeft + pdfWidth, pdfTop + pdfHeight],
+                    original_bbox: [origLeft, origTop, origLeft + origWidth, origTop + origHeight],
+                    origin_x: pdfOriginX,
+                    origin_y: pdfOriginY,
+                    font: field.dataset.font || 'Helvetica',
+                    font_size: fontSizePdf,
+                    font_weight: fontWeight,
+                    font_style: fontStyle,
+                    font_xref: field.dataset.fontXref ? parseInt(field.dataset.fontXref, 10) : null,
+                    line_height: lineHeightValue,
+                    color: textColor
+                });
+
+                persistOverlayEdits();
+                updateOverlaySaveButton();
+                pushUndoState();
             }
 
             function mapFontFamilyToKey(fontFamily) {
@@ -11856,10 +11952,12 @@
                                              Math.abs(ob[1] - nb[1]) < 2 &&
                                              Math.abs(ob[2] - nb[2]) < 2 &&
                                              Math.abs(ob[3] - nb[3]) < 2;
-                        // Check if any style property was changed
-                        const hasStyleEdit = editData.font_weight || editData.font_style ||
+                        // Check if any style property or rich data was changed
+                        const hasStyleEdit = (editData.font_weight && editData.font_weight !== '400' && editData.font_weight !== 'normal') ||
+                                             (editData.font_style && editData.font_style !== 'normal') ||
                                              (editData.color && editData.color !== '#000000') ||
-                                             editData.rich_html || editData.word_styles;
+                                             editData.rich_html ||
+                                             (editData.word_styles && editData.word_styles.length > 0);
                         if (posUnchanged && !hasStyleEdit) {
                             console.log('Skipping no-op edit (text, position & style unchanged):', key);
                             continue;
@@ -14723,8 +14821,10 @@
                         field.dataset.originalOriginY = blockTop + blockHeight;
                         field.dataset.pageNumber = pageData.page_number;
                         field.dataset.wordIndex = key;
+                        field.dataset.blockNum = block.block_num;
                         field.dataset.font = block.font;
                         field.dataset.fontSize = block.font_size;
+                        field.dataset.lineHeight = lineHeightValue || '';
                         if (block.font_xref !== undefined && block.font_xref !== null) {
                             field.dataset.fontXref = block.font_xref;
                         }

@@ -519,8 +519,8 @@ def apply_edits(pdf_path, edits_json):
             if not original_text or not original_text.strip():
                 continue
 
-            # SKIP NO-OP EDITS: If text is identical and position hasn't moved,
-            # there's nothing to scrub or re-insert. This prevents duplication.
+            # SKIP NO-OP EDITS: If text is identical, position hasn't moved,
+            # AND no style changes, there's nothing to scrub or re-insert.
             bbox = edit.get('bbox')
             if original_text.strip() == new_text.strip() and original_bbox and bbox:
                 # Check if position essentially unchanged (within 2pt tolerance)
@@ -528,8 +528,19 @@ def apply_edits(pdf_path, edits_json):
                                  abs(original_bbox[1] - bbox[1]) < 2 and
                                  abs(original_bbox[2] - bbox[2]) < 2 and
                                  abs(original_bbox[3] - bbox[3]) < 2)
-                if pos_unchanged:
-                    print(f"  ⊘ Skipping no-op edit for '{original_text[:30]}...' (text & position unchanged)")
+                # Check if style changed (font_weight, font_style, color)
+                has_style_change = False
+                fw = edit.get('font_weight')
+                if fw and str(fw) not in ('400', 'normal', ''):
+                    has_style_change = True
+                fs = edit.get('font_style')
+                if fs and fs not in ('normal', ''):
+                    has_style_change = True
+                # rich_html or word_styles indicate styled content that must be re-inserted
+                if edit.get('rich_html') or edit.get('word_styles'):
+                    has_style_change = True
+                if pos_unchanged and not has_style_change:
+                    print(f"  ⊘ Skipping no-op edit for '{original_text[:30]}...' (text, position & style unchanged)")
                     edit['_skip_insert'] = True  # Flag to skip Phase B too
                     continue
 
