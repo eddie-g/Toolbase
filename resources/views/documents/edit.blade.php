@@ -11803,9 +11803,10 @@
                 for (const [key, editData] of overlayEditedFields.entries()) {
                     console.log('Preparing edit:', key, editData);
                     
-                    // SKIP NO-OP EDITS: If text is unchanged and position hasn't moved,
-                    // don't send to server at all. This prevents duplication bugs where
-                    // the scrub phase fails to remove old text and insertion adds a copy.
+                    // SKIP NO-OP EDITS: If text is unchanged, position hasn't moved,
+                    // AND style hasn't changed, don't send to server at all.
+                    // This prevents duplication bugs where the scrub phase fails to
+                    // remove old text and insertion adds a copy.
                     const origText = String(editData.original_text || '').trim();
                     const newText = String(editData.new_text || '').trim();
                     if (origText === newText && editData.original_bbox && editData.bbox) {
@@ -11815,8 +11816,12 @@
                                              Math.abs(ob[1] - nb[1]) < 2 &&
                                              Math.abs(ob[2] - nb[2]) < 2 &&
                                              Math.abs(ob[3] - nb[3]) < 2;
-                        if (posUnchanged) {
-                            console.log('Skipping no-op edit (text & position unchanged):', key);
+                        // Check if any style property was changed
+                        const hasStyleEdit = editData.font_weight || editData.font_style ||
+                                             (editData.color && editData.color !== '#000000') ||
+                                             editData.rich_html || editData.word_styles;
+                        if (posUnchanged && !hasStyleEdit) {
+                            console.log('Skipping no-op edit (text, position & style unchanged):', key);
                             continue;
                         }
                     }
@@ -11849,6 +11854,15 @@
                 }
                 
                 console.log('Sending edits to server:', edits);
+                
+                // If all edits were filtered as no-ops, nothing to save
+                if (edits.length === 0) {
+                    console.log('All edits were no-ops after filtering, clearing dirty state');
+                    overlayEditedFields.clear();
+                    updateOverlaySaveButton();
+                    setStatus('No effective changes to save.', '');
+                    return false;
+                }
                 
                 // Validate edits before sending
                 edits.forEach((edit, idx) => {
