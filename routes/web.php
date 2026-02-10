@@ -5,6 +5,7 @@ use App\Http\Controllers\DeveloperChatController;
 use App\Http\Controllers\AIController;
 use App\Http\Controllers\ComplianceController;
 use App\Http\Controllers\OverlayEditorTestController;
+use App\Http\Controllers\ShapeTestController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -77,6 +78,10 @@ Route::post('/compliance/run-single-test', [ComplianceController::class, 'runSin
 
 Route::get('/overlay-editor/test-files', [OverlayEditorTestController::class, 'getTestFiles'])->name('overlayEditor.testFiles');
 Route::post('/overlay-editor/run-single-test', [OverlayEditorTestController::class, 'runSingleTest'])->name('overlayEditor.runSingleTest');
+
+Route::get('/shapes/test-files', [ShapeTestController::class, 'getTestFiles'])->name('shapes.testFiles');
+Route::post('/shapes/run-single-test', [ShapeTestController::class, 'runSingleTest'])->name('shapes.runSingleTest');
+Route::post('/shapes/run-all-tests', [ShapeTestController::class, 'runAllTests'])->name('shapes.runAllTests');
 
 Route::delete('/documents/{document}', [DocumentController::class, 'destroy'])->name('documents.destroy');
 Route::post('/documents/bulk-destroy', [DocumentController::class, 'bulkDestroy'])->name('documents.bulkDestroy');

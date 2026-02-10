@@ -29,6 +29,21 @@ except ImportError:
     sys.exit(1)
 
 
+import re as _re
+
+# Regex to strip XML-illegal characters (NULL bytes, control chars except tab/newline/cr)
+_XML_ILLEGAL_RE = _re.compile(
+    '[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x84\x86-\x9f'
+    '\ud800-\udfff\ufdd0-\ufdef\ufffe\uffff]'
+)
+
+def sanitize_for_xml(text):
+    """Remove characters that are illegal in XML 1.0."""
+    if not text:
+        return text
+    return _XML_ILLEGAL_RE.sub('', text)
+
+
 def extract_page_blocks(page):
     """Extract text blocks from a page using PyMuPDF dict output."""
     blocks = page.get_text("dict", sort=True)["blocks"]
@@ -69,7 +84,7 @@ def color_from_int(color_int):
 
 def add_span_to_paragraph(paragraph, span):
     """Add a span with formatting to a Word paragraph."""
-    text = span.get("text", "")
+    text = sanitize_for_xml(span.get("text", ""))
     if not text:
         return
     
@@ -305,7 +320,7 @@ def main():
                         if page_idx > 0:
                             word_doc.add_page_break()
                         for line_text in ocr_lines:
-                            paragraph = word_doc.add_paragraph(line_text)
+                            paragraph = word_doc.add_paragraph(sanitize_for_xml(line_text))
                             paragraph.paragraph_format.space_after = Pt(2)
                     continue
                 

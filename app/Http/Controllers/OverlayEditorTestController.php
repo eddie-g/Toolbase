@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\OverlayEditorTest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 
@@ -47,6 +48,7 @@ class OverlayEditorTestController extends Controller
 
     /**
      * Run validation on a single PDF and return results.
+     * Saves the result to the tests_overlay_editor table.
      */
     public function runSingleTest(Request $request)
     {
@@ -87,9 +89,27 @@ class OverlayEditorTestController extends Controller
         $result['test_category'] = $result['test_category'] ?? 'Overlay Editor';
         $result['section_name'] = $result['section_name'] ?? 'Extraction Validation';
 
+        // Save to database
+        $report = OverlayEditorTest::create([
+            'run_id' => $runId,
+            'test_type' => 'extraction',
+            'filename' => $result['filename'] ?? basename($filePath),
+            'description' => $result['description'] ?? '',
+            'test_category' => $result['test_category'],
+            'section_name' => $result['section_name'],
+            'status' => $result['status'] ?? 'error',
+            'checks' => $result['checks'] ?? [],
+            'checks_passed' => $result['checks_passed'] ?? 0,
+            'checks_total' => $result['checks_total'] ?? 0,
+            'page_count' => $result['page_count'] ?? 0,
+            'file_size' => $result['file_size'] ?? 0,
+            'error' => $result['error'] ?? null,
+            'warnings' => $result['warnings'] ?? [],
+        ]);
+
         return response()->json([
             'success' => true,
-            'result' => $result,
+            'result' => array_merge($result, ['id' => $report->id]),
         ]);
     }
 }

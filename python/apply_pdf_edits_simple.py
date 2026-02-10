@@ -650,6 +650,18 @@ def apply_edits(pdf_path, edits_json):
                 continue
 
             rect = fitz.Rect(bbox[0], bbox[1], bbox[2], bbox[3])
+            # ── CLAMP RECT TO PAGE BOUNDARIES ──────────────────────────
+            # Text must NEVER be placed outside the page. Intersect the
+            # insertion rect with the page rect so it stays within bounds.
+            page_r = page.rect
+            rect = rect & page_r  # fitz.Rect intersection
+            if rect.is_empty or rect.width < 1 or rect.height < 1:
+                print(f"  ⚠ Clamped rect is empty/tiny — placing at page origin")
+                rect = fitz.Rect(page_r.x0, page_r.y0,
+                                 min(page_r.x0 + 200, page_r.x1),
+                                 min(page_r.y0 + 50, page_r.y1))
+            # Update bbox to match the clamped rect
+            bbox = [rect.x0, rect.y0, rect.x1, rect.y1]
             font_size = edit.get('font_size', 12)
             font_name = edit.get('font', 'Arimo')
             font_xref = edit.get('font_xref')
@@ -806,6 +818,40 @@ def apply_edits(pdf_path, edits_json):
                         return result
 
                     mapped_words = _build_word_edits(word_styles, original_text, new_text_stripped)
+
+                    # ── BOUNDS CHECK ───────────────────────────────────────
+                    # Before using TextWriter (absolute positioning, no wrap),
+                    # verify that all words after the move delta will stay
+                    # within the page rect.  If ANY word would go off-page,
+                    # skip word_styles entirely and fall through to
+                    # insert_textbox which wraps text within the bbox rect.
+                    page_rect = page.rect
+                    words_off_page = False
+                    for mw_check in mapped_words:
+                        check_x = mw_check.get('origin_x', mw_check.get('left', bbox[0])) + ws_delta_x
+                        check_y_top = mw_check.get('top', bbox[1]) + ws_delta_y
+                        check_w = mw_check.get('width', 0)
+                        check_y_bot = check_y_top + mw_check.get('height', mw_check.get('font_size', font_size))
+                        if (check_x < page_rect.x0 - 1 or
+                            check_x + check_w > page_rect.x1 + 1 or
+                            check_y_top < page_rect.y0 - 1 or
+                            check_y_bot > page_rect.y1 + 1):
+                            words_off_page = True
+                            break
+
+                    # Also check: if the bbox itself extends beyond the page,
+                    # word_styles absolute positioning will place text off-page.
+                    if not words_off_page:
+                        if (bbox[0] < page_rect.x0 - 1 or
+                            bbox[2] > page_rect.x1 + 1 or
+                            bbox[1] < page_rect.y0 - 1 or
+                            bbox[3] > page_rect.y1 + 1):
+                            words_off_page = True
+
+                    if words_off_page:
+                        print(f"  ⚠ word_styles would place text off-page, falling back to insert_textbox (wrapping)")
+                        # Fall through to insert_textbox by raising to the except handler
+                        raise ValueError("word_styles off-page — use insert_textbox instead")
 
                     # Re-insert each word with its own font/size/style
                     tw = fitz.TextWriter(page.rect)

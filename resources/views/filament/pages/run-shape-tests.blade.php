@@ -1,5 +1,5 @@
 <x-filament-panels::page>
-    <div x-data="overlayEditorTestRunner()" x-init="init()" class="space-y-6">
+    <div x-data="shapeTestRunner()" x-init="init()" class="space-y-6">
         {{-- Controls --}}
         <div class="flex items-center justify-between">
             <div class="flex items-center gap-4">
@@ -7,9 +7,9 @@
                     x-on:click="startTests()"
                     x-bind:disabled="running"
                     icon="heroicon-o-play"
-                    color="primary"
+                    color="warning"
                 >
-                    <span x-show="!running">Start Overlay Tests</span>
+                    <span x-show="!running">Start Shape Tests</span>
                     <span x-show="running" x-cloak>Running...</span>
                 </x-filament::button>
 
@@ -38,13 +38,28 @@
             </div>
         </div>
 
+        {{-- Description --}}
+        <div class="bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-800 rounded-xl p-4">
+            <div class="flex items-start gap-3">
+                <x-heroicon-o-cube class="h-5 w-5 text-yellow-500 mt-0.5 flex-shrink-0" />
+                <div>
+                    <div class="font-medium text-yellow-700 dark:text-yellow-300">Shape Tool Tests</div>
+                    <div class="text-sm text-yellow-600 dark:text-yellow-400 mt-1">
+                        Tests the shape drawing tool by creating a blank PDF, adding each shape type
+                        (rectangle, circle, triangle, arrow, star, checkmark, hexagon, X mark),
+                        saving the PDF, then verifying each shape's drawings, fill, stroke, and positioning in the output.
+                    </div>
+                </div>
+            </div>
+        </div>
+
         {{-- Progress Bar --}}
         <div x-show="running || completedCount > 0" x-cloak>
             <div class="relative w-full bg-gray-200 dark:bg-gray-700 rounded-full h-4 overflow-hidden">
                 <div
                     class="h-full rounded-full transition-all duration-300 ease-out"
                     x-bind:class="{
-                        'bg-primary-500': running,
+                        'bg-warning-500': running,
                         'bg-success-500': !running && failedCount === 0 && errorCount === 0,
                         'bg-danger-500': !running && (failedCount > 0 || errorCount > 0)
                     }"
@@ -79,14 +94,14 @@
 
         {{-- Currently Running --}}
         <div x-show="running && currentTest" x-cloak
-             class="bg-primary-50 dark:bg-primary-950/20 border border-primary-200 dark:border-primary-800 rounded-xl p-4 flex items-center gap-3">
-            <svg class="animate-spin h-5 w-5 text-primary-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+             class="bg-warning-50 dark:bg-warning-950/20 border border-warning-200 dark:border-warning-800 rounded-xl p-4 flex items-center gap-3">
+            <svg class="animate-spin h-5 w-5 text-warning-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
             <div>
-                <div class="font-medium text-primary-700 dark:text-primary-300" x-text="'Validating: ' + currentTest"></div>
-                <div class="text-sm text-primary-600 dark:text-primary-400" x-text="currentDescription"></div>
+                <div class="font-medium text-warning-700 dark:text-warning-300" x-text="'Testing: ' + currentTest"></div>
+                <div class="text-sm text-warning-600 dark:text-warning-400" x-text="currentDescription"></div>
             </div>
         </div>
 
@@ -98,7 +113,7 @@
                         <tr>
                             <th class="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">#</th>
                             <th class="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Result</th>
-                            <th class="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">PDF File</th>
+                            <th class="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Shape</th>
                             <th class="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Description</th>
                             <th class="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Checks</th>
                             <th class="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Details</th>
@@ -125,7 +140,7 @@
                                           x-text="r.status">
                                     </span>
                                 </td>
-                                <td class="px-4 py-2.5 font-mono text-xs text-gray-700 dark:text-gray-300 max-w-xs truncate" x-text="r.filename"></td>
+                                <td class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300" x-text="r.section_name || r.filename"></td>
                                 <td class="px-4 py-2.5 text-gray-600 dark:text-gray-400 max-w-sm truncate" x-text="r.description" x-bind:title="r.description"></td>
                                 <td class="px-4 py-2.5"
                                     x-bind:class="r.checks_passed === r.checks_total ? 'text-success-600' : 'text-danger-600'">
@@ -142,13 +157,13 @@
             </div>
         </div>
 
-        {{-- Expanded Check Details (per-result) --}}
+        {{-- Expanded Check Details --}}
         <template x-for="(r, idx) in results" :key="'detail-' + idx">
             <div x-show="expandedIndex === idx" x-cloak x-transition
                  class="bg-white dark:bg-gray-800 rounded-xl shadow-sm ring-1 ring-gray-950/5 dark:ring-white/10 overflow-hidden">
                 <div class="px-4 py-3 bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
                     <h3 class="font-semibold text-gray-900 dark:text-white">
-                        <span x-text="r.filename"></span> — Individual Checks
+                        <span x-text="(r.section_name || r.filename) + ' — Individual Checks'"></span>
                     </h3>
                     <x-filament::button size="xs" color="gray" x-on:click="expandedIndex = null">
                         Close
@@ -194,21 +209,21 @@
 
         {{-- Empty State --}}
         <div x-show="!running && results.length === 0 && !loading" class="text-center py-12">
-            <x-heroicon-o-beaker class="mx-auto h-12 w-12 text-gray-400" />
-            <h3 class="mt-2 text-sm font-semibold text-gray-900 dark:text-white">No Tests Run</h3>
+            <x-heroicon-o-cube class="mx-auto h-12 w-12 text-gray-400" />
+            <h3 class="mt-2 text-sm font-semibold text-gray-900 dark:text-white">No Shape Tests Run</h3>
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                Click "Start Overlay Tests" to validate PDF extraction for all test files in <code class="bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded text-xs">tests/OverlayEditor/</code>.
-                <br>Each PDF is extracted and compared against its ground truth. Checks include text match, position accuracy, font data, word-level integrity, and clean PDF generation.
+                Click "Start Shape Tests" to create blank PDFs, draw each shape type, and verify they render correctly.
+                <br>Tests cover: Rectangle, Circle, Triangle, Arrow, Star, Checkmark, Hexagon, and X Mark.
             </p>
         </div>
 
         {{-- Loading State --}}
         <div x-show="loading" x-cloak class="text-center py-12">
-            <svg class="animate-spin mx-auto h-8 w-8 text-primary-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <svg class="animate-spin mx-auto h-8 w-8 text-warning-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
-            <p class="mt-3 text-sm text-gray-500 dark:text-gray-400">Loading test files...</p>
+            <p class="mt-3 text-sm text-gray-500 dark:text-gray-400">Loading shape tests...</p>
         </div>
 
         {{-- Completion Banner --}}
@@ -227,7 +242,7 @@
                 <div>
                     <div class="font-semibold"
                          x-bind:class="failedCount === 0 && errorCount === 0 ? 'text-success-700 dark:text-success-300' : 'text-danger-700 dark:text-danger-300'"
-                         x-text="'Validation Complete — ' + passedCount + ' passed, ' + failedCount + ' failed, ' + errorCount + ' errors out of ' + completedCount + ' PDFs'">
+                         x-text="'Shape Tests Complete — ' + passedCount + ' passed, ' + failedCount + ' failed, ' + errorCount + ' errors out of ' + completedCount + ' tests'">
                     </div>
                     <div class="text-sm mt-1"
                          x-bind:class="failedCount === 0 && errorCount === 0 ? 'text-success-600 dark:text-success-400' : 'text-danger-600 dark:text-danger-400'">
@@ -250,7 +265,7 @@
     </style>
 
     <script>
-        function overlayEditorTestRunner() {
+        function shapeTestRunner() {
             return {
                 running: false,
                 loading: false,
@@ -296,12 +311,12 @@
                     this.expandedIndex = null;
 
                     try {
-                        // Fetch the list of test files
-                        const listResponse = await fetch('/overlay-editor/test-files');
+                        // Fetch the list of shape tests (for UI setup + run_id)
+                        const listResponse = await fetch('/shapes/test-files');
                         const listData = await listResponse.json();
 
                         if (!listData.success) {
-                            alert('Failed to load test files: ' + (listData.message || 'Unknown error'));
+                            alert('Failed to load shape tests: ' + (listData.message || 'Unknown error'));
                             this.running = false;
                             this.loading = false;
                             return;
@@ -312,62 +327,63 @@
                         this.runId = listData.run_id;
                         this.loading = false;
 
-                        // Run tests one by one
-                        for (let i = 0; i < this.files.length; i++) {
-                            if (this.cancelled) break;
+                        // Show "running all tests" status
+                        this.currentTest = 'All Shapes (batch mode)';
+                        this.currentDescription = 'Running all 8 shape tests in a single browser session for speed...';
 
-                            const file = this.files[i];
-                            this.currentTest = file.filename;
-                            this.currentDescription = file.description;
+                        // Use the batch endpoint — one request, one browser, all shapes
+                        try {
+                            const response = await fetch('/shapes/run-all-tests', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'X-CSRF-TOKEN': '{{ csrf_token() }}',
+                                },
+                                body: JSON.stringify({
+                                    run_id: this.runId,
+                                }),
+                            });
 
-                            try {
-                                const response = await fetch('/overlay-editor/run-single-test', {
-                                    method: 'POST',
-                                    headers: {
-                                        'Content-Type': 'application/json',
-                                        'X-CSRF-TOKEN': '{{ csrf_token() }}',
-                                    },
-                                    body: JSON.stringify({
-                                        file_path: file.path,
-                                        run_id: this.runId,
-                                    }),
-                                });
+                            const data = await response.json();
 
-                                const data = await response.json();
-
-                                if (data.success && data.result) {
-                                    this.results.push(data.result);
+                            if (data.success && data.results) {
+                                for (const result of data.results) {
+                                    this.results.push(result);
                                     this.completedCount++;
 
-                                    if (data.result.status === 'pass') {
+                                    if (result.status === 'pass') {
                                         this.passedCount++;
-                                    } else if (data.result.status === 'fail') {
+                                    } else if (result.status === 'fail') {
                                         this.failedCount++;
                                     } else {
                                         this.errorCount++;
                                     }
-                                } else {
-                                    // API error
+                                }
+                            } else {
+                                // Batch failed — show error for all shapes
+                                for (const file of this.files) {
                                     this.results.push({
                                         filename: file.filename,
                                         description: file.description,
-                                        test_category: 'Overlay Editor',
-                                        section_name: 'Extraction Validation',
+                                        test_category: 'Shapes',
+                                        section_name: file.section_name,
                                         status: 'error',
                                         checks_passed: 0,
                                         checks_total: 0,
                                         checks: [],
-                                        error: data.message || 'Request failed',
+                                        error: data.message || 'Batch request failed',
                                     });
                                     this.completedCount++;
                                     this.errorCount++;
                                 }
-                            } catch (fetchError) {
+                            }
+                        } catch (fetchError) {
+                            for (const file of this.files) {
                                 this.results.push({
                                     filename: file.filename,
                                     description: file.description,
-                                    test_category: 'Overlay Editor',
-                                    section_name: 'Extraction Validation',
+                                    test_category: 'Shapes',
+                                    section_name: file.section_name,
                                     status: 'error',
                                     checks_passed: 0,
                                     checks_total: 0,
@@ -377,17 +393,9 @@
                                 this.completedCount++;
                                 this.errorCount++;
                             }
-
-                            // Scroll the latest result into view
-                            this.$nextTick(() => {
-                                const table = document.querySelector('table tbody tr:last-child');
-                                if (table) {
-                                    table.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                                }
-                            });
                         }
                     } catch (err) {
-                        alert('Error starting tests: ' + err.message);
+                        alert('Error starting shape tests: ' + err.message);
                     }
 
                     this.running = false;

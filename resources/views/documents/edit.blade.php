@@ -1535,17 +1535,18 @@
             /* ilovepdf-style states: invisible → hover → selected → editing */
             .overlay-field {
                 outline: none !important;
-                border: 2px solid transparent !important;
+                border: 2px solid rgba(66, 133, 244, 0.25) !important;
                 transition: border-color 0.15s, box-shadow 0.15s;
-                overflow: hidden !important;
+                overflow: hidden;
             }
             .overlay-field:hover:not(.active) {
-                border-color: rgba(66, 133, 244, 0.35) !important;
+                border-color: rgba(66, 133, 244, 0.5) !important;
                 background: rgba(66, 133, 244, 0.04) !important;
             }
             .overlay-field.active {
                 border-color: rgba(66, 133, 244, 0.8) !important;
                 box-shadow: 0 0 0 1px rgba(66, 133, 244, 0.3) !important;
+                overflow: visible;
             }
             .overlay-field.active:not(.editing) {
                 cursor: move;
@@ -1780,10 +1781,11 @@
                 inset: 0;
             }
             .viewer.overlay-view-mode .overlay-field {
-                border: none !important;
+                border: 2px solid transparent !important;
                 background: transparent !important;
                 cursor: default !important;
                 box-shadow: none !important;
+                overflow: hidden !important;
             }
             .viewer.overlay-view-mode .overlay-field [contenteditable] {
                 cursor: default !important;
@@ -8317,6 +8319,7 @@
                             f.classList.remove('active', 'editing');
                             const ce = f.querySelector('[contenteditable]');
                             if (ce) ce.contentEditable = false;
+                            if (f.dataset.originalZIndex) f.style.zIndex = f.dataset.originalZIndex;
                         });
                         clearOverlaySelection();
                         updateSelectionBar();
@@ -13978,7 +13981,10 @@
                 overlay.addEventListener('click', (event) => {
                     if (event.target === overlay) {
                         clearOverlaySelection();
-                        overlay.querySelectorAll('.overlay-field.active').forEach(f => f.classList.remove('active'));
+                        overlay.querySelectorAll('.overlay-field.active').forEach(f => {
+                            f.classList.remove('active');
+                            if (f.dataset.originalZIndex) f.style.zIndex = f.dataset.originalZIndex;
+                        });
                         updateSelectionBar();
                         if (toolMode !== 'text') {
                             setSelection(null);
@@ -14097,7 +14103,10 @@
 
                     if (event.target === overlay) {
                         clearOverlaySelection();
-                        overlay.querySelectorAll('.overlay-field.active').forEach(f => f.classList.remove('active'));
+                        overlay.querySelectorAll('.overlay-field.active').forEach(f => {
+                            f.classList.remove('active');
+                            if (f.dataset.originalZIndex) f.style.zIndex = f.dataset.originalZIndex;
+                        });
                         updateSelectionBar();
                         if (toolMode !== 'text') {
                             setSelection(null);
@@ -15109,9 +15118,16 @@
                         const baseWidth = storedEdit ? (storedEdit.bbox[2] - storedEdit.bbox[0]) : blockWidth;
                         const baseHeight = storedEdit ? (storedEdit.bbox[3] - storedEdit.bbox[1]) : blockHeight;
 
+                        // Extra width to prevent text clipping:
+                        // 4px compensates for the 2px border on each side (box-sizing: border-box
+                        // causes the border to eat into content area), plus a font-size-based
+                        // buffer for rendering differences between PDF embedded fonts and web fonts.
+                        const fontSizeScaled = block.font_size * scaleY;
+                        const widthBuffer = 4 + Math.max(2, fontSizeScaled * 0.15);
+
                         field.style.left = ((baseLeft * scaleX) - paddingX) + 'px';
                         field.style.top = ((baseTop * scaleY) - paddingY) + 'px';
-                        field.style.width = ((baseWidth * scaleX) + (paddingX * 2)) + 'px';
+                        field.style.width = ((baseWidth * scaleX) + (paddingX * 2) + widthBuffer) + 'px';
                         field.style.height = ((baseHeight * scaleY) + (paddingY * 2)) + 'px';
                         field.style.zIndex = blockIndex + 1;
 
@@ -15125,7 +15141,7 @@
                             if (bounds) {
                                 const expectedLeft = (bounds.left * scaleX) - paddingX;
                                 const expectedTop = (bounds.top * scaleY) - paddingY;
-                                const expectedWidth = (bounds.width * scaleX) + (paddingX * 2);
+                                const expectedWidth = (bounds.width * scaleX) + (paddingX * 2) + widthBuffer;
                                 const expectedHeight = (bounds.height * scaleY) + (paddingY * 2);
 
                                 field.style.left = expectedLeft + 'px';
@@ -15281,17 +15297,22 @@
                         // Single click = SELECT (show handles, enable drag, no text editing)
                         field.addEventListener('mousedown', function(e) {
                             if (e.target.closest('.box-menu') || e.target.classList.contains('resize-handle')) return;
-                            // Deactivate other fields
+                            // Deactivate other fields and restore their z-index
                             overlay.querySelectorAll('.overlay-field.active').forEach(f => {
                                 if (f !== field) {
                                     f.classList.remove('active', 'editing');
                                     const ce = f.querySelector('[contenteditable]');
                                     if (ce) ce.contentEditable = false;
+                                    // Restore original z-index
+                                    if (f.dataset.originalZIndex) f.style.zIndex = f.dataset.originalZIndex;
                                 }
                             });
                             if (!field.classList.contains('active')) {
                                 // First click: select only (no text editing)
                                 field.classList.add('active');
+                                // Bump z-index so box-menu isn't hidden behind adjacent fields
+                                if (!field.dataset.originalZIndex) field.dataset.originalZIndex = field.style.zIndex || '1';
+                                field.style.zIndex = '9999';
                                 setOverlaySelection(field);
                             }
                         });
@@ -15351,6 +15372,8 @@
                                 if (!field.contains(document.activeElement) && !field.matches(':hover')) {
                                     field.classList.remove('active', 'editing');
                                     textSpan.contentEditable = false;
+                                    // Restore original z-index
+                                    if (field.dataset.originalZIndex) field.style.zIndex = field.dataset.originalZIndex;
                                 }
                             }, 250);
                         });
@@ -15596,8 +15619,11 @@
                                 if (e.target.closest('.box-menu') || e.target.classList.contains('resize-handle')) {
                                     return;
                                 }
-                                // Only drag if selected but not in text-editing mode
-                                if (field.classList.contains('active') && !field.classList.contains('editing')) {
+                                // Only drag if selected but not in text-editing mode.
+                                // Skip on multi-clicks (e.detail >= 2) so double-click word
+                                // selection works — otherwise startDrag's preventDefault()
+                                // kills the browser's native selection.
+                                if (field.classList.contains('active') && !field.classList.contains('editing') && e.detail < 2) {
                                     startDrag(e);
                                 }
                             });
@@ -15636,10 +15662,22 @@
                                     // Save the new position
                                     // Account for CSS padding: field position includes padding offset
                                     const pad = parseFloat(field.dataset.padding) || 0;
-                                    const newLeft = (parseFloat(field.style.left) / scaleX) + pad;
-                                    const newTop = (parseFloat(field.style.top) / scaleY) + pad;
-                                    const width = (parseFloat(field.style.width) / scaleX) - (pad * 2);
-                                    const height = (parseFloat(field.style.height) / scaleY) - (pad * 2);
+                                    let newLeft = (parseFloat(field.style.left) / scaleX) + pad;
+                                    let newTop = (parseFloat(field.style.top) / scaleY) + pad;
+                                    let width = (parseFloat(field.style.width) / scaleX) - (pad * 2);
+                                    let height = (parseFloat(field.style.height) / scaleY) - (pad * 2);
+                                    
+                                    // Clamp bbox to PDF page boundaries — text must NEVER go off-page
+                                    const pdfPageW = parseFloat(field.dataset.pageWidth || '0');
+                                    const pdfPageH = parseFloat(field.dataset.pageHeight || '0');
+                                    if (pdfPageW > 0 && pdfPageH > 0) {
+                                        if (newLeft < 0) { width += newLeft; newLeft = 0; }
+                                        if (newTop < 0) { height += newTop; newTop = 0; }
+                                        if (newLeft + width > pdfPageW) width = pdfPageW - newLeft;
+                                        if (newTop + height > pdfPageH) height = pdfPageH - newTop;
+                                        if (width < 1) width = 1;
+                                        if (height < 1) height = 1;
+                                    }
                                     
                                     // Calculate NEW origin based on the NEW position (not original!)
                                     // origin_x is the left edge, origin_y is the bottom edge (baseline area)
@@ -15863,10 +15901,22 @@
                                 // Save the new dimensions
                                 // Account for CSS padding: field position includes padding offset
                                 const pad = parseFloat(field.dataset.padding) || 0;
-                                const newLeft = (parseFloat(field.style.left) / scaleX) + pad;
-                                const newTop = (parseFloat(field.style.top) / scaleY) + pad;
-                                const newWidth = (parseFloat(field.style.width) / scaleX) - (pad * 2);
-                                const newHeight = (parseFloat(field.style.height) / scaleY) - (pad * 2);
+                                let newLeft = (parseFloat(field.style.left) / scaleX) + pad;
+                                let newTop = (parseFloat(field.style.top) / scaleY) + pad;
+                                let newWidth = (parseFloat(field.style.width) / scaleX) - (pad * 2);
+                                let newHeight = (parseFloat(field.style.height) / scaleY) - (pad * 2);
+                                
+                                // Clamp bbox to PDF page boundaries — text must NEVER go off-page
+                                const rsPageW = parseFloat(field.dataset.pageWidth || '0');
+                                const rsPageH = parseFloat(field.dataset.pageHeight || '0');
+                                if (rsPageW > 0 && rsPageH > 0) {
+                                    if (newLeft < 0) { newWidth += newLeft; newLeft = 0; }
+                                    if (newTop < 0) { newHeight += newTop; newTop = 0; }
+                                    if (newLeft + newWidth > rsPageW) newWidth = rsPageW - newLeft;
+                                    if (newTop + newHeight > rsPageH) newHeight = rsPageH - newTop;
+                                    if (newWidth < 1) newWidth = 1;
+                                    if (newHeight < 1) newHeight = 1;
+                                }
                                 
                                 // Use CURRENT position for origin (where text should be inserted)
                                 const newOriginX = newLeft;
@@ -16450,10 +16500,20 @@
                 // Account for CSS padding: field position includes padding offset,
                 // and dimensions include 2*padding. Subtract padding to get content bbox.
                 const padPx = padding;  // padding is in pixels for word-level fields
-                const pdfLeft = (currentLeft + padPx) / scaleX;
-                const pdfTop = (currentTop + padPx) / scaleY;
-                const pdfWidth = (currentWidth - padPx * 2) / scaleX;
-                const pdfHeight = (currentHeight - padPx * 2) / scaleY;
+                let pdfLeft = (currentLeft + padPx) / scaleX;
+                let pdfTop = (currentTop + padPx) / scaleY;
+                let pdfWidth = (currentWidth - padPx * 2) / scaleX;
+                let pdfHeight = (currentHeight - padPx * 2) / scaleY;
+
+                // Clamp bbox to PDF page boundaries — text must NEVER go off-page
+                if (pageWidth > 0 && pageHeight > 0) {
+                    if (pdfLeft < 0) { pdfWidth += pdfLeft; pdfLeft = 0; }
+                    if (pdfTop < 0) { pdfHeight += pdfTop; pdfTop = 0; }
+                    if (pdfLeft + pdfWidth > pageWidth) pdfWidth = pageWidth - pdfLeft;
+                    if (pdfTop + pdfHeight > pageHeight) pdfHeight = pageHeight - pdfTop;
+                    if (pdfWidth < 1) pdfWidth = 1;
+                    if (pdfHeight < 1) pdfHeight = 1;
+                }
                 
                 // Calculate baseline origin for text insertion
                 const originDx = originalWord.origin_x - originalWord.left;
