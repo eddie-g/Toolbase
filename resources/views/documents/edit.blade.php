@@ -940,11 +940,8 @@
                 display: flex;
                 align-items: center;
                 gap: 6px;
-                padding: 8px 16px;
-                background: rgba(15, 23, 42, 0.95);
-                border-top: 1px solid rgba(255, 255, 255, 0.06);
-                backdrop-filter: blur(8px);
                 flex-wrap: wrap;
+                width: 100%;
             }
             .selection-toolbar .toolbar-label {
                 font-size: 12px;
@@ -3011,7 +3008,7 @@
                         </div>
                         <div class="flex flex-wrap items-center gap-2 mt-2" style="display: none;">
                     </div>
-                    <div class="selection-toolbar hidden" id="selection-toolbar">
+                    <div class="selection-toolbar hidden px-3 py-2 sticky top-[196px] z-30 bg-gray-800/95 backdrop-blur-sm border-t border-gray-700/50" id="selection-toolbar">
                         <div class="toolbar-label" id="selection-label">Click a text block to edit</div>
                         <div class="toolbar-controls" id="selection-controls">
                             <div class="tb-group">
