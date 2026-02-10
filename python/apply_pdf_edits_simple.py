@@ -443,23 +443,28 @@ def apply_edits(pdf_path, edits_json):
     for page_num, page_edits in edits_by_page.items():
         touched = set()
         for edit in page_edits:
-            orig = (edit.get("original_text") or "").strip()
-            if orig:
-                # Add the full block text AND each individual line
-                touched.add(orig)
-                for line in orig.split("\n"):
-                    line = line.strip()
-                    if line:
-                        touched.add(line)
-                # Also add individual words for finer matching
-                for word in orig.split():
-                    word = word.strip()
-                    if len(word) > 1:  # skip single chars
-                        touched.add(word)
+            # Add BOTH original and new text as "touched" — neither should be
+            # recovered by Phase C.  This prevents re-inserting old underlying
+            # text that happens to share words with the edit.
+            for text_key in ("original_text", "new_text"):
+                txt = (edit.get(text_key) or "").strip()
+                if txt:
+                    touched.add(txt)
+                    for line in txt.split("\n"):
+                        line = line.strip()
+                        if line:
+                            touched.add(line)
+                    for word in txt.split():
+                        word = word.strip()
+                        if len(word) > 1:
+                            touched.add(word)
         edited_texts_by_page[page_num] = touched
     
     # Also build a set of redaction rects per page so we know exactly
     # which areas are being redacted (to detect collateral damage).
+    # CRITICAL: These rects MUST match the adaptive padding used in Phase A,
+    # otherwise Phase C will "recover" text that was intentionally redacted
+    # (e.g., old underlying text from prior overlay edits).
     redaction_rects_by_page = {}
     intentional_edit_rects_by_page = {}
     for page_num, page_edits in edits_by_page.items():
@@ -468,12 +473,26 @@ def apply_edits(pdf_path, edits_json):
         for edit in page_edits:
             original_bbox = edit.get("original_bbox")
             if original_bbox:
-                intentional_rects.append(fitz.Rect(original_bbox))
+                # Use the SAME adaptive padding as Phase A for accurate matching
+                try:
+                    edit_font_size = float(edit.get('font_size', 12))
+                except Exception:
+                    edit_font_size = 12.0
+                pad_left = max(1.0, edit_font_size * 0.15)
+                pad_top = max(1.0, edit_font_size * 0.15)
+                pad_right = max(2.0, edit_font_size * 0.9)
+                pad_bottom = max(1.0, edit_font_size * 0.15)
+                intentional_rects.append(fitz.Rect(
+                    original_bbox[0] - pad_left,
+                    original_bbox[1] - pad_top,
+                    original_bbox[2] + pad_right,
+                    original_bbox[3] + pad_bottom,
+                ))
                 rects.append(fitz.Rect(
-                    original_bbox[0] - 1,
-                    original_bbox[1] - 1,
-                    original_bbox[2] + 1,
-                    original_bbox[3] + 1,
+                    original_bbox[0] - pad_left,
+                    original_bbox[1] - pad_top,
+                    original_bbox[2] + pad_right,
+                    original_bbox[3] + pad_bottom,
                 ))
         redaction_rects_by_page[page_num] = rects
         intentional_edit_rects_by_page[page_num] = intentional_rects
@@ -1275,16 +1294,25 @@ def apply_edits(pdf_path, edits_json):
             if is_inside_intentional_edit:
                 continue
 
+            # Check if span was inside the actual redaction zone.
+            # If it was, the text was INTENTIONALLY removed (it was within the
+            # padded redaction area of an edit). Do NOT recover it — it could be
+            # old underlying text from a prior overlay edit (e.g., "Isartor"
+            # hiding behind "Modified" from a previous save).
             was_in_redaction = False
             for r_rect in redact_rects:
                 if not (span_rect & r_rect).is_empty:
                     was_in_redaction = True
                     break
 
-            if not was_in_redaction:
+            if was_in_redaction:
+                print(f"  ⊘ Skipping recovery of '{span_text}' — inside redaction zone (likely old underlying text)")
+                continue
+
+            if span_text not in post_texts:
                 # Text disappeared but wasn't in a redaction zone → unusual
                 # Could be coordinate-system shift or font issue; still recover it
-                print(f"  ⚠ '{span_text}' missing (not in redaction zone) – recovering anyway")
+                print(f"  ⚠ '{span_text}' missing (not in redaction zone) – recovering")
 
             # ── Re-insert the lost span ──
             origin = span_info["origin"]

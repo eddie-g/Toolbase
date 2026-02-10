@@ -14954,12 +14954,35 @@
                                     const currentTextColor = field.dataset.textColor || computedStyle.color || '#000000';
                                     const richHtml = buildBlockRichHtml(textSpan, fontFamily, fontWeight, fontStyle, currentFontSizePx, currentLineHeightPx, currentTextColor);
                                     
+                                    // Build per-word style data for preserving formatting on save
+                                    // (same as the text input handler — ensures Python uses the reliable word_styles path)
+                                    const moveWordStylesArr = (field._blockWords || []).map(w => ({
+                                        text: w.text,
+                                        font: w.font,
+                                        font_xref: w.font_xref || null,
+                                        font_size: w.font_size,
+                                        font_weight: w.font_weight || 400,
+                                        italic: !!w.italic,
+                                        bold: !!w.bold,
+                                        color: w.color,
+                                        hex_color: w.hex_color || '#000000',
+                                        left: w.left,
+                                        top: w.top,
+                                        width: w.width,
+                                        height: w.height,
+                                        origin_x: w.origin_x,
+                                        origin_y: w.origin_y,
+                                        ascender: w.ascender,
+                                        descender: w.descender
+                                    }));
+
                                     overlayEditedFields.set(key, {
                                         page_number: pageData.page_number,
                                         block_num: block.block_num,
                                         original_text: safeBlockText,          // ORIGINAL PDF TEXT
                                         new_text: currentText,                 // TEXT WITH PRESERVED NEWLINES
                                         rich_html: richHtml,
+                                        word_styles: moveWordStylesArr.length > 0 ? moveWordStylesArr : null,  // PER-WORD FORMATTING
                                         bbox: [newLeft, newTop, newLeft + width, newTop + height],
                                         original_bbox: [blockLeft, blockTop, blockLeft + blockWidth, blockTop + blockHeight],
                                         origin_x: newOriginX,                  // NEW POSITION X
