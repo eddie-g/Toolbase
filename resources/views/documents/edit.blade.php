@@ -1537,6 +1537,7 @@
                 outline: none !important;
                 border: 2px solid transparent !important;
                 transition: border-color 0.15s, box-shadow 0.15s;
+                overflow: hidden !important;
             }
             .overlay-field:hover:not(.active) {
                 border-color: rgba(66, 133, 244, 0.35) !important;
@@ -14560,7 +14561,7 @@
                         field.style.minWidth = '20px';
                         field.style.minHeight = '10px';
                         field.style.boxSizing = 'border-box';
-                        field.style.overflow = 'visible';
+                        field.style.overflow = 'hidden';
 
                         // Render the text content
                         const textSpan = document.createElement('div');
@@ -14577,7 +14578,7 @@
                         textSpan.style.userSelect = 'text';
                         textSpan.style.padding = '0';
                         textSpan.style.margin = '0';
-                        textSpan.style.overflow = 'visible';
+                        textSpan.style.overflow = 'hidden';
                         
                         // Apply font styling from block data directly to the field for inheritance
                         const fontFamily = getCssFontFamily(block.font);
@@ -14662,10 +14663,14 @@
 
                         if (hasStoredEdit) {
                             textSpan.textContent = sanitizeOverlayText(storedEdit.new_text);
+                            textSpan.style.whiteSpace = 'pre-wrap';
+                            textSpan.style.wordBreak = 'break-word';
                         } else if (blockWords.length > 0) {
                             buildStyledWordSpans(textSpan, blockWords, scaleX, scaleY, blockLeft, blockTop);
                         } else {
                             textSpan.textContent = sanitizeOverlayText(blockText);
+                            textSpan.style.whiteSpace = 'pre-wrap';
+                            textSpan.style.wordBreak = 'break-word';
                         }
                         
                         if (lineHeightPx) {
@@ -14861,6 +14866,35 @@
                         field.addEventListener('dblclick', function(e) {
                             if (e.target.closest('.box-menu') || e.target.classList.contains('resize-handle')) return;
                             field.classList.add('active', 'editing');
+
+                            // Normalize absolutely-positioned word spans to flowing text
+                            // so typing works like a textarea (text wraps within the box).
+                            const hasPositionedSpans = textSpan.querySelector('span') &&
+                                Array.from(textSpan.querySelectorAll('span')).some(s => s.style.position === 'absolute');
+                            if (hasPositionedSpans) {
+                                const spans = Array.from(textSpan.querySelectorAll('span'));
+                                // Group by lines using top position to reconstruct line breaks
+                                const lineMap = new Map();
+                                spans.forEach(s => {
+                                    if (!s.textContent.trim() && s.textContent === ' ') return; // skip space spans
+                                    const top = Math.round(parseFloat(s.style.top) || 0);
+                                    if (!lineMap.has(top)) lineMap.set(top, []);
+                                    lineMap.get(top).push(s);
+                                });
+                                const sortedTops = Array.from(lineMap.keys()).sort((a, b) => a - b);
+                                const lines = sortedTops.map(top => {
+                                    const lineSpans = lineMap.get(top).sort((a, b) => 
+                                        (parseFloat(a.style.left) || 0) - (parseFloat(b.style.left) || 0)
+                                    );
+                                    return lineSpans.map(s => s.textContent).join(' ');
+                                });
+                                const plainText = lines.join('\n');
+                                textSpan.textContent = plainText;
+                                textSpan.style.whiteSpace = 'pre-wrap';
+                                textSpan.style.wordBreak = 'break-word';
+                                textSpan.style.overflow = 'hidden';
+                            }
+
                             textSpan.contentEditable = true;
                             textSpan.focus();
                             // Place cursor at click position
@@ -15281,11 +15315,23 @@
                                 const hasPositionedSpans = textSpan.querySelector('span') &&
                                     Array.from(textSpan.querySelectorAll('span')).some(s => s.style.position === 'absolute');
                                 if (!hasPositionedSpans) return;
-                                // Collect individual word-span texts and join with spaces.
-                                // textContent alone concatenates without spaces since the
-                                // gaps between words were purely positional (CSS left/top).
+                                // Group word spans by line (using top position) to preserve line breaks
                                 const spans = Array.from(textSpan.querySelectorAll('span'));
-                                const plainText = spans.map(s => sanitizeOverlayText(s.textContent)).join(' ');
+                                const lineMap = new Map();
+                                spans.forEach(s => {
+                                    if (!s.textContent.trim() && s.textContent === ' ') return;
+                                    const top = Math.round(parseFloat(s.style.top) || 0);
+                                    if (!lineMap.has(top)) lineMap.set(top, []);
+                                    lineMap.get(top).push(s);
+                                });
+                                const sortedTops = Array.from(lineMap.keys()).sort((a, b) => a - b);
+                                const lines = sortedTops.map(top => {
+                                    const lineSpans = lineMap.get(top).sort((a, b) =>
+                                        (parseFloat(a.style.left) || 0) - (parseFloat(b.style.left) || 0)
+                                    );
+                                    return lineSpans.map(s => s.textContent).join(' ');
+                                });
+                                const plainText = lines.join('\n');
                                 textSpan.textContent = plainText;
                                 textSpan.style.whiteSpace = 'pre-wrap';
                                 textSpan.style.wordBreak = 'break-word';
