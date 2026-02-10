@@ -937,78 +937,148 @@
                 pointer-events: none;
             }
             .selection-toolbar {
-                background: #f4f6f8;
-                color: #0f172a;
-                border-bottom: 1px solid #d7dce3;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                padding: 8px 16px;
+                background: rgba(15, 23, 42, 0.95);
+                border-top: 1px solid rgba(255, 255, 255, 0.06);
+                backdrop-filter: blur(8px);
+                flex-wrap: wrap;
             }
-            .selection-toolbar .selection-status {
-                font-weight: 600;
-                color: #475569;
+            .selection-toolbar .toolbar-label {
+                font-size: 12px;
+                font-weight: 500;
+                color: #94a3b8;
+                white-space: nowrap;
+                margin-right: 4px;
+                letter-spacing: 0.01em;
             }
             .selection-toolbar .toolbar-controls {
-                gap: 14px;
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                flex-wrap: wrap;
             }
-            .selection-toolbar .toolbar-divider {
+            .selection-toolbar .toolbar-controls.disabled {
+                opacity: 0.35;
+                pointer-events: none;
+            }
+            .selection-toolbar .tb-divider {
                 width: 1px;
-                height: 28px;
-                background: #d7dce3;
+                height: 24px;
+                background: rgba(255, 255, 255, 0.1);
+                margin: 0 4px;
             }
-            .selection-toolbar .toolbar-group {
+            .selection-toolbar .tb-group {
                 display: inline-flex;
                 align-items: center;
-                gap: 8px;
+                gap: 3px;
             }
             .selection-toolbar select,
             .selection-toolbar input[type="number"] {
-                background: #ffffff;
-                border: 1px solid #cfd6df;
-                color: #0f172a;
-                border-radius: 0;
-                padding: 6px 8px;
-                min-width: 64px;
+                background: rgba(255, 255, 255, 0.07);
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                color: #e2e8f0;
+                border-radius: 6px;
+                padding: 5px 8px;
+                font-size: 12px;
+                min-width: 56px;
+                outline: none;
+                transition: border-color 0.15s, background 0.15s;
             }
-            .selection-toolbar .tool-icon {
-                font-weight: 700;
-                color: #334155;
+            .selection-toolbar select:hover,
+            .selection-toolbar input[type="number"]:hover {
+                background: rgba(255, 255, 255, 0.1);
+                border-color: rgba(255, 255, 255, 0.2);
+            }
+            .selection-toolbar select:focus,
+            .selection-toolbar input[type="number"]:focus {
+                border-color: #3b82f6;
+                background: rgba(255, 255, 255, 0.1);
+            }
+            .selection-toolbar select option {
+                background: #1e293b;
+                color: #e2e8f0;
+            }
+            .selection-toolbar .icon-btn {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 32px;
+                height: 32px;
+                background: rgba(255, 255, 255, 0.05);
+                color: #cbd5e1;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 6px;
                 font-size: 13px;
+                cursor: pointer;
+                transition: all 0.15s;
             }
-            .selection-toolbar .tool-btn {
-                background: #ffffff;
-                color: #0f172a;
-                border: 1px solid #cfd6df;
-                border-radius: 0;
-                padding: 6px 10px;
-                font-weight: 700;
-                min-width: 32px;
+            .selection-toolbar .icon-btn:hover {
+                background: rgba(255, 255, 255, 0.12);
+                color: #f1f5f9;
+                border-color: rgba(255, 255, 255, 0.2);
             }
-            .selection-toolbar .tool-btn.active {
-                background: #0f172a;
+            .selection-toolbar .icon-btn.active {
+                background: #3b82f6;
                 color: #ffffff;
-                border-color: #0f172a;
+                border-color: #3b82f6;
             }
-            .selection-toolbar .tool-btn.danger-btn {
-                background: #fff1f1;
-                color: #b91c1c;
-                border-color: #fecaca;
-                font-weight: 700;
+            .selection-toolbar .icon-btn:disabled {
+                opacity: 0.3;
+                cursor: default;
+            }
+            .selection-toolbar .color-btn {
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+                cursor: pointer;
             }
             .selection-toolbar .color-swatch {
                 display: inline-flex;
                 align-items: center;
-                gap: 6px;
-                padding: 6px 8px;
-                border: 1px solid #cfd6df;
-                border-radius: 0;
-                background: #ffffff;
+                justify-content: center;
+                width: 28px;
+                height: 28px;
+                border-radius: 6px;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                overflow: hidden;
+                position: relative;
                 cursor: pointer;
             }
             .selection-toolbar .color-swatch input[type="color"] {
-                width: 20px;
-                height: 20px;
-                padding: 0;
+                position: absolute;
+                width: 200%;
+                height: 200%;
+                top: -50%;
+                left: -50%;
                 border: none;
                 background: none;
                 cursor: pointer;
+            }
+            .selection-toolbar .danger-btn {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                height: 32px;
+                padding: 0 12px;
+                background: rgba(239, 68, 68, 0.1);
+                color: #f87171;
+                border: 1px solid rgba(239, 68, 68, 0.2);
+                border-radius: 6px;
+                font-size: 12px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: all 0.15s;
+            }
+            .selection-toolbar .danger-btn:hover {
+                background: rgba(239, 68, 68, 0.2);
+                border-color: rgba(239, 68, 68, 0.4);
+            }
+            .selection-toolbar .danger-btn:disabled {
+                opacity: 0.3;
+                cursor: default;
             }
             .mode-bar {
                 display: flex;
@@ -2941,58 +3011,70 @@
                         </div>
                         <div class="flex flex-wrap items-center gap-2 mt-2" style="display: none;">
                     </div>
-                    <div class="selection-toolbar hidden px-3 py-2 bg-gray-700/50" id="selection-toolbar">
-                        <div class="toolbar-label text-sm text-gray-400 mb-2" id="selection-label">No text selected</div>
+                    <div class="selection-toolbar hidden" id="selection-toolbar">
+                        <div class="toolbar-label" id="selection-label">Click a text block to edit</div>
                         <div class="toolbar-controls" id="selection-controls">
-                            <select id="selected-font" disabled>
-                                <option value="Helvetica">Helvetica</option>
-                                <option value="Helvetica-Bold">Helvetica Bold</option>
-                                <option value="Times-Roman">Times</option>
-                                <option value="Times-Bold">Times Bold</option>
-                                <option value="Courier">Courier</option>
-                                <option value="Courier-Bold">Courier Bold</option>
-                            </select>
-                            <select id="selected-weight" disabled>
-                                <option value="100">Thin</option>
-                                <option value="200">Extra Light</option>
-                                <option value="300">Light</option>
-                                <option value="400">Regular</option>
-                                <option value="500">Medium</option>
-                                <option value="600">Semi Bold</option>
-                                <option value="700">Bold</option>
-                                <option value="800">Extra Bold</option>
-                                <option value="900">Black</option>
-                            </select>
-                            <input type="number" id="selected-size" min="8" max="144" value="16" disabled />
-                            <button type="button" id="selected-bold" class="icon-btn" title="Bold" disabled><strong>B</strong></button>
-                            <button type="button" id="selected-italic" class="icon-btn" title="Italic" disabled><em>I</em></button>
-                            <button type="button" id="selected-underline" class="icon-btn" title="Underline" disabled><u>U</u></button>
-                            <label class="color-btn" title="Text Color">
-                                <span class="color-swatch" id="selected-color-swatch"></span>
-                                <input type="color" id="selected-color" value="#111111" disabled />
-                            </label>
-                            <label class="color-btn" title="Background Color">
-                                <span class="color-swatch" id="selected-bg-swatch"></span>
-                                <input type="color" id="selected-bg" value="#ffffff" disabled />
-                            </label>
-                            <select id="selected-align" disabled>
-                                <option value="left">Left</option>
-                                <option value="center">Center</option>
-                                <option value="right">Right</option>
-                            </select>
-                            <select id="selected-opacity" disabled>
-                                <option value="1">100%</option>
-                                <option value="0.9">90%</option>
-                                <option value="0.8">80%</option>
-                                <option value="0.7">70%</option>
-                                <option value="0.6">60%</option>
-                                <option value="0.5">50%</option>
-                                <option value="0.4">40%</option>
-                                <option value="0.3">30%</option>
-                                <option value="0.2">20%</option>
-                                <option value="0.1">10%</option>
-                            </select>
-                            <button type="button" id="selected-delete" class="danger-btn" title="Delete" disabled>Delete</button>
+                            <div class="tb-group">
+                                <select id="selected-font" disabled>
+                                    <option value="Helvetica">Helvetica</option>
+                                    <option value="Helvetica-Bold">Helvetica Bold</option>
+                                    <option value="Times-Roman">Times</option>
+                                    <option value="Times-Bold">Times Bold</option>
+                                    <option value="Courier">Courier</option>
+                                    <option value="Courier-Bold">Courier Bold</option>
+                                </select>
+                                <select id="selected-weight" disabled style="min-width:72px;">
+                                    <option value="100">Thin</option>
+                                    <option value="200">Extra Light</option>
+                                    <option value="300">Light</option>
+                                    <option value="400">Regular</option>
+                                    <option value="500">Medium</option>
+                                    <option value="600">Semi Bold</option>
+                                    <option value="700">Bold</option>
+                                    <option value="800">Extra Bold</option>
+                                    <option value="900">Black</option>
+                                </select>
+                                <input type="number" id="selected-size" min="8" max="144" value="16" disabled style="width:52px;" />
+                            </div>
+                            <div class="tb-divider"></div>
+                            <div class="tb-group">
+                                <button type="button" id="selected-bold" class="icon-btn" title="Bold" disabled><strong>B</strong></button>
+                                <button type="button" id="selected-italic" class="icon-btn" title="Italic" disabled><em>I</em></button>
+                                <button type="button" id="selected-underline" class="icon-btn" title="Underline" disabled><u>U</u></button>
+                            </div>
+                            <div class="tb-divider"></div>
+                            <div class="tb-group">
+                                <label class="color-btn" title="Text Color">
+                                    <span class="color-swatch" id="selected-color-swatch"></span>
+                                    <input type="color" id="selected-color" value="#111111" disabled />
+                                </label>
+                                <label class="color-btn" title="Background Color">
+                                    <span class="color-swatch" id="selected-bg-swatch"></span>
+                                    <input type="color" id="selected-bg" value="#ffffff" disabled />
+                                </label>
+                            </div>
+                            <div class="tb-divider"></div>
+                            <div class="tb-group">
+                                <select id="selected-align" disabled style="min-width:64px;">
+                                    <option value="left">Left</option>
+                                    <option value="center">Center</option>
+                                    <option value="right">Right</option>
+                                </select>
+                                <select id="selected-opacity" disabled style="min-width:56px;">
+                                    <option value="1">100%</option>
+                                    <option value="0.9">90%</option>
+                                    <option value="0.8">80%</option>
+                                    <option value="0.7">70%</option>
+                                    <option value="0.6">60%</option>
+                                    <option value="0.5">50%</option>
+                                    <option value="0.4">40%</option>
+                                    <option value="0.3">30%</option>
+                                    <option value="0.2">20%</option>
+                                    <option value="0.1">10%</option>
+                                </select>
+                            </div>
+                            <div class="tb-divider"></div>
+                            <button type="button" id="selected-delete" class="danger-btn" title="Delete" disabled>🗑 Delete</button>
                         </div>
                     </div>
                 </div>
@@ -5420,6 +5502,26 @@
                 }
                 overlaySelectionRange = null;
                 return true;
+            }
+
+            /**
+             * Mark the currently selected overlay field as dirty (changed) so
+             * the save button appears.  This is called after style-only changes
+             * (bold, italic, underline, color, font, size, etc.) that do NOT
+             * move or resize the field.
+             */
+            function markOverlayFieldDirty() {
+                if (!selectedOverlayField) return;
+                const field = selectedOverlayField;
+                const textEl = getOverlayTextElement(field);
+                if (!textEl) return;
+
+                const pageNumber = parseInt(field.dataset.pageNumber || '0', 10);
+                const index = field.dataset.wordIndex || `${pageNumber}-0`;
+                const originalWord = buildOriginalWordFromField(field, textEl.textContent);
+                const pageData = { page_number: pageNumber };
+
+                trackOverlayFieldChange(field, textEl, pageData, originalWord, index);
             }
 
             function mapFontFamilyToKey(fontFamily) {
@@ -9368,6 +9470,7 @@
                             field.dataset.fontFamily = selectedFontValue;
                         });
                     }
+                    markOverlayFieldDirty();
                 }
             });
             }
@@ -9402,6 +9505,7 @@
                             field.dataset.fontWeight = weightValue;
                         });
                     }
+                    markOverlayFieldDirty();
                 }
             });
             }
@@ -9425,9 +9529,27 @@
                             field.style.fontSize = sizePx + 'px';
                             field.dataset.fontSize = String(sizePx);
                         });
+                        markOverlayFieldDirty();
                     }
                 });
             }
+
+            // Preserve text selection when clicking toolbar buttons
+            [selectedBold, selectedItalic, selectedUnderline].forEach(btn => {
+                if (!btn) return;
+                btn.addEventListener('mousedown', (e) => {
+                    if (!selectedOverlayField) return;
+                    e.preventDefault(); // Prevent blur/deselection
+                    const selection = window.getSelection();
+                    if (selection && selection.rangeCount > 0) {
+                        const range = selection.getRangeAt(0);
+                        const textEl = getOverlayTextElement(selectedOverlayField);
+                        if (range && !range.collapsed && textEl && textEl.contains(range.commonAncestorContainer)) {
+                            overlaySelectionRange = range.cloneRange();
+                        }
+                    }
+                });
+            });
 
             if (selectedBold) {
                 selectedBold.addEventListener('click', () => {
@@ -9445,12 +9567,17 @@
                     }
                     if (selectedOverlayField) {
                         const isActive = selectedBold.classList.contains('active');
-                        applyOverlayStyle((textEl, field) => {
-                            const weight = isActive ? 'normal' : '700';
-                            textEl.style.fontWeight = weight;
-                            field.style.fontWeight = weight;
-                            field.dataset.fontWeight = weight;
-                        });
+                        const newWeight = isActive ? 'normal' : '700';
+                        const appliedToSel = applyOverlayStyleToSelection('fontWeight', newWeight);
+                        if (!appliedToSel) {
+                            applyOverlayStyle((textEl, field) => {
+                                textEl.style.fontWeight = newWeight;
+                                field.style.fontWeight = newWeight;
+                                field.dataset.fontWeight = newWeight;
+                            });
+                        }
+                        markOverlayFieldDirty();
+                        updateSelectionBar();
                     }
                 });
             }
@@ -9469,12 +9596,17 @@
                     }
                     if (selectedOverlayField) {
                         const isActive = selectedItalic.classList.contains('active');
-                        applyOverlayStyle((textEl, field) => {
-                            const style = isActive ? 'normal' : 'italic';
-                            textEl.style.fontStyle = style;
-                            field.style.fontStyle = style;
-                            field.dataset.fontStyle = style;
-                        });
+                        const newStyle = isActive ? 'normal' : 'italic';
+                        const appliedToSel = applyOverlayStyleToSelection('fontStyle', newStyle);
+                        if (!appliedToSel) {
+                            applyOverlayStyle((textEl, field) => {
+                                textEl.style.fontStyle = newStyle;
+                                field.style.fontStyle = newStyle;
+                                field.dataset.fontStyle = newStyle;
+                            });
+                        }
+                        markOverlayFieldDirty();
+                        updateSelectionBar();
                     }
                 });
             }
@@ -9493,11 +9625,16 @@
                     }
                     if (selectedOverlayField) {
                         const isActive = selectedUnderline.classList.contains('active');
-                        applyOverlayStyle((textEl, field) => {
-                            const decoration = isActive ? 'none' : 'underline';
-                            textEl.style.textDecoration = decoration;
-                            field.dataset.underline = String(!isActive);
-                        });
+                        const newDecoration = isActive ? 'none' : 'underline';
+                        const appliedToSel = applyOverlayStyleToSelection('textDecoration', newDecoration);
+                        if (!appliedToSel) {
+                            applyOverlayStyle((textEl, field) => {
+                                textEl.style.textDecoration = newDecoration;
+                                field.dataset.underline = String(!isActive);
+                            });
+                        }
+                        markOverlayFieldDirty();
+                        updateSelectionBar();
                     }
                 });
             }
@@ -9522,6 +9659,7 @@
                                 field.dataset.textColor = selectedColor.value;
                             });
                         }
+                        markOverlayFieldDirty();
                     }
                 });
             }
@@ -9586,6 +9724,7 @@
                                 field.dataset.backgroundColor = selectedBg.value;
                             });
                         }
+                        markOverlayFieldDirty();
                     }
                 });
             }
@@ -9607,6 +9746,7 @@
                             field.style.textAlign = selectedAlign.value;
                             field.dataset.textAlign = selectedAlign.value;
                         });
+                        markOverlayFieldDirty();
                     }
                 });
             }
@@ -9628,6 +9768,7 @@
                             textEl.style.opacity = String(value);
                             field.dataset.opacity = String(value);
                         });
+                        markOverlayFieldDirty();
                     }
                 });
             }
@@ -15712,11 +15853,29 @@
                 const hasPositionChanged = Math.abs(pdfLeft - originalWord.left) > 1 || Math.abs(pdfTop - originalWord.top) > 1;
                 const hasSizeChanged = Math.abs(pdfWidth - originalWord.width) > 1 || Math.abs(pdfHeight - originalWord.height) > 1;
 
-                if (hasTextChanged || hasPositionChanged || hasSizeChanged) {
+                // Detect style changes (font weight, font style, color, font size)
+                const currentFontWeight = field.dataset.fontWeight || '400';
+                const originalFontWeight = field.dataset.originalFontWeight || '400';
+                const currentFontStyle = field.dataset.fontStyle || 'normal';
+                const originalFontStyle = field.dataset.originalFontStyle || 'normal';
+                const currentColor = field.dataset.textColor || '#000000';
+                const originalColor = field.dataset.originalTextColor || '#000000';
+                const currentFontSizePdf = parseFloat(field.dataset.fontSize || String(originalWord.font_size || 12));
+                const originalFontSize = originalWord.font_size || 12;
+                // Check if the text element's innerHTML contains styled <span> elements (per-word styling)
+                const textEl = getOverlayTextElement(field);
+                const hasRichStyling = textEl && textEl.querySelector('span[style]') !== null;
+
+                const hasStyleChanged = currentFontWeight !== originalFontWeight
+                    || currentFontStyle !== originalFontStyle
+                    || currentColor !== originalColor
+                    || Math.abs(currentFontSizePdf - originalFontSize) > 0.5
+                    || hasRichStyling;
+
+                if (hasTextChanged || hasPositionChanged || hasSizeChanged || hasStyleChanged) {
                     const colorValue = field.dataset.textColor || '#000000';
                     const colorHex = colorValue.startsWith('#') ? colorValue : '#' + colorValue;
                     
-                    const currentFontSizePdf = parseFloat(field.dataset.fontSize || String(originalWord.font_size || 12));
                     const editData = {
                         page_index: pageData.page_number - 1, // 0-based for Python
                         page_number: pageData.page_number,    // 1-based for display
@@ -15753,6 +15912,8 @@
                         font_xref: field.dataset.fontXref ? parseInt(field.dataset.fontXref, 10) : null,
                         font: originalWord.font,
                         font_size: currentFontSizePdf,
+                        font_weight: currentFontWeight,
+                        font_style: currentFontStyle,
                         color: colorHex,
                         
                         // Page dimensions
