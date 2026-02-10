@@ -1191,6 +1191,7 @@ class DocumentController extends Controller
         // GUARD MECHANISM: Check if any entire page is being nulled out
         $edits = $validated['edits'];
         $pageTextCounts = [];
+        $pageDimensions = [];
         
         // Get current extraction to know original text per page
         $extraction = DB::table('pdf_extractions_fitz')
@@ -1204,6 +1205,10 @@ class DocumentController extends Controller
                 foreach ($extractionData as $page) {
                     $pageNum = $page['page_number'] ?? 0;
                     $wordCount = count($page['words'] ?? []);
+                    $pageDimensions[$pageNum] = [
+                        'width' => (float) ($page['width'] ?? 0),
+                        'height' => (float) ($page['height'] ?? 0),
+                    ];
                     $pageTextCounts[$pageNum] = [
                         'original' => $wordCount,
                         'remaining' => $wordCount, // Start with all text
@@ -1251,9 +1256,46 @@ class DocumentController extends Controller
             ], 400);
         }
 
+        // Hard guard: clamp incoming edit geometry to page bounds so text can never
+        // be saved outside the page even if client-side constraints are bypassed.
+        foreach ($edits as &$edit) {
+            $pageNum = (int) ($edit['page_number'] ?? 0);
+            $dims = $pageDimensions[$pageNum] ?? null;
+            if (!$dims || $dims['width'] <= 0 || $dims['height'] <= 0) {
+                continue;
+            }
+            if (!isset($edit['bbox']) || !is_array($edit['bbox']) || count($edit['bbox']) < 4) {
+                continue;
+            }
+            $minSize = 0.5;
+            $x0 = (float) ($edit['bbox'][0] ?? 0);
+            $y0 = (float) ($edit['bbox'][1] ?? 0);
+            $x1 = (float) ($edit['bbox'][2] ?? 0);
+            $y1 = (float) ($edit['bbox'][3] ?? 0);
+            $left = min($x0, $x1);
+            $top = min($y0, $y1);
+            $right = max($x0, $x1);
+            $bottom = max($y0, $y1);
+
+            $left = max(0.0, min($left, max(0.0, $dims['width'] - $minSize)));
+            $top = max(0.0, min($top, max(0.0, $dims['height'] - $minSize)));
+            $right = max($left + $minSize, min($right, $dims['width']));
+            $bottom = max($top + $minSize, min($bottom, $dims['height']));
+
+            $edit['bbox'] = [$left, $top, $right, $bottom];
+
+            if (isset($edit['origin_x'])) {
+                $edit['origin_x'] = max(0.0, min((float) $edit['origin_x'], $dims['width']));
+            }
+            if (isset($edit['origin_y'])) {
+                $edit['origin_y'] = max(0.0, min((float) $edit['origin_y'], $dims['height']));
+            }
+        }
+        unset($edit);
+
         // Save edits to temporary file
         $editsFile = storage_path('app/temp_edits_' . $document->id . '.json');
-        file_put_contents($editsFile, json_encode($validated['edits']));
+        file_put_contents($editsFile, json_encode($edits));
 
         // Run Python script to apply edits (using simple version)
         $fullPath = Storage::path($document->path);
@@ -1275,8 +1317,8 @@ class DocumentController extends Controller
         \Log::info('Applying PDF edits', [
             'document_id' => $document->id,
             'pdf_path' => $fullPath,
-            'edits_json' => json_encode($validated['edits']),
-            'edits_count' => count($validated['edits'])
+            'edits_json' => json_encode($edits),
+            'edits_count' => count($edits)
         ]);
         
         // Pass edits via temp file to avoid command-line length limits
@@ -2323,5 +2365,247 @@ class DocumentController extends Controller
         ]);
 
         return response()->json(['success' => true]);
+    }
+
+    public function convertToWord(Request $request, Document $document)
+    {
+        $validated = $request->validate([
+            'layout' => ['required', 'string', 'in:flow,exact'],
+            'include_images' => ['boolean'],
+            'ocr' => ['boolean'],
+        ]);
+
+        $layout = $validated['layout'];
+        $includeImages = $validated['include_images'] ?? true;
+        $ocr = $validated['ocr'] ?? false;
+
+        $inputPath = Storage::path($document->path);
+        $tempOutputPath = Storage::path('documents/temp_word_' . Str::uuid() . '.docx');
+        $pythonScript = base_path('python/convert_to_word.py');
+
+        $command = sprintf(
+            'python3 %s %s %s --layout %s %s %s --json 2>&1',
+            escapeshellarg($pythonScript),
+            escapeshellarg($inputPath),
+            escapeshellarg($tempOutputPath),
+            escapeshellarg($layout),
+            $includeImages ? '--images' : '--no-images',
+            $ocr ? '--ocr' : ''
+        );
+
+        $output = shell_exec($command);
+
+        $result = null;
+        if ($output) {
+            $lines = explode("\n", trim($output));
+            foreach ($lines as $line) {
+                $decoded = json_decode(trim($line), true);
+                if ($decoded !== null) {
+                    $result = $decoded;
+                    break;
+                }
+            }
+        }
+
+        if (!$result || !($result['success'] ?? false)) {
+            if (file_exists($tempOutputPath)) {
+                unlink($tempOutputPath);
+            }
+
+            if (Auth::check()) {
+                UserActivity::create([
+                    'user_id' => Auth::id(),
+                    'action' => 'Convert to Word',
+                    'category' => 'word_export',
+                    'details' => ['layout' => $layout, 'include_images' => $includeImages, 'ocr' => $ocr, 'error' => $result['error'] ?? 'Unknown error'],
+                    'document_id' => $document->id,
+                    'status' => 'failed',
+                    'ip_address' => $request->ip(),
+                    'user_agent' => $request->userAgent(),
+                ]);
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => $result['error'] ?? 'Word conversion failed. Output: ' . ($output ?? 'none'),
+            ], 500);
+        }
+
+        if (!file_exists($tempOutputPath)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Word output file was not created',
+            ], 500);
+        }
+
+        $downloadToken = Str::uuid()->toString();
+        $baseName = pathinfo($document->original_name, PATHINFO_FILENAME);
+        $downloadName = $baseName . '.docx';
+
+        session()->put("converted_download_{$downloadToken}", [
+            'path' => $tempOutputPath,
+            'name' => $downloadName,
+            'content_type' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'expires' => now()->addMinutes(10),
+        ]);
+
+        if (Auth::check()) {
+            UserActivity::create([
+                'user_id' => Auth::id(),
+                'action' => 'Convert to Word',
+                'category' => 'word_export',
+                'details' => [
+                    'layout' => $layout,
+                    'include_images' => $includeImages,
+                    'ocr' => $ocr,
+                    'file_size' => filesize($tempOutputPath),
+                ],
+                'document_id' => $document->id,
+                'status' => 'success',
+                'ip_address' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+            ]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'download_token' => $downloadToken,
+            'download_name' => $downloadName,
+        ]);
+    }
+
+    public function convertToExcel(Request $request, Document $document)
+    {
+        $validated = $request->validate([
+            'mode' => ['required', 'string', 'in:tables,all'],
+            'merge_cells' => ['boolean'],
+            'sheet_per_page' => ['boolean'],
+        ]);
+
+        $mode = $validated['mode'];
+        $mergeCells = $validated['merge_cells'] ?? true;
+        $sheetPerPage = $validated['sheet_per_page'] ?? true;
+
+        $inputPath = Storage::path($document->path);
+        $tempOutputPath = Storage::path('documents/temp_excel_' . Str::uuid() . '.xlsx');
+        $pythonScript = base_path('python/convert_to_excel.py');
+
+        $command = sprintf(
+            'python3 %s %s %s --mode %s %s %s --json 2>&1',
+            escapeshellarg($pythonScript),
+            escapeshellarg($inputPath),
+            escapeshellarg($tempOutputPath),
+            escapeshellarg($mode),
+            $mergeCells ? '--merge-cells' : '--no-merge-cells',
+            $sheetPerPage ? '--sheet-per-page' : '--single-sheet'
+        );
+
+        $output = shell_exec($command);
+
+        $result = null;
+        if ($output) {
+            $lines = explode("\n", trim($output));
+            foreach ($lines as $line) {
+                $decoded = json_decode(trim($line), true);
+                if ($decoded !== null) {
+                    $result = $decoded;
+                    break;
+                }
+            }
+        }
+
+        if (!$result || !($result['success'] ?? false)) {
+            if (file_exists($tempOutputPath)) {
+                unlink($tempOutputPath);
+            }
+
+            if (Auth::check()) {
+                UserActivity::create([
+                    'user_id' => Auth::id(),
+                    'action' => 'Convert to Excel',
+                    'category' => 'excel_export',
+                    'details' => ['mode' => $mode, 'merge_cells' => $mergeCells, 'sheet_per_page' => $sheetPerPage, 'error' => $result['error'] ?? 'Unknown error'],
+                    'document_id' => $document->id,
+                    'status' => 'failed',
+                    'ip_address' => $request->ip(),
+                    'user_agent' => $request->userAgent(),
+                ]);
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => $result['error'] ?? 'Excel conversion failed. Output: ' . ($output ?? 'none'),
+            ], 500);
+        }
+
+        if (!file_exists($tempOutputPath)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Excel output file was not created',
+            ], 500);
+        }
+
+        $downloadToken = Str::uuid()->toString();
+        $baseName = pathinfo($document->original_name, PATHINFO_FILENAME);
+        $downloadName = $baseName . '.xlsx';
+
+        session()->put("converted_download_{$downloadToken}", [
+            'path' => $tempOutputPath,
+            'name' => $downloadName,
+            'content_type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'expires' => now()->addMinutes(10),
+        ]);
+
+        if (Auth::check()) {
+            UserActivity::create([
+                'user_id' => Auth::id(),
+                'action' => 'Convert to Excel',
+                'category' => 'excel_export',
+                'details' => [
+                    'mode' => $mode,
+                    'merge_cells' => $mergeCells,
+                    'sheet_per_page' => $sheetPerPage,
+                    'file_size' => filesize($tempOutputPath),
+                ],
+                'document_id' => $document->id,
+                'status' => 'success',
+                'ip_address' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+            ]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'download_token' => $downloadToken,
+            'download_name' => $downloadName,
+        ]);
+    }
+
+    public function downloadConverted(Request $request)
+    {
+        $token = $request->query('token');
+        if (!$token) {
+            abort(400, 'Missing download token');
+        }
+
+        $data = session()->pull("converted_download_{$token}");
+        if (!$data || !isset($data['path'])) {
+            abort(404, 'Download expired or not found');
+        }
+
+        if (now()->greaterThan($data['expires'])) {
+            if (file_exists($data['path'])) {
+                unlink($data['path']);
+            }
+            abort(410, 'Download link has expired');
+        }
+
+        if (!file_exists($data['path'])) {
+            abort(404, 'File not found');
+        }
+
+        return response()->download($data['path'], $data['name'], [
+            'Content-Type' => $data['content_type'] ?? 'application/octet-stream',
+        ])->deleteFileAfterSend(true);
     }
 }

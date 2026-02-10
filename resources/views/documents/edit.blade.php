@@ -4513,6 +4513,14 @@
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15l2 2 4-4"/></svg>
                         PDF/A
                     </button>
+                    <button id="convert-tab-word" class="convert-tab" style="padding:10px 20px; border:none; border-bottom:2px solid transparent; background:transparent; color:rgba(255,255,255,0.4); cursor:pointer; font-size:13px; font-weight:600; transition:all 0.15s; display:flex; align-items:center; gap:6px;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M7 13h10M7 17h6"/></svg>
+                        Word
+                    </button>
+                    <button id="convert-tab-excel" class="convert-tab" style="padding:10px 20px; border:none; border-bottom:2px solid transparent; background:transparent; color:rgba(255,255,255,0.4); cursor:pointer; font-size:13px; font-weight:600; transition:all 0.15s; display:flex; align-items:center; gap:6px;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+                        Excel
+                    </button>
                 </div>
                 <!-- Body -->
                 <div style="padding:20px 24px;">
@@ -4614,6 +4622,86 @@
                             </div>
                         </div>
                     </div><!-- END convert-pdfa-options -->
+
+                    <!-- ========== WORD SETTINGS TAB ========== -->
+                    <div id="convert-word-options" style="display:none;">
+                        <div style="margin-bottom:20px; padding:16px; border-radius:10px; background:rgba(59,130,246,0.06); border:1px solid rgba(59,130,246,0.15);">
+                            <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M7 13h10M7 17h6"/></svg>
+                                <span style="font-size:13px; font-weight:600; color:#3b82f6;">Word Document (.docx)</span>
+                            </div>
+                            <p style="font-size:12px; color:rgba(255,255,255,0.5); margin:0; line-height:1.5;">Converts your PDF into an editable Word document. Text, formatting, and layout are preserved as closely as possible.</p>
+                        </div>
+                        <!-- Layout Mode -->
+                        <div style="margin-bottom:20px;">
+                            <label style="font-size:12px; font-weight:600; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:8px;">Layout Mode</label>
+                            <select id="convert-word-layout" style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:#1e1e3a; color:#e5e7eb; font-size:13px; outline:none; cursor:pointer; appearance:auto;">
+                                <option value="flow">Flowing Text — Best for editing</option>
+                                <option value="exact" selected>Exact Layout — Preserves positioning</option>
+                            </select>
+                            <div style="font-size:11px; color:rgba(255,255,255,0.35); margin-top:6px;">Exact layout preserves visual position but may be harder to edit</div>
+                        </div>
+                        <!-- Options -->
+                        <div style="margin-bottom:20px;">
+                            <label style="font-size:12px; font-weight:600; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:12px;">Options</label>
+                            <div style="display:flex; flex-direction:column; gap:12px;">
+                                <label style="display:flex; align-items:center; gap:10px; cursor:pointer; padding:10px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.02); transition:all 0.15s;" onmouseenter="this.style.background='rgba(255,255,255,0.04)'" onmouseleave="this.style.background='rgba(255,255,255,0.02)'">
+                                    <input id="convert-word-images" type="checkbox" checked style="accent-color:#3b82f6; width:16px; height:16px; cursor:pointer;">
+                                    <div>
+                                        <div style="font-size:13px; color:#e5e7eb; font-weight:500;">Include Images</div>
+                                        <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px;">Embed images from the PDF into the Word document</div>
+                                    </div>
+                                </label>
+                                <label style="display:flex; align-items:center; gap:10px; cursor:pointer; padding:10px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.02); transition:all 0.15s;" onmouseenter="this.style.background='rgba(255,255,255,0.04)'" onmouseleave="this.style.background='rgba(255,255,255,0.02)'">
+                                    <input id="convert-word-ocr" type="checkbox" style="accent-color:#3b82f6; width:16px; height:16px; cursor:pointer;">
+                                    <div>
+                                        <div style="font-size:13px; color:#e5e7eb; font-weight:500;">OCR Scanned Pages</div>
+                                        <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px;">Use OCR for pages that contain scanned images instead of text</div>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+                    </div><!-- END convert-word-options -->
+
+                    <!-- ========== EXCEL SETTINGS TAB ========== -->
+                    <div id="convert-excel-options" style="display:none;">
+                        <div style="margin-bottom:20px; padding:16px; border-radius:10px; background:rgba(16,185,129,0.06); border:1px solid rgba(16,185,129,0.15);">
+                            <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+                                <span style="font-size:13px; font-weight:600; color:#10b981;">Excel Spreadsheet (.xlsx)</span>
+                            </div>
+                            <p style="font-size:12px; color:rgba(255,255,255,0.5); margin:0; line-height:1.5;">Extracts tables and structured data from your PDF into an Excel spreadsheet. Works best with documents containing tabular data.</p>
+                        </div>
+                        <!-- Extraction Mode -->
+                        <div style="margin-bottom:20px;">
+                            <label style="font-size:12px; font-weight:600; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:8px;">Extraction Mode</label>
+                            <select id="convert-excel-mode" style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:#1e1e3a; color:#e5e7eb; font-size:13px; outline:none; cursor:pointer; appearance:auto;">
+                                <option value="tables" selected>Tables Only — Extract detected tables</option>
+                                <option value="all">All Content — Extract all text into cells</option>
+                            </select>
+                            <div style="font-size:11px; color:rgba(255,255,255,0.35); margin-top:6px;">Tables Only works best for invoices, reports, and forms</div>
+                        </div>
+                        <!-- Options -->
+                        <div style="margin-bottom:20px;">
+                            <label style="font-size:12px; font-weight:600; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:12px;">Options</label>
+                            <div style="display:flex; flex-direction:column; gap:12px;">
+                                <label style="display:flex; align-items:center; gap:10px; cursor:pointer; padding:10px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.02); transition:all 0.15s;" onmouseenter="this.style.background='rgba(255,255,255,0.04)'" onmouseleave="this.style.background='rgba(255,255,255,0.02)'">
+                                    <input id="convert-excel-merge-cells" type="checkbox" checked style="accent-color:#10b981; width:16px; height:16px; cursor:pointer;">
+                                    <div>
+                                        <div style="font-size:13px; color:#e5e7eb; font-weight:500;">Detect Merged Cells</div>
+                                        <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px;">Identify and preserve merged cell regions from tables</div>
+                                    </div>
+                                </label>
+                                <label style="display:flex; align-items:center; gap:10px; cursor:pointer; padding:10px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.02); transition:all 0.15s;" onmouseenter="this.style.background='rgba(255,255,255,0.04)'" onmouseleave="this.style.background='rgba(255,255,255,0.02)'">
+                                    <input id="convert-excel-sheet-per-page" type="checkbox" checked style="accent-color:#10b981; width:16px; height:16px; cursor:pointer;">
+                                    <div>
+                                        <div style="font-size:13px; color:#e5e7eb; font-weight:500;">Separate Sheet per Page</div>
+                                        <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px;">Create a new worksheet for each PDF page</div>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+                    </div><!-- END convert-excel-options -->
 
                     <!-- Progress bar -->
                     <div id="convert-progress-wrap" style="display:none; margin-bottom:16px;">
@@ -5403,6 +5491,32 @@
                 return field.querySelector('[contenteditable]') || field;
             }
 
+            function getOverlayExplicitText(textEl) {
+                if (!textEl) return '';
+                const readNode = (node) => {
+                    if (!node) return '';
+                    if (node.nodeType === Node.TEXT_NODE) {
+                        return node.nodeValue || '';
+                    }
+                    if (node.nodeType !== Node.ELEMENT_NODE) {
+                        return '';
+                    }
+                    const tag = node.tagName;
+                    if (tag === 'BR') {
+                        return '\n';
+                    }
+                    let out = '';
+                    node.childNodes.forEach((child) => {
+                        out += readNode(child);
+                    });
+                    if ((tag === 'DIV' || tag === 'P' || tag === 'LI') && out && !out.endsWith('\n')) {
+                        out += '\n';
+                    }
+                    return out;
+                };
+                return readNode(textEl).replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n+$/g, '');
+            }
+
             function applyOverlayStyle(updateFn) {
                 if (!selectedOverlayField) {
                     return;
@@ -5558,7 +5672,7 @@
                     // Spans still positioned — text hasn't been edited yet, use original
                     currentText = field.dataset.originalText || '';
                 } else {
-                    currentText = textEl.innerText || textEl.textContent || '';
+                    currentText = getOverlayExplicitText(textEl);
                 }
 
                 // Compute scale factors from field dataset
@@ -6821,8 +6935,12 @@
                         if (!moveDragStart) return;
                         const newX = me.clientX - moveDragStart.overlayLeft - moveDragStart.offsetX;
                         const newY = me.clientY - moveDragStart.overlayTop - moveDragStart.offsetY;
-                        box.style.left = Math.max(0, newX) + 'px';
-                        box.style.top = Math.max(0, newY) + 'px';
+                        const maxX = Math.max(0, overlay.clientWidth - box.offsetWidth);
+                        const maxY = Math.max(0, overlay.clientHeight - box.offsetHeight);
+                        const clampedX = Math.max(0, Math.min(maxX, newX));
+                        const clampedY = Math.max(0, Math.min(maxY, newY));
+                        box.style.left = clampedX + 'px';
+                        box.style.top = clampedY + 'px';
                     };
                     const onUp = () => {
                         moveDragStart = null;
@@ -7315,6 +7433,40 @@
                                     newTop = startTop + deltaY;
                                     if (newHeight === 30) newTop = startTop + startHeight - 30;
                                 }
+
+                                // Keep shape bounds fully inside page overlay.
+                                const maxW = overlay.clientWidth;
+                                const maxH = overlay.clientHeight;
+                                if (newLeft < 0) {
+                                    newWidth += newLeft;
+                                    newLeft = 0;
+                                }
+                                if (newTop < 0) {
+                                    newHeight += newTop;
+                                    newTop = 0;
+                                }
+                                if (newLeft + newWidth > maxW) {
+                                    if (direction.includes('w')) {
+                                        newLeft = Math.max(0, maxW - newWidth);
+                                    } else {
+                                        newWidth = maxW - newLeft;
+                                    }
+                                }
+                                if (newTop + newHeight > maxH) {
+                                    if (direction.includes('n')) {
+                                        newTop = Math.max(0, maxH - newHeight);
+                                    } else {
+                                        newHeight = maxH - newTop;
+                                    }
+                                }
+                                newWidth = Math.max(30, Math.min(newWidth, maxW));
+                                newHeight = Math.max(30, Math.min(newHeight, maxH));
+                                if (newLeft + newWidth > maxW) {
+                                    newLeft = Math.max(0, maxW - newWidth);
+                                }
+                                if (newTop + newHeight > maxH) {
+                                    newTop = Math.max(0, maxH - newHeight);
+                                }
                                 
                                 // Update the label
                                 label.style.width = newWidth + 'px';
@@ -7792,6 +7944,41 @@
                                     nl = startLeft + (startW - nw);
                                 }
                                 if (dir.includes('s')) nh = Math.max(16, startH + dy);
+
+                                // Keep text bounds fully inside page overlay.
+                                const maxW = overlay.clientWidth;
+                                const maxH = overlay.clientHeight;
+                                if (nl < 0) {
+                                    nw += nl;
+                                    nl = 0;
+                                }
+                                if (nt < 0) {
+                                    nh += nt;
+                                    nt = 0;
+                                }
+                                if (nl + nw > maxW) {
+                                    if (dir.includes('w')) {
+                                        nl = Math.max(0, maxW - nw);
+                                    } else {
+                                        nw = maxW - nl;
+                                    }
+                                }
+                                if (nt + nh > maxH) {
+                                    if (dir.includes('n')) {
+                                        nt = Math.max(0, maxH - nh);
+                                    } else {
+                                        nh = maxH - nt;
+                                    }
+                                }
+                                nw = Math.max(30, Math.min(nw, maxW));
+                                nh = Math.max(16, Math.min(nh, maxH));
+                                if (nl + nw > maxW) {
+                                    nl = Math.max(0, maxW - nw);
+                                }
+                                if (nt + nh > maxH) {
+                                    nt = Math.max(0, maxH - nh);
+                                }
+
                                 label.style.width = nw + 'px';
                                 label.style.height = nh + 'px';
                                 label.style.left = nl + 'px';
@@ -10402,9 +10589,14 @@
             const convertPdfaEmbedFonts = document.getElementById('convert-pdfa-embed-fonts');
             const convertPdfaSrgb = document.getElementById('convert-pdfa-srgb');
             const convertImageSettings = document.getElementById('convert-image-settings');
+            const convertWordOptions = document.getElementById('convert-word-options');
+            const convertExcelOptions = document.getElementById('convert-excel-options');
             const convertModalTitle = document.getElementById('convert-modal-title');
             const convertModalSubtitle = document.getElementById('convert-modal-subtitle');
             const convertToPdfAUrl = "{{ route('documents.convertToPdfA', $document) }}";
+            const convertToWordUrl = "{{ route('documents.convertToWord', $document) }}";
+            const convertToExcelUrl = "{{ route('documents.convertToExcel', $document) }}";
+            const downloadConvertedBaseUrl = "{{ route('documents.downloadConverted') }}";
             const downloadPdfABaseUrl = "{{ route('documents.downloadPdfA') }}";
             const logExportUrl = "{{ route('documents.logExport', $document) }}";
             const pdfaReportModal = document.getElementById('pdfa-report-modal');
@@ -10443,12 +10635,24 @@
             // Tab switching
             const convertTabImages = document.getElementById('convert-tab-images');
             const convertTabPdfa = document.getElementById('convert-tab-pdfa');
+            const convertTabWord = document.getElementById('convert-tab-word');
+            const convertTabExcel = document.getElementById('convert-tab-excel');
             const convertModalIcon = document.getElementById('convert-modal-icon');
+            const allConvertTabs = [convertTabImages, convertTabPdfa, convertTabWord, convertTabExcel].filter(Boolean);
 
             function switchConvertTab(tab) {
+                // Reset all tabs to inactive
+                allConvertTabs.forEach(t => {
+                    if (t) { t.style.borderBottomColor = 'transparent'; t.style.color = 'rgba(255,255,255,0.4)'; }
+                });
+                // Hide all panels
+                if (convertImageSettings) convertImageSettings.style.display = 'none';
+                if (convertPdfaOptions) convertPdfaOptions.style.display = 'none';
+                if (convertWordOptions) convertWordOptions.style.display = 'none';
+                if (convertExcelOptions) convertExcelOptions.style.display = 'none';
+
                 if (tab === 'images') {
                     cvtFormat = 'jpg';
-                    // Reset image format selection to JPG
                     document.querySelectorAll('.cvt-fmt-btn').forEach(b => {
                         b.style.borderColor = 'rgba(255,255,255,0.1)';
                         b.style.background = 'transparent';
@@ -10457,24 +10661,16 @@
                     const jpgBtn = document.querySelector('.cvt-fmt-btn[data-format="jpg"]');
                     if (jpgBtn) { jpgBtn.style.borderColor = '#3b82f6'; jpgBtn.style.background = 'rgba(59,130,246,0.12)'; jpgBtn.classList.add('active'); }
                     if (convertImageSettings) convertImageSettings.style.display = 'block';
-                    if (convertPdfaOptions) convertPdfaOptions.style.display = 'none';
                     if (convertModalTitle) convertModalTitle.textContent = 'Export to Images';
                     if (convertModalSubtitle) convertModalSubtitle.textContent = 'Convert PDF pages to image files';
                     if (convertModalIcon) convertModalIcon.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14"/><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>';
                     if (convertModalIcon) convertModalIcon.style.background = 'linear-gradient(135deg, #3b82f6, #8b5cf6)';
                     if (convertExportBtn) convertExportBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Export';
                     if (convertExportBtn) convertExportBtn.style.background = 'linear-gradient(135deg, #3b82f6, #8b5cf6)';
-                    convertTabImages.style.borderBottomColor = '#3b82f6';
-                    convertTabImages.style.color = '#e5e7eb';
-                    convertTabPdfa.style.borderBottomColor = 'transparent';
-                    convertTabPdfa.style.color = 'rgba(255,255,255,0.4)';
-                    if (convertQualitySection) {
-                        convertQualitySection.style.opacity = '1';
-                        convertQualitySection.style.pointerEvents = 'auto';
-                    }
-                } else {
+                    if (convertTabImages) { convertTabImages.style.borderBottomColor = '#3b82f6'; convertTabImages.style.color = '#e5e7eb'; }
+                    if (convertQualitySection) { convertQualitySection.style.opacity = '1'; convertQualitySection.style.pointerEvents = 'auto'; }
+                } else if (tab === 'pdfa') {
                     cvtFormat = 'pdfa';
-                    if (convertImageSettings) convertImageSettings.style.display = 'none';
                     if (convertPdfaOptions) convertPdfaOptions.style.display = 'block';
                     if (convertModalTitle) convertModalTitle.textContent = 'Export as PDF/A';
                     if (convertModalSubtitle) convertModalSubtitle.textContent = 'Convert to archival format (ISO 19005)';
@@ -10482,15 +10678,34 @@
                     if (convertModalIcon) convertModalIcon.style.background = 'linear-gradient(135deg, #10b981, #059669)';
                     if (convertExportBtn) convertExportBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15l2 2 4-4"/></svg> Convert to PDF/A';
                     if (convertExportBtn) convertExportBtn.style.background = 'linear-gradient(135deg, #10b981, #059669)';
-                    convertTabPdfa.style.borderBottomColor = '#10b981';
-                    convertTabPdfa.style.color = '#e5e7eb';
-                    convertTabImages.style.borderBottomColor = 'transparent';
-                    convertTabImages.style.color = 'rgba(255,255,255,0.4)';
+                    if (convertTabPdfa) { convertTabPdfa.style.borderBottomColor = '#10b981'; convertTabPdfa.style.color = '#e5e7eb'; }
+                } else if (tab === 'word') {
+                    cvtFormat = 'word';
+                    if (convertWordOptions) convertWordOptions.style.display = 'block';
+                    if (convertModalTitle) convertModalTitle.textContent = 'Convert to Word';
+                    if (convertModalSubtitle) convertModalSubtitle.textContent = 'Export as an editable Word document (.docx)';
+                    if (convertModalIcon) convertModalIcon.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M7 13h10M7 17h6"/></svg>';
+                    if (convertModalIcon) convertModalIcon.style.background = 'linear-gradient(135deg, #2563eb, #3b82f6)';
+                    if (convertExportBtn) convertExportBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Convert to Word';
+                    if (convertExportBtn) convertExportBtn.style.background = 'linear-gradient(135deg, #2563eb, #3b82f6)';
+                    if (convertTabWord) { convertTabWord.style.borderBottomColor = '#3b82f6'; convertTabWord.style.color = '#e5e7eb'; }
+                } else if (tab === 'excel') {
+                    cvtFormat = 'excel';
+                    if (convertExcelOptions) convertExcelOptions.style.display = 'block';
+                    if (convertModalTitle) convertModalTitle.textContent = 'Convert to Excel';
+                    if (convertModalSubtitle) convertModalSubtitle.textContent = 'Extract tables into a spreadsheet (.xlsx)';
+                    if (convertModalIcon) convertModalIcon.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>';
+                    if (convertModalIcon) convertModalIcon.style.background = 'linear-gradient(135deg, #059669, #10b981)';
+                    if (convertExportBtn) convertExportBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Convert to Excel';
+                    if (convertExportBtn) convertExportBtn.style.background = 'linear-gradient(135deg, #059669, #10b981)';
+                    if (convertTabExcel) { convertTabExcel.style.borderBottomColor = '#10b981'; convertTabExcel.style.color = '#e5e7eb'; }
                 }
             }
 
             if (convertTabImages) convertTabImages.addEventListener('click', () => switchConvertTab('images'));
             if (convertTabPdfa) convertTabPdfa.addEventListener('click', () => switchConvertTab('pdfa'));
+            if (convertTabWord) convertTabWord.addEventListener('click', () => switchConvertTab('word'));
+            if (convertTabExcel) convertTabExcel.addEventListener('click', () => switchConvertTab('excel'));
 
             // Login required modal
             const loginRequiredModal = document.getElementById('login-required-modal');
@@ -10968,6 +11183,114 @@
                         } catch (err) {
                             console.error('PDF/A conversion error:', err);
                             setStatus('PDF/A export error: ' + err.message, 'err');
+                        } finally {
+                            cvtExporting = false;
+                            convertExportBtn.disabled = false;
+                            convertExportBtn.style.opacity = '1';
+                            convertProgressWrap.style.display = 'none';
+                            convertProgressBar.style.width = '0%';
+                        }
+                        return;
+                    }
+
+                    // --- Word export (server-side) ---
+                    if (cvtFormat === 'word') {
+                        try {
+                            convertProgressBar.style.width = '20%';
+                            convertProgressPct.textContent = '20%';
+                            convertProgressLabel.textContent = 'Sending to server for Word conversion...';
+
+                            const wordLayout = document.getElementById('convert-word-layout')?.value || 'exact';
+                            const wordImages = document.getElementById('convert-word-images')?.checked ?? true;
+                            const wordOcr = document.getElementById('convert-word-ocr')?.checked ?? false;
+
+                            const resp = await fetch(convertToWordUrl, {
+                                method: 'POST',
+                                headers: { 'X-CSRF-TOKEN': csrfToken, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                                body: JSON.stringify({ layout: wordLayout, include_images: wordImages, ocr: wordOcr })
+                            });
+
+                            convertProgressBar.style.width = '70%';
+                            convertProgressPct.textContent = '70%';
+                            convertProgressLabel.textContent = 'Processing Word conversion...';
+
+                            const data = await resp.json();
+                            if (!resp.ok || !data.success) throw new Error(data.message || 'Word conversion failed');
+
+                            convertProgressBar.style.width = '100%';
+                            convertProgressPct.textContent = '100%';
+                            convertProgressLabel.textContent = 'Complete! Downloading...';
+
+                            // Download the file
+                            const dlUrl = downloadConvertedBaseUrl + '?token=' + encodeURIComponent(data.download_token);
+                            const a = document.createElement('a');
+                            a.href = dlUrl;
+                            a.download = data.download_name || 'document.docx';
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+
+                            setStatus('Word document exported successfully.', 'ok');
+                            logExportActivity('Convert to Word', 'word_export', { layout: wordLayout, include_images: wordImages, ocr: wordOcr }, 'success');
+                            setTimeout(() => { convertModal.style.display = 'none'; }, 600);
+                        } catch (err) {
+                            console.error('Word conversion error:', err);
+                            setStatus('Word export error: ' + err.message, 'err');
+                            logExportActivity('Convert to Word', 'word_export', { error: err.message }, 'failed');
+                        } finally {
+                            cvtExporting = false;
+                            convertExportBtn.disabled = false;
+                            convertExportBtn.style.opacity = '1';
+                            convertProgressWrap.style.display = 'none';
+                            convertProgressBar.style.width = '0%';
+                        }
+                        return;
+                    }
+
+                    // --- Excel export (server-side) ---
+                    if (cvtFormat === 'excel') {
+                        try {
+                            convertProgressBar.style.width = '20%';
+                            convertProgressPct.textContent = '20%';
+                            convertProgressLabel.textContent = 'Sending to server for Excel conversion...';
+
+                            const excelMode = document.getElementById('convert-excel-mode')?.value || 'tables';
+                            const excelMergeCells = document.getElementById('convert-excel-merge-cells')?.checked ?? true;
+                            const excelSheetPerPage = document.getElementById('convert-excel-sheet-per-page')?.checked ?? true;
+
+                            const resp = await fetch(convertToExcelUrl, {
+                                method: 'POST',
+                                headers: { 'X-CSRF-TOKEN': csrfToken, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                                body: JSON.stringify({ mode: excelMode, merge_cells: excelMergeCells, sheet_per_page: excelSheetPerPage })
+                            });
+
+                            convertProgressBar.style.width = '70%';
+                            convertProgressPct.textContent = '70%';
+                            convertProgressLabel.textContent = 'Processing Excel conversion...';
+
+                            const data = await resp.json();
+                            if (!resp.ok || !data.success) throw new Error(data.message || 'Excel conversion failed');
+
+                            convertProgressBar.style.width = '100%';
+                            convertProgressPct.textContent = '100%';
+                            convertProgressLabel.textContent = 'Complete! Downloading...';
+
+                            // Download the file
+                            const dlUrl = downloadConvertedBaseUrl + '?token=' + encodeURIComponent(data.download_token);
+                            const a = document.createElement('a');
+                            a.href = dlUrl;
+                            a.download = data.download_name || 'document.xlsx';
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+
+                            setStatus('Excel spreadsheet exported successfully.', 'ok');
+                            logExportActivity('Convert to Excel', 'excel_export', { mode: excelMode, merge_cells: excelMergeCells, sheet_per_page: excelSheetPerPage }, 'success');
+                            setTimeout(() => { convertModal.style.display = 'none'; }, 600);
+                        } catch (err) {
+                            console.error('Excel conversion error:', err);
+                            setStatus('Excel export error: ' + err.message, 'err');
+                            logExportActivity('Convert to Excel', 'excel_export', { error: err.message }, 'failed');
                         } finally {
                             cvtExporting = false;
                             convertExportBtn.disabled = false;
@@ -14845,8 +15168,8 @@
 
                         // Track changes to the text content
                         textSpan.addEventListener('input', function() {
-                            // Get the actual user-typed text (innerText preserves line breaks)
-                            const userTypedText = textSpan.innerText;
+                            // Preserve explicit line breaks only (not visual soft-wraps).
+                            const userTypedText = getOverlayExplicitText(textSpan);
                             const editKey = key;
                             const computedStyle = window.getComputedStyle(textSpan);
                             const currentFontSizePx = computedStyle.fontSize;
@@ -14926,7 +15249,18 @@
                         textSpan.addEventListener('keydown', function(e) {
                             if (e.key === 'Enter' && field.classList.contains('editing')) {
                                 e.preventDefault();
-                                document.execCommand('insertLineBreak');
+                                const selection = window.getSelection();
+                                if (selection && selection.rangeCount > 0) {
+                                    const range = selection.getRangeAt(0);
+                                    range.deleteContents();
+                                    const newlineNode = document.createTextNode('\n');
+                                    range.insertNode(newlineNode);
+                                    range.setStartAfter(newlineNode);
+                                    range.collapse(true);
+                                    selection.removeAllRanges();
+                                    selection.addRange(range);
+                                    textSpan.dispatchEvent(new Event('input', { bubbles: true }));
+                                }
                             }
                             // Escape exits edit mode back to selected mode
                             if (e.key === 'Escape' && field.classList.contains('editing')) {
@@ -14988,7 +15322,9 @@
                                     );
                                     return lineSpans.map(s => s.textContent).join(' ');
                                 });
-                                const plainText = lines.join('\n');
+                                // Keep text reflowable: positioned spans encode visual wraps,
+                                // not semantic paragraph breaks. Convert to one flowing line.
+                                const plainText = lines.join(' ').replace(/\s+/g, ' ').trim();
                                 textSpan.textContent = plainText;
                                 textSpan.style.whiteSpace = 'pre-wrap';
                                 textSpan.style.wordBreak = 'break-word';
@@ -15320,7 +15656,7 @@
                                         // Words are still in positioned spans — text is unedited
                                         currentText = blockText;
                                     } else {
-                                        currentText = textSpan.innerText;
+                                        currentText = getOverlayExplicitText(textSpan);
                                         const originalClean = blockText.replace(/\s+/g, '');
                                         const currentClean = currentText.replace(/\s+/g, '');
                                         if (originalClean === currentClean) {
@@ -15441,7 +15777,9 @@
                                     );
                                     return lineSpans.map(s => s.textContent).join(' ');
                                 });
-                                const plainText = lines.join('\n');
+                                // Keep text reflowable when resizing: don't persist wrapped
+                                // visual lines as hard newlines.
+                                const plainText = lines.join(' ').replace(/\s+/g, ' ').trim();
                                 textSpan.textContent = plainText;
                                 textSpan.style.whiteSpace = 'pre-wrap';
                                 textSpan.style.wordBreak = 'break-word';
@@ -15544,7 +15882,7 @@
                                 if (hasPositionedSpans2) {
                                     currentText = blockText;
                                 } else {
-                                    currentText = textSpan.innerText;
+                                    currentText = getOverlayExplicitText(textSpan);
                                     const originalClean = blockText.replace(/\s+/g, '');
                                     const currentClean = currentText.replace(/\s+/g, '');
                                     if (originalClean === currentClean) {

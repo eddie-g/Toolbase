@@ -56,7 +56,10 @@ Route::post('/documents/{document}/convert-html-to-pdf', [DocumentController::cl
 Route::post('/documents/{document}/save-guided-form', [DocumentController::class, 'saveGuidedFormData'])->name('documents.saveGuidedForm');
 Route::post('/documents/{document}/screenshot', [DocumentController::class, 'takeScreenshot'])->name('documents.takeScreenshot');
 Route::post('/documents/{document}/convert-to-pdfa', [DocumentController::class, 'convertToPdfA'])->name('documents.convertToPdfA');
+Route::post('/documents/{document}/convert-to-word', [DocumentController::class, 'convertToWord'])->name('documents.convertToWord');
+Route::post('/documents/{document}/convert-to-excel', [DocumentController::class, 'convertToExcel'])->name('documents.convertToExcel');
 Route::get('/documents/download-pdfa', [DocumentController::class, 'downloadPdfA'])->name('documents.downloadPdfA');
+Route::get('/documents/download-converted', [DocumentController::class, 'downloadConverted'])->name('documents.downloadConverted');
 Route::post('/documents/{document}/log-export', [DocumentController::class, 'logExportActivity'])->name('documents.logExport');
 Route::get('/loaded-fonts.css', function() {
     $path = storage_path('app/public/loaded_fonts.css');
