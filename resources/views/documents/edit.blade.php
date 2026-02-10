@@ -1625,8 +1625,9 @@
             }
             .overlay-field .box-menu {
                 position: absolute;
-                top: 2px;
-                right: 2px;
+                bottom: 100%;
+                right: -1px;
+                margin-bottom: 4px;
                 display: none;
                 flex-direction: row;
                 gap: 0;
@@ -14779,6 +14780,12 @@
                         textSpan.addEventListener('mouseup', function() {
                             setOverlaySelection(field);
                         });
+                        textSpan.addEventListener('keydown', function(e) {
+                            if (e.key === 'Enter') {
+                                e.preventDefault();
+                                document.execCommand('insertLineBreak');
+                            }
+                        });
                         textSpan.addEventListener('keyup', function() {
                             setOverlaySelection(field);
                         });
@@ -15419,7 +15426,7 @@
                     textSpan.style.outline = 'none';
                     textSpan.style.width = '100%';
                     textSpan.style.cursor = 'text';
-                    textSpan.style.whiteSpace = 'nowrap';
+                    textSpan.style.whiteSpace = 'pre-wrap';
                     textSpan.style.padding = '0';
                     textSpan.style.margin = '0';
                     textSpan.style.verticalAlign = 'baseline';
@@ -15540,6 +15547,14 @@
                     field.dataset.pageWidth = pageData.width;
                     field.dataset.pageHeight = pageData.height;
                     field.dataset.padding = padding;
+                    
+                    // Allow Enter key to insert line breaks
+                    textSpan.addEventListener('keydown', function(e) {
+                        if (e.key === 'Enter') {
+                            e.preventDefault();
+                            document.execCommand('insertLineBreak');
+                        }
+                    });
                     
                     // Track changes and auto-expand width as user types
                     textSpan.addEventListener('input', () => {
