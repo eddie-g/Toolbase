@@ -4,6 +4,7 @@ use App\Http\Controllers\DocumentController;
 use App\Http\Controllers\DeveloperChatController;
 use App\Http\Controllers\AIController;
 use App\Http\Controllers\ComplianceController;
+use App\Http\Controllers\OverlayEditorTestController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -70,6 +71,10 @@ Route::get('/loaded-fonts.css', function() {
 Route::post('/compliance/run-tests', [ComplianceController::class, 'runTests'])->name('compliance.runTests');
 Route::get('/compliance/test-files', [ComplianceController::class, 'getTestFiles'])->name('compliance.testFiles');
 Route::post('/compliance/run-single-test', [ComplianceController::class, 'runSingleTest'])->name('compliance.runSingleTest');
+
+Route::get('/overlay-editor/test-files', [OverlayEditorTestController::class, 'getTestFiles'])->name('overlayEditor.testFiles');
+Route::post('/overlay-editor/run-single-test', [OverlayEditorTestController::class, 'runSingleTest'])->name('overlayEditor.runSingleTest');
+
 Route::delete('/documents/{document}', [DocumentController::class, 'destroy'])->name('documents.destroy');
 Route::post('/documents/bulk-destroy', [DocumentController::class, 'bulkDestroy'])->name('documents.bulkDestroy');
 
