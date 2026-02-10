@@ -5144,7 +5144,7 @@
                 console.log('updateSelectionBar called - selectedAnnotation:', selectedAnnotation, 'selectedOverlayField:', selectedOverlayField);
                 if (!selectedAnnotation && !selectedOverlayField) {
                     console.log('No selection, disabling toolbar');
-                    if (selectionLabel) selectionLabel.textContent = 'No text selected';
+                    if (selectionLabel) selectionLabel.textContent = overlayEditorActive ? 'Click a text block to edit' : 'No text selected';
                     if (selectionControls) selectionControls.classList.add('disabled');
                     if (selectedFont) {
                         selectedFont.value = 'Helvetica';
@@ -13045,6 +13045,9 @@
                     if (saveOverlayBtn) {
                         saveOverlayBtn.style.display = 'none';
                     }
+                    // Hide the selection/font toolbar when leaving overlay mode
+                    const stBar = document.getElementById('selection-toolbar');
+                    if (stBar) stBar.classList.add('hidden');
                     viewer.classList.add('overlay-view-mode');
                     viewer.classList.remove('overlay-hidden');
                     document.querySelectorAll('.overlay-field [contenteditable]').forEach(el => {
@@ -13082,6 +13085,10 @@
                 basePdfUrl = cleanPdfUrl;
                 pdfVersion = Date.now();
                 const loadToken = ++overlayLoadToken;
+
+                // Show the selection/font toolbar permanently in overlay mode
+                const stBar = document.getElementById('selection-toolbar');
+                if (stBar) stBar.classList.remove('hidden');
 
                 // Remove view mode and enable editing
                 viewer.classList.remove('overlay-view-mode');
