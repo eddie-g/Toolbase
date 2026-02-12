@@ -1959,7 +1959,7 @@ class DocumentController extends Controller
         
         // Path to Python script and venv
         $pythonVenv = base_path('python/venv/bin/python');
-        $pythonScript = base_path('python/screenshot_document.py');
+        $pythonScript = base_path('python/test_helpers/screenshot_document.py');
         $playwrightPath = base_path('python/.playwright');
         
         // Build command with PLAYWRIGHT_BROWSERS_PATH set

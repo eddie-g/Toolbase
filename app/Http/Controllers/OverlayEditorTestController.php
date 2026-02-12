@@ -14,7 +14,7 @@ class OverlayEditorTestController extends Controller
     public function getTestFiles(Request $request)
     {
         $testDir = base_path('tests/OverlayEditor');
-        $pythonScript = base_path('python/validate_overlay_extraction.py');
+        $pythonScript = base_path('python/test_helpers/validate_overlay_extraction.py');
 
         if (!is_dir($testDir)) {
             return response()->json(['success' => false, 'message' => 'Test directory not found: tests/OverlayEditor/'], 404);
@@ -59,7 +59,7 @@ class OverlayEditorTestController extends Controller
 
         $filePath = $request->input('file_path');
         $runId = $request->input('run_id');
-        $pythonScript = base_path('python/validate_overlay_extraction.py');
+        $pythonScript = base_path('python/test_helpers/validate_overlay_extraction.py');
 
         if (!file_exists($filePath)) {
             return response()->json(['success' => false, 'message' => 'Test file not found'], 404);
