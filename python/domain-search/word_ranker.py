@@ -132,7 +132,7 @@ def fetch_words(limit: int) -> List[Tuple[int, str]]:
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT id, word FROM dictionary WHERE ranked IS NULL ORDER BY id ASC LIMIT %s",
+        "SELECT id, word FROM dictionary WHERE word_ranker_scan IS NULL ORDER BY id ASC LIMIT %s",
         (limit,),
     )
     words = cursor.fetchall()
@@ -158,7 +158,7 @@ def update_scores(results: List[dict]) -> int:
         cursor.execute(
             """UPDATE dictionary
                SET space = %s, fantasy = %s, tech = %s, romance = %s, scifi = %s,
-                   popularity = %s, ranked = NOW()
+                   popularity = %s, word_ranker_scan = NOW()
                WHERE id = %s""",
             (
                 round(r["scores"].get("space", 0), 3),

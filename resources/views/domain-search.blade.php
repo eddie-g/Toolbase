@@ -29,7 +29,7 @@
 
     <!-- Main Content -->
     <main class="pt-28 pb-20" x-data="domainSearch()">
-        <div class="container mx-auto px-4 sm:px-6 lg:px-8 max-w-3xl">
+        <div class="container mx-auto px-4 sm:px-6 lg:px-8 max-w-[1000px]">
 
             <!-- Title -->
             <div class="text-center mb-10">
@@ -130,46 +130,43 @@
                         </p>
                     </div>
 
-                    <!-- TLD Selection -->
                     <div class="mb-6">
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Extensions</label>
-                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                            <label class="relative cursor-pointer" :class="tlds.includes('com') ? 'ring-2 ring-blue-500 rounded-xl' : ''">
-                                <input type="checkbox" value="com" x-model="tlds" class="sr-only" />
-                                <div class="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border transition"
-                                     :class="tlds.includes('com')
-                                        ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300'
-                                        : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'">
-                                    <span class="text-sm font-semibold">.com</span>
+                        <div class="rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 p-3"
+                             @click.outside="closeTldTypeaheadFor('direct')">
+                            <div class="flex flex-wrap gap-2 mb-2" x-show="tlds.length > 0">
+                                <template x-for="tld in tlds" :key="'direct-' + tld">
+                                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold"
+                                          :class="tldBadgeClass('.' + tld)">
+                                        <span x-text="'.' + tld"></span>
+                                        <button type="button" class="leading-none opacity-80 hover:opacity-100"
+                                                @click.prevent="removeTld(tld)">x</button>
+                                    </span>
+                                </template>
+                            </div>
+                            <div class="relative">
+                                <input
+                                    type="text"
+                                    x-model="tldQuery"
+                                    @focus="openTldTypeahead()"
+                                    @input="updateTldSuggestions()"
+                                    @keydown.enter.prevent="selectFirstTldSuggestion()"
+                                    @keydown.escape.prevent="closeTldTypeahead()"
+                                    placeholder="Type to add extensions (e.g. .io, .co, .xyz)"
+                                    class="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                                />
+                                <div x-show="tldOpen && tldSuggestions.length > 0" x-cloak
+                                     class="absolute z-[9999] mt-1 w-full max-h-56 overflow-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg">
+                                    <template x-for="option in tldSuggestions" :key="'direct-opt-' + option.tld">
+                                        <button type="button"
+                                                @click.prevent="addTld(option.tld)"
+                                                class="w-full px-3 py-2 text-left text-sm text-gray-900 dark:text-gray-100 hover:bg-blue-50 dark:hover:bg-gray-800 flex items-center justify-between">
+                                            <span class="font-semibold text-gray-900 dark:text-white" x-text="'.' + option.tld"></span>
+                                            <span class="text-xs text-gray-600 dark:text-gray-300" x-text="option.popularity ? ('#' + option.popularity) : ''"></span>
+                                        </button>
+                                    </template>
                                 </div>
-                            </label>
-                            <label class="relative cursor-pointer" :class="tlds.includes('ai') ? 'ring-2 ring-purple-500 rounded-xl' : ''">
-                                <input type="checkbox" value="ai" x-model="tlds" class="sr-only" />
-                                <div class="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border transition"
-                                     :class="tlds.includes('ai')
-                                        ? 'bg-purple-50 dark:bg-purple-900/30 border-purple-300 dark:border-purple-700 text-purple-700 dark:text-purple-300'
-                                        : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'">
-                                    <span class="text-sm font-semibold">.ai</span>
-                                </div>
-                            </label>
-                            <label class="relative cursor-pointer" :class="tlds.includes('net') ? 'ring-2 ring-green-500 rounded-xl' : ''">
-                                <input type="checkbox" value="net" x-model="tlds" class="sr-only" />
-                                <div class="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border transition"
-                                     :class="tlds.includes('net')
-                                        ? 'bg-green-50 dark:bg-green-900/30 border-green-300 dark:border-green-700 text-green-700 dark:text-green-300'
-                                        : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'">
-                                    <span class="text-sm font-semibold">.net</span>
-                                </div>
-                            </label>
-                            <label class="relative cursor-pointer" :class="tlds.includes('org') ? 'ring-2 ring-orange-500 rounded-xl' : ''">
-                                <input type="checkbox" value="org" x-model="tlds" class="sr-only" />
-                                <div class="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border transition"
-                                     :class="tlds.includes('org')
-                                        ? 'bg-orange-50 dark:bg-orange-900/30 border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-300'
-                                        : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'">
-                                    <span class="text-sm font-semibold">.org</span>
-                                </div>
-                            </label>
+                            </div>
                         </div>
                     </div>
 
@@ -187,86 +184,92 @@
 
                 <!-- Generate Mode -->
                 <form x-show="mode === 'generate'" @submit.prevent="searchGenerate()">
-                    <div class="mb-5">
-                        <label for="seed-input" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Start Word</label>
-                        <div class="relative">
-                            <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                                <svg class="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
-                                </svg>
-                            </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
+                        <div>
+                            <label for="prefix-input" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Prefix Word</label>
                             <input
-                                id="seed-input"
+                                id="prefix-input"
                                 type="text"
-                                x-model="seed"
+                                x-model="prefixWord"
                                 @keydown.enter.prevent="searchGenerate()"
-                                placeholder="e.g.  star, cloud, nova, flux"
-                                class="w-full pl-12 pr-4 py-3.5 rounded-xl border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-purple-500 focus:border-transparent transition text-base"
+                                placeholder="e.g. star, neo, ultra"
+                                class="w-full px-4 py-3 rounded-xl border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-purple-500 focus:border-transparent transition text-base"
                             />
                         </div>
-                        <p class="mt-2 text-xs text-gray-400 dark:text-gray-500">Enter a single keyword. We'll generate 100 creative domain names and check availability.</p>
+                        <div>
+                            <label for="suffix-input" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Suffix Word</label>
+                            <input
+                                id="suffix-input"
+                                type="text"
+                                x-model="suffixWord"
+                                @keydown.enter.prevent="searchGenerate()"
+                                placeholder="e.g. labs, zone, forge"
+                                class="w-full px-4 py-3 rounded-xl border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-purple-500 focus:border-transparent transition text-base"
+                            />
+                        </div>
                     </div>
 
-                    <!-- Examples -->
                     <div class="mb-5">
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Try these</label>
-                        <div class="flex flex-wrap gap-2">
-                            <template x-for="example in ['star', 'cloud', 'nova', 'flux', 'bolt', 'zen', 'pixel', 'spark']" :key="example">
-                                <button type="button" @click="seed = example"
-                                    class="px-3 py-1.5 text-sm rounded-lg border transition"
-                                    :class="seed === example
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Dictionary Category</label>
+                        <div class="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                            <template x-for="cat in categoryOptions" :key="cat.value">
+                                <button type="button"
+                                    @click="selectedCategory = cat.value"
+                                    class="px-3 py-2 text-sm rounded-lg border transition capitalize"
+                                    :class="selectedCategory === cat.value
                                         ? 'bg-purple-100 dark:bg-purple-900/30 border-purple-300 dark:border-purple-600 text-purple-700 dark:text-purple-300'
                                         : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'"
-                                    x-text="example">
+                                    x-text="cat.label">
                                 </button>
                             </template>
                         </div>
+                        <p class="mt-2 text-xs text-gray-400 dark:text-gray-500">
+                            Pulls the top 10 highest-scoring words from <code class="text-[11px]">dictionary.<span x-text="selectedCategory"></span></code> and builds:
+                            <span class="font-semibold text-gray-500 dark:text-gray-300" x-text="(prefixWord || '[prefix]') + '[word]' + (suffixWord || '[suffix]')"></span>
+                        </p>
                     </div>
 
-                    <!-- TLD Selection -->
                     <div class="mb-6">
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Extensions</label>
-                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                            <label class="relative cursor-pointer" :class="tlds.includes('com') ? 'ring-2 ring-blue-500 rounded-xl' : ''">
-                                <input type="checkbox" value="com" x-model="tlds" class="sr-only" />
-                                <div class="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border transition"
-                                     :class="tlds.includes('com')
-                                        ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300'
-                                        : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'">
-                                    <span class="text-sm font-semibold">.com</span>
+                        <div class="rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 p-3"
+                             @click.outside="closeTldTypeaheadFor('generate')">
+                            <div class="flex flex-wrap gap-2 mb-2" x-show="tlds.length > 0">
+                                <template x-for="tld in tlds" :key="'gen-' + tld">
+                                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold"
+                                          :class="tldBadgeClass('.' + tld)">
+                                        <span x-text="'.' + tld"></span>
+                                        <button type="button" class="leading-none opacity-80 hover:opacity-100"
+                                                @click.prevent="removeTld(tld)">x</button>
+                                    </span>
+                                </template>
+                            </div>
+                            <div class="relative">
+                                <input
+                                    type="text"
+                                    x-model="tldQuery"
+                                    @focus="openTldTypeahead()"
+                                    @input="updateTldSuggestions()"
+                                    @keydown.enter.prevent="selectFirstTldSuggestion()"
+                                    @keydown.escape.prevent="closeTldTypeahead()"
+                                    placeholder="Type to add extensions (e.g. .io, .co, .xyz)"
+                                    class="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-purple-500 focus:border-transparent transition"
+                                />
+                                <div x-show="tldOpen && tldSuggestions.length > 0" x-cloak
+                                     class="absolute z-[9999] mt-1 w-full max-h-56 overflow-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg">
+                                    <template x-for="option in tldSuggestions" :key="'gen-opt-' + option.tld">
+                                        <button type="button"
+                                                @click.prevent="addTld(option.tld)"
+                                                class="w-full px-3 py-2 text-left text-sm text-gray-900 dark:text-gray-100 hover:bg-purple-50 dark:hover:bg-gray-800 flex items-center justify-between">
+                                            <span class="font-semibold text-gray-900 dark:text-white" x-text="'.' + option.tld"></span>
+                                            <span class="text-xs text-gray-600 dark:text-gray-300" x-text="option.popularity ? ('#' + option.popularity) : ''"></span>
+                                        </button>
+                                    </template>
                                 </div>
-                            </label>
-                            <label class="relative cursor-pointer" :class="tlds.includes('ai') ? 'ring-2 ring-purple-500 rounded-xl' : ''">
-                                <input type="checkbox" value="ai" x-model="tlds" class="sr-only" />
-                                <div class="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border transition"
-                                     :class="tlds.includes('ai')
-                                        ? 'bg-purple-50 dark:bg-purple-900/30 border-purple-300 dark:border-purple-700 text-purple-700 dark:text-purple-300'
-                                        : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'">
-                                    <span class="text-sm font-semibold">.ai</span>
-                                </div>
-                            </label>
-                            <label class="relative cursor-pointer" :class="tlds.includes('net') ? 'ring-2 ring-green-500 rounded-xl' : ''">
-                                <input type="checkbox" value="net" x-model="tlds" class="sr-only" />
-                                <div class="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border transition"
-                                     :class="tlds.includes('net')
-                                        ? 'bg-green-50 dark:bg-green-900/30 border-green-300 dark:border-green-700 text-green-700 dark:text-green-300'
-                                        : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'">
-                                    <span class="text-sm font-semibold">.net</span>
-                                </div>
-                            </label>
-                            <label class="relative cursor-pointer" :class="tlds.includes('org') ? 'ring-2 ring-orange-500 rounded-xl' : ''">
-                                <input type="checkbox" value="org" x-model="tlds" class="sr-only" />
-                                <div class="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border transition"
-                                     :class="tlds.includes('org')
-                                        ? 'bg-orange-50 dark:bg-orange-900/30 border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-300'
-                                        : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'">
-                                    <span class="text-sm font-semibold">.org</span>
-                                </div>
-                            </label>
+                            </div>
                         </div>
                     </div>
 
-                    <button type="submit" :disabled="loading || !seed.trim() || tlds.length === 0"
+                    <button type="submit" :disabled="loading || (!prefixWord.trim() && !suffixWord.trim()) || tlds.length === 0"
                         class="w-full py-3.5 px-6 rounded-xl bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 dark:disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-semibold text-base transition flex items-center justify-center gap-2">
                         <template x-if="loading">
                             <svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -274,7 +277,7 @@
                                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                             </svg>
                         </template>
-                        <span x-text="loading ? statusText : 'Generate & Check 100 Domains'"></span>
+                        <span x-text="loading ? statusText : 'Generate & Check Top 10 Domains'"></span>
                     </button>
                 </form>
 
@@ -312,46 +315,43 @@
                             </div>
                         </div>
 
-                        <!-- TLD Selection for AI Generator -->
                         <div class="mb-6">
                             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Check Availability For</label>
-                            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                                <label class="relative cursor-pointer" :class="tlds.includes('com') ? 'ring-2 ring-blue-500 rounded-xl' : ''">
-                                    <input type="checkbox" value="com" x-model="tlds" class="sr-only" />
-                                    <div class="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border transition"
-                                         :class="tlds.includes('com')
-                                            ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300'
-                                            : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'">
-                                        <span class="text-sm font-semibold">.com</span>
+                            <div class="rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 p-3"
+                                 @click.outside="closeTldTypeaheadFor('ai')">
+                                <div class="flex flex-wrap gap-2 mb-2" x-show="tlds.length > 0">
+                                    <template x-for="tld in tlds" :key="'ai-' + tld">
+                                        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold"
+                                              :class="tldBadgeClass('.' + tld)">
+                                            <span x-text="'.' + tld"></span>
+                                            <button type="button" class="leading-none opacity-80 hover:opacity-100"
+                                                    @click.prevent="removeTld(tld)">x</button>
+                                        </span>
+                                    </template>
+                                </div>
+                                <div class="relative">
+                                    <input
+                                        type="text"
+                                        x-model="tldQuery"
+                                        @focus="openTldTypeahead()"
+                                        @input="updateTldSuggestions()"
+                                        @keydown.enter.prevent="selectFirstTldSuggestion()"
+                                        @keydown.escape.prevent="closeTldTypeahead()"
+                                        placeholder="Type to add extensions (e.g. .io, .co, .xyz)"
+                                        class="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+                                    />
+                                    <div x-show="tldOpen && tldSuggestions.length > 0" x-cloak
+                                         class="absolute z-[9999] mt-1 w-full max-h-56 overflow-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg">
+                                        <template x-for="option in tldSuggestions" :key="'ai-opt-' + option.tld">
+                                            <button type="button"
+                                                    @click.prevent="addTld(option.tld)"
+                                                    class="w-full px-3 py-2 text-left text-sm text-gray-900 dark:text-gray-100 hover:bg-indigo-50 dark:hover:bg-gray-800 flex items-center justify-between">
+                                                <span class="font-semibold text-gray-900 dark:text-white" x-text="'.' + option.tld"></span>
+                                                <span class="text-xs text-gray-600 dark:text-gray-300" x-text="option.popularity ? ('#' + option.popularity) : ''"></span>
+                                            </button>
+                                        </template>
                                     </div>
-                                </label>
-                                <label class="relative cursor-pointer" :class="tlds.includes('ai') ? 'ring-2 ring-purple-500 rounded-xl' : ''">
-                                    <input type="checkbox" value="ai" x-model="tlds" class="sr-only" />
-                                    <div class="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border transition"
-                                         :class="tlds.includes('ai')
-                                            ? 'bg-purple-50 dark:bg-purple-900/30 border-purple-300 dark:border-purple-700 text-purple-700 dark:text-purple-300'
-                                            : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'">
-                                        <span class="text-sm font-semibold">.ai</span>
-                                    </div>
-                                </label>
-                                <label class="relative cursor-pointer" :class="tlds.includes('net') ? 'ring-2 ring-green-500 rounded-xl' : ''">
-                                    <input type="checkbox" value="net" x-model="tlds" class="sr-only" />
-                                    <div class="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border transition"
-                                         :class="tlds.includes('net')
-                                            ? 'bg-green-50 dark:bg-green-900/30 border-green-300 dark:border-green-700 text-green-700 dark:text-green-300'
-                                            : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'">
-                                        <span class="text-sm font-semibold">.net</span>
-                                    </div>
-                                </label>
-                                <label class="relative cursor-pointer" :class="tlds.includes('org') ? 'ring-2 ring-orange-500 rounded-xl' : ''">
-                                    <input type="checkbox" value="org" x-model="tlds" class="sr-only" />
-                                    <div class="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border transition"
-                                         :class="tlds.includes('org')
-                                            ? 'bg-orange-50 dark:bg-orange-900/30 border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-300'
-                                            : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'">
-                                        <span class="text-sm font-semibold">.org</span>
-                                    </div>
-                                </label>
+                                </div>
                             </div>
                         </div>
 
@@ -469,7 +469,7 @@
             <!-- Results List -->
             <template x-if="filteredResults.length > 0">
                 <div class="space-y-2">
-                    <template x-for="(result, index) in filteredResults" :key="result.domain">
+                    <template x-for="(result, index) in filteredResults" :key="`${result.domain}-${index}`">
                         <div
                             class="result-enter group flex items-center justify-between p-4 rounded-xl border transition-all"
                             :class="result.available
@@ -527,12 +527,7 @@
                             </div>
                             <div class="flex items-center gap-3">
                                 <span class="text-xs font-medium px-2.5 py-1 rounded-lg"
-                                      :class="{
-                                          'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300': result.tld === '.com',
-                                          'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300': result.tld === '.ai',
-                                          'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300': result.tld === '.net',
-                                          'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300': result.tld === '.org'
-                                      }"
+                                      :class="tldBadgeClass(result.tld)"
                                       x-text="result.tld">
                                 </span>
                                 <template x-if="result.available">
@@ -585,16 +580,32 @@
     </main>
 
     <script>
+        const domainSearchTldOptions = @js($tldOptions ?? []);
+        const domainSearchDefaultTlds = @js($defaultTlds ?? ['com', 'ai', 'net', 'org']);
+
         function domainSearch() {
             return {
                 mode: 'direct',
                 query: '',
-                seed: '',
+                prefixWord: '',
+                suffixWord: '',
+                selectedCategory: 'tech',
+                categoryOptions: [
+                    { value: 'space', label: 'Space' },
+                    { value: 'tech', label: 'Tech' },
+                    { value: 'fantasy', label: 'Fantasy' },
+                    { value: 'scifi', label: 'SciFi' },
+                    { value: 'romance', label: 'Romance' },
+                ],
                 aiPrompt: '',
                 aiUsage: null,
                 aiCostText: '$0.00',
                 excluded: [],
-                tlds: ['com', 'ai'],
+                tlds: [],
+                tldOptions: Array.isArray(domainSearchTldOptions) ? domainSearchTldOptions : [],
+                tldQuery: '',
+                tldOpen: false,
+                tldSuggestions: [],
                 loading: false,
                 results: [],
                 error: null,
@@ -605,6 +616,116 @@
                 liveSearch: false,
                 liveSearchTimeout: null,
                 pollInterval: null,
+                init() {
+                    const normalize = (raw) => String(raw || '').toLowerCase().replace(/^\./, '').replace(/[^a-z0-9-]/g, '');
+
+                    if (!this.tldOptions.length) {
+                        this.tldOptions = domainSearchDefaultTlds.map((tld) => ({
+                            tld: normalize(tld),
+                            popularity: null,
+                            manager: null,
+                        }));
+                    }
+
+                    const available = new Set(this.tldOptions.map((option) => normalize(option.tld)));
+                    const selected = domainSearchDefaultTlds
+                        .map((tld) => normalize(tld))
+                        .filter((tld) => available.has(tld));
+
+                    this.tlds = selected.length ? [...new Set(selected)] : [...new Set(domainSearchDefaultTlds.map((tld) => normalize(tld)))];
+                    this.updateTldSuggestions();
+                },
+
+                normalizeTld(raw) {
+                    return String(raw || '').toLowerCase().replace(/^\./, '').replace(/[^a-z0-9-]/g, '');
+                },
+
+                openTldTypeahead() {
+                    this.tldOpen = true;
+                    this.updateTldSuggestions();
+                },
+
+                closeTldTypeahead() {
+                    this.tldOpen = false;
+                    this.tldQuery = '';
+                    this.updateTldSuggestions();
+                },
+
+                closeTldTypeaheadFor(activeMode) {
+                    if (this.mode !== activeMode) return;
+                    this.closeTldTypeahead();
+                },
+
+                updateTldSuggestions() {
+                    const query = this.normalizeTld(this.tldQuery);
+                    const selected = new Set(this.tlds);
+
+                    let options = this.tldOptions
+                        .map((option) => ({
+                            tld: this.normalizeTld(option.tld),
+                            popularity: option.popularity,
+                            manager: option.manager,
+                        }))
+                        .filter((option) => option.tld && !selected.has(option.tld));
+
+                    if (query) {
+                        options = options.filter((option) => option.tld.includes(query));
+                    }
+
+                    options.sort((a, b) => {
+                        const aStarts = query && a.tld.startsWith(query) ? 0 : 1;
+                        const bStarts = query && b.tld.startsWith(query) ? 0 : 1;
+                        if (aStarts !== bStarts) return aStarts - bStarts;
+
+                        const aPop = a.popularity === null || a.popularity === undefined ? Number.MAX_SAFE_INTEGER : Number(a.popularity);
+                        const bPop = b.popularity === null || b.popularity === undefined ? Number.MAX_SAFE_INTEGER : Number(b.popularity);
+                        if (aPop !== bPop) return aPop - bPop;
+
+                        return a.tld.localeCompare(b.tld);
+                    });
+
+                    this.tldSuggestions = options.slice(0, 20);
+                },
+
+                addTld(rawTld) {
+                    const tld = this.normalizeTld(rawTld);
+                    if (!tld || this.tlds.includes(tld)) return;
+
+                    const exists = this.tldOptions.some((option) => this.normalizeTld(option.tld) === tld);
+                    if (!exists) return;
+
+                    this.tlds = [...this.tlds, tld];
+                    this.tldQuery = '';
+                    this.updateTldSuggestions();
+                    this.tldOpen = false;
+                },
+
+                removeTld(rawTld) {
+                    const tld = this.normalizeTld(rawTld);
+                    this.tlds = this.tlds.filter((item) => item !== tld);
+                    this.updateTldSuggestions();
+                },
+
+                selectFirstTldSuggestion() {
+                    if (this.tldSuggestions.length === 0) return;
+                    this.addTld(this.tldSuggestions[0].tld);
+                },
+
+                tldBadgeClass(rawTld) {
+                    const tld = this.normalizeTld(rawTld);
+                    if (tld === 'com') return 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300';
+                    if (tld === 'ai') return 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300';
+                    if (tld === 'net') return 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300';
+                    if (tld === 'org') return 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300';
+                    return 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300';
+                },
+
+                sortResults(results) {
+                    return [...results].sort((a, b) => {
+                        if (a.available !== b.available) return a.available ? -1 : 1;
+                        return String(a.domain || '').localeCompare(String(b.domain || ''));
+                    });
+                },
 
                 computeAiCost(usage) {
                     if (!usage) return '$0.00';
@@ -707,10 +828,7 @@
 
                         if (data.error) this.error = data.error;
 
-                        this.results = (data.results || []).sort((a, b) => {
-                            if (a.available !== b.available) return a.available ? -1 : 1;
-                            return a.domain.localeCompare(b.domain);
-                        });
+                        this.results = this.sortResults(data.results || []);
                     } catch (e) {
                         this.error = 'Network error. Please try again.';
                     } finally {
@@ -719,8 +837,9 @@
                 },
 
                 async searchGenerate() {
-                    const seedVal = this.seed.trim().replace(/[^a-zA-Z]/g, '');
-                    if (!seedVal || this.tlds.length === 0) return;
+                    const prefixVal = this.prefixWord.trim().replace(/[^a-zA-Z0-9-]/g, '').toLowerCase();
+                    const suffixVal = this.suffixWord.trim().replace(/[^a-zA-Z0-9-]/g, '').toLowerCase();
+                    if ((!prefixVal && !suffixVal) || this.tlds.length === 0) return;
 
                     this.loading = true;
                     this.error = null;
@@ -736,7 +855,11 @@
                         const genResponse = await fetch('/domain-search/generate', {
                             method: 'POST',
                             headers: this.headers(),
-                            body: JSON.stringify({ seed: seedVal }),
+                            body: JSON.stringify({
+                                prefix: prefixVal,
+                                suffix: suffixVal,
+                                category: this.selectedCategory,
+                            }),
                         });
 
                         const genData = await genResponse.json();
@@ -747,7 +870,7 @@
                         }
 
                         const names = genData.names || [];
-                        this.progress = 20;
+                        this.progress = 25;
                         this.statusText = `Checking ${names.length} domains...`;
 
                         if (names.length === 0) {
@@ -784,10 +907,7 @@
                             this.statusText = `Checked ${Math.min((i + 1) * batchSize, names.length)} of ${names.length}...`;
 
                             // Show results incrementally — available first
-                            this.results = [...allResults].sort((a, b) => {
-                                if (a.available !== b.available) return a.available ? -1 : 1;
-                                return a.domain.localeCompare(b.domain);
-                            });
+                            this.results = this.sortResults(allResults);
                         }
 
                         this.statusText = 'Done!';
@@ -836,10 +956,7 @@
 
                                 if (poll.results && poll.results.length > 0) {
                                     this.results.push(...poll.results);
-                                    this.results = [...this.results].sort((a, b) => {
-                                        if (a.available !== b.available) return a.available ? -1 : 1;
-                                        return a.domain.localeCompare(b.domain);
-                                    });
+                                    this.results = this.sortResults(this.results);
                                     this.statusText = `Checked ${this.results.length} domains...`;
                                 }
 
