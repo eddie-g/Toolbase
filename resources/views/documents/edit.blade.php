@@ -2787,7 +2787,7 @@
                         <svg class="h-8 w-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                         </svg>
-                        <span class="text-xl font-bold text-white">Toolbase</span>
+                        <span class="text-xl font-bold text-white">Netkit</span>
                     </a>
 
                     <!-- Right Side: Theme Toggle & Login -->
@@ -2979,15 +2979,7 @@
                                     <span class="sm:hidden">Original</span>
                                 </button>
                             </div>
-                            <div class="flex gap-2">
-                                <button id="save-btn" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-gray-900 font-semibold rounded-lg text-sm transition" type="button">
-                                    <span class="hidden sm:inline">Save PDF</span>
-                                    <span class="sm:hidden">Save</span>
-                                </button>
-                                <button id="save-overlay-btn" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-gray-900 font-semibold rounded-lg text-sm transition hidden" type="button">
-                                    <span class="hidden sm:inline">Save Changes</span>
-                                    <span class="sm:hidden">Save</span>
-                                </button>
+                            <div class="flex gap-2 items-center">
                                 <button id="clear-btn" class="px-4 py-2 bg-transparent border border-gray-600 hover:bg-gray-700/50 rounded-lg text-sm font-medium transition hidden sm:block" type="button">Clear All</button>
                                 <button id="convert-btn" class="px-3 py-2 bg-transparent border border-gray-600 hover:bg-gray-700/50 rounded-lg text-sm transition flex items-center gap-1.5" type="button" title="Convert PDF to Images">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14"/><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>
@@ -3038,6 +3030,10 @@
                                         </div>
                                     </div>
                                 </div>
+                                <button id="save-btn" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-gray-900 font-semibold rounded-lg text-sm transition flex items-center gap-1.5" type="button">
+                                    <span class="hidden sm:inline">Save PDF</span>
+                                    <span class="sm:hidden">Save</span>
+                                </button>
                             </div>
                         </div>
                         <div class="flex flex-wrap items-center gap-2 mt-2" style="display: none;">
@@ -4952,7 +4948,7 @@
             const modeShape = document.getElementById('mode-shape');
             const modeOverlay = document.getElementById('mode-overlay');
             const modeOverlayToggle = document.getElementById('mode-overlay-toggle');
-            const saveOverlayBtn = document.getElementById('save-overlay-btn');
+            const saveOverlayBtn = null; // Removed: overlay save is now unified with save-btn
             const signatureModal = document.getElementById('signature-modal');
             const signatureCanvas = document.getElementById('signature-canvas');
             const signatureClear = document.getElementById('signature-clear');
@@ -8776,18 +8772,47 @@
                     
                     const rotateResponse = await fetch('{{ route("documents.applyRotations", $document) }}', {
                         method: 'POST',
-                        headers: { 'X-CSRF-TOKEN': csrfToken },
+                        headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content },
                         body: rotateFormData
                     });
                     
-                    if (!rotateResponse.ok) {
+                    // Handle CSRF expiry — refresh token and retry once
+                    if (rotateResponse.status === 419) {
+                        console.warn('CSRF token expired during rotation, refreshing...');
+                        const freshPage = await fetch(window.location.href);
+                        const html = await freshPage.text();
+                        const match = html.match(/csrf-token["']\s+content=["']([^"']+)/);
+                        if (match) {
+                            document.querySelector('meta[name="csrf-token"]').content = match[1];
+                            const retryFormData = new FormData();
+                            retryFormData.append('pdf', new Blob([currentPdfBytes], { type: 'application/pdf' }));
+                            retryFormData.append('rotations', JSON.stringify(rotationData));
+                            const retryResponse = await fetch('{{ route("documents.applyRotations", $document) }}', {
+                                method: 'POST',
+                                headers: { 'X-CSRF-TOKEN': match[1] },
+                                body: retryFormData
+                            });
+                            if (!retryResponse.ok) {
+                                console.error('Failed to apply rotations after CSRF refresh');
+                                setStatus('Failed to apply rotations (session expired). Please refresh the page.', 'err');
+                                setSaveSpinner(false);
+                                return;
+                            }
+                            pdfBytesForLib = await retryResponse.arrayBuffer();
+                        } else {
+                            setStatus('Session expired. Please refresh the page and try again.', 'err');
+                            setSaveSpinner(false);
+                            return;
+                        }
+                    } else if (!rotateResponse.ok) {
                         console.error('Failed to apply rotations');
                         setStatus('Failed to apply rotations', 'err');
                         setSaveSpinner(false);
                         return;
+                    } else {
+                        pdfBytesForLib = await rotateResponse.arrayBuffer();
                     }
                     
-                    pdfBytesForLib = await rotateResponse.arrayBuffer();
                     console.log('Rotations applied, ready for annotations');
                     
                     // Clear pageRotations since they've been applied
@@ -9621,18 +9646,32 @@
             }
 
 
-            document.getElementById('save-btn').addEventListener('click', savePdf);
-            
-            // Overlay save button - saves overlay edits to PDF
-            if (saveOverlayBtn) {
-                saveOverlayBtn.addEventListener('click', async () => {
-                    if (overlayEditedFields.size === 0) {
-                        setStatus('No changes to save.', 'err');
-                        return;
-                    }
-                    
-                    try {
-                        // Collect the edit coordinates BEFORE saving (what we're sending to fitz)
+            // ── UNIFIED SAVE BUTTON ────────────────────────────────────────
+            // Single save button handles BOTH overlay edits and shapes/annotations.
+            // Order: 1) Save overlay editor changes first  2) Save shapes/text annotations
+            document.getElementById('save-btn').addEventListener('click', async () => {
+                const hasOverlayEdits = overlayEditedFields.size > 0;
+                const hasTextEdits = pdfTextItems.some((item) => item.modified);
+                const hasRotations = Object.keys(pageRotations).some(pageIndex => pageRotations[pageIndex] !== 0);
+                const hasDeletedPages = pendingDeletedPages.length > 0;
+                const hasNewPages = pendingNewPages.length > 0;
+                const hasAnnotations = annotations.length > 0;
+                const hasPdfChanges = hasAnnotations || hasTextEdits || hasRotations || hasDeletedPages || hasNewPages;
+
+                if (!hasOverlayEdits && !hasPdfChanges) {
+                    setStatus('No changes to save.', 'err');
+                    return;
+                }
+
+                try {
+                    // Show saving modal
+                    setSaveSpinner(true, 'Saving PDF...');
+
+                    // ── STEP 1: Save overlay editor changes ──────────────────
+                    if (hasOverlayEdits) {
+                        setSaveSpinner(true, 'Saving overlay edits...');
+                        console.log('=== UNIFIED SAVE: Step 1 - Overlay edits ===');
+                        
                         const editsForVerification = [];
                         for (const [key, editData] of overlayEditedFields.entries()) {
                             editsForVerification.push({
@@ -9644,81 +9683,59 @@
                                 font_size: editData.font_size || 12
                             });
                         }
-                        
-                        console.log('=== EDIT COORDINATES BEING SENT TO FITZ ===');
-                        console.log(JSON.stringify(editsForVerification, null, 2));
-                        
-                        // Perform the actual save
-                        setSaveSpinner(true, 'Saving overlay edits...');
+                        console.log('Edit coordinates:', JSON.stringify(editsForVerification, null, 2));
+
                         const saved = await saveOverlayEditsIfNeeded();
-                        
-                        if (saved) {
-                            // Screenshot debugging disabled
-                            // Get the first edited page number from the edits
-                            const firstEditPageNumber = editsForVerification.length > 0 ? editsForVerification[0].page_number : 1;
-                            
-                            // console.log('=== TAKING SCREENSHOT AFTER SAVE ===');
-                            // setStatus('Taking screenshot for debugging...', '');
-                            // setSaveSpinner(true, 'Taking screenshot...');
-                            
-                            // const screenshotUrl = `{{ route('documents.takeScreenshot', $document) }}`;
-                            
-                            // try {
-                            //     const screenshotResponse = await fetch(screenshotUrl, {
-                            //         method: 'POST',
-                            //         headers: {
-                            //             'Content-Type': 'application/json',
-                            //             'X-CSRF-TOKEN': csrfToken,
-                            //         },
-                            //         body: JSON.stringify({
-                            //             page_number: firstEditPageNumber,
-                            //             stage: 'after_overlay_save'
-                            //         })
-                            //     });
-                            //     
-                            //     if (screenshotResponse.ok) {
-                            //         const screenshotData = await screenshotResponse.json();
-                            //         console.log('Screenshot taken:', screenshotData);
-                            //     } else {
-                            //         console.error('Screenshot failed');
-                            //     }
-                            // } catch (screenshotError) {
-                            //     console.error('Screenshot failed:', screenshotError);
-                            // }
-                            
-                            setStatus('Saved! Reloading document...', 'ok');
-                            
-                            // Exit overlay mode and reload the page to show the final PDF
-                            overlayEditorActive = false;
-                            overlayRendered = false;
-                            viewer.classList.remove('overlay-view-mode');
-                            viewer.classList.remove('overlay-hidden');
-                            
-                            // Clean up overlay resources
-                            cleanupOverlayPdf();
-                            
-                            // Clear all overlay state
-                            overlayEditedFields.clear();
-                            overlayPersistedEdits.clear();
-                            try {
-                                sessionStorage.removeItem(overlayEditsStorageKey);
-                            } catch (e) {
-                                console.warn('Failed to clear sessionStorage:', e);
-                            }
-                            
-                            // Reload the page to show the final saved PDF
-                            setTimeout(() => {
-                                window.location.reload();
-                            }, 500);
+                        if (!saved) {
+                            console.log('Overlay edits were no-ops, skipping...');
+                        } else {
+                            console.log('Overlay edits saved successfully');
                         }
-                        setSaveSpinner(false);
-                    } catch (error) {
-                        console.error('Error saving overlay edits:', error);
-                        setStatus('Save failed: ' + error.message, 'err');
-                        setSaveSpinner(false);
+
+                        // Clean up overlay state after save
+                        overlayEditorActive = false;
+                        overlayRendered = false;
+                        viewer.classList.remove('overlay-view-mode');
+                        viewer.classList.remove('overlay-hidden');
+                        cleanupOverlayPdf();
+                        overlayEditedFields.clear();
+                        overlayPersistedEdits.clear();
+                        try {
+                            sessionStorage.removeItem(overlayEditsStorageKey);
+                        } catch (e) {
+                            console.warn('Failed to clear sessionStorage:', e);
+                        }
+
+                        // If there are NO annotation/shape changes, just reload
+                        if (!hasPdfChanges) {
+                            setSaveSpinner(true, 'Saved! Reloading...');
+                            setStatus('Saved! Reloading document...', 'ok');
+                            setTimeout(() => { window.location.reload(); }, 500);
+                            return;
+                        }
+
+                        // Wait briefly for the backend to finish writing the PDF
+                        // before proceeding to save annotations on top of it
+                        await new Promise(r => setTimeout(r, 1000));
+                        // Bump PDF version so savePdf() fetches the freshly-saved PDF
+                        pdfVersion = Date.now();
                     }
-                });
-            }
+
+                    // ── STEP 2: Save shapes / text annotations ───────────────
+                    if (hasPdfChanges) {
+                        setSaveSpinner(true, 'Saving annotations...');
+                        console.log('=== UNIFIED SAVE: Step 2 - Annotations/shapes ===');
+                        await savePdf();
+                        // savePdf handles its own reload/status
+                        return;
+                    }
+
+                } catch (error) {
+                    console.error('Error during unified save:', error);
+                    setStatus('Save failed: ' + error.message, 'err');
+                    setSaveSpinner(false);
+                }
+            });
             
             document.getElementById('clear-btn').addEventListener('click', () => {
                 if (!confirm('Clear all unsaved changes including text edits?')) {
@@ -9738,9 +9755,6 @@
                 overlayEditorActive = false;
                 viewer.classList.remove('overlay-view-mode');
                 viewer.classList.remove('overlay-hidden');
-                if (saveOverlayBtn) {
-                    saveOverlayBtn.style.display = 'none';
-                }
                 updateOverlaySaveButton();
                 persistOverlayEdits();
                 
@@ -13408,9 +13422,6 @@
                 overlayEditorActive = false;
                 overlayLoadToken++;
                 persistOverlayEdits();
-                if (saveOverlayBtn) {
-                    saveOverlayBtn.style.display = 'none';
-                }
                 document.querySelectorAll('.overlay-field [contenteditable]').forEach(el => {
                     el.contentEditable = false;
                 });
@@ -13658,9 +13669,6 @@
                     overlayEditorActive = false;
                     overlayLoadToken++;
                     persistOverlayEdits();
-                    if (saveOverlayBtn) {
-                        saveOverlayBtn.style.display = 'none';
-                    }
                     // Hide the selection/font toolbar when leaving overlay mode
                     const stBar = document.getElementById('selection-toolbar');
                     if (stBar) stBar.classList.add('hidden');
@@ -13720,9 +13728,6 @@
                 });
 
                 updateOverlayShowOriginalToggle();
-                if (saveOverlayBtn) {
-                    saveOverlayBtn.style.display = 'block';
-                }
                 toolMode = 'overlay';
                 updateModeButtons();
                 setStatus('Loading overlay editor...', 'loading');
@@ -13865,9 +13870,6 @@
                     cleanupOverlayPdf();  // Free memory on error
                     overlayEditorActive = false;
                     overlayLoadToken++;
-                    if (saveOverlayBtn) {
-                        saveOverlayBtn.style.display = 'none';
-                    }
                     if (modeOverlay) {
                         modeOverlay.checked = false;
                     }
@@ -16602,14 +16604,17 @@
             }
             
             function updateOverlaySaveButton() {
-                if (!saveOverlayBtn) {
-                    return;
-                }
-                saveOverlayBtn.disabled = overlayEditedFields.size === 0;
+                // Unified save button — update label to indicate pending overlay changes
+                const unifiedBtn = document.getElementById('save-btn');
+                if (!unifiedBtn) return;
+                const desktopSpan = unifiedBtn.querySelector('span.hidden.sm\\:inline');
+                const mobileSpan = unifiedBtn.querySelector('span.sm\\:hidden');
                 if (overlayEditedFields.size > 0) {
-                    saveOverlayBtn.textContent = `Save ${overlayEditedFields.size} Change${overlayEditedFields.size > 1 ? 's' : ''}`;
+                    if (desktopSpan) desktopSpan.textContent = `Save PDF (${overlayEditedFields.size})`;
+                    if (mobileSpan) mobileSpan.textContent = `Save (${overlayEditedFields.size})`;
                 } else {
-                    saveOverlayBtn.textContent = 'Save Changes';
+                    if (desktopSpan) desktopSpan.textContent = 'Save PDF';
+                    if (mobileSpan) mobileSpan.textContent = 'Save';
                 }
             }
 

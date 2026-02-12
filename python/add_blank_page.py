@@ -8,7 +8,7 @@ Usage: python add_blank_page.py /path/to/input.pdf /path/to/output.pdf [insert_a
 
 import sys
 import json
-import pymupdf as fitz
+import fitz  # PyMuPDF
 
 
 def add_blank_page(input_path, output_path, insert_after, size_reference):

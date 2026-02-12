@@ -37,13 +37,14 @@ class DeveloperChatClient
             $payload['generationConfig']['temperature'] = $temperature;
         }
 
-        if ($responseFormat) {
-            $payload['response_format'] = $responseFormat;
+        if ($responseFormat && isset($responseFormat['type']) && $responseFormat['type'] === 'json_object') {
+            $payload['generationConfig']['responseMimeType'] = 'application/json';
         }
 
-        $timeout = $options['timeout'] ?? 60;
+        $timeout = $options['timeout'] ?? 120;
 
         $response = Http::timeout($timeout)
+            ->retry(2, 500)
             ->acceptJson()
             ->post("{$baseUrl}/models/{$model}:generateContent?key={$apiKey}", $payload)
             ->throw();
@@ -63,9 +64,29 @@ class DeveloperChatClient
     private function formatContents(array $messages): array
     {
         $contents = [];
+        $systemMessage = '';
+        
         foreach ($messages as $message) {
             $role = $message['role'] ?? 'user';
             $content = $message['content'] ?? '';
+
+            // Gemini uses 'model' instead of 'assistant' or 'system'
+            // System messages should be prepended to the first user message
+            if ($role === 'system') {
+                $systemMessage = $content;
+                continue;
+            }
+            
+            // Convert assistant role to model
+            if ($role === 'assistant') {
+                $role = 'model';
+            }
+            
+            // Prepend system message to first user message
+            if ($role === 'user' && !empty($systemMessage)) {
+                $content = $systemMessage . "\n\n" . $content;
+                $systemMessage = '';
+            }
 
             $contents[] = [
                 'role' => $role,

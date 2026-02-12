@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\DocumentController;
 use App\Http\Controllers\DeveloperChatController;
+use App\Http\Controllers\DomainSearchController;
 use App\Http\Controllers\AIController;
 use App\Http\Controllers\ComplianceController;
 use App\Http\Controllers\OverlayEditorTestController;
@@ -37,6 +38,9 @@ Route::get('/documents/{document}/file', [DocumentController::class, 'file'])->n
 Route::post('/documents/{document}/save', [DocumentController::class, 'save'])->name('documents.save');
 Route::post('/documents/{document}/flatten-rotations', [DocumentController::class, 'flattenRotations'])->name('documents.flattenRotations');
 Route::post('/documents/{document}/apply-rotations', [DocumentController::class, 'applyRotations'])->name('documents.applyRotations');
+Route::get('/documents/{document}/apply-rotations', function () {
+    return response()->json(['error' => 'This endpoint only accepts POST requests'], 405);
+});
 Route::post('/documents/{document}/save-annotations', [DocumentController::class, 'saveAnnotations'])->name('documents.saveAnnotations');
 Route::post('/documents/{document}/mark-annotations-saved', [DocumentController::class, 'markAnnotationsSaved'])->name('documents.markAnnotationsSaved');
 Route::post('documents/{document}/process-ocr', [DocumentController::class, 'processOcr'])->name('documents.processOcr');
@@ -103,3 +107,12 @@ Route::get('/ai/add-to-pdf', function() {
         'error' => 'This endpoint only accepts POST requests with image data'
     ], 405);
 });
+
+// Domain Search
+Route::get('/domain-search', [DomainSearchController::class, 'index'])->name('domainSearch.index');
+Route::post('/domain-search/check', [DomainSearchController::class, 'check'])->name('domainSearch.check');
+Route::post('/domain-search/check-start', [DomainSearchController::class, 'checkStart'])->middleware(['throttle:10,1'])->name('domainSearch.checkStart');
+Route::get('/domain-search/check-poll', [DomainSearchController::class, 'checkPoll'])->name('domainSearch.checkPoll');
+Route::post('/domain-search/generate', [DomainSearchController::class, 'generate'])->name('domainSearch.generate');
+Route::post('/domain-search/generate-and-check', [DomainSearchController::class, 'generateAndCheck'])->name('domainSearch.generateAndCheck');
+Route::post('/domain-search/ai-generate', [DomainSearchController::class, 'aiGenerate'])->middleware(['auth:sanctum'])->name('domainSearch.aiGenerate');

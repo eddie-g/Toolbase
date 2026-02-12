@@ -5,12 +5,12 @@ Uses show_pdf_page() to ensure text is preserved and content is actually rotated
 """
 
 import sys
-import pymupdf
+import fitz  # PyMuPDF
 import tempfile
 import os
 
 # Suppress MuPDF warnings/errors
-pymupdf.TOOLS.mupdf_display_errors(False)
+fitz.TOOLS.mupdf_display_errors(False)
 
 def rotate_pdf_page(input_path, output_path, page_number, rotation=90):
     """
@@ -24,7 +24,7 @@ def rotate_pdf_page(input_path, output_path, page_number, rotation=90):
         rotation: Rotation angle in degrees (90, 180, 270, or -90)
     """
     try:
-        src_doc = pymupdf.open(input_path)
+        src_doc = fitz.open(input_path)
         total_pages = len(src_doc)
         
         # Validate page number
@@ -42,7 +42,7 @@ def rotate_pdf_page(input_path, output_path, page_number, rotation=90):
         page_idx = page_number - 1
         
         # Create new document with rotated pages
-        dst_doc = pymupdf.open()
+        dst_doc = fitz.open()
         
         for idx in range(total_pages):
             src_page = src_doc[idx]

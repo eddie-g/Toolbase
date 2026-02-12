@@ -5,7 +5,7 @@ This prepares the PDF for shape/annotation addition by ensuring rotation flags a
 """
 
 import sys
-import pymupdf
+import fitz  # PyMuPDF
 
 
 def flatten_rotations(input_path, output_path):
@@ -14,7 +14,7 @@ def flatten_rotations(input_path, output_path):
     This preserves text while physically rotating content.
     """
     try:
-        doc = pymupdf.open(input_path)
+        doc = fitz.open(input_path)
         
         for page_idx in range(len(doc)):
             page = doc[page_idx]
