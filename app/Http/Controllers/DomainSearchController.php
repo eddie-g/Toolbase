@@ -1,0 +1,624 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Word;
+use App\Models\AiDomainRequest;
+use App\Models\AiPriceLog;
+use App\Services\DeveloperChatClient;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Process;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Str;
+
+class DomainSearchController extends Controller
+{
+    public function index()
+    {
+        return view('domain-search');
+    }
+
+    public function check(Request $request)
+    {
+        $request->validate([
+            'names' => 'required|string|max:500',
+            'tlds' => 'required|array|min:1',
+            'tlds.*' => 'in:com,ai,net,org',
+        ]);
+
+        $names = preg_split('/[\s,]+/', trim($request->input('names')));
+        $names = array_filter(array_map('trim', $names));
+
+        if (empty($names)) {
+            return response()->json(['results' => [], 'error' => 'No domain names provided.'], 422);
+        }
+
+        $tlds = $request->input('tlds', ['com', 'ai']);
+
+        $check = $this->checkDomainAvailability($names, $tlds);
+
+        if ($check['error']) {
+            return response()->json($check, 500);
+        }
+
+        return response()->json($check);
+    }
+
+    /**
+     * Generate domain name ideas from a seed word.
+     */
+    public function generate(Request $request)
+    {
+        $request->validate([
+            'seed' => 'required|string|max:30|regex:/^[a-zA-Z]+$/',
+            'count' => 'integer|min:10|max:200',
+        ]);
+
+        $seed = strtolower(trim($request->input('seed')));
+        $count = $request->input('count', 100);
+
+        // Try to use database words first
+        $wordCount = Word::count();
+        
+        if ($wordCount > 100) {
+            // Use database words to generate combinations
+            $names = $this->generateNamesFromDatabase($seed, $count);
+        } else {
+            // Fallback to Python script
+            $scriptPath = base_path('python/generate_domain_names.py');
+            $result = Process::timeout(10)->run([
+                'python3', $scriptPath, $seed, '-n', (string) $count, '--json',
+            ]);
+
+            if (!$result->successful()) {
+                return response()->json([
+                    'names' => [],
+                    'error' => 'Generation failed: ' . $result->errorOutput(),
+                ], 500);
+            }
+
+            $names = json_decode($result->output(), true) ?? [];
+        }
+
+        return response()->json(['names' => $names, 'error' => null]);
+    }
+
+    /**
+     * Generate domain names by combining seed word with database words.
+     */
+    private function generateNamesFromDatabase(string $seed, int $count): array
+    {
+        $names = [];
+        
+        // Get random words from database (3-8 chars work well as suffixes)
+        $words = Word::where('length', '>=', 3)
+            ->where('length', '<=', 8)
+            ->where('rank', '<=', 3000) // Use common words
+            ->inRandomOrder()
+            ->limit($count)
+            ->pluck('word')
+            ->toArray();
+        
+        // Combine seed with words
+        foreach ($words as $word) {
+            $names[] = $seed . $word;
+        }
+        
+        // Also add some prefixed versions if we have room
+        if (count($names) < $count) {
+            $prefixes = ['go', 'my', 'get', 'the', 'try', 'use'];
+            foreach ($prefixes as $prefix) {
+                $names[] = $prefix . $seed;
+                if (count($names) >= $count) break;
+            }
+        }
+        
+        return array_slice($names, 0, $count);
+    }
+
+    /**
+     * Generate names then check availability (combined endpoint).
+     */
+    public function generateAndCheck(Request $request)
+    {
+        $request->validate([
+            'seed' => 'required|string|max:30|regex:/^[a-zA-Z]+$/',
+            'tlds' => 'required|array|min:1',
+            'tlds.*' => 'in:com,ai,net,org',
+            'count' => 'integer|min:10|max:200',
+        ]);
+
+        $seed = strtolower(trim($request->input('seed')));
+        $count = $request->input('count', 100);
+        $tlds = $request->input('tlds', ['com', 'ai']);
+
+        // Step 1: Generate names
+        $genScript = base_path('python/generate_domain_names.py');
+        $genResult = Process::timeout(10)->run([
+            'python3', $genScript, $seed, '-n', (string) $count, '--json',
+        ]);
+
+        if (!$genResult->successful()) {
+            return response()->json([
+                'names' => [],
+                'results' => [],
+                'error' => 'Generation failed: ' . $genResult->errorOutput(),
+            ], 500);
+        }
+
+        $names = json_decode($genResult->output(), true) ?? [];
+
+        if (empty($names)) {
+            return response()->json([
+                'names' => [],
+                'results' => [],
+                'error' => 'No names could be generated.',
+            ], 422);
+        }
+
+        // Step 2: Check availability
+        $checkScript = base_path('python/check_domain_availability.py');
+        $args = ['python3', $checkScript, '-t', ...$tlds, '--', ...$names];
+
+        // Longer timeout since we're checking many domains
+        $checkResult = Process::timeout(120)->run($args);
+
+        if (!$checkResult->successful()) {
+            return response()->json([
+                'names' => $names,
+                'results' => [],
+                'error' => 'Availability check failed: ' . $checkResult->errorOutput(),
+            ], 500);
+        }
+
+        $results = $this->parseOutput($checkResult->output());
+
+        return response()->json([
+            'names' => $names,
+            'results' => $results,
+            'error' => null,
+        ]);
+    }
+
+    private function checkDomainAvailability(array $names, array $tlds): array
+    {
+        // Build full domain list
+        $allDomains = [];
+        foreach ($names as $name) {
+            $baseName = strtolower(preg_replace('/[^a-zA-Z0-9-]/', '', explode('.', $name)[0]));
+            foreach ($tlds as $tld) {
+                $allDomains[] = $baseName . '.' . $tld;
+            }
+        }
+
+        // Check cache first
+        $results = [];
+        $uncachedDomains = [];
+
+        foreach ($allDomains as $domain) {
+            $cacheKey = 'domain:' . $domain;
+            $cached = Cache::get($cacheKey);
+
+            if ($cached !== null) {
+                $results[] = $cached;
+            } else {
+                $uncachedDomains[] = $domain;
+            }
+        }
+
+        // Only check uncached domains
+        if (!empty($uncachedDomains)) {
+            $scriptPath = base_path('python/check_domain_availability.py');
+
+            // Extract base names and TLDs for the script
+            $uncachedNames = array_unique(array_map(function ($d) {
+                return explode('.', $d)[0];
+            }, $uncachedDomains));
+
+            $args = ['python3', $scriptPath, '-t', ...$tlds, '--', ...$uncachedNames];
+
+            $result = Process::timeout(60)->run($args);
+
+            if (!$result->successful()) {
+                return [
+                    'results' => $results,
+                    'error' => 'Some domains could not be checked: ' . $result->errorOutput(),
+                ];
+            }
+
+            $output = $result->output();
+            $newResults = $this->parseOutput($output);
+
+            // Cache new results for 1 hour
+            foreach ($newResults as $result) {
+                $cacheKey = 'domain:' . $result['domain'];
+                Cache::put($cacheKey, $result, now()->addHour());
+                $results[] = $result;
+            }
+        }
+
+        return ['results' => $results, 'error' => null];
+    }
+
+    /**
+     * Start a background domain availability check job.
+     * Returns a job_id that can be polled for results.
+     */
+    public function checkStart(Request $request)
+    {
+        $request->validate([
+            'names' => 'required|array|min:1|max:100',
+            'names.*' => 'string|max:100',
+            'tlds' => 'required|array|min:1',
+            'tlds.*' => 'in:com,ai,net,org',
+        ]);
+
+        // Per-user concurrent job cap (max 3)
+        $userId = $request->user()?->id ?? $request->ip();
+        $userJobsKey = "domain-jobs-user:{$userId}";
+        $activeJobIds = Cache::get($userJobsKey, []);
+
+        // Prune completed jobs from the list
+        $dir = storage_path('app/domain-checks');
+        $activeJobIds = array_values(array_filter($activeJobIds, function ($jid) use ($dir) {
+            $pidFile = "{$dir}/{$jid}.pid";
+            if (!file_exists($pidFile)) return false;
+            $pid = (int) trim(file_get_contents($pidFile));
+            return $pid > 0 && file_exists("/proc/{$pid}");
+        }));
+        Cache::put($userJobsKey, $activeJobIds, now()->addMinutes(30));
+
+        if (count($activeJobIds) >= 3) {
+            return response()->json([
+                'error' => 'Too many concurrent checks. Please wait for current checks to finish.',
+            ], 429);
+        }
+
+        $names = array_values(array_filter(array_unique(
+            array_map(function ($n) {
+                return strtolower(preg_replace('/[^a-zA-Z0-9-]/', '', explode('.', $n)[0]));
+            }, $request->input('names'))
+        )));
+        $tlds = $request->input('tlds');
+        $jobId = Str::uuid()->toString();
+
+        $dir = storage_path('app/domain-checks');
+        if (!is_dir($dir)) {
+            mkdir($dir, 0777, true);
+        }
+
+        // Clean up old job files (older than 30 min)
+        foreach (glob("{$dir}/*.jsonl") as $old) {
+            if (filemtime($old) < time() - 1800) {
+                @unlink($old);
+                @unlink(str_replace('.jsonl', '.err', $old));
+                @unlink(str_replace('.jsonl', '.pid', $old));
+            }
+        }
+
+        $outputFile = "{$dir}/{$jobId}.jsonl";
+        $errorFile  = "{$dir}/{$jobId}.err";
+        $pidFile    = "{$dir}/{$jobId}.pid";
+
+        $scriptPath = base_path('python/check_domain_availability.py');
+        $args = array_merge(
+            ['python3', $scriptPath, '--jsonl', '-t'],
+            $tlds,
+            ['--'],
+            $names
+        );
+        $command = implode(' ', array_map('escapeshellarg', $args));
+
+        // Launch in background, capture PID
+        $pid = (int) trim(shell_exec(sprintf(
+            'nohup %s > %s 2> %s & echo $!',
+            $command,
+            escapeshellarg($outputFile),
+            escapeshellarg($errorFile)
+        )));
+        file_put_contents($pidFile, $pid);
+
+        Cache::put("domain-job:{$jobId}", [
+            'started_at' => now()->toISOString(),
+            'total' => count($names) * count($tlds),
+            'user_id' => $userId,
+        ], now()->addMinutes(30));
+
+        // Track this job under the user's active list
+        $activeJobIds[] = $jobId;
+        Cache::put($userJobsKey, $activeJobIds, now()->addMinutes(30));
+
+        return response()->json(['job_id' => $jobId]);
+    }
+
+    /**
+     * Poll for results of a background domain availability check.
+     * Returns new results since the given offset and a done flag.
+     */
+    public function checkPoll(Request $request)
+    {
+        $request->validate([
+            'job_id' => 'required|string|max:50',
+            'offset' => 'integer|min:0',
+        ]);
+
+        $jobId = $request->input('job_id');
+
+        // Sanitize job_id to prevent path traversal
+        if (!preg_match('/^[a-f0-9\-]{36}$/', $jobId)) {
+            return response()->json(['error' => 'Invalid job ID.'], 400);
+        }
+
+        $job = Cache::get("domain-job:{$jobId}");
+        if (!$job) {
+            return response()->json(['error' => 'Job not found or expired.'], 404);
+        }
+
+        $offset = (int) $request->input('offset', 0);
+        $dir = storage_path('app/domain-checks');
+        $outputFile = "{$dir}/{$jobId}.jsonl";
+        $pidFile    = "{$dir}/{$jobId}.pid";
+        $errorFile  = "{$dir}/{$jobId}.err";
+
+        $results = [];
+        $newOffset = $offset;
+
+        if (file_exists($outputFile)) {
+            $lines = file($outputFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+            $total = count($lines);
+
+            for ($i = $offset; $i < $total; $i++) {
+                $parsed = json_decode(trim($lines[$i]), true);
+                if ($parsed && isset($parsed['domain'])) {
+                    Cache::put('domain:' . $parsed['domain'], $parsed, now()->addHour());
+                    $results[] = $parsed;
+                    $newOffset = $i + 1;
+                } else {
+                    // Partial line write — stop here, retry on next poll
+                    break;
+                }
+            }
+        }
+
+        // Check if background process is still running
+        $done = true;
+        if (file_exists($pidFile)) {
+            $pid = (int) trim(file_get_contents($pidFile));
+            if ($pid > 0 && file_exists("/proc/{$pid}")) {
+                $done = false;
+            }
+        } else {
+            // PID file not yet written — process still starting
+            $done = false;
+        }
+
+        $error = null;
+        if ($done && file_exists($errorFile)) {
+            $errContent = trim(file_get_contents($errorFile));
+            if ($errContent && $newOffset === 0) {
+                $error = $errContent;
+            }
+        }
+
+        return response()->json([
+            'results' => $results,
+            'done' => $done,
+            'offset' => $newOffset,
+            'error' => $error,
+        ]);
+    }
+
+    private function parseOutput(string $output): array
+    {
+        $lines = explode("\n", $output);
+        $results = [];
+
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if (empty($line)) continue;
+
+            // Match lines like: ✓   example.com                    AVAILABLE
+            // or:               ✗   example.com                    taken
+            // or:               $   example.com                    FOR SALE
+            // or:               ?   example.com                    (error: ...)
+            if (preg_match('/^([✓✗$?])\s+(\S+)\s+(.+)$/u', $line, $matches)) {
+                $symbol = $matches[1];
+                $domain = $matches[2];
+                $status = trim($matches[3]);
+
+                $result = [
+                    'domain' => $domain,
+                    'available' => $symbol === '✓',
+                    'taken' => $symbol === '✗',
+                    'for_sale' => $symbol === '$',
+                    'error' => $symbol === '?' ? $status : null,
+                    'tld' => '.' . pathinfo($domain, PATHINFO_EXTENSION),
+                ];
+                
+                // Debug logging
+                \Log::info('Parsed domain result', [
+                    'symbol' => $symbol,
+                    'domain' => $domain,
+                    'for_sale' => $result['for_sale'],
+                    'taken' => $result['taken']
+                ]);
+                
+                $results[] = $result;
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * Generate domain names using AI based on user prompt.
+     */
+    public function aiGenerate(Request $request, DeveloperChatClient $client)
+    {
+        // Check authentication - supports both session auth and Bearer token (Sanctum)
+        $user = $request->user();
+        
+        if (!$user) {
+            return response()->json([
+                'error' => 'You must be logged in to use AI Generator.',
+                'domains' => [],
+                'authenticated' => false,
+            ], 401);
+        }
+
+        $request->validate([
+            'prompt' => 'required|string|min:3|max:4000',
+            'tlds' => 'nullable|array',
+            'tlds.*' => 'in:com,ai,net,org',
+            'stream' => 'nullable|boolean',
+        ]);
+
+        $prompt = $request->input('prompt');
+        $tlds = $request->input('tlds', ['com', 'ai', 'net', 'org']);
+        if (!is_array($tlds) || count($tlds) === 0) {
+            $tlds = ['com', 'ai', 'net', 'org'];
+        }
+        $stream = $request->boolean('stream');
+
+        try {
+            // Create system prompt for domain generation
+            $systemPrompt = "You are a creative domain name generator. Generate 20 unique, brandable domain names based on the user's request. Return ONLY a JSON object with a 'domains' array containing domain name strings (without TLDs). Names should be:
+- Short (4-15 characters)
+- Memorable and brandable
+- Easy to spell and pronounce
+- Related to the user's prompt
+- Creative but professional
+
+Example response format:
+{\"domains\": [\"techflow\", \"cloudnova\", \"pixelforge\", \"datazen\", \"codecraft\"]}";
+
+            $messages = [
+                ['role' => 'system', 'content' => $systemPrompt],
+                ['role' => 'user', 'content' => $prompt],
+            ];
+
+            // Call Gemini API
+            $data = $client->chat(
+                $messages,
+                0.9, // Higher temperature for creativity
+                ['type' => 'json_object'],
+                ['timeout' => 120]
+            );
+
+            $reply = $data['reply'];
+            
+            \Log::info('AI Domain Generation - Raw Reply', [
+                'user_id' => $user->id,
+                'prompt' => $prompt,
+                'reply' => $reply,
+                'reply_type' => gettype($reply),
+            ]);
+            
+            // Parse JSON response
+            $responseData = is_string($reply) ? json_decode($reply, true) : $reply;
+            
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                \Log::error('JSON Parse Error', [
+                    'error' => json_last_error_msg(),
+                    'reply' => $reply,
+                ]);
+                throw new \Exception('Invalid JSON response from AI: ' . json_last_error_msg());
+            }
+            
+            $domains = $responseData['domains'] ?? [];
+            
+            if (empty($domains)) {
+                \Log::warning('No domains in response', [
+                    'response_data' => $responseData,
+                ]);
+            }
+
+            // Store request in database
+            AiDomainRequest::create([
+                'user_id' => $user->id,
+                'prompt' => $prompt,
+                'response' => $responseData,
+                'model' => $data['response']['model'] ?? 'gemini-2.0-flash',
+                'usage' => $data['response']['usageMetadata'] ?? null,
+            ]);
+
+            // Log to ai_price_log for tracking
+            $usageMetadata = $data['response']['usageMetadata'] ?? [];
+            $inputTokens = $usageMetadata['promptTokenCount'] ?? 0;
+            $outputTokens = $usageMetadata['candidatesTokenCount'] ?? 0;
+            $totalTokens = $usageMetadata['totalTokenCount'] ?? ($inputTokens + $outputTokens);
+            
+            // Calculate estimated cost (Gemini Flash pricing: $0.15 per 1M input, $0.60 per 1M output)
+            $estimatedCost = ($inputTokens * 0.00000015) + ($outputTokens * 0.00000060);
+            
+            AiPriceLog::create([
+                'session' => session()->getId(),
+                'document_id' => null,
+                'user_email' => $user->email,
+                'request_type' => 'domain_generation',
+                'model_name' => $data['response']['model'] ?? 'gemini-2.0-flash',
+                'input_tokens' => $inputTokens,
+                'output_tokens' => $outputTokens,
+                'total_tokens' => $totalTokens,
+                'image_count' => 0,
+                'image_size' => null,
+                'cost_usd' => null,
+                'estimated_cost_usd' => $estimatedCost,
+                'prompt_preview' => substr($prompt, 0, 255),
+                'status' => 'completed',
+            ]);
+
+            if ($stream) {
+                return response()->json([
+                    'domains' => $domains,
+                    'model' => $data['response']['model'] ?? 'gemini-2.0-flash',
+                    'usage' => $data['response']['usageMetadata'] ?? null,
+                    'error' => null,
+                ]);
+            }
+
+            $check = $this->checkDomainAvailability($domains, $tlds);
+
+            return response()->json([
+                'domains' => $domains,
+                'results' => $check['results'],
+                'model' => $data['response']['model'] ?? 'gemini-2.0-flash',
+                'usage' => $data['response']['usageMetadata'] ?? null,
+                'error' => $check['error'],
+            ], $check['error'] ? 500 : 200);
+
+        } catch (\Illuminate\Http\Client\RequestException $e) {
+            $statusCode = $e->response?->status();
+            $errorBody = $e->response?->json();
+            
+            \Log::error('AI Domain Generation - API Error', [
+                'user_id' => $user->id,
+                'prompt' => $prompt,
+                'status' => $statusCode,
+                'error' => $errorBody,
+                'message' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'error' => 'AI service error. Please try again.',
+                'domains' => [],
+                'debug' => config('app.debug') ? $errorBody : null,
+            ], 500);
+            
+        } catch (\Exception $e) {
+            \Log::error('AI Domain Generation Error', [
+                'user_id' => $user->id,
+                'prompt' => $prompt,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'error' => 'Failed to generate domains. Please try again.',
+                'domains' => [],
+                'debug' => config('app.debug') ? $e->getMessage() : null,
+            ], 500);
+        }
+    }
+}

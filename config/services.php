@@ -52,8 +52,8 @@ return [
         'model' => env('GEMINI_MODEL', 'gemini-2.0-flash'),
         'base_url' => env('GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com/v1beta'),
         'pricing' => [
-            'input_per_million' => 0.075, // $0.075 per 1M input tokens
-            'output_per_million' => 0.30, // $0.30 per 1M output tokens
+            'input_per_million' => 0.10, // $0.10 per 1M input tokens
+            'output_per_million' => 0.40, // $0.40 per 1M output tokens
         ],
     ],
     'openai' => [

@@ -75,6 +75,7 @@ FONT_FILES = {
     'Lato-Regular': 'fonts/Lato-Regular.ttf',
     'Lato-Bold': 'fonts/Lato-Bold.ttf',
     'Lato_700wght': 'fonts/Lato-Bold.ttf',
+
 }
 
 def get_font_file(font_name, script_dir, font_weight=None):
@@ -331,9 +332,9 @@ def find_font_xref_by_name(doc, page_num, font_name):
 
 def normalize_smart_quotes(text):
     """
-    Replace smart/curly quotes and other typographic characters with their
-    ASCII equivalents. Many PDF fonts (especially subsetted ones) don't include
-    glyphs for Unicode curly quotes, causing PyMuPDF to render them as '?'.
+    Normalize user / extraction text before insertion:
+    - Replace smart typography with ASCII equivalents.
+    - Remove invisible control chars and private-use glyph artifacts.
     """
     if not text:
         return text
@@ -357,6 +358,13 @@ def normalize_smart_quotes(text):
     }
     for smart, ascii_char in replacements.items():
         text = text.replace(smart, ascii_char)
+
+    # Remove invisible and private-use glyph artifacts that often show up as
+    # tofu boxes in the overlay editor (e.g. "", "□").
+    text = re.sub(r'[\u200B\u200C\u200D\u2060\uFEFF]', '', text)
+    text = re.sub(r'[\uE000-\uF8FF]', '', text)
+    text = text.replace('\uFFFD', '')
+    text = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', text)
     return text
 
 
@@ -435,36 +443,59 @@ def apply_edits(pdf_path, edits_json):
     for page_num, page_edits in edits_by_page.items():
         touched = set()
         for edit in page_edits:
-            orig = (edit.get("original_text") or "").strip()
-            if orig:
-                # Add the full block text AND each individual line
-                touched.add(orig)
-                for line in orig.split("\n"):
-                    line = line.strip()
-                    if line:
-                        touched.add(line)
-                # Also add individual words for finer matching
-                for word in orig.split():
-                    word = word.strip()
-                    if len(word) > 1:  # skip single chars
-                        touched.add(word)
+            # Add BOTH original and new text as "touched" — neither should be
+            # recovered by Phase C.  This prevents re-inserting old underlying
+            # text that happens to share words with the edit.
+            for text_key in ("original_text", "new_text"):
+                txt = (edit.get(text_key) or "").strip()
+                if txt:
+                    touched.add(txt)
+                    for line in txt.split("\n"):
+                        line = line.strip()
+                        if line:
+                            touched.add(line)
+                    for word in txt.split():
+                        word = word.strip()
+                        if len(word) > 1:
+                            touched.add(word)
         edited_texts_by_page[page_num] = touched
     
     # Also build a set of redaction rects per page so we know exactly
     # which areas are being redacted (to detect collateral damage).
+    # CRITICAL: These rects MUST match the adaptive padding used in Phase A,
+    # otherwise Phase C will "recover" text that was intentionally redacted
+    # (e.g., old underlying text from prior overlay edits).
     redaction_rects_by_page = {}
+    intentional_edit_rects_by_page = {}
     for page_num, page_edits in edits_by_page.items():
         rects = []
+        intentional_rects = []
         for edit in page_edits:
             original_bbox = edit.get("original_bbox")
             if original_bbox:
+                # Use the SAME adaptive padding as Phase A for accurate matching
+                try:
+                    edit_font_size = float(edit.get('font_size', 12))
+                except Exception:
+                    edit_font_size = 12.0
+                pad_left = max(1.0, edit_font_size * 0.15)
+                pad_top = max(1.0, edit_font_size * 0.15)
+                pad_right = max(2.0, edit_font_size * 0.9)
+                pad_bottom = max(1.0, edit_font_size * 0.15)
+                intentional_rects.append(fitz.Rect(
+                    original_bbox[0] - pad_left,
+                    original_bbox[1] - pad_top,
+                    original_bbox[2] + pad_right,
+                    original_bbox[3] + pad_bottom,
+                ))
                 rects.append(fitz.Rect(
-                    original_bbox[0] - 1,
-                    original_bbox[1] - 1,
-                    original_bbox[2] + 1,
-                    original_bbox[3] + 1,
+                    original_bbox[0] - pad_left,
+                    original_bbox[1] - pad_top,
+                    original_bbox[2] + pad_right,
+                    original_bbox[3] + pad_bottom,
                 ))
         redaction_rects_by_page[page_num] = rects
+        intentional_edit_rects_by_page[page_num] = intentional_rects
     
     # PHASE A: SCRUB PHASE - Remove text from ORIGINAL locations only
     # This phase ONLY handles where text USED TO BE, never where it IS NOW
@@ -488,8 +519,8 @@ def apply_edits(pdf_path, edits_json):
             if not original_text or not original_text.strip():
                 continue
 
-            # SKIP NO-OP EDITS: If text is identical and position hasn't moved,
-            # there's nothing to scrub or re-insert. This prevents duplication.
+            # SKIP NO-OP EDITS: If text is identical, position hasn't moved,
+            # AND no style changes, there's nothing to scrub or re-insert.
             bbox = edit.get('bbox')
             if original_text.strip() == new_text.strip() and original_bbox and bbox:
                 # Check if position essentially unchanged (within 2pt tolerance)
@@ -497,8 +528,19 @@ def apply_edits(pdf_path, edits_json):
                                  abs(original_bbox[1] - bbox[1]) < 2 and
                                  abs(original_bbox[2] - bbox[2]) < 2 and
                                  abs(original_bbox[3] - bbox[3]) < 2)
-                if pos_unchanged:
-                    print(f"  ⊘ Skipping no-op edit for '{original_text[:30]}...' (text & position unchanged)")
+                # Check if style changed (font_weight, font_style, color)
+                has_style_change = False
+                fw = edit.get('font_weight')
+                if fw and str(fw) not in ('400', 'normal', ''):
+                    has_style_change = True
+                fs = edit.get('font_style')
+                if fs and fs not in ('normal', ''):
+                    has_style_change = True
+                # rich_html or word_styles indicate styled content that must be re-inserted
+                if edit.get('rich_html') or edit.get('word_styles'):
+                    has_style_change = True
+                if pos_unchanged and not has_style_change:
+                    print(f"  ⊘ Skipping no-op edit for '{original_text[:30]}...' (text, position & style unchanged)")
                     edit['_skip_insert'] = True  # Flag to skip Phase B too
                     continue
 
@@ -508,15 +550,52 @@ def apply_edits(pdf_path, edits_json):
             # 2. search_for() can match text at WRONG locations (duplicates)
             # 3. original_bbox is the exact known location from extraction data
             if original_bbox:
+                # Add adaptive padding around the original block before redaction.
+                # Some PDFs contain trailing symbol/private-use glyphs that sit just
+                # outside extraction bboxes; tight boxes leave visual "tofu" artifacts.
+                try:
+                    font_size_num = float(edit_font_size or 12)
+                except Exception:
+                    font_size_num = 12.0
+                pad_left = max(1.0, font_size_num * 0.15)
+                pad_top = max(1.0, font_size_num * 0.15)
+                pad_right = max(2.0, font_size_num * 0.9)
+                pad_bottom = max(1.0, font_size_num * 0.15)
+
                 rect = fitz.Rect(
-                    original_bbox[0] - 1,
-                    original_bbox[1] - 1,
-                    original_bbox[2] + 1,
-                    original_bbox[3] + 1
+                    original_bbox[0] - pad_left,
+                    original_bbox[1] - pad_top,
+                    original_bbox[2] + pad_right,
+                    original_bbox[3] + pad_bottom
                 )
                 page.add_redact_annot(rect, fill=None)
                 redaction_count += 1
-                print(f"  ✓ Redacting '{original_text[:30]}...' via original_bbox [{original_bbox[0]:.0f},{original_bbox[1]:.0f},{original_bbox[2]:.0f},{original_bbox[3]:.0f}]")
+                print(
+                    f"  ✓ Redacting '{original_text[:30]}...' via original_bbox "
+                    f"[{original_bbox[0]:.0f},{original_bbox[1]:.0f},{original_bbox[2]:.0f},{original_bbox[3]:.0f}] "
+                    f"pad(L={pad_left:.1f},R={pad_right:.1f},T={pad_top:.1f},B={pad_bottom:.1f})"
+                )
+
+                # Secondary scrub: remove adjacent symbol/replacement glyph spans that
+                # often survive when they are encoded as separate tiny runs.
+                special_spans = pre_edit_spans.get(page_num, [])
+                for span in special_spans:
+                    span_text = span.get("text", "")
+                    if not span_text:
+                        continue
+                    if not re.search(r'[\uFFFD\uE000-\uF8FF]', span_text):
+                        continue
+                    sb = span.get("bbox")
+                    if not sb or len(sb) != 4:
+                        continue
+                    span_rect = fitz.Rect(sb)
+                    same_row = not (span_rect.y1 < rect.y0 or span_rect.y0 > rect.y1)
+                    near_right_edge = span_rect.x0 <= (rect.x1 + (font_size_num * 1.25)) and span_rect.x1 >= (rect.x0 - 2)
+                    if same_row and near_right_edge:
+                        cleanup_rect = fitz.Rect(span_rect.x0 - 1, span_rect.y0 - 1, span_rect.x1 + 1, span_rect.y1 + 1)
+                        page.add_redact_annot(cleanup_rect, fill=None)
+                        redaction_count += 1
+                        print(f"    ↳ Redacting adjacent special span '{span_text.encode('unicode_escape').decode()}' at {list(cleanup_rect)}")
             else:
                 # FALLBACK: No original_bbox — try search_for for single-line text only
                 text_instances = page.search_for(original_text)
@@ -571,6 +650,18 @@ def apply_edits(pdf_path, edits_json):
                 continue
 
             rect = fitz.Rect(bbox[0], bbox[1], bbox[2], bbox[3])
+            # ── CLAMP RECT TO PAGE BOUNDARIES ──────────────────────────
+            # Text must NEVER be placed outside the page. Intersect the
+            # insertion rect with the page rect so it stays within bounds.
+            page_r = page.rect
+            rect = rect & page_r  # fitz.Rect intersection
+            if rect.is_empty or rect.width < 1 or rect.height < 1:
+                print(f"  ⚠ Clamped rect is empty/tiny — placing at page origin")
+                rect = fitz.Rect(page_r.x0, page_r.y0,
+                                 min(page_r.x0 + 200, page_r.x1),
+                                 min(page_r.y0 + 50, page_r.y1))
+            # Update bbox to match the clamped rect
+            bbox = [rect.x0, rect.y0, rect.x1, rect.y1]
             font_size = edit.get('font_size', 12)
             font_name = edit.get('font', 'Arimo')
             font_xref = edit.get('font_xref')
@@ -608,6 +699,234 @@ def apply_edits(pdf_path, edits_json):
                         )
                     except Exception:
                         text_color = (0, 0, 0)
+
+            # ── WORD-STYLES HANDLING ───────────────────────────────────────
+            # When the frontend sends per-word style data (font, size, italic,
+            # color, position), we re-insert each word individually using
+            # TextWriter so that subscripts, superscripts, italic spans, and
+            # mixed-font blocks survive the edit cycle.
+            word_styles = edit.get('word_styles')
+            if word_styles and isinstance(word_styles, list) and len(word_styles) > 0:
+                try:
+                    original_text = (edit.get('original_text') or '').strip()
+                    new_text_stripped = (new_text or '').strip()
+
+                    # ── POSITION OFFSET ────────────────────────────────────
+                    # word_styles contain ABSOLUTE positions from the original
+                    # extraction.  If the block was moved, we need to shift
+                    # every word by the delta between original_bbox and the
+                    # new bbox so text lands at the moved position.
+                    original_bbox = edit.get('original_bbox')
+                    ws_delta_x = 0.0
+                    ws_delta_y = 0.0
+                    if original_bbox and bbox:
+                        ws_delta_x = bbox[0] - original_bbox[0]
+                        ws_delta_y = bbox[1] - original_bbox[1]
+                    if abs(ws_delta_x) > 0.5 or abs(ws_delta_y) > 0.5:
+                        print(f"  ℹ word_styles position offset: dx={ws_delta_x:.1f}, dy={ws_delta_y:.1f}")
+
+                    def _build_word_edits(word_styles, original_text, new_text):
+                        """
+                        Map original per-word styles onto new_text.
+                        
+                        Strategy: build an output token stream from SequenceMatcher opcodes.
+                        Each output token inherits the style of the nearest original token.
+                        Then group consecutive tokens by their word_style index to produce
+                        the final list of word_style dicts.
+                        
+                        Returns a list of word_style dicts with potentially updated 'text'.
+                        """
+                        import difflib
+
+                        # Build token list from word_styles
+                        # Each token tracks which word_style index it came from
+                        orig_tokens = []  # (token_text, ws_idx)
+                        
+                        for ws_idx, ws in enumerate(word_styles):
+                            wt = ws.get('text', '').strip()
+                            if not wt:
+                                continue
+                            for tok in wt.split():
+                                tok = tok.strip()
+                                if tok:
+                                    orig_tokens.append((tok, ws_idx))
+                        
+                        # Tokenize new text
+                        new_tokens = new_text.split()
+                        orig_token_texts = [t[0] for t in orig_tokens]
+                        
+                        # If tokens are identical, return all words unchanged
+                        if orig_token_texts == new_tokens:
+                            return [dict(ws) for ws in word_styles]
+                        
+                        # Use SequenceMatcher to find changed regions
+                        sm = difflib.SequenceMatcher(None, orig_token_texts, new_tokens)
+                        
+                        # Build output token stream: list of (token_text, ws_idx)
+                        # Each output token inherits a word_style from the original.
+                        output_tokens = []  # (token_text, ws_idx)
+                        
+                        for tag, i1, i2, j1, j2 in sm.get_opcodes():
+                            if tag == 'equal':
+                                # Keep original tokens with their styles
+                                for k in range(i1, i2):
+                                    output_tokens.append((orig_tokens[k][0], orig_tokens[k][1]))
+                            elif tag == 'replace':
+                                # New tokens inherit style from first affected original
+                                style_ws = orig_tokens[i1][1] if i1 < len(orig_tokens) else 0
+                                for new_tok in new_tokens[j1:j2]:
+                                    output_tokens.append((new_tok, style_ws))
+                            elif tag == 'insert':
+                                # New tokens — inherit style from nearest preceding token
+                                if i1 > 0:
+                                    style_ws = orig_tokens[i1 - 1][1]
+                                elif orig_tokens:
+                                    style_ws = orig_tokens[0][1]
+                                else:
+                                    style_ws = 0
+                                for new_tok in new_tokens[j1:j2]:
+                                    output_tokens.append((new_tok, style_ws))
+                            elif tag == 'delete':
+                                # Tokens removed — nothing added to output
+                                pass
+                        
+                        # Group consecutive tokens by word_style index
+                        # Each group becomes one word_style entry with joined text
+                        if not output_tokens:
+                            return []
+                        
+                        result = []
+                        current_ws_idx = output_tokens[0][1]
+                        current_toks = [output_tokens[0][0]]
+                        
+                        for tok_text, ws_idx in output_tokens[1:]:
+                            if ws_idx == current_ws_idx:
+                                current_toks.append(tok_text)
+                            else:
+                                # Flush current group
+                                new_ws = dict(word_styles[current_ws_idx])
+                                new_ws['text'] = ' '.join(current_toks)
+                                result.append(new_ws)
+                                current_ws_idx = ws_idx
+                                current_toks = [tok_text]
+                        
+                        # Flush last group
+                        new_ws = dict(word_styles[current_ws_idx])
+                        new_ws['text'] = ' '.join(current_toks)
+                        result.append(new_ws)
+                        
+                        return result
+
+                    mapped_words = _build_word_edits(word_styles, original_text, new_text_stripped)
+
+                    # ── BOUNDS CHECK ───────────────────────────────────────
+                    # Before using TextWriter (absolute positioning, no wrap),
+                    # verify that all words after the move delta will stay
+                    # within the page rect.  If ANY word would go off-page,
+                    # skip word_styles entirely and fall through to
+                    # insert_textbox which wraps text within the bbox rect.
+                    page_rect = page.rect
+                    words_off_page = False
+                    for mw_check in mapped_words:
+                        check_x = mw_check.get('origin_x', mw_check.get('left', bbox[0])) + ws_delta_x
+                        check_y_top = mw_check.get('top', bbox[1]) + ws_delta_y
+                        check_w = mw_check.get('width', 0)
+                        check_y_bot = check_y_top + mw_check.get('height', mw_check.get('font_size', font_size))
+                        if (check_x < page_rect.x0 - 1 or
+                            check_x + check_w > page_rect.x1 + 1 or
+                            check_y_top < page_rect.y0 - 1 or
+                            check_y_bot > page_rect.y1 + 1):
+                            words_off_page = True
+                            break
+
+                    # Also check: if the bbox itself extends beyond the page,
+                    # word_styles absolute positioning will place text off-page.
+                    if not words_off_page:
+                        if (bbox[0] < page_rect.x0 - 1 or
+                            bbox[2] > page_rect.x1 + 1 or
+                            bbox[1] < page_rect.y0 - 1 or
+                            bbox[3] > page_rect.y1 + 1):
+                            words_off_page = True
+
+                    if words_off_page:
+                        print(f"  ⚠ word_styles would place text off-page, falling back to insert_textbox (wrapping)")
+                        # Fall through to insert_textbox by raising to the except handler
+                        raise ValueError("word_styles off-page — use insert_textbox instead")
+
+                    # Re-insert each word with its own font/size/style
+                    tw = fitz.TextWriter(page.rect)
+                    ws_font_cache = {}
+
+                    for mw in mapped_words:
+                        mw_text = mw.get('text', '')
+                        if not mw_text:
+                            continue
+                        mw_text = normalize_smart_quotes(mw_text)
+
+                        mw_font_name = mw.get('font', font_name)
+                        mw_font_size = mw.get('font_size', font_size)
+                        mw_font_weight = mw.get('font_weight')
+                        mw_italic = mw.get('italic', False)
+                        mw_font_xref = mw.get('font_xref')
+
+                        # Color
+                        mw_hex = mw.get('hex_color') or mw.get('color', '#000000')
+                        mw_color = (0, 0, 0)
+                        if isinstance(mw_hex, str):
+                            nh = mw_hex.strip().lstrip('#')
+                            if len(nh) == 6:
+                                try:
+                                    mw_color = (
+                                        int(nh[0:2], 16) / 255.0,
+                                        int(nh[2:4], 16) / 255.0,
+                                        int(nh[4:6], 16) / 255.0,
+                                    )
+                                except Exception:
+                                    mw_color = text_color
+
+                        # Position — apply move delta so words land at the new location
+                        mw_origin_x = mw.get('origin_x', mw.get('left', bbox[0]))
+                        mw_origin_y = mw.get('origin_y')
+                        if mw_origin_y is None:
+                            # Fallback: bottom of word bbox
+                            mw_origin_y = mw.get('top', bbox[1]) + mw.get('height', mw_font_size)
+                        mw_origin_x += ws_delta_x
+                        mw_origin_y += ws_delta_y
+
+                        # Font resolution (with caching)
+                        cache_key = f"{mw_font_name}_{mw_font_weight}_{mw_italic}"
+                        if cache_key in ws_font_cache:
+                            mw_font_obj = ws_font_cache[cache_key]
+                        else:
+                            mw_font_obj = None
+                            # Try full font file
+                            ff = get_font_file(mw_font_name, script_dir, font_weight=mw_font_weight)
+                            if ff and os.path.exists(ff):
+                                mw_font_obj = fitz.Font(fontfile=ff)
+                            if not mw_font_obj:
+                                # Try embedded font
+                                mw_font_obj = get_embedded_font(doc, mw_font_xref, font_name=mw_font_name, page_num=page_num)
+                            if not mw_font_obj:
+                                mw_font_obj = fitz.Font("helv")
+                            ws_font_cache[cache_key] = mw_font_obj
+
+                        tw.append(
+                            (mw_origin_x, mw_origin_y),
+                            mw_text,
+                            font=mw_font_obj,
+                            fontsize=mw_font_size,
+                        )
+                        # TextWriter.write_text only takes one color, but we need
+                        # per-word colors.  Flush after each word with its own color.
+                        tw.write_text(page, color=mw_color, overlay=True)
+                        tw = fitz.TextWriter(page.rect)
+
+                    print(f"  ✓ Inserted block via word_styles at ({bbox[0]:.1f}, {bbox[1]:.1f}) with {len(mapped_words)} styled words [TextWriter overlay]")
+                    continue
+                except Exception as e:
+                    print(f"  ⚠ word_styles handling failed: {e}, falling back to rich_html/textbox")
+                    import traceback
+                    traceback.print_exc()
 
             # Rich HTML handling (for formatted text)
             # CRITICAL: Use FULL FONT FILES, not extracted subsetted font buffers!
@@ -979,6 +1298,7 @@ def apply_edits(pdf_path, edits_json):
         page = doc[page_num - 1]
         touched_texts = edited_texts_by_page.get(page_num, set())
         redact_rects = redaction_rects_by_page.get(page_num, [])
+        intentional_rects = intentional_edit_rects_by_page.get(page_num, [])
         pre_spans = pre_edit_spans.get(page_num, [])
 
         if not pre_spans:
@@ -999,6 +1319,17 @@ def apply_edits(pdf_path, edits_json):
         # Check each pre-edit span
         for span_info in pre_spans:
             span_text = span_info["text"]
+            normalized_span_text = normalize_smart_quotes(span_text).strip()
+
+            # Never recover artifact glyphs (replacement chars, private-use symbols,
+            # zero-width/control chars). These are typically encoding debris and
+            # should be removed during scrub, not re-inserted.
+            if (
+                not normalized_span_text
+                or re.search(r'[\uFFFD\uE000-\uF8FF\u200B\u200C\u200D\u2060\uFEFF]', span_text)
+                or re.search(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', span_text)
+            ):
+                continue
 
             # Already present in post-edit PDF → no loss
             if span_text in post_texts:
@@ -1016,16 +1347,45 @@ def apply_edits(pdf_path, edits_json):
 
             # Was this span inside a redaction rectangle? (collateral damage)
             span_rect = fitz.Rect(span_info["bbox"])
+
+            # If the span is inside one of the user's intentional edit boxes,
+            # never recover it. Recovery is only for accidental neighboring loss.
+            is_inside_intentional_edit = False
+            for i_rect in intentional_rects:
+                inter = span_rect & i_rect
+                if inter.is_empty:
+                    continue
+                span_area = max(1e-6, span_rect.get_area())
+                overlap_ratio = inter.get_area() / span_area
+                center_x = (span_rect.x0 + span_rect.x1) / 2.0
+                center_y = (span_rect.y0 + span_rect.y1) / 2.0
+                center_inside = (i_rect.x0 <= center_x <= i_rect.x1 and i_rect.y0 <= center_y <= i_rect.y1)
+                if overlap_ratio >= 0.5 or center_inside:
+                    is_inside_intentional_edit = True
+                    break
+
+            if is_inside_intentional_edit:
+                continue
+
+            # Check if span was inside the actual redaction zone.
+            # If it was, the text was INTENTIONALLY removed (it was within the
+            # padded redaction area of an edit). Do NOT recover it — it could be
+            # old underlying text from a prior overlay edit (e.g., "Isartor"
+            # hiding behind "Modified" from a previous save).
             was_in_redaction = False
             for r_rect in redact_rects:
                 if not (span_rect & r_rect).is_empty:
                     was_in_redaction = True
                     break
 
-            if not was_in_redaction:
+            if was_in_redaction:
+                print(f"  ⊘ Skipping recovery of '{span_text}' — inside redaction zone (likely old underlying text)")
+                continue
+
+            if span_text not in post_texts:
                 # Text disappeared but wasn't in a redaction zone → unusual
                 # Could be coordinate-system shift or font issue; still recover it
-                print(f"  ⚠ '{span_text}' missing (not in redaction zone) – recovering anyway")
+                print(f"  ⚠ '{span_text}' missing (not in redaction zone) – recovering")
 
             # ── Re-insert the lost span ──
             origin = span_info["origin"]
@@ -1084,11 +1444,17 @@ def apply_edits(pdf_path, edits_json):
 
 if __name__ == '__main__':
     if len(sys.argv) != 3:
-        print("Usage: apply_pdf_edits_simple.py <pdf_path> <edits_json>")
+        print("Usage: apply_pdf_edits_simple.py <pdf_path> <edits_json_or_@file>")
         sys.exit(1)
 
     try:
-        apply_edits(sys.argv[1], sys.argv[2])
+        edits_arg = sys.argv[2]
+        # Support @filename convention: read JSON from file instead of CLI arg
+        if edits_arg.startswith('@'):
+            edits_file = edits_arg[1:]
+            with open(edits_file, 'r') as f:
+                edits_arg = f.read()
+        apply_edits(sys.argv[1], edits_arg)
         print("\nSUCCESS")
     except Exception as e:
         print(f"ERROR: {e}", file=sys.stderr)

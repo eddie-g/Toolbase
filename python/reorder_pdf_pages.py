@@ -7,7 +7,7 @@ Example: python reorder_pdf_pages.py input.pdf output.pdf "2,0,1" (moves page 3 
 
 import sys
 import json
-import pymupdf as fitz
+import fitz  # PyMuPDF
 import tempfile
 import os
 

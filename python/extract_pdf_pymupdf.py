@@ -8,11 +8,33 @@ Much faster than OCR-based extraction
 import sys
 import os
 import json
+import re
 from pathlib import Path
 import fitz  # PyMuPDF
 import mysql.connector
 from mysql.connector import Error
 from datetime import datetime
+
+
+_EXTRACTION_ZERO_WIDTH_RE = re.compile(r'[\u200B\u200C\u200D\u2060\uFEFF]')
+_EXTRACTION_PRIVATE_USE_RE = re.compile(r'[\uE000-\uF8FF]')
+_EXTRACTION_CONTROL_RE = re.compile(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]')
+
+
+def sanitize_extracted_text(text):
+    """
+    Normalize extracted text to remove invisible/unsupported glyphs that
+    commonly appear from problematic PDF font encodings.
+    """
+    if not text:
+        return ''
+
+    cleaned = text.replace('\u00A0', ' ')
+    cleaned = cleaned.replace('\uFFFD', '')
+    cleaned = _EXTRACTION_ZERO_WIDTH_RE.sub('', cleaned)
+    cleaned = _EXTRACTION_PRIVATE_USE_RE.sub('', cleaned)
+    cleaned = _EXTRACTION_CONTROL_RE.sub('', cleaned)
+    return cleaned
 
 
 def _normalize_font_name(font_name):
@@ -106,8 +128,8 @@ def _merge_same_row_lines(line_items):
     if len(line_items) <= 1:
         return line_items
 
-    # Sort by vertical position
-    sorted_items = sorted(line_items, key=lambda item: item['y0'])
+    # Sort by vertical position, then horizontal for deterministic L-to-R order
+    sorted_items = sorted(line_items, key=lambda item: (item['y0'], item['x0']))
 
     rows = [[sorted_items[0]]]
 
@@ -136,6 +158,23 @@ def _merge_same_row_lines(line_items):
             if row_max_size > 0 and item_size > 0:
                 size_ratio = min(row_max_size, item_size) / max(row_max_size, item_size)
                 if size_ratio < 0.6:
+                    should_merge = False
+
+        # Don't merge items with a large horizontal gap (table columns).
+        # Inline formatting (italic, bold) has near-zero gaps between spans,
+        # while table cells have gaps of 15+ points.
+        # Check gap in BOTH directions (item may be left or right of row).
+        if should_merge:
+            row_x0 = min(it['bbox'][0] for it in row)
+            row_x1 = max(it['bbox'][2] for it in row)
+            item_x0 = item['bbox'][0]
+            item_x1 = item['bbox'][2]
+            x_gap = max(item_x0 - row_x1, row_x0 - item_x1, 0)
+            if x_gap > 0:
+                avg_size = max(row_max_size if row_max_size > 0 else 12,
+                               item['max_size'] if item['max_size'] > 0 else 12)
+                x_gap_threshold = max(avg_size * 2, 15)
+                if x_gap > x_gap_threshold:
                     should_merge = False
 
         if should_merge:
@@ -266,14 +305,18 @@ def _merge_adjacent_page_blocks(page_blocks, page_width, page_words, page_lines)
                 h_gap = max(b_left - a_right, a_left - b_right, 0)
                 max_font = max(a_size, b_size) if max(a_size, b_size) > 0 else 12
                 
+                # Don't re-merge blocks that were explicitly split by x-gap detection
+                if block_a.get('_from_xgap_split') or block_b.get('_from_xgap_split'):
+                    continue
+
                 # Adaptive threshold based on font size, but with hard limits
-                # - Small gap: 3x font size (for closely spaced text)
+                # - Small gap: 2x font size
                 # - Hard maximum: 40 points (~0.5 inches) to prevent cross-column merging
-                # - Percentage maximum: 5% of page width (much stricter than before)
+                # - Percentage maximum: 5% of page width
                 adaptive_threshold = min(
-                    max_font * 3,  # 3x font size
-                    40.0,          # Hard limit: 40 points
-                    page_width * 0.05  # 5% of page width (was 15%, way too high!)
+                    max_font * 2,    # 2x font size
+                    40.0,            # Hard limit: 40 points
+                    page_width * 0.05  # 5% of page width
                 )
                 
                 if h_gap > adaptive_threshold:
@@ -520,29 +563,50 @@ def extract_text_with_pymupdf(pdf_path):
                         groups = [line_items]
 
                     # Split each group into sub-blocks if there is a strong x-gap (columns/titles)
+                    # Uses multi-group clustering to handle 3+ table columns.
                     split_groups = []
                     for candidate in groups:
                         if len(candidate) > 1:
                             sorted_by_x = sorted(candidate, key=lambda item: item['x0'])
-                            x_values = [item['x0'] for item in sorted_by_x]
-                            max_gap = 0
-                            split_index = None
-                            for idx in range(len(x_values) - 1):
-                                gap = x_values[idx + 1] - x_values[idx]
-                                if gap > max_gap:
-                                    max_gap = gap
-                                    split_index = idx
                             gap_threshold = max(12.0, block_width * 0.08)
-                            if split_index is not None and max_gap >= gap_threshold:
-                                split_x = (x_values[split_index] + x_values[split_index + 1]) / 2.0
-                                left_group = [item for item in candidate if item['x0'] <= split_x]
-                                right_group = [item for item in candidate if item['x0'] > split_x]
-                                if left_group and right_group:
-                                    # Safety: don't split if the groups share a visual row
-                                    # (this means they're inline text, not separate columns)
-                                    if not _groups_share_visual_row(left_group, right_group):
-                                        split_groups.extend([left_group, right_group])
-                                        continue
+
+                            # Cluster items by x0 proximity
+                            x_groups = [[sorted_by_x[0]]]
+                            for item in sorted_by_x[1:]:
+                                last_x = max(it['x0'] for it in x_groups[-1])
+                                gap = item['x0'] - last_x
+                                if gap >= gap_threshold:
+                                    x_groups.append([item])
+                                else:
+                                    x_groups[-1].append(item)
+
+                            if len(x_groups) > 1:
+                                # For each adjacent pair of groups, check if the split is valid.
+                                # Large gaps (>= 2x font size) are always valid (table columns).
+                                # Smaller gaps require that groups don't share a visual row
+                                # (to avoid splitting inline text).
+                                all_valid = True
+                                avg_font_size = max(
+                                    (it.get('max_size', 0) for it in candidate if it.get('max_size', 0) > 0),
+                                    default=12
+                                )
+                                large_gap_threshold = max(avg_font_size * 2, 20)
+                                for gi in range(len(x_groups) - 1):
+                                    right_min_x = min(it['x0'] for it in x_groups[gi + 1])
+                                    left_max_x = max(it['x0'] for it in x_groups[gi])
+                                    inter_gap = right_min_x - left_max_x
+                                    if inter_gap < large_gap_threshold:
+                                        # Small gap — only split if groups are on different rows
+                                        if _groups_share_visual_row(x_groups[gi], x_groups[gi + 1]):
+                                            all_valid = False
+                                            break
+                                if all_valid:
+                                    split_groups.extend(x_groups)
+                                    # Mark groups as x-gap split so post-merge won't re-join
+                                    for xg in x_groups:
+                                        for it in xg:
+                                            it['_from_xgap_split'] = True
+                                    continue
                         split_groups.append(candidate)
 
                     groups = split_groups if split_groups else [line_items]
@@ -565,7 +629,8 @@ def extract_text_with_pymupdf(pdf_path):
                             'top': group_top,
                             'width': group_right - group_left,
                             'height': group_bottom - group_top,
-                            'line_count': len(group_items)
+                            'line_count': len(group_items),
+                            '_from_xgap_split': any(it.get('_from_xgap_split') for it in group_items)
                         }
 
                         block_text_lines = []
@@ -586,7 +651,7 @@ def extract_text_with_pymupdf(pdf_path):
                             line_style = None
 
                             for span_num, span in enumerate(line.get("spans", [])):
-                                text = span.get("text", "")
+                                text = sanitize_extracted_text(span.get("text", ""))
                                 if not text:
                                     continue
 
@@ -617,7 +682,6 @@ def extract_text_with_pymupdf(pdf_path):
                                 font_weight = None
                                 
                                 # Check for explicit weight patterns like "_700wght" or "-700"
-                                import re
                                 weight_pattern = re.search(r'[_-](\d{3})w?g?h?t?', font_lower)
                                 if weight_pattern:
                                     parsed_weight = int(weight_pattern.group(1))
@@ -652,7 +716,11 @@ def extract_text_with_pymupdf(pdf_path):
                                 font_xref = match_font_xref(font, page_fonts)
 
                                 # Track style frequency to find dominant style
-                                style_key = f"{font}_{size}_{is_bold}_{is_italic}"
+                                # Include hex_color so spans with the same font/size but
+                                # different colors (e.g. red bullet vs black body text) are
+                                # tracked separately.  This prevents a minority-color span
+                                # from becoming the block's dominant color.
+                                style_key = f"{font}_{size}_{is_bold}_{is_italic}_{hex_color}"
                                 style_counts[style_key] = style_counts.get(style_key, 0) + len(text)
 
                                 span_data = {
@@ -685,7 +753,7 @@ def extract_text_with_pymupdf(pdf_path):
                                         'italic': is_italic
                                     }
 
-                                if block_style is None or style_counts.get(style_key, 0) > style_counts.get(f"{block_style.get('font', '')}_{block_style.get('font_size', 0)}_{block_style.get('bold', False)}_{block_style.get('italic', False)}", 0):
+                                if block_style is None or style_counts.get(style_key, 0) > style_counts.get(f"{block_style.get('font', '')}_{block_style.get('font_size', 0)}_{block_style.get('bold', False)}_{block_style.get('italic', False)}_{block_style.get('hex_color', '#000000')}", 0):
                                     block_style = {
                                         'font': font,
                                         'font_xref': font_xref,

@@ -83,6 +83,20 @@ def parse_level(level_str):
     return level_map[level_str]
 
 
+def _font_has_embedded_program(doc, xref):
+    """Check if a font xref actually has an embedded font program by inspecting its FontDescriptor."""
+    try:
+        obj_str = doc.xref_object(xref)
+        m = re.search(r'/FontDescriptor\s+(\d+)\s+0\s+R', obj_str)
+        if not m:
+            return False
+        desc_str = doc.xref_object(int(m.group(1)))
+        # FontFile = Type1, FontFile2 = TrueType, FontFile3 = CFF/OpenType
+        return '/FontFile' in desc_str
+    except:
+        return False
+
+
 def check_font_embedding(doc):
     """
     Check all pages for fonts and report which are/aren't embedded.
@@ -100,10 +114,16 @@ def check_font_embedding(doc):
             font_name = font[3] if len(font) > 3 else "Unknown"
             font_type = font[2] if len(font) > 2 else "Unknown"
             
-            # A font is considered embedded if it has a valid xref and 
-            # its type indicates embedding (Type1C, TrueType, CIDFontType2, etc.)
-            # Fonts with xref=0 or type containing "Type3" are special cases
-            is_embedded = xref > 0 and font_type not in ('Type1',)
+            # A font is embedded if:
+            # - It has a valid xref
+            # - For Type1: check if FontDescriptor contains FontFile/FontFile2/FontFile3
+            # - For other types (TrueType, Type1C, CIDFontType2): assumed embedded if xref > 0
+            if xref <= 0:
+                is_embedded = False
+            elif font_type == 'Type1':
+                is_embedded = _font_has_embedded_program(doc, xref)
+            else:
+                is_embedded = True
             
             if not is_embedded:
                 all_embedded = False
@@ -126,12 +146,28 @@ def check_font_embedding(doc):
 # Google Fonts substitutes (Arimo, Cousine, Tinos).
 
 BASE14_SUBSTITUTES = {
-    'helvetica': {'regular': 'Arimo-Regular.ttf', 'bold': 'Arimo-Bold.ttf', 'google': 'Arimo'},
-    'arial':     {'regular': 'Arimo-Regular.ttf', 'bold': 'Arimo-Bold.ttf', 'google': 'Arimo'},
-    'courier':   {'regular': 'Cousine-Regular.ttf', 'bold': 'Cousine-Bold.ttf', 'google': 'Cousine'},
-    'times':     {'regular': 'Tinos-Regular.ttf', 'bold': 'Tinos-Bold.ttf', 'google': 'Tinos'},
-    'symbol':    {'regular': 'Arimo-Regular.ttf', 'bold': 'Arimo-Bold.ttf', 'google': 'Arimo'},
-    'zapfdingbats': {'regular': 'Arimo-Regular.ttf', 'bold': 'Arimo-Bold.ttf', 'google': 'Arimo'},
+    'helvetica': {'regular': 'Arimo-Regular.ttf', 'bold': 'Arimo-Bold.ttf',
+                  'italic': 'Arimo-Italic.ttf', 'bolditalic': 'Arimo-BoldItalic.ttf', 'google': 'Arimo'},
+    'arial':     {'regular': 'Arimo-Regular.ttf', 'bold': 'Arimo-Bold.ttf',
+                  'italic': 'Arimo-Italic.ttf', 'bolditalic': 'Arimo-BoldItalic.ttf', 'google': 'Arimo'},
+    'courier':   {'regular': 'Cousine-Regular.ttf', 'bold': 'Cousine-Bold.ttf',
+                  'italic': 'Cousine-Italic.ttf', 'bolditalic': 'Cousine-BoldItalic.ttf', 'google': 'Cousine'},
+    'times':     {'regular': 'Tinos-Regular.ttf', 'bold': 'Tinos-Bold.ttf',
+                  'italic': 'Tinos-Italic.ttf', 'bolditalic': 'Tinos-BoldItalic.ttf', 'google': 'Tinos'},
+    'symbol':    {'regular': 'Arimo-Regular.ttf', 'bold': 'Arimo-Bold.ttf',
+                  'italic': 'Arimo-Italic.ttf', 'bolditalic': 'Arimo-BoldItalic.ttf', 'google': 'Arimo'},
+    'zapfdingbats': {'regular': 'Arimo-Regular.ttf', 'bold': 'Arimo-Bold.ttf',
+                     'italic': 'Arimo-Italic.ttf', 'bolditalic': 'Arimo-BoldItalic.ttf', 'google': 'Arimo'},
+}
+
+# Fallback substitutes for non-base14 unembedded fonts (by broad category)
+FALLBACK_SUBSTITUTES = {
+    'sans':  {'regular': 'Arimo-Regular.ttf', 'bold': 'Arimo-Bold.ttf',
+              'italic': 'Arimo-Italic.ttf', 'bolditalic': 'Arimo-BoldItalic.ttf', 'google': 'Arimo'},
+    'serif': {'regular': 'Tinos-Regular.ttf', 'bold': 'Tinos-Bold.ttf',
+              'italic': 'Tinos-Italic.ttf', 'bolditalic': 'Tinos-BoldItalic.ttf', 'google': 'Tinos'},
+    'mono':  {'regular': 'Cousine-Regular.ttf', 'bold': 'Cousine-Bold.ttf',
+              'italic': 'Cousine-Italic.ttf', 'bolditalic': 'Cousine-BoldItalic.ttf', 'google': 'Cousine'},
 }
 
 
@@ -148,9 +184,14 @@ def download_substitute_font(google_name, filename, fonts_dir):
         return filepath
 
     os.makedirs(fonts_dir, exist_ok=True)
-    # Determine weight from filename
-    weight = '700' if 'Bold' in filename else '400'
-    css_url = f"https://fonts.googleapis.com/css2?family={google_name}:wght@{weight}"
+    # Determine weight and style from filename
+    is_bold = 'Bold' in filename
+    is_italic = 'Italic' in filename
+    weight = '700' if is_bold else '400'
+    if is_italic:
+        css_url = f"https://fonts.googleapis.com/css2?family={google_name}:ital,wght@1,{weight}"
+    else:
+        css_url = f"https://fonts.googleapis.com/css2?family={google_name}:wght@{weight}"
 
     try:
         req = urllib.request.Request(css_url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -177,12 +218,14 @@ def ensure_substitute_fonts(needed_families):
     result = {}
 
     for family in needed_families:
-        info = BASE14_SUBSTITUTES.get(family)
+        info = BASE14_SUBSTITUTES.get(family) or FALLBACK_SUBSTITUTES.get(family)
         if not info:
             continue
         paths = {}
-        for variant in ('regular', 'bold'):
-            filename = info[variant]
+        for variant in ('regular', 'bold', 'italic', 'bolditalic'):
+            filename = info.get(variant)
+            if not filename:
+                continue
             full_path = os.path.join(fonts_dir, filename)
             if os.path.exists(full_path):
                 paths[variant] = full_path
@@ -290,17 +333,73 @@ def embed_type1_as_truetype(doc, old_xref, font_path):
     ))
 
 
+def _guess_font_category(basefont, doc=None, xref=None):
+    """Guess the font category (sans/serif/mono) from the font name or descriptor flags."""
+    name_lower = basefont.lower()
+    # Check name hints
+    if any(k in name_lower for k in ('mono', 'courier', 'consol', 'fixed', 'typewriter')):
+        return 'mono'
+    if any(k in name_lower for k in ('serif', 'times', 'roman', 'garamond', 'georgia', 'palat', 'bookman', 'cambria')):
+        return 'serif'
+    if any(k in name_lower for k in ('sans', 'arial', 'helv', 'verdana', 'calibri', 'lucid', 'gothic', 'futura', 'tahoma')):
+        return 'sans'
+    # Check font descriptor flags if available
+    if doc and xref:
+        try:
+            obj_str = doc.xref_object(xref)
+            m = re.search(r'/FontDescriptor\s+(\d+)\s+0\s+R', obj_str)
+            if m:
+                desc_str = doc.xref_object(int(m.group(1)))
+                fm = re.search(r'/Flags\s+(\d+)', desc_str)
+                if fm:
+                    flags = int(fm.group(1))
+                    if flags & 1:  # FixedPitch
+                        return 'mono'
+                    if flags & 2:  # Serif
+                        return 'serif'
+        except:
+            pass
+    return 'sans'  # Default fallback
+
+
+def _is_italic_font(basefont, doc=None, xref=None):
+    """Detect if a font is italic/oblique from name or descriptor flags."""
+    name_lower = basefont.lower()
+    if any(k in name_lower for k in ('italic', 'oblique', 'slant')):
+        return True
+    if doc and xref:
+        try:
+            obj_str = doc.xref_object(xref)
+            m = re.search(r'/FontDescriptor\s+(\d+)\s+0\s+R', obj_str)
+            if m:
+                desc_str = doc.xref_object(int(m.group(1)))
+                fm = re.search(r'/Flags\s+(\d+)', desc_str)
+                if fm:
+                    flags = int(fm.group(1))
+                    if flags & 64:  # Italic flag
+                        return True
+                # Also check ItalicAngle
+                am = re.search(r'/ItalicAngle\s+(-?\d+)', desc_str)
+                if am and int(am.group(1)) != 0:
+                    return True
+        except:
+            pass
+    return False
+
+
 def replace_base14_fonts(doc):
     """
-    Replace unembedded base14 Type1 fonts with embedded TrueType substitutes.
+    Replace unembedded Type1 fonts with embedded TrueType substitutes.
+    Handles both base14 fonts (Helvetica, Courier, Times) and non-base14 fonts
+    (like LuciduxSans) using a category-based fallback system.
     Downloads substitute fonts from Google Fonts if not already cached locally.
     
     Uses in-place xref replacement to convert the Type1 font dict into an embedded
     TrueType font dict with the same WinAnsiEncoding, so existing content streams
     continue to work without any text re-encoding.
     """
-    # Pass 1: Scan all pages to find unembedded base14 fonts (collect unique xrefs)
-    unembedded_xrefs = {}  # xref -> (basefont, family)
+    # Pass 1: Scan all pages to find unembedded Type1 fonts (collect unique xrefs)
+    unembedded_xrefs = {}  # xref -> (basefont, family, is_italic)
     needed_families = set()
 
     for page_idx in range(len(doc)):
@@ -312,9 +411,13 @@ def replace_base14_fonts(doc):
                 continue  # Already collected
             if is_base14_unembedded(doc, xref, ftype, basefont):
                 family = get_base14_family(basefont)
-                if family:
-                    needed_families.add(family)
-                    unembedded_xrefs[xref] = (basefont, family)
+                italic = _is_italic_font(basefont, doc, xref)
+                if not family:
+                    # Non-base14 font: use category-based fallback
+                    family = _guess_font_category(basefont, doc, xref)
+                    print(f"  Non-base14 font '{basefont}' -> fallback category: {family}", file=sys.stderr)
+                needed_families.add(family)
+                unembedded_xrefs[xref] = (basefont, family, italic)
 
     if not unembedded_xrefs:
         return
@@ -326,18 +429,27 @@ def replace_base14_fonts(doc):
         return
 
     # Pass 3: Replace each unembedded font xref in-place
-    for xref, (basefont, family) in unembedded_xrefs.items():
+    for xref, (basefont, family, italic) in unembedded_xrefs.items():
         if family not in available:
             continue
 
         is_bold = 'bold' in basefont.lower()
-        variant = 'bold' if is_bold and 'bold' in available[family] else 'regular'
+        # Pick the best variant: bolditalic > bold/italic > regular
+        if is_bold and italic:
+            variant = 'bolditalic' if 'bolditalic' in available[family] else ('bold' if 'bold' in available[family] else 'regular')
+        elif is_bold:
+            variant = 'bold' if 'bold' in available[family] else 'regular'
+        elif italic:
+            variant = 'italic' if 'italic' in available[family] else 'regular'
+        else:
+            variant = 'regular'
         font_path = available[family].get(variant)
         if not font_path:
             continue
 
         try:
             embed_type1_as_truetype(doc, xref, font_path)
+            print(f"  Embedded substitute for '{basefont}': {os.path.basename(font_path)} ({variant})", file=sys.stderr)
         except Exception as e:
             print(f"Warning: Could not embed substitute for '{basefont}' (xref {xref}): {e}", file=sys.stderr)
 
@@ -495,6 +607,211 @@ def create_minimal_srgb_profile():
     return bytes(profile)
 
 
+# Action types prohibited in PDF/A
+PROHIBITED_ACTIONS = {
+    'Launch', 'Sound', 'Movie', 'ResetForm', 'ImportData',
+    'Hide', 'SetState', 'NOP', 'JavaScript',
+}
+
+# Named actions allowed in PDF/A (all others are prohibited)
+ALLOWED_NAMED_ACTIONS = {'NextPage', 'PrevPage', 'FirstPage', 'LastPage'}
+
+# Annotation types prohibited in PDF/A
+PROHIBITED_ANNOT_TYPES = {'FileAttachment', 'Sound', 'Movie'}
+
+
+def _is_prohibited_action(doc, xref):
+    """
+    Check if an action object at the given xref is prohibited in PDF/A.
+    Returns True if the action should be removed.
+    """
+    try:
+        obj_str = doc.xref_object(xref)
+    except Exception:
+        return False
+
+    import re
+    s_match = re.search(r'/S\s*/([A-Za-z]+)', obj_str)
+    if not s_match:
+        return False
+    action_type = s_match.group(1)
+
+    if action_type in PROHIBITED_ACTIONS:
+        return True
+    if action_type == 'Named':
+        n_match = re.search(r'/N\s*/([A-Za-z]+)', obj_str)
+        if n_match and n_match.group(1) not in ALLOWED_NAMED_ACTIONS:
+            return True
+    if action_type in ('GoToR', 'GoToE', 'SubmitForm'):
+        return True  # External-referencing action types
+    if action_type == 'URI':
+        return True  # URI actions reference external resources
+    return False
+
+
+def _remove_pdf_key(doc, xref, key):
+    """
+    Truly remove a key from a PDF object by rewriting the object string.
+    xref_set_key(xref, key, 'null') leaves '/Key null' in the dict which
+    some checks still detect. This function rewrites the entire object
+    without the key.
+    """
+    import re
+    obj_str = doc.xref_object(xref)
+    # Match /Key followed by: an indirect ref, an inline dict, an inline array, or a simple value
+    patterns = [
+        rf'\s*/{re.escape(key)}\s+\d+\s+\d+\s+R',           # indirect ref
+        rf'\s*/{re.escape(key)}\s*<<(?:[^<>]|<<[^>]*>>)*>>', # inline dict (nested one level)
+        rf'\s*/{re.escape(key)}\s*\[[^\]]*\]',               # inline array
+        rf'\s*/{re.escape(key)}\s+null',                      # null value
+        rf'\s*/{re.escape(key)}\s+/[A-Za-z]+',               # name value
+        rf'\s*/{re.escape(key)}\s+\S+',                       # other simple value
+    ]
+    for pat in patterns:
+        new_str, n = re.subn(pat, ' ', obj_str, count=1)
+        if n > 0:
+            doc.update_object(xref, new_str)
+            return True
+    return False
+
+
+def strip_prohibited_actions(doc):
+    """
+    Remove all PDF/A-prohibited actions, AA entries, and prohibited annotations.
+
+    PDF/A forbids:
+    - Additional Actions (AA) on pages and catalog
+    - Prohibited action types (Launch, Sound, Movie, JS, etc.)
+    - External-referencing actions (GoToR, GoToE, URI, SubmitForm)
+    - Named actions other than NextPage/PrevPage/FirstPage/LastPage
+    - Prohibited annotation types (FileAttachment, Sound, Movie)
+    - Annotation-level AA entries
+    - JavaScript in Names dict
+    """
+    import re
+    catalog_xref = doc.pdf_catalog()
+
+    # 1. Remove AA from catalog
+    try:
+        keys = doc.xref_get_keys(catalog_xref)
+        if 'AA' in keys:
+            _remove_pdf_key(doc, catalog_xref, 'AA')
+    except Exception:
+        pass
+
+    # 2. Remove prohibited OpenAction from catalog
+    try:
+        keys = doc.xref_get_keys(catalog_xref)
+        if 'OpenAction' in keys:
+            oa_type, oa_val = doc.xref_get_key(catalog_xref, 'OpenAction')
+            if oa_type == 'xref':
+                oa_xref = int(re.search(r'(\d+)', oa_val).group(1))
+                if _is_prohibited_action(doc, oa_xref):
+                    _remove_pdf_key(doc, catalog_xref, 'OpenAction')
+    except Exception:
+        pass
+
+    # 3. Remove JavaScript Names tree from catalog
+    try:
+        keys = doc.xref_get_keys(catalog_xref)
+        if 'Names' in keys:
+            names_type, names_val = doc.xref_get_key(catalog_xref, 'Names')
+            if names_type == 'xref':
+                names_xref = int(re.search(r'(\d+)', names_val).group(1))
+                names_keys = doc.xref_get_keys(names_xref)
+                if 'JavaScript' in names_keys:
+                    _remove_pdf_key(doc, names_xref, 'JavaScript')
+            elif names_type == 'dict':
+                # Inline Names dict — need to check for JavaScript key inside
+                if '/JavaScript' in names_val:
+                    _remove_pdf_key(doc, catalog_xref, 'Names')
+    except Exception:
+        pass
+
+    # 4. Nullify all prohibited action objects so they become inert
+    for x in range(1, doc.xref_length()):
+        try:
+            obj_str = doc.xref_object(x)
+            if '/S ' not in obj_str and '/S/' not in obj_str:
+                continue
+            if _is_prohibited_action(doc, x):
+                # Replace the action with an empty dict
+                doc.update_object(x, '<<>>')
+        except Exception:
+            pass
+
+    # 5. Process each page
+    for page in doc:
+        page_xref = page.xref
+        try:
+            page_keys = doc.xref_get_keys(page_xref)
+        except Exception:
+            continue
+
+        # 5a. Remove AA from page
+        if 'AA' in page_keys:
+            _remove_pdf_key(doc, page_xref, 'AA')
+
+        # 5b. Process annotations on this page
+        if 'Annots' in page_keys:
+            annots_type, annots_val = doc.xref_get_key(page_xref, 'Annots')
+            # Parse annotation xrefs from the array
+            annot_xrefs = [int(m) for m in re.findall(r'(\d+)\s+0\s+R', annots_val)]
+            keep_annots = []
+
+            for ax in annot_xrefs:
+                try:
+                    annot_obj = doc.xref_object(ax)
+                except Exception:
+                    keep_annots.append(ax)
+                    continue
+
+                # Check if this is a prohibited annotation type
+                subtype_match = re.search(r'/Subtype\s*/([A-Za-z]+)', annot_obj)
+                if subtype_match and subtype_match.group(1) in PROHIBITED_ANNOT_TYPES:
+                    continue  # Drop this annotation
+
+                # Remove AA from annotation
+                try:
+                    annot_keys = doc.xref_get_keys(ax)
+                    if 'AA' in annot_keys:
+                        _remove_pdf_key(doc, ax, 'AA')
+                except Exception:
+                    pass
+
+                # Check if annotation's A (action) is prohibited — remove the A key
+                try:
+                    annot_keys = doc.xref_get_keys(ax)
+                    if 'A' in annot_keys:
+                        a_type, a_val = doc.xref_get_key(ax, 'A')
+                        if a_type == 'xref':
+                            a_xref = int(re.search(r'(\d+)', a_val).group(1))
+                            if _is_prohibited_action(doc, a_xref):
+                                _remove_pdf_key(doc, ax, 'A')
+                        elif a_type == 'dict':
+                            # Inline action dict — check /S type
+                            s_match = re.search(r'/S\s*/([A-Za-z]+)', a_val)
+                            if s_match:
+                                act_type = s_match.group(1)
+                                if act_type in PROHIBITED_ACTIONS or act_type in ('GoToR', 'GoToE', 'SubmitForm', 'URI'):
+                                    _remove_pdf_key(doc, ax, 'A')
+                                elif act_type == 'Named':
+                                    n_match = re.search(r'/N\s*/([A-Za-z]+)', a_val)
+                                    if n_match and n_match.group(1) not in ALLOWED_NAMED_ACTIONS:
+                                        _remove_pdf_key(doc, ax, 'A')
+                except Exception:
+                    pass
+
+                keep_annots.append(ax)
+
+            # Update or remove the Annots array
+            if not keep_annots:
+                _remove_pdf_key(doc, page_xref, 'Annots')
+            elif len(keep_annots) != len(annot_xrefs):
+                new_annots = '[' + ' '.join(f'{x} 0 R' for x in keep_annots) + ']'
+                doc.xref_set_key(page_xref, 'Annots', new_annots)
+
+
 def convert_to_pdfa(input_path, output_path, level='2b', embed_fonts=True, srgb_profile=True):
     """
     Convert a PDF file to PDF/A format.
@@ -556,6 +873,12 @@ def convert_to_pdfa(input_path, output_path, level='2b', embed_fonts=True, srgb_
     if part == 1:
         warnings.append("PDF/A-1 does not support transparency. Some visual elements may change.")
     
+    # Step 5.5: Strip prohibited actions, AA entries, and prohibited annotations
+    try:
+        strip_prohibited_actions(doc)
+    except Exception as e:
+        warnings.append(f"Action stripping warning: {str(e)}")
+    
     # Step 6: Save with optimal settings for archival
     doc.save(
         output_path,
@@ -615,7 +938,13 @@ def generate_compliance_report(doc_path, part, conformance):
             seen_fonts.add(key)
 
             total_fonts += 1
-            is_embedded = xref > 0 and font_type not in ('Type1',)
+            # For Type1 fonts, check the FontDescriptor for actual font data
+            if xref <= 0:
+                is_embedded = False
+            elif font_type == 'Type1':
+                is_embedded = _font_has_embedded_program(doc, xref)
+            else:
+                is_embedded = True
             if is_embedded:
                 embedded_fonts += 1
             font_details.append({
@@ -698,24 +1027,61 @@ def generate_compliance_report(doc_path, part, conformance):
         'detail': 'sRGB IEC61966-2.1 output intent present' if has_output_intent else 'No output intent found'
     })
 
-    # --- Check 7: No External References ---
-    # PDF/A prohibits external content references (Launch, URI actions on page open, etc.)
-    has_external = False
+    # --- Check 7: No External References / Prohibited Actions ---
+    # PDF/A prohibits: AA on pages/catalog, prohibited action types, external refs
+    import re as _re
+    prohibited_found = []
+    _prohibited_set = {
+        'Launch', 'Sound', 'Movie', 'ResetForm', 'ImportData',
+        'Hide', 'SetState', 'NOP', 'JavaScript', 'GoToR', 'GoToE',
+        'SubmitForm', 'URI',
+    }
+    _allowed_named = {'NextPage', 'PrevPage', 'FirstPage', 'LastPage'}
+
+    # Check catalog for AA
+    try:
+        cat_keys = doc.xref_get_keys(catalog_xref)
+        if 'AA' in cat_keys:
+            prohibited_found.append('AA on catalog')
+    except:
+        pass
+
+    # Check pages for AA
     for page_idx in range(len(doc)):
         page = doc[page_idx]
-        # Check for AA (Additional Actions) on pages  
         try:
             keys = doc.xref_get_keys(page.xref)
             if 'AA' in keys:
-                has_external = True
-                break
+                prohibited_found.append(f'AA on page {page_idx + 1}')
         except:
             pass
+
+    # Scan all objects for prohibited action types
+    for x in range(1, doc.xref_length()):
+        try:
+            obj = doc.xref_object(x)
+            if '/S ' not in obj and '/S/' not in obj:
+                continue
+            s_match = _re.search(r'/S\s*/([A-Za-z]+)', obj)
+            if not s_match:
+                continue
+            action_type = s_match.group(1)
+            if action_type in _prohibited_set:
+                prohibited_found.append(f'{action_type} action')
+            elif action_type == 'Named':
+                n_match = _re.search(r'/N\s*/([A-Za-z]+)', obj)
+                if n_match and n_match.group(1) not in _allowed_named:
+                    prohibited_found.append(f'Named/{n_match.group(1)} action')
+        except:
+            pass
+
+    has_external = len(prohibited_found) > 0
+    detail_text = 'No external references found' if not has_external else f'Prohibited: {", ".join(prohibited_found[:3])}'
     report['checks'].append({
         'item': 'No External References',
         'description': 'PDF/A prohibits external content dependencies',
         'result': 'PASS' if not has_external else 'FAIL',
-        'detail': 'No external references found' if not has_external else 'External references detected'
+        'detail': detail_text
     })
 
     doc.close()

@@ -9,78 +9,12 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Toolbase - Open-Source PDF Editor & Admin Dashboard</title>
+        <title>Netkit - Open-Source PDF Editor & Admin Dashboard</title>
         @vite(['resources/css/app.css', 'resources/js/app.js'])
     </head>
     <body class="bg-white dark:bg-gray-900 antialiased">
         <!-- Header -->
-        <header class="fixed top-0 left-0 right-0 z-50 bg-white/80 dark:bg-gray-900/80 backdrop-blur-lg border-b border-gray-200 dark:border-gray-800">
-            <div class="container mx-auto px-4 sm:px-6 lg:px-8">
-                <div class="flex items-center justify-between h-20">
-                    <!-- Logo -->
-                    <div class="flex items-center gap-3">
-                        <svg class="h-10 w-10 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                        </svg>
-                        <span class="text-2xl font-bold text-gray-900 dark:text-white">Toolbase</span>
-                        <span class="hidden sm:inline-block text-xs bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400 px-2 py-1 rounded-full font-medium">v2.2</span>
-                    </div>
-
-                    <!-- Navigation -->
-                    <nav class="hidden md:flex items-center gap-8">
-                        <a href="#features" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Features</a>
-                        <a href="#dashboards" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Dashboards</a>
-                        <a href="#pdf-features" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">PDF Editor</a>
-                        <a href="#" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Docs</a>
-                    </nav>
-
-                    <!-- CTA Buttons -->
-                    <div class="flex items-center gap-4">
-                        <button @click="toggleDarkMode()" class="p-2 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition">
-                            <svg x-show="!darkMode" class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>
-                            </svg>
-                            <svg x-show="darkMode" class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>
-                            </svg>
-                        </button>
-
-                        @guest
-                            <a href="{{ route('filament.admin.auth.login') }}" class="hidden sm:inline-flex items-center gap-2 px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition">
-                                Login
-                            </a>
-                        @endguest
-
-                        @auth
-                            <div class="relative ml-2" x-data="{ open: false }">
-                                <button @click="open = !open" type="button" class="flex items-center justify-center w-10 h-10 rounded-full bg-gray-700 text-white hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-white transition" id="user-menu-button" aria-expanded="false" aria-haspopup="true">
-                                    <span class="sr-only">Open user menu</span>
-                                    @if(Auth::user()->avatar)
-                                        <img class="h-9 w-9 rounded-full object-cover border-2 border-gray-600" src="{{ Auth::user()->avatar }}" alt="">
-                                    @else
-                                        <svg class="h-6 w-6 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
-                                    @endif
-                                </button>
-
-                                <div x-show="open" @click.away="open = false" x-transition:enter="transition ease-out duration-100" x-transition:enter-start="transform opacity-0 scale-95" x-transition:enter-end="transform opacity-100 scale-100" x-transition:leave="transition ease-in duration-75" x-transition:leave-start="transform opacity-100 scale-100" x-transition:leave-end="transform opacity-0 scale-95" class="absolute right-0 z-50 mt-2 w-48 origin-top-right rounded-xl bg-white dark:bg-[#1a2332] py-2 shadow-2xl ring-1 ring-black/5 dark:ring-white/10 focus:outline-none border border-gray-200 dark:border-gray-700/50 dark:backdrop-blur-xl" role="menu" aria-orientation="vertical" aria-labelledby="user-menu-button" tabindex="-1">
-                                    <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700/50 mb-1">
-                                        <p class="text-xs text-gray-500 dark:text-gray-400">Signed in as</p>
-                                        <p class="text-sm font-medium text-gray-900 dark:text-white truncate">{{ Auth::user()->name }}</p>
-                                    </div>
-                                    <a href="/admin" class="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50 dark:hover:text-white transition-colors" role="menuitem" tabindex="-1">Dashboard</a>
-                                    <a href="{{ route('filament.admin.pages.security') }}" class="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50 dark:hover:text-white transition-colors" role="menuitem" tabindex="-1">Security</a>
-                                    <form method="POST" action="{{ route('filament.admin.auth.logout') }}">
-                                        @csrf
-                                        <button type="submit" class="block w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700/50 hover:text-red-700 dark:hover:text-red-300 transition-colors" role="menuitem" tabindex="-1">Sign out</button>
-                                    </form>
-                                </div>
-                            </div>
-                        @endauth
-                    </div>
-
-                </div>
-            </div>
-        </header>
+        <x-site-header />
 
 
         <!-- Hero Section -->
@@ -88,41 +22,17 @@
             <div class="container mx-auto">
                 <div class="text-center max-w-4xl mx-auto mb-16">
                     <h1 class="text-5xl md:text-6xl lg:text-7xl font-bold text-gray-900 dark:text-white mb-6">
-                        Open-Source <span class="text-blue-600">PDF Editor</span><br>& Admin Dashboard
+                        Powerful <span class="text-blue-600">AI enabled tools</span><br>for the NET
                     </h1>
                     <p class="text-xl text-gray-600 dark:text-gray-300 mb-8 max-w-2xl mx-auto">
-                        TailAdmin-powered PDF Editor with everything you need to create feature-rich backends, dashboards, and document management systems.
+                        Netkit aims to provide security driven, customer focused tools that are as affordable as they are powerful.
                     </p>
                     <div class="flex flex-col sm:flex-row items-center justify-center gap-4 mb-12">
-                        <a href="/admin/login" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold text-lg transition shadow-lg shadow-blue-600/30">
-                            Login
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"></path>
-                            </svg>
-                        </a>
-                        <a href="#pdf-features" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-4 border-2 border-gray-300 dark:border-gray-600 hover:border-blue-600 dark:hover:border-blue-500 text-gray-900 dark:text-white rounded-lg font-semibold text-lg transition">
-                            Live Preview
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path>
-                            </svg>
-                        </a>
+                        
                     </div>
                     <div class="flex items-center justify-center gap-4">
-                        <div class="flex -space-x-2">
-                            <img src="https://ui-avatars.com/api/?name=User+1&background=3b82f6&color=fff" alt="User 1" class="w-10 h-10 rounded-full border-2 border-white dark:border-gray-900">
-                            <img src="https://ui-avatars.com/api/?name=User+2&background=10b981&color=fff" alt="User 2" class="w-10 h-10 rounded-full border-2 border-white dark:border-gray-900">
-                            <img src="https://ui-avatars.com/api/?name=User+3&background=f59e0b&color=fff" alt="User 3" class="w-10 h-10 rounded-full border-2 border-white dark:border-gray-900">
-                        </div>
-                        <div class="text-left">
-                            <div class="flex items-center gap-1 text-yellow-500 mb-1">
-                                <svg class="w-4 h-4 fill-current" viewBox="0 0 20 20"><path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z"/></svg>
-                                <svg class="w-4 h-4 fill-current" viewBox="0 0 20 20"><path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z"/></svg>
-                                <svg class="w-4 h-4 fill-current" viewBox="0 0 20 20"><path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z"/></svg>
-                                <svg class="w-4 h-4 fill-current" viewBox="0 0 20 20"><path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z"/></svg>
-                                <svg class="w-4 h-4 fill-current" viewBox="0 0 20 20"><path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z"/></svg>
-                            </div>
-                            <p class="text-sm font-semibold text-gray-900 dark:text-white">80k+ Happy Users!</p>
-                        </div>
+                       
+                        
                     </div>
                 </div>
 
@@ -255,6 +165,19 @@
                         </p>
                     </div>
 
+                    <!-- Domain Search Feature -->
+                    <a href="{{ route('domainSearch.index') }}" class="bg-white dark:bg-gray-900 rounded-2xl p-8 shadow-lg hover:shadow-xl transition group block">
+                        <div class="w-14 h-14 bg-cyan-100 dark:bg-cyan-900/30 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                            <svg class="w-8 h-8 text-cyan-600 dark:text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path>
+                            </svg>
+                        </div>
+                        <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-3">Domain Search</h3>
+                        <p class="text-gray-600 dark:text-gray-300 text-sm leading-relaxed">
+                            Search for available domain names and generate creative suggestions for your next project.
+                        </p>
+                    </a>
+
                     <!-- Get Started CTA Card -->
                     <div class="bg-gradient-to-br from-blue-600 to-purple-600 rounded-2xl p-8 shadow-lg hover:shadow-xl transition group flex flex-col justify-center items-center text-center">
                         <h3 class="text-2xl font-bold text-white mb-3">Ready to Start?</h3>
@@ -298,6 +221,51 @@
             </div>
         </section>
 
+        <!-- FAQ Section -->
+        <section id="faq" class="py-20 px-4 sm:px-6 lg:px-8 bg-white dark:bg-gray-900">
+            <div class="container mx-auto">
+                <div class="text-center max-w-3xl mx-auto mb-16">
+                    <h2 class="text-4xl md:text-5xl font-bold text-gray-900 dark:text-white mb-4">
+                        Frequently Asked Questions
+                    </h2>
+                    <p class="text-lg text-gray-600 dark:text-gray-300">
+                        Find answers to common questions about our AI-enabled tools and services
+                    </p>
+                </div>
+                
+                <div class="max-w-4xl mx-auto">
+                    <div class="space-y-6">
+                        <div class="py-6 border-b border-gray-200 dark:border-gray-700">
+                            <h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+                                What tools are included in Netkit?
+                            </h3>
+                            <p class="text-gray-600 dark:text-gray-300">
+                                Netkit includes a comprehensive PDF editor, domain search capabilities, and various AI-enabled tools for document management and business operations.
+                            </p>
+                        </div>
+                        
+                        <div class="py-6 border-b border-gray-200 dark:border-gray-700">
+                            <h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+                                Is Netkit secure and reliable?
+                            </h3>
+                            <p class="text-gray-600 dark:text-gray-300">
+                                Yes, Netkit is built with security as a priority. We implement industry-standard encryption and security practices to protect your data.
+                            </p>
+                        </div>
+                        
+                        <div class="py-6 border-b border-gray-200 dark:border-gray-700">
+                            <h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+                                How affordable are your tools?
+                            </h3>
+                            <p class="text-gray-600 dark:text-gray-300">
+                                Our tools are designed to be as affordable as they are powerful, with flexible pricing options to suit different needs and budgets.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
         <!-- Footer -->
         <footer class="py-12 px-4 sm:px-6 lg:px-8 bg-gray-900 text-gray-300">
             <div class="container mx-auto">
@@ -334,7 +302,7 @@
                     </div>
                 </div>
                 <div class="border-t border-gray-800 pt-8 text-center text-sm">
-                    <p>&copy; 2026 Toolbase - All Rights Reserved.</p>
+                    <p>&copy; 2026 Netkit - All Rights Reserved.</p>
                 </div>
             </div>
         </footer>

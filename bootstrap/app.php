@@ -15,7 +15,11 @@ return Application::configure(basePath: dirname(__DIR__))
             '/ai/chat',
             '/ai/sections',
             '/ai/sections/*',
+            '/domain-search/ai-generate',
         ]);
+        
+        // Enable stateful Sanctum authentication
+        $middleware->statefulApi();
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

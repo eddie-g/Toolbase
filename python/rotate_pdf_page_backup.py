@@ -4,12 +4,12 @@ Rotate a specific page in a PDF document by 90 degrees clockwise.
 """
 
 import sys
-import pymupdf
+import fitz  # PyMuPDF
 import tempfile
 import os
 
 # Suppress MuPDF warnings/errors
-pymupdf.TOOLS.mupdf_display_errors(False)
+fitz.TOOLS.mupdf_display_errors(False)
 
 def rotate_pdf_page(input_path, output_path, page_number, rotation=90):
     """
@@ -22,7 +22,7 @@ def rotate_pdf_page(input_path, output_path, page_number, rotation=90):
         rotation: Rotation angle in degrees (90, 180, 270, or -90)
     """
     try:
-        doc = pymupdf.open(input_path)
+        doc = fitz.open(input_path)
         total_pages = len(doc)
         
         # Validate page number
@@ -49,7 +49,7 @@ def rotate_pdf_page(input_path, output_path, page_number, rotation=90):
             new_height = old_rect.height
         
         # Create a new document with a blank page of the new size
-        new_doc = pymupdf.open()
+        new_doc = fitz.open()
         new_page = new_doc.new_page(width=new_width, height=new_height)
         
         # Show the old page on the new page with rotation

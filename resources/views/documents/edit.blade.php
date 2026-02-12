@@ -937,78 +937,145 @@
                 pointer-events: none;
             }
             .selection-toolbar {
-                background: #f4f6f8;
-                color: #0f172a;
-                border-bottom: 1px solid #d7dce3;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                flex-wrap: wrap;
+                width: 100%;
             }
-            .selection-toolbar .selection-status {
-                font-weight: 600;
-                color: #475569;
+            .selection-toolbar .toolbar-label {
+                font-size: 12px;
+                font-weight: 500;
+                color: #94a3b8;
+                white-space: nowrap;
+                margin-right: 4px;
+                letter-spacing: 0.01em;
             }
             .selection-toolbar .toolbar-controls {
-                gap: 14px;
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                flex-wrap: wrap;
             }
-            .selection-toolbar .toolbar-divider {
+            .selection-toolbar .toolbar-controls.disabled {
+                opacity: 0.35;
+                pointer-events: none;
+            }
+            .selection-toolbar .tb-divider {
                 width: 1px;
-                height: 28px;
-                background: #d7dce3;
+                height: 24px;
+                background: rgba(255, 255, 255, 0.1);
+                margin: 0 4px;
             }
-            .selection-toolbar .toolbar-group {
+            .selection-toolbar .tb-group {
                 display: inline-flex;
                 align-items: center;
-                gap: 8px;
+                gap: 3px;
             }
             .selection-toolbar select,
             .selection-toolbar input[type="number"] {
-                background: #ffffff;
-                border: 1px solid #cfd6df;
-                color: #0f172a;
-                border-radius: 0;
-                padding: 6px 8px;
-                min-width: 64px;
+                background: rgba(255, 255, 255, 0.07);
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                color: #e2e8f0;
+                border-radius: 6px;
+                padding: 5px 8px;
+                font-size: 12px;
+                min-width: 56px;
+                outline: none;
+                transition: border-color 0.15s, background 0.15s;
             }
-            .selection-toolbar .tool-icon {
-                font-weight: 700;
-                color: #334155;
+            .selection-toolbar select:hover,
+            .selection-toolbar input[type="number"]:hover {
+                background: rgba(255, 255, 255, 0.1);
+                border-color: rgba(255, 255, 255, 0.2);
+            }
+            .selection-toolbar select:focus,
+            .selection-toolbar input[type="number"]:focus {
+                border-color: #3b82f6;
+                background: rgba(255, 255, 255, 0.1);
+            }
+            .selection-toolbar select option {
+                background: #1e293b;
+                color: #e2e8f0;
+            }
+            .selection-toolbar .icon-btn {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 32px;
+                height: 32px;
+                background: rgba(255, 255, 255, 0.05);
+                color: #cbd5e1;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 6px;
                 font-size: 13px;
+                cursor: pointer;
+                transition: all 0.15s;
             }
-            .selection-toolbar .tool-btn {
-                background: #ffffff;
-                color: #0f172a;
-                border: 1px solid #cfd6df;
-                border-radius: 0;
-                padding: 6px 10px;
-                font-weight: 700;
-                min-width: 32px;
+            .selection-toolbar .icon-btn:hover {
+                background: rgba(255, 255, 255, 0.12);
+                color: #f1f5f9;
+                border-color: rgba(255, 255, 255, 0.2);
             }
-            .selection-toolbar .tool-btn.active {
-                background: #0f172a;
+            .selection-toolbar .icon-btn.active {
+                background: #3b82f6;
                 color: #ffffff;
-                border-color: #0f172a;
+                border-color: #3b82f6;
             }
-            .selection-toolbar .tool-btn.danger-btn {
-                background: #fff1f1;
-                color: #b91c1c;
-                border-color: #fecaca;
-                font-weight: 700;
+            .selection-toolbar .icon-btn:disabled {
+                opacity: 0.3;
+                cursor: default;
+            }
+            .selection-toolbar .color-btn {
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+                cursor: pointer;
             }
             .selection-toolbar .color-swatch {
                 display: inline-flex;
                 align-items: center;
-                gap: 6px;
-                padding: 6px 8px;
-                border: 1px solid #cfd6df;
-                border-radius: 0;
-                background: #ffffff;
+                justify-content: center;
+                width: 28px;
+                height: 28px;
+                border-radius: 6px;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                overflow: hidden;
+                position: relative;
                 cursor: pointer;
             }
             .selection-toolbar .color-swatch input[type="color"] {
-                width: 20px;
-                height: 20px;
-                padding: 0;
+                position: absolute;
+                width: 200%;
+                height: 200%;
+                top: -50%;
+                left: -50%;
                 border: none;
                 background: none;
                 cursor: pointer;
+            }
+            .selection-toolbar .danger-btn {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                height: 32px;
+                padding: 0 12px;
+                background: rgba(239, 68, 68, 0.1);
+                color: #f87171;
+                border: 1px solid rgba(239, 68, 68, 0.2);
+                border-radius: 6px;
+                font-size: 12px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: all 0.15s;
+            }
+            .selection-toolbar .danger-btn:hover {
+                background: rgba(239, 68, 68, 0.2);
+                border-color: rgba(239, 68, 68, 0.4);
+            }
+            .selection-toolbar .danger-btn:disabled {
+                opacity: 0.3;
+                cursor: default;
             }
             .mode-bar {
                 display: flex;
@@ -1460,6 +1527,44 @@
                 position: absolute;
                 background: rgba(66, 133, 244, 0.8);
                 z-index: 10;
+                display: none;
+            }
+            .overlay-field.active .resize-handle {
+                display: block;
+            }
+            /* ilovepdf-style states: invisible → hover → selected → editing */
+            .overlay-field {
+                outline: none !important;
+                border: 2px solid rgba(66, 133, 244, 0.25) !important;
+                transition: border-color 0.15s, box-shadow 0.15s;
+                overflow: hidden;
+            }
+            .overlay-field:hover:not(.active) {
+                border-color: rgba(66, 133, 244, 0.5) !important;
+                background: rgba(66, 133, 244, 0.04) !important;
+            }
+            .overlay-field.active {
+                border-color: rgba(66, 133, 244, 0.8) !important;
+                box-shadow: 0 0 0 1px rgba(66, 133, 244, 0.3) !important;
+                overflow: visible;
+            }
+            .overlay-field.active:not(.editing) {
+                cursor: move;
+            }
+            .overlay-field.active:not(.editing) [contenteditable] {
+                cursor: move;
+                pointer-events: none;
+                user-select: none;
+            }
+            .overlay-field.editing {
+                border-color: rgba(66, 133, 244, 1) !important;
+                box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.25) !important;
+                cursor: text;
+            }
+            .overlay-field.editing [contenteditable] {
+                cursor: text;
+                pointer-events: auto;
+                user-select: text;
             }
 
             /* Shape type buttons (modern grid) */
@@ -1554,12 +1659,13 @@
             }
             .overlay-field .box-menu {
                 position: absolute;
-                top: -38px;
+                bottom: 100%;
                 right: -1px;
+                margin-bottom: 4px;
                 display: none;
                 flex-direction: row;
                 gap: 0;
-                background: #fff;
+                background: rgba(255, 255, 255, 0.97);
                 border: 1px solid rgba(66, 133, 244, 0.5);
                 border-radius: 6px;
                 padding: 2px;
@@ -1675,10 +1781,11 @@
                 inset: 0;
             }
             .viewer.overlay-view-mode .overlay-field {
-                border: none !important;
+                border: 2px solid transparent !important;
                 background: transparent !important;
                 cursor: default !important;
                 box-shadow: none !important;
+                overflow: hidden !important;
             }
             .viewer.overlay-view-mode .overlay-field [contenteditable] {
                 cursor: default !important;
@@ -1691,10 +1798,8 @@
                 display: none !important;
             }
             .viewer.overlay-hidden .overlay-field .resize-handle,
-            .viewer.overlay-hidden .overlay-field .box-menu,
-            .overlay-field.selected {
-                border-color: rgba(66, 133, 244, 0.8) !important;
-                box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.25) !important;
+            .viewer.overlay-hidden .overlay-field .box-menu {
+                display: none !important;
             }
             .annotation {
                 position: absolute;
@@ -2682,7 +2787,7 @@
                         <svg class="h-8 w-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                         </svg>
-                        <span class="text-xl font-bold text-white">Toolbase</span>
+                        <span class="text-xl font-bold text-white">Netkit</span>
                     </a>
 
                     <!-- Right Side: Theme Toggle & Login -->
@@ -2874,15 +2979,7 @@
                                     <span class="sm:hidden">Original</span>
                                 </button>
                             </div>
-                            <div class="flex gap-2">
-                                <button id="save-btn" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-gray-900 font-semibold rounded-lg text-sm transition" type="button">
-                                    <span class="hidden sm:inline">Save PDF</span>
-                                    <span class="sm:hidden">Save</span>
-                                </button>
-                                <button id="save-overlay-btn" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-gray-900 font-semibold rounded-lg text-sm transition hidden" type="button">
-                                    <span class="hidden sm:inline">Save Changes</span>
-                                    <span class="sm:hidden">Save</span>
-                                </button>
+                            <div class="flex gap-2 items-center">
                                 <button id="clear-btn" class="px-4 py-2 bg-transparent border border-gray-600 hover:bg-gray-700/50 rounded-lg text-sm font-medium transition hidden sm:block" type="button">Clear All</button>
                                 <button id="convert-btn" class="px-3 py-2 bg-transparent border border-gray-600 hover:bg-gray-700/50 rounded-lg text-sm transition flex items-center gap-1.5" type="button" title="Convert PDF to Images">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14"/><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>
@@ -2933,62 +3030,78 @@
                                         </div>
                                     </div>
                                 </div>
+                                <button id="save-btn" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-gray-900 font-semibold rounded-lg text-sm transition flex items-center gap-1.5" type="button">
+                                    <span class="hidden sm:inline">Save PDF</span>
+                                    <span class="sm:hidden">Save</span>
+                                </button>
                             </div>
                         </div>
                         <div class="flex flex-wrap items-center gap-2 mt-2" style="display: none;">
                     </div>
-                    <div class="selection-toolbar hidden px-3 py-2 bg-gray-700/50" id="selection-toolbar">
-                        <div class="toolbar-label text-sm text-gray-400 mb-2" id="selection-label">No text selected</div>
+                    <div class="selection-toolbar hidden px-3 py-2 sticky top-[196px] z-30 bg-gray-800/95 backdrop-blur-sm border-t border-gray-700/50" id="selection-toolbar">
+                        <div class="toolbar-label" id="selection-label">Click a text block to edit</div>
                         <div class="toolbar-controls" id="selection-controls">
-                            <select id="selected-font" disabled>
-                                <option value="Helvetica">Helvetica</option>
-                                <option value="Helvetica-Bold">Helvetica Bold</option>
-                                <option value="Times-Roman">Times</option>
-                                <option value="Times-Bold">Times Bold</option>
-                                <option value="Courier">Courier</option>
-                                <option value="Courier-Bold">Courier Bold</option>
-                            </select>
-                            <select id="selected-weight" disabled>
-                                <option value="100">Thin</option>
-                                <option value="200">Extra Light</option>
-                                <option value="300">Light</option>
-                                <option value="400">Regular</option>
-                                <option value="500">Medium</option>
-                                <option value="600">Semi Bold</option>
-                                <option value="700">Bold</option>
-                                <option value="800">Extra Bold</option>
-                                <option value="900">Black</option>
-                            </select>
-                            <input type="number" id="selected-size" min="8" max="144" value="16" disabled />
-                            <button type="button" id="selected-bold" class="icon-btn" title="Bold" disabled><strong>B</strong></button>
-                            <button type="button" id="selected-italic" class="icon-btn" title="Italic" disabled><em>I</em></button>
-                            <button type="button" id="selected-underline" class="icon-btn" title="Underline" disabled><u>U</u></button>
-                            <label class="color-btn" title="Text Color">
-                                <span class="color-swatch" id="selected-color-swatch"></span>
-                                <input type="color" id="selected-color" value="#111111" disabled />
-                            </label>
-                            <label class="color-btn" title="Background Color">
-                                <span class="color-swatch" id="selected-bg-swatch"></span>
-                                <input type="color" id="selected-bg" value="#ffffff" disabled />
-                            </label>
-                            <select id="selected-align" disabled>
-                                <option value="left">Left</option>
-                                <option value="center">Center</option>
-                                <option value="right">Right</option>
-                            </select>
-                            <select id="selected-opacity" disabled>
-                                <option value="1">100%</option>
-                                <option value="0.9">90%</option>
-                                <option value="0.8">80%</option>
-                                <option value="0.7">70%</option>
-                                <option value="0.6">60%</option>
-                                <option value="0.5">50%</option>
-                                <option value="0.4">40%</option>
-                                <option value="0.3">30%</option>
-                                <option value="0.2">20%</option>
-                                <option value="0.1">10%</option>
-                            </select>
-                            <button type="button" id="selected-delete" class="danger-btn" title="Delete" disabled>Delete</button>
+                            <div class="tb-group">
+                                <select id="selected-font" disabled>
+                                    <option value="Helvetica">Helvetica</option>
+                                    <option value="Helvetica-Bold">Helvetica Bold</option>
+                                    <option value="Times-Roman">Times</option>
+                                    <option value="Times-Bold">Times Bold</option>
+                                    <option value="Courier">Courier</option>
+                                    <option value="Courier-Bold">Courier Bold</option>
+                                </select>
+                                <select id="selected-weight" disabled style="min-width:72px;">
+                                    <option value="100">Thin</option>
+                                    <option value="200">Extra Light</option>
+                                    <option value="300">Light</option>
+                                    <option value="400">Regular</option>
+                                    <option value="500">Medium</option>
+                                    <option value="600">Semi Bold</option>
+                                    <option value="700">Bold</option>
+                                    <option value="800">Extra Bold</option>
+                                    <option value="900">Black</option>
+                                </select>
+                                <input type="number" id="selected-size" min="8" max="144" value="16" disabled style="width:52px;" />
+                            </div>
+                            <div class="tb-divider"></div>
+                            <div class="tb-group">
+                                <button type="button" id="selected-bold" class="icon-btn" title="Bold" disabled><strong>B</strong></button>
+                                <button type="button" id="selected-italic" class="icon-btn" title="Italic" disabled><em>I</em></button>
+                                <button type="button" id="selected-underline" class="icon-btn" title="Underline" disabled><u>U</u></button>
+                            </div>
+                            <div class="tb-divider"></div>
+                            <div class="tb-group">
+                                <label class="color-btn" title="Text Color">
+                                    <span class="color-swatch" id="selected-color-swatch"></span>
+                                    <input type="color" id="selected-color" value="#000000" disabled />
+                                </label>
+                                <label class="color-btn" title="Background Color">
+                                    <span class="color-swatch" id="selected-bg-swatch"></span>
+                                    <input type="color" id="selected-bg" value="#ffffff" disabled />
+                                </label>
+                            </div>
+                            <div class="tb-divider"></div>
+                            <div class="tb-group">
+                                <select id="selected-align" disabled style="min-width:64px;">
+                                    <option value="left">Left</option>
+                                    <option value="center">Center</option>
+                                    <option value="right">Right</option>
+                                </select>
+                                <select id="selected-opacity" disabled style="min-width:56px;">
+                                    <option value="1">100%</option>
+                                    <option value="0.9">90%</option>
+                                    <option value="0.8">80%</option>
+                                    <option value="0.7">70%</option>
+                                    <option value="0.6">60%</option>
+                                    <option value="0.5">50%</option>
+                                    <option value="0.4">40%</option>
+                                    <option value="0.3">30%</option>
+                                    <option value="0.2">20%</option>
+                                    <option value="0.1">10%</option>
+                                </select>
+                            </div>
+                            <div class="tb-divider"></div>
+                            <button type="button" id="selected-delete" class="danger-btn" title="Delete" disabled>🗑 Delete</button>
                         </div>
                     </div>
                 </div>
@@ -3006,7 +3119,7 @@
                     <div class="etb-divider"></div>
                     <!-- Text Color -->
                     <div class="etb-color-wrap" title="Text Color">
-                        <input type="color" id="etb-text-color" value="#111111" />
+                        <input type="color" id="etb-text-color" value="#000000" />
                     </div>
                     <!-- Background Color -->
                     <div class="etb-color-wrap" title="Background Color" style="margin-left: 2px;">
@@ -4398,6 +4511,14 @@
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15l2 2 4-4"/></svg>
                         PDF/A
                     </button>
+                    <button id="convert-tab-word" class="convert-tab" style="padding:10px 20px; border:none; border-bottom:2px solid transparent; background:transparent; color:rgba(255,255,255,0.4); cursor:pointer; font-size:13px; font-weight:600; transition:all 0.15s; display:flex; align-items:center; gap:6px;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M7 13h10M7 17h6"/></svg>
+                        Word
+                    </button>
+                    <button id="convert-tab-excel" class="convert-tab" style="padding:10px 20px; border:none; border-bottom:2px solid transparent; background:transparent; color:rgba(255,255,255,0.4); cursor:pointer; font-size:13px; font-weight:600; transition:all 0.15s; display:flex; align-items:center; gap:6px;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+                        Excel
+                    </button>
                 </div>
                 <!-- Body -->
                 <div style="padding:20px 24px;">
@@ -4499,6 +4620,86 @@
                             </div>
                         </div>
                     </div><!-- END convert-pdfa-options -->
+
+                    <!-- ========== WORD SETTINGS TAB ========== -->
+                    <div id="convert-word-options" style="display:none;">
+                        <div style="margin-bottom:20px; padding:16px; border-radius:10px; background:rgba(59,130,246,0.06); border:1px solid rgba(59,130,246,0.15);">
+                            <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M7 13h10M7 17h6"/></svg>
+                                <span style="font-size:13px; font-weight:600; color:#3b82f6;">Word Document (.docx)</span>
+                            </div>
+                            <p style="font-size:12px; color:rgba(255,255,255,0.5); margin:0; line-height:1.5;">Converts your PDF into an editable Word document. Text, formatting, and layout are preserved as closely as possible.</p>
+                        </div>
+                        <!-- Layout Mode -->
+                        <div style="margin-bottom:20px;">
+                            <label style="font-size:12px; font-weight:600; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:8px;">Layout Mode</label>
+                            <select id="convert-word-layout" style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:#1e1e3a; color:#e5e7eb; font-size:13px; outline:none; cursor:pointer; appearance:auto;">
+                                <option value="flow">Flowing Text — Best for editing</option>
+                                <option value="exact" selected>Exact Layout — Preserves positioning</option>
+                            </select>
+                            <div style="font-size:11px; color:rgba(255,255,255,0.35); margin-top:6px;">Exact layout preserves visual position but may be harder to edit</div>
+                        </div>
+                        <!-- Options -->
+                        <div style="margin-bottom:20px;">
+                            <label style="font-size:12px; font-weight:600; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:12px;">Options</label>
+                            <div style="display:flex; flex-direction:column; gap:12px;">
+                                <label style="display:flex; align-items:center; gap:10px; cursor:pointer; padding:10px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.02); transition:all 0.15s;" onmouseenter="this.style.background='rgba(255,255,255,0.04)'" onmouseleave="this.style.background='rgba(255,255,255,0.02)'">
+                                    <input id="convert-word-images" type="checkbox" checked style="accent-color:#3b82f6; width:16px; height:16px; cursor:pointer;">
+                                    <div>
+                                        <div style="font-size:13px; color:#e5e7eb; font-weight:500;">Include Images</div>
+                                        <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px;">Embed images from the PDF into the Word document</div>
+                                    </div>
+                                </label>
+                                <label style="display:flex; align-items:center; gap:10px; cursor:pointer; padding:10px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.02); transition:all 0.15s;" onmouseenter="this.style.background='rgba(255,255,255,0.04)'" onmouseleave="this.style.background='rgba(255,255,255,0.02)'">
+                                    <input id="convert-word-ocr" type="checkbox" style="accent-color:#3b82f6; width:16px; height:16px; cursor:pointer;">
+                                    <div>
+                                        <div style="font-size:13px; color:#e5e7eb; font-weight:500;">OCR Scanned Pages</div>
+                                        <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px;">Use OCR for pages that contain scanned images instead of text</div>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+                    </div><!-- END convert-word-options -->
+
+                    <!-- ========== EXCEL SETTINGS TAB ========== -->
+                    <div id="convert-excel-options" style="display:none;">
+                        <div style="margin-bottom:20px; padding:16px; border-radius:10px; background:rgba(16,185,129,0.06); border:1px solid rgba(16,185,129,0.15);">
+                            <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+                                <span style="font-size:13px; font-weight:600; color:#10b981;">Excel Spreadsheet (.xlsx)</span>
+                            </div>
+                            <p style="font-size:12px; color:rgba(255,255,255,0.5); margin:0; line-height:1.5;">Extracts tables and structured data from your PDF into an Excel spreadsheet. Works best with documents containing tabular data.</p>
+                        </div>
+                        <!-- Extraction Mode -->
+                        <div style="margin-bottom:20px;">
+                            <label style="font-size:12px; font-weight:600; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:8px;">Extraction Mode</label>
+                            <select id="convert-excel-mode" style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:#1e1e3a; color:#e5e7eb; font-size:13px; outline:none; cursor:pointer; appearance:auto;">
+                                <option value="tables" selected>Tables Only — Extract detected tables</option>
+                                <option value="all">All Content — Extract all text into cells</option>
+                            </select>
+                            <div style="font-size:11px; color:rgba(255,255,255,0.35); margin-top:6px;">Tables Only works best for invoices, reports, and forms</div>
+                        </div>
+                        <!-- Options -->
+                        <div style="margin-bottom:20px;">
+                            <label style="font-size:12px; font-weight:600; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:12px;">Options</label>
+                            <div style="display:flex; flex-direction:column; gap:12px;">
+                                <label style="display:flex; align-items:center; gap:10px; cursor:pointer; padding:10px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.02); transition:all 0.15s;" onmouseenter="this.style.background='rgba(255,255,255,0.04)'" onmouseleave="this.style.background='rgba(255,255,255,0.02)'">
+                                    <input id="convert-excel-merge-cells" type="checkbox" checked style="accent-color:#10b981; width:16px; height:16px; cursor:pointer;">
+                                    <div>
+                                        <div style="font-size:13px; color:#e5e7eb; font-weight:500;">Detect Merged Cells</div>
+                                        <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px;">Identify and preserve merged cell regions from tables</div>
+                                    </div>
+                                </label>
+                                <label style="display:flex; align-items:center; gap:10px; cursor:pointer; padding:10px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.02); transition:all 0.15s;" onmouseenter="this.style.background='rgba(255,255,255,0.04)'" onmouseleave="this.style.background='rgba(255,255,255,0.02)'">
+                                    <input id="convert-excel-sheet-per-page" type="checkbox" checked style="accent-color:#10b981; width:16px; height:16px; cursor:pointer;">
+                                    <div>
+                                        <div style="font-size:13px; color:#e5e7eb; font-weight:500;">Separate Sheet per Page</div>
+                                        <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px;">Create a new worksheet for each PDF page</div>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+                    </div><!-- END convert-excel-options -->
 
                     <!-- Progress bar -->
                     <div id="convert-progress-wrap" style="display:none; margin-bottom:16px;">
@@ -4747,7 +4948,7 @@
             const modeShape = document.getElementById('mode-shape');
             const modeOverlay = document.getElementById('mode-overlay');
             const modeOverlayToggle = document.getElementById('mode-overlay-toggle');
-            const saveOverlayBtn = document.getElementById('save-overlay-btn');
+            const saveOverlayBtn = null; // Removed: overlay save is now unified with save-btn
             const signatureModal = document.getElementById('signature-modal');
             const signatureCanvas = document.getElementById('signature-canvas');
             const signatureClear = document.getElementById('signature-clear');
@@ -5140,7 +5341,7 @@
                 console.log('updateSelectionBar called - selectedAnnotation:', selectedAnnotation, 'selectedOverlayField:', selectedOverlayField);
                 if (!selectedAnnotation && !selectedOverlayField) {
                     console.log('No selection, disabling toolbar');
-                    if (selectionLabel) selectionLabel.textContent = 'No text selected';
+                    if (selectionLabel) selectionLabel.textContent = overlayEditorActive ? 'Click a text block to edit' : 'No text selected';
                     if (selectionControls) selectionControls.classList.add('disabled');
                     if (selectedFont) {
                         selectedFont.value = 'Helvetica';
@@ -5184,7 +5385,7 @@
                             selectedWeight.value = ['100','200','300','400','500','600','700','800','900'].includes(annoWeight) ? annoWeight : (annoWeight === 'bold' ? '700' : '400');
                         }
                         if (selectedSize) selectedSize.value = Math.round(selectedAnnotation.fontSize * currentScale);
-                        if (selectedColor) selectedColor.value = selectedAnnotation.textColor || '#111111';
+                        if (selectedColor) selectedColor.value = selectedAnnotation.textColor || '#000000';
                         if (selectedBg) {
                             const background = selectedAnnotation.backgroundColor || 'transparent';
                             selectedBg.value = background === 'transparent' ? '#ffffff' : background;
@@ -5239,7 +5440,7 @@
                         selectedWeight.value = ['100','200','300','400','500','600','700','800','900'].includes(normalizedWeight) ? normalizedWeight : '400';
                     }
                     if (selectedSize) selectedSize.value = Math.round(parseFloat(styles.fontSize) || 16);
-                    if (selectedColor) selectedColor.value = colorToHex(styles.color) || '#111111';
+                    if (selectedColor) selectedColor.value = colorToHex(styles.color) || '#000000';
                     if (selectedBg) {
                         const bgColor = colorToHex(styles.backgroundColor);
                         selectedBg.value = bgColor && bgColor !== 'transparent' ? bgColor : '#ffffff';
@@ -5286,6 +5487,32 @@
 
             function getOverlayTextElement(field) {
                 return field.querySelector('[contenteditable]') || field;
+            }
+
+            function getOverlayExplicitText(textEl) {
+                if (!textEl) return '';
+                const readNode = (node) => {
+                    if (!node) return '';
+                    if (node.nodeType === Node.TEXT_NODE) {
+                        return node.nodeValue || '';
+                    }
+                    if (node.nodeType !== Node.ELEMENT_NODE) {
+                        return '';
+                    }
+                    const tag = node.tagName;
+                    if (tag === 'BR') {
+                        return '\n';
+                    }
+                    let out = '';
+                    node.childNodes.forEach((child) => {
+                        out += readNode(child);
+                    });
+                    if ((tag === 'DIV' || tag === 'P' || tag === 'LI') && out && !out.endsWith('\n')) {
+                        out += '\n';
+                    }
+                    return out;
+                };
+                return readNode(textEl).replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n+$/g, '');
             }
 
             function applyOverlayStyle(updateFn) {
@@ -5418,6 +5645,122 @@
                 return true;
             }
 
+            /**
+             * Mark the currently selected overlay field as dirty (changed) so
+             * the save button appears.  This is called after style-only changes
+             * (bold, italic, underline, color, font, size, etc.) that do NOT
+             * move or resize the field.
+             */
+            function markOverlayFieldDirty() {
+                if (!selectedOverlayField) return;
+                const field = selectedOverlayField;
+                const textEl = getOverlayTextElement(field);
+                if (!textEl) return;
+
+                const pageNumber = parseInt(field.dataset.pageNumber || '0', 10);
+                const editKey = field.dataset.wordIndex || `${pageNumber}-0`;
+
+                // Get current text correctly — if word spans are still absolutely
+                // positioned, textContent concatenates without spaces. Use innerText
+                // which respects visual layout, or join spans manually.
+                const hasPositionedSpans = textEl.querySelector('span') &&
+                    Array.from(textEl.querySelectorAll('span')).some(s => s.style.position === 'absolute');
+                let currentText;
+                if (hasPositionedSpans) {
+                    // Spans still positioned — text hasn't been edited yet, use original
+                    currentText = field.dataset.originalText || '';
+                } else {
+                    currentText = getOverlayExplicitText(textEl);
+                }
+
+                // Compute scale factors from field dataset
+                const pageWidth = parseFloat(field.dataset.pageWidth || '0');
+                const pageHeight = parseFloat(field.dataset.pageHeight || '0');
+                const canvasWidth = parseFloat(field.dataset.canvasWidth || '0');
+                const canvasHeight = parseFloat(field.dataset.canvasHeight || '0');
+                const scaleX = canvasWidth / (pageWidth || 1);
+                const scaleY = canvasHeight / (pageHeight || 1);
+
+                // Convert pixel positions to PDF coordinates
+                const pad = parseFloat(field.dataset.padding || '0');
+                const pdfLeft = (parseFloat(field.style.left) / scaleX) + pad;
+                const pdfTop = (parseFloat(field.style.top) / scaleY) + pad;
+                const pdfWidth = (parseFloat(field.style.width) / scaleX) - (pad * 2);
+                const pdfHeight = (parseFloat(field.style.height) / scaleY) - (pad * 2);
+                const pdfOriginX = pdfLeft;
+                const pdfOriginY = pdfTop + pdfHeight;
+
+                // Original bbox
+                const origLeft = parseFloat(field.dataset.originalLeft || '0');
+                const origTop = parseFloat(field.dataset.originalTop || '0');
+                const origWidth = parseFloat(field.dataset.originalWidth || '0');
+                const origHeight = parseFloat(field.dataset.originalHeight || '0');
+
+                // Font info
+                const fontFamily = field.style.fontFamily || 'Helvetica';
+                const fontWeight = field.dataset.fontWeight || '400';
+                const fontStyle = field.dataset.fontStyle || 'normal';
+                const computedStyle = window.getComputedStyle(textEl);
+                const fontSizePx = computedStyle.fontSize;
+                const lineHeightPx = computedStyle.lineHeight !== 'normal' ? computedStyle.lineHeight : '';
+                const fontSizePdf = parseFloat(field.dataset.fontSize || (parseFloat(fontSizePx) / scaleY) || '12');
+                const textColor = field.dataset.textColor || computedStyle.color || '#000000';
+                const lineHeightValue = parseFloat(field.dataset.lineHeight) || null;
+
+                // Build rich_html and word_styles (same as input handler)
+                const richHtml = buildBlockRichHtml(textEl, fontFamily, fontWeight, fontStyle, fontSizePx, lineHeightPx, textColor);
+
+                // When building word_styles, apply any field-level style overrides
+                // (e.g., user toggled bold on the whole block via toolbar).
+                const fieldFontWeight = parseInt(fontWeight) || 400;
+                const fieldIsBold = fieldFontWeight >= 700;
+                const fieldIsItalic = fontStyle === 'italic';
+
+                const wordStylesArr = (field._blockWords || []).map(w => ({
+                    text: w.text,
+                    font: w.font,
+                    font_xref: w.font_xref || null,
+                    font_size: w.font_size,
+                    font_weight: fieldFontWeight || w.font_weight || 400,
+                    italic: fieldIsItalic || !!w.italic,
+                    bold: fieldIsBold || !!w.bold,
+                    color: w.color,
+                    hex_color: textColor || w.hex_color || '#000000',
+                    left: w.left,
+                    top: w.top,
+                    width: w.width,
+                    height: w.height,
+                    origin_x: w.origin_x,
+                    origin_y: w.origin_y,
+                    ascender: w.ascender,
+                    descender: w.descender
+                }));
+
+                overlayEditedFields.set(editKey, {
+                    page_number: pageNumber,
+                    block_num: field.dataset.blockNum ? parseInt(field.dataset.blockNum, 10) : undefined,
+                    original_text: field.dataset.originalText || '',
+                    new_text: currentText,
+                    rich_html: richHtml,
+                    word_styles: wordStylesArr,
+                    bbox: [pdfLeft, pdfTop, pdfLeft + pdfWidth, pdfTop + pdfHeight],
+                    original_bbox: [origLeft, origTop, origLeft + origWidth, origTop + origHeight],
+                    origin_x: pdfOriginX,
+                    origin_y: pdfOriginY,
+                    font: field.dataset.font || 'Helvetica',
+                    font_size: fontSizePdf,
+                    font_weight: fontWeight,
+                    font_style: fontStyle,
+                    font_xref: field.dataset.fontXref ? parseInt(field.dataset.fontXref, 10) : null,
+                    line_height: lineHeightValue,
+                    color: textColor
+                });
+
+                persistOverlayEdits();
+                updateOverlaySaveButton();
+                pushUndoState();
+            }
+
             function mapFontFamilyToKey(fontFamily) {
                 if (!fontFamily) {
                     return 'Helvetica';
@@ -5461,7 +5804,7 @@
 
             function colorToHex(color) {
                 if (!color) {
-                    return '#111111';
+                    return '#000000';
                 }
                 if (color === 'transparent') {
                     return 'transparent';
@@ -5473,7 +5816,7 @@
                 }
                 const match = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
                 if (!match) {
-                    return '#111111';
+                    return '#000000';
                 }
                 if (match[4] !== undefined && parseFloat(match[4]) === 0) {
                     return 'transparent';
@@ -5514,7 +5857,7 @@
                     const span = annotation.element.querySelector('.annotation-text');
                     if (span) {
                         span.textContent = annotation.text;
-                        span.style.color = annotation.textColor || '#111111';
+                        span.style.color = annotation.textColor || '#000000';
                         span.style.backgroundColor = annotation.backgroundColor || 'transparent';
                         span.style.fontWeight = annotation.fontWeight || 'normal';
                         span.style.fontStyle = annotation.fontStyle || 'normal';
@@ -5555,7 +5898,7 @@
                 }
                 annotation.type = annotation.type || 'text';
                 annotation.fontFamily = annotation.fontFamily || 'Helvetica';
-                annotation.textColor = annotation.textColor || '#111111';
+                annotation.textColor = annotation.textColor || '#000000';
                 annotation.backgroundColor = annotation.backgroundColor || 'transparent';
                 annotation.fontWeight = annotation.fontWeight || 'normal';
                 annotation.fontStyle = annotation.fontStyle || 'normal';
@@ -6486,7 +6829,7 @@
                 const opts = {
                     fontFamily: annotation.fontFamily || defaultTextFont,
                     fontSizePx: Math.round(annotation.fontSize * currentScale),
-                    textColor: annotation.textColor || '#111111',
+                    textColor: annotation.textColor || '#000000',
                     bgColor: annotation.backgroundColor || 'transparent',
                     opacityVal: annotation.opacity ?? 1,
                     fontWeight: annotation.fontWeight || 'normal',
@@ -6517,7 +6860,7 @@
                 return {
                     fontFamily: etbFont ? etbFont.value : defaultTextFont,
                     fontSizePx: etbSize ? Math.max(8, Math.min(144, parseInt(etbSize.value, 10))) : defaultTextSize,
-                    textColor: etbTextColor ? etbTextColor.value : '#111111',
+                    textColor: etbTextColor ? etbTextColor.value : '#000000',
                     bgColor: etbBgColor ? etbBgColor.value : '#ffffff',
                     opacityVal: etbOpacity ? parseFloat(etbOpacity.value) : 1,
                     fontWeight: (etbBold && etbBold.classList.contains('active')) ? '700' : 'normal',
@@ -6590,8 +6933,12 @@
                         if (!moveDragStart) return;
                         const newX = me.clientX - moveDragStart.overlayLeft - moveDragStart.offsetX;
                         const newY = me.clientY - moveDragStart.overlayTop - moveDragStart.offsetY;
-                        box.style.left = Math.max(0, newX) + 'px';
-                        box.style.top = Math.max(0, newY) + 'px';
+                        const maxX = Math.max(0, overlay.clientWidth - box.offsetWidth);
+                        const maxY = Math.max(0, overlay.clientHeight - box.offsetHeight);
+                        const clampedX = Math.max(0, Math.min(maxX, newX));
+                        const clampedY = Math.max(0, Math.min(maxY, newY));
+                        box.style.left = clampedX + 'px';
+                        box.style.top = clampedY + 'px';
                     };
                     const onUp = () => {
                         moveDragStart = null;
@@ -7084,6 +7431,40 @@
                                     newTop = startTop + deltaY;
                                     if (newHeight === 30) newTop = startTop + startHeight - 30;
                                 }
+
+                                // Keep shape bounds fully inside page overlay.
+                                const maxW = overlay.clientWidth;
+                                const maxH = overlay.clientHeight;
+                                if (newLeft < 0) {
+                                    newWidth += newLeft;
+                                    newLeft = 0;
+                                }
+                                if (newTop < 0) {
+                                    newHeight += newTop;
+                                    newTop = 0;
+                                }
+                                if (newLeft + newWidth > maxW) {
+                                    if (direction.includes('w')) {
+                                        newLeft = Math.max(0, maxW - newWidth);
+                                    } else {
+                                        newWidth = maxW - newLeft;
+                                    }
+                                }
+                                if (newTop + newHeight > maxH) {
+                                    if (direction.includes('n')) {
+                                        newTop = Math.max(0, maxH - newHeight);
+                                    } else {
+                                        newHeight = maxH - newTop;
+                                    }
+                                }
+                                newWidth = Math.max(30, Math.min(newWidth, maxW));
+                                newHeight = Math.max(30, Math.min(newHeight, maxH));
+                                if (newLeft + newWidth > maxW) {
+                                    newLeft = Math.max(0, maxW - newWidth);
+                                }
+                                if (newTop + newHeight > maxH) {
+                                    newTop = Math.max(0, maxH - newHeight);
+                                }
                                 
                                 // Update the label
                                 label.style.width = newWidth + 'px';
@@ -7561,6 +7942,41 @@
                                     nl = startLeft + (startW - nw);
                                 }
                                 if (dir.includes('s')) nh = Math.max(16, startH + dy);
+
+                                // Keep text bounds fully inside page overlay.
+                                const maxW = overlay.clientWidth;
+                                const maxH = overlay.clientHeight;
+                                if (nl < 0) {
+                                    nw += nl;
+                                    nl = 0;
+                                }
+                                if (nt < 0) {
+                                    nh += nt;
+                                    nt = 0;
+                                }
+                                if (nl + nw > maxW) {
+                                    if (dir.includes('w')) {
+                                        nl = Math.max(0, maxW - nw);
+                                    } else {
+                                        nw = maxW - nl;
+                                    }
+                                }
+                                if (nt + nh > maxH) {
+                                    if (dir.includes('n')) {
+                                        nt = Math.max(0, maxH - nh);
+                                    } else {
+                                        nh = maxH - nt;
+                                    }
+                                }
+                                nw = Math.max(30, Math.min(nw, maxW));
+                                nh = Math.max(16, Math.min(nh, maxH));
+                                if (nl + nw > maxW) {
+                                    nl = Math.max(0, maxW - nw);
+                                }
+                                if (nt + nh > maxH) {
+                                    nt = Math.max(0, maxH - nh);
+                                }
+
                                 label.style.width = nw + 'px';
                                 label.style.height = nh + 'px';
                                 label.style.left = nl + 'px';
@@ -7894,6 +8310,15 @@
                             setSelection(null);
                             removeActiveEditor();
                         }
+                        // Deselect all overlay fields when clicking on empty space
+                        overlay.querySelectorAll('.overlay-field.active').forEach(f => {
+                            f.classList.remove('active', 'editing');
+                            const ce = f.querySelector('[contenteditable]');
+                            if (ce) ce.contentEditable = false;
+                            if (f.dataset.originalZIndex) f.style.zIndex = f.dataset.originalZIndex;
+                        });
+                        clearOverlaySelection();
+                        updateSelectionBar();
                     });
 
                     // Drag-to-create text box (request #1)
@@ -8347,18 +8772,47 @@
                     
                     const rotateResponse = await fetch('{{ route("documents.applyRotations", $document) }}', {
                         method: 'POST',
-                        headers: { 'X-CSRF-TOKEN': csrfToken },
+                        headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content },
                         body: rotateFormData
                     });
                     
-                    if (!rotateResponse.ok) {
+                    // Handle CSRF expiry — refresh token and retry once
+                    if (rotateResponse.status === 419) {
+                        console.warn('CSRF token expired during rotation, refreshing...');
+                        const freshPage = await fetch(window.location.href);
+                        const html = await freshPage.text();
+                        const match = html.match(/csrf-token["']\s+content=["']([^"']+)/);
+                        if (match) {
+                            document.querySelector('meta[name="csrf-token"]').content = match[1];
+                            const retryFormData = new FormData();
+                            retryFormData.append('pdf', new Blob([currentPdfBytes], { type: 'application/pdf' }));
+                            retryFormData.append('rotations', JSON.stringify(rotationData));
+                            const retryResponse = await fetch('{{ route("documents.applyRotations", $document) }}', {
+                                method: 'POST',
+                                headers: { 'X-CSRF-TOKEN': match[1] },
+                                body: retryFormData
+                            });
+                            if (!retryResponse.ok) {
+                                console.error('Failed to apply rotations after CSRF refresh');
+                                setStatus('Failed to apply rotations (session expired). Please refresh the page.', 'err');
+                                setSaveSpinner(false);
+                                return;
+                            }
+                            pdfBytesForLib = await retryResponse.arrayBuffer();
+                        } else {
+                            setStatus('Session expired. Please refresh the page and try again.', 'err');
+                            setSaveSpinner(false);
+                            return;
+                        }
+                    } else if (!rotateResponse.ok) {
                         console.error('Failed to apply rotations');
                         setStatus('Failed to apply rotations', 'err');
                         setSaveSpinner(false);
                         return;
+                    } else {
+                        pdfBytesForLib = await rotateResponse.arrayBuffer();
                     }
                     
-                    pdfBytesForLib = await rotateResponse.arrayBuffer();
                     console.log('Rotations applied, ready for annotations');
                     
                     // Clear pageRotations since they've been applied
@@ -9192,18 +9646,32 @@
             }
 
 
-            document.getElementById('save-btn').addEventListener('click', savePdf);
-            
-            // Overlay save button - saves overlay edits to PDF
-            if (saveOverlayBtn) {
-                saveOverlayBtn.addEventListener('click', async () => {
-                    if (overlayEditedFields.size === 0) {
-                        setStatus('No changes to save.', 'err');
-                        return;
-                    }
-                    
-                    try {
-                        // Collect the edit coordinates BEFORE saving (what we're sending to fitz)
+            // ── UNIFIED SAVE BUTTON ────────────────────────────────────────
+            // Single save button handles BOTH overlay edits and shapes/annotations.
+            // Order: 1) Save overlay editor changes first  2) Save shapes/text annotations
+            document.getElementById('save-btn').addEventListener('click', async () => {
+                const hasOverlayEdits = overlayEditedFields.size > 0;
+                const hasTextEdits = pdfTextItems.some((item) => item.modified);
+                const hasRotations = Object.keys(pageRotations).some(pageIndex => pageRotations[pageIndex] !== 0);
+                const hasDeletedPages = pendingDeletedPages.length > 0;
+                const hasNewPages = pendingNewPages.length > 0;
+                const hasAnnotations = annotations.length > 0;
+                const hasPdfChanges = hasAnnotations || hasTextEdits || hasRotations || hasDeletedPages || hasNewPages;
+
+                if (!hasOverlayEdits && !hasPdfChanges) {
+                    setStatus('No changes to save.', 'err');
+                    return;
+                }
+
+                try {
+                    // Show saving modal
+                    setSaveSpinner(true, 'Saving PDF...');
+
+                    // ── STEP 1: Save overlay editor changes ──────────────────
+                    if (hasOverlayEdits) {
+                        setSaveSpinner(true, 'Saving overlay edits...');
+                        console.log('=== UNIFIED SAVE: Step 1 - Overlay edits ===');
+                        
                         const editsForVerification = [];
                         for (const [key, editData] of overlayEditedFields.entries()) {
                             editsForVerification.push({
@@ -9215,81 +9683,59 @@
                                 font_size: editData.font_size || 12
                             });
                         }
-                        
-                        console.log('=== EDIT COORDINATES BEING SENT TO FITZ ===');
-                        console.log(JSON.stringify(editsForVerification, null, 2));
-                        
-                        // Perform the actual save
-                        setSaveSpinner(true, 'Saving overlay edits...');
+                        console.log('Edit coordinates:', JSON.stringify(editsForVerification, null, 2));
+
                         const saved = await saveOverlayEditsIfNeeded();
-                        
-                        if (saved) {
-                            // Screenshot debugging disabled
-                            // Get the first edited page number from the edits
-                            const firstEditPageNumber = editsForVerification.length > 0 ? editsForVerification[0].page_number : 1;
-                            
-                            // console.log('=== TAKING SCREENSHOT AFTER SAVE ===');
-                            // setStatus('Taking screenshot for debugging...', '');
-                            // setSaveSpinner(true, 'Taking screenshot...');
-                            
-                            // const screenshotUrl = `{{ route('documents.takeScreenshot', $document) }}`;
-                            
-                            // try {
-                            //     const screenshotResponse = await fetch(screenshotUrl, {
-                            //         method: 'POST',
-                            //         headers: {
-                            //             'Content-Type': 'application/json',
-                            //             'X-CSRF-TOKEN': csrfToken,
-                            //         },
-                            //         body: JSON.stringify({
-                            //             page_number: firstEditPageNumber,
-                            //             stage: 'after_overlay_save'
-                            //         })
-                            //     });
-                            //     
-                            //     if (screenshotResponse.ok) {
-                            //         const screenshotData = await screenshotResponse.json();
-                            //         console.log('Screenshot taken:', screenshotData);
-                            //     } else {
-                            //         console.error('Screenshot failed');
-                            //     }
-                            // } catch (screenshotError) {
-                            //     console.error('Screenshot failed:', screenshotError);
-                            // }
-                            
-                            setStatus('Saved! Reloading document...', 'ok');
-                            
-                            // Exit overlay mode and reload the page to show the final PDF
-                            overlayEditorActive = false;
-                            overlayRendered = false;
-                            viewer.classList.remove('overlay-view-mode');
-                            viewer.classList.remove('overlay-hidden');
-                            
-                            // Clean up overlay resources
-                            cleanupOverlayPdf();
-                            
-                            // Clear all overlay state
-                            overlayEditedFields.clear();
-                            overlayPersistedEdits.clear();
-                            try {
-                                sessionStorage.removeItem(overlayEditsStorageKey);
-                            } catch (e) {
-                                console.warn('Failed to clear sessionStorage:', e);
-                            }
-                            
-                            // Reload the page to show the final saved PDF
-                            setTimeout(() => {
-                                window.location.reload();
-                            }, 500);
+                        if (!saved) {
+                            console.log('Overlay edits were no-ops, skipping...');
+                        } else {
+                            console.log('Overlay edits saved successfully');
                         }
-                        setSaveSpinner(false);
-                    } catch (error) {
-                        console.error('Error saving overlay edits:', error);
-                        setStatus('Save failed: ' + error.message, 'err');
-                        setSaveSpinner(false);
+
+                        // Clean up overlay state after save
+                        overlayEditorActive = false;
+                        overlayRendered = false;
+                        viewer.classList.remove('overlay-view-mode');
+                        viewer.classList.remove('overlay-hidden');
+                        cleanupOverlayPdf();
+                        overlayEditedFields.clear();
+                        overlayPersistedEdits.clear();
+                        try {
+                            sessionStorage.removeItem(overlayEditsStorageKey);
+                        } catch (e) {
+                            console.warn('Failed to clear sessionStorage:', e);
+                        }
+
+                        // If there are NO annotation/shape changes, just reload
+                        if (!hasPdfChanges) {
+                            setSaveSpinner(true, 'Saved! Reloading...');
+                            setStatus('Saved! Reloading document...', 'ok');
+                            setTimeout(() => { window.location.reload(); }, 500);
+                            return;
+                        }
+
+                        // Wait briefly for the backend to finish writing the PDF
+                        // before proceeding to save annotations on top of it
+                        await new Promise(r => setTimeout(r, 1000));
+                        // Bump PDF version so savePdf() fetches the freshly-saved PDF
+                        pdfVersion = Date.now();
                     }
-                });
-            }
+
+                    // ── STEP 2: Save shapes / text annotations ───────────────
+                    if (hasPdfChanges) {
+                        setSaveSpinner(true, 'Saving annotations...');
+                        console.log('=== UNIFIED SAVE: Step 2 - Annotations/shapes ===');
+                        await savePdf();
+                        // savePdf handles its own reload/status
+                        return;
+                    }
+
+                } catch (error) {
+                    console.error('Error during unified save:', error);
+                    setStatus('Save failed: ' + error.message, 'err');
+                    setSaveSpinner(false);
+                }
+            });
             
             document.getElementById('clear-btn').addEventListener('click', () => {
                 if (!confirm('Clear all unsaved changes including text edits?')) {
@@ -9309,9 +9755,6 @@
                 overlayEditorActive = false;
                 viewer.classList.remove('overlay-view-mode');
                 viewer.classList.remove('overlay-hidden');
-                if (saveOverlayBtn) {
-                    saveOverlayBtn.style.display = 'none';
-                }
                 updateOverlaySaveButton();
                 persistOverlayEdits();
                 
@@ -9364,6 +9807,7 @@
                             field.dataset.fontFamily = selectedFontValue;
                         });
                     }
+                    markOverlayFieldDirty();
                 }
             });
             }
@@ -9398,6 +9842,7 @@
                             field.dataset.fontWeight = weightValue;
                         });
                     }
+                    markOverlayFieldDirty();
                 }
             });
             }
@@ -9421,9 +9866,27 @@
                             field.style.fontSize = sizePx + 'px';
                             field.dataset.fontSize = String(sizePx);
                         });
+                        markOverlayFieldDirty();
                     }
                 });
             }
+
+            // Preserve text selection when clicking toolbar buttons
+            [selectedBold, selectedItalic, selectedUnderline].forEach(btn => {
+                if (!btn) return;
+                btn.addEventListener('mousedown', (e) => {
+                    if (!selectedOverlayField) return;
+                    e.preventDefault(); // Prevent blur/deselection
+                    const selection = window.getSelection();
+                    if (selection && selection.rangeCount > 0) {
+                        const range = selection.getRangeAt(0);
+                        const textEl = getOverlayTextElement(selectedOverlayField);
+                        if (range && !range.collapsed && textEl && textEl.contains(range.commonAncestorContainer)) {
+                            overlaySelectionRange = range.cloneRange();
+                        }
+                    }
+                });
+            });
 
             if (selectedBold) {
                 selectedBold.addEventListener('click', () => {
@@ -9441,12 +9904,17 @@
                     }
                     if (selectedOverlayField) {
                         const isActive = selectedBold.classList.contains('active');
-                        applyOverlayStyle((textEl, field) => {
-                            const weight = isActive ? 'normal' : '700';
-                            textEl.style.fontWeight = weight;
-                            field.style.fontWeight = weight;
-                            field.dataset.fontWeight = weight;
-                        });
+                        const newWeight = isActive ? 'normal' : '700';
+                        const appliedToSel = applyOverlayStyleToSelection('fontWeight', newWeight);
+                        if (!appliedToSel) {
+                            applyOverlayStyle((textEl, field) => {
+                                textEl.style.fontWeight = newWeight;
+                                field.style.fontWeight = newWeight;
+                                field.dataset.fontWeight = newWeight;
+                            });
+                        }
+                        markOverlayFieldDirty();
+                        updateSelectionBar();
                     }
                 });
             }
@@ -9465,12 +9933,17 @@
                     }
                     if (selectedOverlayField) {
                         const isActive = selectedItalic.classList.contains('active');
-                        applyOverlayStyle((textEl, field) => {
-                            const style = isActive ? 'normal' : 'italic';
-                            textEl.style.fontStyle = style;
-                            field.style.fontStyle = style;
-                            field.dataset.fontStyle = style;
-                        });
+                        const newStyle = isActive ? 'normal' : 'italic';
+                        const appliedToSel = applyOverlayStyleToSelection('fontStyle', newStyle);
+                        if (!appliedToSel) {
+                            applyOverlayStyle((textEl, field) => {
+                                textEl.style.fontStyle = newStyle;
+                                field.style.fontStyle = newStyle;
+                                field.dataset.fontStyle = newStyle;
+                            });
+                        }
+                        markOverlayFieldDirty();
+                        updateSelectionBar();
                     }
                 });
             }
@@ -9489,11 +9962,16 @@
                     }
                     if (selectedOverlayField) {
                         const isActive = selectedUnderline.classList.contains('active');
-                        applyOverlayStyle((textEl, field) => {
-                            const decoration = isActive ? 'none' : 'underline';
-                            textEl.style.textDecoration = decoration;
-                            field.dataset.underline = String(!isActive);
-                        });
+                        const newDecoration = isActive ? 'none' : 'underline';
+                        const appliedToSel = applyOverlayStyleToSelection('textDecoration', newDecoration);
+                        if (!appliedToSel) {
+                            applyOverlayStyle((textEl, field) => {
+                                textEl.style.textDecoration = newDecoration;
+                                field.dataset.underline = String(!isActive);
+                            });
+                        }
+                        markOverlayFieldDirty();
+                        updateSelectionBar();
                     }
                 });
             }
@@ -9518,6 +9996,7 @@
                                 field.dataset.textColor = selectedColor.value;
                             });
                         }
+                        markOverlayFieldDirty();
                     }
                 });
             }
@@ -9582,6 +10061,7 @@
                                 field.dataset.backgroundColor = selectedBg.value;
                             });
                         }
+                        markOverlayFieldDirty();
                     }
                 });
             }
@@ -9603,6 +10083,7 @@
                             field.style.textAlign = selectedAlign.value;
                             field.dataset.textAlign = selectedAlign.value;
                         });
+                        markOverlayFieldDirty();
                     }
                 });
             }
@@ -9624,6 +10105,7 @@
                             textEl.style.opacity = String(value);
                             field.dataset.opacity = String(value);
                         });
+                        markOverlayFieldDirty();
                     }
                 });
             }
@@ -9647,30 +10129,57 @@
                         return;
                     }
                     if (selectedOverlayField) {
-                        const field = selectedOverlayField;
-                        const pageNumber = parseInt(field.dataset.pageNumber || '0', 10);
-                        const key = field.dataset.wordIndex || `${pageNumber}-0`;
-                        const textEl = getOverlayTextElement(field);
-                        const originalWord = buildOriginalWordFromField(field, textEl ? textEl.textContent : '');
-                        overlayEditedFields.set(key, {
-                            page_number: pageNumber,
-                            original_text: originalWord.text,
-                            new_text: '',
-                            original_bbox: [originalWord.left, originalWord.top, originalWord.left + originalWord.width, originalWord.top + originalWord.height],
-                            bbox: [originalWord.left, originalWord.top, originalWord.left + originalWord.width, originalWord.top + originalWord.height],
-                            font_xref: field.dataset.fontXref ? parseInt(field.dataset.fontXref, 10) : null,
-                            font: originalWord.font,
-                            font_size: originalWord.font_size,
-                            color: field.dataset.textColor || '#000000'
-                        });
-                        field.remove();
-                        clearOverlaySelection();
-                        updateSelectionBar();
-                        updateOverlaySaveButton();
-                        persistOverlayEdits();
+                        try {
+                            pushUndoState();
+                            const field = selectedOverlayField;
+                            const pageNumber = parseInt(field.dataset.pageNumber || '0', 10);
+                            const key = field.dataset.wordIndex || `${pageNumber}-0`;
+                            const textEl = getOverlayTextElement(field);
+                            const originalWord = buildOriginalWordFromField(field, textEl ? textEl.textContent : '');
+                            overlayEditedFields.set(key, {
+                                page_number: pageNumber,
+                                block_num: parseInt(key.replace(/^block-\d+-/, ''), 10) || 0,
+                                original_text: originalWord.text,
+                                new_text: '',
+                                rich_html: null,
+                                original_bbox: [originalWord.left, originalWord.top, originalWord.left + originalWord.width, originalWord.top + originalWord.height],
+                                bbox: [originalWord.left, originalWord.top, originalWord.left + originalWord.width, originalWord.top + originalWord.height],
+                                font_xref: field.dataset.fontXref ? parseInt(field.dataset.fontXref, 10) : null,
+                                font: originalWord.font,
+                                font_size: originalWord.font_size,
+                                font_weight: field.dataset.fontWeight || null,
+                                font_style: field.dataset.fontStyle || null,
+                                color: field.dataset.textColor || '#000000'
+                            });
+                            field.remove();
+                            clearOverlaySelection();
+                            updateSelectionBar();
+                            updateOverlaySaveButton();
+                            persistOverlayEdits();
+                            setStatus('Text block deleted', 'ok');
+                        } catch (err) {
+                            console.error('Selection bar delete error:', err);
+                            setStatus('Delete failed: ' + err.message, 'err');
+                        }
                     }
                 });
             }
+
+            // ── Keyboard Delete for overlay fields ──────────────────────────
+            document.addEventListener('keydown', (e) => {
+                if (!overlayEditorActive) return;
+                if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+                // Only act when a field is selected but text is NOT being edited
+                // (if contenteditable has focus, Delete/Backspace should edit text normally)
+                if (!selectedOverlayField) return;
+                const activeEl = document.activeElement;
+                if (activeEl && (activeEl.isContentEditable || activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'SELECT')) return;
+
+                e.preventDefault();
+                if (selectedDelete && !selectedDelete.disabled) {
+                    selectedDelete.click();
+                }
+            });
 
             // ── Edit Text Banner Controls ──────────────────────────────────
             (function wireEditTextBanner() {
@@ -10097,9 +10606,14 @@
             const convertPdfaEmbedFonts = document.getElementById('convert-pdfa-embed-fonts');
             const convertPdfaSrgb = document.getElementById('convert-pdfa-srgb');
             const convertImageSettings = document.getElementById('convert-image-settings');
+            const convertWordOptions = document.getElementById('convert-word-options');
+            const convertExcelOptions = document.getElementById('convert-excel-options');
             const convertModalTitle = document.getElementById('convert-modal-title');
             const convertModalSubtitle = document.getElementById('convert-modal-subtitle');
             const convertToPdfAUrl = "{{ route('documents.convertToPdfA', $document) }}";
+            const convertToWordUrl = "{{ route('documents.convertToWord', $document) }}";
+            const convertToExcelUrl = "{{ route('documents.convertToExcel', $document) }}";
+            const downloadConvertedBaseUrl = "{{ route('documents.downloadConverted') }}";
             const downloadPdfABaseUrl = "{{ route('documents.downloadPdfA') }}";
             const logExportUrl = "{{ route('documents.logExport', $document) }}";
             const pdfaReportModal = document.getElementById('pdfa-report-modal');
@@ -10138,12 +10652,24 @@
             // Tab switching
             const convertTabImages = document.getElementById('convert-tab-images');
             const convertTabPdfa = document.getElementById('convert-tab-pdfa');
+            const convertTabWord = document.getElementById('convert-tab-word');
+            const convertTabExcel = document.getElementById('convert-tab-excel');
             const convertModalIcon = document.getElementById('convert-modal-icon');
+            const allConvertTabs = [convertTabImages, convertTabPdfa, convertTabWord, convertTabExcel].filter(Boolean);
 
             function switchConvertTab(tab) {
+                // Reset all tabs to inactive
+                allConvertTabs.forEach(t => {
+                    if (t) { t.style.borderBottomColor = 'transparent'; t.style.color = 'rgba(255,255,255,0.4)'; }
+                });
+                // Hide all panels
+                if (convertImageSettings) convertImageSettings.style.display = 'none';
+                if (convertPdfaOptions) convertPdfaOptions.style.display = 'none';
+                if (convertWordOptions) convertWordOptions.style.display = 'none';
+                if (convertExcelOptions) convertExcelOptions.style.display = 'none';
+
                 if (tab === 'images') {
                     cvtFormat = 'jpg';
-                    // Reset image format selection to JPG
                     document.querySelectorAll('.cvt-fmt-btn').forEach(b => {
                         b.style.borderColor = 'rgba(255,255,255,0.1)';
                         b.style.background = 'transparent';
@@ -10152,24 +10678,16 @@
                     const jpgBtn = document.querySelector('.cvt-fmt-btn[data-format="jpg"]');
                     if (jpgBtn) { jpgBtn.style.borderColor = '#3b82f6'; jpgBtn.style.background = 'rgba(59,130,246,0.12)'; jpgBtn.classList.add('active'); }
                     if (convertImageSettings) convertImageSettings.style.display = 'block';
-                    if (convertPdfaOptions) convertPdfaOptions.style.display = 'none';
                     if (convertModalTitle) convertModalTitle.textContent = 'Export to Images';
                     if (convertModalSubtitle) convertModalSubtitle.textContent = 'Convert PDF pages to image files';
                     if (convertModalIcon) convertModalIcon.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14"/><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>';
                     if (convertModalIcon) convertModalIcon.style.background = 'linear-gradient(135deg, #3b82f6, #8b5cf6)';
                     if (convertExportBtn) convertExportBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Export';
                     if (convertExportBtn) convertExportBtn.style.background = 'linear-gradient(135deg, #3b82f6, #8b5cf6)';
-                    convertTabImages.style.borderBottomColor = '#3b82f6';
-                    convertTabImages.style.color = '#e5e7eb';
-                    convertTabPdfa.style.borderBottomColor = 'transparent';
-                    convertTabPdfa.style.color = 'rgba(255,255,255,0.4)';
-                    if (convertQualitySection) {
-                        convertQualitySection.style.opacity = '1';
-                        convertQualitySection.style.pointerEvents = 'auto';
-                    }
-                } else {
+                    if (convertTabImages) { convertTabImages.style.borderBottomColor = '#3b82f6'; convertTabImages.style.color = '#e5e7eb'; }
+                    if (convertQualitySection) { convertQualitySection.style.opacity = '1'; convertQualitySection.style.pointerEvents = 'auto'; }
+                } else if (tab === 'pdfa') {
                     cvtFormat = 'pdfa';
-                    if (convertImageSettings) convertImageSettings.style.display = 'none';
                     if (convertPdfaOptions) convertPdfaOptions.style.display = 'block';
                     if (convertModalTitle) convertModalTitle.textContent = 'Export as PDF/A';
                     if (convertModalSubtitle) convertModalSubtitle.textContent = 'Convert to archival format (ISO 19005)';
@@ -10177,15 +10695,34 @@
                     if (convertModalIcon) convertModalIcon.style.background = 'linear-gradient(135deg, #10b981, #059669)';
                     if (convertExportBtn) convertExportBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15l2 2 4-4"/></svg> Convert to PDF/A';
                     if (convertExportBtn) convertExportBtn.style.background = 'linear-gradient(135deg, #10b981, #059669)';
-                    convertTabPdfa.style.borderBottomColor = '#10b981';
-                    convertTabPdfa.style.color = '#e5e7eb';
-                    convertTabImages.style.borderBottomColor = 'transparent';
-                    convertTabImages.style.color = 'rgba(255,255,255,0.4)';
+                    if (convertTabPdfa) { convertTabPdfa.style.borderBottomColor = '#10b981'; convertTabPdfa.style.color = '#e5e7eb'; }
+                } else if (tab === 'word') {
+                    cvtFormat = 'word';
+                    if (convertWordOptions) convertWordOptions.style.display = 'block';
+                    if (convertModalTitle) convertModalTitle.textContent = 'Convert to Word';
+                    if (convertModalSubtitle) convertModalSubtitle.textContent = 'Export as an editable Word document (.docx)';
+                    if (convertModalIcon) convertModalIcon.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M7 13h10M7 17h6"/></svg>';
+                    if (convertModalIcon) convertModalIcon.style.background = 'linear-gradient(135deg, #2563eb, #3b82f6)';
+                    if (convertExportBtn) convertExportBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Convert to Word';
+                    if (convertExportBtn) convertExportBtn.style.background = 'linear-gradient(135deg, #2563eb, #3b82f6)';
+                    if (convertTabWord) { convertTabWord.style.borderBottomColor = '#3b82f6'; convertTabWord.style.color = '#e5e7eb'; }
+                } else if (tab === 'excel') {
+                    cvtFormat = 'excel';
+                    if (convertExcelOptions) convertExcelOptions.style.display = 'block';
+                    if (convertModalTitle) convertModalTitle.textContent = 'Convert to Excel';
+                    if (convertModalSubtitle) convertModalSubtitle.textContent = 'Extract tables into a spreadsheet (.xlsx)';
+                    if (convertModalIcon) convertModalIcon.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>';
+                    if (convertModalIcon) convertModalIcon.style.background = 'linear-gradient(135deg, #059669, #10b981)';
+                    if (convertExportBtn) convertExportBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Convert to Excel';
+                    if (convertExportBtn) convertExportBtn.style.background = 'linear-gradient(135deg, #059669, #10b981)';
+                    if (convertTabExcel) { convertTabExcel.style.borderBottomColor = '#10b981'; convertTabExcel.style.color = '#e5e7eb'; }
                 }
             }
 
             if (convertTabImages) convertTabImages.addEventListener('click', () => switchConvertTab('images'));
             if (convertTabPdfa) convertTabPdfa.addEventListener('click', () => switchConvertTab('pdfa'));
+            if (convertTabWord) convertTabWord.addEventListener('click', () => switchConvertTab('word'));
+            if (convertTabExcel) convertTabExcel.addEventListener('click', () => switchConvertTab('excel'));
 
             // Login required modal
             const loginRequiredModal = document.getElementById('login-required-modal');
@@ -10663,6 +11200,114 @@
                         } catch (err) {
                             console.error('PDF/A conversion error:', err);
                             setStatus('PDF/A export error: ' + err.message, 'err');
+                        } finally {
+                            cvtExporting = false;
+                            convertExportBtn.disabled = false;
+                            convertExportBtn.style.opacity = '1';
+                            convertProgressWrap.style.display = 'none';
+                            convertProgressBar.style.width = '0%';
+                        }
+                        return;
+                    }
+
+                    // --- Word export (server-side) ---
+                    if (cvtFormat === 'word') {
+                        try {
+                            convertProgressBar.style.width = '20%';
+                            convertProgressPct.textContent = '20%';
+                            convertProgressLabel.textContent = 'Sending to server for Word conversion...';
+
+                            const wordLayout = document.getElementById('convert-word-layout')?.value || 'exact';
+                            const wordImages = document.getElementById('convert-word-images')?.checked ?? true;
+                            const wordOcr = document.getElementById('convert-word-ocr')?.checked ?? false;
+
+                            const resp = await fetch(convertToWordUrl, {
+                                method: 'POST',
+                                headers: { 'X-CSRF-TOKEN': csrfToken, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                                body: JSON.stringify({ layout: wordLayout, include_images: wordImages, ocr: wordOcr })
+                            });
+
+                            convertProgressBar.style.width = '70%';
+                            convertProgressPct.textContent = '70%';
+                            convertProgressLabel.textContent = 'Processing Word conversion...';
+
+                            const data = await resp.json();
+                            if (!resp.ok || !data.success) throw new Error(data.message || 'Word conversion failed');
+
+                            convertProgressBar.style.width = '100%';
+                            convertProgressPct.textContent = '100%';
+                            convertProgressLabel.textContent = 'Complete! Downloading...';
+
+                            // Download the file
+                            const dlUrl = downloadConvertedBaseUrl + '?token=' + encodeURIComponent(data.download_token);
+                            const a = document.createElement('a');
+                            a.href = dlUrl;
+                            a.download = data.download_name || 'document.docx';
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+
+                            setStatus('Word document exported successfully.', 'ok');
+                            logExportActivity('Convert to Word', 'word_export', { layout: wordLayout, include_images: wordImages, ocr: wordOcr }, 'success');
+                            setTimeout(() => { convertModal.style.display = 'none'; }, 600);
+                        } catch (err) {
+                            console.error('Word conversion error:', err);
+                            setStatus('Word export error: ' + err.message, 'err');
+                            logExportActivity('Convert to Word', 'word_export', { error: err.message }, 'failed');
+                        } finally {
+                            cvtExporting = false;
+                            convertExportBtn.disabled = false;
+                            convertExportBtn.style.opacity = '1';
+                            convertProgressWrap.style.display = 'none';
+                            convertProgressBar.style.width = '0%';
+                        }
+                        return;
+                    }
+
+                    // --- Excel export (server-side) ---
+                    if (cvtFormat === 'excel') {
+                        try {
+                            convertProgressBar.style.width = '20%';
+                            convertProgressPct.textContent = '20%';
+                            convertProgressLabel.textContent = 'Sending to server for Excel conversion...';
+
+                            const excelMode = document.getElementById('convert-excel-mode')?.value || 'tables';
+                            const excelMergeCells = document.getElementById('convert-excel-merge-cells')?.checked ?? true;
+                            const excelSheetPerPage = document.getElementById('convert-excel-sheet-per-page')?.checked ?? true;
+
+                            const resp = await fetch(convertToExcelUrl, {
+                                method: 'POST',
+                                headers: { 'X-CSRF-TOKEN': csrfToken, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                                body: JSON.stringify({ mode: excelMode, merge_cells: excelMergeCells, sheet_per_page: excelSheetPerPage })
+                            });
+
+                            convertProgressBar.style.width = '70%';
+                            convertProgressPct.textContent = '70%';
+                            convertProgressLabel.textContent = 'Processing Excel conversion...';
+
+                            const data = await resp.json();
+                            if (!resp.ok || !data.success) throw new Error(data.message || 'Excel conversion failed');
+
+                            convertProgressBar.style.width = '100%';
+                            convertProgressPct.textContent = '100%';
+                            convertProgressLabel.textContent = 'Complete! Downloading...';
+
+                            // Download the file
+                            const dlUrl = downloadConvertedBaseUrl + '?token=' + encodeURIComponent(data.download_token);
+                            const a = document.createElement('a');
+                            a.href = dlUrl;
+                            a.download = data.download_name || 'document.xlsx';
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+
+                            setStatus('Excel spreadsheet exported successfully.', 'ok');
+                            logExportActivity('Convert to Excel', 'excel_export', { mode: excelMode, merge_cells: excelMergeCells, sheet_per_page: excelSheetPerPage }, 'success');
+                            setTimeout(() => { convertModal.style.display = 'none'; }, 600);
+                        } catch (err) {
+                            console.error('Excel conversion error:', err);
+                            setStatus('Excel export error: ' + err.message, 'err');
+                            logExportActivity('Convert to Excel', 'excel_export', { error: err.message }, 'failed');
                         } finally {
                             cvtExporting = false;
                             convertExportBtn.disabled = false;
@@ -11634,9 +12279,10 @@
                 for (const [key, editData] of overlayEditedFields.entries()) {
                     console.log('Preparing edit:', key, editData);
                     
-                    // SKIP NO-OP EDITS: If text is unchanged and position hasn't moved,
-                    // don't send to server at all. This prevents duplication bugs where
-                    // the scrub phase fails to remove old text and insertion adds a copy.
+                    // SKIP NO-OP EDITS: If text is unchanged, position hasn't moved,
+                    // AND style hasn't changed, don't send to server at all.
+                    // This prevents duplication bugs where the scrub phase fails to
+                    // remove old text and insertion adds a copy.
                     const origText = String(editData.original_text || '').trim();
                     const newText = String(editData.new_text || '').trim();
                     if (origText === newText && editData.original_bbox && editData.bbox) {
@@ -11646,8 +12292,14 @@
                                              Math.abs(ob[1] - nb[1]) < 2 &&
                                              Math.abs(ob[2] - nb[2]) < 2 &&
                                              Math.abs(ob[3] - nb[3]) < 2;
-                        if (posUnchanged) {
-                            console.log('Skipping no-op edit (text & position unchanged):', key);
+                        // Check if any style property or rich data was changed
+                        const hasStyleEdit = (editData.font_weight && editData.font_weight !== '400' && editData.font_weight !== 'normal') ||
+                                             (editData.font_style && editData.font_style !== 'normal') ||
+                                             (editData.color && editData.color !== '#000000') ||
+                                             editData.rich_html ||
+                                             (editData.word_styles && editData.word_styles.length > 0);
+                        if (posUnchanged && !hasStyleEdit) {
+                            console.log('Skipping no-op edit (text, position & style unchanged):', key);
                             continue;
                         }
                     }
@@ -11674,11 +12326,21 @@
                         font_style: editData.font_style || null,    // Explicit style (normal, italic)
                         line_height: editData.line_height || null,   // Include line height
                         color: color,
-                        rich_html: editData.rich_html || null        // Always send rich_html for per-word font info
+                        rich_html: editData.rich_html || null,        // Always send rich_html for per-word font info
+                        word_styles: editData.word_styles || null     // Per-word formatting (font, size, italic, etc.)
                     });
                 }
                 
                 console.log('Sending edits to server:', edits);
+                
+                // If all edits were filtered as no-ops, nothing to save
+                if (edits.length === 0) {
+                    console.log('All edits were no-ops after filtering, clearing dirty state');
+                    overlayEditedFields.clear();
+                    updateOverlaySaveButton();
+                    setStatus('No effective changes to save.', '');
+                    return false;
+                }
                 
                 // Validate edits before sending
                 edits.forEach((edit, idx) => {
@@ -12591,7 +13253,7 @@
                 
                 if (font) font.value = annotation.fontFamily || 'Helvetica';
                 if (size) size.value = Math.round(annotation.fontSize * currentScale) || 16;
-                if (textColor) textColor.value = annotation.textColor || '#111111';
+                if (textColor) textColor.value = annotation.textColor || '#000000';
                 if (bgColor) {
                     const bg = annotation.backgroundColor || 'transparent';
                     bgColor.value = bg === 'transparent' ? '#ffffff' : bg;
@@ -12623,7 +13285,7 @@
                 
                 if (font) font.value = defaultTextFont;
                 if (size) size.value = defaultTextSize;
-                if (textColor) textColor.value = '#111111';
+                if (textColor) textColor.value = '#000000';
                 if (bgColor) bgColor.value = '#ffffff';
                 if (opacity) opacity.value = '1';
                 if (bold) bold.classList.remove('active');
@@ -12760,9 +13422,6 @@
                 overlayEditorActive = false;
                 overlayLoadToken++;
                 persistOverlayEdits();
-                if (saveOverlayBtn) {
-                    saveOverlayBtn.style.display = 'none';
-                }
                 document.querySelectorAll('.overlay-field [contenteditable]').forEach(el => {
                     el.contentEditable = false;
                 });
@@ -13010,9 +13669,9 @@
                     overlayEditorActive = false;
                     overlayLoadToken++;
                     persistOverlayEdits();
-                    if (saveOverlayBtn) {
-                        saveOverlayBtn.style.display = 'none';
-                    }
+                    // Hide the selection/font toolbar when leaving overlay mode
+                    const stBar = document.getElementById('selection-toolbar');
+                    if (stBar) stBar.classList.add('hidden');
                     viewer.classList.add('overlay-view-mode');
                     viewer.classList.remove('overlay-hidden');
                     document.querySelectorAll('.overlay-field [contenteditable]').forEach(el => {
@@ -13051,19 +13710,24 @@
                 pdfVersion = Date.now();
                 const loadToken = ++overlayLoadToken;
 
+                // Show the selection/font toolbar permanently in overlay mode
+                const stBar = document.getElementById('selection-toolbar');
+                if (stBar) stBar.classList.remove('hidden');
+
                 // Remove view mode and enable editing
                 viewer.classList.remove('overlay-view-mode');
                 viewer.classList.remove('overlay-hidden');
 
-                // Re-enable contentEditable on all text fields
+                // Re-enable text fields but keep contentEditable off (requires double-click to edit)
                 document.querySelectorAll('.overlay-field [contenteditable]').forEach(el => {
-                    el.contentEditable = true;
+                    el.contentEditable = false;
+                });
+                // Reset any editing state
+                document.querySelectorAll('.overlay-field.editing').forEach(f => {
+                    f.classList.remove('editing');
                 });
 
                 updateOverlayShowOriginalToggle();
-                if (saveOverlayBtn) {
-                    saveOverlayBtn.style.display = 'block';
-                }
                 toolMode = 'overlay';
                 updateModeButtons();
                 setStatus('Loading overlay editor...', 'loading');
@@ -13118,6 +13782,42 @@
                     // Populate font dropdown with fonts from PDF
                     populateFontDropdown();
 
+                    // Pre-load Google Fonts from extraction data so they start
+                    // downloading before the first overlay render.  This gives
+                    // the browser a head start — by the time renderPdfWithOverlay
+                    // finishes, many fonts will already be cached.
+                    if (overlayExtractionData) {
+                        const preloadFontFamilies = new Set();
+                        overlayExtractionData.forEach(page => {
+                            (page.words || []).forEach(w => {
+                                if (w.font) preloadFontFamilies.add(w.font);
+                            });
+                            (page.blocks || []).forEach(b => {
+                                if (b.font) preloadFontFamilies.add(b.font);
+                            });
+                        });
+                        preloadFontFamilies.forEach(rawFont => {
+                            // Quick normalization (strip subset prefix)
+                            let cleaned = rawFont;
+                            if (cleaned.includes('+')) {
+                                const parts = cleaned.split('+', 2);
+                                if (parts[0].length === 6) cleaned = parts[1];
+                            }
+                            if (/^[A-Za-z]{6}[A-Z]/.test(cleaned) && cleaned.length > 7) {
+                                const rest = cleaned.substring(6);
+                                if (/^[A-Z][a-z]/.test(rest)) cleaned = rest;
+                            }
+                            const family = (cleaned.split(/[-_,]/)[0] || cleaned).trim();
+                            if (family && !overlayLoadedFonts.has(family)) {
+                                overlayLoadedFonts.add(family);
+                                const link = document.createElement('link');
+                                link.rel = 'stylesheet';
+                                link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap`;
+                                document.head.appendChild(link);
+                            }
+                        });
+                    }
+
                     // Load clean PDF
                     await renderPdfWithOverlay();
                     overlayRendered = true;
@@ -13128,6 +13828,38 @@
                     if (typeof renderGridlines === 'function') renderGridlines();
                     
                     setStatus('Overlay editor active. Edit text positions and content.', 'ok');
+                    
+                    // Google Fonts are loaded asynchronously via <link> tags
+                    // added during renderOverlayFields.  The initial render uses
+                    // fallback system fonts, so measureTextWidth / computeLetterSpacing
+                    // produce incorrect metrics until the real fonts arrive.
+                    // Re-render once all pending fonts have loaded so that boxes,
+                    // letter-spacing and word positions are accurate.
+                    //
+                    // Strategy: the Google Font stylesheets (@font-face CSS) need
+                    // to be fetched before document.fonts will even know about
+                    // them. We wait a short moment for the browser to start
+                    // fetching the stylesheets, then await document.fonts.ready.
+                    // A second delayed check handles slow network conditions.
+                    const fontsLoadedToken = loadToken;
+                    let fontReRenderDone = false;
+                    const doFontReRender = () => {
+                        if (fontReRenderDone) return;
+                        if (!overlayEditorActive || fontsLoadedToken !== overlayLoadToken) return;
+                        fontReRenderDone = true;
+                        console.log('Fonts loaded — re-rendering overlay for accurate metrics');
+                        renderPdfWithOverlay(true).then(() => {
+                            if (typeof renderGridlines === 'function') renderGridlines();
+                        });
+                    };
+                    // First check — fires quickly if fonts are already cached
+                    setTimeout(() => {
+                        document.fonts.ready.then(doFontReRender);
+                    }, 100);
+                    // Second check — catches slow network / large font families
+                    setTimeout(() => {
+                        document.fonts.ready.then(doFontReRender);
+                    }, 2000);
                 } catch (error) {
                     console.error('Error loading overlay editor:', error);
                     let errorMessage = error.message;
@@ -13138,9 +13870,6 @@
                     cleanupOverlayPdf();  // Free memory on error
                     overlayEditorActive = false;
                     overlayLoadToken++;
-                    if (saveOverlayBtn) {
-                        saveOverlayBtn.style.display = 'none';
-                    }
                     if (modeOverlay) {
                         modeOverlay.checked = false;
                     }
@@ -13254,7 +13983,10 @@
                 overlay.addEventListener('click', (event) => {
                     if (event.target === overlay) {
                         clearOverlaySelection();
-                        overlay.querySelectorAll('.overlay-field.active').forEach(f => f.classList.remove('active'));
+                        overlay.querySelectorAll('.overlay-field.active').forEach(f => {
+                            f.classList.remove('active');
+                            if (f.dataset.originalZIndex) f.style.zIndex = f.dataset.originalZIndex;
+                        });
                         updateSelectionBar();
                         if (toolMode !== 'text') {
                             setSelection(null);
@@ -13373,7 +14105,10 @@
 
                     if (event.target === overlay) {
                         clearOverlaySelection();
-                        overlay.querySelectorAll('.overlay-field.active').forEach(f => f.classList.remove('active'));
+                        overlay.querySelectorAll('.overlay-field.active').forEach(f => {
+                            f.classList.remove('active');
+                            if (f.dataset.originalZIndex) f.style.zIndex = f.dataset.originalZIndex;
+                        });
                         updateSelectionBar();
                         if (toolMode !== 'text') {
                             setSelection(null);
@@ -13910,21 +14645,32 @@
                 };
 
                 const computeLetterSpacing = (word, scaleX, scaleY, fontFamily, fontWeight, fontStyle) => {
-                    if (!word || !word.text || word.text.length < 2 || !word.width) {
+                    const cleanText = sanitizeOverlayText(word?.text || '');
+                    if (!word || !cleanText || cleanText.length < 2 || !word.width) {
                         return null;
                     }
                     const fontSizePx = (word.font_size * scaleY);
-                    const measured = measureTextWidth(word.text, fontSizePx, fontFamily, fontWeight, fontStyle);
+                    const measured = measureTextWidth(cleanText, fontSizePx, fontFamily, fontWeight, fontStyle);
                     if (!measured) {
                         return null;
                     }
                     const target = word.width * scaleX;
-                    const spacing = (target - measured) / (word.text.length - 1);
+                    const spacing = (target - measured) / (cleanText.length - 1);
                     if (!Number.isFinite(spacing)) {
                         return null;
                     }
                     const clamped = Math.max(-1, Math.min(5, spacing));
                     return clamped;
+                };
+
+                const sanitizeOverlayText = (value) => {
+                    if (value == null) return '';
+                    return String(value)
+                        .replace(/\u00A0/g, ' ')
+                        .replace(/\uFFFD/g, '')
+                        .replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, '')
+                        .replace(/[\uE000-\uF8FF]/g, '')
+                        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
                 };
 
                 const buildStyledWordSpans = (container, words, scaleX, scaleY, blockLeft, blockTop) => {
@@ -13943,7 +14689,7 @@
                         const lineWords = lines.get(lineKey).sort((a, b) => a.left - b.left);
                         lineWords.forEach((word, wordIndex) => {
                             const wordSpan = document.createElement('span');
-                            wordSpan.textContent = word.text;
+                            wordSpan.textContent = sanitizeOverlayText(word.text);
                             const wordFontFamily = getCssFontFamily(word.font);
                             
                             // Use explicit font_weight from extraction if available, otherwise infer
@@ -14134,7 +14880,7 @@
                             const textLines = [];
                             Array.from(subLineMap.keys()).sort((a, b) => a - b).forEach(ln => {
                                 const lineWords = subLineMap.get(ln).sort((a, b) => a.left - b.left);
-                                textLines.push(lineWords.map(w => w.text).join(' '));
+                                textLines.push(lineWords.map(w => sanitizeOverlayText(w.text)).join(' '));
                             });
 
                             expandedBlocks.push({
@@ -14225,10 +14971,10 @@
                         const key = `block-${pageData.page_number}-${block.block_num}`;
                         const storedEdit = getOverlayStoredEdit(key);
                         const blockText = (block.text_lines && block.text_lines.length)
-                            ? block.text_lines.join('\n')
-                            : (block.text || '');
+                            ? block.text_lines.map(line => sanitizeOverlayText(line)).join('\n')
+                            : sanitizeOverlayText(block.text || '');
                         // Ensure blockText is always a string, never undefined
-                        const safeBlockText = String(blockText || '');
+                        const safeBlockText = sanitizeOverlayText(String(blockText || ''));
                         if (storedEdit && storedEdit.new_text === '') {
                             return;
                         }
@@ -14242,20 +14988,16 @@
                         field.className = 'overlay-field';
                         field.style.position = 'absolute';
                         field.style.background = 'transparent';
-                        field.style.border = 'none';
-                        field.style.outline = '1px dashed rgba(66, 133, 244, 0.5)';
-                        field.style.outlineOffset = '0px';
                         field.style.pointerEvents = 'auto';
-                        field.style.cursor = 'move';
                         field.style.padding = '0';
                         field.style.minWidth = '20px';
                         field.style.minHeight = '10px';
                         field.style.boxSizing = 'border-box';
-                        field.style.overflow = 'visible';
+                        field.style.overflow = 'hidden';
 
                         // Render the text content
                         const textSpan = document.createElement('div');
-                        textSpan.contentEditable = true;
+                        textSpan.contentEditable = false;
                         const hasStoredEdit = storedEdit && storedEdit.new_text != null;
                         textSpan.textContent = '';
                         textSpan.style.display = 'block';
@@ -14268,7 +15010,7 @@
                         textSpan.style.userSelect = 'text';
                         textSpan.style.padding = '0';
                         textSpan.style.margin = '0';
-                        textSpan.style.overflow = 'visible';
+                        textSpan.style.overflow = 'hidden';
                         
                         // Apply font styling from block data directly to the field for inheritance
                         const fontFamily = getCssFontFamily(block.font);
@@ -14352,11 +15094,15 @@
                         }
 
                         if (hasStoredEdit) {
-                            textSpan.textContent = storedEdit.new_text;
+                            textSpan.textContent = sanitizeOverlayText(storedEdit.new_text);
+                            textSpan.style.whiteSpace = 'pre-wrap';
+                            textSpan.style.wordBreak = 'break-word';
                         } else if (blockWords.length > 0) {
                             buildStyledWordSpans(textSpan, blockWords, scaleX, scaleY, blockLeft, blockTop);
                         } else {
-                            textSpan.textContent = blockText;
+                            textSpan.textContent = sanitizeOverlayText(blockText);
+                            textSpan.style.whiteSpace = 'pre-wrap';
+                            textSpan.style.wordBreak = 'break-word';
                         }
                         
                         if (lineHeightPx) {
@@ -14374,9 +15120,16 @@
                         const baseWidth = storedEdit ? (storedEdit.bbox[2] - storedEdit.bbox[0]) : blockWidth;
                         const baseHeight = storedEdit ? (storedEdit.bbox[3] - storedEdit.bbox[1]) : blockHeight;
 
+                        // Extra width to prevent text clipping:
+                        // 4px compensates for the 2px border on each side (box-sizing: border-box
+                        // causes the border to eat into content area), plus a font-size-based
+                        // buffer for rendering differences between PDF embedded fonts and web fonts.
+                        const fontSizeScaled = block.font_size * scaleY;
+                        const widthBuffer = 4 + Math.max(2, fontSizeScaled * 0.15);
+
                         field.style.left = ((baseLeft * scaleX) - paddingX) + 'px';
                         field.style.top = ((baseTop * scaleY) - paddingY) + 'px';
-                        field.style.width = ((baseWidth * scaleX) + (paddingX * 2)) + 'px';
+                        field.style.width = ((baseWidth * scaleX) + (paddingX * 2) + widthBuffer) + 'px';
                         field.style.height = ((baseHeight * scaleY) + (paddingY * 2)) + 'px';
                         field.style.zIndex = blockIndex + 1;
 
@@ -14390,7 +15143,7 @@
                             if (bounds) {
                                 const expectedLeft = (bounds.left * scaleX) - paddingX;
                                 const expectedTop = (bounds.top * scaleY) - paddingY;
-                                const expectedWidth = (bounds.width * scaleX) + (paddingX * 2);
+                                const expectedWidth = (bounds.width * scaleX) + (paddingX * 2) + widthBuffer;
                                 const expectedHeight = (bounds.height * scaleY) + (paddingY * 2);
 
                                 field.style.left = expectedLeft + 'px';
@@ -14409,8 +15162,10 @@
                         field.dataset.originalOriginY = blockTop + blockHeight;
                         field.dataset.pageNumber = pageData.page_number;
                         field.dataset.wordIndex = key;
+                        field.dataset.blockNum = block.block_num;
                         field.dataset.font = block.font;
                         field.dataset.fontSize = block.font_size;
+                        field.dataset.lineHeight = lineHeightValue || '';
                         if (block.font_xref !== undefined && block.font_xref !== null) {
                             field.dataset.fontXref = block.font_xref;
                         }
@@ -14420,14 +15175,19 @@
                         field.dataset.pageHeight = pageData.height;
                         field.dataset.padding = paddingPdf;
 
+                        // Store per-word style data for preserving formatting on save
+                        if (blockWords.length > 0) {
+                            field._blockWords = blockWords;
+                        }
+
                         // Add tooltip on hover to show what text is in this block
                         field.title = safeBlockText;
 
 
                         // Track changes to the text content
                         textSpan.addEventListener('input', function() {
-                            // Get the actual user-typed text (innerText preserves line breaks)
-                            const userTypedText = textSpan.innerText;
+                            // Preserve explicit line breaks only (not visual soft-wraps).
+                            const userTypedText = getOverlayExplicitText(textSpan);
                             const editKey = key;
                             const computedStyle = window.getComputedStyle(textSpan);
                             const currentFontSizePx = computedStyle.fontSize;
@@ -14450,12 +15210,34 @@
                             const currentOriginX = currentLeft;
                             const currentOriginY = currentTop + currentHeight;
                             
+                            // Build per-word style data for preserving formatting on save
+                            const wordStylesArr = (field._blockWords || []).map(w => ({
+                                text: w.text,
+                                font: w.font,
+                                font_xref: w.font_xref || null,
+                                font_size: w.font_size,
+                                font_weight: w.font_weight || 400,
+                                italic: !!w.italic,
+                                bold: !!w.bold,
+                                color: w.color,
+                                hex_color: w.hex_color || '#000000',
+                                left: w.left,
+                                top: w.top,
+                                width: w.width,
+                                height: w.height,
+                                origin_x: w.origin_x,
+                                origin_y: w.origin_y,
+                                ascender: w.ascender,
+                                descender: w.descender
+                            }));
+
                             overlayEditedFields.set(editKey, {
                                 page_number: pageData.page_number,
                                 block_num: block.block_num,
                                 original_text: safeBlockText,       // ORIGINAL PDF TEXT
                                 new_text: userTypedText,            // USER TYPED TEXT
                                 rich_html: richHtml,
+                                word_styles: wordStylesArr,          // PER-WORD FORMATTING
                                 bbox: [currentLeft, currentTop, currentLeft + currentWidth, currentTop + currentHeight],
                                 original_bbox: [blockLeft, blockTop, blockLeft + blockWidth, blockTop + blockHeight],
                                 origin_x: currentOriginX,           // CURRENT POSITION X
@@ -14482,31 +15264,118 @@
                         textSpan.addEventListener('mouseup', function() {
                             setOverlaySelection(field);
                         });
+                        textSpan.addEventListener('keydown', function(e) {
+                            if (e.key === 'Enter' && field.classList.contains('editing')) {
+                                e.preventDefault();
+                                const selection = window.getSelection();
+                                if (selection && selection.rangeCount > 0) {
+                                    const range = selection.getRangeAt(0);
+                                    range.deleteContents();
+                                    const newlineNode = document.createTextNode('\n');
+                                    range.insertNode(newlineNode);
+                                    range.setStartAfter(newlineNode);
+                                    range.collapse(true);
+                                    selection.removeAllRanges();
+                                    selection.addRange(range);
+                                    textSpan.dispatchEvent(new Event('input', { bubbles: true }));
+                                }
+                            }
+                            // Escape exits edit mode back to selected mode
+                            if (e.key === 'Escape' && field.classList.contains('editing')) {
+                                e.preventDefault();
+                                field.classList.remove('editing');
+                                textSpan.contentEditable = false;
+                                textSpan.blur();
+                                window.getSelection()?.removeAllRanges();
+                            }
+                        });
                         textSpan.addEventListener('keyup', function() {
+                            if (field.classList.contains('editing')) {
+                                setOverlaySelection(field);
+                            }
+                        });
+
+                        // ── ilovepdf-style interaction ──
+                        // Single click = SELECT (show handles, enable drag, no text editing)
+                        field.addEventListener('mousedown', function(e) {
+                            if (e.target.closest('.box-menu') || e.target.classList.contains('resize-handle')) return;
+                            // Deactivate other fields and restore their z-index
+                            overlay.querySelectorAll('.overlay-field.active').forEach(f => {
+                                if (f !== field) {
+                                    f.classList.remove('active', 'editing');
+                                    const ce = f.querySelector('[contenteditable]');
+                                    if (ce) ce.contentEditable = false;
+                                    // Restore original z-index
+                                    if (f.dataset.originalZIndex) f.style.zIndex = f.dataset.originalZIndex;
+                                }
+                            });
+                            if (!field.classList.contains('active')) {
+                                // First click: select only (no text editing)
+                                field.classList.add('active');
+                                // Bump z-index so box-menu isn't hidden behind adjacent fields
+                                if (!field.dataset.originalZIndex) field.dataset.originalZIndex = field.style.zIndex || '1';
+                                field.style.zIndex = '9999';
+                                setOverlaySelection(field);
+                            }
+                        });
+
+                        // Double click = EDIT (enable text cursor)
+                        field.addEventListener('dblclick', function(e) {
+                            if (e.target.closest('.box-menu') || e.target.classList.contains('resize-handle')) return;
+                            field.classList.add('active', 'editing');
+
+                            // Normalize absolutely-positioned word spans to flowing text
+                            // so typing works like a textarea (text wraps within the box).
+                            const hasPositionedSpans = textSpan.querySelector('span') &&
+                                Array.from(textSpan.querySelectorAll('span')).some(s => s.style.position === 'absolute');
+                            if (hasPositionedSpans) {
+                                const spans = Array.from(textSpan.querySelectorAll('span'));
+                                // Group by lines using top position to reconstruct line breaks
+                                const lineMap = new Map();
+                                spans.forEach(s => {
+                                    if (!s.textContent.trim() && s.textContent === ' ') return; // skip space spans
+                                    const top = Math.round(parseFloat(s.style.top) || 0);
+                                    if (!lineMap.has(top)) lineMap.set(top, []);
+                                    lineMap.get(top).push(s);
+                                });
+                                const sortedTops = Array.from(lineMap.keys()).sort((a, b) => a - b);
+                                const lines = sortedTops.map(top => {
+                                    const lineSpans = lineMap.get(top).sort((a, b) => 
+                                        (parseFloat(a.style.left) || 0) - (parseFloat(b.style.left) || 0)
+                                    );
+                                    return lineSpans.map(s => s.textContent).join(' ');
+                                });
+                                // Keep text reflowable: positioned spans encode visual wraps,
+                                // not semantic paragraph breaks. Convert to one flowing line.
+                                const plainText = lines.join(' ').replace(/\s+/g, ' ').trim();
+                                textSpan.textContent = plainText;
+                                textSpan.style.whiteSpace = 'pre-wrap';
+                                textSpan.style.wordBreak = 'break-word';
+                                textSpan.style.overflow = 'hidden';
+                            }
+
+                            textSpan.contentEditable = true;
+                            textSpan.focus();
+                            // Place cursor at click position
+                            const sel = window.getSelection();
+                            if (sel && e.target === textSpan || textSpan.contains(e.target)) {
+                                const range = document.caretRangeFromPoint(e.clientX, e.clientY);
+                                if (range) {
+                                    sel.removeAllRanges();
+                                    sel.addRange(range);
+                                }
+                            }
                             setOverlaySelection(field);
                         });
-                        // Activate field on click (anywhere on the box)
-                        field.addEventListener('click', function(e) {
-                            if (e.target.closest('.box-menu')) return;
-                            // Deactivate all other fields first
-                            overlay.querySelectorAll('.overlay-field.active').forEach(f => {
-                                if (f !== field) f.classList.remove('active');
-                            });
-                            field.classList.add('active');
-                            setOverlaySelection(field);
-                        });
-                        textSpan.addEventListener('focus', function() {
-                            overlay.querySelectorAll('.overlay-field.active').forEach(f => {
-                                if (f !== field) f.classList.remove('active');
-                            });
-                            field.classList.add('active');
-                        });
+
                         textSpan.addEventListener('blur', function(e) {
-                            // Delay removing active class to allow button clicks to register
+                            // Delay to allow button clicks to register
                             setTimeout(() => {
-                                // Only remove if not clicking on handles/menu
                                 if (!field.contains(document.activeElement) && !field.matches(':hover')) {
-                                    field.classList.remove('active');
+                                    field.classList.remove('active', 'editing');
+                                    textSpan.contentEditable = false;
+                                    // Restore original z-index
+                                    if (field.dataset.originalZIndex) field.style.zIndex = field.dataset.originalZIndex;
                                 }
                             }, 250);
                         });
@@ -14597,8 +15466,8 @@
                                 const leftBbox  = wordBbox(leftWords) || [fLeft, fTop, midX, fTop + fHeight];
                                 const rightBbox = wordBbox(rightWords) || [midX, fTop, fLeft + fWidth, fTop + fHeight];
 
-                                const leftText  = leftWords.map(w => w.text).join(' ');
-                                const rightText = rightWords.map(w => w.text).join(' ');
+                                const leftText  = leftWords.map(w => sanitizeOverlayText(w.text)).join(' ');
+                                const rightText = rightWords.map(w => sanitizeOverlayText(w.text)).join(' ');
 
                                 // Keys for the two halves
                                 const maxBlk = pageData.blocks.reduce((m, b) => Math.max(m, b.block_num), 0);
@@ -14681,51 +15550,55 @@
                             });
                             
                             deleteBtn.addEventListener('click', function(e) {
-                                console.log('delete clicked');
                                 e.preventDefault();
                                 e.stopPropagation();
                                 
-                                // Save state before deletion
-                                pushUndoState();
-                                
-                                // Mark as edited by storing empty text
-                                const deleteKey = field.dataset.wordIndex || key;
-                                if (deleteKey) {
-                                    const computedStyle = window.getComputedStyle(textSpan);
-                                    const currentFontSizePx = computedStyle.fontSize;
-                                    const currentLineHeightPx = computedStyle.lineHeight !== 'normal' ? computedStyle.lineHeight : '';
-                                    const currentFontSizePdf = parseFloat(field.dataset.fontSize || (parseFloat(currentFontSizePx) / scaleY) || block.font_size);
-                                    const currentTextColor = field.dataset.textColor || computedStyle.color || '#000000';
-                                    const richHtml = buildBlockRichHtml(textSpan, fontFamily, fontWeight, fontStyle, currentFontSizePx, currentLineHeightPx, currentTextColor);
-                                    overlayEditedFields.set(deleteKey, {
-                                        page_number: pageData.page_number,
-                                        block_num: block.block_num,
-                                        original_text: safeBlockText,
-                                        new_text: '',
-                                        rich_html: richHtml,
-                                        original_bbox: [blockLeft, blockTop, blockLeft + blockWidth, blockTop + blockHeight],
-                                        bbox: [blockLeft, blockTop, blockLeft + blockWidth, blockTop + blockHeight],
-                                    font_xref: field.dataset.fontXref ? parseInt(field.dataset.fontXref, 10) : null,
-                                    font: block.font,
-                                    font_size: currentFontSizePdf,
-                                    font_weight: fontWeight,
-                                    font_style: fontStyle,
-                                    line_height: lineHeightValue || null,
-                                    color: field.dataset.textColor || '#000000'
-                                });
+                                try {
+                                    // Save state before deletion
+                                    pushUndoState();
+                                    
+                                    // Mark as edited by storing empty text
+                                    const deleteKey = field.dataset.wordIndex || key;
+                                    if (deleteKey) {
+                                        const currentFontSizePdf = parseFloat(field.dataset.fontSize || block.font_size || 12);
+                                        overlayEditedFields.set(deleteKey, {
+                                            page_number: pageData.page_number,
+                                            block_num: block.block_num,
+                                            original_text: safeBlockText,
+                                            new_text: '',
+                                            rich_html: null,
+                                            original_bbox: [blockLeft, blockTop, blockLeft + blockWidth, blockTop + blockHeight],
+                                            bbox: [blockLeft, blockTop, blockLeft + blockWidth, blockTop + blockHeight],
+                                            font_xref: field.dataset.fontXref ? parseInt(field.dataset.fontXref, 10) : null,
+                                            font: block.font,
+                                            font_size: currentFontSizePdf,
+                                            font_weight: fontWeight,
+                                            font_style: fontStyle,
+                                            line_height: lineHeightValue || null,
+                                            color: field.dataset.textColor || '#000000'
+                                        });
+                                    }
+                                    
+                                    // Remove field from DOM
+                                    field.classList.remove('active');
+                                    if (field.parentNode) {
+                                        field.parentNode.removeChild(field);
+                                    }
+                                    
+                                    // Clear selection and update UI
+                                    clearOverlaySelection();
+                                    updateSelectionBar();
+                                    updateOverlaySaveButton();
+                                    persistOverlayEdits();
+                                    setStatus('Text block deleted', 'ok');
+                                } catch (err) {
+                                    console.error('Delete handler error:', err);
+                                    // Still try to remove the field even if something failed
+                                    if (field.parentNode) field.parentNode.removeChild(field);
+                                    clearOverlaySelection();
+                                    updateSelectionBar();
+                                    setStatus('Delete failed: ' + err.message, 'err');
                                 }
-                                
-                                // Clear selection immediately
-                                selectedOverlayField = null;
-                                console.log(field.parentNode);
-                                // Remove the entire field element (including bounding box) completely
-                                if (field.parentNode) {
-                                    field.parentNode.removeChild(field);
-                                }
-                                
-                                updateOverlaySaveButton();
-                                persistOverlayEdits();
-                                setStatus('Text block deleted', 'ok');
                             });
                             
                             const startDrag = (e) => {
@@ -14734,8 +15607,6 @@
                                 
                                 isDragging = true;
                                 dragStart = { x: e.clientX, y: e.clientY };
-                                field.style.cursor = 'move';
-                                textSpan.style.pointerEvents = 'none'; // Prevent text selection during drag
                                 dragBtn.style.cursor = 'grabbing';
                                 // Hide menu during drag for cleaner UX
                                 boxMenu.style.display = 'none';
@@ -14745,10 +15616,17 @@
                             
                             dragBtn.addEventListener('mousedown', startDrag);
                             
-                            // Allow dragging the box itself (not the text or handles).
+                            // Allow dragging the whole box when in selected (not editing) mode.
                             field.addEventListener('mousedown', (e) => {
                                 if (e.target.closest('.box-menu') || e.target.classList.contains('resize-handle')) {
                                     return;
+                                }
+                                // Only drag if selected but not in text-editing mode.
+                                // Skip on multi-clicks (e.detail >= 2) so double-click word
+                                // selection works — otherwise startDrag's preventDefault()
+                                // kills the browser's native selection.
+                                if (field.classList.contains('active') && !field.classList.contains('editing') && e.detail < 2) {
+                                    startDrag(e);
                                 }
                             });
                             
@@ -14760,9 +15638,19 @@
                                 
                                 const currentLeft = parseFloat(field.style.left);
                                 const currentTop = parseFloat(field.style.top);
+                                const fieldWidth = parseFloat(field.style.width) || field.offsetWidth;
+                                const fieldHeight = parseFloat(field.style.height) || field.offsetHeight;
+                                const maxW = parseFloat(field.dataset.canvasWidth || '0') || (field.parentElement ? field.parentElement.clientWidth : Infinity);
+                                const maxH = parseFloat(field.dataset.canvasHeight || '0') || (field.parentElement ? field.parentElement.clientHeight : Infinity);
                                 
-                                field.style.left = (currentLeft + dx) + 'px';
-                                field.style.top = (currentTop + dy) + 'px';
+                                let newLeft = currentLeft + dx;
+                                let newTop = currentTop + dy;
+                                // Clamp to page boundaries
+                                newLeft = Math.max(0, Math.min(newLeft, maxW - fieldWidth));
+                                newTop = Math.max(0, Math.min(newTop, maxH - fieldHeight));
+                                
+                                field.style.left = newLeft + 'px';
+                                field.style.top = newTop + 'px';
                                 
                                 dragStart = { x: e.clientX, y: e.clientY };
                             };
@@ -14770,18 +15658,28 @@
                             const upHandler = function() {
                                 if (isDragging) {
                                     isDragging = false;
-                                    field.style.cursor = 'move';
                                     dragBtn.style.cursor = 'grab';
                                     boxMenu.style.display = '';
-                                    textSpan.style.pointerEvents = 'auto'; // Re-enable text interaction
                                     
                                     // Save the new position
                                     // Account for CSS padding: field position includes padding offset
                                     const pad = parseFloat(field.dataset.padding) || 0;
-                                    const newLeft = (parseFloat(field.style.left) / scaleX) + pad;
-                                    const newTop = (parseFloat(field.style.top) / scaleY) + pad;
-                                    const width = (parseFloat(field.style.width) / scaleX) - (pad * 2);
-                                    const height = (parseFloat(field.style.height) / scaleY) - (pad * 2);
+                                    let newLeft = (parseFloat(field.style.left) / scaleX) + pad;
+                                    let newTop = (parseFloat(field.style.top) / scaleY) + pad;
+                                    let width = (parseFloat(field.style.width) / scaleX) - (pad * 2);
+                                    let height = (parseFloat(field.style.height) / scaleY) - (pad * 2);
+                                    
+                                    // Clamp bbox to PDF page boundaries — text must NEVER go off-page
+                                    const pdfPageW = parseFloat(field.dataset.pageWidth || '0');
+                                    const pdfPageH = parseFloat(field.dataset.pageHeight || '0');
+                                    if (pdfPageW > 0 && pdfPageH > 0) {
+                                        if (newLeft < 0) { width += newLeft; newLeft = 0; }
+                                        if (newTop < 0) { height += newTop; newTop = 0; }
+                                        if (newLeft + width > pdfPageW) width = pdfPageW - newLeft;
+                                        if (newTop + height > pdfPageH) height = pdfPageH - newTop;
+                                        if (width < 1) width = 1;
+                                        if (height < 1) height = 1;
+                                    }
                                     
                                     // Calculate NEW origin based on the NEW position (not original!)
                                     // origin_x is the left edge, origin_y is the bottom edge (baseline area)
@@ -14798,7 +15696,7 @@
                                         // Words are still in positioned spans — text is unedited
                                         currentText = blockText;
                                     } else {
-                                        currentText = textSpan.innerText;
+                                        currentText = getOverlayExplicitText(textSpan);
                                         const originalClean = blockText.replace(/\s+/g, '');
                                         const currentClean = currentText.replace(/\s+/g, '');
                                         if (originalClean === currentClean) {
@@ -14812,12 +15710,35 @@
                                     const currentTextColor = field.dataset.textColor || computedStyle.color || '#000000';
                                     const richHtml = buildBlockRichHtml(textSpan, fontFamily, fontWeight, fontStyle, currentFontSizePx, currentLineHeightPx, currentTextColor);
                                     
+                                    // Build per-word style data for preserving formatting on save
+                                    // (same as the text input handler — ensures Python uses the reliable word_styles path)
+                                    const moveWordStylesArr = (field._blockWords || []).map(w => ({
+                                        text: w.text,
+                                        font: w.font,
+                                        font_xref: w.font_xref || null,
+                                        font_size: w.font_size,
+                                        font_weight: w.font_weight || 400,
+                                        italic: !!w.italic,
+                                        bold: !!w.bold,
+                                        color: w.color,
+                                        hex_color: w.hex_color || '#000000',
+                                        left: w.left,
+                                        top: w.top,
+                                        width: w.width,
+                                        height: w.height,
+                                        origin_x: w.origin_x,
+                                        origin_y: w.origin_y,
+                                        ascender: w.ascender,
+                                        descender: w.descender
+                                    }));
+
                                     overlayEditedFields.set(key, {
                                         page_number: pageData.page_number,
                                         block_num: block.block_num,
                                         original_text: safeBlockText,          // ORIGINAL PDF TEXT
                                         new_text: currentText,                 // TEXT WITH PRESERVED NEWLINES
                                         rich_html: richHtml,
+                                        word_styles: moveWordStylesArr.length > 0 ? moveWordStylesArr : null,  // PER-WORD FORMATTING
                                         bbox: [newLeft, newTop, newLeft + width, newTop + height],
                                         original_bbox: [blockLeft, blockTop, blockLeft + blockWidth, blockTop + blockHeight],
                                         origin_x: newOriginX,                  // NEW POSITION X
@@ -14880,11 +15801,25 @@
                                 const hasPositionedSpans = textSpan.querySelector('span') &&
                                     Array.from(textSpan.querySelectorAll('span')).some(s => s.style.position === 'absolute');
                                 if (!hasPositionedSpans) return;
-                                // Collect individual word-span texts and join with spaces.
-                                // textContent alone concatenates without spaces since the
-                                // gaps between words were purely positional (CSS left/top).
+                                // Group word spans by line (using top position) to preserve line breaks
                                 const spans = Array.from(textSpan.querySelectorAll('span'));
-                                const plainText = spans.map(s => s.textContent).join(' ');
+                                const lineMap = new Map();
+                                spans.forEach(s => {
+                                    if (!s.textContent.trim() && s.textContent === ' ') return;
+                                    const top = Math.round(parseFloat(s.style.top) || 0);
+                                    if (!lineMap.has(top)) lineMap.set(top, []);
+                                    lineMap.get(top).push(s);
+                                });
+                                const sortedTops = Array.from(lineMap.keys()).sort((a, b) => a - b);
+                                const lines = sortedTops.map(top => {
+                                    const lineSpans = lineMap.get(top).sort((a, b) =>
+                                        (parseFloat(a.style.left) || 0) - (parseFloat(b.style.left) || 0)
+                                    );
+                                    return lineSpans.map(s => s.textContent).join(' ');
+                                });
+                                // Keep text reflowable when resizing: don't persist wrapped
+                                // visual lines as hard newlines.
+                                const plainText = lines.join(' ').replace(/\s+/g, ' ').trim();
                                 textSpan.textContent = plainText;
                                 textSpan.style.whiteSpace = 'pre-wrap';
                                 textSpan.style.wordBreak = 'break-word';
@@ -14968,10 +15903,22 @@
                                 // Save the new dimensions
                                 // Account for CSS padding: field position includes padding offset
                                 const pad = parseFloat(field.dataset.padding) || 0;
-                                const newLeft = (parseFloat(field.style.left) / scaleX) + pad;
-                                const newTop = (parseFloat(field.style.top) / scaleY) + pad;
-                                const newWidth = (parseFloat(field.style.width) / scaleX) - (pad * 2);
-                                const newHeight = (parseFloat(field.style.height) / scaleY) - (pad * 2);
+                                let newLeft = (parseFloat(field.style.left) / scaleX) + pad;
+                                let newTop = (parseFloat(field.style.top) / scaleY) + pad;
+                                let newWidth = (parseFloat(field.style.width) / scaleX) - (pad * 2);
+                                let newHeight = (parseFloat(field.style.height) / scaleY) - (pad * 2);
+                                
+                                // Clamp bbox to PDF page boundaries — text must NEVER go off-page
+                                const rsPageW = parseFloat(field.dataset.pageWidth || '0');
+                                const rsPageH = parseFloat(field.dataset.pageHeight || '0');
+                                if (rsPageW > 0 && rsPageH > 0) {
+                                    if (newLeft < 0) { newWidth += newLeft; newLeft = 0; }
+                                    if (newTop < 0) { newHeight += newTop; newTop = 0; }
+                                    if (newLeft + newWidth > rsPageW) newWidth = rsPageW - newLeft;
+                                    if (newTop + newHeight > rsPageH) newHeight = rsPageH - newTop;
+                                    if (newWidth < 1) newWidth = 1;
+                                    if (newHeight < 1) newHeight = 1;
+                                }
                                 
                                 // Use CURRENT position for origin (where text should be inserted)
                                 const newOriginX = newLeft;
@@ -14987,7 +15934,7 @@
                                 if (hasPositionedSpans2) {
                                     currentText = blockText;
                                 } else {
-                                    currentText = textSpan.innerText;
+                                    currentText = getOverlayExplicitText(textSpan);
                                     const originalClean = blockText.replace(/\s+/g, '');
                                     const currentClean = currentText.replace(/\s+/g, '');
                                     if (originalClean === currentClean) {
@@ -15071,8 +16018,8 @@
                     field.style.alignItems = 'center';
                     
                     const textSpan = document.createElement('span');
-                    textSpan.contentEditable = true;
-                    textSpan.textContent = storedEdit && storedEdit.new_text != null ? storedEdit.new_text : word.text;
+                    textSpan.contentEditable = false;
+                    textSpan.textContent = sanitizeOverlayText(storedEdit && storedEdit.new_text != null ? storedEdit.new_text : word.text);
                     
                     // Use the color from the PDF extraction (convert from integer to hex)
                     let textColor = '#000000';
@@ -15095,7 +16042,7 @@
                     textSpan.style.outline = 'none';
                     textSpan.style.width = '100%';
                     textSpan.style.cursor = 'text';
-                    textSpan.style.whiteSpace = 'nowrap';
+                    textSpan.style.whiteSpace = 'pre-wrap';
                     textSpan.style.padding = '0';
                     textSpan.style.margin = '0';
                     textSpan.style.verticalAlign = 'baseline';
@@ -15217,6 +16164,14 @@
                     field.dataset.pageHeight = pageData.height;
                     field.dataset.padding = padding;
                     
+                    // Allow Enter key to insert line breaks
+                    textSpan.addEventListener('keydown', function(e) {
+                        if (e.key === 'Enter') {
+                            e.preventDefault();
+                            document.execCommand('insertLineBreak');
+                        }
+                    });
+                    
                     // Track changes and auto-expand width as user types
                     textSpan.addEventListener('input', () => {
                         // Auto-expand field width to fit text content
@@ -15279,9 +16234,19 @@
                             
                             const currentLeft = parseFloat(field.style.left);
                             const currentTop = parseFloat(field.style.top);
+                            const fieldWidth = parseFloat(field.style.width) || field.offsetWidth;
+                            const fieldHeight = parseFloat(field.style.height) || field.offsetHeight;
+                            const maxW = parseFloat(field.dataset.canvasWidth || '0') || (field.parentElement ? field.parentElement.clientWidth : Infinity);
+                            const maxH = parseFloat(field.dataset.canvasHeight || '0') || (field.parentElement ? field.parentElement.clientHeight : Infinity);
                             
-                            field.style.left = (currentLeft + dx) + 'px';
-                            field.style.top = (currentTop + dy) + 'px';
+                            let newLeft = currentLeft + dx;
+                            let newTop = currentTop + dy;
+                            // Clamp to page boundaries
+                            newLeft = Math.max(0, Math.min(newLeft, maxW - fieldWidth));
+                            newTop = Math.max(0, Math.min(newTop, maxH - fieldHeight));
+                            
+                            field.style.left = newLeft + 'px';
+                            field.style.top = newTop + 'px';
                             
                             dragStart = { x: e.clientX, y: e.clientY };
                         };
@@ -15337,8 +16302,19 @@
                         const dy = e.clientY - dragStart.y;
                         const currentLeft = parseFloat(field.style.left);
                         const currentTop = parseFloat(field.style.top);
-                        field.style.left = (currentLeft + dx) + 'px';
-                        field.style.top = (currentTop + dy) + 'px';
+                        const fieldWidth = parseFloat(field.style.width) || field.offsetWidth;
+                        const fieldHeight = parseFloat(field.style.height) || field.offsetHeight;
+                        const maxW = parseFloat(field.dataset.canvasWidth || '0') || (field.parentElement ? field.parentElement.clientWidth : Infinity);
+                        const maxH = parseFloat(field.dataset.canvasHeight || '0') || (field.parentElement ? field.parentElement.clientHeight : Infinity);
+                        
+                        let newLeft = currentLeft + dx;
+                        let newTop = currentTop + dy;
+                        // Clamp to page boundaries
+                        newLeft = Math.max(0, Math.min(newLeft, maxW - fieldWidth));
+                        newTop = Math.max(0, Math.min(newTop, maxH - fieldHeight));
+                        
+                        field.style.left = newLeft + 'px';
+                        field.style.top = newTop + 'px';
                         dragStart = { x: e.clientX, y: e.clientY };
                     });
 
@@ -15480,7 +16456,8 @@
                     
                     const textSpan = overlayResizingField.querySelector('[contenteditable]');
                     if (textSpan) {
-                        textSpan.contentEditable = true;
+                        // Only re-enable editing if field was in editing mode before resize
+                        textSpan.contentEditable = overlayResizingField.classList.contains('editing');
                     }
                     const pageNumber = parseInt(overlayResizingField.dataset.pageNumber, 10);
                     const index = parseInt(overlayResizingField.dataset.wordIndex, 10);
@@ -15525,10 +16502,20 @@
                 // Account for CSS padding: field position includes padding offset,
                 // and dimensions include 2*padding. Subtract padding to get content bbox.
                 const padPx = padding;  // padding is in pixels for word-level fields
-                const pdfLeft = (currentLeft + padPx) / scaleX;
-                const pdfTop = (currentTop + padPx) / scaleY;
-                const pdfWidth = (currentWidth - padPx * 2) / scaleX;
-                const pdfHeight = (currentHeight - padPx * 2) / scaleY;
+                let pdfLeft = (currentLeft + padPx) / scaleX;
+                let pdfTop = (currentTop + padPx) / scaleY;
+                let pdfWidth = (currentWidth - padPx * 2) / scaleX;
+                let pdfHeight = (currentHeight - padPx * 2) / scaleY;
+
+                // Clamp bbox to PDF page boundaries — text must NEVER go off-page
+                if (pageWidth > 0 && pageHeight > 0) {
+                    if (pdfLeft < 0) { pdfWidth += pdfLeft; pdfLeft = 0; }
+                    if (pdfTop < 0) { pdfHeight += pdfTop; pdfTop = 0; }
+                    if (pdfLeft + pdfWidth > pageWidth) pdfWidth = pageWidth - pdfLeft;
+                    if (pdfTop + pdfHeight > pageHeight) pdfHeight = pageHeight - pdfTop;
+                    if (pdfWidth < 1) pdfWidth = 1;
+                    if (pdfHeight < 1) pdfHeight = 1;
+                }
                 
                 // Calculate baseline origin for text insertion
                 const originDx = originalWord.origin_x - originalWord.left;
@@ -15540,11 +16527,29 @@
                 const hasPositionChanged = Math.abs(pdfLeft - originalWord.left) > 1 || Math.abs(pdfTop - originalWord.top) > 1;
                 const hasSizeChanged = Math.abs(pdfWidth - originalWord.width) > 1 || Math.abs(pdfHeight - originalWord.height) > 1;
 
-                if (hasTextChanged || hasPositionChanged || hasSizeChanged) {
+                // Detect style changes (font weight, font style, color, font size)
+                const currentFontWeight = field.dataset.fontWeight || '400';
+                const originalFontWeight = field.dataset.originalFontWeight || '400';
+                const currentFontStyle = field.dataset.fontStyle || 'normal';
+                const originalFontStyle = field.dataset.originalFontStyle || 'normal';
+                const currentColor = field.dataset.textColor || '#000000';
+                const originalColor = field.dataset.originalTextColor || '#000000';
+                const currentFontSizePdf = parseFloat(field.dataset.fontSize || String(originalWord.font_size || 12));
+                const originalFontSize = originalWord.font_size || 12;
+                // Check if the text element's innerHTML contains styled <span> elements (per-word styling)
+                const textEl = getOverlayTextElement(field);
+                const hasRichStyling = textEl && textEl.querySelector('span[style]') !== null;
+
+                const hasStyleChanged = currentFontWeight !== originalFontWeight
+                    || currentFontStyle !== originalFontStyle
+                    || currentColor !== originalColor
+                    || Math.abs(currentFontSizePdf - originalFontSize) > 0.5
+                    || hasRichStyling;
+
+                if (hasTextChanged || hasPositionChanged || hasSizeChanged || hasStyleChanged) {
                     const colorValue = field.dataset.textColor || '#000000';
                     const colorHex = colorValue.startsWith('#') ? colorValue : '#' + colorValue;
                     
-                    const currentFontSizePdf = parseFloat(field.dataset.fontSize || String(originalWord.font_size || 12));
                     const editData = {
                         page_index: pageData.page_number - 1, // 0-based for Python
                         page_number: pageData.page_number,    // 1-based for display
@@ -15581,6 +16586,8 @@
                         font_xref: field.dataset.fontXref ? parseInt(field.dataset.fontXref, 10) : null,
                         font: originalWord.font,
                         font_size: currentFontSizePdf,
+                        font_weight: currentFontWeight,
+                        font_style: currentFontStyle,
                         color: colorHex,
                         
                         // Page dimensions
@@ -15597,14 +16604,17 @@
             }
             
             function updateOverlaySaveButton() {
-                if (!saveOverlayBtn) {
-                    return;
-                }
-                saveOverlayBtn.disabled = overlayEditedFields.size === 0;
+                // Unified save button — update label to indicate pending overlay changes
+                const unifiedBtn = document.getElementById('save-btn');
+                if (!unifiedBtn) return;
+                const desktopSpan = unifiedBtn.querySelector('span.hidden.sm\\:inline');
+                const mobileSpan = unifiedBtn.querySelector('span.sm\\:hidden');
                 if (overlayEditedFields.size > 0) {
-                    saveOverlayBtn.textContent = `Save ${overlayEditedFields.size} Change${overlayEditedFields.size > 1 ? 's' : ''}`;
+                    if (desktopSpan) desktopSpan.textContent = `Save PDF (${overlayEditedFields.size})`;
+                    if (mobileSpan) mobileSpan.textContent = `Save (${overlayEditedFields.size})`;
                 } else {
-                    saveOverlayBtn.textContent = 'Save Changes';
+                    if (desktopSpan) desktopSpan.textContent = 'Save PDF';
+                    if (mobileSpan) mobileSpan.textContent = 'Save';
                 }
             }
 
