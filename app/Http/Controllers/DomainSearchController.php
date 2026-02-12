@@ -66,7 +66,7 @@ class DomainSearchController extends Controller
             $names = $this->generateNamesFromDatabase($seed, $count);
         } else {
             // Fallback to Python script
-            $scriptPath = base_path('python/generate_domain_names.py');
+            $scriptPath = base_path('python/domain-search/generate_domain_names.py');
             $result = Process::timeout(10)->run([
                 'python3', $scriptPath, $seed, '-n', (string) $count, '--json',
             ]);
@@ -134,7 +134,7 @@ class DomainSearchController extends Controller
         $tlds = $request->input('tlds', ['com', 'ai']);
 
         // Step 1: Generate names
-        $genScript = base_path('python/generate_domain_names.py');
+        $genScript = base_path('python/domain-search/generate_domain_names.py');
         $genResult = Process::timeout(10)->run([
             'python3', $genScript, $seed, '-n', (string) $count, '--json',
         ]);
@@ -158,7 +158,7 @@ class DomainSearchController extends Controller
         }
 
         // Step 2: Check availability
-        $checkScript = base_path('python/check_domain_availability.py');
+        $checkScript = base_path('python/domain-search/check_domain_availability.py');
         $args = ['python3', $checkScript, '-t', ...$tlds, '--', ...$names];
 
         // Longer timeout since we're checking many domains
@@ -209,7 +209,7 @@ class DomainSearchController extends Controller
 
         // Only check uncached domains
         if (!empty($uncachedDomains)) {
-            $scriptPath = base_path('python/check_domain_availability.py');
+            $scriptPath = base_path('python/domain-search/check_domain_availability.py');
 
             // Extract base names and TLDs for the script
             $uncachedNames = array_unique(array_map(function ($d) {
@@ -301,7 +301,7 @@ class DomainSearchController extends Controller
         $errorFile  = "{$dir}/{$jobId}.err";
         $pidFile    = "{$dir}/{$jobId}.pid";
 
-        $scriptPath = base_path('python/check_domain_availability.py');
+        $scriptPath = base_path('python/domain-search/check_domain_availability.py');
         $args = array_merge(
             ['python3', $scriptPath, '--jsonl', '-t'],
             $tlds,
