@@ -672,7 +672,7 @@ PROMPT;
             file_put_contents($jsonTempFile, json_encode($images));
             
             // Call Python script - pass the JSON file path instead of the JSON string
-            $pythonScript = base_path('python/add_ai_pages_to_pdf.py');
+            $pythonScript = base_path('python/pdf-editor/add_ai_pages_to_pdf.py');
             
             $command = sprintf(
                 '/usr/bin/python3 %s %s %s %s 2>&1',
