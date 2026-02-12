@@ -14,7 +14,7 @@ class ComplianceController extends Controller
     public function getTestFiles(Request $request)
     {
         $level = $request->input('level', '1b');
-        $pythonScript = base_path('python/run_compliance_tests.py');
+        $pythonScript = base_path('python/test_helpers/run_compliance_tests.py');
         $testDir = base_path('tests/Compliance/PDFA-1b');
 
         if (!is_dir($testDir)) {
@@ -61,7 +61,7 @@ class ComplianceController extends Controller
         $filePath = $request->input('file_path');
         $runId = $request->input('run_id');
         $level = $request->input('level', '1b');
-        $pythonScript = base_path('python/run_compliance_tests.py');
+        $pythonScript = base_path('python/test_helpers/run_compliance_tests.py');
 
         if (!file_exists($filePath)) {
             return response()->json(['success' => false, 'message' => 'Test file not found'], 404);
@@ -117,7 +117,7 @@ class ComplianceController extends Controller
     {
         $level = $request->input('level', '1b');
         $runId = Str::uuid()->toString();
-        $pythonScript = base_path('python/run_compliance_tests.py');
+        $pythonScript = base_path('python/test_helpers/run_compliance_tests.py');
         $testDir = base_path('tests/Compliance/PDFA-1b');
 
         if (!is_dir($testDir)) {
