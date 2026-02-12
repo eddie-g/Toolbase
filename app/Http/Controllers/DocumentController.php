@@ -53,7 +53,7 @@ class DocumentController extends Controller
 
         // Auto-download fonts for this PDF in background
         $fullPath = Storage::path($storedPath);
-        $fontScript = base_path('python/auto_download_fonts.py');
+        $fontScript = base_path('python/pdf-editor/auto_download_fonts.py');
         $fontCommand = sprintf(
             'python3 %s %s > /dev/null 2>&1 &',
             escapeshellarg($fontScript),
@@ -86,7 +86,7 @@ class DocumentController extends Controller
         // Ensure directory exists
         Storage::makeDirectory('documents');
 
-        $script = base_path('python/generate_invoice_template.py');
+        $script = base_path('python/pdf-editor/generate_invoice_template.py');
         $command = sprintf(
             'python3 %s %s %s 2>&1',
             escapeshellarg($script),
@@ -117,7 +117,7 @@ class DocumentController extends Controller
         ]);
 
         // Auto-download fonts
-        $fontScript = base_path('python/auto_download_fonts.py');
+        $fontScript = base_path('python/pdf-editor/auto_download_fonts.py');
         $fontCommand = sprintf(
             'python3 %s %s > /dev/null 2>&1 &',
             escapeshellarg($fontScript),
@@ -180,7 +180,7 @@ class DocumentController extends Controller
         $tmpPayload = tempnam(sys_get_temp_dir(), 'inv_');
         file_put_contents($tmpPayload, $payload);
 
-        $script = base_path('python/generate_simple_invoice.py');
+        $script = base_path('python/pdf-editor/generate_simple_invoice.py');
         $command = sprintf(
             'python3 %s %s < %s 2>&1',
             escapeshellarg($script),
@@ -215,7 +215,7 @@ class DocumentController extends Controller
         ]);
 
         // Auto-download fonts
-        $fontScript = base_path('python/auto_download_fonts.py');
+        $fontScript = base_path('python/pdf-editor/auto_download_fonts.py');
         $fontCommand = sprintf(
             'python3 %s %s > /dev/null 2>&1 &',
             escapeshellarg($fontScript),
@@ -278,7 +278,7 @@ class DocumentController extends Controller
         $tmpPayload = tempnam(sys_get_temp_dir(), 'tpl_');
         file_put_contents($tmpPayload, json_encode($payload, JSON_UNESCAPED_UNICODE));
 
-        $script = base_path('python/generate_template.py');
+        $script = base_path('python/pdf-editor/generate_template.py');
         $command = sprintf(
             'python3 %s %s < %s 2>&1',
             escapeshellarg($script),
@@ -315,7 +315,7 @@ class DocumentController extends Controller
         ]);
 
         // Auto-download fonts
-        $fontScript = base_path('python/auto_download_fonts.py');
+        $fontScript = base_path('python/pdf-editor/auto_download_fonts.py');
         $fontCommand = sprintf(
             'python3 %s %s > /dev/null 2>&1 &',
             escapeshellarg($fontScript),
@@ -360,7 +360,7 @@ class DocumentController extends Controller
         $tmpPayload = tempnam(sys_get_temp_dir(), 'inv_');
         file_put_contents($tmpPayload, $payload);
 
-        $script = base_path('python/generate_simple_invoice.py');
+        $script = base_path('python/pdf-editor/generate_simple_invoice.py');
         $command = sprintf(
             'python3 %s %s < %s 2>&1',
             escapeshellarg($script),
@@ -386,7 +386,7 @@ class DocumentController extends Controller
         ]);
 
         // Auto-download fonts
-        $fontScript = base_path('python/auto_download_fonts.py');
+        $fontScript = base_path('python/pdf-editor/auto_download_fonts.py');
         $fontCommand = sprintf(
             'python3 %s %s > /dev/null 2>&1 &',
             escapeshellarg($fontScript),
@@ -417,7 +417,7 @@ class DocumentController extends Controller
         $tmpPayload = tempnam(sys_get_temp_dir(), 'tpl_');
         file_put_contents($tmpPayload, $payload);
 
-        $script = base_path('python/generate_template.py');
+        $script = base_path('python/pdf-editor/generate_template.py');
         $command = sprintf(
             'python3 %s %s < %s 2>&1',
             escapeshellarg($script),
@@ -445,7 +445,7 @@ class DocumentController extends Controller
         ]);
 
         // Auto-download fonts
-        $fontScript = base_path('python/auto_download_fonts.py');
+        $fontScript = base_path('python/pdf-editor/auto_download_fonts.py');
         $fontCommand = sprintf(
             'python3 %s %s > /dev/null 2>&1 &',
             escapeshellarg($fontScript),
@@ -496,7 +496,7 @@ class DocumentController extends Controller
         $tmpPayload = tempnam(sys_get_temp_dir(), 'html_');
         file_put_contents($tmpPayload, $payload);
 
-        $script = base_path('python/html_to_pdf.py');
+        $script = base_path('python/pdf-editor/html_to_pdf.py');
         $command = sprintf(
             'python3 %s %s < %s 2>&1',
             escapeshellarg($script),
@@ -528,7 +528,7 @@ class DocumentController extends Controller
     {
         // Run OCR extraction in background
         $fullPath = Storage::path($document->path);
-        $pythonScript = base_path('python/extract_pdf_text.py');
+        $pythonScript = base_path('python/pdf-editor/extract_pdf_text.py');
         $documentId = $document->id;
         
         // Execute Python script in background (non-blocking)
@@ -551,7 +551,7 @@ class DocumentController extends Controller
     {
         // Run PyMuPDF extraction in background
         $fullPath = Storage::path($document->path);
-        $pythonScript = base_path('python/extract_pdf_pymupdf.py');
+        $pythonScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
         $documentId = $document->id;
         $userEmail = auth()->user()->email ?? 'guest';
         $sessionId = session()->getId();
@@ -771,7 +771,7 @@ class DocumentController extends Controller
         $tempPath = $file->getPathname();
         $outputPath = tempnam(sys_get_temp_dir(), 'flattened_') . '.pdf';
         
-        $pythonScript = base_path('python/flatten_pdf_rotations.py');
+        $pythonScript = base_path('python/pdf-editor/flatten_pdf_rotations.py');
         
         $command = sprintf(
             'python3 %s %s %s 2>&1',
@@ -816,7 +816,7 @@ class DocumentController extends Controller
             return response()->json(['error' => 'Invalid rotation data'], 400);
         }
         
-        $pythonScript = base_path('python/rotate_pdf_page.py');
+        $pythonScript = base_path('python/pdf-editor/rotate_pdf_page.py');
         
         // Apply rotations one by one
         foreach ($rotations as $pageIndex => $rotation) {
@@ -1020,7 +1020,7 @@ class DocumentController extends Controller
         if (!$extraction) {
             // Run extraction automatically
             $fullPath = Storage::path($document->path);
-            $pythonScript = base_path('python/extract_pdf_pymupdf.py');
+            $pythonScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
             $documentId = $document->id;
             $userEmail = auth()->user()->email ?? 'guest';
             $sessionId = session()->getId();
@@ -1060,7 +1060,7 @@ class DocumentController extends Controller
                     'extraction_time' => $extraction->created_at
                 ]);
                 
-                $pythonScript = base_path('python/extract_pdf_pymupdf.py');
+                $pythonScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
                 $documentId = $document->id;
                 $userEmail = auth()->user()->email ?? 'guest';
                 $sessionId = session()->getId();
@@ -1099,7 +1099,7 @@ class DocumentController extends Controller
             }
             if (!$hasFontXref) {
                 $fullPath = Storage::path($document->path);
-                $pythonScript = base_path('python/extract_pdf_pymupdf.py');
+                $pythonScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
                 $documentId = $document->id;
                 $userEmail = auth()->user()->email ?? 'guest';
                 $sessionId = session()->getId();
@@ -1140,7 +1140,7 @@ class DocumentController extends Controller
         // Save extraction data to temp file
         file_put_contents($extractionFile, $extraction->extraction_data);
         
-        $pythonScript = base_path('python/create_clean_pdf.py');
+        $pythonScript = base_path('python/pdf-editor/create_clean_pdf.py');
         $command = sprintf(
             'python3 %s %s %s %s 2>&1',
             escapeshellarg($pythonScript),
@@ -1311,7 +1311,7 @@ class DocumentController extends Controller
             ]);
         }
         
-        $pythonScript = base_path('python/apply_pdf_edits_simple.py');
+        $pythonScript = base_path('python/pdf-editor/apply_pdf_edits_simple.py');
         
         // Log the command for debugging
         \Log::info('Applying PDF edits', [
@@ -1344,7 +1344,7 @@ class DocumentController extends Controller
             // Refresh extraction data so overlay editor reflects latest text positions
             // Skip refresh if requested (e.g., during page reordering)
             if (!($validated['skip_refresh'] ?? false)) {
-                $extractScript = base_path('python/extract_pdf_pymupdf.py');
+                $extractScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
                 $userEmail = auth()->user()->email ?? 'guest';
                 $sessionId = session()->getId();
                 $refreshCommand = sprintf(
@@ -1381,7 +1381,7 @@ class DocumentController extends Controller
                     
                     file_put_contents($extractionFile, $extractionData);
                     
-                    $pythonScript = base_path('python/create_clean_pdf.py');
+                    $pythonScript = base_path('python/pdf-editor/create_clean_pdf.py');
                     $cleanCommand = sprintf(
                         'python3 %s %s %s %s 2>&1',
                         escapeshellarg($pythonScript),
@@ -1459,7 +1459,7 @@ class DocumentController extends Controller
         }
         
         // Run Python script to extract fonts
-        $pythonScript = base_path('python/extract_pdf_fonts.py');
+        $pythonScript = base_path('python/pdf-editor/extract_pdf_fonts.py');
         $command = sprintf(
             'python3 %s %s 2>&1',
             escapeshellarg($pythonScript),
@@ -1501,7 +1501,7 @@ class DocumentController extends Controller
         }
 
         // Run install_fonts.py script with output CSS path
-        $pythonScript = base_path('python/install_fonts.py');
+        $pythonScript = base_path('python/pdf-editor/install_fonts.py');
         $command = sprintf(
             'python3 %s %s %s 2>&1',
             escapeshellarg($pythonScript),
@@ -1567,7 +1567,7 @@ class DocumentController extends Controller
         $tempOutputPath = Storage::path('documents/temp_reorder_' . Str::uuid() . '.pdf');
         
         // Call Python script to reorder pages
-        $pythonScript = base_path('python/reorder_pdf_pages.py');
+        $pythonScript = base_path('python/pdf-editor/reorder_pdf_pages.py');
         $pageOrderStr = implode(',', $pageOrder);
         
         $command = sprintf(
@@ -1662,7 +1662,7 @@ class DocumentController extends Controller
                 'new_page_count' => count($pageOrder)
             ]);
             
-            $pythonScript = base_path('python/extract_pdf_pymupdf.py');
+            $pythonScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
             $userEmail = auth()->user()->email ?? 'guest';
             $currentSessionId = session()->getId();
             
@@ -1716,7 +1716,7 @@ class DocumentController extends Controller
         $inputPath = Storage::path($document->path);
         $tempOutputPath = Storage::path('documents/temp_add_page_' . Str::uuid() . '.pdf');
 
-        $pythonScript = base_path('python/add_blank_page.py');
+        $pythonScript = base_path('python/pdf-editor/add_blank_page.py');
 
         $command = sprintf(
             'python3 %s %s %s %s %s 2>&1',
@@ -1779,7 +1779,7 @@ class DocumentController extends Controller
             unlink($tempOutputPath);
             
             // Re-extract the PDF to update extraction data after adding page
-            $pythonScript = base_path('python/extract_pdf_pymupdf.py');
+            $pythonScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
             $userEmail = auth()->user()->email ?? 'guest';
             $currentSessionId = session()->getId();
             
@@ -1845,7 +1845,7 @@ class DocumentController extends Controller
         $inputPath = Storage::path($document->path);
         $tempOutputPath = Storage::path('documents/temp_rotate_page_' . Str::uuid() . '.pdf');
 
-        $pythonScript = base_path('python/rotate_pdf_page.py');
+        $pythonScript = base_path('python/pdf-editor/rotate_pdf_page.py');
 
         $command = sprintf(
             'python3 %s %s %s %s %s 2>&1',
@@ -1893,7 +1893,7 @@ class DocumentController extends Controller
             unlink($tempOutputPath);
             
             // Re-extract the PDF to update extraction data after rotation
-            $pythonScript = base_path('python/extract_pdf_pymupdf.py');
+            $pythonScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
             $userEmail = auth()->user()->email ?? 'guest';
             $currentSessionId = session()->getId();
             
@@ -1959,7 +1959,7 @@ class DocumentController extends Controller
         
         // Path to Python script and venv
         $pythonVenv = base_path('python/venv/bin/python');
-        $pythonScript = base_path('python/screenshot_document.py');
+        $pythonScript = base_path('python/test_helpers/screenshot_document.py');
         $playwrightPath = base_path('python/.playwright');
         
         // Build command with PLAYWRIGHT_BROWSERS_PATH set
@@ -2195,7 +2195,7 @@ class DocumentController extends Controller
 
         $inputPath = Storage::path($document->path);
         $tempOutputPath = Storage::path('documents/temp_pdfa_' . Str::uuid() . '.pdf');
-        $pythonScript = base_path('python/convert_to_pdfa.py');
+        $pythonScript = base_path('python/pdf-editor/convert_to_pdfa.py');
 
         // Build command
         $command = sprintf(
@@ -2381,7 +2381,7 @@ class DocumentController extends Controller
 
         $inputPath = Storage::path($document->path);
         $tempOutputPath = Storage::path('documents/temp_word_' . Str::uuid() . '.docx');
-        $pythonScript = base_path('python/convert_to_word.py');
+        $pythonScript = base_path('python/pdf-editor/convert_to_word.py');
 
         $command = sprintf(
             'python3 %s %s %s --layout %s %s %s --json 2>&1',
@@ -2488,7 +2488,7 @@ class DocumentController extends Controller
 
         $inputPath = Storage::path($document->path);
         $tempOutputPath = Storage::path('documents/temp_excel_' . Str::uuid() . '.xlsx');
-        $pythonScript = base_path('python/convert_to_excel.py');
+        $pythonScript = base_path('python/pdf-editor/convert_to_excel.py');
 
         $command = sprintf(
             'python3 %s %s %s --mode %s %s %s --json 2>&1',

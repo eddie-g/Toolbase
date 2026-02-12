@@ -113,7 +113,7 @@ def run_extraction(pdf_path):
     """
     import subprocess
 
-    extract_script = os.path.join(SCRIPT_DIR, "extract_pdf_pymupdf.py")
+    extract_script = os.path.join(os.path.dirname(SCRIPT_DIR), "pdf-editor", "extract_pdf_pymupdf.py")
 
     # The extraction script normally writes to a database.
     # We need to run it in a way that captures the output.
