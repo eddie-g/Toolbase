@@ -15,7 +15,7 @@ use Illuminate\Validation\Rule;
 class DomainSearchController extends Controller
 {
     private const DEFAULT_TLDS = ['com', 'ai', 'net', 'org'];
-    private const GENERATE_CATEGORIES = ['space', 'tech', 'fantasy', 'scifi', 'romance'];
+    private const GENERATE_CATEGORIES = ['space', 'tech', 'fantasy', 'scifi', 'romance', 'mystery', 'thriller', 'horror', 'adventure', 'historical', 'drama', 'action'];
     private const CATEGORY_RESULT_LIMIT = 10;
 
     public function index()
@@ -680,13 +680,15 @@ Example response format:
 
     private function generateCategoryDomains(string $prefix, string $suffix, string $category): array
     {
+        $column = 'category_' . $category;
+
         $rows = DB::table('dictionary')
-            ->select('word', $category, 'length')
+            ->select('word', $column, 'length')
             ->whereNotNull('word')
             ->where('length', '>=', 3)
             ->where('length', '<=', 12)
-            ->where($category, '>', 0)
-            ->orderByDesc($category)
+            ->where($column, '>', 0)
+            ->orderByDesc($column)
             ->limit(250)
             ->get();
 

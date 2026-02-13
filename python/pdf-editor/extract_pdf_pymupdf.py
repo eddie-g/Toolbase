@@ -446,7 +446,13 @@ def _merge_adjacent_page_blocks(page_blocks, page_width, page_words, page_lines)
 
 def get_db_connection():
     """Create database connection using Laravel's .env configuration"""
-    env_path = Path(__file__).parent.parent / '.env'
+    # Resolve the Laravel project .env (repo root), with safe fallbacks.
+    env_candidates = [
+        Path(__file__).resolve().parents[2] / '.env',  # /project/.env
+        Path.cwd() / '.env',
+        Path(__file__).resolve().parents[1] / '.env',  # /project/python/.env (legacy)
+    ]
+    env_path = next((candidate for candidate in env_candidates if candidate.exists()), None)
     db_config = {
         'host': 'mysql',
         'database': 'laravel',
@@ -455,7 +461,7 @@ def get_db_connection():
         'port': 3306
     }
     
-    if env_path.exists():
+    if env_path is not None:
         with open(env_path) as f:
             for line in f:
                 line = line.strip()

@@ -991,6 +991,13 @@ class DocumentController extends Controller
 
     public function prepareOverlay(Document $document)
     {
+        // Check if the PDF file exists on disk
+        $fullPath = Storage::path($document->path);
+        if (!file_exists($fullPath)) {
+            \Log::error('PDF file not found for overlay', ['document_id' => $document->id, 'path' => $document->path, 'fullPath' => $fullPath]);
+            return response()->json(['success' => false, 'error' => 'PDF file not found. The file may have been deleted or moved.'], 404);
+        }
+
         $userEmail = auth()->user()->email ?? 'guest';
         $sessionId = session()->getId();
         
@@ -1038,7 +1045,8 @@ class DocumentController extends Controller
             exec($command, $output, $returnCode);
             
             if ($returnCode !== 0) {
-                return redirect()->back()->with('error', 'Failed to extract PDF text. Please try again.');
+                \Log::error('PDF extraction failed', ['document_id' => $document->id, 'returnCode' => $returnCode, 'output' => implode("\n", $output)]);
+                return response()->json(['success' => false, 'error' => 'Failed to extract PDF text. Please try again.'], 500);
             }
             
             // Reload extraction data
@@ -1046,6 +1054,10 @@ class DocumentController extends Controller
                 ->where('document_id', $document->id)
                 ->orderBy('id', 'desc')
                 ->first();
+
+            if (!$extraction) {
+                return response()->json(['success' => false, 'error' => 'Failed to extract PDF text data.'], 500);
+            }
         } else {
             // Check if PDF has been modified since last extraction
             // If the file timestamp is newer, we need to re-extract to pick up burned-in annotations
@@ -1083,6 +1095,10 @@ class DocumentController extends Controller
                 }
             }
 
+            if (!$extraction) {
+                return response()->json(['success' => false, 'error' => 'No extraction data available for this PDF.'], 500);
+            }
+
             // Ensure extraction includes font_xref data (refresh if missing)
             $extractionData = json_decode($extraction->extraction_data, true);
             $hasFontXref = false;
@@ -1117,8 +1133,24 @@ class DocumentController extends Controller
                         ->where('document_id', $document->id)
                         ->orderBy('id', 'desc')
                         ->first();
+                } else {
+                    \Log::error('Failed to refresh extraction for missing font_xref', [
+                        'document_id' => $document->id,
+                        'output' => implode("\n", $output),
+                    ]);
                 }
             }
+        }
+
+        // Guard against race/failure cases where refresh succeeded but no row was stored.
+        if (!$extraction || !isset($extraction->extraction_data)) {
+            \Log::error('Overlay preparation aborted: extraction row missing after refresh', [
+                'document_id' => $document->id,
+            ]);
+            return response()->json([
+                'success' => false,
+                'error' => 'No extraction data available for this PDF.',
+            ], 500);
         }
 
         // Create clean PDF (with all text removed) for overlay editing

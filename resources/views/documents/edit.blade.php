@@ -227,6 +227,15 @@
                 background: var(--accent);
                 color: #ffffff;
             }
+            body.light-theme .mode-bar.overlay-active {
+                border-bottom-color: rgba(16, 185, 129, 0.6);
+                box-shadow: inset 0 -2px 0 rgba(16, 185, 129, 0.45);
+            }
+            body.light-theme .overlay-state-indicator {
+                color: #065f46;
+                background: linear-gradient(135deg, rgba(16, 185, 129, 0.14), rgba(167, 243, 208, 0.45));
+                border-color: rgba(5, 150, 105, 0.4);
+            }
             body.light-theme .toggle-switch {
                 background: #e5e7eb;
                 border: 1px solid rgba(0,0,0,0.12);
@@ -1119,6 +1128,42 @@
                 background: var(--accent);
                 color: #0b2d20;
             }
+            .mode-bar.overlay-active {
+                border-bottom: 1px solid rgba(16, 185, 129, 0.45);
+                box-shadow: inset 0 -2px 0 rgba(16, 185, 129, 0.35);
+            }
+            .mode-overlay-chip {
+                border: 1px solid rgba(255, 255, 255, 0.16);
+                transition: all 0.2s ease;
+            }
+            .mode-overlay-chip.overlay-active {
+                background: linear-gradient(135deg, rgba(16, 185, 129, 0.28), rgba(6, 95, 70, 0.35)) !important;
+                border-color: rgba(16, 185, 129, 0.8) !important;
+                box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.45), 0 0 18px rgba(16, 185, 129, 0.28);
+            }
+            .overlay-state-indicator {
+                display: none;
+                margin-top: 10px;
+                padding: 10px 12px;
+                border-radius: 10px;
+                font-size: 13px;
+                font-weight: 600;
+                color: #d1fae5;
+                background: linear-gradient(135deg, rgba(16, 185, 129, 0.16), rgba(6, 78, 59, 0.38));
+                border: 1px solid rgba(16, 185, 129, 0.45);
+            }
+            .overlay-state-indicator.active {
+                display: block;
+            }
+            .overlay-tool-disabled {
+                opacity: 0.35 !important;
+                filter: grayscale(0.65);
+                cursor: not-allowed !important;
+                pointer-events: none !important;
+            }
+            .overlay-tool-disabled * {
+                pointer-events: none !important;
+            }
             .mode-bar .icon {
                 font-weight: 800;
                 font-size: 16px;
@@ -1793,6 +1838,14 @@
             .viewer.overlay-view-mode .resize-handle,
             .viewer.overlay-view-mode .box-menu {
                 display: none !important;
+            }
+            .viewer:not(.overlay-editor-active) .overlay-field.editing {
+                outline: none !important;
+            }
+            .viewer:not(.overlay-editor-active) .overlay-field [contenteditable] {
+                pointer-events: none !important;
+                user-select: none !important;
+                caret-color: transparent !important;
             }
             .viewer.overlay-hidden .overlay-field {
                 display: none !important;
@@ -2960,7 +3013,7 @@
                     <div class="mode-bar px-3 py-2 sticky top-[196px] z-30" id="pdf-mode-bar">
                         <div class="flex items-center justify-between gap-2 flex-wrap">
                             <div class="flex items-center gap-2 flex-wrap">
-                                <label class="inline-flex items-center gap-2 px-3 py-2 bg-gray-700/50 rounded-lg cursor-pointer hover:bg-gray-700 transition">
+                                <label id="mode-overlay-chip" class="mode-overlay-chip inline-flex items-center gap-2 px-3 py-2 bg-gray-700/50 rounded-lg cursor-pointer hover:bg-gray-700 transition">
                                     <input type="checkbox" id="mode-overlay-toggle" class="w-4 h-4 rounded border-gray-600 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-gray-800" />
                                     <span class="text-sm font-medium hidden sm:inline">Overlay Editor</span>
                                     <span class="text-sm font-medium sm:hidden">Overlay</span>
@@ -4322,6 +4375,9 @@
                                 </div>
                             </div>
                         </div>
+                        <div id="overlay-state-indicator" class="overlay-state-indicator">
+                            Overlay Editor is ON. Add Text, Sign, Shapes, and Convert are disabled until you turn it off.
+                        </div>
                     </div>
                 </div>
                 
@@ -4948,6 +5004,9 @@
             const modeShape = document.getElementById('mode-shape');
             const modeOverlay = document.getElementById('mode-overlay');
             const modeOverlayToggle = document.getElementById('mode-overlay-toggle');
+            const modeOverlayChip = document.getElementById('mode-overlay-chip');
+            const modeBar = document.getElementById('pdf-mode-bar');
+            const overlayStateIndicator = document.getElementById('overlay-state-indicator');
             const saveOverlayBtn = null; // Removed: overlay save is now unified with save-btn
             const signatureModal = document.getElementById('signature-modal');
             const signatureCanvas = document.getElementById('signature-canvas');
@@ -10746,6 +10805,10 @@
             // Open modal
             if (convertBtn && convertModal) {
                 convertBtn.addEventListener('click', () => {
+                    if (overlayEditorActive) {
+                        setStatus('Convert is disabled while Overlay Editor is active.', 'warn');
+                        return;
+                    }
                     // Auth gate – must be logged in to use Convert
                     if (!isAuthenticated) {
                         showLoginRequiredModal();
@@ -13185,11 +13248,42 @@
                     modeOverlayToggle.checked = overlayEditorActive;
                     modeOverlayToggle.classList.toggle('active', overlayEditorActive);
                 }
+                updateOverlayUiState();
                 updateTextLayerVisibility();
+            };
+
+            const setOverlayToolDisabled = (button, disabled) => {
+                if (!button) return;
+                if (!button.dataset.originalTitle) {
+                    button.dataset.originalTitle = button.getAttribute('title') || '';
+                }
+                button.disabled = disabled;
+                button.classList.toggle('overlay-tool-disabled', disabled);
+                if (disabled) {
+                    button.setAttribute('title', 'Disabled while Overlay Editor is active');
+                } else {
+                    button.setAttribute('title', button.dataset.originalTitle);
+                }
+            };
+
+            const updateOverlayUiState = () => {
+                const overlayOn = Boolean(overlayEditorActive);
+                if (viewer) viewer.classList.toggle('overlay-editor-active', overlayOn);
+                if (modeBar) modeBar.classList.toggle('overlay-active', overlayOn);
+                if (modeOverlayChip) modeOverlayChip.classList.toggle('overlay-active', overlayOn);
+                if (overlayStateIndicator) overlayStateIndicator.classList.toggle('active', overlayOn);
+
+                [modeText, modeSign, modeShape, convertBtn].forEach((btn) => {
+                    setOverlayToolDisabled(btn, overlayOn);
+                });
             };
 
             if (modeText) {
                 modeText.addEventListener('click', () => {
+                    if (overlayEditorActive) {
+                        setStatus('Turn off Overlay Editor first to use Add Text.', 'warn');
+                        return;
+                    }
                     exitOverlayEditorForTool();
                     toolMode = 'text';
                     insertMode = null;
@@ -13392,6 +13486,10 @@
 
             if (modeSign) {
                 modeSign.addEventListener('click', () => {
+                    if (overlayEditorActive) {
+                        setStatus('Turn off Overlay Editor first to use Sign.', 'warn');
+                        return;
+                    }
                     toolMode = 'sign';
                     insertMode = null;
                     if (insertX) insertX.classList.remove('pill-active');
@@ -13404,6 +13502,10 @@
 
             if (modeShape) {
                 modeShape.addEventListener('click', () => {
+                    if (overlayEditorActive) {
+                        setStatus('Turn off Overlay Editor first to use Shapes.', 'warn');
+                        return;
+                    }
                     // Open shape settings modal
                     openShapeModal();
                 });
@@ -13680,6 +13782,7 @@
                     updateOverlayShowOriginalToggle();
                     toolMode = 'select';
                     updateModeButtons();
+                    updateOverlayUiState();
                     setStatus('Overlay editor closed. Text preserved.', 'ok');
                     // Reset basePdfUrl to original PDF (not clean PDF)
                     basePdfUrl = pdfUrl;
@@ -13730,6 +13833,7 @@
                 updateOverlayShowOriginalToggle();
                 toolMode = 'overlay';
                 updateModeButtons();
+                updateOverlayUiState();
                 setStatus('Loading overlay editor...', 'loading');
 
                 try {
@@ -13878,6 +13982,7 @@
                     }
                     viewer.classList.add('overlay-hidden');
                     basePdfUrl = pdfUrl;
+                    updateOverlayUiState();
                     rerenderPdf();
                 }
             };
@@ -15321,6 +15426,7 @@
 
                         // Double click = EDIT (enable text cursor)
                         field.addEventListener('dblclick', function(e) {
+                            if (!overlayEditorActive) return;
                             if (e.target.closest('.box-menu') || e.target.classList.contains('resize-handle')) return;
                             field.classList.add('active', 'editing');
 
@@ -16328,6 +16434,7 @@
                     });
 
                     textSpan.addEventListener('dblclick', (e) => {
+                        if (!overlayEditorActive) return;
                         e.stopPropagation();
                         textSpan.style.cursor = 'text';
                         textSpan.focus();

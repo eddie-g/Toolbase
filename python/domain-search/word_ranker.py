@@ -93,6 +93,41 @@ BASKETS: Dict[str, List[str]] = {
         "laser", "hologram", "warp", "mutant", "clone", "dimension",
         "futuristic", "quantum", "cyberpunk",
     ],
+    "mystery": [
+        "detective", "clue", "suspect", "crime", "murder", "investigation",
+        "witness", "alibi", "mystery", "forensic", "enigma", "sleuth",
+        "puzzle", "riddle", "secret",
+    ],
+    "thriller": [
+        "suspense", "danger", "hostage", "escape", "conspiracy", "betrayal",
+        "assassin", "kidnap", "tension", "pursuit", "sabotage", "spy",
+        "paranoia", "threat", "survival",
+    ],
+    "horror": [
+        "ghost", "demon", "haunted", "nightmare", "terror", "vampire",
+        "zombie", "curse", "darkness", "scream", "monster", "skull",
+        "blood", "creepy", "undead",
+    ],
+    "adventure": [
+        "journey", "explore", "treasure", "expedition", "wilderness",
+        "voyage", "discover", "map", "compass", "mountain", "ocean",
+        "island", "quest", "trail", "frontier",
+    ],
+    "historical": [
+        "ancient", "empire", "dynasty", "medieval", "revolution", "war",
+        "colonial", "kingdom", "monarch", "artifact", "ruins", "century",
+        "heritage", "tradition", "chronicle",
+    ],
+    "drama": [
+        "emotion", "conflict", "struggle", "family", "tragedy", "grief",
+        "courage", "sacrifice", "betrayal", "forgiveness", "identity",
+        "moral", "fate", "loss", "redemption",
+    ],
+    "action": [
+        "fight", "battle", "weapon", "explosion", "combat", "chase",
+        "hero", "villain", "strike", "attack", "warfare", "soldier",
+        "shield", "bullets", "warrior",
+    ],
 }
 
 # Zipf scale boundaries for normalisation.
@@ -155,20 +190,20 @@ def update_scores(results: List[dict]) -> int:
     categories = list(BASKETS.keys())
 
     for r in results:
+        # Build SET clause dynamically from all baskets
+        set_parts = []
+        params = []
+        for cat in categories:
+            set_parts.append(f"category_{cat} = %s")
+            params.append(round(r["scores"].get(cat, 0), 3))
+        set_parts.append("popularity = %s")
+        params.append(round(r["popularity"], 4))
+        set_parts.append("word_ranker_scan = NOW()")
+        params.append(r["word_id"])
+
         cursor.execute(
-            """UPDATE dictionary
-               SET space = %s, fantasy = %s, tech = %s, romance = %s, scifi = %s,
-                   popularity = %s, word_ranker_scan = NOW()
-               WHERE id = %s""",
-            (
-                round(r["scores"].get("space", 0), 3),
-                round(r["scores"].get("fantasy", 0), 3),
-                round(r["scores"].get("tech", 0), 3),
-                round(r["scores"].get("romance", 0), 3),
-                round(r["scores"].get("scifi", 0), 3),
-                round(r["popularity"], 4),
-                r["word_id"],
-            ),
+            f"UPDATE dictionary SET {', '.join(set_parts)} WHERE id = %s",
+            params,
         )
         updated += 1
 
@@ -293,11 +328,15 @@ def score_batch(
     model: KeyedVectors,
     centroids: Dict[str, np.ndarray],
     show: int = 10,
+    update_db: bool = False,
+    batch_size: int = 1000,
 ) -> List[dict]:
-    """Score a list of (id, word) tuples. Returns list of result dicts."""
+    """Score a list of (id, word) tuples. Updates DB incrementally if update_db=True."""
     results: List[dict] = []
     skipped = 0
     printed = 0
+    total_updated = 0
+    total_scored = 0
 
     pbar = tqdm(words, desc="Scoring words", unit="word")
     categories = list(centroids.keys())
@@ -306,12 +345,13 @@ def score_batch(
         r = score_word(word, model, centroids)
         if r is None:
             skipped += 1
-            pbar.set_postfix(scored=len(results), skipped=skipped)
+            pbar.set_postfix(scored=total_scored, skipped=skipped, db_updated=total_updated)
             continue
 
         r["word_id"] = word_id
         results.append(r)
-        pbar.set_postfix(scored=len(results), skipped=skipped)
+        total_scored += 1
+        pbar.set_postfix(scored=total_scored, skipped=skipped, db_updated=total_updated)
 
         if printed < show:
             scores_str = " | ".join(
@@ -323,12 +363,26 @@ def score_batch(
             )
             printed += 1
 
+        # Update database incrementally every batch_size words
+        if update_db and len(results) >= batch_size:
+            updated = update_scores(results)
+            total_updated += updated
+            pbar.set_postfix(scored=total_scored, skipped=skipped, db_updated=total_updated)
+            results = []  # Clear batch after updating
+
     pbar.close()
+
+    # Update any remaining results
+    if update_db and results:
+        updated = update_scores(results)
+        total_updated += updated
 
     print(f"\n📊 Batch Summary:")
     print(f"   Total words:  {len(words)}")
-    print(f"   Scored:       {len(results)}")
+    print(f"   Scored:       {total_scored}")
     print(f"   Skipped (OOV):{skipped}")
+    if update_db:
+        print(f"   DB Updated:   {total_updated}")
 
     return results
 
@@ -462,21 +516,16 @@ Examples:
 
     print(f"   Words loaded: {len(words)}\n")
 
-    results = score_batch(words, model, centroids, show=args.show)
+    results = score_batch(words, model, centroids, show=args.show, update_db=args.update_db, batch_size=1000)
 
-    if not results:
-        print("\n❌ No words could be scored.")
-        return
-
-    # Show top results above threshold
-    above = [r for r in results if r["best_score"] >= args.threshold]
-    print(f"\n   Words above threshold ({args.threshold}): {len(above)}")
-
-    if args.update_db:
-        print(f"\n💾 Writing scores to database...")
-        updated = update_scores(results)
-        print(f"   ✓ Updated {updated} rows")
-    else:
+    # If not updating DB, results contains all scored words
+    if not args.update_db:
+        if not results:
+            print("\n❌ No words could be scored.")
+            return
+        # Show top results above threshold
+        above = [r for r in results if r["best_score"] >= args.threshold]
+        print(f"\n   Words above threshold ({args.threshold}): {len(above)}")
         print(f"\n⚠️  Database not updated (use --update-db to save results)")
 
     print("\n" + "=" * 60)

@@ -35,11 +35,11 @@
             @endif
 
             <div class="flex items-center gap-4">
-                <button @click="toggleDarkMode()" class="p-2 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition" type="button" style="background:transparent;">
-                    <svg x-show="!darkMode" class="{{ $iconSizeClass }}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <button data-theme-toggle class="p-2 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition" type="button" style="background:transparent;">
+                    <svg class="{{ $iconSizeClass }} block dark:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>
                     </svg>
-                    <svg x-show="darkMode" class="{{ $iconSizeClass }}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg class="{{ $iconSizeClass }} hidden dark:block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>
                     </svg>
                 </button>
@@ -81,3 +81,42 @@
         </div>
     </div>
 </header>
+
+@once
+    <script>
+        (() => {
+            if (window.__netkitThemeToggleBound) return;
+            window.__netkitThemeToggleBound = true;
+
+            const STORAGE_KEY = 'darkMode';
+
+            const setTheme = (isDark) => {
+                document.documentElement.classList.toggle('dark', isDark);
+                localStorage.setItem(STORAGE_KEY, isDark ? 'true' : 'false');
+
+                // Keep Alpine root state in sync on pages that still use `darkMode`.
+                const alpineRoot = document.documentElement;
+                if (alpineRoot && alpineRoot.__x && alpineRoot.__x.$data && Object.prototype.hasOwnProperty.call(alpineRoot.__x.$data, 'darkMode')) {
+                    alpineRoot.__x.$data.darkMode = isDark;
+                }
+            };
+
+            window.netkitToggleTheme = () => {
+                const isDark = !document.documentElement.classList.contains('dark');
+                setTheme(isDark);
+            };
+
+            // Apply saved preference once on load.
+            const saved = localStorage.getItem(STORAGE_KEY);
+            if (saved === 'true' || saved === 'false') {
+                setTheme(saved === 'true');
+            }
+
+            document.addEventListener('click', (event) => {
+                const button = event.target.closest('[data-theme-toggle]');
+                if (!button) return;
+                window.netkitToggleTheme();
+            });
+        })();
+    </script>
+@endonce
