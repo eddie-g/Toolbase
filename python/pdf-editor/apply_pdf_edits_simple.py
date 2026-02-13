@@ -667,6 +667,7 @@ def apply_edits(pdf_path, edits_json):
             font_xref = edit.get('font_xref')
             font_weight = edit.get('font_weight')
             font_style = edit.get('font_style')
+            edit_underline = edit.get('underline', False)
             block_num = edit.get('block_num')
             line_height = edit.get('line_height')
             rich_html = edit.get('rich_html')
@@ -856,6 +857,7 @@ def apply_edits(pdf_path, edits_json):
                     # Re-insert each word with its own font/size/style
                     tw = fitz.TextWriter(page.rect)
                     ws_font_cache = {}
+                    underline_lines = []  # Collect underline drawing commands
 
                     for mw in mapped_words:
                         mw_text = mw.get('text', '')
@@ -867,6 +869,7 @@ def apply_edits(pdf_path, edits_json):
                         mw_font_size = mw.get('font_size', font_size)
                         mw_font_weight = mw.get('font_weight')
                         mw_italic = mw.get('italic', False)
+                        mw_underline = mw.get('underline', False)
                         mw_font_xref = mw.get('font_xref')
 
                         # Color
@@ -921,7 +924,30 @@ def apply_edits(pdf_path, edits_json):
                         tw.write_text(page, color=mw_color, overlay=True)
                         tw = fitz.TextWriter(page.rect)
 
-                    print(f"  ✓ Inserted block via word_styles at ({bbox[0]:.1f}, {bbox[1]:.1f}) with {len(mapped_words)} styled words [TextWriter overlay]")
+                        # Collect underline info for drawing after text insertion
+                        if mw_underline:
+                            # Measure text width using the font object
+                            text_width = mw_font_obj.text_length(mw_text, fontsize=mw_font_size)
+                            # Underline position: slightly below the baseline
+                            underline_y = mw_origin_y + mw_font_size * 0.15
+                            # Line thickness proportional to font size
+                            underline_thickness = max(0.5, mw_font_size * 0.05)
+                            underline_lines.append({
+                                'start': (mw_origin_x, underline_y),
+                                'end': (mw_origin_x + text_width, underline_y),
+                                'color': mw_color,
+                                'width': underline_thickness,
+                            })
+
+                    # Draw underline lines on the page
+                    for ul in underline_lines:
+                        shape = page.new_shape()
+                        shape.draw_line(fitz.Point(ul['start']), fitz.Point(ul['end']))
+                        shape.finish(color=ul['color'], width=ul['width'])
+                        shape.commit(overlay=True)
+
+                    print(f"  ✓ Inserted block via word_styles at ({bbox[0]:.1f}, {bbox[1]:.1f}) with {len(mapped_words)} styled words [TextWriter overlay]" +
+                          (f" + {len(underline_lines)} underlines" if underline_lines else ""))
                     continue
                 except Exception as e:
                     print(f"  ⚠ word_styles handling failed: {e}, falling back to rich_html/textbox")
@@ -1176,6 +1202,17 @@ def apply_edits(pdf_path, edits_json):
                 
                 status = "✓" if rc >= 0 else "⚠ (overflow - text too large for box)"
                 print(f"  {status} Textbox at ({bbox[0]:.1f}, {bbox[1]:.1f}) font='{insert_font_name}' [overlay mode]")
+
+                # Draw underline for block textbox edits
+                if edit_underline:
+                    ul_y = bbox[3] + font_size * 0.15
+                    ul_thickness = max(0.5, font_size * 0.05)
+                    shape = page.new_shape()
+                    shape.draw_line(fitz.Point(bbox[0], ul_y), fitz.Point(bbox[2], ul_y))
+                    shape.finish(color=text_color, width=ul_thickness)
+                    shape.commit(overlay=True)
+                    print(f"  ✓ Added underline")
+
                 continue
 
             # Single text: use TextWriter with FULL FONT FILES for correct rendering
@@ -1274,12 +1311,33 @@ def apply_edits(pdf_path, edits_json):
                 
                 status = "✓" if rc >= 0 else "⚠ (overflow - text too large for box)"
                 print(f"  {status} Multiline text at ({bbox[0]:.1f}, {bbox[1]:.1f}) font='{insert_font_name}' [textbox overlay]")
+
+                # Draw underline for multiline textbox edits
+                if edit_underline:
+                    ul_y = bbox[3] + font_size * 0.15
+                    ul_thickness = max(0.5, font_size * 0.05)
+                    shape = page.new_shape()
+                    shape.draw_line(fitz.Point(bbox[0], ul_y), fitz.Point(bbox[2], ul_y))
+                    shape.finish(color=text_color, width=ul_thickness)
+                    shape.commit(overlay=True)
+                    print(f"  ✓ Added underline")
             else:
                 # Single line: use TextWriter for precise positioning
                 tw = fitz.TextWriter(page.rect)
                 tw.append((origin_x, origin_y), new_text, font=font_obj, fontsize=font_size)
                 tw.write_text(page, color=text_color, overlay=True)
                 print(f"  ✓ Text at ({origin_x:.1f}, {origin_y:.1f}) font='{font_label}' [TextWriter overlay]")
+
+                # Draw underline for single-line TextWriter edits
+                if edit_underline:
+                    text_width = font_obj.text_length(new_text, fontsize=font_size)
+                    ul_y = origin_y + font_size * 0.15
+                    ul_thickness = max(0.5, font_size * 0.05)
+                    shape = page.new_shape()
+                    shape.draw_line(fitz.Point(origin_x, ul_y), fitz.Point(origin_x + text_width, ul_y))
+                    shape.finish(color=text_color, width=ul_thickness)
+                    shape.commit(overlay=True)
+                    print(f"  ✓ Added underline")
 
     # ── PHASE C: COLLATERAL DAMAGE RECOVERY ───────────────────────────
     # Compare post-edit text against the pre-edit snapshot.
