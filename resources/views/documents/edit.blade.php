@@ -1600,6 +1600,7 @@
                 cursor: move;
                 pointer-events: none;
                 user-select: none;
+                overflow: hidden !important;
             }
             .overlay-field.editing {
                 border-color: rgba(66, 133, 244, 1) !important;
@@ -1610,6 +1611,12 @@
                 cursor: text;
                 pointer-events: auto;
                 user-select: text;
+                overflow: hidden !important;
+            }
+            /* Ensure word-span container always clips absolutely-positioned spans */
+            .overlay-field [contenteditable] {
+                overflow: hidden !important;
+                position: relative;
             }
 
             /* Shape type buttons (modern grid) */
@@ -15534,7 +15541,6 @@
                         field.style.minWidth = '20px';
                         field.style.minHeight = '10px';
                         field.style.boxSizing = 'border-box';
-                        field.style.overflow = 'hidden';
 
                         // Render the text content
                         const textSpan = document.createElement('div');

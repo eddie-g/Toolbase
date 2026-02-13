@@ -100,13 +100,20 @@ def create_clean_pdf(pdf_path, extraction_data, output_path):
             
             # Add redaction for each word - INCLUDING text over images
             # Using fill=None and images=0 removes text ink without damaging images
+            # IMPORTANT: Expand each rect by a small margin to catch glyph
+            # ascenders, descenders, kerning overhangs, and anti-aliasing
+            # pixels that extend beyond the extracted bounding box.
+            REDACT_MARGIN = 2  # points (~0.7mm) — enough for glyph edges
             for word in words:
                 rect = fitz.Rect(
-                    word['left'],
-                    word['top'],
-                    word['left'] + word['width'],
-                    word['top'] + word['height']
+                    word['left'] - REDACT_MARGIN,
+                    word['top'] - REDACT_MARGIN,
+                    word['left'] + word['width'] + REDACT_MARGIN,
+                    word['top'] + word['height'] + REDACT_MARGIN
                 )
+                
+                # Clamp to page mediabox so redaction doesn't exceed page bounds
+                rect &= page.rect
                 
                 # Redact ALL text with fill=None to preserve backgrounds
                 page.add_redact_annot(rect, fill=None)
