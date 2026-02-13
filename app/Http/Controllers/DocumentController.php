@@ -1212,6 +1212,7 @@ class DocumentController extends Controller
             'edits.*.font_size' => ['required', 'numeric'],
             'edits.*.font_weight' => ['nullable', 'string'],
             'edits.*.font_style' => ['nullable', 'string'],
+            'edits.*.underline' => ['nullable', 'boolean'],
             'edits.*.line_height' => ['nullable', 'numeric'],
             'edits.*.color' => ['nullable', 'string'],
             'edits.*.rich_html' => ['nullable', 'string'],

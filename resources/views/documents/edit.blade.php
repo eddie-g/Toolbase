@@ -1637,6 +1637,69 @@
                 color: #2563eb;
                 box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
             }
+            .shape-type-btn:disabled {
+                opacity: 0.4;
+                cursor: not-allowed;
+            }
+            .shape-type-btn:disabled:hover {
+                border-color: #e5e7eb;
+                background: #fff;
+                color: #374151;
+            }
+            .shape-type-btn.active .draw-tool-label,
+            .shape-type-btn .draw-tool-label {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 2px;
+            }
+
+            /* Eraser cursor when draw mode is active */
+            .eraser-cursor .overlay {
+                cursor: crosshair !important;
+            }
+
+            /* Eraser stroke visual on overlay */
+            .eraser-stroke-annotation {
+                position: absolute;
+                background: white;
+                pointer-events: none;
+                box-shadow: 0 0 0 1px rgba(200, 200, 200, 0.4);
+                z-index: 5;
+            }
+            .eraser-stroke-annotation.finalized {
+                pointer-events: auto;
+                box-shadow: none;
+            }
+
+            /* Draw mode active banner */
+            .draw-mode-banner {
+                position: fixed;
+                top: 60px;
+                left: 50%;
+                transform: translateX(-50%);
+                background: #1e293b;
+                color: #f8fafc;
+                padding: 8px 20px;
+                border-radius: 8px;
+                font-size: 13px;
+                font-weight: 500;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                z-index: 1000;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            }
+            .draw-mode-banner button {
+                background: #ef4444;
+                color: white;
+                border: none;
+                padding: 4px 12px;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 12px;
+                font-weight: 600;
+            }
 
             /* Toggle slider for gridlines */
             .grid-toggle-slider {
@@ -3027,6 +3090,10 @@
                                     <span class="hidden sm:inline">Shapes</span>
                                     <span class="sm:hidden">⬜</span>
                                 </button>
+                                <button id="mode-draw" type="button" class="px-3 py-2 bg-gray-700/50 hover:bg-gray-700 rounded-lg text-sm font-medium transition">
+                                    <span class="hidden sm:inline">Draw</span>
+                                    <span class="sm:hidden">✏️</span>
+                                </button>
                                 <button id="view-original-pdf" type="button" class="px-4 py-2 bg-transparent border border-gray-600 hover:bg-gray-700/50 rounded-lg text-sm font-medium transition">
                                     <span class="hidden sm:inline">View Original PDF</span>
                                     <span class="sm:hidden">Original</span>
@@ -4171,6 +4238,69 @@
                 </div>
             </div>
         </div>
+
+        <!-- Draw Tool Modal -->
+        <div class="modal" id="draw-modal" aria-hidden="true">
+            <div class="modal-card" style="width: min(420px, 94vw);">
+                <div class="modal-header">
+                    <span style="font-size: 16px; display: flex; align-items: center; gap: 8px;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+                        Draw Tools
+                    </span>
+                    <button class="modal-close" type="button" id="draw-close">&times;</button>
+                </div>
+                <div style="padding: 20px; max-height: 70vh; overflow-y: auto;">
+
+                    <!-- Tool Type -->
+                    <div style="margin-bottom: 20px;">
+                        <div style="font-weight: 600; font-size: 13px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px;">Tool</div>
+                        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;" id="draw-type-grid">
+                            <button type="button" class="shape-type-btn" data-draw-tool="brush" title="Brush" disabled style="opacity: 0.4; cursor: not-allowed;">
+                                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.37 2.63a2.12 2.12 0 013 3L14 13l-4 1 1-4 7.37-7.37z"/><path d="M9 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-2a2 2 0 012-2h4z"/></svg>
+                                <div style="font-size: 10px; margin-top: 2px;">Brush</div>
+                            </button>
+                            <button type="button" class="shape-type-btn" data-draw-tool="highlighter" title="Highlighter" disabled style="opacity: 0.4; cursor: not-allowed;">
+                                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.09 2.91l6 6-10.59 10.59H4.5v-6L15.09 2.91z"/><path d="M12 8l4 4"/></svg>
+                                <div style="font-size: 10px; margin-top: 2px;">Highlighter</div>
+                            </button>
+                            <button type="button" class="shape-type-btn active" data-draw-tool="eraser" title="Eraser">
+                                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20H7L3 16c-.8-.8-.8-2 0-2.8L14.6 1.6c.8-.8 2-.8 2.8 0l5 5c.8.8.8 2 0 2.8L12 20"/><path d="M6 11l4 4"/></svg>
+                                <div style="font-size: 10px; margin-top: 2px;">Eraser</div>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div style="height: 1px; background: #e5e7eb; margin: 0 -20px 20px;"></div>
+
+                    <!-- Brush Size -->
+                    <div style="margin-bottom: 20px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                            <span style="font-weight: 600; font-size: 13px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em;">Brush Size</span>
+                            <span id="draw-brush-size-label" style="font-size: 13px; font-weight: 600; color: #111827; background: #f3f4f6; padding: 2px 8px; border-radius: 4px;">20px</span>
+                        </div>
+                        <input type="range" id="draw-brush-size" min="5" max="100" value="20" style="width: 100%; height: 6px; border-radius: 3px; outline: none; cursor: pointer; accent-color: #3b82f6;">
+                        <!-- Brush size preview -->
+                        <div style="display: flex; justify-content: center; margin-top: 12px;">
+                            <div id="draw-brush-preview" style="width: 20px; height: 20px; border-radius: 50%; background: rgba(255,255,255,0.8); border: 2px solid #d1d5db; transition: width 0.2s, height 0.2s;"></div>
+                        </div>
+                    </div>
+
+                    <div style="height: 1px; background: #e5e7eb; margin: 0 -20px 20px;"></div>
+
+                    <!-- Info -->
+                    <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 12px; margin-bottom: 20px;">
+                        <div style="font-size: 13px; color: #166534; display: flex; align-items: flex-start; gap: 8px;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink: 0; margin-top: 1px;"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                            <span>The eraser draws white patches over the PDF to cover text and graphics. Drag on any page to erase content.</span>
+                        </div>
+                    </div>
+
+                    <button type="button" id="draw-apply" class="primary" style="width: 100%; padding: 11px 16px; background: #3b82f6; color: #fff; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 14px; transition: background 0.2s;">
+                        Start Drawing
+                    </button>
+                </div>
+            </div>
+        </div>
         
         <!-- Generate from Template Modal -->
         <div class="modal" id="generate-from-template-modal" style="display: none;">
@@ -5002,6 +5132,7 @@
             const modeEditText = document.getElementById('mode-edit-text');
             const modeSign = document.getElementById('mode-sign');
             const modeShape = document.getElementById('mode-shape');
+            const modeDraw = document.getElementById('mode-draw');
             const modeOverlay = document.getElementById('mode-overlay');
             const modeOverlayToggle = document.getElementById('mode-overlay-toggle');
             const modeOverlayChip = document.getElementById('mode-overlay-chip');
@@ -5086,6 +5217,9 @@
                     } else if (annotation.type === 'image') {
                         icon = '🖼';
                         title = `New Image ${annotations.filter((a, i) => a.type === 'image' && i <= index).length}`;
+                    } else if (annotation.type === 'eraser') {
+                        icon = '🧹';
+                        title = `Eraser ${annotations.filter((a, i) => a.type === 'eraser' && i <= index).length}`;
                     }
                     
                     item.innerHTML = `
@@ -5219,6 +5353,8 @@
             let shapeFill = '#000000';
             let shapeFillTransparentState = true;
             let shapeOpacityValue = 1;
+            let drawToolType = 'eraser'; // 'brush' | 'highlighter' | 'eraser'
+            let drawBrushSize = 20;
             let gridlinesEnabled = false;
             let gridlinesSpacing = 50;
             let gridlinesColor = '#3b82f6';
@@ -5705,6 +5841,19 @@
             }
 
             /**
+             * Build rich HTML representation of a text block for saving.
+             * Clones the text element's inner HTML and wraps it with font metadata.
+             * Hoisted to outer scope so both markOverlayFieldDirty() and
+             * renderOverlayFields() can access it.
+             */
+            function buildBlockRichHtml(textSpan, fontFamily, fontWeight, fontStyle, fontSizePx, lineHeightPx, textColor) {
+                const cloned = textSpan.cloneNode(true);
+                cloned.removeAttribute('contenteditable');
+                const wrapperStyle = `position:relative;width:100%;height:100%;font-family:${fontFamily};font-weight:${fontWeight};font-style:${fontStyle};font-size:${fontSizePx};${lineHeightPx ? `line-height:${lineHeightPx};` : ''}color:${textColor};`;
+                return `<div style="${wrapperStyle}">${cloned.innerHTML}</div>`;
+            }
+
+            /**
              * Mark the currently selected overlay field as dirty (changed) so
              * the save button appears.  This is called after style-only changes
              * (bold, italic, underline, color, font, size, etc.) that do NOT
@@ -5759,12 +5908,17 @@
                 const fontFamily = field.style.fontFamily || 'Helvetica';
                 const fontWeight = field.dataset.fontWeight || '400';
                 const fontStyle = field.dataset.fontStyle || 'normal';
+                const fieldUnderline = field.dataset.underline === 'true';
                 const computedStyle = window.getComputedStyle(textEl);
                 const fontSizePx = computedStyle.fontSize;
                 const lineHeightPx = computedStyle.lineHeight !== 'normal' ? computedStyle.lineHeight : '';
                 const fontSizePdf = parseFloat(field.dataset.fontSize || (parseFloat(fontSizePx) / scaleY) || '12');
                 const textColor = field.dataset.textColor || computedStyle.color || '#000000';
                 const lineHeightValue = parseFloat(field.dataset.lineHeight) || null;
+
+                // Resolve the font name for saving: prefer user-selected font
+                // (fontFamily from dropdown) over original extraction font.
+                const resolvedFont = field.dataset.fontFamily || field.dataset.font || 'Helvetica';
 
                 // Build rich_html and word_styles (same as input handler)
                 const richHtml = buildBlockRichHtml(textEl, fontFamily, fontWeight, fontStyle, fontSizePx, lineHeightPx, textColor);
@@ -5777,12 +5931,13 @@
 
                 const wordStylesArr = (field._blockWords || []).map(w => ({
                     text: w.text,
-                    font: w.font,
+                    font: resolvedFont || w.font,
                     font_xref: w.font_xref || null,
                     font_size: w.font_size,
                     font_weight: fieldFontWeight || w.font_weight || 400,
                     italic: fieldIsItalic || !!w.italic,
                     bold: fieldIsBold || !!w.bold,
+                    underline: fieldUnderline || false,
                     color: w.color,
                     hex_color: textColor || w.hex_color || '#000000',
                     left: w.left,
@@ -5806,10 +5961,11 @@
                     original_bbox: [origLeft, origTop, origLeft + origWidth, origTop + origHeight],
                     origin_x: pdfOriginX,
                     origin_y: pdfOriginY,
-                    font: field.dataset.font || 'Helvetica',
+                    font: resolvedFont,
                     font_size: fontSizePdf,
                     font_weight: fontWeight,
                     font_style: fontStyle,
+                    underline: fieldUnderline,
                     font_xref: field.dataset.fontXref ? parseInt(field.dataset.fontXref, 10) : null,
                     line_height: lineHeightValue,
                     color: textColor
@@ -5952,7 +6108,7 @@
             }
 
             function normalizeTextAnnotation(annotation) {
-                if (!annotation || annotation.type === 'signature' || annotation.type === 'shape') {
+                if (!annotation || annotation.type === 'signature' || annotation.type === 'shape' || annotation.type === 'eraser') {
                     return;
                 }
                 annotation.type = annotation.type || 'text';
@@ -7383,6 +7539,13 @@
                         rect.setAttribute('opacity', String(annotation.opacity));
                         shapeSvg.appendChild(rect);
                     }
+                } else if (annotation.type === 'eraser') {
+                    // Eraser: render as a white filled box covering the erased area
+                    label.style.background = 'white';
+                    label.style.padding = '0';
+                    label.style.border = 'none';
+                    label.style.cursor = 'pointer';
+                    label.style.boxShadow = '0 0 0 1px rgba(200,200,200,0.3)';
                 } else {
                     textSpan = document.createElement('span');
                     textSpan.className = 'annotation-text';
@@ -7780,7 +7943,7 @@
                     label.appendChild(rotateHandle);
                 }
                 label.appendChild(deleteBtn);
-                if (annotation.type !== 'signature' && annotation.type !== 'shape') {
+                if (annotation.type !== 'signature' && annotation.type !== 'shape' && annotation.type !== 'eraser') {
                     label.style.fontFamily = fontMap[annotation.fontFamily]?.css || 'inherit';
                     // Hide old delete button (we use tbc-menu instead)
                     deleteBtn.style.display = 'none';
@@ -8069,6 +8232,9 @@
                 } else if (annotation.type === 'shape') {
                     // Hide delete button for shapes (they have their own in action bar)
                     deleteBtn.style.display = 'none';
+                } else if (annotation.type === 'eraser') {
+                    // Eraser: keep delete button visible (hover to show, like text annotations)
+                    // No further setup needed
                 }
 
                 const overlay = wrapper.querySelector('.overlay');
@@ -8100,6 +8266,14 @@
                             annotation.shapeSvg.style.transform = `rotate(${annotation.rotation}deg)`;
                             annotation.shapeSvg.style.transformOrigin = 'center';
                         }
+                    } else if (annotation.type === 'eraser') {
+                        const width = annotation.pdfWidth * pageInfo.scale;
+                        const height = annotation.pdfHeight * pageInfo.scale;
+                        const y = pageInfo.canvasHeight - (annotation.pdfY + annotation.pdfHeight) * pageInfo.scale;
+                        label.style.left = x + 'px';
+                        label.style.top = y + 'px';
+                        label.style.width = width + 'px';
+                        label.style.height = height + 'px';
                     } else {
                         const y = pageInfo.canvasHeight - annotation.pdfY * pageInfo.scale;
                         label.style.left = x + 'px';
@@ -8152,7 +8326,7 @@
                     annotation.pdfX = clampedX / pageInfo.scale;
                     if (annotation.type === 'signature') {
                         annotation.pdfY = (pageInfo.canvasHeight - clampedY) / pageInfo.scale - annotation.pdfHeight;
-                    } else if (annotation.type === 'shape') {
+                    } else if (annotation.type === 'shape' || annotation.type === 'eraser') {
                         annotation.pdfY = (pageInfo.canvasHeight - clampedY) / pageInfo.scale - annotation.pdfHeight;
                     } else {
                         annotation.pdfY = (pageInfo.canvasHeight - clampedY) / pageInfo.scale;
@@ -8166,7 +8340,7 @@
                         return;
                     }
                     label.classList.remove('dragging');
-                    if (annotation.type === 'shape') {
+                    if (annotation.type === 'shape' || annotation.type === 'eraser') {
                         label.style.cursor = 'pointer';
                     }
                     dragStart = null;
@@ -8218,8 +8392,8 @@
                         return;
                     }
                     
-                    // For shapes: check if in ACTIVE state (action bar visible = selected)
-                    if (annotation.type === 'shape') {
+                    // For shapes/erasers: check if in ACTIVE state (action bar visible = selected)
+                    if (annotation.type === 'shape' || annotation.type === 'eraser') {
                         const actionBar = label.querySelector('.shape-action-bar');
                         const isActive = actionBar && actionBar.style.display === 'flex';
                         
@@ -8241,7 +8415,7 @@
                         offsetY: event.clientY - rect.top,
                     };
                     label.classList.add('dragging');
-                    if (annotation.type === 'shape') {
+                    if (annotation.type === 'shape' || annotation.type === 'eraser') {
                         label.style.cursor = 'move';
                     }
                     window.addEventListener('pointermove', onPointerMove);
@@ -8651,7 +8825,130 @@
                             setStatus('Shape added. Click Save to keep changes.', 'ok');
                         }, 10);
                     });
+
+                    // ─── Draw / Eraser tool pointer events ───
+                    let eraserDrag = null;
+                    overlay.addEventListener('pointerdown', (event) => {
+                        if (toolMode !== 'draw') return;
+                        if (event.target !== overlay) return;
+                        event.preventDefault();
+                        overlay.setPointerCapture(event.pointerId);
+                        const rect = overlay.getBoundingClientRect();
+                        const x = event.clientX - rect.left;
+                        const y = event.clientY - rect.top;
+                        const half = drawBrushSize / 2;
+
+                        // Collect eraser patches as we drag
+                        eraserDrag = {
+                            pageInfo,
+                            patches: [],
+                            lastX: x,
+                            lastY: y
+                        };
+
+                        // First patch at click point
+                        const patch = createEraserPatch(overlay, x - half, y - half, drawBrushSize, drawBrushSize);
+                        eraserDrag.patches.push(patch);
+                    });
+
+                    overlay.addEventListener('pointermove', (event) => {
+                        if (!eraserDrag) return;
+                        const rect = overlay.getBoundingClientRect();
+                        const x = event.clientX - rect.left;
+                        const y = event.clientY - rect.top;
+                        const half = drawBrushSize / 2;
+
+                        // Interpolate between last point and current to avoid gaps
+                        const dx = x - eraserDrag.lastX;
+                        const dy = y - eraserDrag.lastY;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        const step = Math.max(drawBrushSize / 3, 2);
+
+                        if (dist >= step) {
+                            const steps = Math.ceil(dist / step);
+                            for (let i = 1; i <= steps; i++) {
+                                const t = i / steps;
+                                const px = eraserDrag.lastX + dx * t;
+                                const py = eraserDrag.lastY + dy * t;
+                                const patch = createEraserPatch(overlay, px - half, py - half, drawBrushSize, drawBrushSize);
+                                eraserDrag.patches.push(patch);
+                            }
+                            eraserDrag.lastX = x;
+                            eraserDrag.lastY = y;
+                        }
+                    });
+
+                    overlay.addEventListener('pointerup', (event) => {
+                        if (!eraserDrag) return;
+                        if (eraserDrag.patches.length === 0) {
+                            eraserDrag = null;
+                            return;
+                        }
+
+                        // Collect bounding box and stroke rects from patches before cleanup
+                        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                        const strokeRects = [];
+                        eraserDrag.patches.forEach(p => {
+                            const pl = parseFloat(p.dataset.patchX);
+                            const pt = parseFloat(p.dataset.patchY);
+                            const pw = parseFloat(p.dataset.patchW);
+                            const ph = parseFloat(p.dataset.patchH);
+                            if (pl < minX) minX = pl;
+                            if (pt < minY) minY = pt;
+                            if (pl + pw > maxX) maxX = pl + pw;
+                            if (pt + ph > maxY) maxY = pt + ph;
+                            strokeRects.push({
+                                x: pl / currentScale,
+                                y: (overlay.clientHeight - pt) / currentScale - ph / currentScale,
+                                w: pw / currentScale,
+                                h: ph / currentScale,
+                            });
+                        });
+
+                        // Remove individual patch elements from DOM
+                        eraserDrag.patches.forEach(p => p.remove());
+
+                        const pdfX = minX / currentScale;
+                        const pdfWidth = (maxX - minX) / currentScale;
+                        const pdfHeight = (maxY - minY) / currentScale;
+                        const pdfY = (overlay.clientHeight - minY) / currentScale - pdfHeight;
+
+                        const annotation = {
+                            id: generateAnnotationId(),
+                            type: 'eraser',
+                            pageIndex: pageNumber - 1,
+                            pdfX,
+                            pdfY,
+                            pdfWidth,
+                            pdfHeight,
+                            brushSize: drawBrushSize / currentScale,
+                            strokeRects,
+                        };
+                        annotations.push(annotation);
+                        persistAnnotations();
+                        updateAnnotationsList();
+                        addAnnotationElement(wrapper, annotation, pageInfo);
+                        saveAnnotationToDatabase(annotation);
+                        eraserDrag = null;
+                        setStatus('Erased area applied. Click Save to keep changes.', 'ok');
+                    });
                 }
+            }
+
+            // Helper: create a single eraser patch element on overlay
+            function createEraserPatch(overlay, x, y, w, h) {
+                const patch = document.createElement('div');
+                patch.className = 'eraser-stroke-annotation';
+                patch.style.left = x + 'px';
+                patch.style.top = y + 'px';
+                patch.style.width = w + 'px';
+                patch.style.height = h + 'px';
+                patch.dataset.patchX = x;
+                patch.dataset.patchY = y;
+                patch.dataset.patchW = w;
+                patch.dataset.patchH = h;
+                overlay.appendChild(patch);
+                return patch;
             }
 
             function resolvePdfFontKey(annotation) {
@@ -9588,6 +9885,34 @@
                         continue;
                     }
 
+                    // Eraser annotation → draw white rectangles over the erased area
+                    if (annotation.type === 'eraser') {
+                        if (annotation.strokeRects && annotation.strokeRects.length > 0) {
+                            // Draw individual brush stroke rects for precise coverage
+                            for (const sr of annotation.strokeRects) {
+                                page.drawRectangle({
+                                    x: sr.x,
+                                    y: sr.y,
+                                    width: sr.w,
+                                    height: sr.h,
+                                    color: PDFLib.rgb(1, 1, 1),
+                                    borderWidth: 0,
+                                });
+                            }
+                        } else {
+                            // Fallback: draw single bounding-box rectangle
+                            page.drawRectangle({
+                                x: annotation.pdfX,
+                                y: annotation.pdfY,
+                                width: annotation.pdfWidth,
+                                height: annotation.pdfHeight,
+                                color: PDFLib.rgb(1, 1, 1),
+                                borderWidth: 0,
+                            });
+                        }
+                        continue;
+                    }
+
                     const fontKey = resolvePdfFontKey(annotation);
                     const fontCacheKey = `${annotation.fontFamily}-${fontKey}`;
                     if (!fontCache[fontCacheKey]) {
@@ -9739,7 +10064,14 @@
                                 new_text: editData.new_text || '',
                                 bbox: editData.bbox || [0, 0, 100, 100],
                                 original_bbox: editData.original_bbox || editData.bbox || [0, 0, 100, 100],
-                                font_size: editData.font_size || 12
+                                font: editData.font || 'Helvetica',
+                                font_size: editData.font_size || 12,
+                                font_weight: editData.font_weight || null,
+                                font_style: editData.font_style || null,
+                                underline: editData.underline || false,
+                                color: editData.color || '#000000',
+                                has_rich_html: !!editData.rich_html,
+                                word_styles_count: (editData.word_styles || []).length
                             });
                         }
                         console.log('Edit coordinates:', JSON.stringify(editsForVerification, null, 2));
@@ -9864,6 +10196,7 @@
                             textEl.style.fontFamily = cssFamily;
                             field.style.fontFamily = cssFamily;
                             field.dataset.fontFamily = selectedFontValue;
+                            field.dataset.font = selectedFontValue;
                         });
                     }
                     markOverlayFieldDirty();
@@ -9969,9 +10302,10 @@
                             applyOverlayStyle((textEl, field) => {
                                 textEl.style.fontWeight = newWeight;
                                 field.style.fontWeight = newWeight;
-                                field.dataset.fontWeight = newWeight;
                             });
                         }
+                        // Always update dataset so markOverlayFieldDirty captures it
+                        selectedOverlayField.dataset.fontWeight = newWeight;
                         markOverlayFieldDirty();
                         updateSelectionBar();
                     }
@@ -9998,9 +10332,10 @@
                             applyOverlayStyle((textEl, field) => {
                                 textEl.style.fontStyle = newStyle;
                                 field.style.fontStyle = newStyle;
-                                field.dataset.fontStyle = newStyle;
                             });
                         }
+                        // Always update dataset so markOverlayFieldDirty captures it
+                        selectedOverlayField.dataset.fontStyle = newStyle;
                         markOverlayFieldDirty();
                         updateSelectionBar();
                     }
@@ -10026,9 +10361,10 @@
                         if (!appliedToSel) {
                             applyOverlayStyle((textEl, field) => {
                                 textEl.style.textDecoration = newDecoration;
-                                field.dataset.underline = String(!isActive);
                             });
                         }
+                        // Always update dataset so markOverlayFieldDirty captures it
+                        selectedOverlayField.dataset.underline = String(!isActive);
                         markOverlayFieldDirty();
                         updateSelectionBar();
                     }
@@ -10628,6 +10964,17 @@
             const shapeFillTransparentInput = document.getElementById('shape-fill-transparent');
             const shapeOpacityInput = document.getElementById('shape-opacity');
             const shapeOpacityLabel = document.getElementById('shape-opacity-label');
+
+            // Draw Tool Modal
+            const drawModal = document.getElementById('draw-modal');
+            const drawClose = document.getElementById('draw-close');
+            const drawApply = document.getElementById('draw-apply');
+            const drawBrushSizeInput = document.getElementById('draw-brush-size');
+            const drawBrushSizeLabel = document.getElementById('draw-brush-size-label');
+            const drawBrushPreview = document.getElementById('draw-brush-preview');
+            const drawToolButtons = document.querySelectorAll('[data-draw-tool]');
+            let drawModeBanner = null;
+
             const gridlinesToggle = document.getElementById('settings-gridlines-toggle');
             const gridlinesOptions = document.getElementById('settings-gridlines-options');
             const gridlinesSpacingInput = document.getElementById('settings-gridlines-spacing');
@@ -12358,6 +12705,7 @@
                         // Check if any style property or rich data was changed
                         const hasStyleEdit = (editData.font_weight && editData.font_weight !== '400' && editData.font_weight !== 'normal') ||
                                              (editData.font_style && editData.font_style !== 'normal') ||
+                                             editData.underline ||
                                              (editData.color && editData.color !== '#000000') ||
                                              editData.rich_html ||
                                              (editData.word_styles && editData.word_styles.length > 0);
@@ -12387,6 +12735,7 @@
                         font_size: editData.font_size || 12,
                         font_weight: editData.font_weight || null,  // Explicit weight (400, 700, etc.)
                         font_style: editData.font_style || null,    // Explicit style (normal, italic)
+                        underline: editData.underline || false,     // Text decoration underline
                         line_height: editData.line_height || null,   // Include line height
                         color: color,
                         rich_html: editData.rich_html || null,        // Always send rich_html for per-word font info
@@ -13241,6 +13590,7 @@
                 if (modeEditText) modeEditText.classList.toggle('active', toolMode === 'edit-text');
                 if (modeSign) modeSign.classList.toggle('active', toolMode === 'sign');
                 if (modeShape) modeShape.classList.toggle('active', toolMode === 'shape');
+                if (modeDraw) modeDraw.classList.toggle('active', toolMode === 'draw');
                 if (modeOverlay) {
                     modeOverlay.checked = overlayEditorActive;
                 }
@@ -13248,6 +13598,10 @@
                     modeOverlayToggle.checked = overlayEditorActive;
                     modeOverlayToggle.classList.toggle('active', overlayEditorActive);
                 }
+                // Toggle eraser cursor class on viewer
+                if (viewer) viewer.classList.toggle('eraser-cursor', toolMode === 'draw');
+                // Show/hide draw mode banner
+                updateDrawModeBanner();
                 updateOverlayUiState();
                 updateTextLayerVisibility();
             };
@@ -13273,7 +13627,7 @@
                 if (modeOverlayChip) modeOverlayChip.classList.toggle('overlay-active', overlayOn);
                 if (overlayStateIndicator) overlayStateIndicator.classList.toggle('active', overlayOn);
 
-                [modeText, modeSign, modeShape, convertBtn].forEach((btn) => {
+                [modeText, modeSign, modeShape, modeDraw, convertBtn].forEach((btn) => {
                     setOverlayToolDisabled(btn, overlayOn);
                 });
             };
@@ -13508,6 +13862,96 @@
                     }
                     // Open shape settings modal
                     openShapeModal();
+                });
+            }
+
+            // Draw Tool Modal open/close
+            function openDrawModal() {
+                if (drawModal) drawModal.classList.add('active');
+            }
+            function closeDrawModal() {
+                if (drawModal) drawModal.classList.remove('active');
+            }
+            function exitDrawMode() {
+                toolMode = 'select';
+                if (drawModeBanner) {
+                    drawModeBanner.remove();
+                    drawModeBanner = null;
+                }
+                if (viewer) viewer.classList.remove('eraser-cursor');
+                updateModeButtons();
+                updateEditTextBanner();
+                setStatus('Draw mode exited.', 'ok');
+            }
+            function updateDrawModeBanner() {
+                if (toolMode === 'draw') {
+                    if (!drawModeBanner) {
+                        drawModeBanner = document.createElement('div');
+                        drawModeBanner.className = 'draw-mode-banner';
+                        const toolLabel = drawToolType.charAt(0).toUpperCase() + drawToolType.slice(1);
+                        drawModeBanner.innerHTML = `
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20H7L3 16c-.8-.8-.8-2 0-2.8L14.6 1.6c.8-.8 2-.8 2.8 0l5 5c.8.8.8 2 0 2.8L12 20"/><path d="M6 11l4 4"/></svg>
+                            ${toolLabel} mode — drag on page to erase
+                            <button id="draw-mode-exit">Exit</button>
+                        `;
+                        document.body.appendChild(drawModeBanner);
+                        drawModeBanner.querySelector('#draw-mode-exit').addEventListener('click', exitDrawMode);
+                    }
+                } else {
+                    if (drawModeBanner) {
+                        drawModeBanner.remove();
+                        drawModeBanner = null;
+                    }
+                }
+            }
+
+            if (modeDraw) {
+                modeDraw.addEventListener('click', () => {
+                    if (overlayEditorActive) {
+                        setStatus('Turn off Overlay Editor first to use Draw.', 'warn');
+                        return;
+                    }
+                    openDrawModal();
+                });
+            }
+
+            if (drawClose) {
+                drawClose.addEventListener('click', closeDrawModal);
+            }
+
+            // Draw tool type selection (only eraser is enabled for now)
+            drawToolButtons.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    if (btn.disabled) return;
+                    drawToolButtons.forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    drawToolType = btn.dataset.drawTool;
+                });
+            });
+
+            // Brush size slider
+            if (drawBrushSizeInput) {
+                drawBrushSizeInput.addEventListener('input', () => {
+                    drawBrushSize = parseInt(drawBrushSizeInput.value);
+                    if (drawBrushSizeLabel) drawBrushSizeLabel.textContent = drawBrushSize + 'px';
+                    if (drawBrushPreview) {
+                        drawBrushPreview.style.width = drawBrushSize + 'px';
+                        drawBrushPreview.style.height = drawBrushSize + 'px';
+                    }
+                });
+            }
+
+            // Apply = start drawing
+            if (drawApply) {
+                drawApply.addEventListener('click', () => {
+                    closeDrawModal();
+                    toolMode = 'draw';
+                    insertMode = null;
+                    if (insertX) insertX.classList.remove('pill-active');
+                    if (insertCheckbox) insertCheckbox.classList.remove('pill-active');
+                    updateModeButtons();
+                    updateEditTextBanner();
+                    setStatus('Draw mode active. Drag on page to erase content.', 'ok');
                 });
             }
 
@@ -14843,16 +15287,8 @@
                     });
                 };
 
-                const buildBlockRichHtml = (textSpan, fontFamily, fontWeight, fontStyle, fontSizePx, lineHeightPx, textColor) => {
-                    const cloned = textSpan.cloneNode(true);
-                    cloned.removeAttribute('contenteditable');
-                    
-                    // Include font-family and font-weight on wrapper so Python can use them
-                    // as fallback when individual spans lose their styling (e.g., after editing)
-                    const wrapperStyle = `position:relative;width:100%;height:100%;font-family:${fontFamily};font-weight:${fontWeight};font-style:${fontStyle};font-size:${fontSizePx};${lineHeightPx ? `line-height:${lineHeightPx};` : ''}color:${textColor};`;
-                    
-                    return `<div style="${wrapperStyle}">${cloned.innerHTML}</div>`;
-                };
+                // buildBlockRichHtml is defined in the outer scope so
+                // markOverlayFieldDirty() can also use it.
 
                 const getWordBounds = (words) => {
                     let minLeft = Infinity;
@@ -15316,16 +15752,26 @@
                             const currentOriginY = currentTop + currentHeight;
                             
                             // Build per-word style data for preserving formatting on save
+                            // Read current toolbar overrides from the field's dataset so
+                            // that style changes (font, bold, italic, underline) made via
+                            // the toolbar are propagated to every word.
+                            const inputResolvedFont = field.dataset.fontFamily || field.dataset.font || block.font;
+                            const inputFieldWeight = parseInt(field.dataset.fontWeight || fontWeight) || 400;
+                            const inputFieldIsBold = inputFieldWeight >= 700;
+                            const inputFieldIsItalic = (field.dataset.fontStyle || fontStyle) === 'italic';
+                            const inputFieldUnderline = field.dataset.underline === 'true';
+
                             const wordStylesArr = (field._blockWords || []).map(w => ({
                                 text: w.text,
-                                font: w.font,
+                                font: inputResolvedFont || w.font,
                                 font_xref: w.font_xref || null,
                                 font_size: w.font_size,
-                                font_weight: w.font_weight || 400,
-                                italic: !!w.italic,
-                                bold: !!w.bold,
+                                font_weight: inputFieldWeight || w.font_weight || 400,
+                                italic: inputFieldIsItalic || !!w.italic,
+                                bold: inputFieldIsBold || !!w.bold,
+                                underline: inputFieldUnderline || false,
                                 color: w.color,
-                                hex_color: w.hex_color || '#000000',
+                                hex_color: field.dataset.textColor || w.hex_color || '#000000',
                                 left: w.left,
                                 top: w.top,
                                 width: w.width,
@@ -15347,10 +15793,11 @@
                                 original_bbox: [blockLeft, blockTop, blockLeft + blockWidth, blockTop + blockHeight],
                                 origin_x: currentOriginX,           // CURRENT POSITION X
                                 origin_y: currentOriginY,           // CURRENT POSITION Y (bottom)
-                                font: block.font,                   // FONT NAME FROM PDF
+                                font: inputResolvedFont,            // FONT NAME (user-selected or original)
                                 font_size: currentFontSizePdf,      // CURRENT FONT SIZE
-                                font_weight: fontWeight,            // FONT WEIGHT (400, 700, etc.)
-                                font_style: fontStyle,              // FONT STYLE (normal, italic)
+                                font_weight: String(inputFieldWeight), // FONT WEIGHT (400, 700, etc.)
+                                font_style: field.dataset.fontStyle || fontStyle, // FONT STYLE (normal, italic)
+                                underline: inputFieldUnderline,     // TEXT DECORATION UNDERLINE
                                 font_xref: block.font_xref,         // FONT REFERENCE
                                 line_height: lineHeightValue || null,
                                 color: field.dataset.textColor || '#000000'  // TEXT COLOR
@@ -15817,17 +16264,24 @@
                                     const richHtml = buildBlockRichHtml(textSpan, fontFamily, fontWeight, fontStyle, currentFontSizePx, currentLineHeightPx, currentTextColor);
                                     
                                     // Build per-word style data for preserving formatting on save
-                                    // (same as the text input handler — ensures Python uses the reliable word_styles path)
+                                    // Read current toolbar overrides from the field's dataset
+                                    const moveResolvedFont = field.dataset.fontFamily || field.dataset.font || block.font;
+                                    const moveFieldWeight = parseInt(field.dataset.fontWeight || fontWeight) || 400;
+                                    const moveFieldIsBold = moveFieldWeight >= 700;
+                                    const moveFieldIsItalic = (field.dataset.fontStyle || fontStyle) === 'italic';
+                                    const moveFieldUnderline = field.dataset.underline === 'true';
+
                                     const moveWordStylesArr = (field._blockWords || []).map(w => ({
                                         text: w.text,
-                                        font: w.font,
+                                        font: moveResolvedFont || w.font,
                                         font_xref: w.font_xref || null,
                                         font_size: w.font_size,
-                                        font_weight: w.font_weight || 400,
-                                        italic: !!w.italic,
-                                        bold: !!w.bold,
+                                        font_weight: moveFieldWeight || w.font_weight || 400,
+                                        italic: moveFieldIsItalic || !!w.italic,
+                                        bold: moveFieldIsBold || !!w.bold,
+                                        underline: moveFieldUnderline || false,
                                         color: w.color,
-                                        hex_color: w.hex_color || '#000000',
+                                        hex_color: field.dataset.textColor || w.hex_color || '#000000',
                                         left: w.left,
                                         top: w.top,
                                         width: w.width,
@@ -15849,10 +16303,11 @@
                                         original_bbox: [blockLeft, blockTop, blockLeft + blockWidth, blockTop + blockHeight],
                                         origin_x: newOriginX,                  // NEW POSITION X
                                         origin_y: newOriginY,                  // NEW POSITION Y (bottom of box)
-                                        font: block.font,                      // FONT NAME
+                                        font: moveResolvedFont,                // FONT NAME (user-selected or original)
                                         font_size: currentFontSizePdf,         // FONT SIZE
-                                        font_weight: fontWeight,               // FONT WEIGHT (400, 700, etc.)
-                                        font_style: fontStyle,                 // FONT STYLE (normal, italic)
+                                        font_weight: String(moveFieldWeight),  // FONT WEIGHT (400, 700, etc.)
+                                        font_style: field.dataset.fontStyle || fontStyle, // FONT STYLE
+                                        underline: moveFieldUnderline,         // TEXT DECORATION UNDERLINE
                                         font_xref: block.font_xref,            // FONT REFERENCE
                                         line_height: lineHeightValue || null,
                                         color: field.dataset.textColor || '#000000'  // TEXT COLOR
@@ -16054,6 +16509,11 @@
                                 const currentTextColor = field.dataset.textColor || computedStyle.color || '#000000';
                                 const richHtml = buildBlockRichHtml(textSpan, fontFamily, fontWeight, fontStyle, currentFontSizePx, currentLineHeightPx, currentTextColor);
                                 
+                                // Read current toolbar overrides from the field's dataset
+                                const resizeResolvedFont = field.dataset.fontFamily || field.dataset.font || block.font;
+                                const resizeFieldWeight = parseInt(field.dataset.fontWeight || fontWeight) || 400;
+                                const resizeFieldUnderline = field.dataset.underline === 'true';
+
                                 overlayEditedFields.set(key, {
                                     page_number: pageData.page_number,
                                     block_num: block.block_num,
@@ -16064,10 +16524,11 @@
                                     original_bbox: [blockLeft, blockTop, blockLeft + blockWidth, blockTop + blockHeight],
                                     origin_x: newOriginX,                       // NEW POSITION X
                                     origin_y: newOriginY,                       // NEW POSITION Y (bottom)
-                                    font: block.font,                           // FONT NAME
+                                    font: resizeResolvedFont,                   // FONT NAME (user-selected or original)
                                     font_size: currentFontSizePdf,              // FONT SIZE
-                                    font_weight: fontWeight,                    // FONT WEIGHT
-                                    font_style: fontStyle,                      // FONT STYLE
+                                    font_weight: String(resizeFieldWeight),      // FONT WEIGHT
+                                    font_style: field.dataset.fontStyle || fontStyle, // FONT STYLE
+                                    underline: resizeFieldUnderline,            // TEXT DECORATION UNDERLINE
                                     font_xref: block.font_xref,                 // FONT REFERENCE
                                     line_height: lineHeightValue || null,
                                     color: field.dataset.textColor || '#000000' // TEXT COLOR
@@ -16651,7 +17112,8 @@
                     || currentFontStyle !== originalFontStyle
                     || currentColor !== originalColor
                     || Math.abs(currentFontSizePdf - originalFontSize) > 0.5
-                    || hasRichStyling;
+                    || hasRichStyling
+                    || field.dataset.underline === 'true';
 
                 if (hasTextChanged || hasPositionChanged || hasSizeChanged || hasStyleChanged) {
                     const colorValue = field.dataset.textColor || '#000000';
@@ -16691,10 +17153,11 @@
                         
                         // Font information
                         font_xref: field.dataset.fontXref ? parseInt(field.dataset.fontXref, 10) : null,
-                        font: originalWord.font,
+                        font: field.dataset.fontFamily || field.dataset.font || originalWord.font,
                         font_size: currentFontSizePdf,
                         font_weight: currentFontWeight,
                         font_style: currentFontStyle,
+                        underline: field.dataset.underline === 'true',
                         color: colorHex,
                         
                         // Page dimensions
