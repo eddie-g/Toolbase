@@ -2,21 +2,33 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Word;
 use App\Models\AiDomainRequest;
 use App\Models\AiPriceLog;
 use App\Services\DeveloperChatClient;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 
 class DomainSearchController extends Controller
 {
+    private const DEFAULT_TLDS = ['com', 'ai', 'net', 'org'];
+    private const GENERATE_CATEGORIES = ['space', 'tech', 'fantasy', 'scifi', 'romance', 'mystery', 'thriller', 'horror', 'adventure', 'historical', 'drama', 'action'];
+    private const CATEGORY_RESULT_LIMIT = 10;
+
     public function index()
     {
-        return view('domain-search');
+        $tldOptions = $this->getTldOptions();
+        $availableTlds = array_column($tldOptions, 'tld');
+
+        $defaultTlds = $this->getDefaultSelectedTlds($availableTlds);
+
+        return view('domain-search', [
+            'tldOptions' => $tldOptions,
+            'defaultTlds' => $defaultTlds,
+        ]);
     }
 
     public function check(Request $request)
@@ -24,7 +36,7 @@ class DomainSearchController extends Controller
         $request->validate([
             'names' => 'required|string|max:500',
             'tlds' => 'required|array|min:1',
-            'tlds.*' => 'in:com,ai,net,org',
+            'tlds.*' => ['required', Rule::in($this->getAvailableTlds())],
         ]);
 
         $names = preg_split('/[\s,]+/', trim($request->input('names')));
@@ -34,7 +46,7 @@ class DomainSearchController extends Controller
             return response()->json(['results' => [], 'error' => 'No domain names provided.'], 422);
         }
 
-        $tlds = $request->input('tlds', ['com', 'ai']);
+        $tlds = $request->input('tlds', $this->getDefaultSelectedTlds());
 
         $check = $this->checkDomainAvailability($names, $tlds);
 
@@ -46,75 +58,30 @@ class DomainSearchController extends Controller
     }
 
     /**
-     * Generate domain name ideas from a seed word.
+     * Generate domain ideas from dictionary category scores and prefix/suffix.
      */
     public function generate(Request $request)
     {
         $request->validate([
-            'seed' => 'required|string|max:30|regex:/^[a-zA-Z]+$/',
-            'count' => 'integer|min:10|max:200',
+            'prefix' => 'nullable|string|max:30|regex:/^[a-zA-Z0-9-]*$/',
+            'suffix' => 'nullable|string|max:30|regex:/^[a-zA-Z0-9-]*$/',
+            'category' => ['required', Rule::in(self::GENERATE_CATEGORIES)],
         ]);
 
-        $seed = strtolower(trim($request->input('seed')));
-        $count = $request->input('count', 100);
+        $prefix = $this->sanitizeDomainLabelPart((string) $request->input('prefix', ''));
+        $suffix = $this->sanitizeDomainLabelPart((string) $request->input('suffix', ''));
+        $category = strtolower((string) $request->input('category'));
 
-        // Try to use database words first
-        $wordCount = Word::count();
-        
-        if ($wordCount > 100) {
-            // Use database words to generate combinations
-            $names = $this->generateNamesFromDatabase($seed, $count);
-        } else {
-            // Fallback to Python script
-            $scriptPath = base_path('python/domain-search/generate_domain_names.py');
-            $result = Process::timeout(10)->run([
-                'python3', $scriptPath, $seed, '-n', (string) $count, '--json',
-            ]);
-
-            if (!$result->successful()) {
-                return response()->json([
-                    'names' => [],
-                    'error' => 'Generation failed: ' . $result->errorOutput(),
-                ], 500);
-            }
-
-            $names = json_decode($result->output(), true) ?? [];
+        if ($prefix === '' && $suffix === '') {
+            return response()->json([
+                'names' => [],
+                'error' => 'Enter a prefix or suffix to generate ideas.',
+            ], 422);
         }
+
+        $names = $this->generateCategoryDomains($prefix, $suffix, $category);
 
         return response()->json(['names' => $names, 'error' => null]);
-    }
-
-    /**
-     * Generate domain names by combining seed word with database words.
-     */
-    private function generateNamesFromDatabase(string $seed, int $count): array
-    {
-        $names = [];
-        
-        // Get random words from database (3-8 chars work well as suffixes)
-        $words = Word::where('length', '>=', 3)
-            ->where('length', '<=', 8)
-            ->where('rank', '<=', 3000) // Use common words
-            ->inRandomOrder()
-            ->limit($count)
-            ->pluck('word')
-            ->toArray();
-        
-        // Combine seed with words
-        foreach ($words as $word) {
-            $names[] = $seed . $word;
-        }
-        
-        // Also add some prefixed versions if we have room
-        if (count($names) < $count) {
-            $prefixes = ['go', 'my', 'get', 'the', 'try', 'use'];
-            foreach ($prefixes as $prefix) {
-                $names[] = $prefix . $seed;
-                if (count($names) >= $count) break;
-            }
-        }
-        
-        return array_slice($names, 0, $count);
     }
 
     /**
@@ -125,13 +92,13 @@ class DomainSearchController extends Controller
         $request->validate([
             'seed' => 'required|string|max:30|regex:/^[a-zA-Z]+$/',
             'tlds' => 'required|array|min:1',
-            'tlds.*' => 'in:com,ai,net,org',
+            'tlds.*' => ['required', Rule::in($this->getAvailableTlds())],
             'count' => 'integer|min:10|max:200',
         ]);
 
         $seed = strtolower(trim($request->input('seed')));
         $count = $request->input('count', 100);
-        $tlds = $request->input('tlds', ['com', 'ai']);
+        $tlds = $request->input('tlds', $this->getDefaultSelectedTlds());
 
         // Step 1: Generate names
         $genScript = base_path('python/domain-search/generate_domain_names.py');
@@ -251,7 +218,7 @@ class DomainSearchController extends Controller
             'names' => 'required|array|min:1|max:100',
             'names.*' => 'string|max:100',
             'tlds' => 'required|array|min:1',
-            'tlds.*' => 'in:com,ai,net,org',
+            'tlds.*' => ['required', Rule::in($this->getAvailableTlds())],
         ]);
 
         // Per-user concurrent job cap (max 3)
@@ -470,14 +437,14 @@ class DomainSearchController extends Controller
         $request->validate([
             'prompt' => 'required|string|min:3|max:4000',
             'tlds' => 'nullable|array',
-            'tlds.*' => 'in:com,ai,net,org',
+            'tlds.*' => ['required', Rule::in($this->getAvailableTlds())],
             'stream' => 'nullable|boolean',
         ]);
 
         $prompt = $request->input('prompt');
-        $tlds = $request->input('tlds', ['com', 'ai', 'net', 'org']);
+        $tlds = $request->input('tlds', $this->getDefaultSelectedTlds());
         if (!is_array($tlds) || count($tlds) === 0) {
-            $tlds = ['com', 'ai', 'net', 'org'];
+            $tlds = $this->getDefaultSelectedTlds();
         }
         $stream = $request->boolean('stream');
 
@@ -620,5 +587,147 @@ Example response format:
                 'debug' => config('app.debug') ? $e->getMessage() : null,
             ], 500);
         }
+    }
+
+    private function getAvailableTlds(): array
+    {
+        return Cache::remember('domain-search:available-tlds', now()->addMinutes(30), function () {
+            try {
+                $table = $this->resolveTldTable();
+                if (!$table) {
+                    return self::DEFAULT_TLDS;
+                }
+
+                $tlds = DB::table($table)
+                    ->select('tld')
+                    ->whereNotNull('tld')
+                    ->orderBy('tld')
+                    ->pluck('tld')
+                    ->map(fn ($tld) => strtolower(trim((string) $tld)))
+                    ->filter(fn ($tld) => $tld !== '')
+                    ->unique()
+                    ->values()
+                    ->all();
+
+                return !empty($tlds) ? $tlds : self::DEFAULT_TLDS;
+            } catch (\Throwable $e) {
+                return self::DEFAULT_TLDS;
+            }
+        });
+    }
+
+    private function getTldOptions(): array
+    {
+        return Cache::remember('domain-search:tld-options', now()->addMinutes(30), function () {
+            try {
+                $table = $this->resolveTldTable();
+                if (!$table) {
+                    return array_map(fn ($tld) => [
+                        'tld' => $tld,
+                        'popularity' => null,
+                        'manager' => null,
+                    ], self::DEFAULT_TLDS);
+                }
+
+                return DB::table($table)
+                    ->select('tld', 'popularity', 'manager')
+                    ->whereNotNull('tld')
+                    ->orderByRaw('popularity IS NULL, popularity ASC')
+                    ->orderBy('tld')
+                    ->get()
+                    ->map(function ($row) {
+                        return [
+                            'tld' => strtolower(trim((string) $row->tld)),
+                            'popularity' => $row->popularity,
+                            'manager' => $row->manager,
+                        ];
+                    })
+                    ->filter(fn ($row) => $row['tld'] !== '')
+                    ->values()
+                    ->all();
+            } catch (\Throwable $e) {
+                return array_map(fn ($tld) => [
+                    'tld' => $tld,
+                    'popularity' => null,
+                    'manager' => null,
+                ], self::DEFAULT_TLDS);
+            }
+        });
+    }
+
+    private function resolveTldTable(): ?string
+    {
+        foreach (['TLDs', 'tlds'] as $table) {
+            try {
+                DB::table($table)->limit(1)->get();
+                return $table;
+            } catch (\Throwable $e) {
+                // Try next candidate.
+            }
+        }
+
+        return null;
+    }
+
+    private function sanitizeDomainLabelPart(string $value): string
+    {
+        $clean = strtolower(trim($value));
+        $clean = preg_replace('/[^a-z0-9-]/', '', $clean) ?? '';
+        $clean = trim($clean, '-');
+
+        return substr($clean, 0, 30);
+    }
+
+    private function generateCategoryDomains(string $prefix, string $suffix, string $category): array
+    {
+        $column = 'category_' . $category;
+
+        $rows = DB::table('dictionary')
+            ->select('word', $column, 'length')
+            ->whereNotNull('word')
+            ->where('length', '>=', 3)
+            ->where('length', '<=', 12)
+            ->where($column, '>', 0)
+            ->orderByDesc($column)
+            ->limit(250)
+            ->get();
+
+        $names = [];
+        foreach ($rows as $row) {
+            $core = $this->sanitizeDomainLabelPart((string) $row->word);
+            if ($core === '') {
+                continue;
+            }
+
+            $candidate = strtolower($prefix . $core . $suffix);
+            $candidate = preg_replace('/-+/', '-', $candidate) ?? '';
+            $candidate = trim($candidate, '-');
+
+            if ($candidate === '' || strlen($candidate) < 3 || strlen($candidate) > 63) {
+                continue;
+            }
+
+            if (!preg_match('/^[a-z0-9-]+$/', $candidate)) {
+                continue;
+            }
+
+            $names[$candidate] = true;
+            if (count($names) >= self::CATEGORY_RESULT_LIMIT) {
+                break;
+            }
+        }
+
+        return array_keys($names);
+    }
+
+    private function getDefaultSelectedTlds(?array $availableTlds = null): array
+    {
+        $availableTlds = $availableTlds ?? $this->getAvailableTlds();
+        $defaultTlds = array_values(array_filter(
+            self::DEFAULT_TLDS,
+            fn ($tld) => in_array($tld, $availableTlds, true)
+        ));
+
+        return !empty($defaultTlds) ? $defaultTlds : self::DEFAULT_TLDS;
     }
 }

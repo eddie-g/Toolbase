@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Domain Availability Checker
-Check .com, .ai, .net, and .org domain availability via WHOIS lookups.
+Check domain availability across multiple TLDs via WHOIS lookups.
 """
 
 import socket
@@ -21,6 +21,8 @@ WHOIS_SERVERS = {
     ".net": "whois.verisign-grs.com",
     ".org": "whois.pir.org",
 }
+IANA_WHOIS_SERVER = "whois.iana.org"
+WHOIS_SERVER_CACHE: dict[str, str | None] = {}
 
 # Patterns that indicate a domain is NOT registered (i.e., available)
 AVAILABLE_PATTERNS = [
@@ -117,6 +119,33 @@ def whois_query(domain: str, server: str, timeout: int = 15) -> str:
         return f"ERROR: {e}"
 
 
+def resolve_whois_server(tld: str) -> str | None:
+    """Resolve WHOIS server for a TLD (e.g. '.io')."""
+    if tld in WHOIS_SERVERS:
+        return WHOIS_SERVERS[tld]
+
+    if tld in WHOIS_SERVER_CACHE:
+        return WHOIS_SERVER_CACHE[tld]
+
+    response = whois_query(tld.lstrip("."), IANA_WHOIS_SERVER, timeout=10)
+    if response.startswith("ERROR:"):
+        WHOIS_SERVER_CACHE[tld] = None
+        return None
+
+    match = re.search(r"^whois:\s*(\S+)", response, flags=re.IGNORECASE | re.MULTILINE)
+    if not match:
+        WHOIS_SERVER_CACHE[tld] = None
+        return None
+
+    server = match.group(1).strip()
+    if not server or server.lower() in {"none", "not available"}:
+        WHOIS_SERVER_CACHE[tld] = None
+        return None
+
+    WHOIS_SERVER_CACHE[tld] = server
+    return server
+
+
 def check_http_for_sale(domain: str, timeout: int = 7) -> tuple[bool, str]:
     """
     Check if domain redirects to marketplace or contains for-sale indicators.
@@ -166,7 +195,7 @@ def check_http_for_sale(domain: str, timeout: int = 7) -> tuple[bool, str]:
 def check_domain(domain: str) -> dict:
     """Check availability of a single domain."""
     tld = "." + domain.split(".")[-1]
-    server = WHOIS_SERVERS.get(tld)
+    server = resolve_whois_server(tld)
 
     if not server:
         return {"domain": domain, "available": None, "for_sale": False, "error": f"Unsupported TLD: {tld}"}
@@ -277,9 +306,8 @@ def main():
     parser.add_argument(
         "-t", "--tlds",
         nargs="+",
-        choices=["com", "ai", "net", "org"],
         default=["com", "ai", "net", "org"],
-        help="TLDs to check (default: com ai net org)",
+        help="TLDs to check (default: com ai net org). Accepts values like com, .com, io, xyz.",
     )
     parser.add_argument(
         "-i", "--interactive",
@@ -293,7 +321,16 @@ def main():
     )
 
     args = parser.parse_args()
-    tlds = ["." + t for t in args.tlds]
+
+    normalized_tlds: list[str] = []
+    for raw_tld in args.tlds:
+        cleaned = raw_tld.strip().lower().lstrip(".")
+        if not re.fullmatch(r"[a-z0-9-]{2,63}", cleaned):
+            parser.error(f"Invalid TLD: {raw_tld}")
+        if cleaned not in normalized_tlds:
+            normalized_tlds.append(cleaned)
+
+    tlds = ["." + t for t in normalized_tlds]
 
     if args.interactive or not args.names:
         interactive_mode(tlds)

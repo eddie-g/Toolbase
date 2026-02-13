@@ -62,24 +62,23 @@ def update_category_scores(results: List[Tuple[int, str, str, float, dict]], thr
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    categories = ["space", "fantasy", "tech", "romance", "scifi"]
+    categories = ["space", "fantasy", "tech", "romance", "scifi",
+                   "mystery", "thriller", "horror", "adventure", "historical", "drama", "action"]
     updated = 0
     
     for word_id, word, best_category, best_score, scores_dict in results:
         # Update all category scores at once with actual confidence values
         # Round to 3 decimal places to match DECIMAL(5,3) column type
+        set_parts = []
+        params = []
+        for cat in categories:
+            set_parts.append(f"category_{cat} = %s")
+            params.append(round(scores_dict.get(cat, 0), 3))
+        set_parts.append("scanned = NOW()")
+        params.append(word_id)
         cursor.execute(
-            """UPDATE dictionary 
-               SET space = %s, fantasy = %s, tech = %s, romance = %s, scifi = %s, scanned = NOW() 
-               WHERE id = %s""",
-            (
-                round(scores_dict['space'], 3),
-                round(scores_dict['fantasy'], 3),
-                round(scores_dict['tech'], 3),
-                round(scores_dict['romance'], 3),
-                round(scores_dict['scifi'], 3),
-                word_id
-            )
+            f"UPDATE dictionary SET {', '.join(set_parts)} WHERE id = %s",
+            params
         )
         
         # Count as updated if any category meets the threshold
@@ -159,7 +158,8 @@ def score_words(words: List[Tuple[int, str]], model_name: str, show: int, thresh
     )
     print("✓ Model loaded successfully\n")
 
-    categories = ["space", "fantasy", "tech", "romance", "scifi"]
+    categories = ["space", "fantasy", "tech", "romance", "scifi",
+                   "mystery", "thriller", "horror", "adventure", "historical", "drama", "action"]
     hypothesis = "This definition describes something related to {}."
 
     results = []
