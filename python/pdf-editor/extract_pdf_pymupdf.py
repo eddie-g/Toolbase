@@ -839,6 +839,28 @@ def extract_text_with_pymupdf(pdf_path):
             # This catches cases where PyMuPDF reports inline text as separate blocks
             page_blocks = _merge_adjacent_page_blocks(page_blocks, page_width, page_words, page_lines)
 
+            # ── Word-level deduplication ──────────────────────────────
+            # PyMuPDF can emit duplicate spans for OCR layers, font
+            # re-encoding, or ligature splitting. Remove near-identical
+            # entries to prevent stacked/doubled glyphs in the overlay.
+            WORD_POS_EPS = 1.5  # PDF-point tolerance
+            deduped_words = []
+            seen_word_sigs = set()
+            for w in page_words:
+                sig = (
+                    w.get('text', '').strip(),
+                    round(w.get('left', 0) / WORD_POS_EPS),
+                    round(w.get('top', 0) / WORD_POS_EPS),
+                )
+                if sig in seen_word_sigs:
+                    continue
+                seen_word_sigs.add(sig)
+                deduped_words.append(w)
+            removed = len(page_words) - len(deduped_words)
+            if removed > 0:
+                print(f"    ⚠ Removed {removed} duplicate word entries")
+            page_words = deduped_words
+
             # Combine all text from page
             page_full_text = "\n".join(page_text_lines)
             full_text_parts.append(page_full_text)

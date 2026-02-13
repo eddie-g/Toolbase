@@ -2128,6 +2128,79 @@
             .modal.active {
                 display: flex;
             }
+            .overlay-loading-modal {
+                position: fixed;
+                inset: 0;
+                z-index: 100001;
+                display: none;
+                align-items: center;
+                justify-content: center;
+                background: rgba(10, 15, 25, 0.55);
+                backdrop-filter: blur(6px);
+            }
+            .overlay-loading-modal.active {
+                display: flex;
+            }
+            .overlay-loading-modal .loading-card {
+                width: min(460px, 92vw);
+                border: 1px solid rgba(255, 255, 255, 0.14);
+                border-radius: 14px;
+                background: linear-gradient(145deg, rgba(14, 21, 34, 0.97), rgba(21, 32, 52, 0.97));
+                box-shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
+                color: #e5e7eb;
+                padding: 20px;
+            }
+            .overlay-loading-modal .loading-header {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                margin-bottom: 10px;
+            }
+            .overlay-loading-modal .loading-icon {
+                width: 34px;
+                height: 34px;
+                border-radius: 10px;
+                background: linear-gradient(135deg, #2563eb, #4f46e5);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: #fff;
+                flex-shrink: 0;
+            }
+            .overlay-loading-modal .loading-title {
+                font-size: 16px;
+                font-weight: 700;
+                margin: 0;
+                color: #f8fafc;
+            }
+            .overlay-loading-modal .loading-message {
+                font-size: 13px;
+                color: rgba(226, 232, 240, 0.84);
+                margin: 0 0 14px;
+                line-height: 1.5;
+            }
+            .overlay-loading-modal .loading-progress-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                margin-bottom: 7px;
+                font-size: 12px;
+                color: rgba(191, 219, 254, 0.9);
+            }
+            .overlay-loading-modal .loading-progress-track {
+                height: 8px;
+                width: 100%;
+                border-radius: 999px;
+                background: rgba(148, 163, 184, 0.24);
+                overflow: hidden;
+            }
+            .overlay-loading-modal .loading-progress-fill {
+                height: 100%;
+                width: 0%;
+                border-radius: 999px;
+                background: linear-gradient(90deg, #3b82f6, #22d3ee);
+                transition: width 0.2s ease;
+            }
             .organize-modal .modal-card {
                 max-width: 900px;
                 width: 90vw;
@@ -4945,6 +5018,28 @@
             </div>
         </div>
 
+        <div id="overlay-loading-modal" class="overlay-loading-modal" aria-hidden="true">
+            <div class="loading-card">
+                <div class="loading-header">
+                    <div class="loading-icon">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                        </svg>
+                    </div>
+                    <h3 class="loading-title">Preparing Overlay Editor</h3>
+                </div>
+                <p id="overlay-loading-message" class="loading-message">Loading extracted text data for this document...</p>
+                <div class="loading-progress-row">
+                    <span>Progress</span>
+                    <span id="overlay-loading-percent">0%</span>
+                </div>
+                <div class="loading-progress-track">
+                    <div id="overlay-loading-progress" class="loading-progress-fill"></div>
+                </div>
+            </div>
+        </div>
+
         <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
@@ -5393,6 +5488,10 @@
             const overlayUndoBtn = document.getElementById('overlay-undo');
             const overlayRedoBtn = document.getElementById('overlay-redo');
             const textMeasureCtx = document.createElement('canvas').getContext('2d');
+            const overlayLoadingModal = document.getElementById('overlay-loading-modal');
+            const overlayLoadingMessage = document.getElementById('overlay-loading-message');
+            const overlayLoadingProgress = document.getElementById('overlay-loading-progress');
+            const overlayLoadingPercent = document.getElementById('overlay-loading-percent');
 
             // Cleanup function to destroy overlay PDF and release memory
             function cleanupOverlayPdf() {
@@ -5401,6 +5500,67 @@
                     overlayPdfDoc = null;
                 }
             }
+
+            const updateOverlayLoadingProgress = (percent = 0, message = null) => {
+                const safePercent = Math.max(0, Math.min(100, Math.round(percent)));
+                if (overlayLoadingProgress) {
+                    overlayLoadingProgress.style.width = `${safePercent}%`;
+                }
+                if (overlayLoadingPercent) {
+                    overlayLoadingPercent.textContent = `${safePercent}%`;
+                }
+                if (message && overlayLoadingMessage) {
+                    overlayLoadingMessage.textContent = message;
+                }
+            };
+
+            const showOverlayLoadingModal = (message = 'Loading extracted text data for this document...') => {
+                if (!overlayLoadingModal) return;
+                overlayLoadingModal.style.display = 'flex';
+                overlayLoadingModal.setAttribute('aria-hidden', 'false');
+                overlayLoadingModal.classList.add('active');
+                updateOverlayLoadingProgress(2, message);
+            };
+
+            const hideOverlayLoadingModal = () => {
+                if (!overlayLoadingModal) return;
+                overlayLoadingModal.classList.remove('active');
+                overlayLoadingModal.setAttribute('aria-hidden', 'true');
+                overlayLoadingModal.style.display = 'none';
+                updateOverlayLoadingProgress(0);
+            };
+
+            const waitForOverlayExtractionData = async ({ showModal = false, timeoutMs = 45000, pollMs = 700 } = {}) => {
+                const startedAt = Date.now();
+                if (showModal) {
+                    showOverlayLoadingModal('Preparing clean PDF and waiting for extraction data...');
+                }
+                while ((Date.now() - startedAt) < timeoutMs) {
+                    const elapsed = Date.now() - startedAt;
+                    if (showModal) {
+                        const eased = Math.min(94, 10 + (elapsed / timeoutMs) * 84);
+                        updateOverlayLoadingProgress(eased, 'Loading extraction data...');
+                    }
+                    try {
+                        const response = await fetch(`${fitzExtractionDataUrl}?v=${Date.now()}`, {
+                            headers: { 'Accept': 'application/json' }
+                        });
+                        if (response.ok) {
+                            const data = await response.json();
+                            if (data && data.success && Array.isArray(data.extraction_data)) {
+                                if (showModal) {
+                                    updateOverlayLoadingProgress(100, 'Overlay data ready.');
+                                }
+                                return data;
+                            }
+                        }
+                    } catch (pollError) {
+                        // Continue polling until timeout.
+                    }
+                    await new Promise(resolve => setTimeout(resolve, pollMs));
+                }
+                throw new Error('Timed out waiting for overlay extraction data. Please try again.');
+            };
 
             const measureAnnotationTextWidth = (text, fontSizePx, fontFamily, fontWeight, fontStyle) => {
                 const weight = fontWeight || '400';
@@ -6135,7 +6295,7 @@
                     return;
                 }
                 const thumb = document.createElement('div');
-                thumb.className = 'relative p-3 rounded-lg border border-gray-600/50 cursor-pointer transition-all hover:border-emerald-500/50 group';
+                thumb.className = 'page-thumb relative p-3 rounded-lg border border-gray-600/50 cursor-pointer transition-all hover:border-emerald-500/50 group';
                 thumb.dataset.pageIndex = String(pageNumber - 1);
 
                 const thumbCanvas = document.createElement('canvas');
@@ -14218,6 +14378,7 @@
 
             const overlayToggleHandler = async (checked) => {
                 if (!checked) {
+                    hideOverlayLoadingModal();
                     cleanupOverlayPdf();  // Free memory from overlay PDF
                     overlayEditorActive = false;
                     overlayLoadToken++;
@@ -14286,10 +14447,18 @@
                 updateModeButtons();
                 updateOverlayUiState();
                 setStatus('Loading overlay editor...', 'loading');
+                const shouldShowOverlayModal = (Number(pdfjsDocument?.numPages || totalPages || 0) > 5);
+                hideOverlayLoadingModal();
 
                 try {
                     viewer.classList.remove('overlay-hidden');
                     if (overlayRendered) {
+                        // Rebuild overlay DOM every time editor is re-enabled.
+                        // Reusing previous nodes can leave stale visual artifacts.
+                        await renderPdfWithOverlay(true);
+                        if (!overlayEditorActive || loadToken !== overlayLoadToken) {
+                            return;
+                        }
                         if (typeof renderGridlines === 'function') renderGridlines();
                         setStatus('Overlay editor active. Edit text positions and content.', 'ok');
                         return;
@@ -14320,9 +14489,35 @@
                         return;
                     }
 
-                    // Load extraction data
-                    const response = await fetch('{{ route("documents.getFitzExtractionData", $document) }}');
-                    const data = await response.json();
+                    // First attempt: fetch extraction data immediately without showing modal.
+                    // If already available on the server, skip modal entirely.
+                    let data = null;
+                    try {
+                        const quickResponse = await fetch(`${fitzExtractionDataUrl}?v=${Date.now()}`, {
+                            headers: { 'Accept': 'application/json' }
+                        });
+                        if (quickResponse.ok) {
+                            data = await quickResponse.json();
+                        }
+                    } catch (quickFetchError) {
+                        // Fall through to wait/poll path below.
+                    }
+
+                    const hasImmediateData = !!(data && data.success && Array.isArray(data.extraction_data));
+
+                    if (!hasImmediateData) {
+                        // Only show modal on original load when data is not ready yet.
+                        if (shouldShowOverlayModal) {
+                            showOverlayLoadingModal('Preparing clean PDF and waiting for extraction data...');
+                            updateOverlayLoadingProgress(8, 'Preparing clean PDF and waiting for extraction data...');
+                        }
+                        data = await waitForOverlayExtractionData({
+                            showModal: shouldShowOverlayModal,
+                            timeoutMs: 60000,
+                            pollMs: 750
+                        });
+                        hideOverlayLoadingModal();
+                    }
 
                     if (!data.success) {
                         throw new Error(data.message || 'Failed to load extraction data');
@@ -14416,6 +14611,7 @@
                         document.fonts.ready.then(doFontReRender);
                     }, 2000);
                 } catch (error) {
+                    hideOverlayLoadingModal();
                     console.error('Error loading overlay editor:', error);
                     let errorMessage = error.message;
                     if (error.message && error.message.includes('Page dictionary')) {
@@ -14466,6 +14662,11 @@
                     overlayPdfDoc = pdf;  // Track for cleanup
                     
                     viewer.innerHTML = '';
+                    if (pageList) {
+                        // Rebuilding overlay pages must also reset sidebar thumbnails,
+                        // otherwise each re-render appends duplicate page entries.
+                        pageList.innerHTML = '';
+                    }
                     totalPages = pdf.numPages;
                     updatePageControls();
                     renderedPages = 0;
@@ -14999,7 +15200,19 @@
                     .forEach((annotation) => addAnnotationElement(wrapper, annotation, pageInfo));
 
                 // Render editable text fields - pass the actual viewport for accurate scaling
-                const pageData = overlayExtractionData.find(p => p.page_number === pageNumber);
+                const extractionPages = Array.isArray(overlayExtractionData) ? overlayExtractionData : [];
+                let pageData = null;
+                if (typeof extractionPages.find === 'function') {
+                    pageData = extractionPages.find((p) => p && p.page_number === pageNumber) || null;
+                } else {
+                    for (let i = 0; i < extractionPages.length; i++) {
+                        const p = extractionPages[i];
+                        if (p && p.page_number === pageNumber) {
+                            pageData = p;
+                            break;
+                        }
+                    }
+                }
                 if (pageData && pageData.words) {
                     renderOverlayFields(overlay, pageData, viewport, canvas);
                 }
@@ -15010,6 +15223,8 @@
 
             function renderOverlayFields(overlay, pageData, viewport, canvas) {
                 if (!pageData.words || pageData.words.length === 0) return;
+                // Defensive cleanup in case this page overlay is re-rendered.
+                overlay.querySelectorAll('.overlay-field').forEach((el) => el.remove());
 
                 // Normalize PDF font name by stripping subset prefixes and weight suffixes
                 // e.g. "PdbpbbLato-Regular" → "Lato", "MontserratThin_700wght" → "Montserrat"
@@ -15215,7 +15430,7 @@
                     if (!Number.isFinite(spacing)) {
                         return null;
                     }
-                    const clamped = Math.max(-1, Math.min(5, spacing));
+                    const clamped = Math.max(-3, Math.min(8, spacing));
                     return clamped;
                 };
 
@@ -15231,8 +15446,42 @@
 
                 const buildStyledWordSpans = (container, words, scaleX, scaleY, blockLeft, blockTop) => {
                     container.style.position = 'relative';
+
+                    // ── Word-level deduplication ──────────────────────────────
+                    // Extraction can produce duplicate/overlapping word entries
+                    // (OCR layers, font re-encoding, ligature splitting). Remove
+                    // near-identical words so we don't render stacked glyphs.
+                    const WORD_POS_EPS = 1.5; // PDF-unit tolerance
+                    const dedupedWords = [];
+                    const seenWordKeys = new Set();
+                    const sortedInput = [...words].sort((a, b) =>
+                        ((a.top || 0) - (b.top || 0)) || ((a.left || 0) - (b.left || 0))
+                    );
+                    sortedInput.forEach((word) => {
+                        // Fast path: exact signature match
+                        const sig = [
+                            sanitizeOverlayText(word.text || ''),
+                            Math.round((word.left || 0) / WORD_POS_EPS),
+                            Math.round((word.top || 0) / WORD_POS_EPS),
+                        ].join('|');
+                        if (seenWordKeys.has(sig)) return;
+                        seenWordKeys.add(sig);
+
+                        // Slow path: check for near-overlap with already-kept words
+                        const isDup = dedupedWords.some((kept) => {
+                            if (Math.abs((kept.left || 0) - (word.left || 0)) > WORD_POS_EPS) return false;
+                            if (Math.abs((kept.top || 0) - (word.top || 0)) > WORD_POS_EPS) return false;
+                            const keptText = sanitizeOverlayText(kept.text || '');
+                            const wordText = sanitizeOverlayText(word.text || '');
+                            return keptText === wordText
+                                || keptText.includes(wordText)
+                                || wordText.includes(keptText);
+                        });
+                        if (!isDup) dedupedWords.push(word);
+                    });
+
                     const lines = new Map();
-                    words.forEach((word) => {
+                    dedupedWords.forEach((word) => {
                         const lineKey = word.line_num ?? 0;
                         if (!lines.has(lineKey)) {
                             lines.set(lineKey, []);
@@ -15342,10 +15591,26 @@
                     // split them into separate visual blocks so each table cell
                     // gets its own bounding box.
                     const GAP_FACTOR = 3; // gap > GAP_FACTOR × avg font size = column break
-                    let nextSyntheticBlockNum = pageData.blocks.reduce((m, b) => Math.max(m, b.block_num), 0) + 1;
-                    const expandedBlocks = [];
+                    const SPLIT_ALIGN_TOLERANCE_PX = 6;
 
-                    pageData.blocks.forEach(block => {
+                    // Prepare block data only once per extracted page payload. Repeating
+                    // the split+retag pass on every re-render can create drifting block
+                    // assignments and visual duplicates over time.
+                    let expandedBlocks;
+                    if (pageData._overlayBlocksPrepared) {
+                        expandedBlocks = pageData.blocks || [];
+                    } else {
+                        let nextSyntheticBlockNum = pageData.blocks.reduce((m, b) => Math.max(m, b.block_num), 0) + 1;
+                        expandedBlocks = [];
+
+                        pageData.blocks.forEach(block => {
+                        // Avoid double-splitting blocks that were already split upstream
+                        // or by this client-side renderer on a prior pass.
+                        if (block._from_xgap_split || block._client_split) {
+                            expandedBlocks.push(block);
+                            return;
+                        }
+
                         const blockWords = pageData.words
                             ? pageData.words.filter(w => w.block_num === block.block_num)
                             : [];
@@ -15366,28 +15631,53 @@
                         // For multi-line blocks: only split if ALL lines have matching column structure
                         const lineKeys = Array.from(lineMap.keys()).sort((a, b) => a - b);
 
-                        // Determine column breaks from the first line (or longest line)
-                        let refLine = lineMap.get(lineKeys[0]);
-                        lineKeys.forEach(k => {
-                            if (lineMap.get(k).length > refLine.length) refLine = lineMap.get(k);
-                        });
-                        refLine.sort((a, b) => a.left - b.left);
+                        const sortedLineWords = lineKeys.map(k =>
+                            [...lineMap.get(k)].sort((a, b) => a.left - b.left)
+                        );
 
-                        // Find gaps in the reference line
-                        const avgFontSize = refLine.reduce((s, w) => s + (w.font_size || 10), 0) / refLine.length;
-                        const gapThreshold = avgFontSize * GAP_FACTOR;
-                        const splitPositions = []; // midpoint x-coords of gaps
-                        for (let i = 1; i < refLine.length; i++) {
-                            const prevRight = refLine[i - 1].left + refLine[i - 1].width;
-                            const curLeft = refLine[i].left;
-                            const gap = curLeft - prevRight;
-                            if (gap > gapThreshold) {
-                                splitPositions.push((prevRight + curLeft) / 2);
+                        // Determine candidate split positions per line.
+                        const lineSplitPositions = sortedLineWords.map(words => {
+                            if (words.length < 2) return [];
+                            const avgFontSize = words.reduce((s, w) => s + (w.font_size || 10), 0) / words.length;
+                            const gapThreshold = avgFontSize * GAP_FACTOR;
+                            const positions = [];
+                            for (let i = 1; i < words.length; i++) {
+                                const prevRight = words[i - 1].left + words[i - 1].width;
+                                const curLeft = words[i].left;
+                                const gap = curLeft - prevRight;
+                                if (gap > gapThreshold) {
+                                    positions.push((prevRight + curLeft) / 2);
+                                }
+                            }
+                            return positions;
+                        });
+
+                        // Use the longest line as reference for expected split positions.
+                        let refLineIndex = 0;
+                        for (let i = 1; i < sortedLineWords.length; i++) {
+                            if (sortedLineWords[i].length > sortedLineWords[refLineIndex].length) {
+                                refLineIndex = i;
                             }
                         }
+                        const splitPositions = lineSplitPositions[refLineIndex];
 
                         if (splitPositions.length === 0) {
                             // No column gaps found — keep block as-is
+                            expandedBlocks.push(block);
+                            return;
+                        }
+
+                        // Require all lines to have matching column structure.
+                        const allLinesMatchColumns = lineSplitPositions.every(positions => {
+                            if (positions.length !== splitPositions.length) return false;
+                            for (let i = 0; i < positions.length; i++) {
+                                if (Math.abs(positions[i] - splitPositions[i]) > SPLIT_ALIGN_TOLERANCE_PX) {
+                                    return false;
+                                }
+                            }
+                            return true;
+                        });
+                        if (!allLinesMatchColumns) {
                             expandedBlocks.push(block);
                             return;
                         }
@@ -15433,6 +15723,7 @@
 
                             expandedBlocks.push({
                                 ...block,
+                                _client_split: true,
                                 block_num: subNum,
                                 left: minL,
                                 top: minT,
@@ -15442,12 +15733,14 @@
                                 text_lines: textLines,
                             });
                         });
-                    });
+                        });
 
-                    // Persist the expanded blocks back into pageData so subsequent
-                    // re-renders (toggle off/on, zoom, etc.) see the already-split
-                    // blocks with matching word block_num values.
-                    pageData.blocks = expandedBlocks;
+                        // Persist the expanded blocks back into pageData so subsequent
+                        // re-renders (toggle off/on, zoom, etc.) see the already-split
+                        // blocks with matching word block_num values.
+                        pageData.blocks = expandedBlocks;
+                        pageData._overlayBlocksPrepared = true;
+                    }
 
                     // Sort blocks by vertical position (top to bottom) then horizontal (left to right)
                     const sortedBlocks = [...expandedBlocks].sort((a, b) => {
@@ -15456,8 +15749,91 @@
                         return a.left - b.left;
                     });
 
+                    // Defensive dedupe: extraction can occasionally contain duplicate
+                    // or near-duplicate blocks (same text, slightly different bbox).
+                    const BLOCK_GEOM_EPS = 0.75;
+                    const getBlockTextSig = (blk) => sanitizeOverlayText(
+                        (blk.text_single_line || blk.text || (blk.text_lines || []).join(' '))
+                    ).replace(/\s+/g, ' ').trim();
+                    const getRect = (blk) => ({
+                        l: Number(blk.left) || 0,
+                        t: Number(blk.top) || 0,
+                        r: (Number(blk.left) || 0) + (Number(blk.width) || 0),
+                        b: (Number(blk.top) || 0) + (Number(blk.height) || 0)
+                    });
+                    const rectIou = (a, b) => {
+                        const interW = Math.max(0, Math.min(a.r, b.r) - Math.max(a.l, b.l));
+                        const interH = Math.max(0, Math.min(a.b, b.b) - Math.max(a.t, b.t));
+                        const inter = interW * interH;
+                        if (inter <= 0) return 0;
+                        const areaA = Math.max(0, a.r - a.l) * Math.max(0, a.b - a.t);
+                        const areaB = Math.max(0, b.r - b.l) * Math.max(0, b.b - b.t);
+                        const denom = areaA + areaB - inter;
+                        return denom > 0 ? (inter / denom) : 0;
+                    };
+                    const isLikelyDuplicateBlock = (a, b) => {
+                        const textA = a._textSig;
+                        const textB = b._textSig;
+                        if (!textA || !textB) return false;
+                        const iou = rectIou(a._rect, b._rect);
+                        const topClose = Math.abs((a.top || 0) - (b.top || 0)) <= 2;
+                        const leftClose = Math.abs((a.left || 0) - (b.left || 0)) <= 2;
+                        if (textA === textB) {
+                            return iou >= 0.7 || (topClose && leftClose);
+                        }
+                        const aContainsB = textA.includes(textB);
+                        const bContainsA = textB.includes(textA);
+                        if ((aContainsB || bContainsA) && iou >= 0.9) {
+                            return true;
+                        }
+                        const shortFrag = Math.min(textA.length, textB.length) <= 4;
+                        if (shortFrag && iou >= 0.85 && topClose) {
+                            return true;
+                        }
+                        return false;
+                    };
+
+                    const dedupedBlocks = [];
+                    const seenBlockSigs = new Set();
+                    sortedBlocks.forEach((blk) => {
+                        blk._textSig = getBlockTextSig(blk);
+                        blk._rect = getRect(blk);
+
+                        const sig = [
+                            blk._textSig,
+                            Math.round((blk.left || 0) / BLOCK_GEOM_EPS),
+                            Math.round((blk.top || 0) / BLOCK_GEOM_EPS),
+                            Math.round((blk.width || 0) / BLOCK_GEOM_EPS),
+                            Math.round((blk.height || 0) / BLOCK_GEOM_EPS),
+                        ].join('|');
+                        if (seenBlockSigs.has(sig)) {
+                            return;
+                        }
+
+                        let duplicateIndex = -1;
+                        for (let i = 0; i < dedupedBlocks.length; i++) {
+                            if (isLikelyDuplicateBlock(blk, dedupedBlocks[i])) {
+                                duplicateIndex = i;
+                                break;
+                            }
+                        }
+                        if (duplicateIndex >= 0) {
+                            // Keep the richer candidate when two blocks look duplicated.
+                            const existing = dedupedBlocks[duplicateIndex];
+                            const existingScore = ((existing._textSig || '').length * 1000) + ((existing.width || 0) * (existing.height || 0));
+                            const candidateScore = ((blk._textSig || '').length * 1000) + ((blk.width || 0) * (blk.height || 0));
+                            if (candidateScore > existingScore) {
+                                dedupedBlocks[duplicateIndex] = blk;
+                            }
+                            return;
+                        }
+
+                        seenBlockSigs.add(sig);
+                        dedupedBlocks.push(blk);
+                    });
+
                     // Pre-compute base rectangles for all blocks so we can clamp padding to prevent overlaps
-                    const blockBaseRects = sortedBlocks.map((blk) => {
+                    const blockBaseRects = dedupedBlocks.map((blk) => {
                         const blkKey = `block-${pageData.page_number}-${blk.block_num}`;
                         const blkEdit = getOverlayStoredEdit(blkKey);
                         const blkWords = pageData.words
@@ -15515,8 +15891,12 @@
                         return Math.max(0, maxPad);
                     });
 
-                    sortedBlocks.forEach((block, blockIndex) => {
+                    const renderedBlockKeys = new Set();
+                    const renderedFieldFingerprints = [];
+                    dedupedBlocks.forEach((block, blockIndex) => {
                         const key = `block-${pageData.page_number}-${block.block_num}`;
+                        if (renderedBlockKeys.has(key)) return;
+                        renderedBlockKeys.add(key);
                         const storedEdit = getOverlayStoredEdit(key);
                         const blockText = (block.text_lines && block.text_lines.length)
                             ? block.text_lines.map(line => sanitizeOverlayText(line)).join('\n')
@@ -15640,6 +16020,57 @@
                             }
                         }
 
+                        // Skip synthetic/duplicate blocks that don't map to any words and
+                        // also don't have a user edit record. These are a common source of
+                        // stray duplicated glyph fragments in overlay mode.
+                        if (!storedEdit && blockWords.length === 0) {
+                            return;
+                        }
+
+                        // Final safety net: skip near-identical field renderings that
+                        // can appear with duplicated extraction fragments.
+                        const candidateTextSig = sanitizeOverlayText(
+                            String((storedEdit && storedEdit.new_text != null ? storedEdit.new_text : safeBlockText) || '')
+                        ).replace(/\s+/g, ' ').trim();
+                        const candidateWordSig = blockWords
+                            .slice()
+                            .sort((a, b) => ((a.top || 0) - (b.top || 0)) || ((a.left || 0) - (b.left || 0)))
+                            .map((w) => sanitizeOverlayText(String(w.text || '')))
+                            .join('\u241F');
+                        const candidateRect = storedEdit && Array.isArray(storedEdit.bbox) && storedEdit.bbox.length >= 4
+                            ? {
+                                l: Number(storedEdit.bbox[0]) || blockLeft,
+                                t: Number(storedEdit.bbox[1]) || blockTop,
+                                r: Number(storedEdit.bbox[2]) || (blockLeft + blockWidth),
+                                b: Number(storedEdit.bbox[3]) || (blockTop + blockHeight)
+                            }
+                            : {
+                                l: blockLeft,
+                                t: blockTop,
+                                r: blockLeft + blockWidth,
+                                b: blockTop + blockHeight
+                            };
+                        const isDuplicateField = renderedFieldFingerprints.some((prev) => {
+                            const sameWords = candidateWordSig && prev.words && candidateWordSig === prev.words;
+                            if (sameWords) {
+                                return rectIou(candidateRect, prev.rect) >= 0.6;
+                            }
+
+                            if (!candidateTextSig || !prev.text) return false;
+                            const sameText = candidateTextSig === prev.text;
+                            const containsText = candidateTextSig.includes(prev.text) || prev.text.includes(candidateTextSig);
+                            if (!sameText && !containsText) return false;
+                            return rectIou(candidateRect, prev.rect) >= 0.75;
+                        });
+                        if (isDuplicateField) {
+                            return;
+                        }
+                        renderedFieldFingerprints.push({
+                            text: candidateTextSig,
+                            words: candidateWordSig,
+                            rect: candidateRect
+                        });
+
                         if (hasStoredEdit) {
                             textSpan.textContent = sanitizeOverlayText(storedEdit.new_text);
                             textSpan.style.whiteSpace = 'pre-wrap';
@@ -15671,13 +16102,18 @@
                         // 4px compensates for the 2px border on each side (box-sizing: border-box
                         // causes the border to eat into content area), plus a font-size-based
                         // buffer for rendering differences between PDF embedded fonts and web fonts.
+                        // The buffer must also cover residual overflow from letter-spacing
+                        // clamping when web fonts are wider than PDF-embedded fonts.
                         const fontSizeScaled = block.font_size * scaleY;
-                        const widthBuffer = 4 + Math.max(2, fontSizeScaled * 0.15);
+                        const widthBuffer = 4 + Math.max(4, fontSizeScaled * 0.3);
+                        // Height buffer: 4px for border (2 top + 2 bottom) plus a small
+                        // descender‐safety margin so glyphs like g/p/y are not clipped.
+                        const heightBuffer = 4 + Math.max(2, fontSizeScaled * 0.1);
 
                         field.style.left = ((baseLeft * scaleX) - paddingX) + 'px';
                         field.style.top = ((baseTop * scaleY) - paddingY) + 'px';
                         field.style.width = ((baseWidth * scaleX) + (paddingX * 2) + widthBuffer) + 'px';
-                        field.style.height = ((baseHeight * scaleY) + (paddingY * 2)) + 'px';
+                        field.style.height = ((baseHeight * scaleY) + (paddingY * 2) + heightBuffer) + 'px';
                         field.style.zIndex = blockIndex + 1;
 
                         // Apply CSS padding so text content is pushed inward to the correct
@@ -15691,7 +16127,7 @@
                                 const expectedLeft = (bounds.left * scaleX) - paddingX;
                                 const expectedTop = (bounds.top * scaleY) - paddingY;
                                 const expectedWidth = (bounds.width * scaleX) + (paddingX * 2) + widthBuffer;
-                                const expectedHeight = (bounds.height * scaleY) + (paddingY * 2);
+                                const expectedHeight = (bounds.height * scaleY) + (paddingY * 2) + heightBuffer;
 
                                 field.style.left = expectedLeft + 'px';
                                 field.style.top = expectedTop + 'px';
@@ -16558,19 +16994,38 @@
                 const scaleX = canvas.width / pageData.width;
                 const scaleY = canvas.height / pageData.height;
                 
-                console.log('Overlay field rendering:', {
-                    canvasWidth: canvas.width,
-                    canvasHeight: canvas.height,
-                    pageDataWidth: pageData.width,
-                    pageDataHeight: pageData.height,
-                    scaleX,
-                    scaleY,
-                    currentScale,
-                    sampleWord: pageData.words[0]
-                });
-                
                 // Always use block mode
                 renderOverlayBlocks();
+
+                // ── Font-ready re-render ──────────────────────────────────
+                // Google Fonts are loaded asynchronously via <link> tags.
+                // If measureTextWidth runs before the real font is available,
+                // the canvas context falls back to a system font, computing
+                // incorrect letter-spacing. Once fonts finish loading, we
+                // rebuild the word spans so letter-spacing matches reality.
+                if (document.fonts && document.fonts.ready) {
+                    document.fonts.ready.then(() => {
+                        overlay.querySelectorAll('.overlay-field').forEach((field) => {
+                            if (!field._blockWords || field._blockWords.length === 0) return;
+                            // Only re-render fields that still use absolutely-positioned
+                            // word spans (not user-edited plain text).
+                            const textSpan = field.querySelector('[contenteditable]');
+                            if (!textSpan || textSpan.textContent !== '') {
+                                // If textContent is set (user-edited or fallback text), skip
+                                // Only re-render if the container holds word spans
+                                const hasAbsoluteSpans = textSpan.querySelector('span[style*="position: absolute"]') ||
+                                    textSpan.querySelector('span[style*="position:absolute"]');
+                                if (!hasAbsoluteSpans) return;
+                            }
+                            const blockLeft = parseFloat(field.dataset.originalLeft) || 0;
+                            const blockTop = parseFloat(field.dataset.originalTop) || 0;
+                            textSpan.innerHTML = '';
+                            textSpan.textContent = '';
+                            buildStyledWordSpans(textSpan, field._blockWords, scaleX, scaleY, blockLeft, blockTop);
+                        });
+                    });
+                }
+
                 return;
 
                 pageData.words.forEach((word, index) => {
