@@ -5601,6 +5601,7 @@
             let overlayResizingField = null;
             let overlayResizeStart = { x: 0, y: 0, width: 0, height: 0, left: 0, top: 0 };
             let overlayResizePosition = '';
+            let overlayInteractionActive = false; // true during resize/drag to block doFontReRender
             const overlayLoadedFonts = new Set();
             const overlayEditsStorageKey = `pdf-overlay-edits-${documentId}`;
             let overlayRendered = false;
@@ -14917,6 +14918,12 @@
                     const doFontReRender = () => {
                         if (fontReRenderDone) return;
                         if (!overlayEditorActive || fontsLoadedToken !== overlayLoadToken) return;
+                        // If user is mid-resize or mid-drag, defer the re-render
+                        // to avoid destroying the field they're interacting with.
+                        if (overlayInteractionActive) {
+                            setTimeout(doFontReRender, 300);
+                            return;
+                        }
                         fontReRenderDone = true;
                         console.log('Fonts loaded — re-rendering overlay for accurate metrics');
                         renderPdfWithOverlay(true).then(() => {
@@ -15751,6 +15758,13 @@
                     if (!Number.isFinite(spacing)) {
                         return null;
                     }
+                    // When the web font is significantly wider than the PDF font
+                    // (e.g. condensed → regular fallback), don't try to compress
+                    // the text. Instead let it render at natural width and rely on
+                    // the field width expansion to accommodate it.
+                    if (spacing < -1) {
+                        return null;
+                    }
                     const clamped = Math.max(-3, Math.min(8, spacing));
                     return clamped;
                 };
@@ -16449,8 +16463,50 @@
                             if (bounds) {
                                 const expectedLeft = (bounds.left * scaleX) - paddingX;
                                 const expectedTop = (bounds.top * scaleY) - paddingY;
-                                const expectedWidth = (bounds.width * scaleX) + (paddingX * 2) + widthBuffer;
+                                let expectedWidth = (bounds.width * scaleX) + (paddingX * 2) + widthBuffer;
                                 const expectedHeight = (bounds.height * scaleY) + (paddingY * 2) + heightBuffer;
+
+                                // Measure actual text width with CSS fallback font.
+                                // PDF-embedded condensed/unusual fonts (e.g. BMFGlossary-BlackCondens)
+                                // may have much narrower extraction widths than the web fallback font.
+                                // When the CSS font renders wider, expand the field to prevent clipping.
+                                const lines = new Map();
+                                blockWords.forEach(w => {
+                                    const lk = w.line_num ?? 0;
+                                    if (!lines.has(lk)) lines.set(lk, []);
+                                    lines.get(lk).push(w);
+                                });
+                                let maxMeasuredLineWidth = 0;
+                                lines.forEach(lineWords => {
+                                    // For each line, measure total width: sum of word measured widths
+                                    // plus the gaps between words (from extraction positions)
+                                    const sorted = [...lineWords].sort((a, b) => a.left - b.left);
+                                    let lineWidth = 0;
+                                    sorted.forEach((w, i) => {
+                                        const wFamily = getCssFontFamily(w.font);
+                                        let wWeight;
+                                        if (w.font_weight) wWeight = String(w.font_weight);
+                                        else if (w.bold) wWeight = '700';
+                                        else wWeight = '400';
+                                        const wStyle = w.italic ? 'italic' : 'normal';
+                                        const wSizePx = w.font_size * scaleY;
+                                        const wMeasured = measureTextWidth(
+                                            sanitizeOverlayText(w.text || ''), wSizePx, wFamily, wWeight, wStyle
+                                        );
+                                        if (i > 0) {
+                                            // Add gap from previous word's right edge to this word's left
+                                            const prev = sorted[i - 1];
+                                            const gap = (w.left - (prev.left + prev.width)) * scaleX;
+                                            lineWidth += Math.max(0, gap);
+                                        }
+                                        lineWidth += wMeasured;
+                                    });
+                                    maxMeasuredLineWidth = Math.max(maxMeasuredLineWidth, lineWidth);
+                                });
+                                const measuredFieldWidth = maxMeasuredLineWidth + (paddingX * 2) + widthBuffer;
+                                if (measuredFieldWidth > expectedWidth) {
+                                    expectedWidth = measuredFieldWidth;
+                                }
 
                                 field.style.left = expectedLeft + 'px';
                                 field.style.top = expectedTop + 'px';
@@ -16923,6 +16979,7 @@
                                 // Save state before drag starts
                                 pushUndoState();
                                 
+                                overlayInteractionActive = true;
                                 isDragging = true;
                                 dragStart = { x: e.clientX, y: e.clientY };
                                 dragBtn.style.cursor = 'grabbing';
@@ -17080,6 +17137,7 @@
                                     
                                     persistOverlayEdits();
                                     updateOverlaySaveButton();
+                                    overlayInteractionActive = false;
                                 }
                             };
                             
@@ -17102,6 +17160,7 @@
                             e.preventDefault();
                             e.stopPropagation();
                             
+                            overlayInteractionActive = true;
                             pushUndoState();
                             
                             const handle = e.target;
@@ -17301,6 +17360,7 @@
                                 
                                 persistOverlayEdits();
                                 updateOverlaySaveButton();
+                                overlayInteractionActive = false;
                             };
                             
                             document.addEventListener('mousemove', onMouseMove);
@@ -17812,7 +17872,7 @@
                         textSpan.contentEditable = overlayResizingField.classList.contains('editing');
                     }
                     const pageNumber = parseInt(overlayResizingField.dataset.pageNumber, 10);
-                    const index = parseInt(overlayResizingField.dataset.wordIndex, 10);
+                    const index = overlayResizingField.dataset.wordIndex;
                     const originalWord = buildOriginalWordFromField(overlayResizingField, textSpan ? textSpan.textContent : '');
                     trackOverlayFieldChange(overlayResizingField, textSpan, { page_number: pageNumber }, originalWord, index);
                     overlayResizingField = null;
