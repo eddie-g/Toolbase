@@ -482,18 +482,42 @@ def apply_edits(pdf_path, edits_json):
                 pad_top = max(1.0, edit_font_size * 0.15)
                 pad_right = max(2.0, edit_font_size * 0.9)
                 pad_bottom = max(1.0, edit_font_size * 0.15)
-                intentional_rects.append(fitz.Rect(
+                padded_rect = fitz.Rect(
                     original_bbox[0] - pad_left,
                     original_bbox[1] - pad_top,
                     original_bbox[2] + pad_right,
                     original_bbox[3] + pad_bottom,
-                ))
-                rects.append(fitz.Rect(
-                    original_bbox[0] - pad_left,
-                    original_bbox[1] - pad_top,
-                    original_bbox[2] + pad_right,
-                    original_bbox[3] + pad_bottom,
-                ))
+                )
+                intentional_rects.append(padded_rect)
+                rects.append(padded_rect)
+
+                # Include overlapping text layers that start at the same position.
+                # These are ghost text from prior overlay edits and will be scrubbed
+                # by Phase A's extended redaction. We must include them here so
+                # Phase C doesn't try to "recover" them.
+                edit_rect = fitz.Rect(original_bbox)
+                page_spans = pre_edit_spans.get(page_num, [])
+                for span in page_spans:
+                    sb = span.get("bbox")
+                    if not sb or len(sb) != 4:
+                        continue
+                    span_rect = fitz.Rect(sb)
+                    # Same row + same start position
+                    if span_rect.y1 < edit_rect.y0 - 1 or span_rect.y0 > edit_rect.y1 + 1:
+                        continue
+                    if abs(span_rect.x0 - edit_rect.x0) > 2:
+                        continue
+                    # If span extends beyond the padded rect, add that extension
+                    if span_rect.x1 > padded_rect.x1:
+                        ext_rect = fitz.Rect(
+                            padded_rect.x1 - 1,
+                            span_rect.y0 - 1,
+                            span_rect.x1 + pad_right,
+                            span_rect.y1 + 1
+                        )
+                        rects.append(ext_rect)
+                        intentional_rects.append(ext_rect)
+
         redaction_rects_by_page[page_num] = rects
         intentional_edit_rects_by_page[page_num] = intentional_rects
     
@@ -596,6 +620,37 @@ def apply_edits(pdf_path, edits_json):
                         page.add_redact_annot(cleanup_rect, fill=None)
                         redaction_count += 1
                         print(f"    ↳ Redacting adjacent special span '{span_text.encode('unicode_escape').decode()}' at {list(cleanup_rect)}")
+
+                # Overlapping text layer cleanup: if there are OTHER text spans
+                # at the same vertical position whose horizontal extent overlaps
+                # significantly with this edit's original_bbox, they are likely
+                # ghost text from prior overlay edits (e.g., "violate" hiding
+                # behind "violated").  Extend the redaction to cover them too.
+                edit_rect = fitz.Rect(original_bbox)
+                all_page_spans = pre_edit_spans.get(page_num, [])
+                for span in all_page_spans:
+                    sb = span.get("bbox")
+                    if not sb or len(sb) != 4:
+                        continue
+                    span_rect = fitz.Rect(sb)
+                    # Same row check (vertical overlap)
+                    if span_rect.y1 < edit_rect.y0 - 1 or span_rect.y0 > edit_rect.y1 + 1:
+                        continue
+                    # Horizontal overlap: spans must share the same starting position
+                    if abs(span_rect.x0 - edit_rect.x0) > 2:
+                        continue
+                    # If span extends beyond the existing redaction rect, extend it
+                    if span_rect.x1 > rect.x1:
+                        extra_rect = fitz.Rect(
+                            rect.x1 - 1,
+                            span_rect.y0 - 1,
+                            span_rect.x1 + max(2.0, font_size_num * 0.9),
+                            span_rect.y1 + 1
+                        )
+                        page.add_redact_annot(extra_rect, fill=None)
+                        redaction_count += 1
+                        span_text_preview = span.get("text", "")[:40]
+                        print(f"    ↳ Extending redaction for overlapping span '{span_text_preview}' to x={span_rect.x1:.1f}")
             else:
                 # FALLBACK: No original_bbox — try search_for for single-line text only
                 text_instances = page.search_for(original_text)

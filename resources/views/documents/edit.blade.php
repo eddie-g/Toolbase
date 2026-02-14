@@ -16106,6 +16106,18 @@
                         const denom = areaA + areaB - inter;
                         return denom > 0 ? (inter / denom) : 0;
                     };
+                    // Compute overlap ratio of the SMALLER rect with the larger.
+                    // Returns intersection_area / smaller_area (0..1).
+                    const rectOverlapSmaller = (a, b) => {
+                        const interW = Math.max(0, Math.min(a.r, b.r) - Math.max(a.l, b.l));
+                        const interH = Math.max(0, Math.min(a.b, b.b) - Math.max(a.t, b.t));
+                        const inter = interW * interH;
+                        if (inter <= 0) return 0;
+                        const areaA = Math.max(0, a.r - a.l) * Math.max(0, a.b - a.t);
+                        const areaB = Math.max(0, b.r - b.l) * Math.max(0, b.b - b.t);
+                        const smaller = Math.min(areaA, areaB);
+                        return smaller > 0 ? (inter / smaller) : 0;
+                    };
                     const isLikelyDuplicateBlock = (a, b) => {
                         const textA = a._textSig;
                         const textB = b._textSig;
@@ -16124,6 +16136,17 @@
                         const shortFrag = Math.min(textA.length, textB.length) <= 4;
                         if (shortFrag && iou >= 0.85 && topClose) {
                             return true;
+                        }
+                        // Catch overlapping text layers at the same position but with
+                        // different text (e.g., prior edit remnants like "violate" vs
+                        // "violated").  If the smaller block is mostly inside the
+                        // larger one AND they share the same vertical position, they
+                        // are overlapping text layers — deduplicate.
+                        if (topClose && leftClose) {
+                            const overlapSmaller = rectOverlapSmaller(a._rect, b._rect);
+                            if (overlapSmaller >= 0.5) {
+                                return true;
+                            }
                         }
                         return false;
                     };
@@ -16391,6 +16414,21 @@
                             const sameWords = candidateWordSig && prev.words && candidateWordSig === prev.words;
                             if (sameWords) {
                                 return rectIou(candidateRect, prev.rect) >= 0.6;
+                            }
+
+                            // Positional overlap check: if >=50% of the smaller rect
+                            // is inside the larger, these are overlapping text layers
+                            // (e.g., prior edit remnants with slightly different text).
+                            const cW = Math.max(0, Math.min(candidateRect.r, prev.rect.r) - Math.max(candidateRect.l, prev.rect.l));
+                            const cH = Math.max(0, Math.min(candidateRect.b, prev.rect.b) - Math.max(candidateRect.t, prev.rect.t));
+                            const cInter = cW * cH;
+                            if (cInter > 0) {
+                                const cAreaA = (candidateRect.r - candidateRect.l) * (candidateRect.b - candidateRect.t);
+                                const cAreaB = (prev.rect.r - prev.rect.l) * (prev.rect.b - prev.rect.t);
+                                const cSmaller = Math.min(cAreaA, cAreaB);
+                                if (cSmaller > 0 && (cInter / cSmaller) >= 0.5) {
+                                    return true;
+                                }
                             }
 
                             if (!candidateTextSig || !prev.text) return false;
