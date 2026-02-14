@@ -1,35 +1,27 @@
 #!/usr/bin/env python3
 """
-Apply PDF edits with the 'Clean & Layer' Architecture:
+Apply PDF edits: Blank-slate approach.
+
+=== HOW IT WORKS ===
+1. Snapshot all text spans on edited pages (positions, fonts, colors)
+2. Redact ALL text on those pages (blank slate — wipes everything)
+3. Re-insert everything at absolute positions:
+   - Unedited spans → original text at original position from snapshot
+   - Edited spans → new text at new bbox from the editor
+
+This eliminates ghost text, CID hex layers, partial redaction failures,
+and all other encoding-related duplication issues.
 
 === BACKGROUND PRESERVATION RULE ===
 - ALWAYS use fill=None for ALL redactions
 - ALWAYS use apply_redactions(images=0) to preserve images
 - fill=None removes text "ink" without adding any fill color
 - This preserves backgrounds: images, colored rectangles, patterns, etc.
-- Using fill=(1,1,1) creates visible white boxes on non-white backgrounds!
-
-=== PHASE 0: Coordinate Normalization ===
-- Run page.clean_contents() to normalize the coordinate grid
-- Ensures search_for() and insert_textbox() use consistent coordinates
-
-=== PHASE A: SCRUB (Remove Original Text) ===
-- Search for original_text using page.search_for() to find in data stream
-- Redact ONLY the original_bbox (where text WAS) with fill=None
-- NEVER redact new_bbox (where text IS NOW)
-
-=== PHASE B: INSERTION (Overlay New Text) ===
-- Insert text at NEW bbox locations using overlay=True
-- NO redaction at new positions - just draw on top
-- This prevents cutting holes in images when text moves onto them
 
 === CRITICAL FONT HANDLING ===
 - ALWAYS use FULL FONT FILES from the fonts/ directory!
 - Subsetted font buffers extracted from PDFs DON'T WORK with TextWriter
-- Extracted font buffers cause PyMuPDF to fall back to "Noto Serif Regular"
 - Full font files (Arimo-Regular.ttf, Gelasio-Bold.ttf, etc.) work correctly
-
-This fixes the "Double Text", "White Box", and "Wrong Font" bugs.
 """
 import sys
 import json
@@ -370,14 +362,13 @@ def normalize_smart_quotes(text):
 
 def apply_edits(pdf_path, edits_json):
     """
-    Apply edits using absolute coordinates:
+    Simple save pipeline:
     
-    Phase 0: Clean all pages to normalize coordinate systems (CRITICAL)
-    Phase A: Redact original_bbox with tight 1pt padding (absolute positions)
-    Phase B: Overlay new_text at absolute bbox locations (no redaction)
-    
-    Bounding boxes are only used during the overlay editor phase.
-    On save, every piece of text is treated with absolute coordinates.
+    1. Snapshot all text spans on edited pages
+    2. Redact ALL text on those pages (blank slate)
+    3. Re-insert everything at absolute positions:
+       - Edited spans → new text at new bbox
+       - Unedited spans → original text at original position
     """
     script_dir = os.path.dirname(os.path.abspath(__file__))
     print(f"Opening PDF: {pdf_path}")
@@ -397,29 +388,18 @@ def apply_edits(pdf_path, edits_json):
 
     print(f"Total edits: {len(edits)} across {len(edits_by_page)} pages")
     
-    # PHASE 0: Clean all pages FIRST to normalize coordinate systems
+    # STEP 1: Clean pages and snapshot all text
     print("\n" + "="*50)
-    print("PHASE 0: Normalizing coordinate systems")
-    print("="*50)
-    for page_num in edits_by_page.keys():
-        page = doc[page_num - 1]
-        page.clean_contents()
-        print(f"  ✓ Page {page_num}: Cleaned contents")
-
-    # ── PRE-EDIT SNAPSHOT ──────────────────────────────────────────────
-    # Capture every text span on edited pages BEFORE we redact anything.
-    # This is the ground truth we'll verify against after Phase B.
-    # Structure: { page_num: [ {text, bbox, font, size, color, flags}, ... ] }
-    print("\n" + "="*50)
-    print("SNAPSHOT: Capturing pre-edit text for verification")
+    print("STEP 1: Snapshot all text")
     print("="*50)
     pre_edit_spans = {}
     for page_num in edits_by_page.keys():
         page = doc[page_num - 1]
+        page.clean_contents()
         spans = []
         blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
         for block in blocks:
-            if block.get("type") != 0:  # skip image blocks
+            if block.get("type") != 0:
                 continue
             for line in block.get("lines", []):
                 for span in line.get("spans", []):
@@ -436,167 +416,110 @@ def apply_edits(pdf_path, edits_json):
                         "flags": span.get("flags", 0),
                     })
         pre_edit_spans[page_num] = spans
-        print(f"  Page {page_num}: captured {len(spans)} text spans")
+        print(f"  Page {page_num}: {len(spans)} text spans captured")
 
-
-    # Phase 0.5 removed: bounding-box overlaps are ignored on save.
-    # The save pipeline treats every edit with absolute coordinates.
-    scrubbed_overlap_texts = {}
-
-    # Build a set of texts that are being INTENTIONALLY edited or deleted.
-    # We key by (page_num, normalised_text) so we know what the user touched.
-    edited_texts_by_page = {}
-    for page_num, page_edits in edits_by_page.items():
-        touched = set()
-        for edit in page_edits:
-            # Add BOTH original and new text as "touched" — neither should be
-            # recovered by Phase C.  This prevents re-inserting old underlying
-            # text that happens to share words with the edit.
-            for text_key in ("original_text", "new_text"):
-                txt = (edit.get(text_key) or "").strip()
-                if txt:
-                    touched.add(txt)
-                    for line in txt.split("\n"):
-                        line = line.strip()
-                        if line:
-                            touched.add(line)
-                    for word in txt.split():
-                        word = word.strip()
-                        if len(word) > 1:
-                            touched.add(word)
-        edited_texts_by_page[page_num] = touched
-
-
-    # Build redaction rects per page (tight, matching Phase A).
-    redaction_rects_by_page = {}
-    intentional_edit_rects_by_page = {}
-    for page_num, page_edits in edits_by_page.items():
-        rects = []
-        for edit in page_edits:
-            original_bbox = edit.get("original_bbox")
-            if original_bbox:
-                try:
-                    _fs = float(edit.get('font_size', 12))
-                except (TypeError, ValueError):
-                    _fs = 12.0
-                _max_b = original_bbox[1] + _fs * 1.1
-                r = fitz.Rect(
-                    original_bbox[0] - 1, original_bbox[1],
-                    original_bbox[2] + 1, min(original_bbox[3], _max_b),
-                )
-                rects.append(r)
-        redaction_rects_by_page[page_num] = rects
-        intentional_edit_rects_by_page[page_num] = list(rects)
-
-    # PHASE A: SCRUB PHASE - Remove text from ORIGINAL locations only
-    # This phase ONLY handles where text USED TO BE, never where it IS NOW
+    # STEP 2: Remove ALL text from edited pages (blank slate)
+    # Use direct content stream manipulation to strip BT..ET blocks.
+    # This is more reliable than apply_redactions() which can't handle
+    # CID hex encoded text in some PDFs.
     print("\n" + "="*50)
-    print("PHASE A (SCRUB): Removing text from ORIGINAL locations")
+    print("STEP 2: Strip ALL text from content streams (blank slate)")
+    print("="*50)
+    for page_num in edits_by_page.keys():
+        page = doc[page_num - 1]
+        xrefs = page.get_contents()
+        for xref in xrefs:
+            stream = doc.xref_stream(xref)
+            if stream:
+                # Remove all text-drawing blocks (BT ... ET) from the stream
+                cleaned = re.sub(rb'BT\b.*?ET\b', b'', stream, flags=re.DOTALL)
+                doc.update_stream(xref, cleaned)
+        print(f"  Page {page_num}: All text stripped from content streams")
+
+    # STEP 3: Build the map of what to re-insert
+    # For each edit, match it to the snapshot span it replaces.
+    # Everything else gets re-inserted as-is from the snapshot.
+    print("\n" + "="*50)
+    print("STEP 3: Re-insert all text at absolute positions")
     print("="*50)
 
-    for page_num, page_edits in edits_by_page.items():
-        print(f"\nPage {page_num}: Processing {len(page_edits)} edits...")
+    for page_num in edits_by_page.keys():
         page = doc[page_num - 1]
-        
-        redaction_count = 0
+        page_edits = edits_by_page[page_num]
+        snapshot = pre_edit_spans.get(page_num, [])
 
+        # Mark which snapshot spans are replaced by edits
+        # Match by: original_text + original_bbox proximity
+        replaced_indices = set()
         for edit in page_edits:
-            original_text = edit.get('original_text') or ''
-            new_text = edit.get('new_text') or ''
-            original_bbox = edit.get('original_bbox')
-            edit_font_size = edit.get('font_size', 12)
-
-            # Skip entirely empty original text — nothing to remove
-            if not original_text or not original_text.strip():
+            orig_text = (edit.get('original_text') or '').strip()
+            orig_bbox = edit.get('original_bbox')
+            if not orig_text or not orig_bbox:
                 continue
-
-            # SKIP NO-OP EDITS: If text is identical, position hasn't moved,
-            # AND no style changes, there's nothing to scrub or re-insert.
-            bbox = edit.get('bbox')
-            if original_text.strip() == new_text.strip() and original_bbox and bbox:
-                # Check if position essentially unchanged (within 2pt tolerance)
-                pos_unchanged = (abs(original_bbox[0] - bbox[0]) < 2 and
-                                 abs(original_bbox[1] - bbox[1]) < 2 and
-                                 abs(original_bbox[2] - bbox[2]) < 2 and
-                                 abs(original_bbox[3] - bbox[3]) < 2)
-                # Check if style changed (font_weight, font_style, color)
-                has_style_change = False
-                fw = edit.get('font_weight')
-                if fw and str(fw) not in ('400', 'normal', ''):
-                    has_style_change = True
-                fs = edit.get('font_style')
-                if fs and fs not in ('normal', ''):
-                    has_style_change = True
-                # rich_html or word_styles indicate styled content that must be re-inserted
-                if edit.get('rich_html') or edit.get('word_styles'):
-                    has_style_change = True
-                if pos_unchanged and not has_style_change:
-                    print(f"  ⊘ Skipping no-op edit for '{original_text[:30]}...' (text, position & style unchanged)")
-                    edit['_skip_insert'] = True  # Flag to skip Phase B too
+            best_idx = None
+            best_dist = float('inf')
+            for i, span in enumerate(snapshot):
+                if i in replaced_indices:
                     continue
+                # Text must match or contain
+                st = span["text"].strip()
+                if st != orig_text and orig_text not in st and st not in orig_text:
+                    continue
+                # Position must be close
+                dist = abs(span["bbox"][0] - orig_bbox[0]) + abs(span["bbox"][1] - orig_bbox[1])
+                if dist < 5.0 and dist < best_dist:
+                    best_dist = dist
+                    best_idx = i
+            if best_idx is not None:
+                replaced_indices.add(best_idx)
 
-            if original_bbox:
-                # Tight redaction at absolute position.
-                # Left/right get ±1pt to catch glyph edges.
-                # Bottom is capped at font_size × 1.1 from top — PyMuPDF bboxes
-                # include the full descender metric which can extend into the
-                # next line of text even though the actual glyphs don't reach there.
-                try:
-                    fs = float(edit_font_size or 12)
-                except (TypeError, ValueError):
-                    fs = 12.0
-                max_bottom = original_bbox[1] + fs * 1.1
-                rect = fitz.Rect(
-                    original_bbox[0] - 1, original_bbox[1],
-                    original_bbox[2] + 1, min(original_bbox[3], max_bottom),
-                )
-                page.add_redact_annot(rect, fill=None)
-                redaction_count += 1
-                print(
-                    f"  ✓ Redacting '{original_text[:30]}...' via original_bbox "
-                    f"[{original_bbox[0]:.0f},{original_bbox[1]:.0f},{original_bbox[2]:.0f},{original_bbox[3]:.0f}]"
+        # Re-insert unedited spans from snapshot
+        unedited_count = 0
+        for i, span in enumerate(snapshot):
+            if i in replaced_indices:
+                continue
+            # Re-insert at original position
+            font_obj = None
+            span_font_name = span.get("font", "")
+            
+            # Try full font file
+            font_file = get_font_file(span_font_name, script_dir)
+            if font_file and os.path.exists(font_file):
+                font_obj = fitz.Font(fontfile=font_file)
+            
+            if not font_obj:
+                # Try embedded font
+                font_obj = get_embedded_font(doc, None, font_name=span_font_name, page_num=page_num)
+            
+            if not font_obj:
+                font_obj = fitz.Font("helv")
+
+            # Convert color
+            c = span.get("color", 0)
+            if isinstance(c, int):
+                color = (
+                    ((c >> 16) & 0xFF) / 255.0,
+                    ((c >> 8) & 0xFF) / 255.0,
+                    (c & 0xFF) / 255.0,
                 )
             else:
-                # FALLBACK: No original_bbox — try search_for for single-line text only
-                text_instances = page.search_for(original_text)
-                if text_instances:
-                    # Only use the first/best match
-                    inst_rect = text_instances[0]
-                    expanded_rect = fitz.Rect(
-                        inst_rect.x0 - 1,
-                        inst_rect.y0 - 1,
-                        inst_rect.x1 + 1,
-                        inst_rect.y1 + 1
-                    )
-                    page.add_redact_annot(expanded_rect, fill=None)
-                    redaction_count += 1
-                    print(f"  ✓ Redacting '{original_text[:30]}...' via search_for (no original_bbox)")
-                else:
-                    print(f"  ✗ Cannot redact '{original_text[:30]}...' - no original_bbox and search failed")
+                color = (0, 0, 0)
 
-        # Apply ALL redactions for this page at once
-        page.apply_redactions(images=0)
-        print(f"  ✓ Scrubbed {redaction_count} locations [fill=None, images=0]")
+            tw = fitz.TextWriter(page.rect)
+            tw.append(
+                (span["origin"][0], span["origin"][1]),
+                span["text"],
+                font=font_obj,
+                fontsize=span["size"],
+            )
+            tw.write_text(page, color=color, overlay=True)
+            unedited_count += 1
 
-    print("\n" + "="*50)
-    print("PHASE B (INSERTION): Overlaying text at NEW locations")
-    print("="*50)
+        print(f"  Page {page_num}: Re-inserted {unedited_count} unedited spans")
 
-    # PHASE B: Insert ALL new text at their NEW (current) locations
-    # ╔═══════════════════════════════════════════════════════════════════════╗
-    # ║ CRITICAL: NEVER redact the new_bbox!                                  ║
-    # ║ Redacting the new location is what cuts holes in images.              ║
-    # ║ We ONLY use overlay=True to draw text ON TOP of the existing PDF.    ║
-    # ╚═══════════════════════════════════════════════════════════════════════╝
-    for page_num, page_edits in edits_by_page.items():
-        print(f"\nPage {page_num}: Inserting {len(page_edits)} text blocks...")
-        page = doc[page_num - 1]
-
+        # Now insert the edited spans
+        edit_count = 0
         for edit in page_edits:
-            # Skip no-op edits flagged in Phase A
-            if edit.get('_skip_insert'):
-                continue
-
             new_text = (edit.get('new_text') or '')
             new_text = normalize_smart_quotes(new_text)
             if not new_text and not edit.get('rich_html'):
@@ -912,6 +835,7 @@ def apply_edits(pdf_path, edits_json):
 
                     print(f"  ✓ Inserted block via word_styles at ({bbox[0]:.1f}, {bbox[1]:.1f}) with {len(mapped_words)} styled words [TextWriter overlay]" +
                           (f" + {len(underline_lines)} underlines" if underline_lines else ""))
+                    edit_count += 1
                     continue
                 except Exception as e:
                     print(f"  ⚠ word_styles handling failed: {e}, falling back to rich_html/textbox")
@@ -1065,6 +989,7 @@ def apply_edits(pdf_path, edits_json):
                         # Write all text to page
                         tw.write_text(page, color=text_color, overlay=True)
                         print(f"  ✓ Inserted rich HTML at ({bbox[0]:.1f}, {bbox[1]:.1f}) with {len(spans)} spans [TextWriter overlay]")
+                        edit_count += 1
                         continue
                 except Exception as e:
                     print(f"  ⚠ HTML parse error: {e}, falling back to textbox")
@@ -1177,6 +1102,7 @@ def apply_edits(pdf_path, edits_json):
                     shape.commit(overlay=True)
                     print(f"  ✓ Added underline")
 
+                edit_count += 1
                 continue
 
             # Single text: use TextWriter with FULL FONT FILES for correct rendering
@@ -1303,155 +1229,12 @@ def apply_edits(pdf_path, edits_json):
                     shape.commit(overlay=True)
                     print(f"  ✓ Added underline")
 
-    # ── PHASE C: COLLATERAL DAMAGE RECOVERY (OPTIONAL) ─────────────────
-    # This pass can create false-positive "recoveries" (duplicate text) on
-    # complex PDFs where span segmentation changes after edits. Keep it OFF
-    # by default; enable only for targeted troubleshooting.
-    enable_collateral_recovery = str(os.getenv("PDF_EDIT_ENABLE_COLLATERAL_RECOVERY", "0")).strip().lower() in {"1", "true", "yes", "on"}
-    print("\n" + "="*50)
-    print("PHASE C (VERIFY): Checking for collateral text loss")
-    print("="*50)
+            edit_count += 1
 
-    recovered_count = 0
-    if not enable_collateral_recovery:
-        print("  ⊘ Collateral recovery disabled (set PDF_EDIT_ENABLE_COLLATERAL_RECOVERY=1 to enable)")
-    else:
-        for page_num in edits_by_page.keys():
-            page = doc[page_num - 1]
-            touched_texts = edited_texts_by_page.get(page_num, set())
-            redact_rects = redaction_rects_by_page.get(page_num, [])
-            intentional_rects = intentional_edit_rects_by_page.get(page_num, [])
-            pre_spans = pre_edit_spans.get(page_num, [])
-
-            if not pre_spans:
-                continue
-
-            # Collect current (post-edit) span texts for this page
-            post_texts = set()
-            post_blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
-            for block in post_blocks:
-                if block.get("type") != 0:
-                    continue
-                for line in block.get("lines", []):
-                    for span in line.get("spans", []):
-                        t = span.get("text", "").strip()
-                        if t:
-                            post_texts.add(t)
-
-            # Check each pre-edit span
-            for span_info in pre_spans:
-                span_text = span_info["text"]
-                normalized_span_text = normalize_smart_quotes(span_text).strip()
-
-                # Never recover artifact glyphs (replacement chars, private-use symbols,
-                # zero-width/control chars). These are typically encoding debris and
-                # should be removed during scrub, not re-inserted.
-                if (
-                    not normalized_span_text
-                    or re.search(r'[\uFFFD\uE000-\uF8FF\u200B\u200C\u200D\u2060\uFEFF]', span_text)
-                    or re.search(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', span_text)
-                ):
-                    continue
-
-                # Already present in post-edit PDF → no loss
-                if span_text in post_texts:
-                    continue
-
-                # Was this span part of an intentional edit/deletion?
-                # Check if the span text appears in any of the touched texts
-                is_intentional = False
-                for touched in touched_texts:
-                    if span_text in touched or touched in span_text:
-                        is_intentional = True
-                        break
-                if is_intentional:
-                    continue
-
-                # Was this span inside a redaction rectangle? (collateral damage)
-                span_rect = fitz.Rect(span_info["bbox"])
-
-                # If the span is inside one of the user's intentional edit boxes,
-                # never recover it. Recovery is only for accidental neighboring loss.
-                is_inside_intentional_edit = False
-                for i_rect in intentional_rects:
-                    inter = span_rect & i_rect
-                    if inter.is_empty:
-                        continue
-                    span_area = max(1e-6, span_rect.get_area())
-                    overlap_ratio = inter.get_area() / span_area
-                    center_x = (span_rect.x0 + span_rect.x1) / 2.0
-                    center_y = (span_rect.y0 + span_rect.y1) / 2.0
-                    center_inside = (i_rect.x0 <= center_x <= i_rect.x1 and i_rect.y0 <= center_y <= i_rect.y1)
-                    if overlap_ratio >= 0.5 or center_inside:
-                        is_inside_intentional_edit = True
-                        break
-
-                if is_inside_intentional_edit:
-                    continue
-
-                # Check if span was inside the actual redaction zone.
-                # If it was, the text was INTENTIONALLY removed (it was within the
-                # padded redaction area of an edit). Do NOT recover it — it could be
-                # old underlying text from a prior overlay edit (e.g., "Isartor"
-                # hiding behind "Modified" from a previous save).
-                was_in_redaction = False
-                for r_rect in redact_rects:
-                    if not (span_rect & r_rect).is_empty:
-                        was_in_redaction = True
-                        break
-
-                if was_in_redaction:
-                    print(f"  ⊘ Skipping recovery of '{span_text}' — inside redaction zone (likely old underlying text)")
-                    continue
-
-                if span_text not in post_texts:
-                    # Text disappeared but wasn't in a redaction zone → unusual
-                    # Could be coordinate-system shift or font issue; still recover it
-                    print(f"  ⚠ '{span_text}' missing (not in redaction zone) – recovering")
-
-                # ── Re-insert the lost span ──
-                origin = span_info["origin"]
-                font_size_s = span_info["size"]
-                span_color_int = span_info["color"]
-
-                # Convert integer color (sRGB packed) to (r, g, b) 0-1
-                if isinstance(span_color_int, int):
-                    r = ((span_color_int >> 16) & 0xFF) / 255.0
-                    g = ((span_color_int >>  8) & 0xFF) / 255.0
-                    b = ( span_color_int        & 0xFF) / 255.0
-                    span_color = (r, g, b)
-                else:
-                    span_color = (0, 0, 0)
-
-                # Try to use the original font
-                span_font_name = span_info.get("font", "")
-                font_obj = None
-
-                # Try full font file
-                font_file = get_font_file(span_font_name, script_dir)
-                if font_file and os.path.exists(font_file):
-                    font_obj = fitz.Font(fontfile=font_file)
-
-                if not font_obj:
-                    # Try embedded font by name
-                    font_obj = get_embedded_font(doc, None, font_name=span_font_name, page_num=page_num)
-
-                if not font_obj:
-                    font_obj = fitz.Font("helv")
-
-                tw = fitz.TextWriter(page.rect)
-                tw.append((origin[0], origin[1]), span_text, font=font_obj, fontsize=font_size_s)
-                tw.write_text(page, color=span_color, overlay=True)
-                recovered_count += 1
-                print(f"  ✓ Recovered '{span_text}' at ({origin[0]:.1f}, {origin[1]:.1f})")
-
-        if recovered_count > 0:
-            print(f"\n  ★ Recovered {recovered_count} collateral-damage span(s)")
-        else:
-            print("  ✓ No collateral text loss detected")
+        print(f"  Page {page_num}: Inserted {edit_count} edited span(s)")
 
     print("\n" + "="*50)
-    print("PHASE 3: Saving with cleanup")
+    print("SAVING")
     print("="*50)
 
     temp_path = pdf_path + '.tmp'
