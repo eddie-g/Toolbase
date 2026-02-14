@@ -26,3 +26,8 @@ Thumbs.db
 /python/__pycache__
 /python/.playwright
 /python/screenshots
+
+# Debug/temp files
+/tmp/
+python/pdf-editor/__pycache__/
+public/page_*.pdf

@@ -1553,6 +1553,13 @@
             .viewer.text-editing .pdf-text-layer {
                 display: block !important;
             }
+            /* Hide PDF text layer when overlay editor is active to prevent duplication */
+            .viewer.overlay-editor-active .pdf-text-layer {
+                display: none !important;
+            }
+            .viewer.overlay-editor-active .pdf-text {
+                display: none !important;
+            }
             .viewer.text-editing .pdf-text-item {
                 opacity: 1 !important;
                 pointer-events: auto !important;
@@ -1600,6 +1607,7 @@
                 cursor: move;
                 pointer-events: none;
                 user-select: none;
+                overflow: hidden !important;
             }
             .overlay-field.editing {
                 border-color: rgba(66, 133, 244, 1) !important;
@@ -1610,6 +1618,12 @@
                 cursor: text;
                 pointer-events: auto;
                 user-select: text;
+                overflow: hidden !important;
+            }
+            /* Ensure word-span container always clips absolutely-positioned spans */
+            .overlay-field [contenteditable] {
+                overflow: hidden !important;
+                position: relative;
             }
 
             /* Shape type buttons (modern grid) */
@@ -2120,6 +2134,79 @@
             }
             .modal.active {
                 display: flex;
+            }
+            .overlay-loading-modal {
+                position: fixed;
+                inset: 0;
+                z-index: 100001;
+                display: none;
+                align-items: center;
+                justify-content: center;
+                background: rgba(10, 15, 25, 0.55);
+                backdrop-filter: blur(6px);
+            }
+            .overlay-loading-modal.active {
+                display: flex;
+            }
+            .overlay-loading-modal .loading-card {
+                width: min(460px, 92vw);
+                border: 1px solid rgba(255, 255, 255, 0.14);
+                border-radius: 14px;
+                background: linear-gradient(145deg, rgba(14, 21, 34, 0.97), rgba(21, 32, 52, 0.97));
+                box-shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
+                color: #e5e7eb;
+                padding: 20px;
+            }
+            .overlay-loading-modal .loading-header {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                margin-bottom: 10px;
+            }
+            .overlay-loading-modal .loading-icon {
+                width: 34px;
+                height: 34px;
+                border-radius: 10px;
+                background: linear-gradient(135deg, #2563eb, #4f46e5);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: #fff;
+                flex-shrink: 0;
+            }
+            .overlay-loading-modal .loading-title {
+                font-size: 16px;
+                font-weight: 700;
+                margin: 0;
+                color: #f8fafc;
+            }
+            .overlay-loading-modal .loading-message {
+                font-size: 13px;
+                color: rgba(226, 232, 240, 0.84);
+                margin: 0 0 14px;
+                line-height: 1.5;
+            }
+            .overlay-loading-modal .loading-progress-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                margin-bottom: 7px;
+                font-size: 12px;
+                color: rgba(191, 219, 254, 0.9);
+            }
+            .overlay-loading-modal .loading-progress-track {
+                height: 8px;
+                width: 100%;
+                border-radius: 999px;
+                background: rgba(148, 163, 184, 0.24);
+                overflow: hidden;
+            }
+            .overlay-loading-modal .loading-progress-fill {
+                height: 100%;
+                width: 0%;
+                border-radius: 999px;
+                background: linear-gradient(90deg, #3b82f6, #22d3ee);
+                transition: width 0.2s ease;
             }
             .organize-modal .modal-card {
                 max-width: 900px;
@@ -3104,6 +3191,10 @@
                                 <button id="convert-btn" class="px-3 py-2 bg-transparent border border-gray-600 hover:bg-gray-700/50 rounded-lg text-sm transition flex items-center gap-1.5" type="button" title="Convert PDF to Images">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14"/><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>
                                     <span class="hidden sm:inline">Convert</span>
+                                </button>
+                                <button id="split-btn" class="px-3 py-2 bg-transparent border border-gray-600 hover:bg-gray-700/50 rounded-lg text-sm transition flex items-center gap-1.5" type="button" title="Split PDF into pages">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="8" height="18" rx="1"/><rect x="14" y="3" width="8" height="18" rx="1"/><line x1="12" y1="6" x2="12" y2="18" stroke-dasharray="2 2"/></svg>
+                                    <span class="hidden sm:inline">Split</span>
                                 </button>
                                 <div style="position: relative;">
                                     <button id="settings-gear-btn" class="px-2 py-2 bg-transparent border border-gray-600 hover:bg-gray-700/50 rounded-lg text-sm transition" type="button" title="Settings">
@@ -4904,6 +4995,115 @@
             </div>
         </div>
 
+        <!-- Split PDF Modal -->
+        <div id="split-modal" style="display:none; position:fixed; inset:0; z-index:99999; background:rgba(0,0,0,0.6); backdrop-filter:blur(4px); align-items:center; justify-content:center;">
+            <div id="split-modal-inner" style="background:#1a1a2e; border:1px solid rgba(255,255,255,0.1); border-radius:16px; box-shadow:0 24px 80px rgba(0,0,0,0.6); width:480px; max-width:95vw; max-height:90vh; overflow-y:auto; color:#e5e7eb;">
+                <!-- Header -->
+                <div style="padding:20px 24px 16px; border-bottom:1px solid rgba(255,255,255,0.08); display:flex; align-items:center; justify-content:space-between;">
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <div style="width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg, #10b981, #059669); display:flex; align-items:center; justify-content:center;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><rect x="2" y="3" width="8" height="18" rx="1"/><rect x="14" y="3" width="8" height="18" rx="1"/></svg>
+                        </div>
+                        <div>
+                            <div style="font-size:16px; font-weight:700; color:#e5e7eb;">Split PDF</div>
+                            <div style="font-size:12px; color:rgba(255,255,255,0.4);">Extract pages into separate PDF files</div>
+                        </div>
+                    </div>
+                    <button id="split-modal-close" style="background:none; border:none; color:rgba(255,255,255,0.5); cursor:pointer; padding:4px; border-radius:6px; transition:all 0.15s;" onmouseenter="this.style.color='#fff';this.style.background='rgba(255,255,255,0.1)'" onmouseleave="this.style.color='rgba(255,255,255,0.5)';this.style.background='none'">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+                <!-- Body -->
+                <div style="padding:20px 24px;">
+                    <!-- Split Mode Selection -->
+                    <div style="margin-bottom:20px;">
+                        <label style="font-size:12px; font-weight:600; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:8px;">Split Mode</label>
+                        <div style="display:flex; flex-direction:column; gap:8px;">
+                            <label class="split-mode-option active" data-mode="each" style="display:flex; align-items:center; gap:12px; padding:12px 14px; border-radius:10px; border:2px solid #10b981; background:rgba(16,185,129,0.08); cursor:pointer; transition:all 0.15s;">
+                                <input type="radio" name="split-mode" value="each" checked style="accent-color:#10b981; width:16px; height:16px;">
+                                <div>
+                                    <div style="font-size:13px; font-weight:600; color:#e5e7eb;">Each Page</div>
+                                    <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px;">Split every page into a separate PDF file (downloaded as ZIP)</div>
+                                </div>
+                            </label>
+                            <label class="split-mode-option" data-mode="specific" style="display:flex; align-items:center; gap:12px; padding:12px 14px; border-radius:10px; border:2px solid rgba(255,255,255,0.1); background:transparent; cursor:pointer; transition:all 0.15s;">
+                                <input type="radio" name="split-mode" value="specific" style="accent-color:#10b981; width:16px; height:16px;">
+                                <div>
+                                    <div style="font-size:13px; font-weight:600; color:#e5e7eb;">Specific Page</div>
+                                    <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px;">Extract a single page as a new PDF</div>
+                                </div>
+                            </label>
+                            <label class="split-mode-option" data-mode="range" style="display:flex; align-items:center; gap:12px; padding:12px 14px; border-radius:10px; border:2px solid rgba(255,255,255,0.1); background:transparent; cursor:pointer; transition:all 0.15s;">
+                                <input type="radio" name="split-mode" value="range" style="accent-color:#10b981; width:16px; height:16px;">
+                                <div>
+                                    <div style="font-size:13px; font-weight:600; color:#e5e7eb;">Page Range</div>
+                                    <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px;">Extract a continuous range of pages</div>
+                                </div>
+                            </label>
+                            <label class="split-mode-option" data-mode="custom" style="display:flex; align-items:center; gap:12px; padding:12px 14px; border-radius:10px; border:2px solid rgba(255,255,255,0.1); background:transparent; cursor:pointer; transition:all 0.15s;">
+                                <input type="radio" name="split-mode" value="custom" style="accent-color:#10b981; width:16px; height:16px;">
+                                <div>
+                                    <div style="font-size:13px; font-weight:600; color:#e5e7eb;">Custom Selection</div>
+                                    <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px;">Pick individual pages and ranges (e.g. 1,3,5-8)</div>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Specific Page Input -->
+                    <div id="split-specific-options" style="display:none; margin-bottom:20px;">
+                        <label style="font-size:12px; font-weight:600; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:8px;">Page Number</label>
+                        <input id="split-page" type="number" min="1" value="1" style="width:100%; padding:9px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.05); color:#e5e7eb; font-size:13px; outline:none;" placeholder="Enter page number">
+                    </div>
+
+                    <!-- Range Inputs -->
+                    <div id="split-range-options" style="display:none; margin-bottom:20px;">
+                        <label style="font-size:12px; font-weight:600; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:8px;">Page Range</label>
+                        <div style="display:flex; gap:8px; align-items:center;">
+                            <div style="flex:1; display:flex; align-items:center; gap:6px;">
+                                <label style="font-size:12px; color:rgba(255,255,255,0.5); white-space:nowrap;">From</label>
+                                <input id="split-from" type="number" min="1" value="1" style="width:100%; padding:9px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.05); color:#e5e7eb; font-size:13px; outline:none;">
+                            </div>
+                            <span style="color:rgba(255,255,255,0.3); font-size:14px;">—</span>
+                            <div style="flex:1; display:flex; align-items:center; gap:6px;">
+                                <label style="font-size:12px; color:rgba(255,255,255,0.5); white-space:nowrap;">To</label>
+                                <input id="split-to" type="number" min="1" value="1" style="width:100%; padding:9px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.05); color:#e5e7eb; font-size:13px; outline:none;">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Custom Pages Input -->
+                    <div id="split-custom-options" style="display:none; margin-bottom:20px;">
+                        <label style="font-size:12px; font-weight:600; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:8px;">Pages</label>
+                        <input id="split-pages-custom" type="text" style="width:100%; padding:9px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.05); color:#e5e7eb; font-size:13px; outline:none;" placeholder="e.g. 1, 3, 5-8, 12">
+                        <div style="font-size:11px; color:rgba(255,255,255,0.3); margin-top:6px;">Use commas to separate pages, hyphens for ranges</div>
+                    </div>
+
+                    <!-- Progress bar -->
+                    <div id="split-progress-wrap" style="display:none; margin-bottom:16px;">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+                            <span id="split-progress-label" style="font-size:12px; color:rgba(255,255,255,0.5);">Splitting...</span>
+                            <span id="split-progress-pct" style="font-size:12px; color:#10b981; font-weight:600;"></span>
+                        </div>
+                        <div style="height:6px; background:rgba(255,255,255,0.08); border-radius:3px; overflow:hidden;">
+                            <div id="split-progress-bar" style="height:100%; width:0%; background:linear-gradient(90deg, #10b981, #059669); border-radius:3px; transition:width 0.3s;"></div>
+                        </div>
+                    </div>
+                </div>
+                <!-- Footer -->
+                <div style="padding:16px 24px 20px; border-top:1px solid rgba(255,255,255,0.08); display:flex; align-items:center; justify-content:space-between;">
+                    <div id="split-page-info" style="font-size:12px; color:rgba(255,255,255,0.4);"></div>
+                    <div style="display:flex; gap:8px;">
+                        <button id="split-cancel-btn" style="padding:9px 20px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:transparent; color:#e5e7eb; cursor:pointer; font-size:13px; font-weight:500; transition:all 0.15s;" onmouseenter="this.style.background='rgba(255,255,255,0.06)'" onmouseleave="this.style.background='transparent'">Cancel</button>
+                        <button id="split-export-btn" style="padding:9px 24px; border-radius:8px; border:none; background:linear-gradient(135deg, #10b981, #059669); color:#fff; cursor:pointer; font-size:13px; font-weight:600; transition:all 0.15s; display:flex; align-items:center; gap:6px;" onmouseenter="this.style.opacity='0.9'" onmouseleave="this.style.opacity='1'">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="3" width="8" height="18" rx="1"/><rect x="14" y="3" width="8" height="18" rx="1"/></svg>
+                            Split
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- PDF/A Compliance Report Modal -->
         <div id="pdfa-report-modal" style="display:none; position:fixed; inset:0; z-index:100000; background:rgba(0,0,0,0.7); backdrop-filter:blur(6px); align-items:center; justify-content:center;">
             <div style="background:#1a1a2e; border:1px solid rgba(255,255,255,0.1); border-radius:16px; box-shadow:0 24px 80px rgba(0,0,0,0.6); width:580px; max-width:95vw; max-height:90vh; overflow-y:auto; color:#e5e7eb;">
@@ -4938,10 +5138,33 @@
             </div>
         </div>
 
+        <div id="overlay-loading-modal" class="overlay-loading-modal" aria-hidden="true">
+            <div class="loading-card">
+                <div class="loading-header">
+                    <div class="loading-icon">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                        </svg>
+                    </div>
+                    <h3 class="loading-title">Preparing Overlay Editor</h3>
+                </div>
+                <p id="overlay-loading-message" class="loading-message">Loading extracted text data for this document...</p>
+                <div class="loading-progress-row">
+                    <span>Progress</span>
+                    <span id="overlay-loading-percent">0%</span>
+                </div>
+                <div class="loading-progress-track">
+                    <div id="overlay-loading-progress" class="loading-progress-fill"></div>
+                </div>
+            </div>
+        </div>
+
         <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
         <script>
+
             const pdfUrl = "{{ route('documents.file', $document) }}";
             const cleanPdfUrl = "{{ route('documents.cleanPdf', $document) }}";
             const saveUrl = "{{ route('documents.save', $document) }}";
@@ -5386,6 +5609,10 @@
             const overlayUndoBtn = document.getElementById('overlay-undo');
             const overlayRedoBtn = document.getElementById('overlay-redo');
             const textMeasureCtx = document.createElement('canvas').getContext('2d');
+            const overlayLoadingModal = document.getElementById('overlay-loading-modal');
+            const overlayLoadingMessage = document.getElementById('overlay-loading-message');
+            const overlayLoadingProgress = document.getElementById('overlay-loading-progress');
+            const overlayLoadingPercent = document.getElementById('overlay-loading-percent');
 
             // Cleanup function to destroy overlay PDF and release memory
             function cleanupOverlayPdf() {
@@ -5394,6 +5621,67 @@
                     overlayPdfDoc = null;
                 }
             }
+
+            const updateOverlayLoadingProgress = (percent = 0, message = null) => {
+                const safePercent = Math.max(0, Math.min(100, Math.round(percent)));
+                if (overlayLoadingProgress) {
+                    overlayLoadingProgress.style.width = `${safePercent}%`;
+                }
+                if (overlayLoadingPercent) {
+                    overlayLoadingPercent.textContent = `${safePercent}%`;
+                }
+                if (message && overlayLoadingMessage) {
+                    overlayLoadingMessage.textContent = message;
+                }
+            };
+
+            const showOverlayLoadingModal = (message = 'Loading extracted text data for this document...') => {
+                if (!overlayLoadingModal) return;
+                overlayLoadingModal.style.display = 'flex';
+                overlayLoadingModal.setAttribute('aria-hidden', 'false');
+                overlayLoadingModal.classList.add('active');
+                updateOverlayLoadingProgress(2, message);
+            };
+
+            const hideOverlayLoadingModal = () => {
+                if (!overlayLoadingModal) return;
+                overlayLoadingModal.classList.remove('active');
+                overlayLoadingModal.setAttribute('aria-hidden', 'true');
+                overlayLoadingModal.style.display = 'none';
+                updateOverlayLoadingProgress(0);
+            };
+
+            const waitForOverlayExtractionData = async ({ showModal = false, timeoutMs = 45000, pollMs = 700 } = {}) => {
+                const startedAt = Date.now();
+                if (showModal) {
+                    showOverlayLoadingModal('Preparing clean PDF and waiting for extraction data...');
+                }
+                while ((Date.now() - startedAt) < timeoutMs) {
+                    const elapsed = Date.now() - startedAt;
+                    if (showModal) {
+                        const eased = Math.min(94, 10 + (elapsed / timeoutMs) * 84);
+                        updateOverlayLoadingProgress(eased, 'Loading extraction data...');
+                    }
+                    try {
+                        const response = await fetch(`${fitzExtractionDataUrl}?v=${Date.now()}`, {
+                            headers: { 'Accept': 'application/json' }
+                        });
+                        if (response.ok) {
+                            const data = await response.json();
+                            if (data && data.success && Array.isArray(data.extraction_data)) {
+                                if (showModal) {
+                                    updateOverlayLoadingProgress(100, 'Overlay data ready.');
+                                }
+                                return data;
+                            }
+                        }
+                    } catch (pollError) {
+                        // Continue polling until timeout.
+                    }
+                    await new Promise(resolve => setTimeout(resolve, pollMs));
+                }
+                throw new Error('Timed out waiting for overlay extraction data. Please try again.');
+            };
 
             const measureAnnotationTextWidth = (text, fontSizePx, fontFamily, fontWeight, fontStyle) => {
                 const weight = fontWeight || '400';
@@ -6128,7 +6416,7 @@
                     return;
                 }
                 const thumb = document.createElement('div');
-                thumb.className = 'relative p-3 rounded-lg border border-gray-600/50 cursor-pointer transition-all hover:border-emerald-500/50 group';
+                thumb.className = 'page-thumb relative p-3 rounded-lg border border-gray-600/50 cursor-pointer transition-all hover:border-emerald-500/50 group';
                 thumb.dataset.pageIndex = String(pageNumber - 1);
 
                 const thumbCanvas = document.createElement('canvas');
@@ -11019,6 +11307,7 @@
             const convertToPdfAUrl = "{{ route('documents.convertToPdfA', $document) }}";
             const convertToWordUrl = "{{ route('documents.convertToWord', $document) }}";
             const convertToExcelUrl = "{{ route('documents.convertToExcel', $document) }}";
+            const splitPdfUrl = "{{ route('documents.splitPdf', $document) }}";
             const downloadConvertedBaseUrl = "{{ route('documents.downloadConverted') }}";
             const downloadPdfABaseUrl = "{{ route('documents.downloadPdfA') }}";
             const logExportUrl = "{{ route('documents.logExport', $document) }}";
@@ -11256,6 +11545,212 @@
                 if (convertPageTo) convertPageTo.addEventListener('change', updateConvertPageInfo);
                 if (convertPageCustom) convertPageCustom.addEventListener('input', updateConvertPageInfo);
             }
+
+            // ── Split PDF Modal ──────────────────────────────────────────
+            (function wireSplitModal() {
+                const splitBtn = document.getElementById('split-btn');
+                const splitModal = document.getElementById('split-modal');
+                const splitModalClose = document.getElementById('split-modal-close');
+                const splitCancelBtn = document.getElementById('split-cancel-btn');
+                const splitExportBtn = document.getElementById('split-export-btn');
+                const splitPageInfo = document.getElementById('split-page-info');
+                const splitProgressWrap = document.getElementById('split-progress-wrap');
+                const splitProgressBar = document.getElementById('split-progress-bar');
+                const splitProgressLabel = document.getElementById('split-progress-label');
+                const splitProgressPct = document.getElementById('split-progress-pct');
+                const splitSpecificOptions = document.getElementById('split-specific-options');
+                const splitRangeOptions = document.getElementById('split-range-options');
+                const splitCustomOptions = document.getElementById('split-custom-options');
+                const splitPageInput = document.getElementById('split-page');
+                const splitFromInput = document.getElementById('split-from');
+                const splitToInput = document.getElementById('split-to');
+                const splitPagesCustomInput = document.getElementById('split-pages-custom');
+
+                if (!splitBtn || !splitModal) return;
+
+                let splitMode = 'each';
+                let splitExporting = false;
+
+                const openSplitModal = () => {
+                    const total = pdfjsDocument ? pdfjsDocument.numPages : (totalPages || 1);
+                    splitPageInfo.textContent = `Document has ${total} page${total !== 1 ? 's' : ''}`;
+                    if (splitPageInput) splitPageInput.max = total;
+                    if (splitFromInput) splitFromInput.max = total;
+                    if (splitToInput) { splitToInput.max = total; splitToInput.value = total; }
+                    splitModal.style.display = 'flex';
+                    resetSplitProgress();
+                };
+
+                const closeSplitModal = () => {
+                    if (splitExporting) return;
+                    splitModal.style.display = 'none';
+                };
+
+                const resetSplitProgress = () => {
+                    splitProgressWrap.style.display = 'none';
+                    splitProgressBar.style.width = '0%';
+                    splitProgressLabel.textContent = 'Splitting...';
+                    splitProgressPct.textContent = '';
+                    splitExportBtn.disabled = false;
+                    splitExportBtn.style.opacity = '1';
+                };
+
+                const updateSplitModeUI = () => {
+                    document.querySelectorAll('.split-mode-option').forEach(opt => {
+                        const isActive = opt.dataset.mode === splitMode;
+                        opt.style.borderColor = isActive ? '#10b981' : 'rgba(255,255,255,0.1)';
+                        opt.style.background = isActive ? 'rgba(16,185,129,0.08)' : 'transparent';
+                        if (isActive) opt.classList.add('active');
+                        else opt.classList.remove('active');
+                    });
+                    splitSpecificOptions.style.display = splitMode === 'specific' ? 'block' : 'none';
+                    splitRangeOptions.style.display = splitMode === 'range' ? 'block' : 'none';
+                    splitCustomOptions.style.display = splitMode === 'custom' ? 'block' : 'none';
+                };
+
+                // Mode radio buttons
+                document.querySelectorAll('input[name="split-mode"]').forEach(radio => {
+                    radio.addEventListener('change', () => {
+                        splitMode = radio.value;
+                        updateSplitModeUI();
+                    });
+                });
+
+                splitBtn.addEventListener('click', () => {
+                    if (overlayEditorActive) {
+                        setStatus('Split is disabled while Overlay Editor is active.', 'warn');
+                        return;
+                    }
+                    if (!isAuthenticated) {
+                        showLoginRequiredModal();
+                        return;
+                    }
+                    if (settingsPopover) settingsPopover.style.display = 'none';
+                    openSplitModal();
+                });
+
+                splitModalClose.addEventListener('click', closeSplitModal);
+                splitCancelBtn.addEventListener('click', closeSplitModal);
+                splitModal.addEventListener('click', (e) => {
+                    if (e.target === splitModal) closeSplitModal();
+                });
+
+                splitExportBtn.addEventListener('click', async () => {
+                    if (splitExporting) return;
+                    splitExporting = true;
+                    splitExportBtn.disabled = true;
+                    splitExportBtn.style.opacity = '0.6';
+                    splitProgressWrap.style.display = 'block';
+                    splitProgressBar.style.width = '30%';
+                    splitProgressLabel.textContent = 'Splitting PDF...';
+
+                    const body = { mode: splitMode };
+                    const total = pdfjsDocument ? pdfjsDocument.numPages : (totalPages || 1);
+
+                    if (splitMode === 'specific') {
+                        const page = parseInt(splitPageInput.value);
+                        if (isNaN(page) || page < 1 || page > total) {
+                            splitProgressLabel.textContent = `Invalid page number (1-${total})`;
+                            splitProgressBar.style.width = '100%';
+                            splitProgressBar.style.background = '#ef4444';
+                            splitExporting = false;
+                            splitExportBtn.disabled = false;
+                            splitExportBtn.style.opacity = '1';
+                            return;
+                        }
+                        body.page = page;
+                    } else if (splitMode === 'range') {
+                        const from = parseInt(splitFromInput.value);
+                        const to = parseInt(splitToInput.value);
+                        if (isNaN(from) || isNaN(to) || from < 1 || to > total || from > to) {
+                            splitProgressLabel.textContent = `Invalid range (1-${total})`;
+                            splitProgressBar.style.width = '100%';
+                            splitProgressBar.style.background = '#ef4444';
+                            splitExporting = false;
+                            splitExportBtn.disabled = false;
+                            splitExportBtn.style.opacity = '1';
+                            return;
+                        }
+                        body.from_page = from;
+                        body.to_page = to;
+                    } else if (splitMode === 'custom') {
+                        const pages = splitPagesCustomInput.value.trim();
+                        if (!pages) {
+                            splitProgressLabel.textContent = 'Please enter page numbers';
+                            splitProgressBar.style.width = '100%';
+                            splitProgressBar.style.background = '#ef4444';
+                            splitExporting = false;
+                            splitExportBtn.disabled = false;
+                            splitExportBtn.style.opacity = '1';
+                            return;
+                        }
+                        body.pages = pages;
+                    }
+
+                    try {
+                        splitProgressBar.style.width = '50%';
+                        const response = await fetch(splitPdfUrl, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Accept': 'application/json',
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                            },
+                            body: JSON.stringify(body),
+                        });
+
+                        splitProgressBar.style.width = '80%';
+                        const result = await response.json();
+
+                        if (!result.success) {
+                            throw new Error(result.message || 'Split failed');
+                        }
+
+                        splitProgressBar.style.width = '100%';
+                        splitProgressLabel.textContent = `Split complete! ${result.file_count} file${result.file_count !== 1 ? 's' : ''} created.`;
+                        splitProgressPct.textContent = '100%';
+
+                        // Log export
+                        logExportActivity('Split PDF', 'split_export', {
+                            mode: splitMode,
+                            file_count: result.file_count,
+                            total_pages: result.total_pages,
+                        }, 'success');
+
+                        // Trigger download
+                        const downloadUrl = downloadConvertedBaseUrl + '?token=' + encodeURIComponent(result.download_token);
+                        const a = document.createElement('a');
+                        a.href = downloadUrl;
+                        a.download = result.download_name;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+
+                        setStatus(`PDF split successfully: ${result.download_name}`, 'ok');
+
+                        // Auto-close after brief delay
+                        setTimeout(() => {
+                            splitExporting = false;
+                            closeSplitModal();
+                            resetSplitProgress();
+                        }, 1500);
+                    } catch (error) {
+                        console.error('Split error:', error);
+                        splitProgressBar.style.width = '100%';
+                        splitProgressBar.style.background = '#ef4444';
+                        splitProgressLabel.textContent = 'Error: ' + error.message;
+                        splitExporting = false;
+                        splitExportBtn.disabled = false;
+                        splitExportBtn.style.opacity = '1';
+                        setStatus('Split failed: ' + error.message, 'err');
+
+                        logExportActivity('Split PDF', 'split_export', {
+                            mode: splitMode,
+                            error: error.message,
+                        }, 'failed');
+                    }
+                });
+            })();
 
             function updateColorModelOptions() {
                 const rgbaOpt = convertColorModel.querySelector('option[value="rgba"]');
@@ -13627,7 +14122,7 @@
                 if (modeOverlayChip) modeOverlayChip.classList.toggle('overlay-active', overlayOn);
                 if (overlayStateIndicator) overlayStateIndicator.classList.toggle('active', overlayOn);
 
-                [modeText, modeSign, modeShape, modeDraw, convertBtn].forEach((btn) => {
+                [modeText, modeSign, modeShape, modeDraw, convertBtn, document.getElementById('split-btn')].forEach((btn) => {
                     setOverlayToolDisabled(btn, overlayOn);
                 });
             };
@@ -14211,8 +14706,10 @@
 
             const overlayToggleHandler = async (checked) => {
                 if (!checked) {
+                    hideOverlayLoadingModal();
                     cleanupOverlayPdf();  // Free memory from overlay PDF
                     overlayEditorActive = false;
+                    overlayRendered = false; // Force fresh prepareOverlay on next enable
                     overlayLoadToken++;
                     persistOverlayEdits();
                     // Hide the selection/font toolbar when leaving overlay mode
@@ -14279,17 +14776,17 @@
                 updateModeButtons();
                 updateOverlayUiState();
                 setStatus('Loading overlay editor...', 'loading');
+                const shouldShowOverlayModal = (Number(pdfjsDocument?.numPages || totalPages || 0) > 5);
+                hideOverlayLoadingModal();
 
                 try {
                     viewer.classList.remove('overlay-hidden');
-                    if (overlayRendered) {
-                        if (typeof renderGridlines === 'function') renderGridlines();
-                        setStatus('Overlay editor active. Edit text positions and content.', 'ok');
-                        return;
-                    }
+                    // Always regenerate the clean PDF when enabling overlay mode.
+                    // Reusing a previous clean_{documentId}.pdf can preserve stale
+                    // glyph artifacts after extraction/scrub logic changes.
                     // First, ensure clean PDF is created by calling the overlay editor endpoint
                     // Add cache-busting parameter to force regeneration after PDF changes
-                    const prepareResponse = await fetch('{{ route("documents.prepareOverlay", $document) }}?v=' + Date.now(), { 
+                    const prepareResponse = await fetch('{{ route("documents.prepareOverlay", $document) }}?force_refresh=1&v=' + Date.now(), { 
                         method: 'POST', 
                         headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content } 
                     });
@@ -14313,9 +14810,35 @@
                         return;
                     }
 
-                    // Load extraction data
-                    const response = await fetch('{{ route("documents.getFitzExtractionData", $document) }}');
-                    const data = await response.json();
+                    // First attempt: fetch extraction data immediately without showing modal.
+                    // If already available on the server, skip modal entirely.
+                    let data = null;
+                    try {
+                        const quickResponse = await fetch(`${fitzExtractionDataUrl}?v=${Date.now()}`, {
+                            headers: { 'Accept': 'application/json' }
+                        });
+                        if (quickResponse.ok) {
+                            data = await quickResponse.json();
+                        }
+                    } catch (quickFetchError) {
+                        // Fall through to wait/poll path below.
+                    }
+
+                    const hasImmediateData = !!(data && data.success && Array.isArray(data.extraction_data));
+
+                    if (!hasImmediateData) {
+                        // Only show modal on original load when data is not ready yet.
+                        if (shouldShowOverlayModal) {
+                            showOverlayLoadingModal('Preparing clean PDF and waiting for extraction data...');
+                            updateOverlayLoadingProgress(8, 'Preparing clean PDF and waiting for extraction data...');
+                        }
+                        data = await waitForOverlayExtractionData({
+                            showModal: shouldShowOverlayModal,
+                            timeoutMs: 60000,
+                            pollMs: 750
+                        });
+                        hideOverlayLoadingModal();
+                    }
 
                     if (!data.success) {
                         throw new Error(data.message || 'Failed to load extraction data');
@@ -14409,6 +14932,7 @@
                         document.fonts.ready.then(doFontReRender);
                     }, 2000);
                 } catch (error) {
+                    hideOverlayLoadingModal();
                     console.error('Error loading overlay editor:', error);
                     let errorMessage = error.message;
                     if (error.message && error.message.includes('Page dictionary')) {
@@ -14459,6 +14983,11 @@
                     overlayPdfDoc = pdf;  // Track for cleanup
                     
                     viewer.innerHTML = '';
+                    if (pageList) {
+                        // Rebuilding overlay pages must also reset sidebar thumbnails,
+                        // otherwise each re-render appends duplicate page entries.
+                        pageList.innerHTML = '';
+                    }
                     totalPages = pdf.numPages;
                     updatePageControls();
                     renderedPages = 0;
@@ -14992,7 +15521,19 @@
                     .forEach((annotation) => addAnnotationElement(wrapper, annotation, pageInfo));
 
                 // Render editable text fields - pass the actual viewport for accurate scaling
-                const pageData = overlayExtractionData.find(p => p.page_number === pageNumber);
+                const extractionPages = Array.isArray(overlayExtractionData) ? overlayExtractionData : [];
+                let pageData = null;
+                if (typeof extractionPages.find === 'function') {
+                    pageData = extractionPages.find((p) => p && p.page_number === pageNumber) || null;
+                } else {
+                    for (let i = 0; i < extractionPages.length; i++) {
+                        const p = extractionPages[i];
+                        if (p && p.page_number === pageNumber) {
+                            pageData = p;
+                            break;
+                        }
+                    }
+                }
                 if (pageData && pageData.words) {
                     renderOverlayFields(overlay, pageData, viewport, canvas);
                 }
@@ -15003,6 +15544,8 @@
 
             function renderOverlayFields(overlay, pageData, viewport, canvas) {
                 if (!pageData.words || pageData.words.length === 0) return;
+                // Defensive cleanup in case this page overlay is re-rendered.
+                overlay.querySelectorAll('.overlay-field').forEach((el) => el.remove());
 
                 // Normalize PDF font name by stripping subset prefixes and weight suffixes
                 // e.g. "PdbpbbLato-Regular" → "Lato", "MontserratThin_700wght" → "Montserrat"
@@ -15208,7 +15751,7 @@
                     if (!Number.isFinite(spacing)) {
                         return null;
                     }
-                    const clamped = Math.max(-1, Math.min(5, spacing));
+                    const clamped = Math.max(-3, Math.min(8, spacing));
                     return clamped;
                 };
 
@@ -15224,8 +15767,42 @@
 
                 const buildStyledWordSpans = (container, words, scaleX, scaleY, blockLeft, blockTop) => {
                     container.style.position = 'relative';
+
+                    // ── Word-level deduplication ──────────────────────────────
+                    // Extraction can produce duplicate/overlapping word entries
+                    // (OCR layers, font re-encoding, ligature splitting). Remove
+                    // near-identical words so we don't render stacked glyphs.
+                    const WORD_POS_EPS = 1.5; // PDF-unit tolerance
+                    const dedupedWords = [];
+                    const seenWordKeys = new Set();
+                    const sortedInput = [...words].sort((a, b) =>
+                        ((a.top || 0) - (b.top || 0)) || ((a.left || 0) - (b.left || 0))
+                    );
+                    sortedInput.forEach((word) => {
+                        // Fast path: exact signature match
+                        const sig = [
+                            sanitizeOverlayText(word.text || ''),
+                            Math.round((word.left || 0) / WORD_POS_EPS),
+                            Math.round((word.top || 0) / WORD_POS_EPS),
+                        ].join('|');
+                        if (seenWordKeys.has(sig)) return;
+                        seenWordKeys.add(sig);
+
+                        // Slow path: check for near-overlap with already-kept words
+                        const isDup = dedupedWords.some((kept) => {
+                            if (Math.abs((kept.left || 0) - (word.left || 0)) > WORD_POS_EPS) return false;
+                            if (Math.abs((kept.top || 0) - (word.top || 0)) > WORD_POS_EPS) return false;
+                            const keptText = sanitizeOverlayText(kept.text || '');
+                            const wordText = sanitizeOverlayText(word.text || '');
+                            return keptText === wordText
+                                || keptText.includes(wordText)
+                                || wordText.includes(keptText);
+                        });
+                        if (!isDup) dedupedWords.push(word);
+                    });
+
                     const lines = new Map();
-                    words.forEach((word) => {
+                    dedupedWords.forEach((word) => {
                         const lineKey = word.line_num ?? 0;
                         if (!lines.has(lineKey)) {
                             lines.set(lineKey, []);
@@ -15335,10 +15912,26 @@
                     // split them into separate visual blocks so each table cell
                     // gets its own bounding box.
                     const GAP_FACTOR = 3; // gap > GAP_FACTOR × avg font size = column break
-                    let nextSyntheticBlockNum = pageData.blocks.reduce((m, b) => Math.max(m, b.block_num), 0) + 1;
-                    const expandedBlocks = [];
+                    const SPLIT_ALIGN_TOLERANCE_PX = 6;
 
-                    pageData.blocks.forEach(block => {
+                    // Prepare block data only once per extracted page payload. Repeating
+                    // the split+retag pass on every re-render can create drifting block
+                    // assignments and visual duplicates over time.
+                    let expandedBlocks;
+                    if (pageData._overlayBlocksPrepared) {
+                        expandedBlocks = pageData.blocks || [];
+                    } else {
+                        let nextSyntheticBlockNum = pageData.blocks.reduce((m, b) => Math.max(m, b.block_num), 0) + 1;
+                        expandedBlocks = [];
+
+                        pageData.blocks.forEach(block => {
+                        // Avoid double-splitting blocks that were already split upstream
+                        // or by this client-side renderer on a prior pass.
+                        if (block._from_xgap_split || block._client_split) {
+                            expandedBlocks.push(block);
+                            return;
+                        }
+
                         const blockWords = pageData.words
                             ? pageData.words.filter(w => w.block_num === block.block_num)
                             : [];
@@ -15359,28 +15952,53 @@
                         // For multi-line blocks: only split if ALL lines have matching column structure
                         const lineKeys = Array.from(lineMap.keys()).sort((a, b) => a - b);
 
-                        // Determine column breaks from the first line (or longest line)
-                        let refLine = lineMap.get(lineKeys[0]);
-                        lineKeys.forEach(k => {
-                            if (lineMap.get(k).length > refLine.length) refLine = lineMap.get(k);
-                        });
-                        refLine.sort((a, b) => a.left - b.left);
+                        const sortedLineWords = lineKeys.map(k =>
+                            [...lineMap.get(k)].sort((a, b) => a.left - b.left)
+                        );
 
-                        // Find gaps in the reference line
-                        const avgFontSize = refLine.reduce((s, w) => s + (w.font_size || 10), 0) / refLine.length;
-                        const gapThreshold = avgFontSize * GAP_FACTOR;
-                        const splitPositions = []; // midpoint x-coords of gaps
-                        for (let i = 1; i < refLine.length; i++) {
-                            const prevRight = refLine[i - 1].left + refLine[i - 1].width;
-                            const curLeft = refLine[i].left;
-                            const gap = curLeft - prevRight;
-                            if (gap > gapThreshold) {
-                                splitPositions.push((prevRight + curLeft) / 2);
+                        // Determine candidate split positions per line.
+                        const lineSplitPositions = sortedLineWords.map(words => {
+                            if (words.length < 2) return [];
+                            const avgFontSize = words.reduce((s, w) => s + (w.font_size || 10), 0) / words.length;
+                            const gapThreshold = avgFontSize * GAP_FACTOR;
+                            const positions = [];
+                            for (let i = 1; i < words.length; i++) {
+                                const prevRight = words[i - 1].left + words[i - 1].width;
+                                const curLeft = words[i].left;
+                                const gap = curLeft - prevRight;
+                                if (gap > gapThreshold) {
+                                    positions.push((prevRight + curLeft) / 2);
+                                }
+                            }
+                            return positions;
+                        });
+
+                        // Use the longest line as reference for expected split positions.
+                        let refLineIndex = 0;
+                        for (let i = 1; i < sortedLineWords.length; i++) {
+                            if (sortedLineWords[i].length > sortedLineWords[refLineIndex].length) {
+                                refLineIndex = i;
                             }
                         }
+                        const splitPositions = lineSplitPositions[refLineIndex];
 
                         if (splitPositions.length === 0) {
                             // No column gaps found — keep block as-is
+                            expandedBlocks.push(block);
+                            return;
+                        }
+
+                        // Require all lines to have matching column structure.
+                        const allLinesMatchColumns = lineSplitPositions.every(positions => {
+                            if (positions.length !== splitPositions.length) return false;
+                            for (let i = 0; i < positions.length; i++) {
+                                if (Math.abs(positions[i] - splitPositions[i]) > SPLIT_ALIGN_TOLERANCE_PX) {
+                                    return false;
+                                }
+                            }
+                            return true;
+                        });
+                        if (!allLinesMatchColumns) {
                             expandedBlocks.push(block);
                             return;
                         }
@@ -15426,6 +16044,7 @@
 
                             expandedBlocks.push({
                                 ...block,
+                                _client_split: true,
                                 block_num: subNum,
                                 left: minL,
                                 top: minT,
@@ -15435,12 +16054,14 @@
                                 text_lines: textLines,
                             });
                         });
-                    });
+                        });
 
-                    // Persist the expanded blocks back into pageData so subsequent
-                    // re-renders (toggle off/on, zoom, etc.) see the already-split
-                    // blocks with matching word block_num values.
-                    pageData.blocks = expandedBlocks;
+                        // Persist the expanded blocks back into pageData so subsequent
+                        // re-renders (toggle off/on, zoom, etc.) see the already-split
+                        // blocks with matching word block_num values.
+                        pageData.blocks = expandedBlocks;
+                        pageData._overlayBlocksPrepared = true;
+                    }
 
                     // Sort blocks by vertical position (top to bottom) then horizontal (left to right)
                     const sortedBlocks = [...expandedBlocks].sort((a, b) => {
@@ -15449,8 +16070,91 @@
                         return a.left - b.left;
                     });
 
+                    // Defensive dedupe: extraction can occasionally contain duplicate
+                    // or near-duplicate blocks (same text, slightly different bbox).
+                    const BLOCK_GEOM_EPS = 0.75;
+                    const getBlockTextSig = (blk) => sanitizeOverlayText(
+                        (blk.text_single_line || blk.text || (blk.text_lines || []).join(' '))
+                    ).replace(/\s+/g, ' ').trim();
+                    const getRect = (blk) => ({
+                        l: Number(blk.left) || 0,
+                        t: Number(blk.top) || 0,
+                        r: (Number(blk.left) || 0) + (Number(blk.width) || 0),
+                        b: (Number(blk.top) || 0) + (Number(blk.height) || 0)
+                    });
+                    const rectIou = (a, b) => {
+                        const interW = Math.max(0, Math.min(a.r, b.r) - Math.max(a.l, b.l));
+                        const interH = Math.max(0, Math.min(a.b, b.b) - Math.max(a.t, b.t));
+                        const inter = interW * interH;
+                        if (inter <= 0) return 0;
+                        const areaA = Math.max(0, a.r - a.l) * Math.max(0, a.b - a.t);
+                        const areaB = Math.max(0, b.r - b.l) * Math.max(0, b.b - b.t);
+                        const denom = areaA + areaB - inter;
+                        return denom > 0 ? (inter / denom) : 0;
+                    };
+                    const isLikelyDuplicateBlock = (a, b) => {
+                        const textA = a._textSig;
+                        const textB = b._textSig;
+                        if (!textA || !textB) return false;
+                        const iou = rectIou(a._rect, b._rect);
+                        const topClose = Math.abs((a.top || 0) - (b.top || 0)) <= 2;
+                        const leftClose = Math.abs((a.left || 0) - (b.left || 0)) <= 2;
+                        if (textA === textB) {
+                            return iou >= 0.7 || (topClose && leftClose);
+                        }
+                        const aContainsB = textA.includes(textB);
+                        const bContainsA = textB.includes(textA);
+                        if ((aContainsB || bContainsA) && iou >= 0.9) {
+                            return true;
+                        }
+                        const shortFrag = Math.min(textA.length, textB.length) <= 4;
+                        if (shortFrag && iou >= 0.85 && topClose) {
+                            return true;
+                        }
+                        return false;
+                    };
+
+                    const dedupedBlocks = [];
+                    const seenBlockSigs = new Set();
+                    sortedBlocks.forEach((blk) => {
+                        blk._textSig = getBlockTextSig(blk);
+                        blk._rect = getRect(blk);
+
+                        const sig = [
+                            blk._textSig,
+                            Math.round((blk.left || 0) / BLOCK_GEOM_EPS),
+                            Math.round((blk.top || 0) / BLOCK_GEOM_EPS),
+                            Math.round((blk.width || 0) / BLOCK_GEOM_EPS),
+                            Math.round((blk.height || 0) / BLOCK_GEOM_EPS),
+                        ].join('|');
+                        if (seenBlockSigs.has(sig)) {
+                            return;
+                        }
+
+                        let duplicateIndex = -1;
+                        for (let i = 0; i < dedupedBlocks.length; i++) {
+                            if (isLikelyDuplicateBlock(blk, dedupedBlocks[i])) {
+                                duplicateIndex = i;
+                                break;
+                            }
+                        }
+                        if (duplicateIndex >= 0) {
+                            // Keep the richer candidate when two blocks look duplicated.
+                            const existing = dedupedBlocks[duplicateIndex];
+                            const existingScore = ((existing._textSig || '').length * 1000) + ((existing.width || 0) * (existing.height || 0));
+                            const candidateScore = ((blk._textSig || '').length * 1000) + ((blk.width || 0) * (blk.height || 0));
+                            if (candidateScore > existingScore) {
+                                dedupedBlocks[duplicateIndex] = blk;
+                            }
+                            return;
+                        }
+
+                        seenBlockSigs.add(sig);
+                        dedupedBlocks.push(blk);
+                    });
+
                     // Pre-compute base rectangles for all blocks so we can clamp padding to prevent overlaps
-                    const blockBaseRects = sortedBlocks.map((blk) => {
+                    const blockBaseRects = dedupedBlocks.map((blk) => {
                         const blkKey = `block-${pageData.page_number}-${blk.block_num}`;
                         const blkEdit = getOverlayStoredEdit(blkKey);
                         const blkWords = pageData.words
@@ -15508,9 +16212,15 @@
                         return Math.max(0, maxPad);
                     });
 
-                    sortedBlocks.forEach((block, blockIndex) => {
+                    const renderedBlockKeys = new Set();
+                    const renderedFieldFingerprints = [];
+
+                    dedupedBlocks.forEach((block, blockIndex) => {
                         const key = `block-${pageData.page_number}-${block.block_num}`;
+                        if (renderedBlockKeys.has(key)) return;
+                        renderedBlockKeys.add(key);
                         const storedEdit = getOverlayStoredEdit(key);
+
                         const blockText = (block.text_lines && block.text_lines.length)
                             ? block.text_lines.map(line => sanitizeOverlayText(line)).join('\n')
                             : sanitizeOverlayText(block.text || '');
@@ -15534,7 +16244,6 @@
                         field.style.minWidth = '20px';
                         field.style.minHeight = '10px';
                         field.style.boxSizing = 'border-box';
-                        field.style.overflow = 'hidden';
 
                         // Render the text content
                         const textSpan = document.createElement('div');
@@ -15634,6 +16343,57 @@
                             }
                         }
 
+                        // Skip synthetic/duplicate blocks that don't map to any words and
+                        // also don't have a user edit record. These are a common source of
+                        // stray duplicated glyph fragments in overlay mode.
+                        if (!storedEdit && blockWords.length === 0) {
+                            return;
+                        }
+
+                        // Final safety net: skip near-identical field renderings that
+                        // can appear with duplicated extraction fragments.
+                        const candidateTextSig = sanitizeOverlayText(
+                            String((storedEdit && storedEdit.new_text != null ? storedEdit.new_text : safeBlockText) || '')
+                        ).replace(/\s+/g, ' ').trim();
+                        const candidateWordSig = blockWords
+                            .slice()
+                            .sort((a, b) => ((a.top || 0) - (b.top || 0)) || ((a.left || 0) - (b.left || 0)))
+                            .map((w) => sanitizeOverlayText(String(w.text || '')))
+                            .join('\u241F');
+                        const candidateRect = storedEdit && Array.isArray(storedEdit.bbox) && storedEdit.bbox.length >= 4
+                            ? {
+                                l: Number(storedEdit.bbox[0]) || blockLeft,
+                                t: Number(storedEdit.bbox[1]) || blockTop,
+                                r: Number(storedEdit.bbox[2]) || (blockLeft + blockWidth),
+                                b: Number(storedEdit.bbox[3]) || (blockTop + blockHeight)
+                            }
+                            : {
+                                l: blockLeft,
+                                t: blockTop,
+                                r: blockLeft + blockWidth,
+                                b: blockTop + blockHeight
+                            };
+                        const isDuplicateField = renderedFieldFingerprints.some((prev) => {
+                            const sameWords = candidateWordSig && prev.words && candidateWordSig === prev.words;
+                            if (sameWords) {
+                                return rectIou(candidateRect, prev.rect) >= 0.6;
+                            }
+
+                            if (!candidateTextSig || !prev.text) return false;
+                            const sameText = candidateTextSig === prev.text;
+                            const containsText = candidateTextSig.includes(prev.text) || prev.text.includes(candidateTextSig);
+                            if (!sameText && !containsText) return false;
+                            return rectIou(candidateRect, prev.rect) >= 0.75;
+                        });
+                        if (isDuplicateField) {
+                            return;
+                        }
+                        renderedFieldFingerprints.push({
+                            text: candidateTextSig,
+                            words: candidateWordSig,
+                            rect: candidateRect
+                        });
+
                         if (hasStoredEdit) {
                             textSpan.textContent = sanitizeOverlayText(storedEdit.new_text);
                             textSpan.style.whiteSpace = 'pre-wrap';
@@ -15665,13 +16425,18 @@
                         // 4px compensates for the 2px border on each side (box-sizing: border-box
                         // causes the border to eat into content area), plus a font-size-based
                         // buffer for rendering differences between PDF embedded fonts and web fonts.
+                        // The buffer must also cover residual overflow from letter-spacing
+                        // clamping when web fonts are wider than PDF-embedded fonts.
                         const fontSizeScaled = block.font_size * scaleY;
-                        const widthBuffer = 4 + Math.max(2, fontSizeScaled * 0.15);
+                        const widthBuffer = 4 + Math.max(4, fontSizeScaled * 0.3);
+                        // Height buffer: 4px for border (2 top + 2 bottom) plus a small
+                        // descender‐safety margin so glyphs like g/p/y are not clipped.
+                        const heightBuffer = 4 + Math.max(2, fontSizeScaled * 0.1);
 
                         field.style.left = ((baseLeft * scaleX) - paddingX) + 'px';
                         field.style.top = ((baseTop * scaleY) - paddingY) + 'px';
                         field.style.width = ((baseWidth * scaleX) + (paddingX * 2) + widthBuffer) + 'px';
-                        field.style.height = ((baseHeight * scaleY) + (paddingY * 2)) + 'px';
+                        field.style.height = ((baseHeight * scaleY) + (paddingY * 2) + heightBuffer) + 'px';
                         field.style.zIndex = blockIndex + 1;
 
                         // Apply CSS padding so text content is pushed inward to the correct
@@ -15685,7 +16450,7 @@
                                 const expectedLeft = (bounds.left * scaleX) - paddingX;
                                 const expectedTop = (bounds.top * scaleY) - paddingY;
                                 const expectedWidth = (bounds.width * scaleX) + (paddingX * 2) + widthBuffer;
-                                const expectedHeight = (bounds.height * scaleY) + (paddingY * 2);
+                                const expectedHeight = (bounds.height * scaleY) + (paddingY * 2) + heightBuffer;
 
                                 field.style.left = expectedLeft + 'px';
                                 field.style.top = expectedTop + 'px';
@@ -16552,19 +17317,38 @@
                 const scaleX = canvas.width / pageData.width;
                 const scaleY = canvas.height / pageData.height;
                 
-                console.log('Overlay field rendering:', {
-                    canvasWidth: canvas.width,
-                    canvasHeight: canvas.height,
-                    pageDataWidth: pageData.width,
-                    pageDataHeight: pageData.height,
-                    scaleX,
-                    scaleY,
-                    currentScale,
-                    sampleWord: pageData.words[0]
-                });
-                
                 // Always use block mode
                 renderOverlayBlocks();
+
+                // ── Font-ready re-render ──────────────────────────────────
+                // Google Fonts are loaded asynchronously via <link> tags.
+                // If measureTextWidth runs before the real font is available,
+                // the canvas context falls back to a system font, computing
+                // incorrect letter-spacing. Once fonts finish loading, we
+                // rebuild the word spans so letter-spacing matches reality.
+                if (document.fonts && document.fonts.ready) {
+                    document.fonts.ready.then(() => {
+                        overlay.querySelectorAll('.overlay-field').forEach((field) => {
+                            if (!field._blockWords || field._blockWords.length === 0) return;
+                            // Only re-render fields that still use absolutely-positioned
+                            // word spans (not user-edited plain text).
+                            const textSpan = field.querySelector('[contenteditable]');
+                            if (!textSpan || textSpan.textContent !== '') {
+                                // If textContent is set (user-edited or fallback text), skip
+                                // Only re-render if the container holds word spans
+                                const hasAbsoluteSpans = textSpan.querySelector('span[style*="position: absolute"]') ||
+                                    textSpan.querySelector('span[style*="position:absolute"]');
+                                if (!hasAbsoluteSpans) return;
+                            }
+                            const blockLeft = parseFloat(field.dataset.originalLeft) || 0;
+                            const blockTop = parseFloat(field.dataset.originalTop) || 0;
+                            textSpan.innerHTML = '';
+                            textSpan.textContent = '';
+                            buildStyledWordSpans(textSpan, field._blockWords, scaleX, scaleY, blockLeft, blockTop);
+                        });
+                    });
+                }
+
                 return;
 
                 pageData.words.forEach((word, index) => {
