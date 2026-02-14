@@ -1553,6 +1553,13 @@
             .viewer.text-editing .pdf-text-layer {
                 display: block !important;
             }
+            /* Hide PDF text layer when overlay editor is active to prevent duplication */
+            .viewer.overlay-editor-active .pdf-text-layer {
+                display: none !important;
+            }
+            .viewer.overlay-editor-active .pdf-text {
+                display: none !important;
+            }
             .viewer.text-editing .pdf-text-item {
                 opacity: 1 !important;
                 pointer-events: auto !important;
@@ -3184,6 +3191,10 @@
                                 <button id="convert-btn" class="px-3 py-2 bg-transparent border border-gray-600 hover:bg-gray-700/50 rounded-lg text-sm transition flex items-center gap-1.5" type="button" title="Convert PDF to Images">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14"/><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>
                                     <span class="hidden sm:inline">Convert</span>
+                                </button>
+                                <button id="split-btn" class="px-3 py-2 bg-transparent border border-gray-600 hover:bg-gray-700/50 rounded-lg text-sm transition flex items-center gap-1.5" type="button" title="Split PDF into pages">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="8" height="18" rx="1"/><rect x="14" y="3" width="8" height="18" rx="1"/><line x1="12" y1="6" x2="12" y2="18" stroke-dasharray="2 2"/></svg>
+                                    <span class="hidden sm:inline">Split</span>
                                 </button>
                                 <div style="position: relative;">
                                     <button id="settings-gear-btn" class="px-2 py-2 bg-transparent border border-gray-600 hover:bg-gray-700/50 rounded-lg text-sm transition" type="button" title="Settings">
@@ -4984,6 +4995,115 @@
             </div>
         </div>
 
+        <!-- Split PDF Modal -->
+        <div id="split-modal" style="display:none; position:fixed; inset:0; z-index:99999; background:rgba(0,0,0,0.6); backdrop-filter:blur(4px); align-items:center; justify-content:center;">
+            <div id="split-modal-inner" style="background:#1a1a2e; border:1px solid rgba(255,255,255,0.1); border-radius:16px; box-shadow:0 24px 80px rgba(0,0,0,0.6); width:480px; max-width:95vw; max-height:90vh; overflow-y:auto; color:#e5e7eb;">
+                <!-- Header -->
+                <div style="padding:20px 24px 16px; border-bottom:1px solid rgba(255,255,255,0.08); display:flex; align-items:center; justify-content:space-between;">
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <div style="width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg, #10b981, #059669); display:flex; align-items:center; justify-content:center;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><rect x="2" y="3" width="8" height="18" rx="1"/><rect x="14" y="3" width="8" height="18" rx="1"/></svg>
+                        </div>
+                        <div>
+                            <div style="font-size:16px; font-weight:700; color:#e5e7eb;">Split PDF</div>
+                            <div style="font-size:12px; color:rgba(255,255,255,0.4);">Extract pages into separate PDF files</div>
+                        </div>
+                    </div>
+                    <button id="split-modal-close" style="background:none; border:none; color:rgba(255,255,255,0.5); cursor:pointer; padding:4px; border-radius:6px; transition:all 0.15s;" onmouseenter="this.style.color='#fff';this.style.background='rgba(255,255,255,0.1)'" onmouseleave="this.style.color='rgba(255,255,255,0.5)';this.style.background='none'">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+                <!-- Body -->
+                <div style="padding:20px 24px;">
+                    <!-- Split Mode Selection -->
+                    <div style="margin-bottom:20px;">
+                        <label style="font-size:12px; font-weight:600; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:8px;">Split Mode</label>
+                        <div style="display:flex; flex-direction:column; gap:8px;">
+                            <label class="split-mode-option active" data-mode="each" style="display:flex; align-items:center; gap:12px; padding:12px 14px; border-radius:10px; border:2px solid #10b981; background:rgba(16,185,129,0.08); cursor:pointer; transition:all 0.15s;">
+                                <input type="radio" name="split-mode" value="each" checked style="accent-color:#10b981; width:16px; height:16px;">
+                                <div>
+                                    <div style="font-size:13px; font-weight:600; color:#e5e7eb;">Each Page</div>
+                                    <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px;">Split every page into a separate PDF file (downloaded as ZIP)</div>
+                                </div>
+                            </label>
+                            <label class="split-mode-option" data-mode="specific" style="display:flex; align-items:center; gap:12px; padding:12px 14px; border-radius:10px; border:2px solid rgba(255,255,255,0.1); background:transparent; cursor:pointer; transition:all 0.15s;">
+                                <input type="radio" name="split-mode" value="specific" style="accent-color:#10b981; width:16px; height:16px;">
+                                <div>
+                                    <div style="font-size:13px; font-weight:600; color:#e5e7eb;">Specific Page</div>
+                                    <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px;">Extract a single page as a new PDF</div>
+                                </div>
+                            </label>
+                            <label class="split-mode-option" data-mode="range" style="display:flex; align-items:center; gap:12px; padding:12px 14px; border-radius:10px; border:2px solid rgba(255,255,255,0.1); background:transparent; cursor:pointer; transition:all 0.15s;">
+                                <input type="radio" name="split-mode" value="range" style="accent-color:#10b981; width:16px; height:16px;">
+                                <div>
+                                    <div style="font-size:13px; font-weight:600; color:#e5e7eb;">Page Range</div>
+                                    <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px;">Extract a continuous range of pages</div>
+                                </div>
+                            </label>
+                            <label class="split-mode-option" data-mode="custom" style="display:flex; align-items:center; gap:12px; padding:12px 14px; border-radius:10px; border:2px solid rgba(255,255,255,0.1); background:transparent; cursor:pointer; transition:all 0.15s;">
+                                <input type="radio" name="split-mode" value="custom" style="accent-color:#10b981; width:16px; height:16px;">
+                                <div>
+                                    <div style="font-size:13px; font-weight:600; color:#e5e7eb;">Custom Selection</div>
+                                    <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px;">Pick individual pages and ranges (e.g. 1,3,5-8)</div>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Specific Page Input -->
+                    <div id="split-specific-options" style="display:none; margin-bottom:20px;">
+                        <label style="font-size:12px; font-weight:600; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:8px;">Page Number</label>
+                        <input id="split-page" type="number" min="1" value="1" style="width:100%; padding:9px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.05); color:#e5e7eb; font-size:13px; outline:none;" placeholder="Enter page number">
+                    </div>
+
+                    <!-- Range Inputs -->
+                    <div id="split-range-options" style="display:none; margin-bottom:20px;">
+                        <label style="font-size:12px; font-weight:600; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:8px;">Page Range</label>
+                        <div style="display:flex; gap:8px; align-items:center;">
+                            <div style="flex:1; display:flex; align-items:center; gap:6px;">
+                                <label style="font-size:12px; color:rgba(255,255,255,0.5); white-space:nowrap;">From</label>
+                                <input id="split-from" type="number" min="1" value="1" style="width:100%; padding:9px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.05); color:#e5e7eb; font-size:13px; outline:none;">
+                            </div>
+                            <span style="color:rgba(255,255,255,0.3); font-size:14px;">—</span>
+                            <div style="flex:1; display:flex; align-items:center; gap:6px;">
+                                <label style="font-size:12px; color:rgba(255,255,255,0.5); white-space:nowrap;">To</label>
+                                <input id="split-to" type="number" min="1" value="1" style="width:100%; padding:9px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.05); color:#e5e7eb; font-size:13px; outline:none;">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Custom Pages Input -->
+                    <div id="split-custom-options" style="display:none; margin-bottom:20px;">
+                        <label style="font-size:12px; font-weight:600; color:rgba(255,255,255,0.5); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:8px;">Pages</label>
+                        <input id="split-pages-custom" type="text" style="width:100%; padding:9px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.05); color:#e5e7eb; font-size:13px; outline:none;" placeholder="e.g. 1, 3, 5-8, 12">
+                        <div style="font-size:11px; color:rgba(255,255,255,0.3); margin-top:6px;">Use commas to separate pages, hyphens for ranges</div>
+                    </div>
+
+                    <!-- Progress bar -->
+                    <div id="split-progress-wrap" style="display:none; margin-bottom:16px;">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+                            <span id="split-progress-label" style="font-size:12px; color:rgba(255,255,255,0.5);">Splitting...</span>
+                            <span id="split-progress-pct" style="font-size:12px; color:#10b981; font-weight:600;"></span>
+                        </div>
+                        <div style="height:6px; background:rgba(255,255,255,0.08); border-radius:3px; overflow:hidden;">
+                            <div id="split-progress-bar" style="height:100%; width:0%; background:linear-gradient(90deg, #10b981, #059669); border-radius:3px; transition:width 0.3s;"></div>
+                        </div>
+                    </div>
+                </div>
+                <!-- Footer -->
+                <div style="padding:16px 24px 20px; border-top:1px solid rgba(255,255,255,0.08); display:flex; align-items:center; justify-content:space-between;">
+                    <div id="split-page-info" style="font-size:12px; color:rgba(255,255,255,0.4);"></div>
+                    <div style="display:flex; gap:8px;">
+                        <button id="split-cancel-btn" style="padding:9px 20px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:transparent; color:#e5e7eb; cursor:pointer; font-size:13px; font-weight:500; transition:all 0.15s;" onmouseenter="this.style.background='rgba(255,255,255,0.06)'" onmouseleave="this.style.background='transparent'">Cancel</button>
+                        <button id="split-export-btn" style="padding:9px 24px; border-radius:8px; border:none; background:linear-gradient(135deg, #10b981, #059669); color:#fff; cursor:pointer; font-size:13px; font-weight:600; transition:all 0.15s; display:flex; align-items:center; gap:6px;" onmouseenter="this.style.opacity='0.9'" onmouseleave="this.style.opacity='1'">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="3" width="8" height="18" rx="1"/><rect x="14" y="3" width="8" height="18" rx="1"/></svg>
+                            Split
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- PDF/A Compliance Report Modal -->
         <div id="pdfa-report-modal" style="display:none; position:fixed; inset:0; z-index:100000; background:rgba(0,0,0,0.7); backdrop-filter:blur(6px); align-items:center; justify-content:center;">
             <div style="background:#1a1a2e; border:1px solid rgba(255,255,255,0.1); border-radius:16px; box-shadow:0 24px 80px rgba(0,0,0,0.6); width:580px; max-width:95vw; max-height:90vh; overflow-y:auto; color:#e5e7eb;">
@@ -5044,6 +5164,7 @@
         <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
         <script>
+
             const pdfUrl = "{{ route('documents.file', $document) }}";
             const cleanPdfUrl = "{{ route('documents.cleanPdf', $document) }}";
             const saveUrl = "{{ route('documents.save', $document) }}";
@@ -11186,6 +11307,7 @@
             const convertToPdfAUrl = "{{ route('documents.convertToPdfA', $document) }}";
             const convertToWordUrl = "{{ route('documents.convertToWord', $document) }}";
             const convertToExcelUrl = "{{ route('documents.convertToExcel', $document) }}";
+            const splitPdfUrl = "{{ route('documents.splitPdf', $document) }}";
             const downloadConvertedBaseUrl = "{{ route('documents.downloadConverted') }}";
             const downloadPdfABaseUrl = "{{ route('documents.downloadPdfA') }}";
             const logExportUrl = "{{ route('documents.logExport', $document) }}";
@@ -11423,6 +11545,212 @@
                 if (convertPageTo) convertPageTo.addEventListener('change', updateConvertPageInfo);
                 if (convertPageCustom) convertPageCustom.addEventListener('input', updateConvertPageInfo);
             }
+
+            // ── Split PDF Modal ──────────────────────────────────────────
+            (function wireSplitModal() {
+                const splitBtn = document.getElementById('split-btn');
+                const splitModal = document.getElementById('split-modal');
+                const splitModalClose = document.getElementById('split-modal-close');
+                const splitCancelBtn = document.getElementById('split-cancel-btn');
+                const splitExportBtn = document.getElementById('split-export-btn');
+                const splitPageInfo = document.getElementById('split-page-info');
+                const splitProgressWrap = document.getElementById('split-progress-wrap');
+                const splitProgressBar = document.getElementById('split-progress-bar');
+                const splitProgressLabel = document.getElementById('split-progress-label');
+                const splitProgressPct = document.getElementById('split-progress-pct');
+                const splitSpecificOptions = document.getElementById('split-specific-options');
+                const splitRangeOptions = document.getElementById('split-range-options');
+                const splitCustomOptions = document.getElementById('split-custom-options');
+                const splitPageInput = document.getElementById('split-page');
+                const splitFromInput = document.getElementById('split-from');
+                const splitToInput = document.getElementById('split-to');
+                const splitPagesCustomInput = document.getElementById('split-pages-custom');
+
+                if (!splitBtn || !splitModal) return;
+
+                let splitMode = 'each';
+                let splitExporting = false;
+
+                const openSplitModal = () => {
+                    const total = pdfjsDocument ? pdfjsDocument.numPages : (totalPages || 1);
+                    splitPageInfo.textContent = `Document has ${total} page${total !== 1 ? 's' : ''}`;
+                    if (splitPageInput) splitPageInput.max = total;
+                    if (splitFromInput) splitFromInput.max = total;
+                    if (splitToInput) { splitToInput.max = total; splitToInput.value = total; }
+                    splitModal.style.display = 'flex';
+                    resetSplitProgress();
+                };
+
+                const closeSplitModal = () => {
+                    if (splitExporting) return;
+                    splitModal.style.display = 'none';
+                };
+
+                const resetSplitProgress = () => {
+                    splitProgressWrap.style.display = 'none';
+                    splitProgressBar.style.width = '0%';
+                    splitProgressLabel.textContent = 'Splitting...';
+                    splitProgressPct.textContent = '';
+                    splitExportBtn.disabled = false;
+                    splitExportBtn.style.opacity = '1';
+                };
+
+                const updateSplitModeUI = () => {
+                    document.querySelectorAll('.split-mode-option').forEach(opt => {
+                        const isActive = opt.dataset.mode === splitMode;
+                        opt.style.borderColor = isActive ? '#10b981' : 'rgba(255,255,255,0.1)';
+                        opt.style.background = isActive ? 'rgba(16,185,129,0.08)' : 'transparent';
+                        if (isActive) opt.classList.add('active');
+                        else opt.classList.remove('active');
+                    });
+                    splitSpecificOptions.style.display = splitMode === 'specific' ? 'block' : 'none';
+                    splitRangeOptions.style.display = splitMode === 'range' ? 'block' : 'none';
+                    splitCustomOptions.style.display = splitMode === 'custom' ? 'block' : 'none';
+                };
+
+                // Mode radio buttons
+                document.querySelectorAll('input[name="split-mode"]').forEach(radio => {
+                    radio.addEventListener('change', () => {
+                        splitMode = radio.value;
+                        updateSplitModeUI();
+                    });
+                });
+
+                splitBtn.addEventListener('click', () => {
+                    if (overlayEditorActive) {
+                        setStatus('Split is disabled while Overlay Editor is active.', 'warn');
+                        return;
+                    }
+                    if (!isAuthenticated) {
+                        showLoginRequiredModal();
+                        return;
+                    }
+                    if (settingsPopover) settingsPopover.style.display = 'none';
+                    openSplitModal();
+                });
+
+                splitModalClose.addEventListener('click', closeSplitModal);
+                splitCancelBtn.addEventListener('click', closeSplitModal);
+                splitModal.addEventListener('click', (e) => {
+                    if (e.target === splitModal) closeSplitModal();
+                });
+
+                splitExportBtn.addEventListener('click', async () => {
+                    if (splitExporting) return;
+                    splitExporting = true;
+                    splitExportBtn.disabled = true;
+                    splitExportBtn.style.opacity = '0.6';
+                    splitProgressWrap.style.display = 'block';
+                    splitProgressBar.style.width = '30%';
+                    splitProgressLabel.textContent = 'Splitting PDF...';
+
+                    const body = { mode: splitMode };
+                    const total = pdfjsDocument ? pdfjsDocument.numPages : (totalPages || 1);
+
+                    if (splitMode === 'specific') {
+                        const page = parseInt(splitPageInput.value);
+                        if (isNaN(page) || page < 1 || page > total) {
+                            splitProgressLabel.textContent = `Invalid page number (1-${total})`;
+                            splitProgressBar.style.width = '100%';
+                            splitProgressBar.style.background = '#ef4444';
+                            splitExporting = false;
+                            splitExportBtn.disabled = false;
+                            splitExportBtn.style.opacity = '1';
+                            return;
+                        }
+                        body.page = page;
+                    } else if (splitMode === 'range') {
+                        const from = parseInt(splitFromInput.value);
+                        const to = parseInt(splitToInput.value);
+                        if (isNaN(from) || isNaN(to) || from < 1 || to > total || from > to) {
+                            splitProgressLabel.textContent = `Invalid range (1-${total})`;
+                            splitProgressBar.style.width = '100%';
+                            splitProgressBar.style.background = '#ef4444';
+                            splitExporting = false;
+                            splitExportBtn.disabled = false;
+                            splitExportBtn.style.opacity = '1';
+                            return;
+                        }
+                        body.from_page = from;
+                        body.to_page = to;
+                    } else if (splitMode === 'custom') {
+                        const pages = splitPagesCustomInput.value.trim();
+                        if (!pages) {
+                            splitProgressLabel.textContent = 'Please enter page numbers';
+                            splitProgressBar.style.width = '100%';
+                            splitProgressBar.style.background = '#ef4444';
+                            splitExporting = false;
+                            splitExportBtn.disabled = false;
+                            splitExportBtn.style.opacity = '1';
+                            return;
+                        }
+                        body.pages = pages;
+                    }
+
+                    try {
+                        splitProgressBar.style.width = '50%';
+                        const response = await fetch(splitPdfUrl, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Accept': 'application/json',
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                            },
+                            body: JSON.stringify(body),
+                        });
+
+                        splitProgressBar.style.width = '80%';
+                        const result = await response.json();
+
+                        if (!result.success) {
+                            throw new Error(result.message || 'Split failed');
+                        }
+
+                        splitProgressBar.style.width = '100%';
+                        splitProgressLabel.textContent = `Split complete! ${result.file_count} file${result.file_count !== 1 ? 's' : ''} created.`;
+                        splitProgressPct.textContent = '100%';
+
+                        // Log export
+                        logExportActivity('Split PDF', 'split_export', {
+                            mode: splitMode,
+                            file_count: result.file_count,
+                            total_pages: result.total_pages,
+                        }, 'success');
+
+                        // Trigger download
+                        const downloadUrl = downloadConvertedBaseUrl + '?token=' + encodeURIComponent(result.download_token);
+                        const a = document.createElement('a');
+                        a.href = downloadUrl;
+                        a.download = result.download_name;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+
+                        setStatus(`PDF split successfully: ${result.download_name}`, 'ok');
+
+                        // Auto-close after brief delay
+                        setTimeout(() => {
+                            splitExporting = false;
+                            closeSplitModal();
+                            resetSplitProgress();
+                        }, 1500);
+                    } catch (error) {
+                        console.error('Split error:', error);
+                        splitProgressBar.style.width = '100%';
+                        splitProgressBar.style.background = '#ef4444';
+                        splitProgressLabel.textContent = 'Error: ' + error.message;
+                        splitExporting = false;
+                        splitExportBtn.disabled = false;
+                        splitExportBtn.style.opacity = '1';
+                        setStatus('Split failed: ' + error.message, 'err');
+
+                        logExportActivity('Split PDF', 'split_export', {
+                            mode: splitMode,
+                            error: error.message,
+                        }, 'failed');
+                    }
+                });
+            })();
 
             function updateColorModelOptions() {
                 const rgbaOpt = convertColorModel.querySelector('option[value="rgba"]');
@@ -13794,7 +14122,7 @@
                 if (modeOverlayChip) modeOverlayChip.classList.toggle('overlay-active', overlayOn);
                 if (overlayStateIndicator) overlayStateIndicator.classList.toggle('active', overlayOn);
 
-                [modeText, modeSign, modeShape, modeDraw, convertBtn].forEach((btn) => {
+                [modeText, modeSign, modeShape, modeDraw, convertBtn, document.getElementById('split-btn')].forEach((btn) => {
                     setOverlayToolDisabled(btn, overlayOn);
                 });
             };
@@ -14381,6 +14709,7 @@
                     hideOverlayLoadingModal();
                     cleanupOverlayPdf();  // Free memory from overlay PDF
                     overlayEditorActive = false;
+                    overlayRendered = false; // Force fresh prepareOverlay on next enable
                     overlayLoadToken++;
                     persistOverlayEdits();
                     // Hide the selection/font toolbar when leaving overlay mode
@@ -14452,20 +14781,12 @@
 
                 try {
                     viewer.classList.remove('overlay-hidden');
-                    if (overlayRendered) {
-                        // Rebuild overlay DOM every time editor is re-enabled.
-                        // Reusing previous nodes can leave stale visual artifacts.
-                        await renderPdfWithOverlay(true);
-                        if (!overlayEditorActive || loadToken !== overlayLoadToken) {
-                            return;
-                        }
-                        if (typeof renderGridlines === 'function') renderGridlines();
-                        setStatus('Overlay editor active. Edit text positions and content.', 'ok');
-                        return;
-                    }
+                    // Always regenerate the clean PDF when enabling overlay mode.
+                    // Reusing a previous clean_{documentId}.pdf can preserve stale
+                    // glyph artifacts after extraction/scrub logic changes.
                     // First, ensure clean PDF is created by calling the overlay editor endpoint
                     // Add cache-busting parameter to force regeneration after PDF changes
-                    const prepareResponse = await fetch('{{ route("documents.prepareOverlay", $document) }}?v=' + Date.now(), { 
+                    const prepareResponse = await fetch('{{ route("documents.prepareOverlay", $document) }}?force_refresh=1&v=' + Date.now(), { 
                         method: 'POST', 
                         headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content } 
                     });
@@ -15893,11 +16214,13 @@
 
                     const renderedBlockKeys = new Set();
                     const renderedFieldFingerprints = [];
+
                     dedupedBlocks.forEach((block, blockIndex) => {
                         const key = `block-${pageData.page_number}-${block.block_num}`;
                         if (renderedBlockKeys.has(key)) return;
                         renderedBlockKeys.add(key);
                         const storedEdit = getOverlayStoredEdit(key);
+
                         const blockText = (block.text_lines && block.text_lines.length)
                             ? block.text_lines.map(line => sanitizeOverlayText(line)).join('\n')
                             : sanitizeOverlayText(block.text || '');

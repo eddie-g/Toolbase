@@ -989,7 +989,7 @@ class DocumentController extends Controller
             ->with('status', "$count documents deleted.");
     }
 
-    public function prepareOverlay(Document $document)
+    public function prepareOverlay(Request $request, Document $document)
     {
         // Check if the PDF file exists on disk
         $fullPath = Storage::path($document->path);
@@ -1000,6 +1000,37 @@ class DocumentController extends Controller
 
         $userEmail = auth()->user()->email ?? 'guest';
         $sessionId = session()->getId();
+        $forceRefresh = $request->boolean('force_refresh', false);
+
+        $runFitzExtraction = function () use ($document, $fullPath, $userEmail, $sessionId) {
+            $pythonScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
+            $documentId = $document->id;
+            $command = sprintf(
+                'python3 %s %s %d %s %s 2>&1',
+                escapeshellarg($pythonScript),
+                escapeshellarg($fullPath),
+                $documentId,
+                escapeshellarg($userEmail),
+                escapeshellarg($sessionId)
+            );
+
+            exec($command, $output, $returnCode);
+
+            return [$returnCode, $output];
+        };
+
+        // Optional hard refresh path used by overlay toggle to avoid stale extraction state.
+        if ($forceRefresh) {
+            [$returnCode, $output] = $runFitzExtraction();
+            if ($returnCode !== 0) {
+                \Log::error('Forced PDF extraction failed', [
+                    'document_id' => $document->id,
+                    'returnCode' => $returnCode,
+                    'output' => implode("\n", $output),
+                ]);
+                return response()->json(['success' => false, 'error' => 'Failed to refresh PDF extraction data.'], 500);
+            }
+        }
         
         // Check if extraction data exists - prioritize user_email over session_id
         if ($userEmail !== 'guest') {
@@ -1026,23 +1057,7 @@ class DocumentController extends Controller
 
         if (!$extraction) {
             // Run extraction automatically
-            $fullPath = Storage::path($document->path);
-            $pythonScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
-            $documentId = $document->id;
-            $userEmail = auth()->user()->email ?? 'guest';
-            $sessionId = session()->getId();
-            
-            // Execute Python script synchronously (wait for it to complete)
-            $command = sprintf(
-                'python3 %s %s %d %s %s 2>&1',
-                escapeshellarg($pythonScript),
-                escapeshellarg($fullPath),
-                $documentId,
-                escapeshellarg($userEmail),
-                escapeshellarg($sessionId)
-            );
-            
-            exec($command, $output, $returnCode);
+            [$returnCode, $output] = $runFitzExtraction();
             
             if ($returnCode !== 0) {
                 \Log::error('PDF extraction failed', ['document_id' => $document->id, 'returnCode' => $returnCode, 'output' => implode("\n", $output)]);
@@ -1071,20 +1086,8 @@ class DocumentController extends Controller
                     'pdf_time' => date('Y-m-d H:i:s', $pdfModifiedTime),
                     'extraction_time' => $extraction->created_at
                 ]);
-                
-                $pythonScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
-                $documentId = $document->id;
-                $userEmail = auth()->user()->email ?? 'guest';
-                $sessionId = session()->getId();
-                $command = sprintf(
-                    'python3 %s %s %d %s %s 2>&1',
-                    escapeshellarg($pythonScript),
-                    escapeshellarg($fullPath),
-                    $documentId,
-                    escapeshellarg($userEmail),
-                    escapeshellarg($sessionId)
-                );
-                exec($command, $output, $returnCode);
+
+                [$returnCode, $output] = $runFitzExtraction();
                 if ($returnCode === 0) {
                     $extraction = DB::table('pdf_extractions_fitz')
                         ->where('document_id', $document->id)
@@ -1114,20 +1117,7 @@ class DocumentController extends Controller
                 }
             }
             if (!$hasFontXref) {
-                $fullPath = Storage::path($document->path);
-                $pythonScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
-                $documentId = $document->id;
-                $userEmail = auth()->user()->email ?? 'guest';
-                $sessionId = session()->getId();
-                $command = sprintf(
-                    'python3 %s %s %d %s %s 2>&1',
-                    escapeshellarg($pythonScript),
-                    escapeshellarg($fullPath),
-                    $documentId,
-                    escapeshellarg($userEmail),
-                    escapeshellarg($sessionId)
-                );
-                exec($command, $output, $returnCode);
+                [$returnCode, $output] = $runFitzExtraction();
                 if ($returnCode === 0) {
                     $extraction = DB::table('pdf_extractions_fitz')
                         ->where('document_id', $document->id)
@@ -1463,9 +1453,13 @@ class DocumentController extends Controller
         
         if (file_exists($cleanPath)) {
             // During editing: serve the clean PDF (with text removed for overlay)
+            // No-cache headers prevent browsers from serving stale clean PDFs
             return response()->file($cleanPath, [
                 'Content-Type' => 'application/pdf',
                 'Content-Disposition' => 'inline; filename="clean.pdf"',
+                'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+                'Pragma' => 'no-cache',
+                'Expires' => '0',
             ]);
         }
         
@@ -2611,6 +2605,189 @@ class DocumentController extends Controller
             'success' => true,
             'download_token' => $downloadToken,
             'download_name' => $downloadName,
+        ]);
+    }
+
+    public function splitPdf(Request $request, Document $document)
+    {
+        $validated = $request->validate([
+            'mode' => ['required', 'string', 'in:each,specific,range,custom'],
+            'page' => ['nullable', 'integer', 'min:1'],
+            'from_page' => ['nullable', 'integer', 'min:1'],
+            'to_page' => ['nullable', 'integer', 'min:1'],
+            'pages' => ['nullable', 'string'],
+        ]);
+
+        $mode = $validated['mode'];
+        $inputPath = Storage::path($document->path);
+        $outputDir = Storage::path('documents/split_' . Str::uuid());
+        $pythonScript = base_path('python/pdf-editor/split_pdf.py');
+
+        // Build command
+        $command = 'python3 ' . escapeshellarg($pythonScript)
+            . ' ' . escapeshellarg($inputPath)
+            . ' ' . escapeshellarg($outputDir)
+            . ' --mode ' . escapeshellarg($mode);
+
+        if ($mode === 'specific' && isset($validated['page'])) {
+            $command .= ' --page ' . intval($validated['page']);
+        }
+        if ($mode === 'range') {
+            if (isset($validated['from_page'])) {
+                $command .= ' --from ' . intval($validated['from_page']);
+            }
+            if (isset($validated['to_page'])) {
+                $command .= ' --to ' . intval($validated['to_page']);
+            }
+        }
+        if ($mode === 'custom' && isset($validated['pages'])) {
+            $command .= ' --pages ' . escapeshellarg($validated['pages']);
+        }
+
+        $command .= ' --json 2>&1';
+
+        $output = shell_exec($command);
+
+        // Parse JSON output
+        $result = null;
+        if ($output) {
+            $lines = explode("\n", trim($output));
+            foreach ($lines as $line) {
+                $decoded = json_decode(trim($line), true);
+                if ($decoded !== null) {
+                    $result = $decoded;
+                    break;
+                }
+            }
+        }
+
+        if (!$result || !($result['success'] ?? false)) {
+            // Clean up output dir
+            if (is_dir($outputDir)) {
+                array_map('unlink', glob("$outputDir/*"));
+                rmdir($outputDir);
+            }
+
+            if (Auth::check()) {
+                UserActivity::create([
+                    'user_id' => Auth::id(),
+                    'action' => "Split PDF ({$mode})",
+                    'category' => 'split_export',
+                    'details' => ['mode' => $mode, 'error' => $result['error'] ?? 'Unknown error'],
+                    'document_id' => $document->id,
+                    'status' => 'failed',
+                    'ip_address' => $request->ip(),
+                    'user_agent' => $request->userAgent(),
+                ]);
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => $result['error'] ?? 'PDF split failed. Output: ' . ($output ?? 'none'),
+            ], 500);
+        }
+
+        $files = $result['files'] ?? [];
+        if (empty($files)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No output files were created',
+            ], 500);
+        }
+
+        $baseName = pathinfo($document->original_name, PATHINFO_FILENAME);
+
+        // For "each" mode with multiple files, create a ZIP
+        if ($mode === 'each' && count($files) > 1) {
+            $zipPath = Storage::path('documents/split_' . Str::uuid() . '.zip');
+            $zip = new \ZipArchive();
+            if ($zip->open($zipPath, \ZipArchive::CREATE) !== true) {
+                return response()->json(['success' => false, 'message' => 'Failed to create ZIP archive'], 500);
+            }
+            foreach ($files as $file) {
+                $zip->addFile($file['path'], $file['name']);
+            }
+            $zip->close();
+
+            // Clean up individual files
+            foreach ($files as $file) {
+                if (file_exists($file['path'])) {
+                    unlink($file['path']);
+                }
+            }
+            if (is_dir($outputDir)) {
+                @rmdir($outputDir);
+            }
+
+            $downloadToken = Str::uuid()->toString();
+            $downloadName = $baseName . '_split_all_pages.zip';
+
+            session()->put("converted_download_{$downloadToken}", [
+                'path' => $zipPath,
+                'name' => $downloadName,
+                'content_type' => 'application/zip',
+                'expires' => now()->addMinutes(10),
+            ]);
+
+            if (Auth::check()) {
+                UserActivity::create([
+                    'user_id' => Auth::id(),
+                    'action' => "Split PDF ({$mode})",
+                    'category' => 'split_export',
+                    'details' => ['mode' => $mode, 'file_count' => count($files), 'total_pages' => $result['total_pages']],
+                    'document_id' => $document->id,
+                    'status' => 'success',
+                    'ip_address' => $request->ip(),
+                    'user_agent' => $request->userAgent(),
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'download_token' => $downloadToken,
+                'download_name' => $downloadName,
+                'file_count' => count($files),
+                'total_pages' => $result['total_pages'],
+            ]);
+        }
+
+        // Single file output
+        $file = $files[0];
+        $downloadToken = Str::uuid()->toString();
+        $downloadName = $file['name'];
+
+        session()->put("converted_download_{$downloadToken}", [
+            'path' => $file['path'],
+            'name' => $downloadName,
+            'content_type' => 'application/pdf',
+            'expires' => now()->addMinutes(10),
+        ]);
+
+        // Clean up output dir (file moved to session tracking)
+        // Don't remove the file itself, just the dir if empty later
+        if (is_dir($outputDir) && count(glob("$outputDir/*")) === 0) {
+            @rmdir($outputDir);
+        }
+
+        if (Auth::check()) {
+            UserActivity::create([
+                'user_id' => Auth::id(),
+                'action' => "Split PDF ({$mode})",
+                'category' => 'split_export',
+                'details' => ['mode' => $mode, 'file_count' => 1, 'total_pages' => $result['total_pages']],
+                'document_id' => $document->id,
+                'status' => 'success',
+                'ip_address' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+            ]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'download_token' => $downloadToken,
+            'download_name' => $downloadName,
+            'file_count' => 1,
+            'total_pages' => $result['total_pages'],
         ]);
     }
 
