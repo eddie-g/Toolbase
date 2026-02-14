@@ -437,6 +437,224 @@ def apply_edits(pdf_path, edits_json):
         pre_edit_spans[page_num] = spans
         print(f"  Page {page_num}: captured {len(spans)} text spans")
 
+    # ── PHASE 0.5: SCRUB OVERLAPPING TEXT LAYERS ──────────────────────
+    # Some PDFs contain ghost text layers — multiple text spans rendered
+    # at the exact same position with slightly different content (e.g.,
+    # from font encoding issues or prior overlay edits).  These cause
+    # visual duplication in the final PDF.
+    #
+    # Strategy: Detect overlapping spans via fitz text extraction, then
+    # remove the duplicate BT…ET block directly from the content stream.
+    # We do NOT use page.apply_redactions() here because it fails on
+    # hex-encoded CID fonts (<00470048…> glyph IDs).
+    #
+    # Heuristic for choosing which span to KEEP:
+    #   – If one text is a truncated prefix of the other, keep the LONGER
+    #     (more complete) version.
+    #   – If the texts diverge early, keep the SHORTER version (the longer
+    #     one typically has garbled glyph names appended).
+    print("\n" + "="*50)
+    print("PHASE 0.5: Scrubbing overlapping text layers")
+    print("="*50)
+    overlap_scrub_count = 0
+    scrubbed_overlap_texts = {}
+
+    for page_num in edits_by_page.keys():
+        page = doc[page_num - 1]
+        spans = pre_edit_spans.get(page_num, [])
+        if len(spans) < 2:
+            continue
+
+        # ── Step 1: Find groups of overlapping spans ──
+        processed = set()
+        overlap_groups = []  # each group = list of span indices
+
+        for i in range(len(spans)):
+            if i in processed:
+                continue
+            si_rect = fitz.Rect(spans[i]["bbox"])
+            group = [i]
+            for j in range(i + 1, len(spans)):
+                if j in processed:
+                    continue
+                sj_rect = fitz.Rect(spans[j]["bbox"])
+                # Same row?
+                if sj_rect.y1 < si_rect.y0 - 1 or sj_rect.y0 > si_rect.y1 + 1:
+                    continue
+                # Same start-x?
+                if abs(sj_rect.x0 - si_rect.x0) > 2:
+                    continue
+                inter = si_rect & sj_rect
+                if inter.is_empty:
+                    continue
+                inter_area = inter.get_area()
+                smaller_area = min(max(1e-6, si_rect.get_area()),
+                                   max(1e-6, sj_rect.get_area()))
+                if inter_area / smaller_area >= 0.5:
+                    group.append(j)
+            if len(group) > 1:
+                for idx in group:
+                    processed.add(idx)
+                overlap_groups.append(group)
+
+        if not overlap_groups:
+            continue
+
+        # ── helper: pick the best span from a group ──
+        def _pick_best(grp):
+            if len(grp) == 2:
+                ta = spans[grp[0]]["text"]
+                tb = spans[grp[1]]["text"]
+                min_len = min(len(ta), len(tb))
+                if min_len == 0:
+                    return grp[0]
+                common = 0
+                for k in range(min_len):
+                    if ta[k] == tb[k]:
+                        common += 1
+                    else:
+                        break
+                if common / min_len >= 0.8:
+                    # One is a truncated prefix → keep the longer text
+                    return grp[0] if len(ta) >= len(tb) else grp[1]
+                else:
+                    # Texts diverge → keep the shorter (cleaner) version
+                    return grp[0] if len(ta) <= len(tb) else grp[1]
+            return min(grp, key=lambda idx: len(spans[idx]["text"]))
+
+        # ── Step 2: For each group, identify the span to SCRUB ──
+        scrub_bboxes = []  # (bbox, text) of spans to remove
+        scrubbed_texts = set()
+        for group in overlap_groups:
+            best_idx = _pick_best(group)
+            for idx in group:
+                label = "KEEP" if idx == best_idx else "SCRUB"
+                sr = fitz.Rect(spans[idx]["bbox"])
+                print(f"  Page {page_num}: {label} '{spans[idx]['text'][:60]}' "
+                      f"[{sr.x0:.1f},{sr.y0:.1f},{sr.x1:.1f},{sr.y1:.1f}]")
+                if idx != best_idx:
+                    scrubbed_texts.add(spans[idx]["text"])
+                    overlap_scrub_count += 1
+                    scrub_bboxes.append(spans[idx]["bbox"])
+
+        if not scrub_bboxes:
+            continue
+
+        # ── Step 3: Remove duplicate STANDALONE BT…ET blocks ──────────
+        # We target only "standalone" BT blocks: those with exactly one
+        # Tm, zero Td operators, and at most one TJ/Tj.  Multi-line
+        # blocks (with Td movements and multiple TJ operators) contain
+        # other content and must NOT be removed wholesale.
+        #
+        # For matching, we collect ALL overlap-group positions (not just
+        # the scrub targets) so we catch standalone blocks at that row
+        # regardless of which duplicate the span-level heuristic chose.
+        page_height = page.rect.height
+        _bt_et_re = re.compile(rb'\bBT\b(.*?)\bET\b', re.DOTALL)
+        _tm_re = re.compile(
+            rb'([\d.e+-]+)\s+([\d.e+-]+)\s+([\d.e+-]+)\s+([\d.e+-]+)\s+'
+            rb'([\d.e+-]+)\s+([\d.e+-]+)\s+Tm\b'
+        )
+        _td_re = re.compile(rb'\bTd\b')
+        _tj_re = re.compile(rb'(?:\)\s*Tj|\]\s*TJ)')
+
+        # Collect ALL overlap positions (page coords) from ALL groups
+        overlap_positions_page = []
+        for group in overlap_groups:
+            for idx in group:
+                bbox = spans[idx]["bbox"]
+                center_y = (bbox[1] + bbox[3]) / 2.0
+                overlap_positions_page.append((bbox[0], center_y))
+
+        removed_blocks = 0
+        for xref in page.get_contents():
+            try:
+                stream = doc.xref_stream(xref)
+                if not stream:
+                    continue
+            except Exception:
+                continue
+
+            def _replace_bt(match):
+                nonlocal removed_blocks
+                bt_body = match.group(1)
+
+                # Only consider standalone blocks
+                tms = _tm_re.findall(bt_body)
+                if len(tms) != 1:
+                    return match.group(0)
+                if _td_re.search(bt_body):
+                    return match.group(0)
+                if len(_tj_re.findall(bt_body)) > 1:
+                    return match.group(0)
+
+                # Extract page-coordinate origin
+                try:
+                    tx = float(tms[0][4])
+                    ty = float(tms[0][5])
+                except (ValueError, IndexError):
+                    return match.group(0)
+                page_y = page_height - ty
+
+                # Does this standalone block sit at an overlap position?
+                for ox, oy in overlap_positions_page:
+                    if abs(tx - ox) < 3 and abs(page_y - oy) < 8:
+                        removed_blocks += 1
+                        print(f"  Page {page_num}: removed standalone BT at "
+                              f"page ({tx:.1f},{page_y:.1f})")
+                        return b''  # strip entire BT…ET
+                return match.group(0)
+                return match.group(0)
+
+            cleaned = _bt_et_re.sub(_replace_bt, stream)
+            if cleaned != stream:
+                doc.update_stream(xref, cleaned)
+
+        if removed_blocks > 0:
+            page.clean_contents()
+            print(f"  Page {page_num}: removed {removed_blocks} duplicate BT block(s)")
+        else:
+            # Fallback: try redaction-based removal for spans not in CID fonts
+            print(f"  Page {page_num}: no BT blocks matched, trying redaction fallback")
+            for bbox in scrub_bboxes:
+                sr = fitz.Rect(bbox)
+                union_rect = fitz.Rect(sr.x0 - 0.5, sr.y0 - 0.5,
+                                       sr.x1 + 0.5, sr.y1 + 0.5)
+                page.add_redact_annot(union_rect, fill=None)
+            page.apply_redactions(images=0)
+
+        scrubbed_overlap_texts[page_num] = scrubbed_texts
+        print(f"  Page {page_num}: processed {len(overlap_groups)} overlap group(s)")
+
+    if overlap_scrub_count > 0:
+        print(f"  ★ Total overlapping spans scrubbed: {overlap_scrub_count}")
+        # Re-capture spans after overlap scrub so pre_edit_spans is accurate
+        for page_num in scrubbed_overlap_texts:
+            page = doc[page_num - 1]
+            spans = []
+            blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+            for block in blocks:
+                if block.get("type") != 0:
+                    continue
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        text = span.get("text", "").strip()
+                        if not text:
+                            continue
+                        spans.append({
+                            "text": text,
+                            "bbox": list(span["bbox"]),
+                            "origin": list(span["origin"]),
+                            "font": span.get("font", ""),
+                            "size": span.get("size", 12),
+                            "color": span.get("color", 0),
+                            "flags": span.get("flags", 0),
+                        })
+            pre_edit_spans[page_num] = spans
+            print(f"  Page {page_num}: re-captured {len(spans)} spans after overlap scrub")
+    else:
+        print("  ✓ No overlapping text layers found")
+
     # Build a set of texts that are being INTENTIONALLY edited or deleted.
     # We key by (page_num, normalised_text) so we know what the user touched.
     edited_texts_by_page = {}
@@ -459,6 +677,18 @@ def apply_edits(pdf_path, edits_json):
                         if len(word) > 1:
                             touched.add(word)
         edited_texts_by_page[page_num] = touched
+
+    # Merge scrubbed overlap texts into edited_texts_by_page so Phase C
+    # knows NOT to recover them as "collateral damage".
+    for page_num, scrubbed_set in scrubbed_overlap_texts.items():
+        if page_num not in edited_texts_by_page:
+            edited_texts_by_page[page_num] = set()
+        for txt in scrubbed_set:
+            edited_texts_by_page[page_num].add(txt)
+            for word in txt.split():
+                word = word.strip()
+                if len(word) > 1:
+                    edited_texts_by_page[page_num].add(word)
     
     # Also build a set of redaction rects per page so we know exactly
     # which areas are being redacted (to detect collateral damage).
