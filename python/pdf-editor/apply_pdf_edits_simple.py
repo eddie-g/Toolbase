@@ -370,13 +370,14 @@ def normalize_smart_quotes(text):
 
 def apply_edits(pdf_path, edits_json):
     """
-    Apply edits using the 'Search-and-Destroy' Protocol:
+    Apply edits using absolute coordinates:
     
     Phase 0: Clean all pages to normalize coordinate systems (CRITICAL)
-    Phase A: Search for original_text in PDF data stream and redact ALL instances
-    Phase B: Overlay new_text at NEW bbox locations (no redaction)
+    Phase A: Redact original_bbox with tight 1pt padding (absolute positions)
+    Phase B: Overlay new_text at absolute bbox locations (no redaction)
     
-    This prevents ghosting by finding text in the actual PDF data layer.
+    Bounding boxes are only used during the overlay editor phase.
+    On save, every piece of text is treated with absolute coordinates.
     """
     script_dir = os.path.dirname(os.path.abspath(__file__))
     print(f"Opening PDF: {pdf_path}")
@@ -437,264 +438,10 @@ def apply_edits(pdf_path, edits_json):
         pre_edit_spans[page_num] = spans
         print(f"  Page {page_num}: captured {len(spans)} text spans")
 
-    # ── PHASE 0.5: SCRUB OVERLAPPING TEXT LAYERS ──────────────────────
-    # Some PDFs contain ghost text layers — multiple text spans rendered
-    # at the exact same position with slightly different content (e.g.,
-    # from font encoding issues or prior overlay edits).  These cause
-    # visual duplication in the final PDF.
-    #
-    # Strategy: Detect overlapping spans via fitz text extraction, then
-    # remove the duplicate BT…ET block directly from the content stream.
-    # We do NOT use page.apply_redactions() here because it fails on
-    # hex-encoded CID fonts (<00470048…> glyph IDs).
-    #
-    # Heuristic for choosing which span to KEEP:
-    #   – If one text is a truncated prefix of the other, keep the LONGER
-    #     (more complete) version.
-    #   – If the texts diverge early, keep the SHORTER version (the longer
-    #     one typically has garbled glyph names appended).
-    print("\n" + "="*50)
-    print("PHASE 0.5: Scrubbing overlapping text layers")
-    print("="*50)
-    overlap_scrub_count = 0
+
+    # Phase 0.5 removed: bounding-box overlaps are ignored on save.
+    # The save pipeline treats every edit with absolute coordinates.
     scrubbed_overlap_texts = {}
-
-    for page_num in edits_by_page.keys():
-        page = doc[page_num - 1]
-        spans = pre_edit_spans.get(page_num, [])
-        if len(spans) < 2:
-            continue
-
-        # ── Step 1: Find groups of overlapping spans ──
-        processed = set()
-        overlap_groups = []  # each group = list of span indices
-
-        for i in range(len(spans)):
-            if i in processed:
-                continue
-            si_rect = fitz.Rect(spans[i]["bbox"])
-            si_size = spans[i].get("size", 12)
-            si_text = spans[i]["text"]
-            group = [i]
-            for j in range(i + 1, len(spans)):
-                if j in processed:
-                    continue
-                sj_rect = fitz.Rect(spans[j]["bbox"])
-                sj_size = spans[j].get("size", 12)
-                sj_text = spans[j]["text"]
-
-                # ── Guard 1: Font-size ratio ──
-                # True duplicates use the same (or very similar) font size.
-                # A 40pt heading vs 9pt body text is never a duplicate pair.
-                max_size = max(si_size, sj_size)
-                min_size = max(min(si_size, sj_size), 0.1)  # floor to avoid /0
-                if max_size / min_size > 1.5:
-                    continue
-
-                # ── Guard 2: Vertical centre proximity ──
-                # True duplicates sit at the *same* baseline.  If vertical
-                # centres are more than half the smaller span height apart,
-                # they're stacked, not overlapping.
-                si_cy = (si_rect.y0 + si_rect.y1) / 2
-                sj_cy = (sj_rect.y0 + sj_rect.y1) / 2
-                smaller_h = min(si_rect.height, sj_rect.height)
-                if abs(si_cy - sj_cy) > smaller_h * 0.5:
-                    continue
-
-                # Same start-x?
-                if abs(sj_rect.x0 - si_rect.x0) > 2:
-                    continue
-                inter = si_rect & sj_rect
-                if inter.is_empty:
-                    continue
-                inter_area = inter.get_area()
-                smaller_area = min(max(1e-6, si_rect.get_area()),
-                                   max(1e-6, sj_rect.get_area()))
-                if inter_area / smaller_area < 0.5:
-                    continue
-
-                # ── Guard 3: Text similarity ──
-                # True duplicates share significant text content.
-                # Require either: a) one text contains the other, or
-                # b) texts share a prefix ≥ 40% of the shorter text.
-                min_tlen = min(len(si_text), len(sj_text))
-                if min_tlen == 0:
-                    continue
-                # Check containment
-                is_contained = (si_text in sj_text or sj_text in si_text)
-                # Check prefix overlap
-                common_prefix = 0
-                for k in range(min_tlen):
-                    if si_text[k] == sj_text[k]:
-                        common_prefix += 1
-                    else:
-                        break
-                has_prefix = common_prefix / min_tlen >= 0.4
-
-                if not is_contained and not has_prefix:
-                    continue
-
-                group.append(j)
-            if len(group) > 1:
-                for idx in group:
-                    processed.add(idx)
-                overlap_groups.append(group)
-
-        if not overlap_groups:
-            continue
-
-        # ── helper: pick the best span from a group ──
-        def _pick_best(grp):
-            if len(grp) == 2:
-                ta = spans[grp[0]]["text"]
-                tb = spans[grp[1]]["text"]
-                min_len = min(len(ta), len(tb))
-                if min_len == 0:
-                    return grp[0]
-                common = 0
-                for k in range(min_len):
-                    if ta[k] == tb[k]:
-                        common += 1
-                    else:
-                        break
-                if common / min_len >= 0.8:
-                    # One is a truncated prefix → keep the longer text
-                    return grp[0] if len(ta) >= len(tb) else grp[1]
-                else:
-                    # Texts diverge → keep the shorter (cleaner) version
-                    return grp[0] if len(ta) <= len(tb) else grp[1]
-            return min(grp, key=lambda idx: len(spans[idx]["text"]))
-
-        # ── Step 2: For each group, identify the span to SCRUB ──
-        scrub_bboxes = []  # (bbox, text) of spans to remove
-        scrubbed_texts = set()
-        for group in overlap_groups:
-            best_idx = _pick_best(group)
-            for idx in group:
-                label = "KEEP" if idx == best_idx else "SCRUB"
-                sr = fitz.Rect(spans[idx]["bbox"])
-                print(f"  Page {page_num}: {label} '{spans[idx]['text'][:60]}' "
-                      f"[{sr.x0:.1f},{sr.y0:.1f},{sr.x1:.1f},{sr.y1:.1f}]")
-                if idx != best_idx:
-                    scrubbed_texts.add(spans[idx]["text"])
-                    overlap_scrub_count += 1
-                    scrub_bboxes.append(spans[idx]["bbox"])
-
-        if not scrub_bboxes:
-            continue
-
-        # ── Step 3: Remove duplicate STANDALONE BT…ET blocks ──────────
-        # We target only "standalone" BT blocks: those with exactly one
-        # Tm, zero Td operators, and at most one TJ/Tj.  Multi-line
-        # blocks (with Td movements and multiple TJ operators) contain
-        # other content and must NOT be removed wholesale.
-        #
-        # For matching, we collect ALL overlap-group positions (not just
-        # the scrub targets) so we catch standalone blocks at that row
-        # regardless of which duplicate the span-level heuristic chose.
-        page_height = page.rect.height
-        _bt_et_re = re.compile(rb'\bBT\b(.*?)\bET\b', re.DOTALL)
-        _tm_re = re.compile(
-            rb'([\d.e+-]+)\s+([\d.e+-]+)\s+([\d.e+-]+)\s+([\d.e+-]+)\s+'
-            rb'([\d.e+-]+)\s+([\d.e+-]+)\s+Tm\b'
-        )
-        _td_re = re.compile(rb'\bTd\b')
-        _tj_re = re.compile(rb'(?:\)\s*Tj|\]\s*TJ)')
-
-        # Collect ALL overlap positions (page coords) from ALL groups
-        overlap_positions_page = []
-        for group in overlap_groups:
-            for idx in group:
-                bbox = spans[idx]["bbox"]
-                center_y = (bbox[1] + bbox[3]) / 2.0
-                overlap_positions_page.append((bbox[0], center_y))
-
-        removed_blocks = 0
-        for xref in page.get_contents():
-            try:
-                stream = doc.xref_stream(xref)
-                if not stream:
-                    continue
-            except Exception:
-                continue
-
-            def _replace_bt(match):
-                nonlocal removed_blocks
-                bt_body = match.group(1)
-
-                # Only consider standalone blocks
-                tms = _tm_re.findall(bt_body)
-                if len(tms) != 1:
-                    return match.group(0)
-                if _td_re.search(bt_body):
-                    return match.group(0)
-                if len(_tj_re.findall(bt_body)) > 1:
-                    return match.group(0)
-
-                # Extract page-coordinate origin
-                try:
-                    tx = float(tms[0][4])
-                    ty = float(tms[0][5])
-                except (ValueError, IndexError):
-                    return match.group(0)
-                page_y = page_height - ty
-
-                # Does this standalone block sit at an overlap position?
-                for ox, oy in overlap_positions_page:
-                    if abs(tx - ox) < 3 and abs(page_y - oy) < 8:
-                        removed_blocks += 1
-                        print(f"  Page {page_num}: removed standalone BT at "
-                              f"page ({tx:.1f},{page_y:.1f})")
-                        return b''  # strip entire BT…ET
-                return match.group(0)
-
-            cleaned = _bt_et_re.sub(_replace_bt, stream)
-            if cleaned != stream:
-                doc.update_stream(xref, cleaned)
-
-        if removed_blocks > 0:
-            page.clean_contents()
-            print(f"  Page {page_num}: removed {removed_blocks} duplicate BT block(s)")
-        else:
-            # No standalone BT blocks matched.  Do NOT fall back to redaction:
-            # overlapping duplicate spans share nearly the same bbox, so
-            # redacting the SCRUB copy also destroys the KEEP copy.
-            # It is safer to leave harmless visual duplicates than to risk
-            # deleting content.
-            print(f"  Page {page_num}: no standalone BT blocks matched – "
-                  f"skipping (safe: duplicates are visually harmless)")
-
-        scrubbed_overlap_texts[page_num] = scrubbed_texts
-        print(f"  Page {page_num}: processed {len(overlap_groups)} overlap group(s)")
-
-    if overlap_scrub_count > 0:
-        print(f"  ★ Total overlapping spans scrubbed: {overlap_scrub_count}")
-        # Re-capture spans after overlap scrub so pre_edit_spans is accurate
-        for page_num in scrubbed_overlap_texts:
-            page = doc[page_num - 1]
-            spans = []
-            blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
-            for block in blocks:
-                if block.get("type") != 0:
-                    continue
-                for line in block.get("lines", []):
-                    for span in line.get("spans", []):
-                        text = span.get("text", "").strip()
-                        if not text:
-                            continue
-                        spans.append({
-                            "text": text,
-                            "bbox": list(span["bbox"]),
-                            "origin": list(span["origin"]),
-                            "font": span.get("font", ""),
-                            "size": span.get("size", 12),
-                            "color": span.get("color", 0),
-                            "flags": span.get("flags", 0),
-                        })
-            pre_edit_spans[page_num] = spans
-            print(f"  Page {page_num}: re-captured {len(spans)} spans after overlap scrub")
-    else:
-        print("  ✓ No overlapping text layers found")
 
     # Build a set of texts that are being INTENTIONALLY edited or deleted.
     # We key by (page_num, normalised_text) so we know what the user touched.
@@ -719,105 +466,28 @@ def apply_edits(pdf_path, edits_json):
                             touched.add(word)
         edited_texts_by_page[page_num] = touched
 
-    # Merge scrubbed overlap texts into edited_texts_by_page so Phase C
-    # knows NOT to recover them as "collateral damage".
-    for page_num, scrubbed_set in scrubbed_overlap_texts.items():
-        if page_num not in edited_texts_by_page:
-            edited_texts_by_page[page_num] = set()
-        for txt in scrubbed_set:
-            edited_texts_by_page[page_num].add(txt)
-            for word in txt.split():
-                word = word.strip()
-                if len(word) > 1:
-                    edited_texts_by_page[page_num].add(word)
-    
-    # Also build a set of redaction rects per page so we know exactly
-    # which areas are being redacted (to detect collateral damage).
-    # CRITICAL: These rects MUST match the adaptive padding used in Phase A,
-    # otherwise Phase C will "recover" text that was intentionally redacted
-    # (e.g., old underlying text from prior overlay edits).
+
+    # Build redaction rects per page (tight, matching Phase A).
     redaction_rects_by_page = {}
     intentional_edit_rects_by_page = {}
     for page_num, page_edits in edits_by_page.items():
         rects = []
-        intentional_rects = []
         for edit in page_edits:
             original_bbox = edit.get("original_bbox")
             if original_bbox:
-                # Use the SAME adaptive padding as Phase A for accurate matching
                 try:
-                    edit_font_size = float(edit.get('font_size', 12))
-                except Exception:
-                    edit_font_size = 12.0
-                pad_left = max(1.0, edit_font_size * 0.15)
-                pad_top = max(1.0, edit_font_size * 0.15)
-                pad_right = max(2.0, edit_font_size * 0.9)
-                pad_bottom = max(1.0, edit_font_size * 0.15)
-
-                # ── Neighbor-aware padding clamp (pre-computation) ────
-                # Prevent pad_top/pad_bottom from extending the redaction
-                # rect into adjacent non-edited spans.
-                _edit_text = (edit.get('original_text') or '').strip()
-                _edit_rect = fitz.Rect(original_bbox)
-                for _span in pre_edit_spans.get(page_num, []):
-                    _sb = _span.get("bbox")
-                    if not _sb or len(_sb) != 4:
-                        continue
-                    _sr = fitz.Rect(_sb)
-                    # Skip spans with no horizontal overlap with the ORIGINAL edit area
-                    # (use small margin, NOT pad_right which extends far for glyph cleanup)
-                    if _sr.x1 <= _edit_rect.x0 - 2 or _sr.x0 >= _edit_rect.x1 + 2:
-                        continue
-                    # Skip the edited span itself
-                    if (abs(_sr.x0 - _edit_rect.x0) < 2 and abs(_sr.y0 - _edit_rect.y0) < 2
-                            and _span.get("text", "").strip() == _edit_text):
-                        continue
-                    # Clamp pad_bottom: don't extend into a span below
-                    if _sr.y1 > _edit_rect.y1 and _sr.y0 < _edit_rect.y1 + pad_bottom:
-                        pad_bottom = _sr.y0 - _edit_rect.y1 - 0.5
-                    # Clamp pad_top: don't extend into a span above
-                    if _sr.y0 < _edit_rect.y0 and _sr.y1 > _edit_rect.y0 - pad_top:
-                        pad_top = _edit_rect.y0 - _sr.y1 - 0.5
-
-                padded_rect = fitz.Rect(
-                    original_bbox[0] - pad_left,
-                    original_bbox[1] - pad_top,
-                    original_bbox[2] + pad_right,
-                    original_bbox[3] + pad_bottom,
+                    _fs = float(edit.get('font_size', 12))
+                except (TypeError, ValueError):
+                    _fs = 12.0
+                _max_b = original_bbox[1] + _fs * 1.1
+                r = fitz.Rect(
+                    original_bbox[0] - 1, original_bbox[1],
+                    original_bbox[2] + 1, min(original_bbox[3], _max_b),
                 )
-                intentional_rects.append(padded_rect)
-                rects.append(padded_rect)
-
-                # Include overlapping text layers that start at the same position.
-                # These are ghost text from prior overlay edits and will be scrubbed
-                # by Phase A's extended redaction. We must include them here so
-                # Phase C doesn't try to "recover" them.
-                edit_rect = fitz.Rect(original_bbox)
-                page_spans = pre_edit_spans.get(page_num, [])
-                for span in page_spans:
-                    sb = span.get("bbox")
-                    if not sb or len(sb) != 4:
-                        continue
-                    span_rect = fitz.Rect(sb)
-                    # Same row + same start position
-                    if span_rect.y1 < edit_rect.y0 - 1 or span_rect.y0 > edit_rect.y1 + 1:
-                        continue
-                    if abs(span_rect.x0 - edit_rect.x0) > 2:
-                        continue
-                    # If span extends beyond the padded rect, add that extension
-                    if span_rect.x1 > padded_rect.x1:
-                        ext_rect = fitz.Rect(
-                            padded_rect.x1 - 1,
-                            span_rect.y0 - 1,
-                            span_rect.x1 + pad_right,
-                            span_rect.y1 + 1
-                        )
-                        rects.append(ext_rect)
-                        intentional_rects.append(ext_rect)
-
+                rects.append(r)
         redaction_rects_by_page[page_num] = rects
-        intentional_edit_rects_by_page[page_num] = intentional_rects
-    
+        intentional_edit_rects_by_page[page_num] = list(rects)
+
     # PHASE A: SCRUB PHASE - Remove text from ORIGINAL locations only
     # This phase ONLY handles where text USED TO BE, never where it IS NOW
     print("\n" + "="*50)
@@ -865,117 +535,27 @@ def apply_edits(pdf_path, edits_json):
                     edit['_skip_insert'] = True  # Flag to skip Phase B too
                     continue
 
-            # PRIMARY SCRUB METHOD: Use original_bbox directly.
-            # This is the most reliable approach because:
-            # 1. search_for() fails for multi-line text
-            # 2. search_for() can match text at WRONG locations (duplicates)
-            # 3. original_bbox is the exact known location from extraction data
             if original_bbox:
-                # Add adaptive padding around the original block before redaction.
-                # Some PDFs contain trailing symbol/private-use glyphs that sit just
-                # outside extraction bboxes; tight boxes leave visual "tofu" artifacts.
+                # Tight redaction at absolute position.
+                # Left/right get ±1pt to catch glyph edges.
+                # Bottom is capped at font_size × 1.1 from top — PyMuPDF bboxes
+                # include the full descender metric which can extend into the
+                # next line of text even though the actual glyphs don't reach there.
                 try:
-                    font_size_num = float(edit_font_size or 12)
-                except Exception:
-                    font_size_num = 12.0
-                pad_left = max(1.0, font_size_num * 0.15)
-                pad_top = max(1.0, font_size_num * 0.15)
-                pad_right = max(2.0, font_size_num * 0.9)
-                pad_bottom = max(1.0, font_size_num * 0.15)
-
-                # ── Neighbor-aware padding clamp (Phase A) ────────────
-                # Prevent pad_top/pad_bottom from extending the redaction
-                # rect into adjacent non-edited spans.
-                _edit_rect = fitz.Rect(original_bbox)
-                for _span in pre_edit_spans.get(page_num, []):
-                    _sb = _span.get("bbox")
-                    if not _sb or len(_sb) != 4:
-                        continue
-                    _sr = fitz.Rect(_sb)
-                    # Use original edit area + small margin for horizontal check
-                    if _sr.x1 <= _edit_rect.x0 - 2 or _sr.x0 >= _edit_rect.x1 + 2:
-                        continue
-                    if (abs(_sr.x0 - _edit_rect.x0) < 2 and abs(_sr.y0 - _edit_rect.y0) < 2
-                            and _span.get("text", "").strip() == original_text.strip()):
-                        continue
-                    if _sr.y1 > _edit_rect.y1 and _sr.y0 < _edit_rect.y1 + pad_bottom:
-                        safe = _sr.y0 - _edit_rect.y1 - 0.5  # allow negative to shrink away
-                        if safe < pad_bottom:
-                            print(f"    ⚠ Clamping pad_bottom {pad_bottom:.1f}→{safe:.1f} "
-                                  f"to protect '{_span.get('text','')[:30]}'")
-                            pad_bottom = safe
-                    if _sr.y0 < _edit_rect.y0 and _sr.y1 > _edit_rect.y0 - pad_top:
-                        safe = _edit_rect.y0 - _sr.y1 - 0.5  # allow negative to shrink away
-                        if safe < pad_top:
-                            print(f"    ⚠ Clamping pad_top {pad_top:.1f}→{safe:.1f} "
-                                  f"to protect '{_span.get('text','')[:30]}'")
-                            pad_top = safe
-
+                    fs = float(edit_font_size or 12)
+                except (TypeError, ValueError):
+                    fs = 12.0
+                max_bottom = original_bbox[1] + fs * 1.1
                 rect = fitz.Rect(
-                    original_bbox[0] - pad_left,
-                    original_bbox[1] - pad_top,
-                    original_bbox[2] + pad_right,
-                    original_bbox[3] + pad_bottom
+                    original_bbox[0] - 1, original_bbox[1],
+                    original_bbox[2] + 1, min(original_bbox[3], max_bottom),
                 )
                 page.add_redact_annot(rect, fill=None)
                 redaction_count += 1
                 print(
                     f"  ✓ Redacting '{original_text[:30]}...' via original_bbox "
-                    f"[{original_bbox[0]:.0f},{original_bbox[1]:.0f},{original_bbox[2]:.0f},{original_bbox[3]:.0f}] "
-                    f"pad(L={pad_left:.1f},R={pad_right:.1f},T={pad_top:.1f},B={pad_bottom:.1f})"
+                    f"[{original_bbox[0]:.0f},{original_bbox[1]:.0f},{original_bbox[2]:.0f},{original_bbox[3]:.0f}]"
                 )
-
-                # Secondary scrub: remove adjacent symbol/replacement glyph spans that
-                # often survive when they are encoded as separate tiny runs.
-                special_spans = pre_edit_spans.get(page_num, [])
-                for span in special_spans:
-                    span_text = span.get("text", "")
-                    if not span_text:
-                        continue
-                    if not re.search(r'[\uFFFD\uE000-\uF8FF]', span_text):
-                        continue
-                    sb = span.get("bbox")
-                    if not sb or len(sb) != 4:
-                        continue
-                    span_rect = fitz.Rect(sb)
-                    same_row = not (span_rect.y1 < rect.y0 or span_rect.y0 > rect.y1)
-                    near_right_edge = span_rect.x0 <= (rect.x1 + (font_size_num * 1.25)) and span_rect.x1 >= (rect.x0 - 2)
-                    if same_row and near_right_edge:
-                        cleanup_rect = fitz.Rect(span_rect.x0 - 1, span_rect.y0 - 1, span_rect.x1 + 1, span_rect.y1 + 1)
-                        page.add_redact_annot(cleanup_rect, fill=None)
-                        redaction_count += 1
-                        print(f"    ↳ Redacting adjacent special span '{span_text.encode('unicode_escape').decode()}' at {list(cleanup_rect)}")
-
-                # Overlapping text layer cleanup: if there are OTHER text spans
-                # at the same vertical position whose horizontal extent overlaps
-                # significantly with this edit's original_bbox, they are likely
-                # ghost text from prior overlay edits (e.g., "violate" hiding
-                # behind "violated").  Extend the redaction to cover them too.
-                edit_rect = fitz.Rect(original_bbox)
-                all_page_spans = pre_edit_spans.get(page_num, [])
-                for span in all_page_spans:
-                    sb = span.get("bbox")
-                    if not sb or len(sb) != 4:
-                        continue
-                    span_rect = fitz.Rect(sb)
-                    # Same row check (vertical overlap)
-                    if span_rect.y1 < edit_rect.y0 - 1 or span_rect.y0 > edit_rect.y1 + 1:
-                        continue
-                    # Horizontal overlap: spans must share the same starting position
-                    if abs(span_rect.x0 - edit_rect.x0) > 2:
-                        continue
-                    # If span extends beyond the existing redaction rect, extend it
-                    if span_rect.x1 > rect.x1:
-                        extra_rect = fitz.Rect(
-                            rect.x1 - 1,
-                            span_rect.y0 - 1,
-                            span_rect.x1 + max(2.0, font_size_num * 0.9),
-                            span_rect.y1 + 1
-                        )
-                        page.add_redact_annot(extra_rect, fill=None)
-                        redaction_count += 1
-                        span_text_preview = span.get("text", "")[:40]
-                        print(f"    ↳ Extending redaction for overlapping span '{span_text_preview}' to x={span_rect.x1:.1f}")
             else:
                 # FALLBACK: No original_bbox — try search_for for single-line text only
                 text_instances = page.search_for(original_text)
