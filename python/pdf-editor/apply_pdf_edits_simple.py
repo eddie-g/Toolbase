@@ -473,14 +473,34 @@ def apply_edits(pdf_path, edits_json):
             if i in processed:
                 continue
             si_rect = fitz.Rect(spans[i]["bbox"])
+            si_size = spans[i].get("size", 12)
+            si_text = spans[i]["text"]
             group = [i]
             for j in range(i + 1, len(spans)):
                 if j in processed:
                     continue
                 sj_rect = fitz.Rect(spans[j]["bbox"])
-                # Same row?
-                if sj_rect.y1 < si_rect.y0 - 1 or sj_rect.y0 > si_rect.y1 + 1:
+                sj_size = spans[j].get("size", 12)
+                sj_text = spans[j]["text"]
+
+                # ── Guard 1: Font-size ratio ──
+                # True duplicates use the same (or very similar) font size.
+                # A 40pt heading vs 9pt body text is never a duplicate pair.
+                max_size = max(si_size, sj_size)
+                min_size = max(min(si_size, sj_size), 0.1)  # floor to avoid /0
+                if max_size / min_size > 1.5:
                     continue
+
+                # ── Guard 2: Vertical centre proximity ──
+                # True duplicates sit at the *same* baseline.  If vertical
+                # centres are more than half the smaller span height apart,
+                # they're stacked, not overlapping.
+                si_cy = (si_rect.y0 + si_rect.y1) / 2
+                sj_cy = (sj_rect.y0 + sj_rect.y1) / 2
+                smaller_h = min(si_rect.height, sj_rect.height)
+                if abs(si_cy - sj_cy) > smaller_h * 0.5:
+                    continue
+
                 # Same start-x?
                 if abs(sj_rect.x0 - si_rect.x0) > 2:
                     continue
@@ -490,8 +510,31 @@ def apply_edits(pdf_path, edits_json):
                 inter_area = inter.get_area()
                 smaller_area = min(max(1e-6, si_rect.get_area()),
                                    max(1e-6, sj_rect.get_area()))
-                if inter_area / smaller_area >= 0.5:
-                    group.append(j)
+                if inter_area / smaller_area < 0.5:
+                    continue
+
+                # ── Guard 3: Text similarity ──
+                # True duplicates share significant text content.
+                # Require either: a) one text contains the other, or
+                # b) texts share a prefix ≥ 40% of the shorter text.
+                min_tlen = min(len(si_text), len(sj_text))
+                if min_tlen == 0:
+                    continue
+                # Check containment
+                is_contained = (si_text in sj_text or sj_text in si_text)
+                # Check prefix overlap
+                common_prefix = 0
+                for k in range(min_tlen):
+                    if si_text[k] == sj_text[k]:
+                        common_prefix += 1
+                    else:
+                        break
+                has_prefix = common_prefix / min_tlen >= 0.4
+
+                if not is_contained and not has_prefix:
+                    continue
+
+                group.append(j)
             if len(group) > 1:
                 for idx in group:
                     processed.add(idx)
@@ -604,7 +647,6 @@ def apply_edits(pdf_path, edits_json):
                               f"page ({tx:.1f},{page_y:.1f})")
                         return b''  # strip entire BT…ET
                 return match.group(0)
-                return match.group(0)
 
             cleaned = _bt_et_re.sub(_replace_bt, stream)
             if cleaned != stream:
@@ -614,14 +656,13 @@ def apply_edits(pdf_path, edits_json):
             page.clean_contents()
             print(f"  Page {page_num}: removed {removed_blocks} duplicate BT block(s)")
         else:
-            # Fallback: try redaction-based removal for spans not in CID fonts
-            print(f"  Page {page_num}: no BT blocks matched, trying redaction fallback")
-            for bbox in scrub_bboxes:
-                sr = fitz.Rect(bbox)
-                union_rect = fitz.Rect(sr.x0 - 0.5, sr.y0 - 0.5,
-                                       sr.x1 + 0.5, sr.y1 + 0.5)
-                page.add_redact_annot(union_rect, fill=None)
-            page.apply_redactions(images=0)
+            # No standalone BT blocks matched.  Do NOT fall back to redaction:
+            # overlapping duplicate spans share nearly the same bbox, so
+            # redacting the SCRUB copy also destroys the KEEP copy.
+            # It is safer to leave harmless visual duplicates than to risk
+            # deleting content.
+            print(f"  Page {page_num}: no standalone BT blocks matched – "
+                  f"skipping (safe: duplicates are visually harmless)")
 
         scrubbed_overlap_texts[page_num] = scrubbed_texts
         print(f"  Page {page_num}: processed {len(overlap_groups)} overlap group(s)")
@@ -712,6 +753,32 @@ def apply_edits(pdf_path, edits_json):
                 pad_top = max(1.0, edit_font_size * 0.15)
                 pad_right = max(2.0, edit_font_size * 0.9)
                 pad_bottom = max(1.0, edit_font_size * 0.15)
+
+                # ── Neighbor-aware padding clamp (pre-computation) ────
+                # Prevent pad_top/pad_bottom from extending the redaction
+                # rect into adjacent non-edited spans.
+                _edit_text = (edit.get('original_text') or '').strip()
+                _edit_rect = fitz.Rect(original_bbox)
+                for _span in pre_edit_spans.get(page_num, []):
+                    _sb = _span.get("bbox")
+                    if not _sb or len(_sb) != 4:
+                        continue
+                    _sr = fitz.Rect(_sb)
+                    # Skip spans with no horizontal overlap with the ORIGINAL edit area
+                    # (use small margin, NOT pad_right which extends far for glyph cleanup)
+                    if _sr.x1 <= _edit_rect.x0 - 2 or _sr.x0 >= _edit_rect.x1 + 2:
+                        continue
+                    # Skip the edited span itself
+                    if (abs(_sr.x0 - _edit_rect.x0) < 2 and abs(_sr.y0 - _edit_rect.y0) < 2
+                            and _span.get("text", "").strip() == _edit_text):
+                        continue
+                    # Clamp pad_bottom: don't extend into a span below
+                    if _sr.y1 > _edit_rect.y1 and _sr.y0 < _edit_rect.y1 + pad_bottom:
+                        pad_bottom = _sr.y0 - _edit_rect.y1 - 0.5
+                    # Clamp pad_top: don't extend into a span above
+                    if _sr.y0 < _edit_rect.y0 and _sr.y1 > _edit_rect.y0 - pad_top:
+                        pad_top = _edit_rect.y0 - _sr.y1 - 0.5
+
                 padded_rect = fitz.Rect(
                     original_bbox[0] - pad_left,
                     original_bbox[1] - pad_top,
@@ -815,6 +882,34 @@ def apply_edits(pdf_path, edits_json):
                 pad_top = max(1.0, font_size_num * 0.15)
                 pad_right = max(2.0, font_size_num * 0.9)
                 pad_bottom = max(1.0, font_size_num * 0.15)
+
+                # ── Neighbor-aware padding clamp (Phase A) ────────────
+                # Prevent pad_top/pad_bottom from extending the redaction
+                # rect into adjacent non-edited spans.
+                _edit_rect = fitz.Rect(original_bbox)
+                for _span in pre_edit_spans.get(page_num, []):
+                    _sb = _span.get("bbox")
+                    if not _sb or len(_sb) != 4:
+                        continue
+                    _sr = fitz.Rect(_sb)
+                    # Use original edit area + small margin for horizontal check
+                    if _sr.x1 <= _edit_rect.x0 - 2 or _sr.x0 >= _edit_rect.x1 + 2:
+                        continue
+                    if (abs(_sr.x0 - _edit_rect.x0) < 2 and abs(_sr.y0 - _edit_rect.y0) < 2
+                            and _span.get("text", "").strip() == original_text.strip()):
+                        continue
+                    if _sr.y1 > _edit_rect.y1 and _sr.y0 < _edit_rect.y1 + pad_bottom:
+                        safe = _sr.y0 - _edit_rect.y1 - 0.5  # allow negative to shrink away
+                        if safe < pad_bottom:
+                            print(f"    ⚠ Clamping pad_bottom {pad_bottom:.1f}→{safe:.1f} "
+                                  f"to protect '{_span.get('text','')[:30]}'")
+                            pad_bottom = safe
+                    if _sr.y0 < _edit_rect.y0 and _sr.y1 > _edit_rect.y0 - pad_top:
+                        safe = _edit_rect.y0 - _sr.y1 - 0.5  # allow negative to shrink away
+                        if safe < pad_top:
+                            print(f"    ⚠ Clamping pad_top {pad_top:.1f}→{safe:.1f} "
+                                  f"to protect '{_span.get('text','')[:30]}'")
+                            pad_top = safe
 
                 rect = fitz.Rect(
                     original_bbox[0] - pad_left,
@@ -948,6 +1043,10 @@ def apply_edits(pdf_path, edits_json):
             # Update bbox to match the clamped rect
             bbox = [rect.x0, rect.y0, rect.x1, rect.y1]
             font_size = edit.get('font_size', 12)
+            try:
+                font_size = float(font_size)
+            except (TypeError, ValueError):
+                font_size = 12.0
             font_name = edit.get('font', 'Arimo')
             font_xref = edit.get('font_xref')
             font_weight = edit.get('font_weight')
@@ -1624,152 +1723,152 @@ def apply_edits(pdf_path, edits_json):
                     shape.commit(overlay=True)
                     print(f"  ✓ Added underline")
 
-    # ── PHASE C: COLLATERAL DAMAGE RECOVERY ───────────────────────────
-    # Compare post-edit text against the pre-edit snapshot.
-    # Any span that:
-    #   1. existed before edits
-    #   2. is now missing from the PDF
-    #   3. was NOT part of any intentional edit/deletion
-    # … is "collateral damage" from an overlapping redaction rect and
-    # must be re-inserted at its original position to prevent data loss.
+    # ── PHASE C: COLLATERAL DAMAGE RECOVERY (OPTIONAL) ─────────────────
+    # This pass can create false-positive "recoveries" (duplicate text) on
+    # complex PDFs where span segmentation changes after edits. Keep it OFF
+    # by default; enable only for targeted troubleshooting.
+    enable_collateral_recovery = str(os.getenv("PDF_EDIT_ENABLE_COLLATERAL_RECOVERY", "0")).strip().lower() in {"1", "true", "yes", "on"}
     print("\n" + "="*50)
     print("PHASE C (VERIFY): Checking for collateral text loss")
     print("="*50)
 
     recovered_count = 0
-    for page_num in edits_by_page.keys():
-        page = doc[page_num - 1]
-        touched_texts = edited_texts_by_page.get(page_num, set())
-        redact_rects = redaction_rects_by_page.get(page_num, [])
-        intentional_rects = intentional_edit_rects_by_page.get(page_num, [])
-        pre_spans = pre_edit_spans.get(page_num, [])
-
-        if not pre_spans:
-            continue
-
-        # Collect current (post-edit) span texts for this page
-        post_texts = set()
-        post_blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
-        for block in post_blocks:
-            if block.get("type") != 0:
-                continue
-            for line in block.get("lines", []):
-                for span in line.get("spans", []):
-                    t = span.get("text", "").strip()
-                    if t:
-                        post_texts.add(t)
-
-        # Check each pre-edit span
-        for span_info in pre_spans:
-            span_text = span_info["text"]
-            normalized_span_text = normalize_smart_quotes(span_text).strip()
-
-            # Never recover artifact glyphs (replacement chars, private-use symbols,
-            # zero-width/control chars). These are typically encoding debris and
-            # should be removed during scrub, not re-inserted.
-            if (
-                not normalized_span_text
-                or re.search(r'[\uFFFD\uE000-\uF8FF\u200B\u200C\u200D\u2060\uFEFF]', span_text)
-                or re.search(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', span_text)
-            ):
-                continue
-
-            # Already present in post-edit PDF → no loss
-            if span_text in post_texts:
-                continue
-
-            # Was this span part of an intentional edit/deletion?
-            # Check if the span text appears in any of the touched texts
-            is_intentional = False
-            for touched in touched_texts:
-                if span_text in touched or touched in span_text:
-                    is_intentional = True
-                    break
-            if is_intentional:
-                continue
-
-            # Was this span inside a redaction rectangle? (collateral damage)
-            span_rect = fitz.Rect(span_info["bbox"])
-
-            # If the span is inside one of the user's intentional edit boxes,
-            # never recover it. Recovery is only for accidental neighboring loss.
-            is_inside_intentional_edit = False
-            for i_rect in intentional_rects:
-                inter = span_rect & i_rect
-                if inter.is_empty:
-                    continue
-                span_area = max(1e-6, span_rect.get_area())
-                overlap_ratio = inter.get_area() / span_area
-                center_x = (span_rect.x0 + span_rect.x1) / 2.0
-                center_y = (span_rect.y0 + span_rect.y1) / 2.0
-                center_inside = (i_rect.x0 <= center_x <= i_rect.x1 and i_rect.y0 <= center_y <= i_rect.y1)
-                if overlap_ratio >= 0.5 or center_inside:
-                    is_inside_intentional_edit = True
-                    break
-
-            if is_inside_intentional_edit:
-                continue
-
-            # Check if span was inside the actual redaction zone.
-            # If it was, the text was INTENTIONALLY removed (it was within the
-            # padded redaction area of an edit). Do NOT recover it — it could be
-            # old underlying text from a prior overlay edit (e.g., "Isartor"
-            # hiding behind "Modified" from a previous save).
-            was_in_redaction = False
-            for r_rect in redact_rects:
-                if not (span_rect & r_rect).is_empty:
-                    was_in_redaction = True
-                    break
-
-            if was_in_redaction:
-                print(f"  ⊘ Skipping recovery of '{span_text}' — inside redaction zone (likely old underlying text)")
-                continue
-
-            if span_text not in post_texts:
-                # Text disappeared but wasn't in a redaction zone → unusual
-                # Could be coordinate-system shift or font issue; still recover it
-                print(f"  ⚠ '{span_text}' missing (not in redaction zone) – recovering")
-
-            # ── Re-insert the lost span ──
-            origin = span_info["origin"]
-            font_size_s = span_info["size"]
-            span_color_int = span_info["color"]
-
-            # Convert integer color (sRGB packed) to (r, g, b) 0-1
-            if isinstance(span_color_int, int):
-                r = ((span_color_int >> 16) & 0xFF) / 255.0
-                g = ((span_color_int >>  8) & 0xFF) / 255.0
-                b = ( span_color_int        & 0xFF) / 255.0
-                span_color = (r, g, b)
-            else:
-                span_color = (0, 0, 0)
-
-            # Try to use the original font
-            span_font_name = span_info.get("font", "")
-            font_obj = None
-
-            # Try full font file
-            font_file = get_font_file(span_font_name, script_dir)
-            if font_file and os.path.exists(font_file):
-                font_obj = fitz.Font(fontfile=font_file)
-
-            if not font_obj:
-                # Try embedded font by name
-                font_obj = get_embedded_font(doc, None, font_name=span_font_name, page_num=page_num)
-
-            if not font_obj:
-                font_obj = fitz.Font("helv")
-
-            tw = fitz.TextWriter(page.rect)
-            tw.append((origin[0], origin[1]), span_text, font=font_obj, fontsize=font_size_s)
-            tw.write_text(page, color=span_color, overlay=True)
-            recovered_count += 1
-            print(f"  ✓ Recovered '{span_text}' at ({origin[0]:.1f}, {origin[1]:.1f})")
-
-    if recovered_count > 0:
-        print(f"\n  ★ Recovered {recovered_count} collateral-damage span(s)")
+    if not enable_collateral_recovery:
+        print("  ⊘ Collateral recovery disabled (set PDF_EDIT_ENABLE_COLLATERAL_RECOVERY=1 to enable)")
     else:
-        print("  ✓ No collateral text loss detected")
+        for page_num in edits_by_page.keys():
+            page = doc[page_num - 1]
+            touched_texts = edited_texts_by_page.get(page_num, set())
+            redact_rects = redaction_rects_by_page.get(page_num, [])
+            intentional_rects = intentional_edit_rects_by_page.get(page_num, [])
+            pre_spans = pre_edit_spans.get(page_num, [])
+
+            if not pre_spans:
+                continue
+
+            # Collect current (post-edit) span texts for this page
+            post_texts = set()
+            post_blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+            for block in post_blocks:
+                if block.get("type") != 0:
+                    continue
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        t = span.get("text", "").strip()
+                        if t:
+                            post_texts.add(t)
+
+            # Check each pre-edit span
+            for span_info in pre_spans:
+                span_text = span_info["text"]
+                normalized_span_text = normalize_smart_quotes(span_text).strip()
+
+                # Never recover artifact glyphs (replacement chars, private-use symbols,
+                # zero-width/control chars). These are typically encoding debris and
+                # should be removed during scrub, not re-inserted.
+                if (
+                    not normalized_span_text
+                    or re.search(r'[\uFFFD\uE000-\uF8FF\u200B\u200C\u200D\u2060\uFEFF]', span_text)
+                    or re.search(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', span_text)
+                ):
+                    continue
+
+                # Already present in post-edit PDF → no loss
+                if span_text in post_texts:
+                    continue
+
+                # Was this span part of an intentional edit/deletion?
+                # Check if the span text appears in any of the touched texts
+                is_intentional = False
+                for touched in touched_texts:
+                    if span_text in touched or touched in span_text:
+                        is_intentional = True
+                        break
+                if is_intentional:
+                    continue
+
+                # Was this span inside a redaction rectangle? (collateral damage)
+                span_rect = fitz.Rect(span_info["bbox"])
+
+                # If the span is inside one of the user's intentional edit boxes,
+                # never recover it. Recovery is only for accidental neighboring loss.
+                is_inside_intentional_edit = False
+                for i_rect in intentional_rects:
+                    inter = span_rect & i_rect
+                    if inter.is_empty:
+                        continue
+                    span_area = max(1e-6, span_rect.get_area())
+                    overlap_ratio = inter.get_area() / span_area
+                    center_x = (span_rect.x0 + span_rect.x1) / 2.0
+                    center_y = (span_rect.y0 + span_rect.y1) / 2.0
+                    center_inside = (i_rect.x0 <= center_x <= i_rect.x1 and i_rect.y0 <= center_y <= i_rect.y1)
+                    if overlap_ratio >= 0.5 or center_inside:
+                        is_inside_intentional_edit = True
+                        break
+
+                if is_inside_intentional_edit:
+                    continue
+
+                # Check if span was inside the actual redaction zone.
+                # If it was, the text was INTENTIONALLY removed (it was within the
+                # padded redaction area of an edit). Do NOT recover it — it could be
+                # old underlying text from a prior overlay edit (e.g., "Isartor"
+                # hiding behind "Modified" from a previous save).
+                was_in_redaction = False
+                for r_rect in redact_rects:
+                    if not (span_rect & r_rect).is_empty:
+                        was_in_redaction = True
+                        break
+
+                if was_in_redaction:
+                    print(f"  ⊘ Skipping recovery of '{span_text}' — inside redaction zone (likely old underlying text)")
+                    continue
+
+                if span_text not in post_texts:
+                    # Text disappeared but wasn't in a redaction zone → unusual
+                    # Could be coordinate-system shift or font issue; still recover it
+                    print(f"  ⚠ '{span_text}' missing (not in redaction zone) – recovering")
+
+                # ── Re-insert the lost span ──
+                origin = span_info["origin"]
+                font_size_s = span_info["size"]
+                span_color_int = span_info["color"]
+
+                # Convert integer color (sRGB packed) to (r, g, b) 0-1
+                if isinstance(span_color_int, int):
+                    r = ((span_color_int >> 16) & 0xFF) / 255.0
+                    g = ((span_color_int >>  8) & 0xFF) / 255.0
+                    b = ( span_color_int        & 0xFF) / 255.0
+                    span_color = (r, g, b)
+                else:
+                    span_color = (0, 0, 0)
+
+                # Try to use the original font
+                span_font_name = span_info.get("font", "")
+                font_obj = None
+
+                # Try full font file
+                font_file = get_font_file(span_font_name, script_dir)
+                if font_file and os.path.exists(font_file):
+                    font_obj = fitz.Font(fontfile=font_file)
+
+                if not font_obj:
+                    # Try embedded font by name
+                    font_obj = get_embedded_font(doc, None, font_name=span_font_name, page_num=page_num)
+
+                if not font_obj:
+                    font_obj = fitz.Font("helv")
+
+                tw = fitz.TextWriter(page.rect)
+                tw.append((origin[0], origin[1]), span_text, font=font_obj, fontsize=font_size_s)
+                tw.write_text(page, color=span_color, overlay=True)
+                recovered_count += 1
+                print(f"  ✓ Recovered '{span_text}' at ({origin[0]:.1f}, {origin[1]:.1f})")
+
+        if recovered_count > 0:
+            print(f"\n  ★ Recovered {recovered_count} collateral-damage span(s)")
+        else:
+            print("  ✓ No collateral text loss detected")
 
     print("\n" + "="*50)
     print("PHASE 3: Saving with cleanup")
