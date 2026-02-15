@@ -40,6 +40,14 @@
                 </div>
                 <h1 class="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-3">Domain Search</h1>
                 <p class="text-gray-500 dark:text-gray-400 text-lg">Check availability or generate creative domain ideas</p>
+                <div class="mt-4">
+                    <a href="/domain-search/faq" class="inline-flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 transition font-medium">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        Privacy & FAQ
+                    </a>
+                </div>
             </div>
 
             <!-- Mode Tabs -->
@@ -180,6 +188,15 @@
                         </template>
                         <span x-text="loading ? 'Checking...' : 'Check Availability'"></span>
                     </button>
+                    
+                    <div class="mt-3 text-center">
+                        <p class="text-xs text-gray-500 dark:text-gray-400 flex items-center justify-center gap-1.5">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
+                            </svg>
+                            <span>Your searches are never logged or tracked</span>
+                        </p>
+                    </div>
                 </form>
 
                 <!-- Generate Mode -->
@@ -279,6 +296,15 @@
                         </template>
                         <span x-text="loading ? statusText : 'Generate & Check Top 10 Domains'"></span>
                     </button>
+                    
+                    <div class="mt-3 text-center">
+                        <p class="text-xs text-gray-500 dark:text-gray-400 flex items-center justify-center gap-1.5">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
+                            </svg>
+                            <span>Your searches are never logged or tracked</span>
+                        </p>
+                    </div>
                 </form>
 
                 <!-- AI Generator Mode -->
@@ -368,6 +394,15 @@
                             </svg>
                             <span x-text="loading ? 'Generating...' : 'Generate with AI'"></span>
                         </button>
+                        
+                        <div class="mt-3 text-center">
+                            <p class="text-xs text-gray-500 dark:text-gray-400 flex items-center justify-center gap-1.5">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                </svg>
+                                <span>AI usage tracked for billing. Domain searches remain private.</span>
+                            </p>
+                        </div>
                     @else
                         <div class="text-center py-12">
                             <svg class="mx-auto h-16 w-16 text-indigo-500 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

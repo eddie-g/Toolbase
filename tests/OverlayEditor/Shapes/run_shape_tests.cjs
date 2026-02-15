@@ -370,9 +370,22 @@ async function savePdf(page) {
     });
     page.on('pageerror', err => pageErrors.push(err.message));
 
-    // Start monitoring for the save POST response before clicking
+    // Start monitoring for the save POST response before clicking.
+    // The editor can save via multiple endpoints depending on current mode:
+    // - legacy unified save: /documents/{id}/save
+    // - direct annotation save: /documents/{id}/apply-annotations-direct
+    // - annotation-only fallback: /documents/{id}/save-annotations
+    const saveEndpointMatchers = [
+        '/apply-annotations-direct',
+        '/save-annotations',
+        '/save',
+    ];
     const responsePromise = page.waitForResponse(
-        resp => resp.url().includes('/save') && resp.request().method() === 'POST',
+        resp => {
+            if (resp.request().method() !== 'POST') return false;
+            const url = resp.url();
+            return saveEndpointMatchers.some((needle) => url.includes(needle));
+        },
         { timeout: 60000 }
     ).catch(err => null); // Catch timeout, return null
 

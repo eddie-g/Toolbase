@@ -873,15 +873,18 @@
             .sticky-tools {
                 position: sticky;
                 top: 0;
-                z-index: 100;
+                z-index: 120000;
                 background: linear-gradient(180deg, rgba(7,11,18,0.98), rgba(7,11,18,0.92));
                 border-bottom: 1px solid rgba(255,255,255,0.08);
                 backdrop-filter: blur(6px);
+                isolation: isolate;
             }
             .sticky-tools .mode-bar,
             .sticky-tools .toolbar {
                 margin: 0;
                 border-radius: 0;
+                position: relative;
+                z-index: 120001;
             }
             .toolbar {
                 display: flex;
@@ -951,6 +954,8 @@
                 gap: 6px;
                 flex-wrap: wrap;
                 width: 100%;
+                position: relative;
+                z-index: 120002 !important;
             }
             .selection-toolbar .toolbar-label {
                 font-size: 12px;
@@ -5320,6 +5325,9 @@
             const DEBUG_KEEP_ANNOTATIONS = true; // Set to false to delete annotations after save
             
             const documentId = "{{ $document->id }}";
+            // Keep a single generic overlay pipeline for all PDFs.
+            // Doc-specific debug behavior is disabled by default.
+            const overlayDebug539HeadingOnly = false;
             const annotationsStorageKey = `pdf-annotations-${documentId}`;
             const viewer = document.getElementById('viewer');
             const status = document.getElementById('status');
@@ -5594,6 +5602,7 @@
             // Overlay editor state
             let overlayEditorActive = false;
             let overlayExtractionData = null;
+            let overlayEmbeddedFonts = null;  // Embedded font data from PDF extraction
             let overlayPdfDoc = null;  // Track overlay PDF for cleanup
             let overlayEditedFields = new Map();
             let overlayPersistedEdits = new Map();
@@ -5601,6 +5610,7 @@
             let overlayResizingField = null;
             let overlayResizeStart = { x: 0, y: 0, width: 0, height: 0, left: 0, top: 0 };
             let overlayResizePosition = '';
+            let overlayInteractionActive = false; // true during resize/drag to block doFontReRender
             const overlayLoadedFonts = new Set();
             const overlayEditsStorageKey = `pdf-overlay-edits-${documentId}`;
             let overlayRendered = false;
@@ -5613,6 +5623,78 @@
             const overlayLoadingMessage = document.getElementById('overlay-loading-message');
             const overlayLoadingProgress = document.getElementById('overlay-loading-progress');
             const overlayLoadingPercent = document.getElementById('overlay-loading-percent');
+
+            /**
+             * Get system font fallback stack for a given font family name.
+             * Used as fallback after embedded PDF fonts for characters not in the subset.
+             */
+            const _getSystemFallback = (family) => {
+                const lower = family.toLowerCase();
+                const fallbacks = {
+                    'tahoma': 'Tahoma, Arial, Verdana, sans-serif',
+                    'tahomaunicode': 'Tahoma, Arial, Verdana, sans-serif',
+                    'timesnewroman': 'Times New Roman, Times, serif',
+                    'timesnewromanunicode': 'Times New Roman, Times, serif',
+                    'times': 'Times New Roman, Times, serif',
+                    'arial': 'Arial, Helvetica, sans-serif',
+                    'helvetica': 'Helvetica, Arial, sans-serif',
+                    'courier': 'Courier New, Courier, monospace',
+                    'calibri': 'Calibri, sans-serif',
+                };
+                for (const [key, val] of Object.entries(fallbacks)) {
+                    if (lower === key || lower.startsWith(key)) {
+                        return val;
+                    }
+                }
+                if (lower.includes('serif') && !lower.includes('sans')) return 'serif';
+                if (lower.includes('mono')) return 'monospace';
+                return 'Arial, sans-serif';
+            };
+
+            /**
+             * Create @font-face CSS rules from embedded PDF fonts.
+             * This ensures the overlay uses the exact same fonts as the original PDF.
+             */
+            const loadEmbeddedFontFaces = (embeddedFonts) => {
+                if (!embeddedFonts || typeof embeddedFonts !== 'object') return;
+
+                // Remove any previously injected embedded font styles
+                const existing = document.getElementById('overlay-embedded-fonts');
+                if (existing) existing.remove();
+
+                const style = document.createElement('style');
+                style.id = 'overlay-embedded-fonts';
+                let css = '';
+
+                for (const [fontKey, fontData] of Object.entries(embeddedFonts)) {
+                    const family = fontData.family || fontKey;
+                    const weight = fontData.css_weight || '400';
+                    const fontStyle = fontData.css_style || 'normal';
+                    const filePath = fontData.file_path;
+                    const ext = fontData.file_ext || 'ttf';
+
+                    // Determine format string for @font-face src
+                    let format = 'truetype';
+                    if (ext === 'woff2') format = 'woff2';
+                    else if (ext === 'woff') format = 'woff';
+                    else if (ext === 'otf' || ext === 'cff') format = 'opentype';
+
+                    const embeddedFamily = `PDF_${family}`;
+
+                    css += `@font-face {\n`;
+                    css += `  font-family: '${embeddedFamily}';\n`;
+                    css += `  src: url('${filePath}') format('${format}');\n`;
+                    css += `  font-weight: ${weight};\n`;
+                    css += `  font-style: ${fontStyle};\n`;
+                    css += `  font-display: swap;\n`;
+                    css += `}\n\n`;
+
+                    console.log(`@font-face: '${embeddedFamily}' weight=${weight} style=${fontStyle} → ${filePath}`);
+                }
+
+                style.textContent = css;
+                document.head.appendChild(style);
+            };
 
             // Cleanup function to destroy overlay PDF and release memory
             function cleanupOverlayPdf() {
@@ -9297,8 +9379,9 @@
                 const hasRotations = Object.keys(pageRotations).some(pageIndex => pageRotations[pageIndex] !== 0);
                 const hasDeletedPages = pendingDeletedPages.length > 0;
                 const hasNewPages = pendingNewPages.length > 0;
+                const hasAnnotations = annotations.length > 0;
                 
-                if (!annotations.length && !hasTextEdits && !hasRotations && !hasDeletedPages && !hasNewPages) {
+                if (!hasAnnotations && !hasTextEdits && !hasRotations && !hasDeletedPages && !hasNewPages) {
                     setStatus('No changes to save.', 'err');
                     return;
                 }
@@ -9350,7 +9433,7 @@
                 setSaveSpinner(true, 'Saving and refreshing...');
 
                 // Mark existing annotations as saved in database (don't update annotation_data, just the state)
-                if (annotations.length > 0) {
+                if (hasAnnotations) {
                     try {
                         const sessionId = localStorage.getItem('pdf_session_id');
                         if (sessionId) {
@@ -9383,6 +9466,80 @@
                     } catch (error) {
                         console.error('Error marking annotations as saved:', error);
                     }
+                }
+
+                // Direct annotation stamping path (PyMuPDF):
+                // keeps shapes/text stamps independent from overlay/text rewrite pipeline.
+                const directAnnotationTypes = new Set(['shape', 'eraser', 'signature', 'text']);
+                const canApplyAnnotationsDirect =
+                    hasAnnotations &&
+                    !hasTextEdits &&
+                    !hasRotations &&
+                    !hasDeletedPages &&
+                    !hasNewPages &&
+                    annotations.every(a => directAnnotationTypes.has((a?.type || '').toLowerCase()));
+
+                console.log('=== SAVE PATH DECISION ===', {
+                    canApplyAnnotationsDirect,
+                    hasAnnotations,
+                    hasTextEdits,
+                    hasRotations,
+                    hasDeletedPages,
+                    hasNewPages,
+                    annotationTypes: annotations.map(a => a.type),
+                });
+
+                if (canApplyAnnotationsDirect) {
+                    console.log('>>> USING DIRECT PATH (PyMuPDF)');
+                    const directResponse = await fetch('{{ route("documents.applyAnnotationsDirect", $document) }}', {
+                        method: 'POST',
+                        headers: {
+                            'X-CSRF-TOKEN': csrfToken,
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json',
+                        },
+                        body: JSON.stringify({ annotations }),
+                    });
+
+                    if (!directResponse.ok) {
+                        const errorText = await directResponse.text();
+                        throw new Error('Direct annotation save failed: ' + errorText);
+                    }
+
+                    const directResult = await directResponse.json();
+                    if (!directResult.success) {
+                        throw new Error(directResult.message || 'Direct annotation save failed.');
+                    }
+
+                    // Immediately reload the current PDF bytes in-place so the stamped
+                    // annotation is visible without relying on a redirect race.
+                    setStatus('Saved! Reloading PDF...', 'ok');
+                    setSelection(null);
+                    annotations.length = 0;
+                    persistAnnotations();
+                    updateAnnotationsList();
+                    document.querySelectorAll('.annotation-label, .shape-resize-handle, .shape-action-bar').forEach(el => el.remove());
+
+                    try {
+                        basePdfUrl = pdfUrl;
+                        pdfVersion = Date.now();
+                        if (overlayEditorActive) {
+                            overlayEditorActive = false;
+                            const overlayToggleEl = document.getElementById('mode-overlay-toggle');
+                            if (overlayToggleEl) overlayToggleEl.checked = false;
+                            updateOverlayToolbarVisibility();
+                        }
+                        await rerenderPdf();
+                        setSaveSpinner(false);
+                        setStatus('Saved.', 'ok');
+                    } catch (refreshErr) {
+                        console.warn('Direct save applied but in-place reload failed, falling back to redirect', refreshErr);
+                        setSaveSpinner(true, 'Saved! Reloading...');
+                        setTimeout(() => {
+                            window.location.href = '{{ route("documents.edit", $document) }}';
+                        }, 300);
+                    }
+                    return;
                 }
 
                 // Load the CURRENT version of the PDF (not the original), so we keep previous stamps
@@ -10374,6 +10531,7 @@
                         // Clean up overlay state after save
                         overlayEditorActive = false;
                         overlayRendered = false;
+                        basePdfUrl = pdfUrl; // Reset to original PDF so savePdf() fetches the right file
                         viewer.classList.remove('overlay-view-mode');
                         viewer.classList.remove('overlay-hidden');
                         cleanupOverlayPdf();
@@ -10420,6 +10578,9 @@
                 if (!confirm('Clear all unsaved changes including text edits?')) {
                     return;
                 }
+                // Clear All should always exit overlay mode.
+                if (modeOverlay) modeOverlay.checked = false;
+                if (modeOverlayToggle) modeOverlayToggle.checked = false;
                 basePdfUrl = pdfUrl;
                 pdfVersion = Date.now();
                 annotations.length = 0;
@@ -10434,6 +10595,7 @@
                 overlayEditorActive = false;
                 viewer.classList.remove('overlay-view-mode');
                 viewer.classList.remove('overlay-hidden');
+                updateOverlayUiState();
                 updateOverlaySaveButton();
                 persistOverlayEdits();
                 
@@ -14848,6 +15010,24 @@
                     }
 
                     overlayExtractionData = data.extraction_data;
+
+                    // Load embedded fonts from PDF if available
+                    if (data.embedded_fonts && typeof data.embedded_fonts === 'object') {
+                        overlayEmbeddedFonts = data.embedded_fonts;
+                        loadEmbeddedFontFaces(overlayEmbeddedFonts);
+                        console.log('Loaded embedded fonts:', Object.keys(overlayEmbeddedFonts));
+                    }
+
+                    if (overlayDebug539HeadingOnly) {
+                        // Debug mode for doc 539: render all pages from DB extraction_data.
+                        overlayExtractionData = (Array.isArray(overlayExtractionData) ? overlayExtractionData : []).map((page) => ({
+                            ...(page || {}),
+                            blocks: Array.isArray(page?.blocks) ? page.blocks : [],
+                            words: Array.isArray(page?.words) ? page.words : [],
+                        }));
+                        overlayEditedFields.clear();
+                        overlayPersistedEdits.clear();
+                    }
                     loadOverlayEdits();
 
                     // Populate font dropdown with fonts from PDF
@@ -14878,8 +15058,18 @@
                                 const rest = cleaned.substring(6);
                                 if (/^[A-Z][a-z]/.test(rest)) cleaned = rest;
                             }
-                            const family = (cleaned.split(/[-_,]/)[0] || cleaned).trim();
+                            const family = (cleaned.split(/[-_,]/)[0] || cleaned)
+                                .replace(/[,\s]+$/g, '')
+                                .trim();
                             if (family && !overlayLoadedFonts.has(family)) {
+                                // Skip Google Fonts loading for fonts we have embedded from the PDF
+                                const hasEmbedded = overlayEmbeddedFonts && Object.values(overlayEmbeddedFonts).some(
+                                    fd => (fd.family || '').toLowerCase() === family.toLowerCase()
+                                );
+                                if (hasEmbedded) {
+                                    overlayLoadedFonts.add(family);
+                                    return;  // Already loaded via @font-face from embedded fonts
+                                }
                                 overlayLoadedFonts.add(family);
                                 const link = document.createElement('link');
                                 link.rel = 'stylesheet';
@@ -14898,7 +15088,11 @@
                     // Re-apply gridlines after overlay render
                     if (typeof renderGridlines === 'function') renderGridlines();
                     
-                    setStatus('Overlay editor active. Edit text positions and content.', 'ok');
+                    if (overlayDebug539HeadingOnly) {
+                        setStatus('Debug mode (doc 539): rendering all pages from DB extraction_data.', 'ok');
+                    } else {
+                        setStatus('Overlay editor active. Edit text positions and content.', 'ok');
+                    }
                     
                     // Google Fonts are loaded asynchronously via <link> tags
                     // added during renderOverlayFields.  The initial render uses
@@ -14917,6 +15111,12 @@
                     const doFontReRender = () => {
                         if (fontReRenderDone) return;
                         if (!overlayEditorActive || fontsLoadedToken !== overlayLoadToken) return;
+                        // If user is mid-resize or mid-drag, defer the re-render
+                        // to avoid destroying the field they're interacting with.
+                        if (overlayInteractionActive) {
+                            setTimeout(doFontReRender, 300);
+                            return;
+                        }
                         fontReRenderDone = true;
                         console.log('Fonts loaded — re-rendering overlay for accurate metrics');
                         renderPdfWithOverlay(true).then(() => {
@@ -15155,12 +15355,42 @@
                 
                 const canvas = document.createElement('canvas');
                 const context = canvas.getContext('2d');
-                canvas.height = viewport.height;
-                canvas.width = viewport.width;
+                const outputScale = window.devicePixelRatio || 1;
+                canvas.width = Math.floor(viewport.width * outputScale);
+                canvas.height = Math.floor(viewport.height * outputScale);
+                canvas.style.width = viewport.width + 'px';
+                canvas.style.height = viewport.height + 'px';
                 canvas.style.display = 'block';
                 
-                // Render PDF page
-                await page.render({ canvasContext: context, viewport }).promise;
+                // Render PDF at device resolution while keeping CSS pixel coordinates
+                // unchanged for overlay positioning.
+                const renderContext = { canvasContext: context, viewport };
+                if (outputScale !== 1) {
+                    renderContext.transform = [outputScale, 0, 0, outputScale, 0, 0];
+                }
+                await page.render(renderContext).promise;
+
+                if (overlayDebug539HeadingOnly) {
+                    wrapper.appendChild(canvas);
+                    // Keep this path read-only and minimal: only use draw loop output.
+                    const pageData = Array.isArray(overlayExtractionData)
+                        ? overlayExtractionData.find((p) => p && p.page_number === pageNumber)
+                        : null;
+                    if (pageData && pageData.words) {
+                        const overlay = document.createElement('div');
+                        overlay.className = 'pdf-overlay overlay';
+                        overlay.style.position = 'absolute';
+                        overlay.style.left = '0';
+                        overlay.style.top = '0';
+                        overlay.style.width = '100%';
+                        overlay.style.height = '100%';
+                        overlay.style.pointerEvents = 'none';
+                        wrapper.appendChild(overlay);
+                        renderOverlayFields(overlay, pageData, viewport, canvas);
+                    }
+                    viewer.appendChild(wrapper);
+                    return;
+                }
                 
                 // Create overlay for interactive text fields
                 const overlay = document.createElement('div');
@@ -15198,7 +15428,7 @@
                 // Define pageInfo before using it in IIFEs
                 const pageInfo = {
                     scale: currentScale,
-                    canvasHeight: canvas.height,
+                    canvasHeight: viewport.height,
                 };
                 
                 // Drag-to-create text box for load-more pages
@@ -15467,8 +15697,10 @@
                     const left = parseInt(drawingShape.element.style.left);
                     const top = parseInt(drawingShape.element.style.top);
 
+                    // Use overlay.clientHeight (CSS pixels) instead of canvas.height
+                    // (which includes devicePixelRatio and would produce wrong coords on HiDPI)
                     const pdfX = left / currentScale;
-                    const pdfY = (canvas.height - top) / currentScale - (height / currentScale);
+                    const pdfY = (overlay.clientHeight - top) / currentScale - (height / currentScale);
                     const pdfWidth = width / currentScale;
                     const pdfHeight = height / currentScale;
 
@@ -15480,6 +15712,7 @@
                     const fillColor = fillTransparent ? 'transparent' : (document.getElementById('shape-fill-color-display')?.dataset.color || shapeFill);
 
                     const annotation = {
+                        id: generateAnnotationId(),
                         type: 'shape',
                         shapeType: shapeType,
                         pageIndex: pageNumber - 1,
@@ -15503,9 +15736,11 @@
                     drawingShape.element.remove();
                     const pageInfo = {
                         scale: currentScale,
-                        canvasHeight: canvas.height,
+                        canvasHeight: overlay.clientHeight,
                     };
                     addAnnotationElement(wrapper, annotation, pageInfo);
+                    // Save to database immediately
+                    saveAnnotationToDatabase(annotation);
                     setSelection(annotation);
                     setStatus('Shape added. Click Save to keep changes.', 'ok');
 
@@ -15571,7 +15806,7 @@
                         }
                     }
 
-                    // Split off style/weight suffixes (e.g., "-Regular", "_700wght")
+                    // Split off style/weight suffixes (e.g., "-Regular", "_700wght", ",Bold")
                     const basePart = cleaned.split(/[-_,]/)[0] || cleaned;
 
                     // Remove weight variant suffixes fused with family name
@@ -15587,6 +15822,10 @@
                         }
                     }
 
+                    // Remove leftover punctuation after suffix stripping
+                    // (e.g. "TahomaUnicode," -> "TahomaUnicode")
+                    family = family.replace(/[,\s]+$/g, '').trim();
+
                     return family;
                 };
 
@@ -15595,8 +15834,24 @@
 
                     const family = normalizePdfFontName(fontName);
 
+                    // If we have embedded fonts from the PDF, use them with highest priority.
+                    // This gives exact visual matching with the original PDF rendering.
+                    if (overlayEmbeddedFonts) {
+                        // Try to find a matching embedded font by checking all entries
+                        for (const [fontKey, fontData] of Object.entries(overlayEmbeddedFonts)) {
+                            const embFamily = fontData.family || fontKey;
+                            if (embFamily.toLowerCase() === family.toLowerCase()) {
+                                const embeddedFamily = `PDF_${embFamily}`;
+                                // Include system fallbacks after the embedded font
+                                return `'${embeddedFamily}', ${_getSystemFallback(family)}`;
+                            }
+                        }
+                    }
+
                     // Common PDF font mappings to system/web fonts
                     const fontMappings = {
+                        'Tahoma': 'Tahoma, Arial, Verdana, sans-serif',
+                        'TahomaUnicode': 'Tahoma, Arial, Verdana, sans-serif',
                         'TimesNewRoman': 'Times New Roman, Times, serif',
                         'Times': 'Times New Roman, Times, serif',
                         'TimesRoman': 'Times New Roman, Times, serif',
@@ -15658,6 +15913,14 @@
 
                     families.forEach((family) => {
                         if (overlayLoadedFonts.has(family)) return;
+                        // Skip Google Fonts for families we have embedded from the PDF
+                        const hasEmbedded = overlayEmbeddedFonts && Object.values(overlayEmbeddedFonts).some(
+                            fd => (fd.family || '').toLowerCase() === family.toLowerCase()
+                        );
+                        if (hasEmbedded) {
+                            overlayLoadedFonts.add(family);
+                            return;
+                        }
                         overlayLoadedFonts.add(family);
                         const link = document.createElement('link');
                         link.rel = 'stylesheet';
@@ -15683,6 +15946,14 @@
                         if (!block.font) return;
                         const family = normalizePdfFontName(block.font);
                         if (family && !overlayLoadedFonts.has(family)) {
+                            // Skip Google Fonts for families we have embedded from the PDF
+                            const hasEmbedded = overlayEmbeddedFonts && Object.values(overlayEmbeddedFonts).some(
+                                fd => (fd.family || '').toLowerCase() === family.toLowerCase()
+                            );
+                            if (hasEmbedded) {
+                                overlayLoadedFonts.add(family);
+                                return;
+                            }
                             overlayLoadedFonts.add(family);
                             const link = document.createElement('link');
                             link.rel = 'stylesheet';
@@ -15705,6 +15976,52 @@
                         }
                     }
                     return fallbackColor || '#000000';
+                };
+                const underlineVisualCache = new Map();
+                const hasVisualUnderlineInWordBBox = (word, scaleX, scaleY) => {
+                    if (!word || !canvas) return false;
+                    const key = [
+                        Math.round((Number(word.left) || 0) * 10),
+                        Math.round((Number(word.top) || 0) * 10),
+                        Math.round((Number(word.width) || 0) * 10),
+                        Math.round((Number(word.height) || 0) * 10),
+                    ].join('|');
+                    if (underlineVisualCache.has(key)) return underlineVisualCache.get(key);
+                    try {
+                        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+                        if (!ctx) {
+                            underlineVisualCache.set(key, false);
+                            return false;
+                        }
+                        const cssW = Math.max(1, viewport.width || canvas.clientWidth || canvas.width);
+                        const cssH = Math.max(1, viewport.height || canvas.clientHeight || canvas.height);
+                        const pxRatioX = canvas.width / cssW;
+                        const pxRatioY = canvas.height / cssH;
+                        const x0 = Math.max(0, Math.floor(((Number(word.left) || 0) * scaleX) * pxRatioX));
+                        const x1 = Math.min(canvas.width - 1, Math.ceil((((Number(word.left) || 0) + (Number(word.width) || 0)) * scaleX) * pxRatioX));
+                        const yTop = (Number(word.top) || 0) + (Math.max(1, Number(word.height) || 1) * 0.6);
+                        const yBottom = (Number(word.top) || 0) + (Math.max(1, Number(word.height) || 1) * 1.05);
+                        const y0 = Math.max(0, Math.floor((yTop * scaleY) * pxRatioY));
+                        const y1 = Math.min(canvas.height - 1, Math.ceil((yBottom * scaleY) * pxRatioY));
+                        const w = Math.max(1, x1 - x0 + 1);
+                        const h = Math.max(1, y1 - y0 + 1);
+                        const img = ctx.getImageData(x0, y0, w, h).data;
+                        let dark = 0;
+                        let total = 0;
+                        for (let i = 0; i < img.length; i += 4) {
+                            const a = img[i + 3];
+                            if (a < 20) continue;
+                            total++;
+                            const r = img[i], g = img[i + 1], b = img[i + 2];
+                            if (r < 180 && g < 180 && b < 180) dark++;
+                        }
+                        const hasLine = total > 0 && (dark / total) >= 0.08;
+                        underlineVisualCache.set(key, hasLine);
+                        return hasLine;
+                    } catch (_e) {
+                        underlineVisualCache.set(key, false);
+                        return false;
+                    }
                 };
 
                 const inferFontWeightFromName = (fontName) => {
@@ -15736,7 +16053,7 @@
                     return null;
                 };
 
-                const computeLetterSpacing = (word, scaleX, scaleY, fontFamily, fontWeight, fontStyle) => {
+                const computeLetterSpacing = (word, scaleX, scaleY, fontFamily, fontWeight, fontStyle, opts = {}) => {
                     const cleanText = sanitizeOverlayText(word?.text || '');
                     if (!word || !cleanText || cleanText.length < 2 || !word.width) {
                         return null;
@@ -15751,7 +16068,16 @@
                     if (!Number.isFinite(spacing)) {
                         return null;
                     }
-                    const clamped = Math.max(-3, Math.min(8, spacing));
+                    // When the web font is significantly wider than the PDF font
+                    // (e.g. condensed → regular fallback), don't try to compress
+                    // the text. Instead let it render at natural width and rely on
+                    // the field width expansion to accommodate it.
+                    if (spacing < -1) {
+                        return null;
+                    }
+                    const minSpacing = Number.isFinite(opts.minSpacing) ? opts.minSpacing : -3;
+                    const maxSpacing = Number.isFinite(opts.maxSpacing) ? opts.maxSpacing : 8;
+                    const clamped = Math.max(minSpacing, Math.min(maxSpacing, spacing));
                     return clamped;
                 };
 
@@ -15764,9 +16090,315 @@
                         .replace(/[\uE000-\uF8FF]/g, '')
                         .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
                 };
+                const getOverlayWordDisplayText = (word) => {
+                    const sourceText = sanitizeOverlayText(word?.text || '');
+                    const renderedText = sanitizeOverlayText(
+                        (word && word.render_text !== undefined && word.render_text !== null)
+                            ? word.render_text
+                            : sourceText
+                    );
+                    const hasDrawnUnderline = !!(word && (word.has_drawn_underline || word.suppress_drawn_underline));
+                    const sourceUnderscoreRuns = (sourceText.match(/_{3,}/g) || []).length;
+                    const sourceAlphaTokens = sourceText.replace(/_{3,}/g, ' ')
+                        .split(/\s+/)
+                        .filter((tok) => /[A-Za-z]/.test(tok))
+                        .length;
+                    const isOptionStyleUnderscoreLine = sourceUnderscoreRuns >= 2 && sourceAlphaTokens >= 3;
+                    const isLabelUnderlineToken = sourceUnderscoreRuns >= 1 && sourceText.includes(':') && sourceAlphaTokens >= 2;
+                    if (isLabelUnderlineToken && !isOptionStyleUnderscoreLine) {
+                        // Preserve textual underscores for fill-in label rows
+                        // (e.g. "Number of children ...: _____") so the line remains visible.
+                        return sourceText;
+                    }
+                    if (
+                        sourceText !== renderedText &&
+                        isOptionStyleUnderscoreLine
+                    ) {
+                        if (hasDrawnUnderline) {
+                            // A drawn underline already exists on the clean PDF: suppress
+                            // duplicate underscore glyphs but preserve horizontal spacing.
+                            return sourceText
+                                .replace(/_{3,}/g, (m) => ' '.repeat(m.length))
+                                .replace(/[ \t]+$/g, '');
+                        }
+                        // No drawn line anchor: keep textual underscores.
+                        return sourceText;
+                    }
+                    // Fallback scrub: if extraction doesn't provide render_text but the
+                    // token is mixed text + underscore placeholders, suppress underscore
+                    // runs client-side to avoid duplicate underlines over drawn lines.
+                    if (
+                        renderedText === sourceText &&
+                        sourceText.includes('_') &&
+                        /[A-Za-z0-9]/.test(sourceText) &&
+                        /_{3,}/.test(sourceText) &&
+                        isOptionStyleUnderscoreLine &&
+                        hasDrawnUnderline
+                    ) {
+                        return sourceText
+                            // Keep horizontal alignment: replace underline glyph runs
+                            // with same-length spaces instead of collapsing the line.
+                            .replace(/_{3,}/g, (m) => ' '.repeat(m.length))
+                            .replace(/[ \t]+$/g, '');
+                    }
+                    return renderedText;
+                };
+                const isIgnorableOverlayToken = (text) => {
+                    const t = sanitizeOverlayText(String(text || ''));
+                    const compact = t.replace(/\s+/g, '');
+                    if (!compact) return true;
+                    // Ignore pure symbol/tofu/checkbox-like tokens that frequently
+                    // appear as empty ghost boxes in overlay mode.
+                    if (/^[\u25A0-\u25FF\u2610-\u2612\u274F\u2750\uFFFD]+$/u.test(compact)) return true;
+                    // Ignore tiny punctuation-only fragments.
+                    if (compact.length <= 2 && !/[A-Za-z0-9_]/.test(compact)) return true;
+                    return false;
+                };
+                const hasMeaningfulOverlayText = (text) => {
+                    const t = sanitizeOverlayText(String(text || ''));
+                    const compact = t.replace(/\s+/g, '');
+                    if (!compact) return false;
+                    if (/[A-Za-z0-9]/.test(compact)) return true;
+                    if (compact.includes('_')) return true;
+                    return !isIgnorableOverlayToken(compact);
+                };
+                const normalizeStableFlowText = (value) => {
+                    const lines = sanitizeOverlayText(String(value || ''))
+                        .split('\n')
+                        .map((l) => l.replace(/[ \t]+$/g, ''));
+                    const out = [];
+                    lines.forEach((line) => {
+                        if (!line && out.length && !out[out.length - 1]) return;
+                        if (out.length && out[out.length - 1] === line) return;
+                        out.push(line);
+                    });
+                    return out.join('\n').replace(/\n+$/g, '');
+                };
+                const normalizeUnderscoreAnchors = (value) => {
+                    return sanitizeOverlayText(String(value || '')).replace(/_{2,}/g, '___');
+                };
+                const collapseLabelValueLines = (value) => {
+                    const text = normalizeStableFlowText(value || '');
+                    const lines = text.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+                    if (lines.length !== 2) return text;
+                    const tryCollapse = (labelLine, valueLine) => {
+                        const labelOnly = labelLine.replace(/\s*_{3,}.*/g, '').replace(/[ \t]+$/g, '');
+                        const valueOnly = valueLine.replace(/\s*_{3,}.*/g, '').trim();
+                        if (!labelOnly || !valueOnly) return null;
+                        if (!labelOnly.includes(':')) return null;
+                        if (valueOnly.includes(':')) return null;
+                        if (/_{3,}/.test(valueOnly)) return null;
+                        // Do not collapse option-row style lines; they must remain on
+                        // their own line to preserve form layout.
+                        const hasLargeInternalGaps = / {3,}/.test(valueLine);
+                        const underscoreRunCount = (valueLine.match(/_{3,}/g) || []).length;
+                        const alphaTokenCount = valueOnly.split(/\s+/).filter((tok) => /[A-Za-z]/.test(tok)).length;
+                        const looksLikeOptionRow = (underscoreRunCount >= 2) || (hasLargeInternalGaps && alphaTokenCount >= 3);
+                        if (looksLikeOptionRow) return null;
+                        const words = valueOnly.split(/\s+/).filter(Boolean);
+                        if (words.length > 10 || valueOnly.length > 100) return null;
+                        return normalizeStableFlowText(`${labelOnly} ${valueOnly}`.trim());
+                    };
 
-                const buildStyledWordSpans = (container, words, scaleX, scaleY, blockLeft, blockTop) => {
+                    // Case 1: Label with underscores + value on other line.
+                    const uIdx = lines.findIndex((t) => /_{3,}/.test(t));
+                    const vIdx = uIdx === 0 ? 1 : (uIdx === 1 ? 0 : -1);
+                    if (uIdx >= 0 && vIdx >= 0) {
+                        const collapsed = tryCollapse(lines[uIdx], lines[vIdx]);
+                        if (collapsed) return collapsed;
+                    }
+
+                    // Case 2: Underscores already suppressed, now "Label:" + "Value".
+                    const labelIdx = lines.findIndex((t) => /:\s*$/.test(t) || (t.includes(':') && t.length <= 90));
+                    const valueIdx = labelIdx === 0 ? 1 : (labelIdx === 1 ? 0 : -1);
+                    if (labelIdx >= 0 && valueIdx >= 0) {
+                        const collapsed = tryCollapse(lines[labelIdx], lines[valueIdx]);
+                        if (collapsed) return collapsed;
+                    }
+                    return text;
+                };
+                const isLabelUnderlineValueBlock = (block, words, blockText) => {
+                    const text = sanitizeOverlayText(blockText || '');
+                    const textLines = Array.isArray(block?.text_lines)
+                        ? block.text_lines.map((l) => sanitizeOverlayText(l)).filter((l) => l.length > 0)
+                        : text.split('\n').map((l) => sanitizeOverlayText(l)).filter((l) => l.length > 0);
+                    if (textLines.length !== 2) return false;
+                    const normalizedLines = textLines.map((l) => normalizeUnderscoreAnchors(l));
+                    const allText = textLines.join(' ');
+                    const optionLikeLine = normalizedLines.some((line) => {
+                        const runCount = (line.match(/_{3,}/g) || []).length;
+                        const tokenCount = line.replace(/_{3,}/g, ' ')
+                            .split(/\s+/)
+                            .filter((tok) => /[A-Za-z]/.test(tok))
+                            .length;
+                        return runCount >= 2 && tokenCount >= 2;
+                    });
+                    const isChoiceRow = optionLikeLine;
+                    if (isChoiceRow) return false;
+                    const hasLabelLine = textLines.some((l) => l.includes(':'));
+                    const hasUnderlineLine = textLines.some((l) => /_{3,}/.test(l));
+                    if (!hasLabelLine || !hasUnderlineLine) return false;
+                    const hasValueWord = Array.isArray(words) && words.some((w) => {
+                        const t = sanitizeOverlayText((w.render_text !== undefined && w.render_text !== null) ? w.render_text : w.text);
+                        const src = sanitizeOverlayText(w.text || '');
+                        return t.length > 0 && !/_{3,}/.test(src) && !t.includes(':');
+                    });
+                    return hasValueWord;
+                };
+                const isOptionChoiceBlock = (block, words, blockText) => {
+                    const text = normalizeUnderscoreAnchors(blockText || '');
+                    const underscoreRuns = (text.match(/_{3,}/g) || []).length;
+                    const alphaTokenCount = text.replace(/_{3,}/g, ' ')
+                        .split(/\s+/)
+                        .filter((tok) => /[A-Za-z]/.test(tok))
+                        .length;
+                    const hasUnderscore = text.includes('_');
+                    const hasMarkerWord = Array.isArray(words) && words.some((w) => {
+                        const t = sanitizeOverlayText(String(w.text || '')).trim();
+                        return t === 'X' || t === 'x';
+                    });
+                    return hasUnderscore && underscoreRuns >= 2 && alphaTokenCount >= 3 && hasMarkerWord;
+                };
+                const buildStableFlowTextFromWords = (block, words) => {
+                    if (!Array.isArray(words) || words.length === 0) return '';
+                    const lineBBoxes = Array.isArray(block?.line_bboxes) ? block.line_bboxes : [];
+                    if (lineBBoxes.length > 1) {
+                        const rows = lineBBoxes.map(() => []);
+                        const overlapAmount = (aTop, aBottom, bTop, bBottom) =>
+                            Math.max(0, Math.min(aBottom, bBottom) - Math.max(aTop, bTop));
+                        words.forEach((w) => {
+                            const wTop = Number(w.top) || 0;
+                            const wBottom = wTop + (Number(w.height) || 0);
+                            let bestIdx = -1;
+                            let bestScore = 0;
+                            lineBBoxes.forEach((lb, idx) => {
+                                const lTop = Number(lb?.[1]) || 0;
+                                const lBottom = Number(lb?.[3]) || lTop;
+                                const inter = overlapAmount(wTop, wBottom, lTop, lBottom);
+                                const minH = Math.max(1, Math.min(wBottom - wTop, lBottom - lTop));
+                                const score = inter / minH;
+                                if (score > bestScore) {
+                                    bestScore = score;
+                                    bestIdx = idx;
+                                }
+                            });
+                            if (bestIdx >= 0 && bestScore > 0.1) {
+                                rows[bestIdx].push(w);
+                            }
+                        });
+                        const lineTexts = rows
+                            .map((lineWords) => lineWords
+                                .slice()
+                                .sort((a, b) => (Number(a.left) || 0) - (Number(b.left) || 0))
+                                .map((w) => getOverlayWordDisplayText(w))
+                                .filter((t) => t.length > 0)
+                                .join(' ')
+                                .trimEnd()
+                            )
+                            .filter((line) => line.length > 0);
+                        // Heuristic: some filled form rows are extracted as:
+                        // line 1 => value text, line 2 => "Label: _________"
+                        // For editing flow, fold into one stable line "Label: value".
+                        if (lineTexts.length === 2) {
+                            const uIdx = lineTexts.findIndex((t) => /_{3,}/.test(t));
+                            const vIdx = uIdx === 0 ? 1 : (uIdx === 1 ? 0 : -1);
+                            if (uIdx >= 0 && vIdx >= 0) {
+                                const labelLine = lineTexts[uIdx];
+                                const valueLine = lineTexts[vIdx];
+                                const looksLikeLabel = labelLine.includes(':');
+                                const looksLikeValue = !/_{3,}/.test(valueLine) && valueLine.length > 0 && valueLine.length < 120;
+                                if (looksLikeLabel && looksLikeValue) {
+                                    const labelOnly = labelLine.replace(/\s*_{3,}.*/g, '').replace(/[ \t]+$/g, '');
+                                    return normalizeStableFlowText(`${labelOnly} ${valueLine}`.trim());
+                                }
+                            }
+                        }
+                        if (lineTexts.length > 0) {
+                            return collapseLabelValueLines(lineTexts.join('\n'));
+                        }
+                    }
+                    const lineNums = new Set(
+                        words
+                            .map((w) => w.line_num)
+                            .filter((ln) => Number.isFinite(Number(ln)))
+                    );
+
+                    let groupedLines = [];
+                    if (lineNums.size > 1) {
+                        const byLine = new Map();
+                        words.forEach((w) => {
+                            const ln = w.line_num ?? 0;
+                            if (!byLine.has(ln)) byLine.set(ln, []);
+                            byLine.get(ln).push(w);
+                        });
+                        groupedLines = Array.from(byLine.keys())
+                            .sort((a, b) => a - b)
+                            .map((ln) => byLine.get(ln));
+                    } else {
+                        // Fallback for synthetic/merged blocks where line_num is flattened.
+                        // Group by vertical position so each visual row stays separate.
+                        const sorted = words.slice().sort((a, b) =>
+                            ((Number(a.top) || 0) - (Number(b.top) || 0)) ||
+                            ((Number(a.left) || 0) - (Number(b.left) || 0))
+                        );
+                        const clusters = [];
+                        sorted.forEach((w) => {
+                            const wTop = Number(w.top) || 0;
+                            const wHeight = Math.max(1, Number(w.height) || 10);
+                            const tol = Math.max(2, Math.min(8, wHeight * 0.6));
+                            let cluster = clusters.find((c) => Math.abs(c.top - wTop) <= tol);
+                            if (!cluster) {
+                                cluster = { top: wTop, words: [] };
+                                clusters.push(cluster);
+                            }
+                            cluster.words.push(w);
+                            cluster.top = (cluster.top * (cluster.words.length - 1) + wTop) / cluster.words.length;
+                        });
+                        groupedLines = clusters
+                            .sort((a, b) => a.top - b.top)
+                            .map((c) => c.words);
+                    }
+
+                    const lines = groupedLines
+                        .map((lineWords) => {
+                            return lineWords
+                                .slice()
+                                .sort((a, b) => (Number(a.left) || 0) - (Number(b.left) || 0))
+                                .map((w) => getOverlayWordDisplayText(w))
+                                .filter((t) => t.length > 0)
+                                .join(' ')
+                                .trimEnd();
+                        })
+                        .filter((line) => line.length > 0);
+                    return collapseLabelValueLines(lines.join('\n'));
+                };
+                const shouldUseFlowRenderForBlock = (block, words, blockText) => {
+                    const text = sanitizeOverlayText(blockText || '');
+                    if (isOptionChoiceBlock(block, words, text)) {
+                        // Keep checkbox/radio rows in absolute-word mode so marker X
+                        // and option labels stay exactly where extracted.
+                        return false;
+                    }
+                    if (isLabelUnderlineValueBlock(block, words, text)) {
+                        // These fields need absolute placement over printed lines.
+                        return false;
+                    }
+                    const hasUnderscore = text.includes('_') ||
+                        (Array.isArray(words) && words.some((w) => sanitizeOverlayText(w.text || '').includes('_')));
+                    if (!hasUnderscore) return false;
+                    // Form-like lines with long underscore runs are unstable when rendered
+                    // as absolutely-positioned spans (huge reconstructed gaps on edit).
+                    return /_{6,}/.test(text) || !!(block && (block._client_form_merge || block._client_539_row_merge));
+                };
+
+                const buildStyledWordSpans = (container, words, scaleX, scaleY, blockLeft, blockTop, sourceBlock, sourceBlockText) => {
                     container.style.position = 'relative';
+                    const parentBlockText = sanitizeOverlayText(sourceBlockText || '');
+                    const alignToUnderlineRow = isLabelUnderlineValueBlock(sourceBlock || {}, words, parentBlockText);
+                    let underlineTop = null;
+                    let underlineLeft = null;
+                    let underlineRight = null;
+                    const valueShiftByLine = new Map();
 
                     // ── Word-level deduplication ──────────────────────────────
                     // Extraction can produce duplicate/overlapping word entries
@@ -15811,11 +16443,160 @@
                     });
 
                     const sortedLineKeys = Array.from(lines.keys()).sort((a, b) => a - b);
+                    if (alignToUnderlineRow) {
+                        // Derive underline anchor from actual underscore glyph run.
+                        // If underscores are embedded in a mixed token like
+                        // "Label: ________", use measured prefix/run widths so
+                        // value text can center over the underline region only.
+                        sortedLineKeys.forEach((lineKey) => {
+                            const lineWords = (lines.get(lineKey) || []).slice().sort((a, b) => (a.left || 0) - (b.left || 0));
+                            lineWords.forEach((w) => {
+                                const src = sanitizeOverlayText(w.text || '');
+                                if (!/_{3,}/.test(src)) return;
+
+                                let candLeft = Number(w.left) || 0;
+                                let candRight = candLeft + (Number(w.width) || 0);
+                                const candTop = Number(w.top) || 0;
+
+                                if (!/^_+$/.test(src)) {
+                                    const firstUs = src.indexOf('_');
+                                    const lastUs = src.lastIndexOf('_');
+                                    if (firstUs >= 0 && lastUs >= firstUs) {
+                                        const prefix = src.slice(0, firstUs);
+                                        const run = src.slice(firstUs, lastUs + 1);
+                                        const wFamily = getCssFontFamily(w.font);
+                                        let wWeight;
+                                        if (w.font_weight) wWeight = String(w.font_weight);
+                                        else if (w.bold) wWeight = '700';
+                                        else wWeight = '400';
+                                        const wStyle = w.italic ? 'italic' : 'normal';
+                                        const wSizePx = (Number(w.font_size) || 10) * scaleY;
+                                        const totalPx = Math.max(1, measureTextWidth(src, wSizePx, wFamily, wWeight, wStyle));
+                                        const prePx = Math.max(0, measureTextWidth(prefix, wSizePx, wFamily, wWeight, wStyle));
+                                        const runPx = Math.max(0, measureTextWidth(run, wSizePx, wFamily, wWeight, wStyle));
+                                        const pdfW = Math.max(1, Number(w.width) || 1);
+                                        candLeft = (Number(w.left) || 0) + ((prePx / totalPx) * pdfW);
+                                        candRight = candLeft + ((runPx / totalPx) * pdfW);
+                                    }
+                                }
+
+                                underlineTop = (underlineTop === null) ? candTop : Math.min(underlineTop, candTop);
+                                underlineLeft = (underlineLeft === null) ? candLeft : Math.min(underlineLeft, candLeft);
+                                underlineRight = (underlineRight === null) ? candRight : Math.max(underlineRight, candRight);
+                            });
+                        });
+                    }
+                    // Coordinate-based mapping for label+underline+value rows:
+                    // use underscore bbox as anchor and center the value group within it.
+                    if (alignToUnderlineRow && underlineTop !== null && underlineLeft !== null && underlineRight !== null) {
+                        sortedLineKeys.forEach((lineKey) => {
+                            const lineWords = lines.get(lineKey) || [];
+                            const hasUnderline = lineWords.some((w) => /_{3,}/.test(sanitizeOverlayText(w.text || '')));
+                            if (hasUnderline) return;
+                            const valueWords = lineWords.filter((w) => {
+                                const src = sanitizeOverlayText(w.text || '');
+                                return src && !src.includes(':') && !/_{3,}/.test(src);
+                            });
+                            if (!valueWords.length) return;
+                            const vMinL = Math.min(...valueWords.map((w) => Number(w.left) || 0));
+                            const vMaxR = Math.max(...valueWords.map((w) => (Number(w.left) || 0) + (Number(w.width) || 0)));
+                            const valueCenter = (vMinL + vMaxR) / 2;
+                            const underlineCenter = (underlineLeft + underlineRight) / 2;
+                            const shift = underlineCenter - valueCenter;
+                            valueShiftByLine.set(String(lineKey), shift);
+                        });
+                    }
+
+                    // Only strip template underscores for option-choice rows where
+                    // duplicate lines are common. For normal label/value fields
+                    // (e.g. "... marriage: ____" + "2"), keep underscores visible.
+                    const shouldStripTemplateUnderscores = isOptionChoiceBlock(
+                        sourceBlock || {},
+                        dedupedWords,
+                        parentBlockText
+                    );
+                    const renderAnchoredUnderscoreSegments = (word, wordFontFamily, wordWeight, wordStyle, lineKey) => {
+                        const sourceText = sanitizeOverlayText(word.text || '');
+                        if (!/_{3,}/.test(sourceText)) return false;
+                        const chunks = sourceText.split(/(_{3,})/);
+                        if (chunks.length < 2) return false;
+                        const fontSizePx = (Number(word.font_size) || 10) * scaleY;
+                        const measuredTotal = Math.max(1, measureTextWidth(sourceText, fontSizePx, wordFontFamily, wordWeight, wordStyle));
+                        const targetPx = Math.max(1, (Number(word.width) || 1) * scaleX);
+                        const widthScale = targetPx / measuredTotal;
+                        let cursorPx = 0;
+                        let renderedAny = false;
+
+                        chunks.forEach((chunk) => {
+                            const chunkPx = measureTextWidth(chunk, fontSizePx, wordFontFamily, wordWeight, wordStyle) * widthScale;
+                            const isUnderlineRun = /^_{3,}$/.test(chunk);
+                            if (!isUnderlineRun && chunk.length > 0) {
+                                const seg = document.createElement('span');
+                                seg.textContent = chunk;
+                                seg.style.fontFamily = wordFontFamily;
+                                seg.style.fontSize = fontSizePx + 'px';
+                                seg.style.fontWeight = wordWeight;
+                                seg.style.fontStyle = wordStyle;
+                                seg.style.color = getWordColor(word, '#000000');
+                                seg.style.position = 'absolute';
+                                let renderLeft = (Number(word.left) || 0) + (cursorPx / Math.max(1e-6, scaleX));
+                                let renderTop = Number(word.top) || 0;
+                                if (alignToUnderlineRow && underlineTop !== null) {
+                                    const src = sanitizeOverlayText(word.text || '');
+                                    const isUnderlineWord = /_{3,}/.test(src);
+                                    const isLabelWord = src.includes(':');
+                                    if (!isUnderlineWord && !isLabelWord) {
+                                        renderTop = underlineTop;
+                                        const lineShift = valueShiftByLine.get(String(lineKey));
+                                        if (Number.isFinite(lineShift)) renderLeft = renderLeft + lineShift;
+                                    }
+                                }
+                                seg.style.left = ((renderLeft - blockLeft) * scaleX) + 'px';
+                                seg.style.top = ((renderTop - blockTop) * scaleY) + 'px';
+                                seg.dataset.lineNum = String(word.line_num ?? 0);
+                                seg.dataset.originY = String(
+                                    (word.origin_y !== undefined && word.origin_y !== null)
+                                        ? word.origin_y
+                                        : ((word.top || 0) + (word.height || 0))
+                                );
+                                seg.style.whiteSpace = 'pre';
+                                container.appendChild(seg);
+                                renderedAny = true;
+                            }
+                            cursorPx += chunkPx;
+                        });
+
+                        return renderedAny;
+                    };
+
                     sortedLineKeys.forEach((lineKey) => {
-                        const lineWords = lines.get(lineKey).sort((a, b) => a.left - b.left);
+                        const lineWords = lines.get(lineKey)
+                            .sort((a, b) => a.left - b.left)
+                            .map((w) => {
+                                let displayText = getOverlayWordDisplayText(w);
+                                const srcText = sanitizeOverlayText(w.text || '');
+                                if (/_{3,}/.test(srcText)) {
+                                    const hasFlag = !!(w.has_drawn_underline || w.suppress_drawn_underline);
+                                    const hasVisual = hasVisualUnderlineInWordBBox(w, scaleX, scaleY);
+                                    if (hasFlag || hasVisual) {
+                                        displayText = displayText
+                                            .replace(/_{3,}/g, (m) => ' '.repeat(m.length))
+                                            .replace(/[ \t]+$/g, '');
+                                    }
+                                }
+                                // If a fill value exists in this block, strip underscores
+                                // from template words (they are just form placeholders).
+                                // Keep underscores only when no value is present.
+                                if (shouldStripTemplateUnderscores && /_{3,}/.test(sanitizeOverlayText(w.text || ''))) {
+                                    displayText = displayText
+                                        .replace(/_{3,}/g, (m) => ' '.repeat(m.length))
+                                        .replace(/[ \t]+$/g, '');
+                                }
+                                return { ...w, _displayText: displayText };
+                            })
+                            .filter((w) => w._displayText.length > 0);
+                        if (!lineWords.length) return;
                         lineWords.forEach((word, wordIndex) => {
-                            const wordSpan = document.createElement('span');
-                            wordSpan.textContent = sanitizeOverlayText(word.text);
                             const wordFontFamily = getCssFontFamily(word.font);
                             
                             // Use explicit font_weight from extraction if available, otherwise infer
@@ -15834,18 +16615,78 @@
                             }
                             
                             const wordStyle = word.italic ? 'italic' : 'normal';
+                            const sourceText = sanitizeOverlayText(word.text || '');
+                            const displayText = sanitizeOverlayText(word._displayText || '');
+                            const shouldRenderAnchoredSegments =
+                                /_{3,}/.test(sourceText) &&
+                                displayText.length > 0 &&
+                                !displayText.includes('_') &&
+                                displayText !== sourceText;
+                            if (shouldRenderAnchoredSegments) {
+                                const rendered = renderAnchoredUnderscoreSegments(
+                                    word, wordFontFamily, wordWeight, wordStyle, lineKey
+                                );
+                                if (rendered) {
+                                    return;
+                                }
+                            }
+
+                            const wordSpan = document.createElement('span');
+                            wordSpan.textContent = word._displayText;
                             wordSpan.style.fontFamily = wordFontFamily;
                             wordSpan.style.fontSize = (word.font_size * scaleY) + 'px';
                             wordSpan.style.fontWeight = wordWeight;
                             wordSpan.style.fontStyle = wordStyle;
                             wordSpan.style.color = getWordColor(word, '#000000');
                             wordSpan.style.position = 'absolute';
-                            wordSpan.style.left = ((word.left - blockLeft) * scaleX) + 'px';
-                            wordSpan.style.top = ((word.top - blockTop) * scaleY) + 'px';
+                            let renderLeft = Number(word.left) || 0;
+                            let renderTop = Number(word.top) || 0;
+                            if (alignToUnderlineRow && underlineTop !== null) {
+                                const src = sanitizeOverlayText(word.text || '');
+                                const isUnderlineWord = /_{3,}/.test(src);
+                                const isLabelWord = src.includes(':');
+                                if (!isUnderlineWord && !isLabelWord) {
+                                    // Place filled values onto the underline row.
+                                    renderTop = underlineTop;
+                                    const lineShift = valueShiftByLine.get(String(lineKey));
+                                    if (Number.isFinite(lineShift)) {
+                                        renderLeft = renderLeft + lineShift;
+                                    }
+                                }
+                            }
+                            wordSpan.style.left = ((renderLeft - blockLeft) * scaleX) + 'px';
+                            wordSpan.style.top = ((renderTop - blockTop) * scaleY) + 'px';
+                            wordSpan.dataset.lineNum = String(word.line_num ?? 0);
+                            wordSpan.dataset.originY = String(
+                                (word.origin_y !== undefined && word.origin_y !== null)
+                                    ? word.origin_y
+                                    : ((word.top || 0) + (word.height || 0))
+                            );
                             wordSpan.style.whiteSpace = 'pre';
-                            const spacing = computeLetterSpacing(word, scaleX, scaleY, wordFontFamily, wordWeight, wordStyle);
-                            if (spacing !== null) {
-                                wordSpan.style.letterSpacing = spacing + 'px';
+                            // Do not apply width-fit letter spacing when render_text differs
+                            // from source text (e.g. underscore suppression over drawn lines).
+                            // Using original extraction width in that case causes extreme
+                            // character spreading like "A d d r e s s :".
+                            const sourceUnderscoreRuns = (sourceText.match(/_{3,}/g) || []).length;
+                            const sourceAlphaTokens = sourceText.replace(/_{3,}/g, ' ')
+                                .split(/\s+/)
+                                .filter((tok) => /[A-Za-z]/.test(tok))
+                                .length;
+                            const isOptionChoiceToken = sourceUnderscoreRuns >= 2 && sourceAlphaTokens >= 3;
+                            const isUnderscoreAnchorToken = sourceUnderscoreRuns >= 1 &&
+                                !/_{3,}/.test(displayText) &&
+                                /\s/.test(displayText);
+                            const canFitSpacing = displayText && sourceText &&
+                                ((displayText === sourceText) || isOptionChoiceToken);
+                            if (canFitSpacing) {
+                                const spacing = computeLetterSpacing(
+                                    { ...word, text: displayText },
+                                    scaleX, scaleY, wordFontFamily, wordWeight, wordStyle,
+                                    isUnderscoreAnchorToken ? { maxSpacing: 24 } : undefined
+                                );
+                                if (spacing !== null) {
+                                    wordSpan.style.letterSpacing = spacing + 'px';
+                                }
                             }
                             container.appendChild(wordSpan);
                             if (wordIndex < lineWords.length - 1) {
@@ -15862,6 +16703,152 @@
                             }
                         });
                     });
+                };
+
+                // Convert absolutely-positioned word spans back to flowing text while
+                // preserving meaningful horizontal gaps (e.g. "1.      Information...").
+                const positionedSpansToFlowText = (container) => {
+                    const allSpans = Array.from(container.querySelectorAll('span'))
+                        .filter((s) => s.style.position === 'absolute');
+                    if (!allSpans.length) return '';
+
+                    const contentSpans = allSpans.filter((s) => {
+                        const text = s.textContent || '';
+                        return !(text === ' ' && !text.trim());
+                    });
+                    const declaredLineNums = new Set(
+                        contentSpans
+                            .map((s) => s.dataset.lineNum)
+                            .filter((v) => v !== undefined && v !== null && v !== '')
+                    );
+
+                    // If extraction declared a single logical line, keep it as one line
+                    // during edit normalization to avoid artificial line flips.
+                    if (declaredLineNums.size === 1) {
+                        const lineSpans = contentSpans.sort((a, b) =>
+                            (parseFloat(a.style.left) || 0) - (parseFloat(b.style.left) || 0)
+                        );
+                        let out = '';
+                        let prevRight = null;
+                        lineSpans.forEach((s) => {
+                            const txt = s.textContent || '';
+                            const left = parseFloat(s.style.left) || 0;
+                            const width = s.getBoundingClientRect().width || 0;
+                            if (prevRight !== null) {
+                                const gapPx = left - prevRight;
+                                if (gapPx > 0.5) {
+                                    const fontSizePx = parseFloat(s.style.fontSize)
+                                        || parseFloat(window.getComputedStyle(container).fontSize)
+                                        || 12;
+                                    const approxSpacePx = Math.max(2, fontSizePx * 0.33);
+                                    const spaces = Math.max(1, Math.min(24, Math.round(gapPx / approxSpacePx)));
+                                    out += ' '.repeat(spaces);
+                                }
+                            }
+                            out += txt;
+                            prevRight = left + width;
+                        });
+                        return out.replace(/[ \t]+$/g, '');
+                    }
+
+                    const lineTolPx = 2.5;
+                    const lines = [];
+                    const candidates = contentSpans
+                        .map((s) => {
+                            const left = parseFloat(s.style.left) || 0;
+                            const top = parseFloat(s.style.top) || 0;
+                            const baseline = Number.isFinite(parseFloat(s.dataset.originY))
+                                ? parseFloat(s.dataset.originY)
+                                : top;
+                            return { s, left, baseline };
+                        })
+                        .sort((a, b) => (a.baseline - b.baseline) || (a.left - b.left));
+
+                    candidates.forEach((item) => {
+                        let line = lines.find((ln) => Math.abs(ln.baseline - item.baseline) <= lineTolPx);
+                        if (!line) {
+                            line = { baseline: item.baseline, items: [] };
+                            lines.push(line);
+                        }
+                        line.items.push(item);
+                        line.baseline = (line.baseline * (line.items.length - 1) + item.baseline) / line.items.length;
+                    });
+
+                    lines.sort((a, b) => a.baseline - b.baseline);
+                    const outLines = lines.map((line) => {
+                        const lineSpans = line.items
+                            .sort((a, b) => a.left - b.left)
+                            .map((it) => it.s);
+
+                        let out = '';
+                        let prevRight = null;
+                        lineSpans.forEach((s) => {
+                            const txt = s.textContent || '';
+                            const left = parseFloat(s.style.left) || 0;
+                            const width = s.getBoundingClientRect().width || 0;
+
+                            if (prevRight !== null) {
+                                const gapPx = left - prevRight;
+                                if (gapPx > 0.5) {
+                                    const fontSizePx = parseFloat(s.style.fontSize)
+                                        || parseFloat(window.getComputedStyle(container).fontSize)
+                                        || 12;
+                                    const approxSpacePx = Math.max(2, fontSizePx * 0.33);
+                                    const spaces = Math.max(1, Math.min(24, Math.round(gapPx / approxSpacePx)));
+                                    out += ' '.repeat(spaces);
+                                }
+                            }
+
+                            out += txt;
+                            prevRight = left + width;
+                        });
+
+                        return out.replace(/[ \t]+$/g, '');
+                    });
+
+                    return outLines.join('\n').replace(/\n+$/g, '');
+                };
+
+                const normalizePositionedSpansForEditing = (field, textSpan) => {
+                    if (!field || !textSpan) return;
+                    if (field.dataset.flowNormalized === '1') return;
+                    const preserveUnderscores = field.dataset.preserveUnderscores === '1';
+                    if (preserveUnderscores) {
+                        // Keep absolute word-span layout for underscore form fields.
+                        // Converting to plain flowing text causes value drift to the right.
+                        field.dataset.flowNormalized = '1';
+                        return;
+                    }
+                    const stableFlowText = preserveUnderscores
+                        ? normalizeStableFlowText(field.dataset.stableFlowText || '')
+                        : collapseLabelValueLines(field.dataset.stableFlowText || '');
+                    const lockFormLayout = field.dataset.lockFormLayout === '1';
+                    const hasPositionedSpans = textSpan.querySelector('span') &&
+                        Array.from(textSpan.querySelectorAll('span')).some(s => s.style.position === 'absolute');
+                    if (stableFlowText.length > 0 && lockFormLayout) {
+                        // Force deterministic edit text for form rows (Name/Address/etc),
+                        // even when content already became plain text from prior edits.
+                        textSpan.textContent = stableFlowText;
+                        textSpan.style.whiteSpace = 'pre';
+                        textSpan.style.wordBreak = 'normal';
+                        textSpan.style.overflow = 'hidden';
+                        field.dataset.flowNormalized = '1';
+                        return;
+                    }
+                    if (!hasPositionedSpans) {
+                        field.dataset.flowNormalized = '1';
+                        return;
+                    }
+                    const plainText = stableFlowText.length > 0
+                        ? stableFlowText
+                        : positionedSpansToFlowText(textSpan);
+                    textSpan.textContent = plainText;
+                    // Keep layout locked while editing: preserve explicit spacing/newlines
+                    // and prevent automatic reflow from moving tokens across lines.
+                    textSpan.style.whiteSpace = 'pre';
+                    textSpan.style.wordBreak = 'normal';
+                    textSpan.style.overflow = 'hidden';
+                    field.dataset.flowNormalized = '1';
                 };
 
                 // buildBlockRichHtml is defined in the outer scope so
@@ -15901,10 +16888,33 @@
                         console.warn('No block data available for block mode');
                         return;
                     }
-                    const effectiveWidth = canvas.width || 1;
-                    const effectiveHeight = canvas.height || 1;
+                    // Use CSS pixel dimensions for overlay coordinate math.
+                    // Canvas backing size may be DPR-scaled.
+                    const effectiveWidth = viewport.width || overlay.clientWidth || 1;
+                    const effectiveHeight = viewport.height || overlay.clientHeight || 1;
                     const scaleX = pageData.width ? effectiveWidth / pageData.width : 1;
                     const scaleY = pageData.height ? effectiveHeight / pageData.height : 1;
+                    const overlayWidthPx = Math.max(1, overlay.clientWidth || effectiveWidth);
+                    const overlayHeightPx = Math.max(1, overlay.clientHeight || effectiveHeight);
+                    const clampRectToOverlay = (left, top, width, height) => {
+                        let l = Number.isFinite(left) ? left : 0;
+                        let t = Number.isFinite(top) ? top : 0;
+                        let w = Number.isFinite(width) ? width : 1;
+                        let h = Number.isFinite(height) ? height : 1;
+
+                        w = Math.max(1, Math.min(w, overlayWidthPx));
+                        h = Math.max(1, Math.min(h, overlayHeightPx));
+                        l = Math.max(0, Math.min(l, overlayWidthPx - w));
+                        t = Math.max(0, Math.min(t, overlayHeightPx - h));
+                        return { left: l, top: t, width: w, height: h };
+                    };
+                    const applyClampedRect = (field, left, top, width, height) => {
+                        const rect = clampRectToOverlay(left, top, width, height);
+                        field.style.left = rect.left + 'px';
+                        field.style.top = rect.top + 'px';
+                        field.style.width = rect.width + 'px';
+                        field.style.height = rect.height + 'px';
+                    };
 
                     // ── Gap-based block splitting ──────────────────────────────
                     // PyMuPDF merges entire table rows into one block. We detect
@@ -15923,8 +16933,12 @@
                     } else {
                         let nextSyntheticBlockNum = pageData.blocks.reduce((m, b) => Math.max(m, b.block_num), 0) + 1;
                         expandedBlocks = [];
+                        const consumedByFormMerge = new Set();
 
                         pageData.blocks.forEach(block => {
+                        if (consumedByFormMerge.has(block.block_num)) {
+                            return;
+                        }
                         // Avoid double-splitting blocks that were already split upstream
                         // or by this client-side renderer on a prior pass.
                         if (block._from_xgap_split || block._client_split) {
@@ -15935,6 +16949,106 @@
                         const blockWords = pageData.words
                             ? pageData.words.filter(w => w.block_num === block.block_num)
                             : [];
+
+                        // Form-row helper: merge multi-line underscore blocks with their
+                        // sibling value blocks (e.g. Address + 1810..., Wife, 1980) into
+                        // one composite block.
+                        const lineBBoxes = Array.isArray(block.line_bboxes) ? block.line_bboxes : [];
+                        const blockTextRaw = sanitizeOverlayText(String(block.text || ''));
+                        const hasInlineChoiceLine = (Array.isArray(block.text_lines) ? block.text_lines : [])
+                            .some((line) => /_{3,}\s+\S+.*_{3,}\s+\S+/.test(String(line || '')));
+                        const looksLikeFormRows = lineBBoxes.length > 1 && blockTextRaw.includes('_') && !hasInlineChoiceLine;
+                        if (looksLikeFormRows) {
+                            const overlapsVertically = (aTop, aBottom, bTop, bBottom) => {
+                                const inter = Math.max(0, Math.min(aBottom, bBottom) - Math.max(aTop, bTop));
+                                const minH = Math.max(1, Math.min(aBottom - aTop, bBottom - bTop));
+                                return (inter / minH) >= 0.35;
+                            };
+
+                            const compositeWords = [...blockWords];
+                            const compositeLineTexts = [];
+                            const compositeLineBBoxes = [];
+                            const valueBlockNums = new Set();
+
+                            lineBBoxes.forEach((lb, idx) => {
+                                const lineLeft = lb[0];
+                                const lineTop = lb[1];
+                                const lineRightRaw = lb[2];
+                                const lineBottom = lb[3];
+
+                                const sibling = (pageData.blocks || [])
+                                    .filter((ob) => ob && ob.block_num !== block.block_num)
+                                    .filter((ob) => overlapsVertically(lineTop, lineBottom, ob.top || 0, (ob.top || 0) + (ob.height || 0)))
+                                    .filter((ob) => (Number(ob.left) || 0) > (lineLeft + 4))
+                                    .sort((a, b) => (Number(a.left) || 0) - (Number(b.left) || 0))[0];
+
+                                if (sibling) {
+                                    valueBlockNums.add(sibling.block_num);
+                                    const sibWords = (pageData.words || []).filter((w) => w.block_num === sibling.block_num);
+                                    compositeWords.push(...sibWords);
+                                }
+
+                                const rowWords = compositeWords
+                                    .filter((w) => overlapsVertically(
+                                        lineTop, lineBottom,
+                                        (Number(w.top) || 0), (Number(w.top) || 0) + (Number(w.height) || 0)
+                                    ))
+                                    .sort((a, b) => (Number(a.left) || 0) - (Number(b.left) || 0));
+
+                                const lineText = rowWords
+                                    .map((w) => getOverlayWordDisplayText(w))
+                                    .filter((t) => t.length > 0)
+                                    .join(' ')
+                                    .replace(/[ \t]+/g, ' ')
+                                    .trim();
+                                compositeLineTexts.push(lineText);
+                                compositeLineBBoxes.push([lineLeft, lineTop, lineRightRaw, lineBottom]);
+                            });
+
+                            const uniqByGeom = new Map();
+                            compositeWords.forEach((w) => {
+                                const key = [
+                                    Math.round((Number(w.left) || 0) * 100),
+                                    Math.round((Number(w.top) || 0) * 100),
+                                    Math.round((Number(w.width) || 0) * 100),
+                                    Math.round((Number(w.height) || 0) * 100),
+                                    sanitizeOverlayText(String(w.text || ''))
+                                ].join('|');
+                                if (!uniqByGeom.has(key)) uniqByGeom.set(key, w);
+                            });
+                            const mergedWords = Array.from(uniqByGeom.values());
+                            const subNum = nextSyntheticBlockNum++;
+                            mergedWords.forEach((w) => { w.block_num = subNum; });
+                            valueBlockNums.forEach((bn) => consumedByFormMerge.add(bn));
+
+                            let minL = Infinity, minT = Infinity, maxR = -Infinity, maxB = -Infinity;
+                            mergedWords.forEach((w) => {
+                                minL = Math.min(minL, Number(w.left) || 0);
+                                minT = Math.min(minT, Number(w.top) || 0);
+                                maxR = Math.max(maxR, (Number(w.left) || 0) + (Number(w.width) || 0));
+                                maxB = Math.max(maxB, (Number(w.top) || 0) + (Number(w.height) || 0));
+                            });
+                            if (!Number.isFinite(minL) || !Number.isFinite(minT) || !Number.isFinite(maxR) || !Number.isFinite(maxB)) {
+                                minL = block.left; minT = block.top; maxR = block.left + block.width; maxB = block.top + block.height;
+                            }
+
+                            expandedBlocks.push({
+                                ...block,
+                                _client_split: true,
+                                _client_form_merge: true,
+                                block_num: subNum,
+                                left: minL,
+                                top: minT,
+                                width: Math.max(1, maxR - minL),
+                                height: Math.max(1, maxB - minT),
+                                line_count: compositeLineTexts.length || (block.line_count || 1),
+                                text: compositeLineTexts.join('\n'),
+                                text_lines: compositeLineTexts.length ? compositeLineTexts : (block.text_lines || []),
+                                line_bboxes: compositeLineBBoxes.length ? compositeLineBBoxes : lineBBoxes,
+                            });
+                            return;
+                        }
+
                         if (blockWords.length < 2) {
                             expandedBlocks.push(block);
                             return;
@@ -16063,6 +17177,124 @@
                         pageData._overlayBlocksPrepared = true;
                     }
 
+                    // Doc 539 debug merge: force the three Affiant row labels/values
+                    // (Address / Relationship / Year) into one composite field.
+                    if (overlayDebug539HeadingOnly && Number(pageData.page_number) === 1 && !pageData._overlay539RowGroupPrepared) {
+                        const normalizeRowText = (value) => sanitizeOverlayText(String(value || ''))
+                            .replace(/\s+/g, ' ')
+                            .trim()
+                            .toLowerCase();
+                        const rowSig = (blk) => normalizeRowText(
+                            (Array.isArray(blk.text_lines) && blk.text_lines.length)
+                                ? blk.text_lines.join('\n')
+                                : (blk.text || '')
+                        );
+                        const rowStarts = [
+                            'address:',
+                            'relationship to the deceased:',
+                            'relationship with deceased began in what year?',
+                            '- relationship with deceased began in what year?',
+                        ];
+                        const rowAnchors = (expandedBlocks || []).filter((blk) => {
+                            const sig = rowSig(blk);
+                            return rowStarts.some((start) => sig.startsWith(start));
+                        });
+
+                        if (rowAnchors.length >= 2) {
+                            const overlapsVertically = (aTop, aBottom, bTop, bBottom) => {
+                                const inter = Math.max(0, Math.min(aBottom, bBottom) - Math.max(aTop, bTop));
+                                const minH = Math.max(1, Math.min(aBottom - aTop, bBottom - bTop));
+                                return (inter / minH) >= 0.35;
+                            };
+                            const anchorRows = rowAnchors
+                                .map((b) => ({
+                                    l: Number(b.left) || 0,
+                                    t: Number(b.top) || 0,
+                                    r: (Number(b.left) || 0) + (Number(b.width) || 0),
+                                    b: (Number(b.top) || 0) + (Number(b.height) || 0),
+                                }))
+                                .sort((a, b) => a.t - b.t);
+
+                            const consumedBlockNums = new Set(rowAnchors.map((b) => b.block_num));
+                            (expandedBlocks || []).forEach((blk) => {
+                                if (!blk || consumedBlockNums.has(blk.block_num)) return;
+                                const bLeft = Number(blk.left) || 0;
+                                const bTop = Number(blk.top) || 0;
+                                const bBottom = bTop + (Number(blk.height) || 0);
+                                const sameRow = anchorRows.some((row) =>
+                                    overlapsVertically(row.t, row.b, bTop, bBottom)
+                                );
+                                if (!sameRow) return;
+                                const rightOfLabel = anchorRows.some((row) => bLeft >= (row.l - 6));
+                                if (rightOfLabel) {
+                                    consumedBlockNums.add(blk.block_num);
+                                }
+                            });
+
+                            if (consumedBlockNums.size > 1) {
+                                const mergedWords = (pageData.words || []).filter((w) => consumedBlockNums.has(w.block_num));
+                                if (mergedWords.length) {
+                                    const nextSyntheticBlockNum = (expandedBlocks || []).reduce((m, b) => Math.max(m, Number(b.block_num) || 0), 0) + 1;
+                                    mergedWords.forEach((w) => { w.block_num = nextSyntheticBlockNum; });
+
+                                    let minL = Infinity, minT = Infinity, maxR = -Infinity, maxB = -Infinity;
+                                    mergedWords.forEach((w) => {
+                                        const wL = Number(w.left) || 0;
+                                        const wT = Number(w.top) || 0;
+                                        const wR = wL + (Number(w.width) || 0);
+                                        const wB = wT + (Number(w.height) || 0);
+                                        minL = Math.min(minL, wL);
+                                        minT = Math.min(minT, wT);
+                                        maxR = Math.max(maxR, wR);
+                                        maxB = Math.max(maxB, wB);
+                                    });
+                                    if (!Number.isFinite(minL) || !Number.isFinite(minT) || !Number.isFinite(maxR) || !Number.isFinite(maxB)) {
+                                        minL = Math.min(...anchorRows.map((r) => r.l));
+                                        minT = Math.min(...anchorRows.map((r) => r.t));
+                                        maxR = Math.max(...anchorRows.map((r) => r.r));
+                                        maxB = Math.max(...anchorRows.map((r) => r.b));
+                                    }
+
+                                    const mergedTextLines = anchorRows.map((row) => {
+                                        return mergedWords
+                                            .filter((w) => overlapsVertically(
+                                                row.t, row.b,
+                                                (Number(w.top) || 0), (Number(w.top) || 0) + (Number(w.height) || 0)
+                                            ))
+                                            .sort((a, b) => (Number(a.left) || 0) - (Number(b.left) || 0))
+                                            .map((w) => getOverlayWordDisplayText(w))
+                                            .filter((t) => t.length > 0)
+                                            .join(' ')
+                                            .replace(/[ \t]+/g, ' ')
+                                            .trim();
+                                    }).filter((line) => line.length > 0);
+
+                                    const modelBase = rowAnchors[0];
+                                    const mergedBlock = {
+                                        ...modelBase,
+                                        _client_split: true,
+                                        _client_form_merge: true,
+                                        _client_539_row_merge: true,
+                                        block_num: nextSyntheticBlockNum,
+                                        left: minL,
+                                        top: minT,
+                                        width: Math.max(1, maxR - minL),
+                                        height: Math.max(1, maxB - minT),
+                                        line_count: mergedTextLines.length || anchorRows.length,
+                                        text: mergedTextLines.join('\n'),
+                                        text_lines: mergedTextLines,
+                                        line_bboxes: anchorRows.map((row) => [row.l, row.t, row.r, row.b]),
+                                    };
+
+                                    expandedBlocks = (expandedBlocks || []).filter((blk) => !consumedBlockNums.has(blk.block_num));
+                                    expandedBlocks.push(mergedBlock);
+                                    pageData.blocks = expandedBlocks;
+                                }
+                            }
+                        }
+                        pageData._overlay539RowGroupPrepared = true;
+                    }
+
                     // Sort blocks by vertical position (top to bottom) then horizontal (left to right)
                     const sortedBlocks = [...expandedBlocks].sort((a, b) => {
                         const topDiff = a.top - b.top;
@@ -16092,6 +17324,18 @@
                         const denom = areaA + areaB - inter;
                         return denom > 0 ? (inter / denom) : 0;
                     };
+                    // Compute overlap ratio of the SMALLER rect with the larger.
+                    // Returns intersection_area / smaller_area (0..1).
+                    const rectOverlapSmaller = (a, b) => {
+                        const interW = Math.max(0, Math.min(a.r, b.r) - Math.max(a.l, b.l));
+                        const interH = Math.max(0, Math.min(a.b, b.b) - Math.max(a.t, b.t));
+                        const inter = interW * interH;
+                        if (inter <= 0) return 0;
+                        const areaA = Math.max(0, a.r - a.l) * Math.max(0, a.b - a.t);
+                        const areaB = Math.max(0, b.r - b.l) * Math.max(0, b.b - b.t);
+                        const smaller = Math.min(areaA, areaB);
+                        return smaller > 0 ? (inter / smaller) : 0;
+                    };
                     const isLikelyDuplicateBlock = (a, b) => {
                         const textA = a._textSig;
                         const textB = b._textSig;
@@ -16110,6 +17354,17 @@
                         const shortFrag = Math.min(textA.length, textB.length) <= 4;
                         if (shortFrag && iou >= 0.85 && topClose) {
                             return true;
+                        }
+                        // Catch overlapping text layers at the same position but with
+                        // different text (e.g., prior edit remnants like "violate" vs
+                        // "violated").  If the smaller block is mostly inside the
+                        // larger one AND they share the same vertical position, they
+                        // are overlapping text layers — deduplicate.
+                        if (topClose && leftClose) {
+                            const overlapSmaller = rectOverlapSmaller(a._rect, b._rect);
+                            if (overlapSmaller >= 0.5) {
+                                return true;
+                            }
                         }
                         return false;
                     };
@@ -16215,6 +17470,46 @@
                     const renderedBlockKeys = new Set();
                     const renderedFieldFingerprints = [];
 
+                    // Pre-process blocks to detect horizontally overlapping elements
+                    // (e.g., form fills overlaying template text) and align them to
+                    // the same baseline Y position to prevent visual line breaks.
+                    const Y_ALIGNMENT_THRESHOLD = 15; // max Y difference in PDF units for alignment
+                    const blockYAdjustments = new Map(); // block_num -> adjusted Y position
+
+                    dedupedBlocks.forEach((blockA, idxA) => {
+                        if (blockYAdjustments.has(blockA.block_num)) return;
+                        
+                        const aLeft = blockA.left || 0;
+                        const aRight = aLeft + (blockA.width || 0);
+                        const aTop = blockA.top || 0;
+                        
+                        // Look for other blocks that horizontally overlap with this one
+                        dedupedBlocks.forEach((blockB, idxB) => {
+                            if (idxA === idxB) return;
+                            if (blockYAdjustments.has(blockB.block_num)) return;
+                            
+                            const bLeft = blockB.left || 0;
+                            const bRight = bLeft + (blockB.width || 0);
+                            const bTop = blockB.top || 0;
+                            
+                            // Check Y proximity
+                            const yDiff = Math.abs(aTop - bTop);
+                            if (yDiff > Y_ALIGNMENT_THRESHOLD) return;
+                            
+                            // Check horizontal overlap: does one contain the other?
+                            const aContainsB = (bLeft >= aLeft && bRight <= aRight);
+                            const bContainsA = (aLeft >= bLeft && aRight <= bRight);
+                            const hasHorizontalOverlap = aContainsB || bContainsA;
+                            
+                            if (!hasHorizontalOverlap) return;
+                            
+                            // Align both blocks to the minimum Y (topmost position)
+                            const alignedY = Math.min(aTop, bTop);
+                            blockYAdjustments.set(blockA.block_num, alignedY);
+                            blockYAdjustments.set(blockB.block_num, alignedY);
+                        });
+                    });
+
                     dedupedBlocks.forEach((block, blockIndex) => {
                         const key = `block-${pageData.page_number}-${block.block_num}`;
                         if (renderedBlockKeys.has(key)) return;
@@ -16235,6 +17530,15 @@
                         let blockWidth = block.width;
                         let blockHeight = block.height;
 
+                        // Apply Y-axis alignment adjustment if this block overlaps horizontally with another
+                        if (blockYAdjustments.has(block.block_num)) {
+                            const originalTop = blockTop;
+                            blockTop = blockYAdjustments.get(block.block_num);
+                            // Keep the height adjustment so bottom edge doesn't shift
+                            const topDiff = originalTop - blockTop;
+                            blockHeight = blockHeight + topDiff;
+                        }
+
                         const field = document.createElement('div');
                         field.className = 'overlay-field';
                         field.style.position = 'absolute';
@@ -16249,6 +17553,10 @@
                         const textSpan = document.createElement('div');
                         textSpan.contentEditable = false;
                         const hasStoredEdit = storedEdit && storedEdit.new_text != null;
+                        const stripWs = (v) => sanitizeOverlayText(String(v || '')).replace(/\s+/g, '');
+                        const hasMeaningfulTextEdit = hasStoredEdit
+                            ? (stripWs(storedEdit.new_text) !== stripWs(safeBlockText))
+                            : false;
                         textSpan.textContent = '';
                         textSpan.style.display = 'block';
                         textSpan.style.whiteSpace = 'pre';
@@ -16329,9 +17637,17 @@
                         field.dataset.originalFontWeight = fontWeight;
                         field.dataset.originalFontStyle = fontStyle;
 
-                        const blockWords = pageData.words
+                        const rawBlockWords = pageData.words
                             ? pageData.words.filter((word) => word.block_num === block.block_num)
                             : [];
+                        const blockWords = rawBlockWords.filter((word) => {
+                            const display = getOverlayWordDisplayText(word);
+                            return !isIgnorableOverlayToken(display);
+                        });
+
+                        if (!storedEdit && blockWords.length === 0 && !hasMeaningfulOverlayText(safeBlockText)) {
+                            return;
+                        }
 
                         if (!storedEdit && blockWords.length > 0) {
                             const bounds = getWordBounds(blockWords);
@@ -16373,7 +17689,8 @@
                                 r: blockLeft + blockWidth,
                                 b: blockTop + blockHeight
                             };
-                        const isDuplicateField = renderedFieldFingerprints.some((prev) => {
+                        const shouldDedupField = !overlayDebug539HeadingOnly;
+                        const isDuplicateField = shouldDedupField && renderedFieldFingerprints.some((prev) => {
                             const sameWords = candidateWordSig && prev.words && candidateWordSig === prev.words;
                             if (sameWords) {
                                 return rectIou(candidateRect, prev.rect) >= 0.6;
@@ -16383,6 +17700,16 @@
                             const sameText = candidateTextSig === prev.text;
                             const containsText = candidateTextSig.includes(prev.text) || prev.text.includes(candidateTextSig);
                             if (!sameText && !containsText) return false;
+                            // Only dedupe geometric overlaps when text is same/contains.
+                            const cW = Math.max(0, Math.min(candidateRect.r, prev.rect.r) - Math.max(candidateRect.l, prev.rect.l));
+                            const cH = Math.max(0, Math.min(candidateRect.b, prev.rect.b) - Math.max(candidateRect.t, prev.rect.t));
+                            const cInter = cW * cH;
+                            if (cInter > 0) {
+                                const cAreaA = (candidateRect.r - candidateRect.l) * (candidateRect.b - candidateRect.t);
+                                const cAreaB = (prev.rect.r - prev.rect.l) * (prev.rect.b - prev.rect.t);
+                                const cSmaller = Math.min(cAreaA, cAreaB);
+                                if (cSmaller > 0 && (cInter / cSmaller) >= 0.5) return true;
+                            }
                             return rectIou(candidateRect, prev.rect) >= 0.75;
                         });
                         if (isDuplicateField) {
@@ -16394,12 +17721,21 @@
                             rect: candidateRect
                         });
 
-                        if (hasStoredEdit) {
+                        const forceFlowRender = shouldUseFlowRenderForBlock(block, blockWords, safeBlockText);
+                        if (hasStoredEdit && hasMeaningfulTextEdit) {
                             textSpan.textContent = sanitizeOverlayText(storedEdit.new_text);
                             textSpan.style.whiteSpace = 'pre-wrap';
                             textSpan.style.wordBreak = 'break-word';
+                        } else if (forceFlowRender && blockWords.length > 0) {
+                            textSpan.textContent = buildStableFlowTextFromWords(block, blockWords) || safeBlockText;
+                            textSpan.style.whiteSpace = 'pre';
+                            textSpan.style.wordBreak = 'normal';
                         } else if (blockWords.length > 0) {
-                            buildStyledWordSpans(textSpan, blockWords, scaleX, scaleY, blockLeft, blockTop);
+                            buildStyledWordSpans(textSpan, blockWords, scaleX, scaleY, blockLeft, blockTop, block, safeBlockText);
+                        } else if (hasStoredEdit) {
+                            textSpan.textContent = sanitizeOverlayText(storedEdit.new_text);
+                            textSpan.style.whiteSpace = 'pre-wrap';
+                            textSpan.style.wordBreak = 'break-word';
                         } else {
                             textSpan.textContent = sanitizeOverlayText(blockText);
                             textSpan.style.whiteSpace = 'pre-wrap';
@@ -16433,10 +17769,13 @@
                         // descender‐safety margin so glyphs like g/p/y are not clipped.
                         const heightBuffer = 4 + Math.max(2, fontSizeScaled * 0.1);
 
-                        field.style.left = ((baseLeft * scaleX) - paddingX) + 'px';
-                        field.style.top = ((baseTop * scaleY) - paddingY) + 'px';
-                        field.style.width = ((baseWidth * scaleX) + (paddingX * 2) + widthBuffer) + 'px';
-                        field.style.height = ((baseHeight * scaleY) + (paddingY * 2) + heightBuffer) + 'px';
+                        applyClampedRect(
+                            field,
+                            (baseLeft * scaleX) - paddingX,
+                            (baseTop * scaleY) - paddingY,
+                            (baseWidth * scaleX) + (paddingX * 2) + widthBuffer,
+                            (baseHeight * scaleY) + (paddingY * 2) + heightBuffer
+                        );
                         field.style.zIndex = blockIndex + 1;
 
                         // Apply CSS padding so text content is pushed inward to the correct
@@ -16449,13 +17788,57 @@
                             if (bounds) {
                                 const expectedLeft = (bounds.left * scaleX) - paddingX;
                                 const expectedTop = (bounds.top * scaleY) - paddingY;
-                                const expectedWidth = (bounds.width * scaleX) + (paddingX * 2) + widthBuffer;
+                                let expectedWidth = (bounds.width * scaleX) + (paddingX * 2) + widthBuffer;
                                 const expectedHeight = (bounds.height * scaleY) + (paddingY * 2) + heightBuffer;
 
-                                field.style.left = expectedLeft + 'px';
-                                field.style.top = expectedTop + 'px';
-                                field.style.width = expectedWidth + 'px';
-                                field.style.height = expectedHeight + 'px';
+                                // Measure actual text width with CSS fallback font.
+                                // PDF-embedded condensed/unusual fonts (e.g. BMFGlossary-BlackCondens)
+                                // may have much narrower extraction widths than the web fallback font.
+                                // When the CSS font renders wider, expand the field to prevent clipping.
+                                const lines = new Map();
+                                blockWords.forEach(w => {
+                                    const lk = w.line_num ?? 0;
+                                    if (!lines.has(lk)) lines.set(lk, []);
+                                    lines.get(lk).push(w);
+                                });
+                                let maxMeasuredLineWidth = 0;
+                                lines.forEach(lineWords => {
+                                    // For each line, measure total width: sum of word measured widths
+                                    // plus the gaps between words (from extraction positions)
+                                    const sorted = [...lineWords].sort((a, b) => a.left - b.left);
+                                    let lineWidth = 0;
+                                    sorted.forEach((w, i) => {
+                                        const wFamily = getCssFontFamily(w.font);
+                                        let wWeight;
+                                        if (w.font_weight) wWeight = String(w.font_weight);
+                                        else if (w.bold) wWeight = '700';
+                                        else wWeight = '400';
+                                        const wStyle = w.italic ? 'italic' : 'normal';
+                                        const wSizePx = w.font_size * scaleY;
+                                        const wMeasured = measureTextWidth(
+                                            sanitizeOverlayText(w.text || ''), wSizePx, wFamily, wWeight, wStyle
+                                        );
+                                        if (i > 0) {
+                                            // Add gap from previous word's right edge to this word's left
+                                            const prev = sorted[i - 1];
+                                            const gap = (w.left - (prev.left + prev.width)) * scaleX;
+                                            lineWidth += Math.max(0, gap);
+                                        }
+                                        lineWidth += wMeasured;
+                                    });
+                                    maxMeasuredLineWidth = Math.max(maxMeasuredLineWidth, lineWidth);
+                                });
+                                const measuredFieldWidth = maxMeasuredLineWidth + (paddingX * 2) + widthBuffer;
+                                if (measuredFieldWidth > expectedWidth) {
+                                    // Guard against runaway expansion on long underline/blank
+                                    // form fields where fallback metrics can be much wider.
+                                    // Keep a small safety margin for font mismatch, but do not
+                                    // let metric drift stretch the box across the page.
+                                    const maxExpansionPx = Math.max(12, Math.min(expectedWidth * 0.08, 48));
+                                    expectedWidth = Math.min(measuredFieldWidth, expectedWidth + maxExpansionPx);
+                                }
+
+                                applyClampedRect(field, expectedLeft, expectedTop, expectedWidth, expectedHeight);
                             }
                         }
 
@@ -16466,6 +17849,20 @@
                         field.dataset.originalHeight = blockHeight;
                         field.dataset.originalOriginX = blockLeft;
                         field.dataset.originalOriginY = blockTop + blockHeight;
+                        // Preserve a stable edit-entry snapshot for form/underscore
+                        // blocks so dblclick doesn't rebuild huge gap spaces that
+                        // push values to the far right.
+                        const hasUnderscoreContent = (safeBlockText || '').includes('_') ||
+                            (Array.isArray(blockWords) && blockWords.some((w) => sanitizeOverlayText(w.text || '').includes('_')));
+                        if (block._client_form_merge || block._client_539_row_merge || hasUnderscoreContent) {
+                            const stableFromWords = buildStableFlowTextFromWords(block, blockWords);
+                            const isOptionRow = isOptionChoiceBlock(block, blockWords, safeBlockText);
+                            field.dataset.stableFlowText = isOptionRow
+                                ? collapseLabelValueLines(stableFromWords || normalizeStableFlowText(safeBlockText))
+                                : normalizeStableFlowText(safeBlockText);
+                            field.dataset.preserveUnderscores = (!isOptionRow && hasUnderscoreContent) ? '1' : '0';
+                            field.dataset.lockFormLayout = '1';
+                        }
                         field.dataset.pageNumber = pageData.page_number;
                         field.dataset.wordIndex = key;
                         field.dataset.blockNum = block.block_num;
@@ -16480,6 +17877,7 @@
                         field.dataset.pageWidth = pageData.width;
                         field.dataset.pageHeight = pageData.height;
                         field.dataset.padding = paddingPdf;
+                        field._overlaySourceBlock = block;
 
                         // Store per-word style data for preserving formatting on save
                         if (blockWords.length > 0) {
@@ -16572,7 +17970,7 @@
                             updateOverlaySaveButton();
                             pushUndoState();
                         });
-                        
+
                         // Save undo state when user starts editing
                         textSpan.addEventListener('focus', function() {
                             setOverlaySelection(field);
@@ -16582,6 +17980,11 @@
                             setOverlaySelection(field);
                         });
                         textSpan.addEventListener('keydown', function(e) {
+                            if (field.classList.contains('editing')) {
+                                // Keyboard edits should operate on flowing text, not
+                                // absolutely-positioned span fragments.
+                                normalizePositionedSpansForEditing(field, textSpan);
+                            }
                             if (e.key === 'Enter' && field.classList.contains('editing')) {
                                 e.preventDefault();
                                 const selection = window.getSelection();
@@ -16642,34 +18045,18 @@
                             if (e.target.closest('.box-menu') || e.target.classList.contains('resize-handle')) return;
                             field.classList.add('active', 'editing');
 
-                            // Normalize absolutely-positioned word spans to flowing text
-                            // so typing works like a textarea (text wraps within the box).
-                            const hasPositionedSpans = textSpan.querySelector('span') &&
-                                Array.from(textSpan.querySelectorAll('span')).some(s => s.style.position === 'absolute');
-                            if (hasPositionedSpans) {
-                                const spans = Array.from(textSpan.querySelectorAll('span'));
-                                // Group by lines using top position to reconstruct line breaks
-                                const lineMap = new Map();
-                                spans.forEach(s => {
-                                    if (!s.textContent.trim() && s.textContent === ' ') return; // skip space spans
-                                    const top = Math.round(parseFloat(s.style.top) || 0);
-                                    if (!lineMap.has(top)) lineMap.set(top, []);
-                                    lineMap.get(top).push(s);
-                                });
-                                const sortedTops = Array.from(lineMap.keys()).sort((a, b) => a - b);
-                                const lines = sortedTops.map(top => {
-                                    const lineSpans = lineMap.get(top).sort((a, b) => 
-                                        (parseFloat(a.style.left) || 0) - (parseFloat(b.style.left) || 0)
-                                    );
-                                    return lineSpans.map(s => s.textContent).join(' ');
-                                });
-                                // Keep text reflowable: positioned spans encode visual wraps,
-                                // not semantic paragraph breaks. Convert to one flowing line.
-                                const plainText = lines.join(' ').replace(/\s+/g, ' ').trim();
-                                textSpan.textContent = plainText;
-                                textSpan.style.whiteSpace = 'pre-wrap';
-                                textSpan.style.wordBreak = 'break-word';
-                                textSpan.style.overflow = 'hidden';
+                            // Normalize immediately on edit-entry so caret and typing
+                            // behave predictably and preserve line ordering.
+                            field.dataset.flowNormalized = '0';
+                            normalizePositionedSpansForEditing(field, textSpan);
+
+                            // For underscore-preserved form fields, allow editing but
+                            // keep absolute-span layout (no flow-text normalization).
+                            if (field.dataset.preserveUnderscores === '1') {
+                                textSpan.contentEditable = true;
+                                textSpan.focus();
+                                setOverlaySelection(field);
+                                return;
                             }
 
                             textSpan.contentEditable = true;
@@ -16923,6 +18310,7 @@
                                 // Save state before drag starts
                                 pushUndoState();
                                 
+                                overlayInteractionActive = true;
                                 isDragging = true;
                                 dragStart = { x: e.clientX, y: e.clientY };
                                 dragBtn.style.cursor = 'grabbing';
@@ -17080,6 +18468,7 @@
                                     
                                     persistOverlayEdits();
                                     updateOverlaySaveButton();
+                                    overlayInteractionActive = false;
                                 }
                             };
                             
@@ -17102,6 +18491,7 @@
                             e.preventDefault();
                             e.stopPropagation();
                             
+                            overlayInteractionActive = true;
                             pushUndoState();
                             
                             const handle = e.target;
@@ -17127,25 +18517,9 @@
                                 const hasPositionedSpans = textSpan.querySelector('span') &&
                                     Array.from(textSpan.querySelectorAll('span')).some(s => s.style.position === 'absolute');
                                 if (!hasPositionedSpans) return;
-                                // Group word spans by line (using top position) to preserve line breaks
-                                const spans = Array.from(textSpan.querySelectorAll('span'));
-                                const lineMap = new Map();
-                                spans.forEach(s => {
-                                    if (!s.textContent.trim() && s.textContent === ' ') return;
-                                    const top = Math.round(parseFloat(s.style.top) || 0);
-                                    if (!lineMap.has(top)) lineMap.set(top, []);
-                                    lineMap.get(top).push(s);
-                                });
-                                const sortedTops = Array.from(lineMap.keys()).sort((a, b) => a - b);
-                                const lines = sortedTops.map(top => {
-                                    const lineSpans = lineMap.get(top).sort((a, b) =>
-                                        (parseFloat(a.style.left) || 0) - (parseFloat(b.style.left) || 0)
-                                    );
-                                    return lineSpans.map(s => s.textContent).join(' ');
-                                });
-                                // Keep text reflowable when resizing: don't persist wrapped
-                                // visual lines as hard newlines.
-                                const plainText = lines.join(' ').replace(/\s+/g, ' ').trim();
+                                // Preserve extracted line boundaries while normalizing spans.
+                                // This keeps save payload geometry aligned with the original block.
+                                const plainText = positionedSpansToFlowText(textSpan);
                                 textSpan.textContent = plainText;
                                 textSpan.style.whiteSpace = 'pre-wrap';
                                 textSpan.style.wordBreak = 'break-word';
@@ -17301,6 +18675,7 @@
                                 
                                 persistOverlayEdits();
                                 updateOverlaySaveButton();
+                                overlayInteractionActive = false;
                             };
                             
                             document.addEventListener('mousemove', onMouseMove);
@@ -17344,7 +18719,16 @@
                             const blockTop = parseFloat(field.dataset.originalTop) || 0;
                             textSpan.innerHTML = '';
                             textSpan.textContent = '';
-                            buildStyledWordSpans(textSpan, field._blockWords, scaleX, scaleY, blockLeft, blockTop);
+                            buildStyledWordSpans(
+                                textSpan,
+                                field._blockWords,
+                                scaleX,
+                                scaleY,
+                                blockLeft,
+                                blockTop,
+                                field._overlaySourceBlock || null,
+                                field.dataset.originalText || ''
+                            );
                         });
                     });
                 }
@@ -17812,7 +19196,7 @@
                         textSpan.contentEditable = overlayResizingField.classList.contains('editing');
                     }
                     const pageNumber = parseInt(overlayResizingField.dataset.pageNumber, 10);
-                    const index = parseInt(overlayResizingField.dataset.wordIndex, 10);
+                    const index = overlayResizingField.dataset.wordIndex;
                     const originalWord = buildOriginalWordFromField(overlayResizingField, textSpan ? textSpan.textContent : '');
                     trackOverlayFieldChange(overlayResizingField, textSpan, { page_number: pageNumber }, originalWord, index);
                     overlayResizingField = null;

@@ -49,18 +49,93 @@
                 box-shadow: 0 20px 40px rgba(0,0,0,0.25);
             }
             .upload {
-                display: flex;
-                gap: 16px;
-                flex-wrap: wrap;
-                align-items: center;
+                display: grid;
+                gap: 14px;
             }
-            input[type="file"] {
-                background: #0f1826;
-                border: 1px dashed rgba(255,255,255,0.25);
-                color: var(--ink);
-                padding: 12px;
+            .upload-input {
+                display: none;
+            }
+            .upload-dropzone {
+                min-height: 230px;
+                border: 2px dashed rgba(255,255,255,0.25);
                 border-radius: 10px;
-                width: 320px;
+                background: rgba(255,255,255,0.03);
+                display: grid;
+                place-items: center;
+                text-align: center;
+                padding: 24px;
+                cursor: pointer;
+                transition: border-color .2s, background-color .2s, transform .2s;
+                outline: none;
+            }
+            .upload-dropzone:hover,
+            .upload-dropzone:focus {
+                border-color: var(--accent);
+                background: rgba(77, 208, 168, 0.08);
+                transform: translateY(-1px);
+            }
+            .upload-dropzone.dragover {
+                border-color: var(--accent);
+                background: rgba(77, 208, 168, 0.12);
+            }
+            .upload-dropzone strong {
+                display: block;
+                font-size: 24px;
+                line-height: 1.25;
+                margin-bottom: 8px;
+            }
+            .upload-dropzone span {
+                color: var(--muted);
+                font-size: 14px;
+            }
+            .upload-meta {
+                display: flex;
+                gap: 12px;
+                align-items: center;
+                flex-wrap: wrap;
+            }
+            .upload-file-name {
+                padding: 10px 12px;
+                border-radius: 8px;
+                border: 1px solid rgba(255,255,255,0.15);
+                background: rgba(255,255,255,0.03);
+                color: var(--muted);
+                min-width: 260px;
+                max-width: 100%;
+                white-space: nowrap;
+                text-overflow: ellipsis;
+                overflow: hidden;
+                flex: 1;
+            }
+            .upload-error {
+                color: var(--danger);
+                font-size: 14px;
+                font-weight: 600;
+            }
+            .upload-progress {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            .upload-progress-track {
+                height: 10px;
+                border-radius: 99px;
+                background: rgba(255,255,255,0.12);
+                border: 1px solid rgba(255,255,255,0.08);
+                overflow: hidden;
+                flex: 1;
+                min-width: 220px;
+            }
+            .upload-progress-bar {
+                width: 0%;
+                height: 100%;
+                background: linear-gradient(90deg, #4dd0a8, #6be3be);
+                transition: width .12s linear;
+            }
+            .upload-progress-value {
+                font-variant-numeric: tabular-nums;
+                min-width: 42px;
+                text-align: right;
             }
             button {
                 background: var(--accent);
@@ -138,6 +213,9 @@
             }
             @media (max-width: 700px) {
                 .template-grid { grid-template-columns: 1fr; }
+                .upload-dropzone {
+                    min-height: 180px;
+                }
             }
             .tpl-card {
                 background: rgba(255,255,255,0.04);
@@ -217,10 +295,31 @@
             @endif
 
             <div class="card">
-                <form class="upload" action="{{ route('documents.store') }}" method="POST" enctype="multipart/form-data">
+                <form class="upload" id="upload-form" action="{{ route('documents.store') }}" method="POST" enctype="multipart/form-data">
                     @csrf
-                    <input type="file" name="document" accept="application/pdf" required>
-                    <button type="submit">Upload PDF</button>
+                    <input id="document-input" class="upload-input" type="file" name="document" accept="application/pdf,.pdf" required>
+
+                    <div id="upload-dropzone" class="upload-dropzone" role="button" tabindex="0" aria-label="Upload PDF by click or drag and drop">
+                        <div>
+                            <strong>Drop your PDF here</strong>
+                            <span>or click to browse your files</span>
+                            <div class="tag" style="margin-top: 10px;">PDF files only</div>
+                        </div>
+                    </div>
+
+                    <div class="upload-meta">
+                        <div id="upload-file-name" class="upload-file-name">No file selected</div>
+                        <button id="upload-submit" type="submit">Upload PDF</button>
+                    </div>
+
+                    <div id="upload-error" class="upload-error" style="display:none;"></div>
+
+                    <div id="upload-progress" class="upload-progress" style="display:none;" aria-live="polite">
+                        <div class="upload-progress-track">
+                            <div id="upload-progress-bar" class="upload-progress-bar"></div>
+                        </div>
+                        <div id="upload-progress-value" class="upload-progress-value">0%</div>
+                    </div>
                 </form>
             </div>
 
@@ -360,8 +459,164 @@
                     form.submit();
                 }
 
+                function initUploadDropzone() {
+                    const form = document.getElementById('upload-form');
+                    const input = document.getElementById('document-input');
+                    const dropzone = document.getElementById('upload-dropzone');
+                    const fileName = document.getElementById('upload-file-name');
+                    const error = document.getElementById('upload-error');
+                    const progress = document.getElementById('upload-progress');
+                    const progressBar = document.getElementById('upload-progress-bar');
+                    const progressValue = document.getElementById('upload-progress-value');
+                    const submitBtn = document.getElementById('upload-submit');
+
+                    if (!form || !input || !dropzone || !fileName || !error || !progress || !progressBar || !progressValue || !submitBtn) {
+                        return;
+                    }
+
+                    let selectedFile = null;
+
+                    const isPdf = (file) => {
+                        if (!file) return false;
+                        const mime = (file.type || '').toLowerCase();
+                        const name = (file.name || '').toLowerCase();
+                        return mime === 'application/pdf' || name.endsWith('.pdf');
+                    };
+
+                    const formatBytes = (bytes) => {
+                        if (!bytes || bytes < 1024) return `${bytes || 0} B`;
+                        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+                        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+                    };
+
+                    const showError = (message) => {
+                        error.textContent = message;
+                        error.style.display = 'block';
+                    };
+
+                    const clearError = () => {
+                        error.textContent = '';
+                        error.style.display = 'none';
+                    };
+
+                    const setProgress = (percent) => {
+                        const value = Math.max(0, Math.min(100, Math.round(percent)));
+                        progressBar.style.width = `${value}%`;
+                        progressValue.textContent = `${value}%`;
+                    };
+
+                    const setFile = (file) => {
+                        if (!file) return;
+                        if (!isPdf(file)) {
+                            selectedFile = null;
+                            input.value = '';
+                            fileName.textContent = 'No file selected';
+                            showError('Only PDF files are allowed.');
+                            return;
+                        }
+
+                        clearError();
+                        selectedFile = file;
+                        fileName.textContent = `${file.name} (${formatBytes(file.size)})`;
+
+                        try {
+                            const transfer = new DataTransfer();
+                            transfer.items.add(file);
+                            input.files = transfer.files;
+                        } catch (_) {}
+                    };
+
+                    dropzone.addEventListener('click', () => input.click());
+                    dropzone.addEventListener('keydown', (event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            input.click();
+                        }
+                    });
+
+                    input.addEventListener('change', () => setFile(input.files[0]));
+
+                    ['dragenter', 'dragover'].forEach((eventName) => {
+                        dropzone.addEventListener(eventName, (event) => {
+                            event.preventDefault();
+                            dropzone.classList.add('dragover');
+                        });
+                    });
+
+                    ['dragleave', 'drop'].forEach((eventName) => {
+                        dropzone.addEventListener(eventName, (event) => {
+                            event.preventDefault();
+                            dropzone.classList.remove('dragover');
+                        });
+                    });
+
+                    dropzone.addEventListener('drop', (event) => {
+                        const file = event.dataTransfer?.files?.[0];
+                        setFile(file);
+                    });
+
+                    form.addEventListener('submit', (event) => {
+                        event.preventDefault();
+                        clearError();
+
+                        const file = selectedFile || input.files[0];
+                        if (!file) {
+                            showError('Please choose a PDF file before uploading.');
+                            return;
+                        }
+                        if (!isPdf(file)) {
+                            showError('Only PDF files are allowed.');
+                            return;
+                        }
+
+                        const data = new FormData(form);
+                        data.set('document', file);
+
+                        submitBtn.disabled = true;
+                        progress.style.display = 'flex';
+                        setProgress(0);
+
+                        const xhr = new XMLHttpRequest();
+                        xhr.open('POST', form.action, true);
+                        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+
+                        xhr.upload.addEventListener('progress', (uploadEvent) => {
+                            if (!uploadEvent.lengthComputable) return;
+                            setProgress((uploadEvent.loaded / uploadEvent.total) * 100);
+                        });
+
+                        xhr.addEventListener('load', () => {
+                            if (xhr.status >= 200 && xhr.status < 300) {
+                                setProgress(100);
+                                window.location.href = xhr.responseURL || window.location.href;
+                                return;
+                            }
+
+                            submitBtn.disabled = false;
+                            progress.style.display = 'none';
+                            let message = 'Upload failed. Please try again.';
+                            try {
+                                const body = JSON.parse(xhr.responseText);
+                                message = body.errors?.document?.[0] || body.message || message;
+                            } catch (_) {}
+                            showError(message);
+                        });
+
+                        xhr.addEventListener('error', () => {
+                            submitBtn.disabled = false;
+                            progress.style.display = 'none';
+                            showError('Network error while uploading. Please try again.');
+                        });
+
+                        xhr.send(data);
+                    });
+                }
+
                 // Initial check in case browser restores checked state on reload
-                document.addEventListener('DOMContentLoaded', updateBulkState);
+                document.addEventListener('DOMContentLoaded', () => {
+                    updateBulkState();
+                    initUploadDropzone();
+                });
             </script>
 
             <div class="card">
@@ -388,7 +643,7 @@
                                     </button>
                                 </form>
                             @else
-                                <button onclick="document.querySelector('input[type=file]').click()" style="background: var(--accent); color: #053322; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; transition: opacity 0.2s;" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">
+                                <button onclick="document.getElementById('document-input')?.click()" style="background: var(--accent); color: #053322; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; transition: opacity 0.2s;" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">
                                     <span>Upload & Start</span>
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
                                 </button>
