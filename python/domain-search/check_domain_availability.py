@@ -99,7 +99,7 @@ SKIP_HTTP_CHECK = [
 ]
 
 
-def whois_query(domain: str, server: str, timeout: int = 15) -> str:
+def whois_query(domain: str, server: str, timeout: int = 10) -> str:
     """Send a raw WHOIS query to the specified server."""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -146,45 +146,41 @@ def resolve_whois_server(tld: str) -> str | None:
     return server
 
 
-def check_http_for_sale(domain: str, timeout: int = 7) -> tuple[bool, str]:
+def check_http_for_sale(domain: str, timeout: int = 2) -> tuple[bool, str]:
     """
     Check if domain redirects to marketplace or contains for-sale indicators.
     Returns (is_for_sale, redirect_url).
     """
     try:
-        # Try both http and https
-        for protocol in ["https", "http"]:
-            try:
-                url = f"{protocol}://{domain}"
-                response = requests.get(
-                    url,
-                    timeout=timeout,
-                    allow_redirects=True,
-                    headers={"User-Agent": "Mozilla/5.0 (compatible; DomainChecker/1.0)"}
-                )
-                
-                final_url = response.url.lower()
-                content = response.text.lower()
-                
-                # Check if redirected to marketplace
-                for marketplace in MARKETPLACE_URLS:
-                    if marketplace in final_url:
-                        return (True, response.url)
-                
-                # Check page content for for-sale patterns
-                for pattern in FOR_SALE_HTML_PATTERNS:
-                    if pattern in content:
-                        return (True, response.url)
-                
-                # If we got a successful response, domain is taken but not obviously for sale
-                return (False, response.url)
-                
-            except (requests.exceptions.SSLError, requests.exceptions.ConnectionError):
-                # Try next protocol
-                continue
-            except requests.exceptions.Timeout:
-                # Timeout doesn't tell us much
-                break
+        # Try HTTPS only (most sites use HTTPS now, skip HTTP for speed)
+        url = f"https://{domain}"
+        try:
+            response = requests.get(
+                url,
+                timeout=(1, timeout),  # (connect_timeout, read_timeout)
+                allow_redirects=True,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; DomainChecker/1.0)"}
+            )
+            
+            final_url = response.url.lower()
+            content = response.text.lower()
+            
+            # Check if redirected to marketplace
+            for marketplace in MARKETPLACE_URLS:
+                if marketplace in final_url:
+                    return (True, response.url)
+            
+            # Check page content for for-sale patterns
+            for pattern in FOR_SALE_HTML_PATTERNS:
+                if pattern in content:
+                    return (True, response.url)
+            
+            # If we got a successful response, domain is taken but not obviously for sale
+            return (False, response.url)
+            
+        except (requests.exceptions.SSLError, requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            # Connection failed or timed out - assume not for sale
+            pass
                 
     except Exception:
         pass
@@ -192,7 +188,7 @@ def check_http_for_sale(domain: str, timeout: int = 7) -> tuple[bool, str]:
     return (False, "")
 
 
-def check_domain(domain: str) -> dict:
+def check_domain(domain: str, skip_http_check: bool = False) -> dict:
     """Check availability of a single domain."""
     tld = "." + domain.split(".")[-1]
     server = resolve_whois_server(tld)
@@ -210,10 +206,10 @@ def check_domain(domain: str) -> dict:
     for_sale_whois = any(pattern in response_lower for pattern in FOR_SALE_PATTERNS)
 
     # If domain is not available and not marked for sale in WHOIS, check HTTP
-    # Skip HTTP check for well-known domains to save time
+    # Skip HTTP check for well-known domains or if explicitly disabled
     for_sale = for_sale_whois
     base_name = domain.split(".")[0].lower()
-    if not available and not for_sale_whois and base_name not in SKIP_HTTP_CHECK:
+    if not skip_http_check and not available and not for_sale_whois and base_name not in SKIP_HTTP_CHECK:
         for_sale_http, redirect_url = check_http_for_sale(domain)
         for_sale = for_sale_http
 
@@ -249,7 +245,7 @@ def expand_domains(names: list[str], tlds: list[str]) -> list[str]:
     return domains
 
 
-def interactive_mode(tlds: list[str]):
+def interactive_mode(tlds: list[str], skip_http_check: bool = False):
     """Run in interactive loop mode."""
     print("Domain Availability Checker (interactive mode)")
     print(f"Checking TLDs: {', '.join(tlds)}")
@@ -277,7 +273,7 @@ def interactive_mode(tlds: list[str]):
 
         print()
         with ThreadPoolExecutor(max_workers=16) as pool:
-            futures = {pool.submit(check_domain, d): d for d in domains}
+            futures = {pool.submit(check_domain, d, skip_http_check): d for d in domains}
             results = []
             for future in as_completed(futures):
                 results.append(future.result())
@@ -319,6 +315,11 @@ def main():
         action="store_true",
         help="Stream JSON lines output (one result per line)",
     )
+    parser.add_argument(
+        "--skip-http-check",
+        action="store_true",
+        help="Skip HTTP checks for for-sale detection (faster but less accurate)",
+    )
 
     args = parser.parse_args()
 
@@ -331,16 +332,17 @@ def main():
             normalized_tlds.append(cleaned)
 
     tlds = ["." + t for t in normalized_tlds]
+    skip_http = args.skip_http_check
 
     if args.interactive or not args.names:
-        interactive_mode(tlds)
+        interactive_mode(tlds, skip_http)
         return
 
     domains = expand_domains(args.names, tlds)
 
     if args.jsonl:
         with ThreadPoolExecutor(max_workers=16) as pool:
-            futures = {pool.submit(check_domain, d): d for d in domains}
+            futures = {pool.submit(check_domain, d, skip_http): d for d in domains}
             for future in as_completed(futures):
                 result = future.result()
                 print(json.dumps(result, ensure_ascii=False))
@@ -349,7 +351,7 @@ def main():
 
     print(f"\nChecking {len(domains)} domain(s)...\n")
     with ThreadPoolExecutor(max_workers=16) as pool:
-        futures = {pool.submit(check_domain, d): d for d in domains}
+        futures = {pool.submit(check_domain, d, skip_http): d for d in domains}
         results = []
         for future in as_completed(futures):
             results.append(future.result())

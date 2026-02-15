@@ -19,6 +19,7 @@ from datetime import datetime
 _EXTRACTION_ZERO_WIDTH_RE = re.compile(r'[\u200B\u200C\u200D\u2060\uFEFF]')
 _EXTRACTION_PRIVATE_USE_RE = re.compile(r'[\uE000-\uF8FF]')
 _EXTRACTION_CONTROL_RE = re.compile(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]')
+_EXTRACTION_UNDERLINE_RUN_RE = re.compile(r'_{3,}')
 
 
 def sanitize_extracted_text(text):
@@ -35,6 +36,69 @@ def sanitize_extracted_text(text):
     cleaned = _EXTRACTION_PRIVATE_USE_RE.sub('', cleaned)
     cleaned = _EXTRACTION_CONTROL_RE.sub('', cleaned)
     return cleaned
+
+
+def _collect_horizontal_lines(page):
+    """Collect horizontal vector line segments from page drawings."""
+    lines = []
+    try:
+        drawings = page.get_drawings() or []
+    except Exception:
+        return lines
+
+    for d in drawings:
+        stroke_w = float(d.get("width") or 0)
+        for item in d.get("items", []):
+            if not item or item[0] != "l":
+                continue
+            p1, p2 = item[1], item[2]
+            if p1 is None or p2 is None:
+                continue
+            if abs(float(p1.y) - float(p2.y)) > 0.5:
+                continue
+            x0 = min(float(p1.x), float(p2.x))
+            x1 = max(float(p1.x), float(p2.x))
+            if (x1 - x0) < 20:
+                continue
+            y = (float(p1.y) + float(p2.y)) / 2.0
+            lines.append((x0, x1, y, stroke_w))
+    return lines
+
+
+def _span_has_drawn_underline(span_bbox, horizontal_lines):
+    """True when a span bbox sits on top of an existing horizontal vector line."""
+    if not span_bbox or not horizontal_lines:
+        return False
+    x0, y0, x1, y1 = [float(v) for v in span_bbox]
+    span_w = max(1.0, x1 - x0)
+    for lx0, lx1, ly, _sw in horizontal_lines:
+        if ly < (y0 - 2.0) or ly > (y1 + 2.0):
+            continue
+        overlap = max(0.0, min(x1, lx1) - max(x0, lx0))
+        if overlap <= 0:
+            continue
+        overlap_ratio = overlap / span_w
+        if overlap_ratio >= 0.55 or overlap >= 40:
+            return True
+    return False
+
+
+def _overlay_render_text(text, has_drawn_underline):
+    """
+    Build text used for overlay rendering. If underscore placeholders are already
+    represented by vector lines, suppress duplicate underscore glyphs.
+    """
+    if not text:
+        return text, False
+    if not has_drawn_underline or "_" not in text:
+        return text, False
+    if not _EXTRACTION_UNDERLINE_RUN_RE.search(text):
+        return text, False
+
+    render_text = _EXTRACTION_UNDERLINE_RUN_RE.sub("", text)
+    render_text = re.sub(r"[ \t]{2,}", " ", render_text).rstrip()
+    changed = (render_text != text)
+    return render_text, changed
 
 
 def _normalize_font_name(font_name):
@@ -61,6 +125,197 @@ def _font_family_name(font_name):
             if trimmed:
                 return trimmed
     return font_name
+
+
+def extract_embedded_fonts(pdf_path, document_id, output_dir=None):
+    """
+    Extract embedded fonts from a PDF and save as web-usable font files.
+    Returns a dict mapping PDF font names to their extracted file paths
+    and CSS metadata (family, weight, style).
+    """
+    if output_dir is None:
+        # Default: save under public/fonts/extracted/{document_id}/
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.abspath(os.path.join(script_dir, '..', '..'))
+        output_dir = os.path.join(project_root, 'public', 'fonts', 'extracted', str(document_id))
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    doc = fitz.open(pdf_path)
+    embedded_fonts = {}
+    seen_xrefs = set()
+
+    for page in doc:
+        page_fonts = page.get_fonts(full=True)
+        for font_info in page_fonts:
+            xref = font_info[0]
+            if xref in seen_xrefs:
+                continue
+            seen_xrefs.add(xref)
+
+            font_ext = font_info[1]   # e.g. 'ttf', 'cff', 'n/a'
+            font_name = font_info[3]  # e.g. 'AAAAAA+TahomaUnicode,Bold'
+
+            if font_ext == 'n/a' or not font_ext:
+                continue  # Skip non-embedded fonts (Type1 builtins like Helvetica)
+
+            try:
+                name, ext, subtype, content = doc.extract_font(xref)
+            except Exception:
+                continue
+
+            if not content or len(content) < 100:
+                continue  # Skip empty or trivially small fonts
+
+            # Clean font name: remove AAAAAA+ prefix
+            clean_name = font_name
+            if '+' in clean_name:
+                prefix, rest = clean_name.split('+', 1)
+                if len(prefix) == 6 and prefix.isupper():
+                    clean_name = rest
+
+            # Determine CSS font-family, weight, style from font name
+            lower_name = clean_name.lower()
+
+            # Extract family (strip weight/style suffixes)
+            family_base = clean_name.split(',')[0]  # "TahomaUnicode,Bold" → "TahomaUnicode"
+            for sep in ('-', '_'):
+                if sep in family_base:
+                    family_base = family_base.split(sep, 1)[0]
+
+            # Determine weight
+            css_weight = '400'
+            if 'bold' in lower_name and ('extra' in lower_name or 'ultra' in lower_name):
+                css_weight = '800'
+            elif 'semibold' in lower_name or 'demibold' in lower_name:
+                css_weight = '600'
+            elif 'bold' in lower_name or 'black' in lower_name or 'heavy' in lower_name:
+                css_weight = '700'
+            elif 'medium' in lower_name:
+                css_weight = '500'
+            elif 'light' in lower_name:
+                css_weight = '300'
+            elif 'thin' in lower_name or 'hairline' in lower_name:
+                css_weight = '100'
+
+            # Determine style
+            css_style = 'italic' if ('italic' in lower_name or 'oblique' in lower_name) else 'normal'
+
+            # Save font file
+            safe_name = clean_name.replace(',', '_').replace('+', '_').replace(' ', '_')
+            filename = f"{safe_name}.{ext}"
+            filepath = os.path.join(output_dir, filename)
+            with open(filepath, 'wb') as f:
+                f.write(content)
+
+            # Web-relative path (from public/)
+            web_path = f"/fonts/extracted/{document_id}/{filename}"
+
+            embedded_fonts[clean_name] = {
+                'pdf_font_name': font_name,
+                'clean_name': clean_name,
+                'family': family_base,
+                'css_weight': css_weight,
+                'css_style': css_style,
+                'file_path': web_path,
+                'file_ext': ext,
+                'xref': xref,
+            }
+
+            print(f"  📋 Extracted font: {clean_name} → {filename} (weight={css_weight}, style={css_style})")
+
+    doc.close()
+    print(f"  ✓ Extracted {len(embedded_fonts)} embedded fonts")
+    return embedded_fonts
+
+
+def _trace_text_from_chars(chars):
+    out = []
+    for ch in chars or []:
+        if not ch or len(ch) < 1:
+            continue
+        codepoint = ch[0]
+        if codepoint is None:
+            continue
+        try:
+            out.append(chr(codepoint))
+        except Exception:
+            continue
+    return sanitize_extracted_text(''.join(out))
+
+
+def _build_texttrace_index(page):
+    """
+    Build a lookup structure keyed by sanitized text for fast matching from
+    get_text('dict') spans to get_texttrace() paint metrics.
+    """
+    by_text = {}
+    try:
+        traces = page.get_texttrace() or []
+    except Exception:
+        return by_text
+
+    for tr in traces:
+        chars = tr.get('chars') or []
+        if not chars:
+            continue
+        text = _trace_text_from_chars(chars)
+        if not text:
+            continue
+        first = chars[0]
+        if len(first) < 3 or not first[2]:
+            continue
+        origin = first[2]
+        rec = {
+            'text': text,
+            'origin': origin,
+            'font': tr.get('font', ''),
+            'size': tr.get('size', 0),
+            'bbox': tr.get('bbox'),
+            'linewidth': tr.get('linewidth'),
+            'render_type': tr.get('type'),
+            'spacewidth': tr.get('spacewidth'),
+            'ascender': tr.get('ascender'),
+            'descender': tr.get('descender'),
+        }
+        by_text.setdefault(text, []).append(rec)
+    return by_text
+
+
+def _match_texttrace_span(trace_index, text, origin, font, size):
+    """
+    Find the closest texttrace entry by same text and nearest baseline origin,
+    with font/size compatibility checks.
+    """
+    if not text or not origin:
+        return None
+    candidates = trace_index.get(text) or []
+    if not candidates:
+        return None
+
+    target_font = _normalize_font_name(font)
+    best = None
+    best_score = None
+    for cand in candidates:
+        cand_origin = cand.get('origin')
+        if not cand_origin:
+            continue
+        dx = abs(float(cand_origin[0]) - float(origin[0]))
+        dy = abs(float(cand_origin[1]) - float(origin[1]))
+        if dx > 2.0 or dy > 2.0:
+            continue
+
+        size_diff = abs(float(cand.get('size') or 0) - float(size or 0))
+        if size_diff > 0.6:
+            continue
+
+        cand_font = _normalize_font_name(cand.get('font'))
+        font_penalty = 0.0 if (not target_font or target_font == cand_font) else 1.0
+        score = dx + dy + (size_diff * 2.0) + font_penalty
+        if best_score is None or score < best_score:
+            best = cand
+            best_score = score
+    return best
 
 
 def _parse_font_style(font_name):
@@ -160,21 +415,37 @@ def _merge_same_row_lines(line_items):
                 if size_ratio < 0.6:
                     should_merge = False
 
-        # Don't merge items with a large horizontal gap (table columns).
-        # Inline formatting (italic, bold) has near-zero gaps between spans,
-        # while table cells have gaps of 15+ points.
-        # Check gap in BOTH directions (item may be left or right of row).
+        # Don't merge items with a significant horizontal overlap (z-ordered text).
+        # Normal text flows left-to-right with positive gaps.
+        # Minimal negative gap (kerning) is okay, but large overlap means
+        # distinct text elements on top of each other (e.g. form fields).
         if should_merge:
             row_x0 = min(it['bbox'][0] for it in row)
             row_x1 = max(it['bbox'][2] for it in row)
             item_x0 = item['bbox'][0]
             item_x1 = item['bbox'][2]
-            x_gap = max(item_x0 - row_x1, row_x0 - item_x1, 0)
-            if x_gap > 0:
+            
+            # Check gap (positive) or overlap (negative)
+            # We want to merge items that are SEQUENTIAL (small positive gap).
+            # We do NOT want to merge items that OVERLAP significantly (negative gap).
+            
+            # Distance between end of row and start of item
+            dist = item_x0 - row_x1
+            
+            if dist > 0:
+                # Positive gap logic (existing)
                 avg_size = max(row_max_size if row_max_size > 0 else 12,
                                item['max_size'] if item['max_size'] > 0 else 12)
                 x_gap_threshold = max(avg_size * 2, 15)
-                if x_gap > x_gap_threshold:
+                if dist > x_gap_threshold:
+                    should_merge = False
+            else:
+                # Negative gap (overlap)
+                overlap = -dist
+                # Allow small overlap for italics/kerning (up to 20% of font size)
+                avg_size = max(row_max_size if row_max_size > 0 else 12,
+                               item['max_size'] if item['max_size'] > 0 else 12)
+                if overlap > avg_size * 0.2:
                     should_merge = False
 
         if should_merge:
@@ -510,12 +781,23 @@ def extract_text_with_pymupdf(pdf_path):
             page_width = page_rect.width
             page_height = page_rect.height
             
-            # Extract text with detailed positioning
-            # Use flags to preserve ligatures and whitespace for accurate matching
-            # Use sort parameter to help with better block detection
-            text_dict = page.get_text("dict", flags=fitz.TEXT_PRESERVE_LIGATURES | fitz.TEXT_PRESERVE_WHITESPACE, sort=True)
+            # Extract text with detailed positioning.
+            # Include accurate bbox / ascender flags so span and line geometry
+            # matches painted glyph bounds more closely across viewers.
+            accurate_bboxes_flag = getattr(fitz, "TEXT_ACCURATE_BBOXES", 0)
+            accurate_ascenders_flag = getattr(fitz, "TEXT_ACCURATE_ASCENDERS", 0)
+            text_flags = (
+                fitz.TEXT_PRESERVE_LIGATURES
+                | fitz.TEXT_PRESERVE_WHITESPACE
+                | accurate_bboxes_flag
+                | accurate_ascenders_flag
+            )
+            # Use sort parameter to help with better block detection.
+            text_dict = page.get_text("dict", flags=text_flags, sort=True)
             blocks = text_dict.get("blocks", [])
             page_fonts = page.get_fonts(full=True)
+            trace_index = _build_texttrace_index(page)
+            horizontal_lines = _collect_horizontal_lines(page)
             
             page_words = []
             page_blocks = []  # Track paragraph blocks
@@ -581,7 +863,17 @@ def extract_text_with_pymupdf(pdf_path):
                             for item in sorted_by_x[1:]:
                                 last_x = max(it['x0'] for it in x_groups[-1])
                                 gap = item['x0'] - last_x
-                                if gap >= gap_threshold:
+                                
+                                # Split if significant gap OR significant overlap (z-order)
+                                # Gap threshold: 8% of width or 12pt
+                                # Overlap threshold: 20% of font size
+                                avg_size = max(
+                                    (it.get('max_size', 0) for it in x_groups[-1] if it.get('max_size', 0) > 0), 
+                                    default=12
+                                )
+                                overlap_threshold = avg_size * 0.2
+                                
+                                if gap >= gap_threshold or gap < -overlap_threshold:
                                     x_groups.append([item])
                                 else:
                                     x_groups[-1].append(item)
@@ -641,6 +933,7 @@ def extract_text_with_pymupdf(pdf_path):
 
                         block_text_lines = []
                         block_spans = []  # Store all spans for rich text handling
+                        block_word_bboxes = []
                         block_line_bboxes = []
                         block_line_heights = []
                         block_style = None  # Dominant style for the block
@@ -671,6 +964,31 @@ def extract_text_with_pymupdf(pdf_path):
                                 # Get ascender and descender from span (PyMuPDF provides these)
                                 ascender = span.get("ascender", 0.8)  # Default ratio if not provided
                                 descender = span.get("descender", -0.2)  # Default ratio if not provided
+
+                                # Prefer texttrace geometry / metrics when we can match this span.
+                                # This captures painted glyph boxes more accurately than dict spans
+                                # on some PyMuPDF builds.
+                                trace_match = _match_texttrace_span(trace_index, text, origin, font, size)
+                                trace_linewidth = None
+                                trace_render_type = None
+                                trace_spacewidth = None
+                                if trace_match:
+                                    if trace_match.get("bbox"):
+                                        bbox = trace_match.get("bbox")
+                                    trace_asc = trace_match.get("ascender")
+                                    trace_desc = trace_match.get("descender")
+                                    if trace_asc is not None:
+                                        ascender = trace_asc
+                                    if trace_desc is not None:
+                                        descender = trace_desc
+                                    trace_linewidth = trace_match.get("linewidth")
+                                    trace_render_type = trace_match.get("render_type")
+                                    trace_spacewidth = trace_match.get("spacewidth")
+
+                                has_drawn_underline = _span_has_drawn_underline(bbox, horizontal_lines)
+                                render_text, suppressed_drawn_underline = _overlay_render_text(
+                                    text, has_drawn_underline
+                                )
 
                                 # Convert 24-bit color integer to hex (#RRGGBB) for CSS
                                 hex_color = f"#{(color >> 16) & 0xFF:02x}{(color >> 8) & 0xFF:02x}{color & 0xFF:02x}"
@@ -731,6 +1049,9 @@ def extract_text_with_pymupdf(pdf_path):
 
                                 span_data = {
                                     'text': text,
+                                    'render_text': render_text,
+                                    'suppress_drawn_underline': suppressed_drawn_underline,
+                                    'has_drawn_underline': has_drawn_underline,
                                     'font': font,
                                     'font_xref': font_xref,
                                     'font_size': size,
@@ -742,7 +1063,10 @@ def extract_text_with_pymupdf(pdf_path):
                                     'flags': flags,
                                     'ascender': ascender,
                                     'descender': descender,
-                                    'origin': origin  # (x, y) baseline point
+                                    'origin': origin,  # (x, y) baseline point
+                                    'line_width': trace_linewidth,
+                                    'render_type': trace_render_type,
+                                    'space_width': trace_spacewidth
                                 }
                                 block_spans.append(span_data)
                                 line_spans.append(span_data)
@@ -776,6 +1100,9 @@ def extract_text_with_pymupdf(pdf_path):
 
                                 word_data = {
                                     'text': text,
+                                    'render_text': render_text,
+                                    'suppress_drawn_underline': suppressed_drawn_underline,
+                                    'has_drawn_underline': has_drawn_underline,
                                     'left': bbox[0],
                                     'top': bbox[1],
                                     'width': bbox[2] - bbox[0],
@@ -794,10 +1121,14 @@ def extract_text_with_pymupdf(pdf_path):
                                     'line_num': item['line_num'],
                                     'span_num': span_num,
                                     'ascender': ascender,
-                                    'descender': descender
+                                    'descender': descender,
+                                    'line_width': trace_linewidth,
+                                    'render_type': trace_render_type,
+                                    'space_width': trace_spacewidth
                                 }
 
                                 page_words.append(word_data)
+                                block_word_bboxes.append(bbox)
                                 line_text += text + " "
                                 total_words += len(text.split())
 
@@ -822,6 +1153,15 @@ def extract_text_with_pymupdf(pdf_path):
                         current_block['text'] = '\n'.join(block_text_lines)
                         current_block['text_single_line'] = ' '.join(block_text_lines)
                         current_block['text_lines'] = block_text_lines
+                        if block_word_bboxes:
+                            b_left = min(b[0] for b in block_word_bboxes)
+                            b_top = min(b[1] for b in block_word_bboxes)
+                            b_right = max(b[2] for b in block_word_bboxes)
+                            b_bottom = max(b[3] for b in block_word_bboxes)
+                            current_block['left'] = b_left
+                            current_block['top'] = b_top
+                            current_block['width'] = b_right - b_left
+                            current_block['height'] = b_bottom - b_top
                         current_block['line_bboxes'] = block_line_bboxes
                         if block_line_heights:
                             current_block['avg_line_height'] = sum(block_line_heights) / len(block_line_heights)
@@ -1034,6 +1374,29 @@ def main():
     
     # Extract text
     extraction_result = extract_text_with_pymupdf(pdf_path)
+    
+    # Extract embedded fonts for accurate overlay rendering
+    if document_id is not None:
+        print()
+        print("=" * 60)
+        print("Extracting Embedded Fonts")
+        print("=" * 60)
+        try:
+            embedded_fonts = extract_embedded_fonts(pdf_path, document_id)
+            # Store embedded fonts info as a separate JSON file alongside extraction
+            if embedded_fonts:
+                fonts_dir = os.path.dirname(pdf_path)
+                fonts_json_path = os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)),
+                    '..', '..', 'storage', 'app', 'temp',
+                    f'embedded_fonts_{document_id}.json'
+                )
+                import json as json_mod
+                with open(fonts_json_path, 'w') as f:
+                    json_mod.dump(embedded_fonts, f, indent=2)
+                print(f"  ✓ Font metadata saved to {fonts_json_path}")
+        except Exception as e:
+            print(f"  ⚠ Font extraction failed (non-fatal): {e}")
     
     print()
     print("=" * 60)

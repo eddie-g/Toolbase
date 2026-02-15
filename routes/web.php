@@ -43,6 +43,7 @@ Route::get('/documents/{document}/apply-rotations', function () {
 });
 Route::post('/documents/{document}/save-annotations', [DocumentController::class, 'saveAnnotations'])->name('documents.saveAnnotations');
 Route::post('/documents/{document}/mark-annotations-saved', [DocumentController::class, 'markAnnotationsSaved'])->name('documents.markAnnotationsSaved');
+Route::post('/documents/{document}/apply-annotations-direct', [DocumentController::class, 'applyAnnotationsDirect'])->name('documents.applyAnnotationsDirect');
 Route::post('documents/{document}/process-ocr', [DocumentController::class, 'processOcr'])->name('documents.processOcr');
 Route::get('documents/{document}/extraction-data', [DocumentController::class, 'getExtractionData'])->name('documents.getExtractionData');
 Route::post('documents/{document}/process-fitz', [DocumentController::class, 'processFitz'])->name('documents.processFitz');
@@ -111,6 +112,9 @@ Route::get('/ai/add-to-pdf', function() {
 
 // Domain Search
 Route::get('/domain-search', [DomainSearchController::class, 'index'])->name('domainSearch.index');
+Route::get('/domain-search/faq', function () {
+    return view('domain-search-faq');
+})->name('domainSearch.faq');
 Route::post('/domain-search/check', [DomainSearchController::class, 'check'])->name('domainSearch.check');
 Route::post('/domain-search/check-start', [DomainSearchController::class, 'checkStart'])->middleware(['throttle:10,1'])->name('domainSearch.checkStart');
 Route::get('/domain-search/check-poll', [DomainSearchController::class, 'checkPoll'])->name('domainSearch.checkPoll');

@@ -609,12 +609,39 @@ class DocumentController extends Controller
             ], 200); // Return 200 so clients parse JSON easily
         }
 
+        // Load embedded fonts metadata if available
+        $embeddedFonts = null;
+        $embeddedFontsPath = storage_path("app/temp/embedded_fonts_{$document->id}.json");
+        if (file_exists($embeddedFontsPath)) {
+            $embeddedFonts = json_decode(file_get_contents($embeddedFontsPath), true);
+        } else {
+            // Try to extract fonts on-the-fly if not yet done
+            $fullPath = Storage::path($document->path);
+            if (file_exists($fullPath)) {
+                $docId = $document->id;
+                $escapedPath = escapeshellarg($fullPath);
+                $escapedJsonPath = escapeshellarg($embeddedFontsPath);
+                $command = sprintf(
+                    'python3 -c "import sys, json; sys.path.insert(0, \'%s\'); from extract_pdf_pymupdf import extract_embedded_fonts; fonts = extract_embedded_fonts(%s, %d); f = open(%s, \'w\'); json.dump(fonts, f); f.close()" 2>&1',
+                    base_path('python/pdf-editor'),
+                    $escapedPath,
+                    $docId,
+                    $escapedJsonPath
+                );
+                exec($command);
+                if (file_exists($embeddedFontsPath)) {
+                    $embeddedFonts = json_decode(file_get_contents($embeddedFontsPath), true);
+                }
+            }
+        }
+
         return response()->json([
             'success' => true,
             'extraction_data' => json_decode($extraction->extraction_data, true),
             'total_pages' => $extraction->total_pages,
             'total_words' => $extraction->total_words,
-            'full_text' => $extraction->full_text
+            'full_text' => $extraction->full_text,
+            'embedded_fonts' => $embeddedFonts,
         ]);
     }
 
@@ -892,8 +919,24 @@ class DocumentController extends Controller
             return true;
         }
         
-        // qpdf exit code 3 = warnings but file was still written successfully
+        // qpdf exit code 3 = warnings but file may still be damaged.
         if ($returnCode === 3) {
+            $warnings = implode("\n", $output);
+            $fatalWarningPatterns = [
+                'too many errors; giving up on reading object',
+                'operation for dictionary attempted on object of type null',
+                'unknown token while reading object',
+            ];
+            foreach ($fatalWarningPatterns as $pattern) {
+                if (stripos($warnings, $pattern) !== false) {
+                    \Log::warning('qpdf normalization reported fatal warning pattern', [
+                        'path' => $pdfPath,
+                        'pattern' => $pattern,
+                        'warnings' => implode("\n", array_slice($output, -20)),
+                    ]);
+                    return false;
+                }
+            }
             \Log::info('PDF normalized with qpdf (with warnings)', [
                 'path' => $pdfPath,
                 'warnings' => implode("\n", array_slice($output, -5))
@@ -917,16 +960,49 @@ class DocumentController extends Controller
 
         $file = $validated['edited_pdf'];
         $tempPath = $file->getPathname();
+        $incomingBytes = @file_get_contents($tempPath);
+        $incomingSize = $incomingBytes === false ? 0 : strlen($incomingBytes);
+
+        // Hard guard: reject obviously malformed/truncated uploads from frontend.
+        if ($incomingSize < 2048) {
+            \Log::warning('Rejected suspiciously small edited PDF upload', [
+                'document_id' => $document->id,
+                'incoming_size' => $incomingSize,
+            ]);
+            return response()->json([
+                'ok' => false,
+                'message' => 'Edited PDF payload is invalid or truncated.',
+            ], 422);
+        }
+
+        // Pre-save rollback point for failed normalization.
+        $fullPath = Storage::path($document->path);
+        $preSaveBackupPath = $fullPath . '.presave.bak';
+        if (file_exists($fullPath)) {
+            @copy($fullPath, $preSaveBackupPath);
+        }
         
-        Storage::put($document->path, file_get_contents($tempPath));
+        Storage::put($document->path, $incomingBytes);
 
         // CRITICAL: Normalize the PDF with qpdf to fix pdf-lib structural issues.
         // pdf-lib creates ExtGState dicts and Content stream arrays that PyMuPDF cannot parse,
         // causing "syntax error: invalid key in dict" and "not a dict (null)" errors.
         // qpdf rewrites the structure without touching fonts (unlike Ghostscript which
         // re-encodes fonts to Type0/CID and corrupts space character glyphs).
-        $fullPath = Storage::path($document->path);
-        $this->normalizePdfWithQpdf($fullPath);
+        if (!$this->normalizePdfWithQpdf($fullPath)) {
+            // qpdf could not normalize this PDF — keep the pdf-lib version as-is.
+            // pdf-lib output is valid PDF; qpdf just cannot parse some exotic
+            // structures.  Rolling back would discard the user's edits, so we
+            // proceed with the un-normalized file and log a warning.
+            \Log::warning('qpdf normalization failed for save — keeping pdf-lib output as-is', [
+                'document_id' => $document->id,
+                'path' => $fullPath,
+            ]);
+        }
+
+        if (file_exists($preSaveBackupPath)) {
+            @unlink($preSaveBackupPath);
+        }
 
         // Re-read file size after normalization (size may have changed)
         $normalizedSize = file_exists($fullPath) ? filesize($fullPath) : $file->getSize();
@@ -1146,7 +1222,10 @@ class DocumentController extends Controller
         // Create clean PDF (with all text removed) for overlay editing
         $fullPath = Storage::path($document->path);
         $cleanPath = Storage::path('temp/clean_' . $document->id . '.pdf');
-        $extractionFile = storage_path('app/temp_extraction_' . $document->id . '.json');
+        $extractionFile = tempnam(sys_get_temp_dir(), 'tb_ext_' . $document->id . '_');
+        if ($extractionFile === false) {
+            $extractionFile = Storage::path('private/temp/extraction_' . $document->id . '_' . uniqid() . '.json');
+        }
         
         // Always delete old clean PDF to ensure we get fresh version
         if (file_exists($cleanPath)) {
@@ -1160,7 +1239,17 @@ class DocumentController extends Controller
         }
         
         // Save extraction data to temp file
-        file_put_contents($extractionFile, $extraction->extraction_data);
+        $writeOk = @file_put_contents($extractionFile, $extraction->extraction_data);
+        if ($writeOk === false) {
+            \Log::error('Failed to write extraction temp file for overlay prep', [
+                'document_id' => $document->id,
+                'extraction_file' => $extractionFile,
+            ]);
+            return response()->json([
+                'success' => false,
+                'error' => 'Failed to prepare temporary extraction file.',
+            ], 500);
+        }
         
         $pythonScript = base_path('python/pdf-editor/create_clean_pdf.py');
         $command = sprintf(
@@ -1217,6 +1306,7 @@ class DocumentController extends Controller
         $pageDimensions = [];
         
         // Get current extraction to know original text per page
+        $extractionData = [];
         $extraction = DB::table('pdf_extractions_fitz')
             ->where('document_id', $document->id)
             ->orderBy('id', 'desc')
@@ -1316,13 +1406,83 @@ class DocumentController extends Controller
         }
         unset($edit);
 
-        // Save edits to temporary file
-        $editsFile = storage_path('app/temp_edits_' . $document->id . '.json');
-        file_put_contents($editsFile, json_encode($edits));
+        // Use unique temp files per request to avoid permission issues when
+        // stale fixed filenames are owned by another user/process.
+        $tempJsonDir = storage_path('app/temp');
+        if (!is_dir($tempJsonDir)) {
+            @mkdir($tempJsonDir, 0775, true);
+        }
+        $makeTempFile = function (string $prefix) use ($tempJsonDir, $document) {
+            $candidates = [$tempJsonDir, sys_get_temp_dir()];
+            foreach ($candidates as $dir) {
+                if (!$dir || !is_dir($dir)) {
+                    continue;
+                }
+                if (!is_writable($dir)) {
+                    continue;
+                }
+                $path = rtrim($dir, DIRECTORY_SEPARATOR)
+                    . DIRECTORY_SEPARATOR
+                    . $prefix
+                    . $document->id
+                    . '_'
+                    . uniqid('', true)
+                    . '.json';
+                // Reserve the path immediately so later writes are deterministic.
+                if (@file_put_contents($path, '') !== false) {
+                    return $path;
+                }
+            }
+            throw new \RuntimeException('Failed to allocate temporary JSON file path.');
+        };
 
-        // Run Python script to apply edits (using simple version)
-        $fullPath = Storage::path($document->path);
+        // Save edits to temporary file
+        $editsFile = $makeTempFile('edits_');
+        if (@file_put_contents($editsFile, json_encode($edits)) === false) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to write edits temp file.',
+            ], 500);
+        }
+
+        // Track which pages have edits
+        $editedPages = [];
+        foreach ($edits as $edit) {
+            $pageNum = $edit['page_number'];
+            if (!in_array($pageNum, $editedPages)) {
+                $editedPages[] = $pageNum;
+            }
+        }
+        sort($editedPages);
         
+        \Log::info('Pages with edits', [
+            'document_id' => $document->id,
+            'edited_pages' => $editedPages,
+            'total_edits' => count($edits)
+        ]);
+
+        $fullPath = Storage::path($document->path);
+        $saveMode = strtolower((string) config('pdf_editor.save_mode', 'full_page_save'));
+        $isSurgicalSave = $saveMode === 'surgical_save';
+
+        // OPTIMIZATION: If no edits made, skip save pipeline entirely.
+        if (empty($editedPages)) {
+            \Log::info('No edits detected, skipping PDF save', [
+                'document_id' => $document->id,
+                'save_mode' => $saveMode,
+            ]);
+            if (file_exists($editsFile)) {
+                @unlink($editsFile);
+            }
+            return response()->json([
+                'success' => true,
+                'message' => 'No changes to save.'
+            ]);
+        }
+
+        $extractionFile = null;
+        $editedPagesFile = null;
+
         // CRITICAL: Create a backup of the PDF before applying destructive edits
         // This allows recovery if the edit process corrupts or loses content
         $backupPath = Storage::path('documents/backup_' . pathinfo($document->path, PATHINFO_FILENAME) . '.pdf');
@@ -1333,35 +1493,132 @@ class DocumentController extends Controller
                 'backup_path' => $backupPath,
             ]);
         }
-        
-        $pythonScript = base_path('python/pdf-editor/apply_pdf_edits_simple.py');
-        
-        // Log the command for debugging
-        \Log::info('Applying PDF edits', [
-            'document_id' => $document->id,
-            'pdf_path' => $fullPath,
-            'edits_json' => json_encode($edits),
-            'edits_count' => count($edits)
-        ]);
-        
-        // Pass edits via temp file to avoid command-line length limits
-        // (word_styles arrays can be large)
-        $command = sprintf(
-            'python3 %s %s %s 2>&1',
-            escapeshellarg($pythonScript),
-            escapeshellarg($fullPath),
-            escapeshellarg('@' . $editsFile)
-        );
-        
+
         $output = [];
         $returnCode = 0;
-        exec($command, $output, $returnCode);
+
+        if ($isSurgicalSave) {
+            // Surgical mode: redact and reinsert only changed blocks.
+            $pythonScript = base_path('python/pdf-editor/apply_pdf_edits.py');
+            $command = sprintf(
+                'python3 %s %s %s 2>&1',
+                escapeshellarg($pythonScript),
+                escapeshellarg($fullPath),
+                escapeshellarg($editsFile)
+            );
+
+            \Log::info('Applying PDF edits (surgical_save)', [
+                'document_id' => $document->id,
+                'pdf_path' => $fullPath,
+                'edits_count' => count($edits),
+                'edited_pages' => $editedPages,
+            ]);
+
+            exec($command, $output, $returnCode);
+        } else {
+            // Full-page mode: rebuild page text from clean PDF + extraction.
+            if (empty($extractionData) || !is_array($extractionData)) {
+                if (file_exists($editsFile)) {
+                    @unlink($editsFile);
+                }
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No extraction data available to rebuild text layer.'
+                ], 500);
+            }
+
+            $extractionFile = $makeTempFile('extract_');
+            if (@file_put_contents($extractionFile, json_encode($extractionData)) === false) {
+                if (file_exists($editsFile)) {
+                    @unlink($editsFile);
+                }
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to write extraction temp file.',
+                ], 500);
+            }
+
+            $cleanPath = Storage::path('temp/clean_' . $document->id . '.pdf');
+            $cleanScript = base_path('python/pdf-editor/create_clean_pdf.py');
+            $cleanCommand = sprintf(
+                'python3 %s %s %s %s 2>&1',
+                escapeshellarg($cleanScript),
+                escapeshellarg($fullPath),
+                escapeshellarg($extractionFile),
+                escapeshellarg($cleanPath)
+            );
+            $cleanOutput = [];
+            $cleanCode = 0;
+            exec($cleanCommand, $cleanOutput, $cleanCode);
+
+            if ($cleanCode !== 0 || !file_exists($cleanPath)) {
+                \Log::error('Failed to create clean PDF before absolute text rebuild', [
+                    'document_id' => $document->id,
+                    'return_code' => $cleanCode,
+                    'output' => implode("\n", $cleanOutput),
+                ]);
+                if (file_exists($extractionFile)) {
+                    unlink($extractionFile);
+                }
+                if (file_exists($editsFile)) {
+                    @unlink($editsFile);
+                }
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to prepare clean PDF for save.',
+                    'error' => implode("\n", $cleanOutput),
+                ], 500);
+            }
+
+            $pythonScript = base_path('python/pdf-editor/rebuild_pdf_from_overlay_extraction.py');
+            $editedPagesFile = $makeTempFile('pages_');
+            if (@file_put_contents($editedPagesFile, json_encode($editedPages)) === false) {
+                if (file_exists($extractionFile)) @unlink($extractionFile);
+                if (file_exists($editsFile)) @unlink($editsFile);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to write edited-pages temp file.',
+                ], 500);
+            }
+
+            $command = sprintf(
+                'python3 %s %s %s %s %s %s %s 2>&1',
+                escapeshellarg($pythonScript),
+                escapeshellarg($cleanPath),
+                escapeshellarg('@' . $extractionFile),
+                escapeshellarg('@' . $editsFile),
+                escapeshellarg($fullPath),
+                escapeshellarg($backupPath),
+                escapeshellarg('@' . $editedPagesFile)
+            );
+
+            \Log::info('Applying PDF edits (full_page_save)', [
+                'document_id' => $document->id,
+                'pdf_path' => $fullPath,
+                'clean_pdf_path' => $cleanPath,
+                'edits_count' => count($edits),
+                'edited_pages' => $editedPages,
+            ]);
+
+            exec($command, $output, $returnCode);
+        }
         
         // Log the output
         \Log::info('Python script output', [
             'return_code' => $returnCode,
+            'save_mode' => $saveMode,
             'output' => implode("\n", $output)
         ]);
+
+        if ($extractionFile && file_exists($extractionFile)) {
+            unlink($extractionFile);
+        }
+        if ($editedPagesFile && file_exists($editedPagesFile)) {
+            unlink($editedPagesFile);
+        }
+        if (file_exists($editsFile)) {
+            @unlink($editsFile);
+        }
 
         if ($returnCode === 0) {
             // Refresh extraction data so overlay editor reflects latest text positions
@@ -1395,14 +1652,16 @@ class DocumentController extends Controller
                     ->first();
                 
                 if ($latestExtraction) {
-                    $extractionFile = storage_path('app/temp_extraction_' . $document->id . '.json');
+                    $extractionFile = $makeTempFile('extract_post_');
                     
                     // Ensure extraction_data is a string (it might be an array)
                     $extractionData = is_string($latestExtraction->extraction_data) 
                         ? $latestExtraction->extraction_data 
                         : json_encode($latestExtraction->extraction_data);
                     
-                    file_put_contents($extractionFile, $extractionData);
+                    if (@file_put_contents($extractionFile, $extractionData) === false) {
+                        throw new \RuntimeException('Failed to write post-save extraction temp file.');
+                    }
                     
                     $pythonScript = base_path('python/pdf-editor/create_clean_pdf.py');
                     $cleanCommand = sprintf(
@@ -2174,6 +2433,131 @@ class DocumentController extends Controller
             'updated' => $updatedCount,
             'created' => $createdCount,
             'state' => $targetState,
+        ]);
+    }
+
+    public function applyAnnotationsDirect(Request $request, Document $document)
+    {
+        $validated = $request->validate([
+            'annotations' => 'required|array',
+            'annotations.*.type' => 'required|string',
+            'annotations.*.pageIndex' => 'required',
+        ]);
+        // IMPORTANT:
+        // $validated['annotations'] only contains keys declared in validation rules
+        // (type/pageIndex). For direct annotation stamping we need the full payload
+        // (pdfX/pdfY/pdfWidth/pdfHeight/colors/etc), so read annotations from request input.
+        $annotationsPayload = $request->input('annotations', []);
+        if (!is_array($annotationsPayload)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid annotations payload.',
+            ], 422);
+        }
+
+        $pdfPath = Storage::path($document->path);
+        if (!file_exists($pdfPath)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Document file not found.',
+            ], 404);
+        }
+
+        $backupPath = Storage::path('documents/backup_' . pathinfo($document->path, PATHINFO_FILENAME) . '.pdf');
+        if (file_exists($pdfPath)) {
+            @copy($pdfPath, $backupPath);
+        }
+
+        $tempJsonDir = storage_path('app/temp');
+        if (!is_dir($tempJsonDir)) {
+            @mkdir($tempJsonDir, 0775, true);
+        }
+        $makeTempFile = function (string $prefix) use ($tempJsonDir, $document) {
+            $candidates = [$tempJsonDir, sys_get_temp_dir()];
+            foreach ($candidates as $dir) {
+                if (!$dir || !is_dir($dir) || !is_writable($dir)) {
+                    continue;
+                }
+                $path = rtrim($dir, DIRECTORY_SEPARATOR)
+                    . DIRECTORY_SEPARATOR
+                    . $prefix
+                    . $document->id
+                    . '_'
+                    . uniqid('', true)
+                    . '.json';
+                if (@file_put_contents($path, '') !== false) {
+                    return $path;
+                }
+            }
+            throw new \RuntimeException('Failed to allocate temporary JSON file path.');
+        };
+
+        try {
+            $annotationsFile = $makeTempFile('annotations_');
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to allocate annotations temp file.',
+            ], 500);
+        }
+
+        $annotationsJson = json_encode($annotationsPayload, JSON_INVALID_UTF8_SUBSTITUTE);
+        if ($annotationsJson === false || @file_put_contents($annotationsFile, $annotationsJson) === false) {
+            if (isset($annotationsFile) && file_exists($annotationsFile)) {
+                @unlink($annotationsFile);
+            }
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to write annotations temp file.',
+            ], 500);
+        }
+
+        $script = base_path('python/pdf-editor/apply_annotations_direct.py');
+        $command = sprintf(
+            'python3 %s %s %s 2>&1',
+            escapeshellarg($script),
+            escapeshellarg($pdfPath),
+            escapeshellarg($annotationsFile)
+        );
+        $output = [];
+        $returnCode = 0;
+        exec($command, $output, $returnCode);
+
+        if (file_exists($annotationsFile)) {
+            @unlink($annotationsFile);
+        }
+
+        if ($returnCode !== 0) {
+            if (file_exists($backupPath)) {
+                @copy($backupPath, $pdfPath);
+            }
+            \Log::error('Direct annotation apply failed', [
+                'document_id' => $document->id,
+                'return_code' => $returnCode,
+                'output' => implode("\n", $output),
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to apply annotations directly.',
+                'error' => implode("\n", $output),
+            ], 500);
+        }
+
+        $size = @filesize($pdfPath) ?: $document->size_bytes;
+        $document->size_bytes = $size;
+        $document->saveQuietly();
+
+        \Log::info('Direct annotation apply SUCCESS', [
+            'document_id' => $document->id,
+            'annotation_count' => count($annotationsPayload),
+            'annotation_types' => array_map(fn($a) => $a['type'] ?? 'unknown', $annotationsPayload),
+            'first_annotation' => $annotationsPayload[0] ?? null,
+            'new_size' => $size,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Annotations applied directly to PDF.',
         ]);
     }
 

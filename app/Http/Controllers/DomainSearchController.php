@@ -126,10 +126,11 @@ class DomainSearchController extends Controller
 
         // Step 2: Check availability
         $checkScript = base_path('python/domain-search/check_domain_availability.py');
-        $args = ['python3', $checkScript, '-t', ...$tlds, '--', ...$names];
+        // Skip HTTP check for speed
+        $args = ['python3', $checkScript, '-t', ...$tlds, '--skip-http-check', '--', ...$names];
 
         // Longer timeout since we're checking many domains
-        $checkResult = Process::timeout(120)->run($args);
+        $checkResult = Process::timeout(90)->run($args);
 
         if (!$checkResult->successful()) {
             return response()->json([
@@ -183,9 +184,10 @@ class DomainSearchController extends Controller
                 return explode('.', $d)[0];
             }, $uncachedDomains));
 
-            $args = ['python3', $scriptPath, '-t', ...$tlds, '--', ...$uncachedNames];
+            // Skip HTTP check for speed (reduces check time from 7+ seconds to ~1 second per domain)
+            $args = ['python3', $scriptPath, '-t', ...$tlds, '--skip-http-check', '--', ...$uncachedNames];
 
-            $result = Process::timeout(60)->run($args);
+            $result = Process::timeout(30)->run($args);
 
             if (!$result->successful()) {
                 return [
