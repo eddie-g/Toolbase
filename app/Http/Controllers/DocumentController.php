@@ -1704,6 +1704,29 @@ class DocumentController extends Controller
         ]);
     }
 
+    public function saveImage(Request $request, Document $document)
+    {
+        $request->validate([
+            'image' => ['required', 'file', 'mimes:png,jpg,jpeg,webp,svg', 'max:20480'],
+        ]);
+
+        $file = $request->file('image');
+        $fullPath = Storage::path($document->path);
+
+        // Write the uploaded image directly over the existing document file
+        file_put_contents($fullPath, file_get_contents($file->getPathname()));
+
+        $document->update([
+            'mime_type' => $file->getClientMimeType() ?: 'image/png',
+            'size_bytes' => $file->getSize(),
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Image saved successfully.',
+        ]);
+    }
+
     public function cleanPdf(Document $document)
     {
         // After edits are saved, the "clean" PDF is deleted

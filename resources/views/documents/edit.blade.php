@@ -4,7 +4,7 @@
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="csrf-token" content="{{ csrf_token() }}">
-        <title>Edit PDF</title>
+        <title>{{ str_starts_with($document->mime_type ?? 'application/pdf', 'image/') ? 'Edit Image' : 'Edit PDF' }}</title>
         
         <!-- Bootstrap 5.3.3 CSS -->
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
@@ -2983,6 +2983,20 @@
                 background: rgba(255,107,107,0.1);
                 color: #ff6b6b;
             }
+            /* Image document mode: hide PDF-specific features */
+            @if(str_starts_with($document->mime_type ?? 'application/pdf', 'image/'))
+            #mode-overlay-chip,
+            #split-btn,
+            #add-page-btn,
+            #rotate-page-btn,
+            #overlay-undo,
+            #overlay-redo,
+            #overlay-state-indicator,
+            .mode-overlay-chip,
+            [data-pdf-only] {
+                display: none !important;
+            }
+            @endif
         </style>
     </head>
     <body class="bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 text-gray-100 min-h-screen">
@@ -5280,6 +5294,7 @@
             // Only trigger extraction if no extraction data exists yet
             // This prevents overwriting extraction data when page reloads after saving shapes
             // Extraction data should ONLY be updated by overlay editor's save-overlay-btn
+            if (!isImageDocument) {
             fetch(fitzExtractionDataUrl)
             .then(response => response.json())
             .then(data => {
@@ -5313,6 +5328,7 @@
             .catch(err => {
                 console.log('Error checking extraction data, will not auto-extract');
             });
+            } // end if (!isImageDocument)
 
 
             let basePdfUrl = pdfUrl;
@@ -5325,6 +5341,8 @@
             const DEBUG_KEEP_ANNOTATIONS = true; // Set to false to delete annotations after save
             
             const documentId = "{{ $document->id }}";
+            const documentMimeType = @json($document->mime_type);
+            const isImageDocument = documentMimeType && documentMimeType.startsWith('image/');
             // Keep a single generic overlay pipeline for all PDFs.
             // Doc-specific debug behavior is disabled by default.
             const overlayDebug539HeadingOnly = false;
@@ -5824,12 +5842,12 @@
 
             async function loadPdf() {
                 try {
-                    setStatus('Loading PDF...', '');
+                    setStatus(isImageDocument ? 'Loading image...' : 'Loading PDF...', '');
                     loadAnnotationsFromStorage();
                     await rerenderPdf();
-                    setStatus('PDF loaded successfully.', 'ok');
+                    setStatus(isImageDocument ? 'Image loaded successfully.' : 'PDF loaded successfully.', 'ok');
                 } catch (err) {
-                    setStatus('Failed to load PDF: ' + err.message, 'err');
+                    setStatus('Failed to load: ' + err.message, 'err');
                 }
             }
 
@@ -8834,10 +8852,312 @@
                 }
             }
 
+            async function renderImageDocument() {
+                const isSvg = documentMimeType === 'image/svg+xml';
+                const imgUrl = pdfUrlWithVersion();
+
+                return new Promise((resolve, reject) => {
+                    if (isSvg) {
+                        // For SVG: fetch SVG content, render to canvas via Image
+                        fetch(imgUrl)
+                            .then(r => r.text())
+                            .then(svgText => {
+                                // Parse SVG to get dimensions
+                                const parser = new DOMParser();
+                                const svgDoc = parser.parseFromString(svgText, 'image/svg+xml');
+                                const svgEl = svgDoc.querySelector('svg');
+                                let natW = 800, natH = 800;
+                                if (svgEl) {
+                                    const vb = svgEl.getAttribute('viewBox');
+                                    if (vb) {
+                                        const parts = vb.split(/[\s,]+/).map(Number);
+                                        if (parts.length === 4 && parts[2] > 0 && parts[3] > 0) {
+                                            natW = parts[2];
+                                            natH = parts[3];
+                                        }
+                                    }
+                                    const w = parseFloat(svgEl.getAttribute('width'));
+                                    const h = parseFloat(svgEl.getAttribute('height'));
+                                    if (w > 0 && h > 0) {
+                                        natW = w;
+                                        natH = h;
+                                    }
+                                }
+
+                                const blob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
+                                const url = URL.createObjectURL(blob);
+                                const img = new Image();
+                                img.onload = () => {
+                                    buildImagePage(img, natW, natH);
+                                    URL.revokeObjectURL(url);
+                                    resolve();
+                                };
+                                img.onerror = () => {
+                                    URL.revokeObjectURL(url);
+                                    reject(new Error('Failed to render SVG'));
+                                };
+                                img.src = url;
+                            })
+                            .catch(reject);
+                    } else {
+                        // For raster images (PNG, JPG, WebP, etc.)
+                        const img = new Image();
+                        img.crossOrigin = 'anonymous';
+                        img.onload = () => {
+                            buildImagePage(img, img.naturalWidth, img.naturalHeight);
+                            resolve();
+                        };
+                        img.onerror = () => reject(new Error('Failed to load image'));
+                        img.src = imgUrl;
+                    }
+                });
+            }
+
+            function buildImagePage(img, natW, natH) {
+                // Scale image to fit viewer area nicely
+                const viewerRect = viewer.getBoundingClientRect();
+                const maxW = viewerRect.width - 40; // padding
+                const scaledW = Math.min(natW * currentScale, maxW);
+                const scaleFactor = scaledW / natW;
+                const scaledH = natH * scaleFactor;
+
+                const wrapper = document.createElement('div');
+                wrapper.className = 'page';
+                wrapper.dataset.pageIndex = '0';
+
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = scaledW;
+                canvas.height = scaledH;
+
+                // Draw image onto canvas
+                ctx.drawImage(img, 0, 0, scaledW, scaledH);
+
+                const overlay = document.createElement('div');
+                overlay.className = 'overlay';
+
+                wrapper.appendChild(canvas);
+                wrapper.appendChild(overlay);
+                viewer.appendChild(wrapper);
+
+                // Store image reference for re-rendering on zoom
+                viewer._imageRef = img;
+                viewer._imageNatW = natW;
+                viewer._imageNatH = natH;
+
+                totalPages = 1;
+                pageRotations[0] = 0;
+                updatePageControls();
+                addPageThumbnail(1, canvas);
+
+                const pageInfo = {
+                    scale: currentScale,
+                    canvasHeight: canvas.height,
+                };
+
+                // Render existing annotations
+                annotations
+                    .filter(a => a.pageIndex === 0)
+                    .forEach(a => addAnnotationElement(wrapper, a, pageInfo));
+
+                // Empty text layer (no PDF text for images)
+                const textLayer = document.createElement('div');
+                textLayer.className = 'pdf-text-layer';
+                overlay.appendChild(textLayer);
+
+                // Click on overlay deselects
+                overlay.addEventListener('click', (event) => {
+                    if (event.target !== overlay) return;
+                    if (toolMode !== 'text') {
+                        setSelection(null);
+                        removeActiveEditor();
+                    }
+                    overlay.querySelectorAll('.overlay-field.active').forEach(f => {
+                        f.classList.remove('active', 'editing');
+                        const ce = f.querySelector('[contenteditable]');
+                        if (ce) ce.contentEditable = false;
+                        if (f.dataset.originalZIndex) f.style.zIndex = f.dataset.originalZIndex;
+                    });
+                    clearOverlaySelection();
+                    updateSelectionBar();
+                });
+
+                // Drag-to-create text box
+                (function setupTextDrag(ov, pn, cv, wr, pi) {
+                    let dragState = null;
+                    ov.addEventListener('pointerdown', (e) => {
+                        if (toolMode !== 'text') return;
+                        if (e.target !== ov) return;
+                        e.preventDefault();
+                        ov.setPointerCapture(e.pointerId);
+                        const rect = ov.getBoundingClientRect();
+                        const startX = e.clientX - rect.left;
+                        const startY = e.clientY - rect.top;
+                        const sel = document.createElement('div');
+                        sel.className = 'text-drag-selection';
+                        sel.style.left = startX + 'px';
+                        sel.style.top = startY + 'px';
+                        sel.style.width = '0';
+                        sel.style.height = '0';
+                        ov.appendChild(sel);
+                        dragState = { startX, startY, sel, rect, moved: false };
+                    });
+                    ov.addEventListener('pointermove', (e) => {
+                        if (!dragState) return;
+                        const curX = e.clientX - dragState.rect.left;
+                        const curY = e.clientY - dragState.rect.top;
+                        const x = Math.min(dragState.startX, curX);
+                        const y = Math.min(dragState.startY, curY);
+                        const w = Math.abs(curX - dragState.startX);
+                        const h = Math.abs(curY - dragState.startY);
+                        dragState.sel.style.left = x + 'px';
+                        dragState.sel.style.top = y + 'px';
+                        dragState.sel.style.width = w + 'px';
+                        dragState.sel.style.height = h + 'px';
+                        if (w > 5 || h > 5) dragState.moved = true;
+                    });
+                    ov.addEventListener('pointerup', (e) => {
+                        if (!dragState) return;
+                        const ds = dragState;
+                        dragState = null;
+                        const curX = e.clientX - ds.rect.left;
+                        const curY = e.clientY - ds.rect.top;
+                        const bx = Math.min(ds.startX, curX);
+                        const by = Math.min(ds.startY, curY);
+                        const bw = Math.abs(curX - ds.startX);
+                        const bh = Math.abs(curY - ds.startY);
+                        ds.sel.remove();
+                        const opts = readBannerOpts();
+                        if (ds.moved && bw > 20 && bh > 10) {
+                            createTextBoxCreator(ov, bx, by, pn - 1, cv, wr, pi, opts, bw, bh);
+                        } else {
+                            createTextBoxCreator(ov, bx, by, pn - 1, cv, wr, pi, opts);
+                        }
+                    });
+                })(overlay, 1, canvas, wrapper, pageInfo);
+
+                // Shape drawing on overlay
+                let drawingShape = null;
+                overlay.addEventListener('pointerdown', (event) => {
+                    if (toolMode !== 'shape') return;
+                    if (event.target !== overlay) return;
+                    const rect = overlay.getBoundingClientRect();
+                    const startX = event.clientX - rect.left;
+                    const startY = event.clientY - rect.top;
+
+                    const shapeWrapper = document.createElement('div');
+                    shapeWrapper.className = 'annotation';
+                    shapeWrapper.style.position = 'absolute';
+                    shapeWrapper.style.left = startX + 'px';
+                    shapeWrapper.style.top = startY + 'px';
+                    shapeWrapper.style.width = '1px';
+                    shapeWrapper.style.height = '1px';
+                    shapeWrapper.style.padding = '0';
+                    shapeWrapper.style.border = 'none';
+                    shapeWrapper.style.background = 'transparent';
+                    shapeWrapper.style.cursor = 'move';
+
+                    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                    svg.setAttribute('width', '100%');
+                    svg.setAttribute('height', '100%');
+                    svg.setAttribute('viewBox', '0 0 100 100');
+                    svg.setAttribute('preserveAspectRatio', 'none');
+
+                    const strokeColor = shapeStrokeTransparentState ? 'transparent' : shapeStroke;
+                    const fillColor = shapeFillTransparentState ? 'transparent' : shapeFill;
+                    let shapeEl;
+                    if (shapeType === 'circle' || shapeType === 'ellipse') {
+                        shapeEl = document.createElementNS('http://www.w3.org/2000/svg', 'ellipse');
+                        shapeEl.setAttribute('cx', '50');
+                        shapeEl.setAttribute('cy', '50');
+                        shapeEl.setAttribute('rx', '48');
+                        shapeEl.setAttribute('ry', '48');
+                        shapeEl.setAttribute('fill', fillColor);
+                        shapeEl.setAttribute('stroke', strokeColor);
+                        shapeEl.setAttribute('stroke-width', String(shapeStrokeWidth));
+                        shapeEl.setAttribute('opacity', String(shapeOpacityValue));
+                        svg.appendChild(shapeEl);
+                    } else {
+                        shapeEl = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                        shapeEl.setAttribute('x', '2');
+                        shapeEl.setAttribute('y', '2');
+                        shapeEl.setAttribute('width', '96');
+                        shapeEl.setAttribute('height', '96');
+                        shapeEl.setAttribute('fill', fillColor);
+                        shapeEl.setAttribute('stroke', strokeColor);
+                        shapeEl.setAttribute('stroke-width', String(shapeStrokeWidth));
+                        shapeEl.setAttribute('opacity', String(shapeOpacityValue));
+                        svg.appendChild(shapeEl);
+                    }
+
+                    shapeWrapper.appendChild(svg);
+                    overlay.appendChild(shapeWrapper);
+
+                    drawingShape = { wrapper: shapeWrapper, startX, startY, rect };
+
+                    const onMove = (me) => {
+                        if (!drawingShape) return;
+                        const curX = me.clientX - drawingShape.rect.left;
+                        const curY = me.clientY - drawingShape.rect.top;
+                        const x = Math.min(drawingShape.startX, curX);
+                        const y = Math.min(drawingShape.startY, curY);
+                        const w = Math.max(Math.abs(curX - drawingShape.startX), 5);
+                        const h = Math.max(Math.abs(curY - drawingShape.startY), 5);
+                        drawingShape.wrapper.style.left = x + 'px';
+                        drawingShape.wrapper.style.top = y + 'px';
+                        drawingShape.wrapper.style.width = w + 'px';
+                        drawingShape.wrapper.style.height = h + 'px';
+                    };
+
+                    const onUp = (ue) => {
+                        document.removeEventListener('pointermove', onMove);
+                        document.removeEventListener('pointerup', onUp);
+                        if (!drawingShape) return;
+                        const finalW = parseInt(drawingShape.wrapper.style.width);
+                        const finalH = parseInt(drawingShape.wrapper.style.height);
+                        if (finalW < 10 || finalH < 10) {
+                            drawingShape.wrapper.remove();
+                            drawingShape = null;
+                            return;
+                        }
+                        const ann = {
+                            id: generateAnnotationId(),
+                            type: 'shape',
+                            shapeType: shapeType,
+                            pageIndex: 0,
+                            x: parseFloat(drawingShape.wrapper.style.left),
+                            y: parseFloat(drawingShape.wrapper.style.top),
+                            width: finalW,
+                            height: finalH,
+                            fill: fillColor,
+                            stroke: strokeColor,
+                            strokeWidth: shapeStrokeWidth,
+                            opacity: shapeOpacityValue,
+                            rotation: 0,
+                            element: drawingShape.wrapper,
+                        };
+                        annotations.push(ann);
+                        setupAnnotationInteraction(drawingShape.wrapper, ann, pageInfo);
+                        setSelection(ann);
+                        persistAnnotations();
+                        drawingShape = null;
+                    };
+
+                    document.addEventListener('pointermove', onMove);
+                    document.addEventListener('pointerup', onUp);
+                });
+            }
+
             async function renderPdf() {
                 // Clear the viewer completely
                 while (viewer.firstChild) {
                     viewer.removeChild(viewer.firstChild);
+                }
+
+                // IMAGE MODE: render image on canvas instead of PDF
+                if (isImageDocument) {
+                    await renderImageDocument();
+                    return;
                 }
                 
                 // Destroy old PDF document to free memory
@@ -10418,15 +10738,27 @@
                 
                 // NOTE: Rotations were already applied BEFORE pdf-lib, no need to send them again
                 
-                console.log('=== FINAL DATA BEING SENT TO BACKEND ===');
-                console.log('Request URL:', saveUrl);
-                console.log('Method:', 'POST');
-                console.log('FormData Contents:');
+                console.groupCollapsed('[Save Debug] Request -> documents.saveAnnotations');
+                console.log('url', saveUrl);
+                console.log('method', 'POST');
+                console.log('annotation_summary', annotations.map((a, idx) => ({
+                    idx,
+                    type: a.type || 'text',
+                    shapeType: a.shapeType || null,
+                    pageIndex: a.pageIndex,
+                    text: a.text || null,
+                    x: a.x,
+                    y: a.y,
+                    width: a.width,
+                    height: a.height,
+                    rotation: a.rotation || 0,
+                })));
+                console.log('formData');
                 for (let [key, value] of formData.entries()) {
                     console.log(`  ${key}:`, value instanceof Blob ? `Blob (${value.size} bytes)` : value);
                 }
-                console.log('PDF Byte Size:', pdfBytes.length, 'bytes');
-                console.log('=====================================');
+                console.log('pdfByteSize', pdfBytes.length);
+                console.groupEnd();
 
                 const response = await fetch(saveUrl, {
                     method: 'POST',
@@ -10475,10 +10807,117 @@
             }
 
 
+            // ── IMAGE SAVE ─────────────────────────────────────────────────
+            async function saveImageDocument() {
+                try {
+                    setSaveSpinner(true, 'Saving image...');
+                    setStatus('Saving image...', '');
+
+                    const pageWrapper = viewer.querySelector('.page');
+                    if (!pageWrapper) {
+                        setStatus('No image to save.', 'err');
+                        setSaveSpinner(false);
+                        return;
+                    }
+
+                    const sourceCanvas = pageWrapper.querySelector('canvas');
+                    if (!sourceCanvas) {
+                        setStatus('No canvas found.', 'err');
+                        setSaveSpinner(false);
+                        return;
+                    }
+
+                    // Create a composite canvas that merges the image + all annotations
+                    const compositeCanvas = document.createElement('canvas');
+                    compositeCanvas.width = sourceCanvas.width;
+                    compositeCanvas.height = sourceCanvas.height;
+                    const ctx = compositeCanvas.getContext('2d');
+
+                    // Draw the original image
+                    ctx.drawImage(sourceCanvas, 0, 0);
+
+                    // Render annotations on top using html2canvas-style approach
+                    // We'll use the DOM overlay to capture annotations
+                    const overlay = pageWrapper.querySelector('.overlay');
+                    if (overlay) {
+                        // For each annotation element in the overlay, draw it onto the composite
+                        const annElements = overlay.querySelectorAll('.annotation');
+                        for (const el of annElements) {
+                            const left = parseFloat(el.style.left) || 0;
+                            const top = parseFloat(el.style.top) || 0;
+                            const width = parseFloat(el.style.width) || el.offsetWidth;
+                            const height = parseFloat(el.style.height) || el.offsetHeight;
+
+                            // Check if it has SVG (shape annotation)
+                            const svg = el.querySelector('svg');
+                            if (svg) {
+                                const svgData = new XMLSerializer().serializeToString(svg);
+                                const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+                                const svgUrl = URL.createObjectURL(svgBlob);
+                                const svgImg = await new Promise((resolve, reject) => {
+                                    const img = new Image();
+                                    img.onload = () => resolve(img);
+                                    img.onerror = reject;
+                                    img.src = svgUrl;
+                                });
+                                ctx.drawImage(svgImg, left, top, width, height);
+                                URL.revokeObjectURL(svgUrl);
+                                continue;
+                            }
+
+                            // Text annotation
+                            const text = el.textContent || el.innerText;
+                            if (text) {
+                                const style = window.getComputedStyle(el);
+                                ctx.font = style.font;
+                                ctx.fillStyle = style.color || '#000000';
+                                ctx.textBaseline = 'top';
+                                ctx.fillText(text, left, top);
+                            }
+                        }
+                    }
+
+                    // Convert to blob
+                    const blob = await new Promise(resolve => compositeCanvas.toBlob(resolve, 'image/png'));
+
+                    // Upload via FormData to save back to the document
+                    const formData = new FormData();
+                    formData.append('image', blob, 'edited.png');
+
+                    const response = await fetch(`/documents/${documentId}/save-image`, {
+                        method: 'POST',
+                        headers: {
+                            'X-CSRF-TOKEN': csrfToken,
+                        },
+                        body: formData,
+                    });
+
+                    if (response.ok) {
+                        setStatus('Image saved successfully!', 'ok');
+                        pdfVersion = Date.now();
+                        persistAnnotations();
+                    } else {
+                        const err = await response.json().catch(() => ({}));
+                        setStatus('Save failed: ' + (err.error || 'Unknown error'), 'err');
+                    }
+                } catch (error) {
+                    console.error('Image save error:', error);
+                    setStatus('Save failed: ' + error.message, 'err');
+                } finally {
+                    setSaveSpinner(false);
+                }
+            }
+
             // ── UNIFIED SAVE BUTTON ────────────────────────────────────────
             // Single save button handles BOTH overlay edits and shapes/annotations.
             // Order: 1) Save overlay editor changes first  2) Save shapes/text annotations
             document.getElementById('save-btn').addEventListener('click', async () => {
+                // IMAGE DOCUMENT: Export canvas + annotations as image file
+                if (isImageDocument) {
+                    await saveImageDocument();
+                    return;
+                }
+
                 const hasOverlayEdits = overlayEditedFields.size > 0;
                 const hasTextEdits = pdfTextItems.some((item) => item.modified);
                 const hasRotations = Object.keys(pageRotations).some(pageIndex => pageRotations[pageIndex] !== 0);
@@ -10486,6 +10925,24 @@
                 const hasNewPages = pendingNewPages.length > 0;
                 const hasAnnotations = annotations.length > 0;
                 const hasPdfChanges = hasAnnotations || hasTextEdits || hasRotations || hasDeletedPages || hasNewPages;
+
+                console.groupCollapsed('[Save Debug] Save button pressed');
+                console.log('meta', {
+                    timestamp: new Date().toISOString(),
+                    hasOverlayEdits,
+                    hasTextEdits,
+                    hasRotations,
+                    hasDeletedPages,
+                    hasNewPages,
+                    hasAnnotations,
+                    hasPdfChanges,
+                    overlayEditedFieldsCount: overlayEditedFields.size,
+                    annotationsCount: annotations.length,
+                    pendingDeletedPagesCount: pendingDeletedPages.length,
+                    pendingNewPagesCount: pendingNewPages.length,
+                    rotationEntries: Object.keys(pageRotations).length,
+                });
+                console.groupEnd();
 
                 if (!hasOverlayEdits && !hasPdfChanges) {
                     setStatus('No changes to save.', 'err');
@@ -13421,6 +13878,19 @@
                     }
                 });
 
+                const saveEditsRequestBody = { edits };
+                console.groupCollapsed('[Save Debug] Request -> documents.saveEdits');
+                console.log('url', '{{ route("documents.saveEdits", $document) }}');
+                console.log('method', 'POST');
+                console.log('headers', {
+                    'X-CSRF-TOKEN': 'present',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                });
+                console.log('body', saveEditsRequestBody);
+                console.groupEnd();
+
                 const saveResponse = await fetch('{{ route("documents.saveEdits", $document) }}', {
                     method: 'POST',
                     credentials: 'same-origin',
@@ -13430,10 +13900,7 @@
                         'Content-Type': 'application/json',
                         'Accept': 'application/json'
                     },
-                    body: JSON.stringify({ 
-                        edits
-                        // Note: skip_refresh is NOT set here - we want extraction to refresh after save
-                    })
+                    body: JSON.stringify(saveEditsRequestBody)
                 });
 
                 if (!saveResponse.ok) {
@@ -14866,7 +15333,49 @@
                 console.log(`Added ${fontsSet.size} fonts from PDF to dropdown`);
             };
 
+            const logOverlayActivationDebug = ({ loadToken, prepareData }) => {
+                try {
+                    const extractionPages = Array.isArray(overlayExtractionData) ? overlayExtractionData : [];
+                    const persistedEdits = Array.from(overlayPersistedEdits.entries()).map(([key, value]) => ({ key, value }));
+                    const pendingEdits = Array.from(overlayEditedFields.entries()).map(([key, value]) => ({ key, value }));
+                    const extractionSummary = extractionPages.map((page) => ({
+                        page_number: page?.page_number,
+                        blocks: Array.isArray(page?.blocks) ? page.blocks.length : 0,
+                        words: Array.isArray(page?.words) ? page.words.length : 0,
+                    }));
+
+                    console.groupCollapsed('[Overlay Debug] Activation payload');
+                    console.log('meta', {
+                        documentId,
+                        loadToken,
+                        totalPages: extractionPages.length,
+                        persistedEdits: persistedEdits.length,
+                        pendingEdits: pendingEdits.length,
+                        cleanPdfUrl,
+                        basePdfUrl,
+                        mode: 'overlay',
+                    });
+                    console.log('prepareOverlayResponse', prepareData || null);
+                    console.table(extractionSummary);
+                    console.log('extraction_data_full', extractionPages);
+                    console.log('persisted_edits_full', persistedEdits);
+                    console.log('pending_edits_full', pendingEdits);
+                    console.groupEnd();
+                } catch (debugError) {
+                    console.error('[Overlay Debug] Failed to print activation payload', debugError);
+                }
+            };
+
             const overlayToggleHandler = async (checked) => {
+                console.log('[Overlay Debug] Overlay toggle pressed', {
+                    checked,
+                    overlayEditorActive,
+                    currentPageInput: Number(document.getElementById('page-num')?.value || 1),
+                    totalPages,
+                    pendingNewPages: pendingNewPages?.length || 0,
+                    timestamp: new Date().toISOString(),
+                });
+
                 if (!checked) {
                     hideOverlayLoadingModal();
                     cleanupOverlayPdf();  // Free memory from overlay PDF
@@ -14952,6 +15461,7 @@
                         method: 'POST', 
                         headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content } 
                     });
+                    let prepareData = null;
                     if (!prepareResponse.ok) {
                         const errorText = await prepareResponse.text();
                         let errorData;
@@ -14967,6 +15477,12 @@
                             throw new Error('The PDF file appears to be corrupted. This can happen after saving annotations. Please try refreshing the page. If the issue persists, you may need to re-upload the original PDF file.');
                         }
                         throw new Error('Failed to prepare clean PDF: ' + prepareResponse.statusText);
+                    } else {
+                        try {
+                            prepareData = await prepareResponse.clone().json();
+                        } catch (e) {
+                            prepareData = null;
+                        }
                     }
                     if (!overlayEditorActive || loadToken !== overlayLoadToken) {
                         return;
@@ -15032,6 +15548,9 @@
 
                     // Populate font dropdown with fonts from PDF
                     populateFontDropdown();
+
+                    // Debug snapshot of everything about to be rendered into overlay fields.
+                    logOverlayActivationDebug({ loadToken, prepareData });
 
                     // Pre-load Google Fonts from extraction data so they start
                     // downloading before the first overlay render.  This gives
@@ -16089,6 +16608,54 @@
                         .replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, '')
                         .replace(/[\uE000-\uF8FF]/g, '')
                         .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
+                };
+                const verticalOverlapRatio = (aTop, aBottom, bTop, bBottom) => {
+                    const inter = Math.max(0, Math.min(aBottom, bBottom) - Math.max(aTop, bTop));
+                    const minH = Math.max(1, Math.min(aBottom - aTop, bBottom - bTop));
+                    return inter / minH;
+                };
+                const filterOverlayArtifactWords = (words) => {
+                    if (!Array.isArray(words) || words.length < 2) return Array.isArray(words) ? words : [];
+                    return words.filter((word) => {
+                        const txt = sanitizeOverlayText(word?.text || '').trim();
+                        // Target only tiny alnum fragments that can be duplicated glyph debris.
+                        if (!txt || txt.length > 2 || !/[A-Za-z0-9]/.test(txt)) {
+                            return true;
+                        }
+                        const wl = Number(word?.left) || 0;
+                        const wt = Number(word?.top) || 0;
+                        const ww = Math.max(0.1, Number(word?.width) || 0);
+                        const wh = Math.max(0.1, Number(word?.height) || 0);
+                        const wr = wl + ww;
+                        const wb = wt + wh;
+                        const wCenterX = wl + (ww / 2);
+
+                        const nestedInsideLargerWord = words.some((other) => {
+                            if (other === word) return false;
+                            const oTxt = sanitizeOverlayText(other?.text || '').trim();
+                            if (oTxt.length < 8) return false;
+
+                            const ol = Number(other?.left) || 0;
+                            const ot = Number(other?.top) || 0;
+                            const ow = Math.max(0.1, Number(other?.width) || 0);
+                            const oh = Math.max(0.1, Number(other?.height) || 0);
+                            const or = ol + ow;
+                            const ob = ot + oh;
+
+                            const sameDeclaredLine = word?.line_num != null && other?.line_num != null && String(word.line_num) === String(other.line_num);
+                            const yOverlap = verticalOverlapRatio(wt, wb, ot, ob);
+                            const sameVisualLine = sameDeclaredLine || yOverlap >= 0.8;
+                            if (!sameVisualLine) return false;
+
+                            // Artifact signature: tiny word is fully nested inside a larger
+                            // word's bbox on the same line.
+                            const nestedHorizontally = wl >= (ol - 1) && wr <= (or + 1);
+                            const centerInside = wCenterX >= (ol - 1) && wCenterX <= (or + 1);
+                            return yOverlap >= 0.8 && (nestedHorizontally || centerInside);
+                        });
+
+                        return !nestedInsideLargerWord;
+                    });
                 };
                 const getOverlayWordDisplayText = (word) => {
                     const sourceText = sanitizeOverlayText(word?.text || '');
@@ -17408,6 +17975,38 @@
                         dedupedBlocks.push(blk);
                     });
 
+                    const isLikelyOrphanTinyBlock = (block, textValue, allBlocks) => {
+                        const t = sanitizeOverlayText(String(textValue || '')).trim();
+                        if (!t || t.length > 2 || !/[A-Za-z0-9]/.test(t)) return false;
+                        const bL = Number(block.left) || 0;
+                        const bT = Number(block.top) || 0;
+                        const bW = Math.max(0.1, Number(block.width) || 0);
+                        const bH = Math.max(0.1, Number(block.height) || 0);
+                        const bR = bL + bW;
+                        const bB = bT + bH;
+                        const bCx = bL + (bW / 2);
+                        const bArea = bW * bH;
+
+                        return (allBlocks || []).some((other) => {
+                            if (!other || other === block) return false;
+                            const oText = sanitizeOverlayText(String(other.text_single_line || other.text || '')).replace(/\s+/g, ' ').trim();
+                            if (oText.length < 8) return false;
+                            const oL = Number(other.left) || 0;
+                            const oT = Number(other.top) || 0;
+                            const oW = Math.max(0.1, Number(other.width) || 0);
+                            const oH = Math.max(0.1, Number(other.height) || 0);
+                            const oR = oL + oW;
+                            const oB = oT + oH;
+                            const oArea = oW * oH;
+                            if (oArea <= bArea * 3) return false;
+                            const yOverlap = verticalOverlapRatio(bT, bB, oT, oB);
+                            if (yOverlap < 0.6) return false;
+                            const centerInsideX = bCx >= (oL - 1) && bCx <= (oR + 1);
+                            const nestedHoriz = bL >= (oL - 1) && bR <= (oR + 1);
+                            return centerInsideX || nestedHoriz;
+                        });
+                    };
+
                     // Pre-compute base rectangles for all blocks so we can clamp padding to prevent overlaps
                     const blockBaseRects = dedupedBlocks.map((blk) => {
                         const blkKey = `block-${pageData.page_number}-${blk.block_num}`;
@@ -17640,10 +18239,14 @@
                         const rawBlockWords = pageData.words
                             ? pageData.words.filter((word) => word.block_num === block.block_num)
                             : [];
-                        const blockWords = rawBlockWords.filter((word) => {
+                        const blockWords = filterOverlayArtifactWords(rawBlockWords).filter((word) => {
                             const display = getOverlayWordDisplayText(word);
                             return !isIgnorableOverlayToken(display);
                         });
+
+                        if (!storedEdit && isLikelyOrphanTinyBlock(block, safeBlockText, dedupedBlocks)) {
+                            return;
+                        }
 
                         if (!storedEdit && blockWords.length === 0 && !hasMeaningfulOverlayText(safeBlockText)) {
                             return;
@@ -17699,6 +18302,9 @@
                             if (!candidateTextSig || !prev.text) return false;
                             const sameText = candidateTextSig === prev.text;
                             const containsText = candidateTextSig.includes(prev.text) || prev.text.includes(candidateTextSig);
+                            const shortVsLongPair = Math.min(candidateTextSig.length, prev.text.length) <= 2
+                                && Math.max(candidateTextSig.length, prev.text.length) >= 8;
+                            if (shortVsLongPair) return false;
                             if (!sameText && !containsText) return false;
                             // Only dedupe geometric overlaps when text is same/contains.
                             const cW = Math.max(0, Math.min(candidateRect.r, prev.rect.r) - Math.max(candidateRect.l, prev.rect.l));
@@ -17849,6 +18455,12 @@
                         field.dataset.originalHeight = blockHeight;
                         field.dataset.originalOriginX = blockLeft;
                         field.dataset.originalOriginY = blockTop + blockHeight;
+                        // Keep a stable, block-level text snapshot for edit-entry.
+                        // This avoids reassembling text from absolute word spans, which
+                        // can include stray duplicate glyph fragments in some PDFs.
+                        field.dataset.stableFlowText = normalizeStableFlowText(
+                            buildStableFlowTextFromWords(block, blockWords) || safeBlockText
+                        );
                         // Preserve a stable edit-entry snapshot for form/underscore
                         // blocks so dblclick doesn't rebuild huge gap spaces that
                         // push values to the far right.
@@ -19534,15 +20146,17 @@
 
             loadAnnotationsFromStorage();
             updateAnnotationsList(); // Populate annotations panel with loaded annotations
-            loadOriginalPdfBytes().catch((err) => {
-                console.warn('Failed to cache original PDF bytes', err);
-            });
+            if (!isImageDocument) {
+                loadOriginalPdfBytes().catch((err) => {
+                    console.warn('Failed to cache original PDF bytes', err);
+                });
+            }
             updateOverlayShowOriginalToggle();
             updateModeButtons();
             updateSelectionBar();
             
             renderPdf().catch(() => {
-                setStatus('Failed to load PDF.', 'err');
+                setStatus(isImageDocument ? 'Failed to load image.' : 'Failed to load PDF.', 'err');
             });
 
             // Page navigation (separate pages instead of tabs)
@@ -20755,12 +21369,17 @@
                 const pageHeight = wrapper.pageHeight;
                 const generatedContent = wrapper.generatedContent; // Get stored content
                 const generatedImages = wrapper.generatedImages || []; // Get stored images
+                const renderVersion = (wrapper.canvasRenderVersion || 0) + 1;
+                wrapper.canvasRenderVersion = renderVersion;
                 
                 // Get the canvas element
                 const canvas = wrapper.querySelector('canvas');
+                if (!canvas) return;
                 const ctx = canvas.getContext('2d');
                 
                 // Clear and redraw
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.clearRect(0, 0, pageWidth, pageHeight);
                 ctx.fillStyle = '#ffffff';
                 ctx.fillRect(0, 0, pageWidth, pageHeight);
                 
@@ -20789,9 +21408,11 @@
                         fetch(`/api/ai-images/${generatedImage.image_id}`)
                             .then(response => response.json())
                             .then(imageData => {
+                                if (wrapper.canvasRenderVersion !== renderVersion) return;
                                 if (imageData.image_data && imageData.storage_type === 'base64') {
                                     const img = new Image();
                                     img.onload = function() {
+                                        if (wrapper.canvasRenderVersion !== renderVersion) return;
                                         const padding = 20;
                                         const maxWidth = sectionWidth - padding * 2;
                                         const maxHeight = sectionHeight - padding * 2;

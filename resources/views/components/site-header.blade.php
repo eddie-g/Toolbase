@@ -29,6 +29,7 @@
                 <nav class="hidden md:flex items-center gap-8">
                     <a href="/pdf-editor" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">PDF Editor</a>
                     <a href="/domain-search" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Domain Search</a>
+                    <a href="/logo-generator" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Logo Generator</a>
                     <a href="/prices" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Prices</a>
                     <a href="#faq" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">FAQ</a>
                 </nav>

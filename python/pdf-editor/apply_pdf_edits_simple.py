@@ -449,29 +449,129 @@ def apply_edits(pdf_path, edits_json):
         snapshot = pre_edit_spans.get(page_num, [])
 
         # Mark which snapshot spans are replaced by edits
-        # Match by: original_text + original_bbox proximity
+        # Match by: original_text + original_bbox overlap / proximity.
+        #
+        # IMPORTANT: A single overlay field (edit) can cover MULTIPLE PDF
+        # spans (e.g. "1" + "Purpose of the Isartor Test Suite" are two
+        # separate spans rendered by different BT..ET blocks in the PDF
+        # but shown as one editable block in the UI).  We must mark ALL
+        # constituent spans as replaced, otherwise the unmatched ones get
+        # re-inserted as "unedited" text — creating phantom/duplicate
+        # characters (the "phantom P" bug).
+        #
+        # Strategy:
+        #   1. Pass 1 — find the closest span (the "anchor") using
+        #      substring text match + position < 5pt.
+        #   2. Pass 2 — sweep for sibling spans whose text is a
+        #      sub-part of orig_text or new_text AND whose bbox falls
+        #      within the edit's original_bbox.
+        #   3. Pass 3 — pure bbox overlap: any span whose bbox is
+        #      substantially contained within the edit bbox, regardless
+        #      of text content.  This catches re-edit scenarios where
+        #      the span text has already been changed by a prior save
+        #      (e.g. "Isartord" no longer matches "Isartor").
         replaced_indices = set()
         for edit in page_edits:
             orig_text = (edit.get('original_text') or '').strip()
+            new_text_edit = (edit.get('new_text') or '').strip()
             orig_bbox = edit.get('original_bbox')
             if not orig_text or not orig_bbox:
                 continue
+
+            # Build the edit's bounding rectangle (with small tolerance)
+            tol = 2.0
+            edit_x0 = orig_bbox[0] - tol
+            edit_y0 = orig_bbox[1] - tol
+            edit_x1 = (orig_bbox[2] if len(orig_bbox) > 2 else orig_bbox[0] + 500) + tol
+            edit_y1 = (orig_bbox[3] if len(orig_bbox) > 3 else orig_bbox[1] + 50) + tol
+
+            # Also build a rect from the NEW bbox (may be resized)
+            new_bbox = edit.get('bbox')
+            if new_bbox and len(new_bbox) >= 4:
+                wide_x0 = min(edit_x0, new_bbox[0] - tol)
+                wide_y0 = min(edit_y0, new_bbox[1] - tol)
+                wide_x1 = max(edit_x1, new_bbox[2] + tol)
+                wide_y1 = max(edit_y1, new_bbox[3] + tol)
+            else:
+                wide_x0, wide_y0, wide_x1, wide_y1 = edit_x0, edit_y0, edit_x1, edit_y1
+
+            # Pass 1 — anchor span (closest positional match)
             best_idx = None
             best_dist = float('inf')
             for i, span in enumerate(snapshot):
                 if i in replaced_indices:
                     continue
-                # Text must match or contain
                 st = span["text"].strip()
-                if st != orig_text and orig_text not in st and st not in orig_text:
+                # Text check: substring match against orig_text OR new_text
+                text_match = (
+                    st == orig_text or orig_text in st or st in orig_text or
+                    (new_text_edit and (st == new_text_edit or new_text_edit in st or st in new_text_edit))
+                )
+                if not text_match:
                     continue
-                # Position must be close
                 dist = abs(span["bbox"][0] - orig_bbox[0]) + abs(span["bbox"][1] - orig_bbox[1])
                 if dist < 5.0 and dist < best_dist:
                     best_dist = dist
                     best_idx = i
             if best_idx is not None:
                 replaced_indices.add(best_idx)
+
+            # Pass 2 — sweep for sibling spans that are INSIDE the edit
+            # bbox and whose text is a sub-part of orig_text or new_text.
+            # This catches additional spans like "Purpose of the Isartor
+            # Test Suite" that start further right but are still part of
+            # the same logical text block.
+            for i, span in enumerate(snapshot):
+                if i in replaced_indices:
+                    continue
+                st = span["text"].strip()
+                if not st:
+                    continue
+                # Text must be a substring of orig_text OR new_text
+                if st not in orig_text and (not new_text_edit or st not in new_text_edit):
+                    continue
+                # Span bbox must be substantially inside the edit bbox
+                sb = span["bbox"]
+                # Check vertical overlap (same line)
+                vert_overlap = min(sb[3], edit_y1) - max(sb[1], edit_y0)
+                span_height = max(sb[3] - sb[1], 1)
+                if vert_overlap < span_height * 0.5:
+                    continue
+                # Check horizontal containment
+                if sb[0] < edit_x0 or sb[2] > edit_x1 + tol:
+                    continue
+                replaced_indices.add(i)
+                print(f"    Pass 2 matched span {i}: {repr(st[:40])}")
+
+            # Pass 3 — pure bbox overlap: catch spans from prior edits
+            # whose text no longer matches (e.g. "Isartord" vs "Isartor")
+            # but which occupy the same area on the page.
+            for i, span in enumerate(snapshot):
+                if i in replaced_indices:
+                    continue
+                st = span["text"].strip()
+                if not st:
+                    continue
+                sb = span["bbox"]
+                # Span must be vertically on the same line
+                vert_overlap = min(sb[3], wide_y1) - max(sb[1], wide_y0)
+                span_height = max(sb[3] - sb[1], 1)
+                if vert_overlap < span_height * 0.5:
+                    continue
+                # Span must be horizontally contained within (or nearly so)
+                if sb[0] < wide_x0 or sb[2] > wide_x1 + tol:
+                    continue
+                # Additional safety: span must overlap the edit rect by
+                # at least 80% of the span's own area to avoid catching
+                # adjacent but unrelated text.
+                horiz_overlap = min(sb[2], wide_x1) - max(sb[0], wide_x0)
+                span_width = max(sb[2] - sb[0], 1)
+                if horiz_overlap < span_width * 0.8:
+                    continue
+                replaced_indices.add(i)
+                print(f"    Pass 3 (bbox) matched span {i}: {repr(st[:40])}")
+
+        print(f"  Page {page_num}: {len(replaced_indices)} of {len(snapshot)} spans matched as replaced")
 
         # Re-insert unedited spans from snapshot
         unedited_count = 0
