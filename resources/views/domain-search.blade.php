@@ -843,7 +843,11 @@
                             <div class="flex items-center gap-3 text-sm">
                                 <span class="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
                                     <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-                                    <span x-text="results.filter(r => r.available).length"></span> available
+                                    <span x-text="results.filter(r => r.available && !r.premium).length"></span> available
+                                </span>
+                                <span x-show="results.filter(r => r.premium && r.available).length > 0" class="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+                                    <span class="w-2 h-2 rounded-full bg-amber-500"></span>
+                                    <span x-text="results.filter(r => r.premium && r.available).length"></span> premium
                                 </span>
                                 <span class="flex items-center gap-1.5 text-gray-400 dark:text-gray-500">
                                     <span class="w-2 h-2 rounded-full bg-gray-400 dark:bg-gray-600"></span>
@@ -854,7 +858,7 @@
                     </div>
 
                     <!-- Filter Buttons -->
-                    <div class="flex gap-2 mb-4">
+                    <div class="flex flex-wrap gap-2 mb-4">
                         <button @click="filter = 'all'"
                             class="px-3 py-1.5 text-xs font-medium rounded-lg border transition"
                             :class="filter === 'all'
@@ -867,21 +871,22 @@
                             :class="filter === 'available'
                                 ? 'bg-emerald-600 text-white border-transparent'
                                 : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-300'">
-                            Available <span class="ml-1 opacity-60" x-text="results.filter(r => r.available).length"></span>
+                            Available <span class="ml-1 opacity-60" x-text="results.filter(r => r.available && !r.premium).length"></span>
                         </button>
-                        <button @click="filter = 'for_sale'"
+                        <button @click="filter = 'premium'"
+                            x-show="results.filter(r => r.premium && r.available).length > 0"
                             class="px-3 py-1.5 text-xs font-medium rounded-lg border transition"
-                            :class="filter === 'for_sale'
-                                ? 'bg-orange-500 text-white border-transparent'
+                            :class="filter === 'premium'
+                                ? 'bg-amber-500 text-white border-transparent'
                                 : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-300'">
-                            For Sale <span class="ml-1 opacity-60" x-text="results.filter(r => r.for_sale).length"></span>
+                            Premium <span class="ml-1 opacity-60" x-text="results.filter(r => r.premium && r.available).length"></span>
                         </button>
                         <button @click="filter = 'taken'"
                             class="px-3 py-1.5 text-xs font-medium rounded-lg border transition"
                             :class="filter === 'taken'
                                 ? 'bg-gray-500 text-white border-transparent'
                                 : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-300'">
-                            Taken <span class="ml-1 opacity-60" x-text="results.filter(r => r.taken && !r.for_sale).length"></span>
+                            Taken <span class="ml-1 opacity-60" x-text="results.filter(r => r.taken).length"></span>
                         </button>
                     </div>
                 </div>
@@ -893,31 +898,31 @@
                     <template x-for="(result, index) in filteredResults" :key="`${result.domain}-${index}`">
                         <div
                             class="result-enter group flex items-center justify-between p-4 rounded-xl border transition-all"
-                            :class="result.available
-                                ? 'bg-emerald-50 dark:bg-emerald-900/10 border-emerald-200 dark:border-emerald-800/50 hover:shadow-md hover:shadow-emerald-100 dark:hover:shadow-emerald-900/20'
-                                : result.for_sale
-                                    ? 'bg-orange-50 dark:bg-orange-900/10 border-orange-200 dark:border-orange-800/50 hover:shadow-md hover:shadow-orange-100 dark:hover:shadow-orange-900/20'
+                            :class="result.premium && result.available
+                                ? 'bg-amber-50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800/50 hover:shadow-md hover:shadow-amber-100 dark:hover:shadow-amber-900/20'
+                                : result.available
+                                    ? 'bg-emerald-50 dark:bg-emerald-900/10 border-emerald-200 dark:border-emerald-800/50 hover:shadow-md hover:shadow-emerald-100 dark:hover:shadow-emerald-900/20'
                                     : result.error
                                         ? 'bg-amber-50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800/50'
                                         : 'bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 opacity-70'"
                         >
                             <div class="flex items-center gap-3">
                                 <div class="shrink-0">
-                                    <template x-if="result.available">
+                                    <template x-if="result.premium && result.available">
+                                        <div class="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-800/40 flex items-center justify-center">
+                                            <svg class="w-5 h-5 text-amber-600 dark:text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"></path>
+                                            </svg>
+                                        </div>
+                                    </template>
+                                    <template x-if="result.available && !result.premium">
                                         <div class="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-800/40 flex items-center justify-center">
                                             <svg class="w-5 h-5 text-emerald-600 dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path>
                                             </svg>
                                         </div>
                                     </template>
-                                    <template x-if="result.for_sale">
-                                        <div class="w-10 h-10 rounded-full bg-orange-100 dark:bg-orange-800/40 flex items-center justify-center">
-                                            <svg class="w-5 h-5 text-orange-600 dark:text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                                            </svg>
-                                        </div>
-                                    </template>
-                                    <template x-if="result.taken && !result.for_sale">
+                                    <template x-if="result.taken">
                                         <div class="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
                                             <svg class="w-5 h-5 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"></path>
@@ -935,14 +940,20 @@
                                 <div>
                                     <p class="font-semibold text-gray-900 dark:text-white text-base" x-text="result.domain"></p>
                                     <p class="text-xs mt-0.5"
-                                       :class="result.available
-                                           ? 'text-emerald-600 dark:text-emerald-400'
-                                           : result.for_sale
-                                               ? 'text-orange-600 dark:text-orange-400'
+                                       :class="result.premium && result.available
+                                           ? 'text-amber-600 dark:text-amber-400'
+                                           : result.available
+                                               ? 'text-emerald-600 dark:text-emerald-400'
                                                : result.error
                                                    ? 'text-amber-600 dark:text-amber-400'
-                                                   : 'text-gray-400 dark:text-gray-500'"
-                                       x-text="result.available ? 'Available!' : result.for_sale ? 'For Sale' : result.error ? result.error : 'Registered'">
+                                                   : 'text-gray-400 dark:text-gray-500'">
+                                        <span x-text="result.premium && result.available
+                                            ? 'Premium' + (result.premium_price ? ' · $' + Number(result.premium_price).toLocaleString() : '')
+                                            : result.available
+                                                ? 'Available!'
+                                                : result.error
+                                                    ? result.error
+                                                    : 'Registered'"></span>
                                     </p>
                                 </div>
                             </div>
@@ -951,11 +962,21 @@
                                       :class="tldBadgeClass(result.tld)"
                                       x-text="result.tld">
                                 </span>
-                                <template x-if="result.available">
+                                <template x-if="result.available && !result.premium">
                                     <a :href="'https://www.namecheap.com/domains/registration/results/?domain=' + result.domain"
                                        target="_blank"
                                        class="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium transition">
                                         Register
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                                        </svg>
+                                    </a>
+                                </template>
+                                <template x-if="result.premium && result.available">
+                                    <a :href="'https://www.namecheap.com/domains/registration/results/?domain=' + result.domain"
+                                       target="_blank"
+                                       class="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-medium transition">
+                                        <span x-text="result.premium_price ? '$' + Number(result.premium_price).toLocaleString() : 'Register'"></span>
                                         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
                                         </svg>
@@ -971,11 +992,11 @@
                                         <span x-text="isExcluded(result.domain) ? 'Excluded' : 'Exclude'"></span>
                                     </button>
                                 </template>
-                                <template x-if="result.for_sale">
-                                    <a :href="'https://www.namecheap.com/domains/marketplace/?query=' + result.domain"
+                                <template x-if="result.taken">
+                                    <a :href="'https://www.namecheap.com/domains/registration/results/?domain=' + result.domain"
                                        target="_blank"
-                                       class="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-500 hover:bg-orange-600 text-white text-xs font-medium transition">
-                                        View Listing
+                                       class="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-500 hover:bg-gray-600 text-white text-xs font-medium transition">
+                                        Buy Domain
                                         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
                                         </svg>
@@ -1171,7 +1192,10 @@
 
                 sortResults(results) {
                     return [...results].sort((a, b) => {
-                        if (a.available !== b.available) return a.available ? -1 : 1;
+                        // Sort order: available (non-premium) > premium (available) > taken
+                        const rank = (r) => r.available && !r.premium ? 0 : r.premium && r.available ? 1 : 2;
+                        const ra = rank(a), rb = rank(b);
+                        if (ra !== rb) return ra - rb;
                         return String(a.domain || '').localeCompare(String(b.domain || ''));
                     });
                 },
@@ -1215,9 +1239,9 @@
                 },
 
                 get filteredResults() {
-                    if (this.filter === 'available') return this.results.filter(r => r.available);
-                    if (this.filter === 'for_sale') return this.results.filter(r => r.for_sale);
-                    if (this.filter === 'taken') return this.results.filter(r => r.taken && !r.for_sale);
+                    if (this.filter === 'available') return this.results.filter(r => r.available && !r.premium);
+                    if (this.filter === 'premium') return this.results.filter(r => r.premium && r.available);
+                    if (this.filter === 'taken') return this.results.filter(r => r.taken);
                     return this.results;
                 },
 
@@ -1381,12 +1405,27 @@
                     })
                     .then(r => r.json())
                     .then(data => {
-                        if (data.error) {
+                        if (data.error && !data.results) {
                             this.error = data.error;
                             this.loading = false;
                             return;
                         }
 
+                        // Namecheap fast-path: results returned instantly (no polling needed)
+                        if (data.instant && data.done) {
+                            if (data.results && data.results.length > 0) {
+                                this.results.push(...data.results);
+                                this.results = this.sortResults(this.results);
+                            }
+                            if (data.error) {
+                                this.error = data.error;
+                            }
+                            this.statusText = 'Done!';
+                            this.loading = false;
+                            return;
+                        }
+
+                        // WHOIS fallback: poll for results in background
                         const jobId = data.job_id;
                         let offset = 0;
 
@@ -1447,14 +1486,14 @@
                     let streamMode = false;
 
                     try {
-                        // Step 1: Generate names with AI
+                        // Step 1: Generate names with AI + check availability in one call
                         const aiResponse = await fetch('/domain-search/ai-generate', {
                             method: 'POST',
                             headers: this.headers(),
                             body: JSON.stringify({
                                 prompt: finalPrompt,
                                 tlds: this.tlds,
-                                stream: true,
+                                stream: false,
                             }),
                         });
 
@@ -1490,10 +1529,19 @@
                             return;
                         }
 
-                        this.statusText = `Checking ${domains.length} domains...`;
-                        this.results = [];
-                        this.startAvailabilityPolling(domains);
-                        streamMode = true;
+                        // Results come back inline from the single batched Namecheap call
+                        if (aiData.results && aiData.results.length > 0) {
+                            this.results = this.sortResults(aiData.results);
+                            this.statusText = 'Done!';
+                            if (aiData.error) {
+                                this.error = aiData.error;
+                            }
+                        } else {
+                            // Fallback: poll-based availability check (WHOIS mode)
+                            this.statusText = `Checking ${domains.length} domains...`;
+                            this.startAvailabilityPolling(domains);
+                            streamMode = true;
+                        }
                         return;
 
                     } catch (e) {

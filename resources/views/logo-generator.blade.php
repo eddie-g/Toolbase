@@ -84,7 +84,7 @@
                     </div>
 
                     <div class="mb-5">
-                        <label for="logo-prompt" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Describe Your Logo <span class="text-gray-400 font-normal">(optional)</span></label>
+                        <label for="logo-prompt" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Describe Your Logo <span class="text-red-400 font-normal">*</span></label>
                         <textarea
                             id="logo-prompt"
                             x-model="logoPrompt"
@@ -93,41 +93,6 @@
                             class="w-full px-4 py-3 rounded-xl border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition text-sm resize-none"
                         ></textarea>
                         <p class="mt-1.5 text-xs text-gray-400 dark:text-gray-500">Click <span class="font-semibold">Use as Prompt</span> on a generated logo to quickly iterate.</p>
-                    </div>
-
-                    <div class="mb-6" x-show="logoPrompt.trim().length >= 3 || similarIdeasLoading || similarIdeasError || similarIdeas.length > 0">
-                        <div class="flex items-center justify-between mb-3">
-                            <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">Other Ideas</h3>
-                            <span class="text-xs text-gray-400 dark:text-gray-500" x-show="similarIdeas.length > 0" x-text="similarIdeas.length + ' similar saved ideas'"></span>
-                        </div>
-
-                        <div x-show="similarIdeasLoading" class="text-xs text-gray-500 dark:text-gray-400 mb-2">Looking for similar saved icon ideas...</div>
-
-                        <div x-show="similarIdeasError" class="mb-2 p-2 rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-xs text-red-700 dark:text-red-300" x-text="similarIdeasError"></div>
-
-                        <div x-show="!similarIdeasLoading && !similarIdeasError && logoPrompt.trim().length >= 3 && similarIdeas.length === 0" class="text-xs text-gray-500 dark:text-gray-400">No similar saved icon ideas found yet.</div>
-
-                        <div x-show="similarIdeas.length > 0" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <template x-for="idea in similarIdeas" :key="idea.id">
-                                <div class="rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 overflow-hidden">
-                                    <div class="aspect-video bg-white dark:bg-gray-900 flex items-center justify-center p-2">
-                                        <img :src="idea.image_urls[0]" alt="Similar logo idea" class="max-w-full max-h-full object-contain" />
-                                    </div>
-                                    <div class="p-3">
-                                        <p class="text-xs text-gray-700 dark:text-gray-300 leading-relaxed line-clamp-3" x-text="idea.prompt"></p>
-                                        <div class="mt-2 flex items-center justify-between gap-2">
-                                            <span class="text-[11px] text-gray-400 dark:text-gray-500" x-text="'Similarity ' + Math.round((idea.score || 0) * 100) + '%'"></span>
-                                            <div class="flex items-center gap-1.5">
-                                                @if(config('services.logo_editor_enabled'))
-                                                <a :href="'/logos/' + idea.id + '/edit?image=0'" class="px-2.5 py-1 rounded-lg bg-green-600 text-white text-xs font-medium hover:bg-green-700 transition">Open in Editor</a>
-                                                @endif
-                                                <button type="button" class="px-2.5 py-1 rounded-lg bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 text-xs font-medium hover:bg-violet-200 dark:hover:bg-violet-800/40 transition" @click="logoPrompt = idea.prompt">Use Prompt</button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </template>
-                        </div>
                     </div>
 
                     <div class="mb-6">
@@ -146,7 +111,6 @@
                             <div class="flex gap-1.5 items-center">
                                 <button type="button" @click="logoBgColor = 'white'; fetchLogoPrice()" class="w-8 h-8 rounded-lg border-2 bg-white transition-all flex-shrink-0" :class="logoBgColor === 'white' ? 'border-emerald-500 ring-2 ring-emerald-200' : 'border-gray-300 dark:border-gray-600'" title="White"></button>
                                 <button type="button" @click="logoBgColor = 'black'; fetchLogoPrice()" class="w-8 h-8 rounded-lg border-2 bg-black transition-all flex-shrink-0" :class="logoBgColor === 'black' ? 'border-emerald-500 ring-2 ring-emerald-200' : 'border-gray-300 dark:border-gray-600'" title="Black"></button>
-                                <button type="button" @click="logoBgColor = 'transparent'; fetchLogoPrice()" class="w-8 h-8 rounded-lg border-2 transition-all flex-shrink-0 relative overflow-hidden" :class="logoBgColor === 'transparent' ? 'border-emerald-500 ring-2 ring-emerald-200' : 'border-gray-300 dark:border-gray-600'" title="Transparent" style="background: repeating-conic-gradient(#ccc 0% 25%, white 0% 50%) 50% / 12px 12px"></button>
                                 <div class="relative flex-shrink-0">
                                     <button type="button" @click="logoBgColor = 'custom'; fetchLogoPrice()" class="w-8 h-8 rounded-lg border-2 transition-all overflow-hidden" :class="logoBgColor === 'custom' ? 'border-emerald-500 ring-2 ring-emerald-200' : 'border-gray-300 dark:border-gray-600'" :style="'background-color: ' + logoBgCustom" title="Custom color"></button>
                                     <input type="color" x-model="logoBgCustom" @input="logoBgColor = 'custom'; fetchLogoPrice()" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
@@ -194,7 +158,7 @@
                         </div>
                     </div>
 
-                    <button type="button" @click="generateLogo()" :disabled="logoLoading || (!logoIconOnly && !logoDomain.trim())"
+                    <button type="button" @click="generateLogo()" :disabled="logoLoading || (!logoIconOnly && !logoDomain.trim()) || !logoPrompt.trim()"
                         class="w-full py-3.5 px-6 rounded-xl font-semibold text-base transition flex items-center justify-center gap-2 disabled:cursor-not-allowed text-white"
                         :class="logoProMode
                             ? 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 disabled:from-gray-300 disabled:to-gray-300 dark:disabled:from-gray-700 dark:disabled:to-gray-700'
@@ -215,7 +179,7 @@
                                 <div class="rounded-xl overflow-hidden border border-gray-200 dark:border-gray-700 shadow-sm">
                                     <div class="aspect-square cursor-zoom-in"
                                         @click="zoomLogo(idx)"
-                                        :style="logoBgResult === 'transparent'
+                                        :style="img.transparent
                                             ? 'background: repeating-conic-gradient(#d1d5db 0% 25%, #f3f4f6 0% 50%) 50% / 20px 20px'
                                             : logoBgResult.startsWith('#')
                                                 ? 'background-color: ' + logoBgResult
@@ -248,6 +212,56 @@
                                             </svg>
                                             <span x-text="img.describing ? 'Analyzing...' : 'Use as Prompt'"></span>
                                         </button>
+                                        <button type="button" @click.stop.prevent="removeBackground(idx)" :disabled="img.removingBg"
+                                            class="w-full py-1.5 rounded-lg text-xs font-medium transition flex items-center justify-center gap-1 cursor-pointer relative z-10 disabled:cursor-not-allowed"
+                                            :class="img.removingBg
+                                                ? 'bg-rose-200 dark:bg-rose-900/50 text-rose-400'
+                                                : 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-300 hover:bg-rose-200 dark:hover:bg-rose-800/40'">
+                                            <svg x-show="img.removingBg" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                                            </svg>
+                                            <svg x-show="!img.removingBg" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                                            </svg>
+                                            <span x-text="img.removingBg ? 'Removing…' : 'Remove Background'"></span>
+                                        </button>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                    {{-- Other Ideas: similar saved logos based on the current prompt --}}
+                    <div x-show="(logoPrompt.trim().length >= 3 || similarIdeasLoading || similarIdeasError || similarIdeas.length > 0) && logoImages.length > 0" class="mt-6">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">Other Ideas</h3>
+                            <span class="text-xs text-gray-400 dark:text-gray-500" x-show="similarIdeas.length > 0" x-text="similarIdeas.length + ' similar saved ideas'"></span>
+                        </div>
+
+                        <div x-show="similarIdeasLoading" class="text-xs text-gray-500 dark:text-gray-400 mb-2">Looking for similar saved icon ideas...</div>
+
+                        <div x-show="similarIdeasError" class="mb-2 p-2 rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-xs text-red-700 dark:text-red-300" x-text="similarIdeasError"></div>
+
+                        <div x-show="!similarIdeasLoading && !similarIdeasError && logoPrompt.trim().length >= 3 && similarIdeas.length === 0" class="text-xs text-gray-500 dark:text-gray-400">No similar saved icon ideas found yet.</div>
+
+                        <div x-show="similarIdeas.length > 0" class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            <template x-for="idea in similarIdeas" :key="idea.id">
+                                <div class="rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 overflow-hidden">
+                                    <div class="aspect-square bg-white dark:bg-gray-900 flex items-center justify-center p-2">
+                                        <img :src="idea.image_urls[0]" alt="Similar logo idea" class="w-full h-full object-contain" loading="lazy" />
+                                    </div>
+                                    <div class="p-2">
+                                        <p class="text-xs text-gray-700 dark:text-gray-300 leading-relaxed line-clamp-2" x-text="idea.prompt"></p>
+                                        <div class="mt-2 flex items-center justify-between gap-2">
+                                            <span class="text-[11px] text-gray-400 dark:text-gray-500" x-text="Math.round((idea.score || 0) * 100) + '%'"></span>
+                                            <div class="flex items-center gap-1.5">
+                                                @if(config('services.logo_editor_enabled'))
+                                                <a :href="'/logos/' + idea.id + '/edit?image=0'" class="px-2 py-1 rounded-lg bg-green-600 text-white text-[11px] font-medium hover:bg-green-700 transition">Editor</a>
+                                                @endif
+                                                <button type="button" class="px-2 py-1 rounded-lg bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 text-[11px] font-medium hover:bg-violet-200 dark:hover:bg-violet-800/40 transition" @click="logoPrompt = idea.prompt">Use</button>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             </template>
@@ -371,52 +385,66 @@
                 async generateLogo() {
                     const domain = this.logoDomain.trim();
                     if (!domain && !this.logoIconOnly) return;
+                    if (!this.logoPrompt.trim()) return;
 
+                    const totalCount = this.logoCount;
                     this.logoLoading = true;
                     this.logoError = null;
                     this.logoImages = [];
                     this.logoRequestId = null;
                     this.zoomedLogoUrl = null;
 
-                    try {
-                        const response = await fetch('/domain-search/generate-logo', {
-                            method: 'POST',
-                            headers: this.headers(),
-                            body: JSON.stringify({
-                                domain: domain,
-                                style: this.logoStyle,
-                                count: this.logoCount,
-                                custom_prompt: this.logoPrompt.trim() || null,
-                                pro: this.logoProMode,
-                                pro_size: this.logoProMode ? parseInt(this.logoProSize) : null,
-                                icon_only: this.logoIconOnly,
-                                bg_color: this.logoBgColor === 'custom' ? this.logoBgCustom : this.logoBgColor,
-                            }),
-                        });
+                    // Generate one image at a time so results stream in progressively
+                    for (let i = 0; i < totalCount; i++) {
+                        try {
+                            const response = await fetch('/domain-search/generate-logo', {
+                                method: 'POST',
+                                headers: this.headers(),
+                                body: JSON.stringify({
+                                    domain: domain,
+                                    style: this.logoStyle,
+                                    count: 1,
+                                    custom_prompt: this.logoPrompt.trim() || null,
+                                    pro: this.logoProMode,
+                                    pro_size: this.logoProMode ? parseInt(this.logoProSize) : null,
+                                    icon_only: this.logoIconOnly,
+                                    bg_color: this.logoBgColor === 'custom' ? this.logoBgCustom : this.logoBgColor,
+                                }),
+                            });
 
-                        if (response.status === 419) {
-                            this.logoError = 'Session expired. Please refresh the page and try again.';
-                            return;
+                            if (response.status === 419) {
+                                this.logoError = 'Session expired. Please refresh the page and try again.';
+                                break;
+                            }
+
+                            const data = await response.json();
+
+                            if (!response.ok) {
+                                this.logoError = data.error || 'Failed to generate logo ' + (i + 1) + '.';
+                                continue;
+                            }
+
+                            // Keep the first request ID for editor links
+                            if (!this.logoRequestId) {
+                                this.logoRequestId = data.logo_request_id || null;
+                                this.logoBgResult = data.bg_color || 'white';
+                            }
+
+                            const newImages = (data.images || []).map((img) => ({
+                                ...img,
+                                describing: false,
+                                removingBg: false,
+                            }));
+                            this.logoImages = [...this.logoImages, ...newImages];
+                        } catch (e) {
+                            this.logoError = 'Network error generating logo ' + (i + 1) + '.';
                         }
-
-                        const data = await response.json();
-
-                        if (!response.ok) {
-                            this.logoError = data.error || 'Failed to generate logo.';
-                            return;
-                        }
-
-                        this.logoRequestId = data.logo_request_id || null;
-                        this.logoImages = (data.images || []).map((img) => ({ ...img, describing: false }));
-                        this.logoBgResult = data.bg_color || 'white';
-                        if (this.logoImages.length === 0) {
-                            this.logoError = 'No logo was generated. Please try again.';
-                        }
-                    } catch (e) {
-                        this.logoError = 'Network error. Please try again.';
-                    } finally {
-                        this.logoLoading = false;
                     }
+
+                    if (this.logoImages.length === 0 && !this.logoError) {
+                        this.logoError = 'No logos were generated. Please try again.';
+                    }
+                    this.logoLoading = false;
                 },
 
                 zoomLogo(idx) {
@@ -466,6 +494,39 @@
                         this.logoError = 'Network error analyzing image.';
                     } finally {
                         this.setLogoImageState(idx, { describing: false });
+                    }
+                },
+
+                async removeBackground(idx) {
+                    const img = this.logoImages[idx];
+                    if (!img || img.removingBg) return;
+
+                    this.setLogoImageState(idx, { removingBg: true });
+
+                    try {
+                        const response = await fetch('/domain-search/remove-logo-bg', {
+                            method: 'POST',
+                            headers: this.headers(),
+                            body: JSON.stringify({ image_url: img.url }),
+                        });
+
+                        if (response.ok) {
+                            const data = await response.json();
+                            if (data.transparent_url) {
+                                this.setLogoImageState(idx, {
+                                    url: data.transparent_url,
+                                    transparent: true,
+                                    removingBg: false,
+                                });
+                            }
+                        } else {
+                            const err = await response.json().catch(() => ({}));
+                            this.logoError = err.error || 'Failed to remove background.';
+                        }
+                    } catch (e) {
+                        this.logoError = 'Network error removing background.';
+                    } finally {
+                        this.setLogoImageState(idx, { removingBg: false });
                     }
                 },
 
