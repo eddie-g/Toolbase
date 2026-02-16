@@ -5,6 +5,7 @@ use App\Http\Controllers\DeveloperChatController;
 use App\Http\Controllers\DomainSearchController;
 use App\Http\Controllers\AIController;
 use App\Http\Controllers\ComplianceController;
+use App\Http\Controllers\CreditController;
 use App\Http\Controllers\OverlayEditorTestController;
 use App\Http\Controllers\ShapeTestController;
 use Illuminate\Support\Facades\Route;
@@ -132,3 +133,9 @@ Route::post('/domain-search/upscale-logo', [DomainSearchController::class, 'upsc
 Route::get('/domain-search/upscale-logo', fn () => response()->json(['error' => 'POST method required.'], 405));
 Route::get('/logos/{logoRequest}/edit', [DomainSearchController::class, 'editLogo'])->name('logos.edit');
 Route::post('/logos/{logoRequest}/save-edited', [DomainSearchController::class, 'saveEditedLogo'])->name('logos.saveEdited');
+
+// Stripe Credits
+Route::post('/credits/checkout', [CreditController::class, 'createCheckout'])->middleware('auth')->name('credits.checkout');
+Route::post('/subscription/checkout', [CreditController::class, 'createSubscriptionCheckout'])->middleware('auth')->name('subscription.checkout');
+Route::post('/subscription/cancel', [CreditController::class, 'cancelSubscription'])->middleware('auth')->name('subscription.cancel');
+Route::post('/stripe/webhook', [CreditController::class, 'handleWebhook'])->name('stripe.webhook');

@@ -73,4 +73,10 @@ return [
 
     'logo_editor_enabled' => env('LOGO_EDITOR_ENABLED', false),
 
+    'stripe' => [
+        'key' => env('STRIPE_KEY'),
+        'secret' => env('STRIPE_SECRET'),
+        'webhook_secret' => env('STRIPE_WEBHOOK_SECRET'),
+    ],
+
 ];
