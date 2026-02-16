@@ -1,11 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" x-data="{ 
-    darkMode: localStorage.getItem('darkMode') === 'true' || false,
-    toggleDarkMode() {
-        this.darkMode = !this.darkMode;
-        localStorage.setItem('darkMode', this.darkMode);
-    }
-}" x-init="$watch('darkMode', val => document.documentElement.classList.toggle('dark', val))" :class="{ 'dark': darkMode }">
+<html lang="en">
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -13,40 +7,80 @@
         @vite(['resources/css/app.css', 'resources/js/app.js'])
         <style>
             :root {
-                color-scheme: light;
-                --bg: #0b1320;
-                --card: #141f2e;
-                --ink: #e9f0ff;
-                --muted: #a9b7cf;
-                --accent: #4dd0a8;
-                --danger: #ff6b6b;
+                --accent: var(--color-emerald-400);
+                --accent-strong: var(--color-emerald-300);
+                --ink: var(--color-gray-900);
+                --muted: var(--color-gray-600);
+                --danger: var(--color-red-500);
+                --surface-bg: color-mix(in oklab, var(--color-white) 92%, transparent);
+                --surface-border: color-mix(in oklab, var(--color-gray-200) 85%, transparent);
+                --soft-bg: color-mix(in oklab, var(--color-gray-100) 85%, transparent);
+                --soft-bg-hover: color-mix(in oklab, var(--color-gray-200) 65%, transparent);
+                --dropzone-bg: color-mix(in oklab, var(--color-gray-100) 75%, transparent);
+                --dropzone-accent-bg: color-mix(in oklab, var(--accent) 16%, transparent);
+                --tab-count-inactive-bg: color-mix(in oklab, var(--color-gray-200) 80%, transparent);
+                --tab-count-active-bg: color-mix(in oklab, var(--accent) 16%, transparent);
+                --callout-bg: linear-gradient(
+                    135deg,
+                    color-mix(in oklab, var(--accent) 12%, transparent) 0%,
+                    color-mix(in oklab, var(--color-gray-900) 40%, transparent) 100%
+                );
+                --callout-border: color-mix(in oklab, var(--accent) 35%, transparent);
+                --guided-pill-bg: color-mix(in oklab, var(--accent) 18%, transparent);
+                --ai-pill-bg: color-mix(in oklab, var(--color-violet-500) 22%, transparent);
+                --ai-pill-text: var(--color-violet-700);
             }
-            * { box-sizing: border-box; }
+            .dark {
+                --ink: var(--color-gray-100);
+                --muted: var(--color-gray-400);
+                --danger: var(--color-red-400);
+                --surface-bg: color-mix(in oklab, var(--color-gray-900) 70%, transparent);
+                --surface-border: color-mix(in oklab, var(--color-gray-700) 70%, transparent);
+                --soft-bg: color-mix(in oklab, var(--color-gray-800) 55%, transparent);
+                --soft-bg-hover: color-mix(in oklab, var(--color-gray-700) 60%, transparent);
+                --dropzone-bg: color-mix(in oklab, var(--color-gray-800) 55%, transparent);
+                --dropzone-accent-bg: color-mix(in oklab, var(--accent) 22%, transparent);
+                --tab-count-inactive-bg: color-mix(in oklab, var(--color-gray-700) 70%, transparent);
+                --tab-count-active-bg: color-mix(in oklab, var(--accent) 22%, transparent);
+                --callout-bg: linear-gradient(
+                    135deg,
+                    color-mix(in oklab, var(--accent) 10%, transparent) 0%,
+                    color-mix(in oklab, var(--color-gray-900) 65%, transparent) 100%
+                );
+                --callout-border: color-mix(in oklab, var(--accent) 45%, transparent);
+                --guided-pill-bg: color-mix(in oklab, var(--accent) 20%, transparent);
+                --ai-pill-bg: color-mix(in oklab, var(--color-violet-400) 20%, transparent);
+                --ai-pill-text: var(--color-violet-300);
+            }
             body {
                 margin: 0;
-                font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-                background: radial-gradient(circle at top, #19283d, var(--bg));
-                color: var(--ink);
-                min-height: 100vh;
+            }
+            .uploader-page {
+                padding: 28px 16px 40px;
+            }
+            .page-container {
+                max-width: 1200px;
+                margin: 0 auto;
             }
             .shell {
-                max-width: 1000px;
-                margin: 0 auto;
-                padding: 120px 20px 72px;
+                display: grid;
+                gap: 18px;
             }
-            h1 {
-                margin: 0 0 8px;
-                font-size: 32px;
-                letter-spacing: 0.5px;
+            .shell > h1 {
+                margin: 0;
+                font-size: clamp(1.5rem, 2.6vw, 2.1rem);
+                line-height: 1.2;
             }
-            p { color: var(--muted); }
+            .shell > p {
+                margin: -8px 0 4px;
+                color: var(--muted);
+            }
             .card {
-                background: var(--card);
-                border: 1px solid rgba(255,255,255,0.08);
-                border-radius: 18px;
-                padding: 24px;
-                margin-top: 24px;
-                box-shadow: 0 20px 40px rgba(0,0,0,0.25);
+                background: var(--surface-bg);
+                border: 1px solid var(--surface-border);
+                border-radius: 16px;
+                padding: 20px;
+                backdrop-filter: blur(6px);
             }
             .upload {
                 display: grid;
@@ -57,9 +91,9 @@
             }
             .upload-dropzone {
                 min-height: 230px;
-                border: 2px dashed rgba(255,255,255,0.25);
+                border: 2px dashed var(--surface-border);
                 border-radius: 10px;
-                background: rgba(255,255,255,0.03);
+                background: var(--dropzone-bg);
                 display: grid;
                 place-items: center;
                 text-align: center;
@@ -71,12 +105,12 @@
             .upload-dropzone:hover,
             .upload-dropzone:focus {
                 border-color: var(--accent);
-                background: rgba(77, 208, 168, 0.08);
+                background: var(--dropzone-accent-bg);
                 transform: translateY(-1px);
             }
             .upload-dropzone.dragover {
                 border-color: var(--accent);
-                background: rgba(77, 208, 168, 0.12);
+                background: var(--dropzone-accent-bg);
             }
             .upload-dropzone strong {
                 display: block;
@@ -97,8 +131,8 @@
             .upload-file-name {
                 padding: 10px 12px;
                 border-radius: 8px;
-                border: 1px solid rgba(255,255,255,0.15);
-                background: rgba(255,255,255,0.03);
+                border: 1px solid var(--surface-border);
+                background: var(--soft-bg);
                 color: var(--muted);
                 min-width: 260px;
                 max-width: 100%;
@@ -120,8 +154,8 @@
             .upload-progress-track {
                 height: 10px;
                 border-radius: 99px;
-                background: rgba(255,255,255,0.12);
-                border: 1px solid rgba(255,255,255,0.08);
+                background: var(--soft-bg);
+                border: 1px solid var(--surface-border);
                 overflow: hidden;
                 flex: 1;
                 min-width: 220px;
@@ -129,7 +163,7 @@
             .upload-progress-bar {
                 width: 0%;
                 height: 100%;
-                background: linear-gradient(90deg, #4dd0a8, #6be3be);
+                background: linear-gradient(90deg, var(--accent), var(--accent-strong));
                 transition: width .12s linear;
             }
             .upload-progress-value {
@@ -166,8 +200,8 @@
                 align-items: center;
                 padding: 16px;
                 border-radius: 14px;
-                background: rgba(255,255,255,0.04);
-                border: 1px solid rgba(255,255,255,0.08);
+                background: var(--soft-bg);
+                border: 1px solid var(--surface-border);
             }
             .doc-actions {
                 display: inline-flex;
@@ -179,12 +213,12 @@
                 text-decoration: none;
                 font-weight: 600;
                 padding: 8px 16px;
-                background: rgba(77, 208, 168, 0.1);
+                background: var(--dropzone-accent-bg);
                 border-radius: 6px;
                 display: inline-block;
             }
             .doc a:hover {
-                background: rgba(77, 208, 168, 0.2);
+                background: var(--tab-count-active-bg);
             }
             .doc form {
                 margin: 0;
@@ -218,8 +252,8 @@
                 }
             }
             .tpl-card {
-                background: rgba(255,255,255,0.04);
-                border: 1px solid rgba(255,255,255,0.10);
+                background: var(--soft-bg);
+                border: 1px solid var(--surface-border);
                 border-radius: 14px;
                 overflow: hidden;
                 transition: all .25s;
@@ -245,7 +279,7 @@
             }
             .tpl-info {
                 padding: 14px 16px;
-                border-top: 1px solid rgba(255,255,255,0.06);
+                border-top: 1px solid var(--surface-border);
             }
             .tpl-info h3 {
                 margin: 0 0 4px;
@@ -261,7 +295,7 @@
                 position: absolute;
                 top: 10px;
                 right: 10px;
-                background: rgba(0,0,0,0.55);
+                background: color-mix(in oklab, var(--color-black) 55%, transparent);
                 color: var(--accent);
                 font-size: 10px;
                 font-weight: 700;
@@ -279,12 +313,14 @@
 
         </style>
     </head>
-    <body>
+    <body class="bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 min-h-screen antialiased">
         <x-site-header />
 
-        <div class="shell">
-            <h1>Document Uploader</h1>
-            <p>Upload a PDF, then jump into the editor to add text and save the updated file.</p>
+        <main class="uploader-page">
+            <div class="page-container">
+                <div class="shell">
+                    <h1>Document Uploader</h1>
+                    <p>Upload a PDF, then jump into the editor to add text and save the updated file.</p>
 
             @if (session('status'))
                 <div class="flash">{{ session('status') }}</div>
@@ -294,7 +330,7 @@
                 <div class="error">{{ $errors->first() }}</div>
             @endif
 
-            <div class="card">
+                    <div class="card">
                 <form class="upload" id="upload-form" action="{{ route('documents.store') }}" method="POST" enctype="multipart/form-data">
                     @csrf
                     <input id="document-input" class="upload-input" type="file" name="document" accept="application/pdf,.pdf" required>
@@ -324,7 +360,7 @@
             </div>
 
             <!-- ── Guided Templates ────────────────────────────── -->
-            <div class="card">
+                    <div class="card">
                 <h2 style="margin: 0 0 8px;">Guided Templates</h2>
                 <p style="margin: 0 0 20px; font-size: 14px;">Choose a template to get started — fill out the interactive form in the editor.</p>
 
@@ -345,7 +381,7 @@
                             style="background:none; border:none; color:{{ $loop->first ? 'var(--accent)' : 'var(--muted)' }}; font:inherit; font-size:14px; font-weight:600; padding:10px 18px; cursor:pointer; border-bottom:2px solid {{ $loop->first ? 'var(--accent)' : 'transparent' }}; display:flex; align-items:center; gap:6px; transition:all .2s;">
                             <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">{!! $cat['icon'] !!}</svg>
                             {{ $cat['label'] }}
-                            <span style="background:{{ $loop->first ? 'rgba(77,208,168,0.15)' : 'rgba(255,255,255,0.08)' }}; font-size:11px; padding:1px 7px; border-radius:10px; font-weight:700;">{{ $guidedTemplatesByType[$catKey]->count() ?? 0 }}</span>
+                            <span style="background:{{ $loop->first ? 'var(--tab-count-active-bg)' : 'var(--tab-count-inactive-bg)' }}; font-size:11px; padding:1px 7px; border-radius:10px; font-weight:700;">{{ $guidedTemplatesByType[$catKey]->count() ?? 0 }}</span>
                         </button>
                     @endforeach
                 </div>
@@ -376,7 +412,7 @@
                                 <input type="hidden" name="_template_slug"   value="{{ $tpl->slug }}">
                                 <input type="hidden" name="_guided"          value="1">
                             @endif
-                            <button type="submit" class="tpl-card" style="background:rgba(255,255,255,0.04);font:inherit;color:inherit;padding:0;width:100%;text-align:left;border-radius:14px;">
+                            <button type="submit" class="tpl-card" style="background:var(--soft-bg);font:inherit;color:inherit;padding:0;width:100%;text-align:left;border-radius:14px;">
                                 <div class="tpl-preview">
                                     {!! $tpl->preview_html !!}
                                     <span class="tpl-badge">{{ $cat['label'] }}</span>
@@ -406,7 +442,7 @@
                         btn.classList.toggle('active', isActive);
                         btn.style.color = isActive ? 'var(--accent)' : 'var(--muted)';
                         btn.style.borderBottomColor = isActive ? 'var(--accent)' : 'transparent';
-                        btn.querySelector('span').style.background = isActive ? 'rgba(77,208,168,0.15)' : 'rgba(255,255,255,0.08)';
+                        btn.querySelector('span').style.background = isActive ? 'var(--tab-count-active-bg)' : 'var(--tab-count-inactive-bg)';
                     });
                 }
 
@@ -621,7 +657,7 @@
 
             <div class="card">
                 <!-- AI Design Callout -->
-                <div style="background: linear-gradient(135deg, rgba(77,208,168,0.05) 0%, rgba(11,19,32,0.5) 100%); border: 1px solid rgba(77,208,168,0.2); border-radius: 14px; padding: 24px; margin-bottom: 32px; display: flex; align-items: center; justify-content: space-between; position: relative; overflow: hidden;">
+                <div style="background: var(--callout-bg); border: 1px solid var(--callout-border); border-radius: 14px; padding: 24px; margin-bottom: 32px; display: flex; align-items: center; justify-content: space-between; position: relative; overflow: hidden;">
                     <div style="position: absolute; top: -50px; right: -50px; width: 200px; height: 200px; background: var(--accent); opacity: 0.05; border-radius: 50%; filter: blur(40px);"></div>
                     <div style="position: relative; z-index: 2; max-width: 700px;">
                         <h2 style="color: var(--accent); margin: 0 0 8px; font-size: 20px; display: flex; align-items: center; gap: 10px;">
@@ -680,9 +716,9 @@
                                     <div style="display: flex; align-items: center; gap: 8px;">
                                         {{ $document->original_name }}
                                         @if($document->mode === 'guided')
-                                            <span style="background: rgba(77, 208, 168, 0.15); color: var(--accent); padding: 2px 8px; border-radius: 99px; font-size: 10px; font-weight: 700; text-transform: uppercase;">GUIDED</span>
+                                            <span style="background: var(--guided-pill-bg); color: var(--accent); padding: 2px 8px; border-radius: 99px; font-size: 10px; font-weight: 700; text-transform: uppercase;">GUIDED</span>
                                         @elseif($document->mode === 'ai')
-                                            <span style="background: rgba(168, 85, 247, 0.15); color: #c084fc; padding: 2px 8px; border-radius: 99px; font-size: 10px; font-weight: 700; text-transform: uppercase;">AI</span>
+                                            <span style="background: var(--ai-pill-bg); color: var(--ai-pill-text); padding: 2px 8px; border-radius: 99px; font-size: 10px; font-weight: 700; text-transform: uppercase;">AI</span>
                                         @endif
                                     </div>
                                     <div class="tag">{{ number_format($document->size_bytes / 1024, 1) }} KB</div>
@@ -717,8 +753,10 @@
                         <div class="tag">No uploads yet.</div>
                     @endforelse
                 </div>
+                    </div>
+                </div>
             </div>
-        </div>
+        </main>
 
 
     </body>
