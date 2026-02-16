@@ -59,4 +59,20 @@ class User extends Authenticatable
     {
         return $this->hasMany(CreditTransaction::class);
     }
+
+    public function subscriptions(): HasMany
+    {
+        return $this->hasMany(UserSubscription::class);
+    }
+
+    /**
+     * Check if user has an active subscription for a given product.
+     */
+    public function hasActiveSubscription(string $productKey): bool
+    {
+        return $this->subscriptions()
+            ->whereHas('plan', fn ($q) => $q->where('product_key', $productKey))
+            ->where('status', 'active')
+            ->exists();
+    }
 }
