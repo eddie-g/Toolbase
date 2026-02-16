@@ -67,4 +67,10 @@ return [
         ],
     ],
 
+    'fal' => [
+        'key' => env('FAL_AI_KEY'),
+    ],
+
+    'logo_editor_enabled' => env('LOGO_EDITOR_ENABLED', false),
+
 ];

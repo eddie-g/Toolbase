@@ -3,11 +3,17 @@
 namespace App\Http\Controllers;
 
 use App\Models\AiDomainRequest;
+use App\Models\AiLogoRequest;
+use App\Models\AiLogoPrice;
 use App\Models\AiPriceLog;
+use App\Models\CreditTransaction;
+use App\Models\Document;
 use App\Services\DeveloperChatClient;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -29,6 +35,11 @@ class DomainSearchController extends Controller
             'tldOptions' => $tldOptions,
             'defaultTlds' => $defaultTlds,
         ]);
+    }
+
+    public function logoGenerator()
+    {
+        return view('logo-generator');
     }
 
     public function check(Request $request)
@@ -731,5 +742,1240 @@ Example response format:
         ));
 
         return !empty($defaultTlds) ? $defaultTlds : self::DEFAULT_TLDS;
+    }
+
+    /**
+     * Describe a logo image using Gemini Vision to generate a reusable prompt.
+     */
+    public function describeLogo(Request $request)
+    {
+        if (!$request->user()) {
+            return response()->json(['error' => 'You must be logged in.'], 401);
+        }
+
+        $request->validate([
+            'image_url' => 'required|url|max:2000',
+        ]);
+
+        $imageUrl = $request->input('image_url');
+
+        try {
+            $apiKey = config('services.gemini.api_key');
+            $model = config('services.gemini.model', 'gemini-2.0-flash');
+            $baseUrl = config('services.gemini.base_url', 'https://generativelanguage.googleapis.com/v1beta');
+
+            // Fetch the image and send as base64 inline_data
+            $imageData = Http::timeout(15)->get($imageUrl);
+            if (!$imageData->successful()) {
+                return response()->json(['error' => 'Could not fetch the image.'], 422);
+            }
+
+            $imageBytes = $imageData->body();
+            $mimeType = $imageData->header('Content-Type') ?: 'image/png';
+            $base64Image = base64_encode($imageBytes);
+
+            $response = Http::timeout(30)->post(
+                "{$baseUrl}/models/{$model}:generateContent?key={$apiKey}",
+                [
+                    'contents' => [
+                        [
+                            'parts' => [
+                                [
+                                    'text' => 'You are a logo design expert. Analyze this logo image and write a concise, visual description that could be used as a prompt to recreate or iterate on this design. Focus on: the visual style, colors, shapes, composition, typography style (if any), and overall mood. Do NOT mention brand names or readable text content — describe only the visual design elements. Keep it under 120 words. Write it as a direct design instruction, not a description (e.g. "A minimalist geometric..." not "This logo features..."). Output ONLY the prompt text, nothing else.',
+                                ],
+                                [
+                                    'inline_data' => [
+                                        'mime_type' => $mimeType,
+                                        'data' => $base64Image,
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                    'generationConfig' => [
+                        'temperature' => 0.3,
+                        'maxOutputTokens' => 300,
+                    ],
+                ]
+            );
+
+            if (!$response->successful()) {
+                \Log::warning('Gemini vision API failed', [
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                ]);
+                return response()->json(['error' => 'AI vision service failed.'], 502);
+            }
+
+            $data = $response->json();
+            $description = $data['candidates'][0]['content']['parts'][0]['text'] ?? null;
+
+            if (!$description) {
+                return response()->json(['error' => 'Could not generate description.'], 500);
+            }
+
+            // Clean up the description
+            $description = trim($description);
+            $description = preg_replace('/^["\']+|["\']+$/', '', $description); // Strip wrapping quotes
+
+            // Deduct Gemini vision cost (~$0.0001 per call)
+            CreditTransaction::debit(
+                userId: $request->user()->id,
+                amount: 0.0001,
+                service: 'logo_describe',
+                modelName: $model,
+                description: 'AI logo analysis (Gemini Vision)',
+            );
+
+            return response()->json([
+                'prompt' => $description,
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Logo describe error: ' . $e->getMessage());
+            return response()->json(['error' => 'Failed to analyze image.'], 500);
+        }
+    }
+
+    /**
+     * Get real-time price estimate from fal.ai for logo generation.
+     */
+    public function estimateLogoPrice(Request $request)
+    {
+        $request->validate([
+            'count' => 'nullable|integer|min:1|max:4',
+            'pro' => 'nullable|boolean',
+            'pro_size' => 'nullable|integer|in:512,1024,1536',
+            'style' => 'nullable|string|in:professional,fantasy,future,vector',
+            'bg_color' => 'nullable|string|max:20',
+        ]);
+
+        $estimate = AiLogoPrice::estimateCost(
+            imageCount: (int) $request->input('count', 4),
+            isPro: (bool) $request->input('pro', false),
+            proSize: (int) $request->input('pro_size', 1024),
+            style: $request->input('style', 'professional'),
+            bgColor: $request->input('bg_color', 'white'),
+        );
+
+        return response()->json($estimate);
+    }
+
+    public function generateLogo(Request $request)
+    {
+        if (!$request->user()) {
+            return response()->json([
+                'error' => 'You must be logged in to generate logos.',
+            ], 401);
+        }
+
+        $request->validate([
+            'domain' => 'required|string|max:100',
+            'style' => 'required|string|in:professional,fantasy,future,vector',
+            'count' => 'nullable|integer|min:1|max:4',
+            'custom_prompt' => 'nullable|string|max:500',
+            'pro' => 'nullable|boolean',
+            'pro_size' => 'nullable|integer|in:512,1024,1536',
+            'icon_only' => 'nullable|boolean',
+            'bg_color' => 'nullable|string|max:20',
+        ]);
+
+        $domain = $request->input('domain');
+        $style = $request->input('style');
+        $imageCount = $request->input('count', 4);
+        $customPrompt = $request->input('custom_prompt');
+        $isPro = (bool) $request->input('pro', false);
+        $proSize = (int) $request->input('pro_size', 1024);
+        $iconOnly = (bool) $request->input('icon_only', false);
+        $bgColor = $request->input('bg_color', 'white');
+
+        // Calculate cost estimate from real fal.ai pricing API
+        $costEstimate = AiLogoPrice::estimateCost(
+            imageCount: $imageCount,
+            isPro: $isPro,
+            proSize: $proSize,
+            style: $style,
+            bgColor: $bgColor,
+        );
+
+        // Extract the core brand concept from the domain name (strip TLD if present)
+        $brandName = preg_replace('/\.(com|net|org|io|co|ai|app|dev|xyz|tech|me)$/i', '', $domain);
+        $brandUpper = strtoupper($brandName);
+        // Try to infer what the brand is about from its name
+        $brandConcept = str_replace(['-', '_', '.'], ' ', $brandName);
+
+        // If user provided a custom description, extract visual concept only
+        // Strip any ALL-CAPS phrases and size/style directives to prevent them rendering as text
+        $customElement = '';
+        if ($customPrompt) {
+            // Remove ALL-CAPS words (3+ chars) that Flux might render as text
+            $cleaned = preg_replace('/\b[A-Z]{3,}\b/', '', $customPrompt);
+            // Remove common directive phrases
+            $cleaned = preg_replace('/\b(make|put|add|write|show|display|include|type|spell)\s+(it|the|a|an)?\s*/i', '', $cleaned);
+            // Remove size directives
+            $cleaned = preg_replace('/\b(large|big|huge|small|tiny|giant|massive|enormous)\b/i', '', $cleaned);
+            // Collapse whitespace
+            $cleaned = trim(preg_replace('/\s+/', ' ', $cleaned));
+            if ($cleaned) {
+                $customElement = " A visual icon element of {$cleaned} is integrated into the logo design. Do not render any words or letters from this description.";
+            }
+        }
+
+        // Typography-first prompts with style hooks and avoidance language
+        // Determine background color instruction
+        $bgInstruction = match($bgColor) {
+            'black' => 'isolated on a solid black background',
+            'transparent' => 'isolated on a plain transparent background with no background elements',
+            default => str_starts_with($bgColor, '#')
+                ? "isolated on a solid {$bgColor} colored background"
+                : 'isolated on a solid white background',
+        };
+
+        if ($iconOnly) {
+            // Icon-only mode: no text at all, pure symbol/icon
+            // Use custom element if provided, otherwise use a generic concept hint without the brand name
+            $conceptHint = $customElement ? $customElement : ' A unique abstract symbol.';
+            $noExtraText = " There is absolutely NO text, NO letters, NO words, NO numbers, NO typography anywhere in the image. Zero text of any kind. Pure graphic symbol only.";
+
+            $stylePrompts = [
+                'professional' => "A premium corporate icon mark.{$conceptHint} A single bold geometric symbol. Monolithic, thick lines, emblem style, navy blue and gold color palette. Secure, established, Fortune 500 quality. Clean vector art, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no gradients, no cluttered details, avoid photorealism, avoid messy lines. High contrast, professional design, 4k.{$noExtraText}",
+                'fantasy' => "An epic fantasy-themed icon mark.{$conceptHint} A single ornate magical symbol. Elven runes, enchanted forest motifs, mythical creatures, ancient scrollwork, Lord of the Rings inspired aesthetics, rich emerald green and antique gold color palette. Clean vector art, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no cluttered details, avoid photorealism, avoid messy lines. Epic fantasy design, 4k.{$noExtraText}",
+                'future' => "A futuristic sci-fi icon mark.{$conceptHint} A single sleek angular geometric symbol. Holographic elements, circuit board patterns, space-age aesthetics, glowing neon cyan and electric purple color palette, starfield accents, advanced technology motifs. Clean vector art, centered 1:1 square composition, {$bgInstruction}. No cluttered details, avoid photorealism, avoid messy lines. Futuristic sci-fi design, 4k.{$noExtraText}",
+                'vector' => "A minimalist flat vector icon mark.{$conceptHint} Simple geometric shapes, solid flat colors, clean precise lines, no gradients, no shadows, no textures, no 3D effects. Centered 1:1 square composition, {$bgInstruction}. SVG-ready, print-ready, scalable design. Avoid photorealism, avoid messy lines, avoid cluttered details. Ultra-clean flat vector art, 4k.{$noExtraText}",
+            ];
+        } else {
+            // With brand name text
+            $noExtraText = " The ONLY text in the entire image is \"{$brandUpper}\". Do not add any other words, letters, taglines, slogans, or captions anywhere in the image.";
+
+            $stylePrompts = [
+                'professional' => "A premium corporate logo. The centerpiece is the word \"{$brandUpper}\" in an elegant, refined custom serif typeface with perfectly spaced letters.{$customElement} Monolithic, thick lines, emblem style, navy blue and gold color palette. Secure, established, Fortune 500 quality. Clean vector art, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no gradients, no cluttered details, avoid photorealism, avoid messy lines. High contrast, professional design, 4k.{$noExtraText}",
+                'fantasy' => "An epic fantasy-themed logo. The centerpiece is the word \"{$brandUpper}\" in an ornate, medieval-inspired custom typeface with elegant serifs and decorative flourishes.{$customElement} Elven runes, enchanted forest motifs, mythical creatures, ancient scrollwork, Lord of the Rings inspired aesthetics, rich emerald green and antique gold color palette. Clean vector art, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no cluttered details, avoid photorealism, avoid messy lines. Epic fantasy design, 4k.{$noExtraText}",
+                'future' => "A futuristic sci-fi logo. The centerpiece is the word \"{$brandUpper}\" in a sleek, angular, cyberpunk-inspired custom typeface with sharp edges and neon accents.{$customElement} Holographic elements, circuit board patterns, space-age aesthetics, glowing neon cyan and electric purple color palette, starfield accents, advanced technology motifs. Clean vector art, centered 1:1 square composition, {$bgInstruction}. No cluttered details, avoid photorealism, avoid messy lines. Futuristic sci-fi design, 4k.{$noExtraText}",
+                'vector' => "A minimalist flat vector logo for \"{$brandUpper}\". Simple geometric shapes, solid flat colors, clean precise lines, no gradients, no shadows, no textures, no 3D effects.{$customElement} Bold readable typography, centered 1:1 square composition, {$bgInstruction}. SVG-ready, print-ready, scalable design. Avoid photorealism, avoid messy lines, avoid cluttered details. Ultra-clean flat vector art, 4k.{$noExtraText}",
+            ];
+        }
+
+        $prompt = $stylePrompts[$style];
+
+        $logoRequest = AiLogoRequest::create([
+            'user_id' => $request->user()->id,
+            'domain' => $domain,
+            'style' => $style . ($isPro ? '_pro' : ''),
+            'prompt' => $prompt,
+            'original_prompt' => $customPrompt ? trim((string) $customPrompt) : null,
+            'status' => 'pending',
+        ]);
+
+        // Create price log entry (pending)
+        $priceLog = AiLogoPrice::create([
+            'user_id' => $request->user()->id,
+            'ai_logo_request_id' => $logoRequest->id,
+            'session' => session()->getId(),
+            'user_email' => $request->user()->email,
+            'request_type' => $isPro ? 'logo_pro' : 'logo_generation',
+            'model_name' => $isPro ? 'fal-ai/flux-pro/v1.1' : 'fal-ai/flux/schnell',
+            'image_count' => $imageCount,
+            'image_size' => $isPro ? $proSize . 'x' . $proSize : '512x512',
+            'num_inference_steps' => $isPro ? 28 : 8,
+            'guidance_scale' => 3.50,
+            'cost_per_image' => $costEstimate['cost_per_image'],
+            'estimated_cost_usd' => $costEstimate['estimated_cost_usd'],
+            'status' => 'pending',
+            'prompt_preview' => substr($prompt, 0, 255),
+        ]);
+
+        $startTime = microtime(true);
+
+        try {
+            $endpoint = $isPro
+                ? 'https://fal.run/fal-ai/flux-pro/v1.1'
+                : 'https://fal.run/fal-ai/flux/schnell';
+
+            $timeout = $isPro ? 120 : 120;
+
+            if ($isPro) {
+                // Flux Pro v1.1 only supports num_images=1, so loop for each image
+                $allImages = [];
+                for ($i = 0; $i < $imageCount; $i++) {
+                    $proResponse = Http::withHeaders([
+                        'Authorization' => 'Key ' . config('services.fal.key'),
+                        'Content-Type' => 'application/json',
+                    ])->timeout($timeout)->post($endpoint, [
+                        'prompt' => $prompt,
+                        'image_size' => [
+                            'width' => $proSize,
+                            'height' => $proSize,
+                        ],
+                        'num_images' => 1,
+                        'num_inference_steps' => 28,
+                        'safety_tolerance' => 5,
+                        'sync_mode' => true,
+                    ]);
+
+                    if ($proResponse->successful()) {
+                        $proData = $proResponse->json();
+                        $proImages = $proData['images'] ?? [];
+                        foreach ($proImages as $pImg) {
+                            $allImages[] = $pImg;
+                        }
+                    } else {
+                        \Log::warning('PRO image ' . ($i + 1) . ' failed', [
+                            'status' => $proResponse->status(),
+                            'body' => substr($proResponse->body(), 0, 500),
+                        ]);
+                    }
+                }
+
+                // Build a synthetic response-like structure
+                $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
+                $data = ['images' => $allImages, 'seed' => null];
+                $responseStatus = count($allImages) > 0 ? 200 : 500;
+
+                if (count($allImages) === 0) {
+                    $logoRequest->update([
+                        'status' => 'failed',
+                        'error_message' => 'All PRO image generations failed',
+                        'response_time_ms' => $elapsedMs,
+                    ]);
+                    $priceLog->update(['status' => 'failed', 'response_time_ms' => $elapsedMs]);
+                    return response()->json(['error' => 'Failed to generate PRO logos. Please try again.'], 500);
+                }
+            } else {
+                $response = Http::withHeaders([
+                    'Authorization' => 'Key ' . config('services.fal.key'),
+                    'Content-Type' => 'application/json',
+                ])->timeout($timeout)->post($endpoint, [
+                    'prompt' => $prompt,
+                    'image_size' => [
+                        'width' => 512,
+                        'height' => 512,
+                    ],
+                    'num_images' => $imageCount,
+                    'num_inference_steps' => 8,
+                    'guidance_scale' => 3.5,
+                    'sync_mode' => true,
+                ]);
+
+                $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
+
+                if (!$response->successful()) {
+                    \Log::error('Fal.ai logo generation failed', [
+                        'status' => $response->status(),
+                        'body' => $response->body(),
+                    ]);
+                    $falError = $response->json('detail') ?? $response->json('message') ?? 'Unknown error';
+
+                    $logoRequest->update([
+                        'status' => 'failed',
+                        'fal_status_code' => $response->status(),
+                        'error_message' => $falError,
+                        'response_time_ms' => $elapsedMs,
+                    ]);
+
+                    $priceLog->update([
+                        'status' => 'failed',
+                        'response_time_ms' => $elapsedMs,
+                    ]);
+
+                    return response()->json([
+                        'error' => 'Failed to generate logo: ' . $falError,
+                    ], 500);
+                }
+
+                $data = $response->json();
+                $responseStatus = $response->status();
+            }
+            $images = $data['images'] ?? [];
+            $seed = $data['seed'] ?? null;
+
+            // Extract URLs for DB storage (keep base64 data URIs temporarily;
+            // they'll be redacted by the nightly logos:redact-base64 command)
+            $imageUrls = [];
+            foreach ($images as &$img) {
+                $url = is_array($img) ? ($img['url'] ?? '') : (string) $img;
+                $imageUrls[] = $url;
+            }
+            unset($img);
+
+            // NOTE: Local storage now happens AFTER bg removal & vectorization (see below)
+
+            // If transparent or custom color background, remove background via birefnet
+            $needsBgRemoval = ($bgColor === 'transparent' || str_starts_with($bgColor, '#'));
+            if ($needsBgRemoval) {
+                $falKey = config('services.fal.key');
+                foreach ($images as $i => &$img) {
+                    $imgUrl = is_array($img) ? ($img['url'] ?? '') : (string) $img;
+                    if (!$imgUrl || str_starts_with($imgUrl, 'data:')) continue;
+
+                    try {
+                        $bgResponse = Http::withHeaders([
+                            'Authorization' => 'Key ' . $falKey,
+                            'Content-Type' => 'application/json',
+                        ])->timeout(60)->post('https://fal.run/fal-ai/birefnet', [
+                            'image_url' => $imgUrl,
+                            'model' => 'General Use (Light)',
+                            'operating_resolution' => '1024x1024',
+                            'output_format' => 'png',
+                        ]);
+
+                        if ($bgResponse->successful()) {
+                            $bgData = $bgResponse->json();
+                            $transparentUrl = $bgData['image']['url'] ?? null;
+                            if ($transparentUrl) {
+                                if (is_array($img)) {
+                                    $img['url'] = $transparentUrl;
+                                    $img['transparent'] = true;
+                                } else {
+                                    $images[$i] = ['url' => $transparentUrl, 'transparent' => true];
+                                }
+                            }
+                        } else {
+                            \Log::warning('Background removal failed for image ' . $i, [
+                                'status' => $bgResponse->status(),
+                            ]);
+                        }
+                    } catch (\Exception $bgEx) {
+                        \Log::warning('Background removal exception for image ' . $i, [
+                            'error' => $bgEx->getMessage(),
+                        ]);
+                    }
+                }
+                unset($img);
+            }
+
+            // If vector style, vectorize each image to SVG
+            if ($style === 'vector') {
+                foreach ($images as $i => &$img) {
+                    $rasterUrl = $img['url'] ?? (is_string($img) ? $img : null);
+                    if (!$rasterUrl) continue;
+
+                    try {
+                        $svgResponse = Http::withHeaders([
+                            'Authorization' => 'Key ' . config('services.fal.key'),
+                            'Content-Type' => 'application/json',
+                        ])->timeout(120)->post('https://fal.run/fal-ai/recraft/vectorize', [
+                            'image_url' => $rasterUrl,
+                        ]);
+
+                        if ($svgResponse->successful()) {
+                            $svgData = $svgResponse->json();
+                            $svgUrl = $svgData['image']['url'] ?? ($svgData['images'][0]['url'] ?? null);
+                            if ($svgUrl) {
+                                $img['svg_url'] = $svgUrl;
+                            }
+                        } else {
+                            \Log::warning('SVG vectorization failed for image ' . $i, [
+                                'status' => $svgResponse->status(),
+                                'body' => $svgResponse->body(),
+                            ]);
+                        }
+                    } catch (\Exception $svgEx) {
+                        \Log::warning('SVG vectorization exception for image ' . $i, [
+                            'error' => $svgEx->getMessage(),
+                        ]);
+                    }
+                }
+                unset($img);
+            }
+
+            // Persist ALL generated images to local storage AFTER all transformations
+            // (bg removal, vectorization). This ensures we store the final processed images.
+            $storedImageUrls = [];
+            $storedImagePaths = [];
+            foreach ($images as $idx => &$img) {
+                // For vector logos, prefer the SVG URL
+                $imgUrl = null;
+                if (is_array($img)) {
+                    $imgUrl = $img['svg_url'] ?? $img['url'] ?? '';
+                } else {
+                    $imgUrl = (string) $img;
+                }
+
+                if (!$imgUrl || str_starts_with($imgUrl, 'data:') || $imgUrl === '[base64-omitted]') {
+                    continue;
+                }
+
+                $stored = $this->storeRemoteLogoImage(
+                    imageUrl: $imgUrl,
+                    requestId: (int) $logoRequest->id,
+                    userId: (int) $request->user()->id,
+                    domain: $domain,
+                    index: (int) $idx + 1
+                );
+
+                if ($stored) {
+                    $storedImagePaths[] = $stored['path'];
+                    $storedImageUrls[] = $stored['url'];
+                    if (is_array($img)) {
+                        $img['stored_path'] = $stored['path'];
+                        $img['stored_url'] = $stored['url'];
+                    } else {
+                        $img = [
+                            'url' => $imgUrl,
+                            'stored_path' => $stored['path'],
+                            'stored_url' => $stored['url'],
+                        ];
+                    }
+                }
+            }
+            unset($img);
+
+            // Attach seed to each image for PRO consistency
+            $imagesWithSeed = array_map(function ($img) use ($seed) {
+                if (is_array($img)) {
+                    $img['seed'] = $seed;
+                }
+                return $img;
+            }, $images);
+
+            $logoRequest->update([
+                'status' => 'completed',
+                'fal_status_code' => $responseStatus,
+                'storage_type' => !empty($storedImagePaths) ? 'path' : 'url',
+                'image_urls' => !empty($storedImageUrls) ? $storedImageUrls : $imageUrls,
+                'response_time_ms' => $elapsedMs,
+            ]);
+
+            // Update price log with actual cost and completion
+            $actualImageCount = count($images);
+            $actualCost = AiLogoPrice::estimateCost(
+                imageCount: $actualImageCount,
+                isPro: $isPro,
+                proSize: $proSize,
+                style: $style,
+                bgColor: $bgColor,
+            );
+            $priceLog->update([
+                'status' => 'completed',
+                'image_count' => $actualImageCount,
+                'actual_cost_usd' => $actualCost['estimated_cost_usd'],
+                'response_time_ms' => $elapsedMs,
+            ]);
+
+            // Deduct actual cost from user's credit balance
+            $totalCost = (float) $actualCost['estimated_cost_usd'];
+            if ($totalCost > 0) {
+                $breakdown = $actualCost['breakdown'] ?? [];
+                CreditTransaction::debit(
+                    userId: $request->user()->id,
+                    amount: $totalCost,
+                    service: 'logo_generation',
+                    modelName: $isPro ? 'fal-ai/flux-pro/v1.1' : 'fal-ai/flux/schnell',
+                    description: "{$actualImageCount} logo(s) for {$domain}",
+                    metadata: [
+                        'domain' => $domain,
+                        'style' => $style,
+                        'image_count' => $actualImageCount,
+                        'resolution' => $isPro ? "{$proSize}x{$proSize}" : '512x512',
+                        'pro' => $isPro,
+                        'icon_only' => $iconOnly,
+                        'bg_color' => $bgColor,
+                        'breakdown' => $breakdown,
+                    ],
+                );
+            }
+
+            return response()->json([
+                'logo_request_id' => (int) $logoRequest->id,
+                'images' => $imagesWithSeed,
+                'prompt' => $prompt,
+                'seed' => $seed,
+                'bg_color' => $bgColor,
+                'cost' => [
+                    'image_count' => $actualImageCount,
+                    'cost_per_image' => $costEstimate['cost_per_image'],
+                    'total_cost' => $actualCost['estimated_cost_usd'],
+                ],
+            ]);
+        } catch (\Exception $e) {
+            $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
+
+            $logoRequest->update([
+                'status' => 'error',
+                'error_message' => $e->getMessage(),
+                'response_time_ms' => $elapsedMs,
+            ]);
+
+            $priceLog->update([
+                'status' => 'error',
+                'response_time_ms' => $elapsedMs,
+            ]);
+
+            return response()->json([
+                'error' => 'Logo generation failed: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Return similar saved icon-only logo ideas for the current prompt.
+     * Similarity is lexical (token + phrase overlap), tuned for short prompts.
+     */
+    public function logoSimilarIdeas(Request $request)
+    {
+        if (!$request->user()) {
+            return response()->json([
+                'error' => 'You must be logged in to view similar ideas.',
+            ], 401);
+        }
+
+        $request->validate([
+            'prompt' => 'required|string|min:3|max:500',
+            'limit' => 'nullable|integer|min:1|max:20',
+        ]);
+
+        $prompt = trim((string) $request->input('prompt'));
+        $limit = (int) $request->input('limit', 8);
+
+        $rows = AiLogoRequest::query()
+            ->where('status', 'completed')
+            ->where('storage_type', 'path') // saved local icon-only outputs
+            ->whereNotNull('original_prompt')
+            ->whereNotNull('image_urls')
+            ->orderByDesc('id')
+            ->limit(600)
+            ->get(['id', 'domain', 'style', 'original_prompt', 'image_urls', 'created_at']);
+
+        $scored = [];
+        foreach ($rows as $row) {
+            $candidatePrompt = trim((string) $row->original_prompt);
+            if ($candidatePrompt === '') {
+                continue;
+            }
+
+            $score = $this->computePromptSimilarity($prompt, $candidatePrompt);
+            if ($score < 0.42) {
+                continue;
+            }
+
+            $urls = array_values(array_filter((array) $row->image_urls, function ($url) {
+                return is_string($url) && $url !== '';
+            }));
+            if (empty($urls)) {
+                continue;
+            }
+
+            $scored[] = [
+                'id' => $row->id,
+                'domain' => $row->domain,
+                'style' => $row->style,
+                'prompt' => $candidatePrompt,
+                'score' => round($score, 4),
+                'image_urls' => array_slice($urls, 0, 4),
+                'created_at' => optional($row->created_at)->toIso8601String(),
+            ];
+        }
+
+        usort($scored, fn ($a, $b) => $b['score'] <=> $a['score']);
+        $ideas = array_slice($scored, 0, $limit);
+
+        return response()->json([
+            'ideas' => $ideas,
+            'count' => count($ideas),
+        ]);
+    }
+
+    public function editLogo(Request $request, AiLogoRequest $logoRequest)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return redirect('/admin/login');
+        }
+
+        if ((int) $logoRequest->user_id !== (int) $user->id) {
+            abort(403, 'You do not have access to this logo request.');
+        }
+
+        $imageUrls = array_values(array_filter((array) $logoRequest->image_urls, function ($url) {
+            return is_string($url) && $url !== '';
+        }));
+
+        if (empty($imageUrls)) {
+            abort(404, 'No logo images found for this request.');
+        }
+
+        $imageIndex = max(0, (int) $request->query('image', 0));
+        if (!isset($imageUrls[$imageIndex])) {
+            $imageIndex = 0;
+        }
+
+        $imageUrl = $imageUrls[$imageIndex];
+
+        // Guard against placeholder URLs from cleaned-up base64 data
+        if ($imageUrl === '[base64-omitted]' || empty($imageUrl)) {
+            abort(404, 'This logo image is no longer available (data was cleaned up).');
+        }
+
+        // Determine if this is a local public-disk file or an external URL
+        $binary = null;
+        $extension = 'png';
+        $mimeType = 'image/png';
+
+        // Handle base64 data URIs
+        if (preg_match('/^data:image\/([a-z+]+);base64,(.+)$/si', $imageUrl, $b64Match)) {
+            $mimeMap = [
+                'png' => 'image/png',
+                'jpeg' => 'image/jpeg',
+                'jpg' => 'image/jpeg',
+                'webp' => 'image/webp',
+                'svg+xml' => 'image/svg+xml',
+                'gif' => 'image/gif',
+            ];
+            $subtype = strtolower($b64Match[1]);
+            $mimeType = $mimeMap[$subtype] ?? 'image/png';
+            $binary = base64_decode($b64Match[2], true);
+            if ($binary === false) {
+                $binary = null;
+            }
+        }
+
+        // Check if it's a local /storage/ URL
+        if ($binary === null) {
+            $parsedPath = parse_url($imageUrl, PHP_URL_PATH);
+            if ($parsedPath && str_starts_with($parsedPath, '/storage/')) {
+                $relativePath = substr($parsedPath, strlen('/storage/'));
+                $fullPath = Storage::disk('public')->path($relativePath);
+                if (file_exists($fullPath)) {
+                    $binary = file_get_contents($fullPath);
+                    $detectedMime = mime_content_type($fullPath);
+                    if ($detectedMime) {
+                        $mimeType = $detectedMime;
+                    }
+                }
+            }
+        }
+
+        // Fallback: fetch from URL (only for http/https URLs)
+        if ($binary === null && preg_match('/^https?:\/\//', $imageUrl)) {
+            try {
+                $response = \Illuminate\Support\Facades\Http::timeout(15)->get($imageUrl);
+                if ($response->successful()) {
+                    $binary = $response->body();
+                    $contentType = $response->header('Content-Type');
+                    if ($contentType && str_starts_with($contentType, 'image/')) {
+                        $mimeType = explode(';', $contentType)[0];
+                    }
+                }
+            } catch (\Exception $e) {
+                abort(500, 'Failed to fetch logo image.');
+            }
+        }
+
+        if (!$binary) {
+            abort(404, 'Could not load logo image.');
+        }
+
+        // Determine extension from mime type
+        $extMap = [
+            'image/svg+xml' => 'svg',
+            'image/png' => 'png',
+            'image/jpeg' => 'jpg',
+            'image/webp' => 'webp',
+            'image/gif' => 'gif',
+        ];
+        $extension = $extMap[$mimeType] ?? 'png';
+
+        // Store in documents directory on default disk
+        $safeDomain = Str::slug((string) $logoRequest->domain) ?: 'logo';
+        $filename = Str::uuid()->toString() . '.' . $extension;
+        $storedPath = 'documents/' . $filename;
+        Storage::put($storedPath, $binary);
+
+        $originalName = sprintf('%s-logo-%d.%s', $safeDomain, $imageIndex + 1, $extension);
+
+        $document = Document::create([
+            'original_name' => $originalName,
+            'path' => $storedPath,
+            'mime_type' => $mimeType,
+            'size_bytes' => strlen($binary),
+        ]);
+
+        return redirect()->route('documents.edit', $document);
+    }
+
+    public function saveEditedLogo(Request $request, AiLogoRequest $logoRequest)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['error' => 'You must be logged in.'], 401);
+        }
+
+        if ((int) $logoRequest->user_id !== (int) $user->id) {
+            return response()->json(['error' => 'You do not have access to this logo request.'], 403);
+        }
+
+        $validated = $request->validate([
+            'image_data' => ['required', 'string'],
+            'image_index' => ['nullable', 'integer', 'min:0'],
+        ]);
+
+        $imageData = (string) $validated['image_data'];
+        if (!preg_match('/^data:image\/(png|jpeg|jpg|webp);base64,/', $imageData, $matches)) {
+            return response()->json(['error' => 'Invalid edited image format.'], 422);
+        }
+
+        $extension = $matches[1] === 'jpeg' ? 'jpg' : strtolower($matches[1]);
+        $base64 = substr($imageData, strpos($imageData, ',') + 1);
+        $binary = base64_decode($base64, true);
+        if ($binary === false) {
+            return response()->json(['error' => 'Failed to decode edited image.'], 422);
+        }
+
+        $imageIndex = (int) ($validated['image_index'] ?? 0);
+        $safeDomain = Str::slug((string) $logoRequest->domain) ?: 'logo';
+        $filename = sprintf(
+            '%s-%d-%02d-edited-%s.%s',
+            $safeDomain,
+            (int) $logoRequest->id,
+            max(1, $imageIndex + 1),
+            now()->format('YmdHis'),
+            $extension
+        );
+        $relativePath = sprintf('logos/%d/%d/edited/%s', (int) $user->id, (int) $logoRequest->id, $filename);
+        Storage::disk('public')->put($relativePath, $binary);
+        $publicUrl = Storage::disk('public')->url($relativePath);
+
+        $urls = array_values((array) $logoRequest->image_urls);
+        if ($imageIndex >= 0 && $imageIndex < count($urls)) {
+            $urls[$imageIndex] = $publicUrl;
+        } else {
+            $urls[] = $publicUrl;
+        }
+
+        $logoRequest->update([
+            'storage_type' => 'path',
+            'image_urls' => $urls,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'image_url' => $publicUrl,
+            'image_path' => $relativePath,
+        ]);
+    }
+
+    private function computePromptSimilarity(string $a, string $b): float
+    {
+        $tokensA = $this->promptTokens($a);
+        $tokensB = $this->promptTokens($b);
+
+        if (empty($tokensA) || empty($tokensB)) {
+            return 0.0;
+        }
+
+        $setA = array_values(array_unique($tokensA));
+        $setB = array_values(array_unique($tokensB));
+        $inter = array_values(array_intersect($setA, $setB));
+        $union = array_values(array_unique(array_merge($setA, $setB)));
+
+        $jaccard = count($union) > 0 ? (count($inter) / count($union)) : 0.0;
+
+        $freqA = array_count_values($tokensA);
+        $freqB = array_count_values($tokensB);
+        $keys = array_values(array_unique(array_merge(array_keys($freqA), array_keys($freqB))));
+
+        $dot = 0.0;
+        $magA = 0.0;
+        $magB = 0.0;
+        foreach ($keys as $k) {
+            $va = (float) ($freqA[$k] ?? 0);
+            $vb = (float) ($freqB[$k] ?? 0);
+            $dot += $va * $vb;
+            $magA += $va * $va;
+            $magB += $vb * $vb;
+        }
+        $cosine = ($magA > 0.0 && $magB > 0.0) ? ($dot / (sqrt($magA) * sqrt($magB))) : 0.0;
+
+        $subset = (min(count($setA), count($setB)) > 0)
+            ? (count($inter) / min(count($setA), count($setB)))
+            : 0.0;
+
+        $strA = implode(' ', $setA);
+        $strB = implode(' ', $setB);
+        $bigram = $this->charBigramDice($strA, $strB);
+
+        return (0.35 * $cosine) + (0.35 * $jaccard) + (0.20 * $bigram) + (0.10 * $subset);
+    }
+
+    private function promptTokens(string $text): array
+    {
+        $norm = Str::lower($text);
+        $norm = preg_replace('/[^a-z0-9\\s]+/u', ' ', $norm) ?? '';
+        $parts = preg_split('/\\s+/', trim($norm)) ?: [];
+
+        $stop = [
+            'a', 'an', 'the', 'and', 'or', 'of', 'to', 'in', 'on', 'for', 'with', 'at', 'by', 'from',
+            'is', 'are', 'be', 'as', 'it', 'this', 'that', 'logo', 'design', 'icon',
+        ];
+        $stopMap = array_fill_keys($stop, true);
+
+        $tokens = [];
+        foreach ($parts as $p) {
+            if ($p === '' || isset($stopMap[$p])) {
+                continue;
+            }
+            // light stemming for plural/suffix variants
+            $stem = $p;
+            if (strlen($stem) > 4 && str_ends_with($stem, 'es')) {
+                $stem = substr($stem, 0, -2);
+            } elseif (strlen($stem) > 3 && str_ends_with($stem, 's')) {
+                $stem = substr($stem, 0, -1);
+            }
+            $tokens[] = $stem;
+        }
+        return $tokens;
+    }
+
+    private function charBigramDice(string $a, string $b): float
+    {
+        $a = preg_replace('/\\s+/', '', Str::lower($a)) ?? '';
+        $b = preg_replace('/\\s+/', '', Str::lower($b)) ?? '';
+        if ($a === '' || $b === '') {
+            return 0.0;
+        }
+        if (strlen($a) < 2 || strlen($b) < 2) {
+            return ($a === $b) ? 1.0 : 0.0;
+        }
+
+        $gramsA = [];
+        for ($i = 0; $i < strlen($a) - 1; $i++) {
+            $gramsA[] = substr($a, $i, 2);
+        }
+        $gramsB = [];
+        for ($i = 0; $i < strlen($b) - 1; $i++) {
+            $gramsB[] = substr($b, $i, 2);
+        }
+
+        $countA = array_count_values($gramsA);
+        $countB = array_count_values($gramsB);
+        $shared = 0;
+        foreach ($countA as $gram => $cA) {
+            $shared += min($cA, $countB[$gram] ?? 0);
+        }
+
+        return (2.0 * $shared) / (count($gramsA) + count($gramsB));
+    }
+
+    private function storeRemoteLogoImage(int $requestId, int $userId, string $domain, string $imageUrl, int $index): ?array
+    {
+        try {
+            $response = Http::timeout(45)->get($imageUrl);
+            if (!$response->successful()) {
+                \Log::warning('Failed to download generated logo image', [
+                    'request_id' => $requestId,
+                    'status' => $response->status(),
+                    'image_url' => $imageUrl,
+                ]);
+                return null;
+            }
+
+            $contentType = strtolower((string) $response->header('Content-Type', ''));
+            $extension = 'png';
+            if (str_contains($contentType, 'jpeg') || str_contains($contentType, 'jpg')) {
+                $extension = 'jpg';
+            } elseif (str_contains($contentType, 'webp')) {
+                $extension = 'webp';
+            } elseif (str_contains($contentType, 'svg')) {
+                $extension = 'svg';
+            } elseif (str_contains($contentType, 'png')) {
+                $extension = 'png';
+            } else {
+                $urlPath = strtolower((string) parse_url($imageUrl, PHP_URL_PATH));
+                if (preg_match('/\.(png|jpe?g|webp|svg)$/', $urlPath, $m)) {
+                    $extension = $m[1] === 'jpeg' ? 'jpg' : $m[1];
+                }
+            }
+
+            $safeDomain = Str::slug($domain) ?: 'logo';
+            $filename = sprintf('%s-%d-%02d.%s', $safeDomain, $requestId, $index, $extension);
+            $relativePath = sprintf('logos/%d/%d/%s', $userId, $requestId, $filename);
+
+            Storage::disk('public')->put($relativePath, $response->body());
+
+            return [
+                'path' => $relativePath,
+                'url' => Storage::disk('public')->url($relativePath),
+            ];
+        } catch (\Throwable $e) {
+            \Log::warning('Exception while storing generated logo image', [
+                'request_id' => $requestId,
+                'image_url' => $imageUrl,
+                'error' => $e->getMessage(),
+            ]);
+            return null;
+        }
+    }
+
+    /**
+     * Generate a PRO-quality logo using FLUX.1 [pro] v1.1-ultra.
+     * Takes the prompt from a Schnell draft and regenerates at production quality.
+     */
+    public function generateProLogo(Request $request)
+    {
+        if (!$request->user()) {
+            return response()->json([
+                'error' => 'You must be logged in to generate PRO logos.',
+            ], 401);
+        }
+
+        $request->validate([
+            'prompt' => 'required|string|max:2000',
+            'domain' => 'required|string|max:255',
+            'style' => 'required|string|in:professional,fantasy,future,vector',
+            'seed' => 'nullable|integer',
+        ]);
+
+        $prompt = $request->input('prompt');
+        $domain = $request->input('domain');
+        $style = $request->input('style');
+        $seed = $request->input('seed');
+
+        // Pro cost estimate (~$0.05 per image)
+        $costPerImage = 0.05;
+
+        $logoRequest = AiLogoRequest::create([
+            'user_id' => $request->user()->id,
+            'domain' => $domain,
+            'style' => $style . '_pro',
+            'prompt' => $prompt,
+            'status' => 'pending',
+        ]);
+
+        $priceLog = AiLogoPrice::create([
+            'user_id' => $request->user()->id,
+            'ai_logo_request_id' => $logoRequest->id,
+            'session' => session()->getId(),
+            'user_email' => $request->user()->email,
+            'request_type' => 'logo_pro',
+            'model_name' => 'fal-ai/flux-pro/v1.1-ultra',
+            'image_count' => 1,
+            'image_size' => 'square_hd',
+            'num_inference_steps' => 28,
+            'guidance_scale' => 3.50,
+            'cost_per_image' => $costPerImage,
+            'estimated_cost_usd' => $costPerImage,
+            'status' => 'pending',
+            'prompt_preview' => substr($prompt, 0, 255),
+        ]);
+
+        $startTime = microtime(true);
+
+        try {
+            $response = Http::withHeaders([
+                'Authorization' => 'Key ' . config('services.fal.key'),
+                'Content-Type' => 'application/json',
+            ])->timeout(180)->post('https://fal.run/fal-ai/flux-pro/v1.1-ultra', array_filter([
+                'prompt' => $prompt,
+                'image_size' => 'square_hd',
+                'num_inference_steps' => 28,
+                'guidance_scale' => 3.5,
+                'safety_tolerance' => 5,
+                'seed' => $seed,
+                'num_images' => 1,
+                'sync_mode' => true,
+            ], fn ($v) => !is_null($v)));
+
+            $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
+
+            if (!$response->successful()) {
+                $falError = $response->json('detail') ?? $response->json('message') ?? 'Unknown error';
+                \Log::error('Fal.ai PRO logo generation failed', [
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                ]);
+
+                $logoRequest->update([
+                    'status' => 'failed',
+                    'fal_status_code' => $response->status(),
+                    'error_message' => $falError,
+                    'response_time_ms' => $elapsedMs,
+                ]);
+
+                $priceLog->update([
+                    'status' => 'failed',
+                    'response_time_ms' => $elapsedMs,
+                ]);
+
+                return response()->json([
+                    'error' => 'PRO generation failed: ' . $falError,
+                ], 500);
+            }
+
+            $data = $response->json();
+            $images = $data['images'] ?? [];
+            $imageUrls = array_map(fn ($img) => $img['url'] ?? $img, $images);
+
+            // Persist PRO images to local storage
+            $storedImageUrls = [];
+            foreach ($imageUrls as $idx => $imgUrl) {
+                if (!$imgUrl || str_starts_with($imgUrl, 'data:')) continue;
+
+                $stored = $this->storeRemoteLogoImage(
+                    imageUrl: $imgUrl,
+                    requestId: (int) $logoRequest->id,
+                    userId: (int) $request->user()->id,
+                    domain: $domain,
+                    index: $idx + 1
+                );
+
+                if ($stored) {
+                    $storedImageUrls[] = $stored['url'];
+                    if (is_array($images[$idx])) {
+                        $images[$idx]['stored_path'] = $stored['path'];
+                        $images[$idx]['stored_url'] = $stored['url'];
+                    }
+                }
+            }
+
+            $logoRequest->update([
+                'status' => 'completed',
+                'fal_status_code' => $response->status(),
+                'storage_type' => !empty($storedImageUrls) ? 'path' : 'url',
+                'image_urls' => !empty($storedImageUrls) ? $storedImageUrls : $imageUrls,
+                'response_time_ms' => $elapsedMs,
+            ]);
+
+            $priceLog->update([
+                'status' => 'completed',
+                'actual_cost_usd' => $costPerImage,
+                'response_time_ms' => $elapsedMs,
+            ]);
+
+            return response()->json([
+                'images' => $images,
+                'prompt' => $prompt,
+                'cost' => [
+                    'image_count' => 1,
+                    'cost_per_image' => $costPerImage,
+                    'total_cost' => $costPerImage,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
+
+            $logoRequest->update([
+                'status' => 'error',
+                'error_message' => $e->getMessage(),
+                'response_time_ms' => $elapsedMs,
+            ]);
+
+            $priceLog->update([
+                'status' => 'error',
+                'response_time_ms' => $elapsedMs,
+            ]);
+
+            return response()->json([
+                'error' => 'PRO generation failed: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Upscale a logo: background removal → super-resolution upscale.
+     */
+    public function upscaleLogo(Request $request)
+    {
+        if (!$request->user()) {
+            return response()->json([
+                'error' => 'You must be logged in to upscale logos.',
+            ], 401);
+        }
+
+        $request->validate([
+            'image_url' => 'required|string',
+        ]);
+
+        $imageUrl = $request->input('image_url');
+        $falKey = config('services.fal.key');
+
+        $startTime = microtime(true);
+
+        try {
+            // Step 1: Remove background
+            $bgResponse = Http::withHeaders([
+                'Authorization' => 'Key ' . $falKey,
+                'Content-Type' => 'application/json',
+            ])->timeout(60)->post('https://fal.run/fal-ai/birefnet', [
+                'image_url' => $imageUrl,
+                'model' => 'General Use (Light)',
+                'operating_resolution' => '1024x1024',
+                'output_format' => 'png',
+            ]);
+
+            if (!$bgResponse->successful()) {
+                $bgError = $bgResponse->json('detail') ?? $bgResponse->json('message') ?? 'Unknown error';
+                \Log::error('Background removal failed', ['status' => $bgResponse->status(), 'body' => $bgResponse->body()]);
+                return response()->json([
+                    'error' => 'Background removal failed: ' . $bgError,
+                ], 500);
+            }
+
+            $bgData = $bgResponse->json();
+            $transparentUrl = $bgData['image']['url'] ?? null;
+
+            if (!$transparentUrl) {
+                return response()->json([
+                    'error' => 'Background removal returned no image.',
+                ], 500);
+            }
+
+            // Step 2: Upscale with Aura SR (2x sharpening)
+            $upscaleResponse = Http::withHeaders([
+                'Authorization' => 'Key ' . $falKey,
+                'Content-Type' => 'application/json',
+            ])->timeout(180)->post('https://fal.run/fal-ai/aura-sr', [
+                'image_url' => $transparentUrl,
+                'upscaling_factor' => 2,
+            ]);
+
+            if (!$upscaleResponse->successful()) {
+                $upError = $upscaleResponse->json('detail') ?? $upscaleResponse->json('message') ?? 'Unknown error';
+                \Log::error('Upscale failed', ['status' => $upscaleResponse->status(), 'body' => $upscaleResponse->body()]);
+                return response()->json([
+                    'error' => 'Upscale failed: ' . $upError,
+                ], 500);
+            }
+
+            $upscaleData = $upscaleResponse->json();
+            $upscaledUrl = $upscaleData['image']['url'] ?? null;
+
+            if (!$upscaledUrl) {
+                return response()->json([
+                    'error' => 'Upscaler returned no image.',
+                ], 500);
+            }
+
+            $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
+
+            // Log the upscale cost
+            AiLogoPrice::create([
+                'user_id' => $request->user()->id,
+                'session' => session()->getId(),
+                'user_email' => $request->user()->email,
+                'request_type' => 'logo_upscale',
+                'model_name' => 'fal-ai/aura-sr + bria/background-removal',
+                'image_count' => 1,
+                'image_size' => 'upscaled_4x',
+                'num_inference_steps' => 0,
+                'guidance_scale' => 0,
+                'cost_per_image' => 0.01,
+                'estimated_cost_usd' => 0.01,
+                'actual_cost_usd' => 0.01,
+                'status' => 'completed',
+                'prompt_preview' => 'Upscale: bg-removal → aura-sr 4x',
+                'response_time_ms' => $elapsedMs,
+            ]);
+
+            return response()->json([
+                'original_url' => $imageUrl,
+                'transparent_url' => $transparentUrl,
+                'upscaled_url' => $upscaledUrl,
+                'processing_time_ms' => $elapsedMs,
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Logo upscale error: ' . $e->getMessage());
+            return response()->json([
+                'error' => 'Upscale failed: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 }

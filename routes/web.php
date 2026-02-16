@@ -52,6 +52,7 @@ Route::match(['get', 'post'], '/documents/{document}/prepare-overlay', [Document
 Route::get('/documents/{document}/clean-pdf', [DocumentController::class, 'cleanPdf'])->name('documents.cleanPdf');
 Route::get('/documents/{document}/fonts', [DocumentController::class, 'getFonts'])->name('documents.getFonts');
 Route::post('/documents/{document}/save-edits', [DocumentController::class, 'saveEdits'])->name('documents.saveEdits');
+Route::post('/documents/{document}/save-image', [DocumentController::class, 'saveImage'])->name('documents.saveImage');
 Route::post('/documents/{document}/match-fonts', [DocumentController::class, 'matchFonts'])->name('documents.matchFonts');
 Route::post('/documents/{document}/reorder-pages', [DocumentController::class, 'reorderPages'])->name('documents.reorderPages');
 Route::post('/documents/{document}/add-blank-page', [DocumentController::class, 'addBlankPage'])->name('documents.addBlankPage');
@@ -112,6 +113,7 @@ Route::get('/ai/add-to-pdf', function() {
 
 // Domain Search
 Route::get('/domain-search', [DomainSearchController::class, 'index'])->name('domainSearch.index');
+Route::get('/logo-generator', [DomainSearchController::class, 'logoGenerator'])->name('domainSearch.logoGenerator');
 Route::get('/domain-search/faq', function () {
     return view('domain-search-faq');
 })->name('domainSearch.faq');
@@ -121,3 +123,12 @@ Route::get('/domain-search/check-poll', [DomainSearchController::class, 'checkPo
 Route::post('/domain-search/generate', [DomainSearchController::class, 'generate'])->name('domainSearch.generate');
 Route::post('/domain-search/generate-and-check', [DomainSearchController::class, 'generateAndCheck'])->name('domainSearch.generateAndCheck');
 Route::post('/domain-search/ai-generate', [DomainSearchController::class, 'aiGenerate'])->middleware(['auth:sanctum'])->name('domainSearch.aiGenerate');
+Route::post('/domain-search/generate-logo', [DomainSearchController::class, 'generateLogo'])->name('domainSearch.generateLogo');
+Route::post('/domain-search/logo-similar-ideas', [DomainSearchController::class, 'logoSimilarIdeas'])->name('domainSearch.logoSimilarIdeas');
+Route::post('/domain-search/generate-pro-logo', [DomainSearchController::class, 'generateProLogo'])->name('domainSearch.generateProLogo');
+Route::post('/domain-search/estimate-logo-price', [DomainSearchController::class, 'estimateLogoPrice'])->name('domainSearch.estimateLogoPrice');
+Route::post('/domain-search/describe-logo', [DomainSearchController::class, 'describeLogo'])->name('domainSearch.describeLogo');
+Route::post('/domain-search/upscale-logo', [DomainSearchController::class, 'upscaleLogo'])->name('domainSearch.upscaleLogo');
+Route::get('/domain-search/upscale-logo', fn () => response()->json(['error' => 'POST method required.'], 405));
+Route::get('/logos/{logoRequest}/edit', [DomainSearchController::class, 'editLogo'])->name('logos.edit');
+Route::post('/logos/{logoRequest}/save-edited', [DomainSearchController::class, 'saveEditedLogo'])->name('logos.saveEdited');

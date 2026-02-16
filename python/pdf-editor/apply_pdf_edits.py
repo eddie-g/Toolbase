@@ -186,10 +186,8 @@ def apply_edits_to_pdf(pdf_path, edits_data):
                     overlaps_image = any(rect.intersects(img_rect) for img_rect in image_rects)
                     redact_rect = _inflate_rect(rect, 0.5)
                     if overlaps_image:
-                        page.add_redact_annot(redact_rect, fill=None)
                         image_overlap_count += 1
-                    else:
-                        page.add_redact_annot(redact_rect, fill=(1, 1, 1))
+                    page.add_redact_annot(redact_rect, fill=None)
                     redaction_count += 1
                     found_any = True
                     print(f"    ✓ Redacting '{original_text[:30]}...' via outer block bbox")
@@ -227,10 +225,8 @@ def apply_edits_to_pdf(pdf_path, edits_data):
                                     continue
                                 overlaps_image = any(wrect.intersects(img_rect) for img_rect in image_rects)
                                 if overlaps_image:
-                                    page.add_redact_annot(_inflate_rect(wrect, 0.5), fill=None)
                                     image_overlap_count += 1
-                                else:
-                                    page.add_redact_annot(_inflate_rect(wrect, 0.5), fill=(1, 1, 1))
+                                page.add_redact_annot(_inflate_rect(wrect, 0.5), fill=None)
                                 redaction_count += 1
                                 tiny_redactions += 1
                             if tiny_redactions > 0:
@@ -251,23 +247,132 @@ def apply_edits_to_pdf(pdf_path, edits_data):
                         overlaps_image = any(rect.intersects(img_rect) for img_rect in image_rects)
                         redact_rect = _inflate_rect(rect, 0.5)
                         if overlaps_image:
-                            page.add_redact_annot(redact_rect, fill=None)
                             image_overlap_count += 1
-                        else:
-                            page.add_redact_annot(redact_rect, fill=(1, 1, 1))
+                        page.add_redact_annot(redact_rect, fill=None)
                         redaction_count += 1
                         search_success_count += 1
                     else:
                         print(f"    ✗ Cannot redact '{original_text[:30]}...' - no original_bbox and search failed")
             
             # Apply all redactions at once to physically purge the character streams
-            page.apply_redactions()
+            page.apply_redactions(images=0)
             # Rebuild content stream after redaction to avoid ghost/duplicate glyph artifacts.
             try:
                 page.clean_contents()
             except Exception as clean_err:
                 print(f"    ⚠ page.clean_contents() warning: {clean_err}")
             print(f"    ✓ Redacted {redaction_count} locations ({search_success_count} by search, {image_overlap_count} over images)")
+
+            # ── POST-REDACTION CLEANUP ──────────────────────────────
+            # PyMuPDF's apply_redactions() cannot always remove text
+            # rendered with CID/TrueType fonts (e.g. /TT2 Verdana-Bold)
+            # that use TJ arrays with large glyph displacements.  These
+            # orphan glyphs survive redaction even though their rendered
+            # position is inside the redaction rect.
+            #
+            # Fix: re-extract spans after redaction.  Any span whose bbox
+            # is INSIDE an edit's original_bbox AND whose text is NOT the
+            # new_text being inserted is a residual that must be stripped
+            # directly from the content stream.
+            post_blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+            residual_spans = []
+            for b in post_blocks:
+                if b.get("type") != 0:
+                    continue
+                for l in b.get("lines", []):
+                    for s in l.get("spans", []):
+                        st = (s.get("text") or "").strip()
+                        if not st:
+                            continue
+                        sb = list(s["bbox"])
+                        for edit in page_edits:
+                            if edit.get('_skip_insert'):
+                                continue
+                            ob = edit.get('original_bbox')
+                            if not ob or len(ob) < 4:
+                                continue
+                            new_t = (edit.get('new_text') or '').strip()
+                            # Check if span bbox is inside the edit's original_bbox (with tolerance)
+                            tol = 3.0
+                            if (sb[0] >= ob[0] - tol and sb[1] >= ob[1] - tol and
+                                sb[2] <= ob[2] + tol and sb[3] <= ob[3] + tol):
+                                # This span is inside the edit rect — it should have been redacted
+                                # Skip if it IS the new text (already inserted)
+                                if st == new_t:
+                                    continue
+                                residual_spans.append({
+                                    "text": st,
+                                    "bbox": sb,
+                                    "origin": list(s["origin"]),
+                                })
+
+            if residual_spans:
+                print(f"    ⚠ Found {len(residual_spans)} residual span(s) that survived redaction:")
+                for rs in residual_spans:
+                    print(f"      '{rs['text'][:40]}' at bbox {[round(x,1) for x in rs['bbox']]}")
+
+                # Strip residual spans by removing their BT..ET blocks
+                # from the content stream directly.
+                # We match BT blocks by checking if the block's Tm position
+                # (converted to PyMuPDF page coords) is close to the residual
+                # span's origin.  This avoids false positives from matching
+                # short text like "P" against unrelated blocks containing
+                # "PDF", "PASS", etc.
+                page_height = page.rect.height
+                xrefs = page.get_contents()
+                stripped_total = 0
+                for xref in xrefs:
+                    stream = doc.xref_stream(xref)
+                    if not stream:
+                        continue
+                    bt_blocks = list(re.finditer(rb'BT\b.*?ET\b', stream, re.DOTALL))
+                    if not bt_blocks:
+                        continue
+                    to_remove = set()
+                    for m in bt_blocks:
+                        blk_bytes = m.group()
+                        # Extract the Tm position from the BT block
+                        tm_match = re.search(
+                            rb'([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+Tm',
+                            blk_bytes
+                        )
+                        if not tm_match:
+                            continue
+                        # Tm matrix: [a b c d e f] where e=x, f=y in PDF coords
+                        tm_f = float(tm_match.group(6))  # y in PDF coords (bottom-up)
+                        tm_e = float(tm_match.group(5))  # x in PDF coords
+                        # Convert PDF y-coord to PyMuPDF y-coord (top-down)
+                        pymupdf_y = page_height - tm_f
+
+                        for rs in residual_spans:
+                            rt = rs["text"]
+                            ro = rs["origin"]  # [x, y] in PyMuPDF coords
+                            # Text must appear as a parenthesized string in the block
+                            rt_encoded = b'(' + rt.encode('latin-1', errors='ignore') + b')'
+                            if rt_encoded not in blk_bytes:
+                                continue
+                            # Position check: Tm position (e,f) is in page
+                            # coords already.  Allow generous x tolerance
+                            # for TJ displacement (e.g. [-2312.1(P)] shifts
+                            # the glyph ~37pt right of Tm x origin).
+                            x_tol = 50.0
+                            y_tol = 5.0
+                            if (abs(pymupdf_y - ro[1]) < y_tol and
+                                abs(tm_e - ro[0]) < x_tol):
+                                to_remove.add((m.start(), m.end()))
+                                break
+
+                    if to_remove:
+                        # Remove matched BT..ET blocks from the stream
+                        # Process in reverse order to preserve offsets
+                        new_stream = bytearray(stream)
+                        for start, end in sorted(to_remove, reverse=True):
+                            new_stream[start:end] = b''
+                            stripped_total += 1
+                        doc.update_stream(xref, bytes(new_stream))
+
+                if stripped_total:
+                    print(f"    ✓ Stripped {stripped_total} residual BT..ET block(s) from content stream")
         
         # PHASE B: Overlay new text at NEW locations
         print("\n" + "="*50)
