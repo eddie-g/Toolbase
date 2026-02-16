@@ -9,6 +9,7 @@ use App\Models\AiPriceLog;
 use App\Models\CreditTransaction;
 use App\Models\Document;
 use App\Services\DeveloperChatClient;
+use App\Services\NamecheapClient;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Process;
@@ -135,32 +136,31 @@ class DomainSearchController extends Controller
             ], 422);
         }
 
-        // Step 2: Check availability
-        $checkScript = base_path('python/domain-search/check_domain_availability.py');
-        // Skip HTTP check for speed
-        $args = ['python3', $checkScript, '-t', ...$tlds, '--skip-http-check', '--', ...$names];
-
-        // Longer timeout since we're checking many domains
-        $checkResult = Process::timeout(90)->run($args);
-
-        if (!$checkResult->successful()) {
-            return response()->json([
-                'names' => $names,
-                'results' => [],
-                'error' => 'Availability check failed: ' . $checkResult->errorOutput(),
-            ], 500);
-        }
-
-        $results = $this->parseOutput($checkResult->output());
+        // Step 2: Check availability (uses Namecheap or WHOIS depending on config)
+        $check = $this->checkDomainAvailability($names, $tlds);
 
         return response()->json([
             'names' => $names,
-            'results' => $results,
-            'error' => null,
-        ]);
+            'results' => $check['results'],
+            'error' => $check['error'],
+        ], $check['error'] ? 500 : 200);
     }
 
     private function checkDomainAvailability(array $names, array $tlds): array
+    {
+        // Use Namecheap API when configured (batches all TLDs into one request)
+        if (config('services.domain_lookup') === 'namecheap') {
+            return app(NamecheapClient::class)->checkAvailability($names, $tlds);
+        }
+
+        // Fallback: WHOIS via Python script
+        return $this->checkDomainAvailabilityWhois($names, $tlds);
+    }
+
+    /**
+     * Legacy WHOIS-based domain check via the Python script.
+     */
+    private function checkDomainAvailabilityWhois(array $names, array $tlds): array
     {
         // Build full domain list
         $allDomains = [];
@@ -234,6 +234,28 @@ class DomainSearchController extends Controller
             'tlds.*' => ['required', Rule::in($this->getAvailableTlds())],
         ]);
 
+        $names = array_values(array_filter(array_unique(
+            array_map(function ($n) {
+                return strtolower(preg_replace('/[^a-zA-Z0-9-]/', '', explode('.', $n)[0]));
+            }, $request->input('names'))
+        )));
+        $tlds = $request->input('tlds');
+
+        // Namecheap fast-path: single batched HTTP call, return results immediately
+        if (config('services.domain_lookup') === 'namecheap') {
+            $check = app(NamecheapClient::class)->checkAvailability($names, $tlds);
+
+            // Return in the same format as checkPoll so the frontend can handle both
+            return response()->json([
+                'results' => $check['results'],
+                'done' => true,
+                'offset' => count($check['results']),
+                'error' => $check['error'],
+                'instant' => true, // tells frontend no polling needed
+            ]);
+        }
+
+        // Fallback: WHOIS background process (legacy)
         // Per-user concurrent job cap (max 3)
         $userId = $request->user()?->id ?? $request->ip();
         $userJobsKey = "domain-jobs-user:{$userId}";
@@ -255,12 +277,6 @@ class DomainSearchController extends Controller
             ], 429);
         }
 
-        $names = array_values(array_filter(array_unique(
-            array_map(function ($n) {
-                return strtolower(preg_replace('/[^a-zA-Z0-9-]/', '', explode('.', $n)[0]));
-            }, $request->input('names'))
-        )));
-        $tlds = $request->input('tlds');
         $jobId = Str::uuid()->toString();
 
         $dir = storage_path('app/domain-checks');
@@ -462,8 +478,13 @@ class DomainSearchController extends Controller
         $stream = $request->boolean('stream');
 
         try {
+            // Calculate how many names to generate so all fit in one Namecheap batch (max 50 domains)
+            $tldCount = count($tlds);
+            $maxNames = $tldCount > 0 ? (int) floor(50 / $tldCount) : 20;
+            $maxNames = max(5, min($maxNames, 25)); // clamp between 5–25
+
             // Create system prompt for domain generation
-            $systemPrompt = "You are a creative domain name generator. Generate 20 unique, brandable domain names based on the user's request. Return ONLY a JSON object with a 'domains' array containing domain name strings (without TLDs). Names should be:
+            $systemPrompt = "You are a creative domain name generator. Generate {$maxNames} unique, brandable domain names based on the user's request. Return ONLY a JSON object with a 'domains' array containing domain name strings (without TLDs). Names should be:
 - Short (4-15 characters)
 - Memorable and brandable
 - Easy to spell and pronounce
@@ -869,23 +890,31 @@ Example response format:
         }
 
         $request->validate([
-            'domain' => 'required|string|max:100',
+            'domain' => 'nullable|string|max:100',
             'style' => 'required|string|in:professional,fantasy,future,vector',
             'count' => 'nullable|integer|min:1|max:4',
-            'custom_prompt' => 'nullable|string|max:500',
+            'custom_prompt' => 'required|string|min:2|max:500',
             'pro' => 'nullable|boolean',
             'pro_size' => 'nullable|integer|in:512,1024,1536',
             'icon_only' => 'nullable|boolean',
             'bg_color' => 'nullable|string|max:20',
         ]);
 
-        $domain = $request->input('domain');
+        $iconOnly = (bool) $request->input('icon_only', false);
+        $domain = $request->input('domain', '');
+
+        // Domain is required unless icon-only mode
+        if (!$iconOnly && !trim($domain)) {
+            return response()->json([
+                'error' => 'Domain name is required when Text in Logo is enabled.',
+            ], 422);
+        }
+
         $style = $request->input('style');
         $imageCount = $request->input('count', 4);
         $customPrompt = $request->input('custom_prompt');
         $isPro = (bool) $request->input('pro', false);
         $proSize = (int) $request->input('pro_size', 1024);
-        $iconOnly = (bool) $request->input('icon_only', false);
         $bgColor = $request->input('bg_color', 'white');
 
         // Calculate cost estimate from real fal.ai pricing API
@@ -1260,7 +1289,7 @@ Example response format:
                     amount: $totalCost,
                     service: 'logo_generation',
                     modelName: $isPro ? 'fal-ai/flux-pro/v1.1' : 'fal-ai/flux/schnell',
-                    description: "{$actualImageCount} logo(s) for {$domain}",
+                    description: $domain ? "{$actualImageCount} logo(s) for {$domain}" : "{$actualImageCount} icon-only logo(s)",
                     metadata: [
                         'domain' => $domain,
                         'style' => $style,
@@ -1353,6 +1382,15 @@ Example response format:
             if (empty($urls)) {
                 continue;
             }
+
+            // Normalize absolute URLs to relative paths so they work regardless of host
+            $urls = array_map(function ($url) {
+                $parsed = parse_url($url);
+                if (isset($parsed['path']) && isset($parsed['host'])) {
+                    return $parsed['path'];
+                }
+                return $url;
+            }, $urls);
 
             $scored[] = [
                 'id' => $row->id,
@@ -1975,6 +2013,97 @@ Example response format:
             \Log::error('Logo upscale error: ' . $e->getMessage());
             return response()->json([
                 'error' => 'Upscale failed: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Remove the background from a generated logo image.
+     */
+    public function removeLogoBg(Request $request)
+    {
+        if (!$request->user()) {
+            return response()->json([
+                'error' => 'You must be logged in to remove backgrounds.',
+            ], 401);
+        }
+
+        $request->validate([
+            'image_url' => 'required|string',
+        ]);
+
+        $imageUrl = $request->input('image_url');
+        $falKey = config('services.fal.key');
+
+        $startTime = microtime(true);
+
+        try {
+            $bgResponse = Http::withHeaders([
+                'Authorization' => 'Key ' . $falKey,
+                'Content-Type' => 'application/json',
+            ])->timeout(60)->post('https://fal.run/fal-ai/birefnet', [
+                'image_url' => $imageUrl,
+                'model' => 'General Use (Light)',
+                'operating_resolution' => '1024x1024',
+                'output_format' => 'png',
+            ]);
+
+            if (!$bgResponse->successful()) {
+                $bgError = $bgResponse->json('detail') ?? $bgResponse->json('message') ?? 'Unknown error';
+                \Log::error('Background removal failed', ['status' => $bgResponse->status(), 'body' => $bgResponse->body()]);
+                return response()->json([
+                    'error' => 'Background removal failed: ' . $bgError,
+                ], 500);
+            }
+
+            $bgData = $bgResponse->json();
+            $transparentUrl = $bgData['image']['url'] ?? null;
+
+            if (!$transparentUrl) {
+                return response()->json([
+                    'error' => 'Background removal returned no image.',
+                ], 500);
+            }
+
+            $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
+
+            // Log the cost
+            AiLogoPrice::create([
+                'user_id' => $request->user()->id,
+                'session' => session()->getId(),
+                'user_email' => $request->user()->email,
+                'request_type' => 'logo_bg_removal',
+                'model_name' => 'fal-ai/birefnet',
+                'image_count' => 1,
+                'image_size' => '1024x1024',
+                'num_inference_steps' => 0,
+                'guidance_scale' => 0,
+                'cost_per_image' => 0.005,
+                'estimated_cost_usd' => 0.005,
+                'actual_cost_usd' => 0.005,
+                'status' => 'completed',
+                'prompt_preview' => 'Background removal via birefnet',
+                'response_time_ms' => $elapsedMs,
+            ]);
+
+            // Deduct cost from credit balance
+            CreditTransaction::debit(
+                userId: $request->user()->id,
+                amount: 0.005,
+                service: 'logo_bg_removal',
+                modelName: 'fal-ai/birefnet',
+                description: 'Logo background removal',
+            );
+
+            return response()->json([
+                'original_url' => $imageUrl,
+                'transparent_url' => $transparentUrl,
+                'processing_time_ms' => $elapsedMs,
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Logo bg removal error: ' . $e->getMessage());
+            return response()->json([
+                'error' => 'Background removal failed: ' . $e->getMessage(),
             ], 500);
         }
     }

@@ -79,4 +79,14 @@ return [
         'webhook_secret' => env('STRIPE_WEBHOOK_SECRET'),
     ],
 
+    'namecheap' => [
+        'api_user'  => env('NAMECHEAP_API_USER', ''),
+        'api_key'   => env('NAMECHEAP_API_KEY', ''),
+        'username'  => env('NAMECHEAP_USERNAME', ''),   // defaults to api_user if empty
+        'client_ip' => env('NAMECHEAP_CLIENT_IP', '127.0.0.1'),
+        'sandbox'   => env('NAMECHEAP_SANDBOX', true),  // sandbox by default for safety
+    ],
+
+    'domain_lookup' => env('DOMAIN_LOOKUP', 'whois'), // 'namecheap' or 'whois'
+
 ];
