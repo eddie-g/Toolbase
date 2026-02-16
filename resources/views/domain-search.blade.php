@@ -1,12 +1,7 @@
 <!DOCTYPE html>
-<html lang="en" x-data="{
-    darkMode: localStorage.getItem('darkMode') === 'true' || false,
-    toggleDarkMode() {
-        this.darkMode = !this.darkMode;
-        localStorage.setItem('darkMode', this.darkMode);
-    }
-}" x-init="$watch('darkMode', val => document.documentElement.classList.toggle('dark', val))" :class="{ 'dark': darkMode }">
+<html lang="en">
 <head>
+    <script>if(localStorage.getItem('darkMode')==='true')document.documentElement.classList.add('dark');</script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="csrf-token" content="{{ csrf_token() }}" />
@@ -25,7 +20,7 @@
 <body class="bg-gray-50 dark:bg-gray-950 antialiased min-h-screen">
 
     <!-- Header -->
-    <x-site-header :compact="true" :show-navigation="false" :show-auth-controls="false" brand="NetKit" />
+    <x-site-header />
 
     <!-- Main Content -->
     <main class="pt-28 pb-20" x-data="domainSearch()">
