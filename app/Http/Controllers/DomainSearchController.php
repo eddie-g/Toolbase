@@ -945,6 +945,7 @@ Example response format:
             'output_format' => 'nullable|string|in:raster,vector',
             'image_format' => 'nullable|string|in:png,bmp',
             'recraft_substyle' => 'nullable|string|max:60',
+            'logo_shape' => 'nullable|string|in:none,circle,hexagon,triangle,square,pentagon',
             'color_palette' => 'nullable|array|max:5',
             'color_palette.*' => 'string|max:20',
         ]);
@@ -972,6 +973,7 @@ Example response format:
         $imageFormat = $request->input('image_format', 'png');
         $colorPalette = $request->input('color_palette');
         $recraftSubstyle = $request->input('recraft_substyle');
+        $logoShape = $request->input('logo_shape', 'none');
 
         // DALL-E always produces raster
         if ($imageModel === 'dalle') {
@@ -1310,6 +1312,14 @@ Example response format:
             // ── Composition + Rendering ──
             $lines[] = 'Composition: Centered 1:1 square, equal breathing room, bilateral symmetry.';
             $lines[] = 'Rendering: No gradients, shadows, glows, bevels or textures. Flat color fills, clean edges. Production-ready logo mark.';
+
+            // ── Shape Container ──
+            if ($logoShape && $logoShape !== 'none') {
+                $shapeUpper = strtoupper($logoShape);
+                $lines[] = "Container: Centered logo inside a PERFECT {$shapeUpper}-shaped geometric container.";
+            } else {
+                $lines[] = 'Container: The logo is free-floating with NO container, NO badge, NO emblem, NO geometric frame, and NO enclosing shape.';
+            }
 
             $prompt = implode("\n", $lines);
         }

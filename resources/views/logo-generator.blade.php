@@ -243,6 +243,19 @@
                                         </div>
                                     </div>
 
+                                    {{-- Shape Container (mobile, inside palette panel, Recraft only) --}}
+                                    <div x-show="showStylePanel === 'palette' && logoImageModel === 'recraft'" x-transition class="mt-5 pt-4 border-t border-gray-200 dark:border-gray-700">
+                                        <h4 class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">Shape Container</h4>
+                                        <div class="grid grid-cols-3 gap-2">
+                                            <template x-for="shape in ['none','circle','square','triangle','pentagon','hexagon']" :key="shape">
+                                                <button type="button" @click="logoShape = shape"
+                                                    class="py-2 rounded-xl border-2 text-xs font-medium text-center capitalize transition-all"
+                                                    :class="logoShape === shape ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300' : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'"
+                                                    x-text="shape"></button>
+                                            </template>
+                                        </div>
+                                    </div>
+
                                     {{-- Background --}}
                                     <div x-show="showStylePanel === 'background'">
                                         <div class="space-y-3">
@@ -693,6 +706,19 @@
                     </div>
                 </div>
 
+                    {{-- Shape Container Section (Recraft only) --}}
+                    <div x-show="logoImageModel === 'recraft'" x-transition class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                        <h3 class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">Shape Container</h3>
+                        <div class="grid grid-cols-3 gap-1.5">
+                            <template x-for="shape in ['none','circle','square','triangle','pentagon','hexagon']" :key="shape">
+                                <button type="button" @click="logoShape = shape"
+                                    class="py-1.5 px-1 rounded-lg border-2 text-[10px] font-medium text-center capitalize transition-all"
+                                    :class="logoShape === shape ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300' : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'"
+                                    x-text="shape"></button>
+                            </template>
+                        </div>
+                    </div>
+
                     {{-- Background Section --}}
                     <div class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
                         <h3 class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">Background</h3>
@@ -759,6 +785,7 @@
                 logoColorPalette: 'default',
                 logoCustomColors: ['#1e3a5f', '#d4af37', '#333333'],
                 recraftSubstyle: null,
+                logoShape: 'none',
                 showStylePanel: null,
                 showStyleModal: false,
                 colorPalettes: [
@@ -904,6 +931,7 @@
                                     image_format: this.logoImageModel === 'dalle' ? this.logoImageFormat : null,
                                     color_palette: this.logoColorPalette !== 'default' ? this.getSelectedPaletteColors() : null,
                                     recraft_substyle: this.logoImageModel === 'recraft' ? (this.recraftSubstyle || null) : null,
+                                    logo_shape: this.logoImageModel === 'recraft' ? this.logoShape : null,
                                 }),
                             });
 
