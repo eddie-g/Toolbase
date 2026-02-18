@@ -227,18 +227,18 @@ class AiLogoPrice extends Model
         } else {
             $basePrices = [
                 'standard' => [
-                    '1024x1024' => 0.04,
-                    '1024x1792' => 0.08,
-                    '1792x1024' => 0.08,
-                ],
-                'hd' => [
-                    '1024x1024' => 0.08,
+                    '1024x1024' => 0.06,
                     '1024x1792' => 0.12,
                     '1792x1024' => 0.12,
                 ],
+                'hd' => [
+                    '1024x1024' => 0.12,
+                    '1024x1792' => 0.18,
+                    '1792x1024' => 0.18,
+                ],
             ];
             
-            $baseCost = $basePrices[$quality][$resolution] ?? 0.04;
+            $baseCost = $basePrices[$quality][$resolution] ?? 0.06;
             $markupPercentage = 50.00;
             $costPerImage = round($baseCost * 1.5, 6); // 50% markup
         }

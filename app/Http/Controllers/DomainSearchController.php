@@ -852,8 +852,20 @@ Example response format:
                 'prompt' => $description,
             ]);
         } catch (\Exception $e) {
-            \Log::error('Logo describe error: ' . $e->getMessage());
-            return response()->json(['error' => 'Failed to analyze image.'], 500);
+            if ($e instanceof \Illuminate\Http\Client\ConnectionException) {
+                \Log::error('Logo describe connection error - NO CHARGE', [
+                    'error' => $e->getMessage(),
+                    'user_id' => $request->user()->id,
+                ]);
+            } else {
+                \Log::error('Logo describe error: ' . $e->getMessage());
+            }
+            
+            $userMessage = $e instanceof \Illuminate\Http\Client\ConnectionException
+                ? 'Unable to connect to the AI service. Please try again in a moment. Your account was not charged.'
+                : 'Failed to analyze image.';
+                
+            return response()->json(['error' => $userMessage], 500);
         }
     }
 
@@ -918,8 +930,10 @@ Example response format:
 
         $request->validate([
             'domain' => 'nullable|string|max:100',
-            'style' => 'required|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego',
+            'style' => 'required|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,minimalist',
             'count' => 'nullable|integer|min:1|max:4',
+            'total_count' => 'nullable|integer|min:1|max:4',
+            'batch_index' => 'nullable|integer|min:0|max:3',
             'custom_prompt' => 'required|string|min:2|max:500',
             'pro' => 'nullable|boolean',
             'pro_size' => 'nullable|integer|in:512,1024,1536',
@@ -944,7 +958,9 @@ Example response format:
         }
 
         $style = $request->input('style');
-        $imageCount = $request->input('count', 4);
+        $imageCount = $request->input('count', 1);
+        $totalCount = $request->input('total_count', $imageCount);
+        $batchIndex = $request->input('batch_index', 0);
         $customPrompt = $request->input('custom_prompt');
         $isPro = (bool) $request->input('pro', false);
         $proSize = (int) $request->input('pro_size', 1024);
@@ -972,23 +988,23 @@ Example response format:
             ], 402);
         }
 
-        // Calculate cost estimate
+        // Calculate cost estimate using total count for proper pricing
         if ($imageModel === 'recraft') {
             $costEstimate = \App\Services\RecraftPricing::estimateLogoCost(
-                imageCount: $imageCount,
+                imageCount: $totalCount,
                 size: '1024x1024',
                 isPro: $isPro,
                 type: $outputFormat,
             );
         } elseif ($imageModel === 'dalle') {
             $costEstimate = AiLogoPrice::estimateDalleCost(
-                imageCount: $imageCount,
+                imageCount: $totalCount,
                 resolution: '1024x1024',
                 quality: $isPro ? 'hd' : 'standard',
             );
         } else {
             $costEstimate = AiLogoPrice::estimateCost(
-                imageCount: $imageCount,
+                imageCount: $totalCount,
                 isPro: $isPro,
                 proSize: $proSize,
                 style: $style,
@@ -996,14 +1012,17 @@ Example response format:
                 outputFormat: $outputFormat,
             );
         }
+        
+        // Calculate per-image cost for this single request
+        $costPerImage = $costEstimate['cost_per_image'];
+        $estimatedCostForThisImage = $costPerImage;
 
-        // ── Precise balance check against estimated cost ──
-        $estimatedTotal = (float) ($costEstimate['estimated_cost_usd'] ?? 0);
-        if ($estimatedTotal > 0 && $userBalance < $estimatedTotal) {
+        // ── Precise balance check against estimated cost (for this single image) ──
+        if ($estimatedCostForThisImage > 0 && $userBalance < $estimatedCostForThisImage) {
             return response()->json([
-                'error' => 'Insufficient balance. This generation costs ~$' . number_format($estimatedTotal, 4) . ' but your balance is $' . number_format($userBalance, 4) . '. Please add credits.',
+                'error' => 'Insufficient balance. This generation costs ~$' . number_format($estimatedCostForThisImage, 4) . ' but your balance is $' . number_format($userBalance, 4) . '. Please add credits.',
                 'credit_balance' => $userBalance,
-                'estimated_cost' => $estimatedTotal,
+                'estimated_cost' => $estimatedCostForThisImage,
             ], 402);
         }
 
@@ -1068,6 +1087,7 @@ Example response format:
                 '8bit' => "An epic fantasy-themed icon mark.{$conceptHint} A single ornate magical symbol. Engraved polished gold with beveled edges, intricate filigree and ornamental carvings, glowing blue arcane crystals, ancient metal structures, magical geometric forms, {$fantColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. Fantasy RPG design, 4k.{$noExtraText}",
                 'dotmatrix' => "A stippled dot art icon mark.{$conceptHint} A single bold symbol rendered entirely in stippling technique. {$profColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. Professional dot art design, 4k.{$noExtraText}",
                 'lego' => "A glossy sticker-style icon mark.{$conceptHint} Thick clean outlines, soft shadows, toy plastic material. {$profColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. Sticker design, 4k.{$noExtraText}",
+                'minimalist' => "A minimalist icon mark.{$conceptHint} A single clean, modern symbol using flat design principles. Subtle geometric shapes, {$profColor} Plain or white background. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No gradients, no shadows, no clutter. Visually balanced professional minimalist design, 4k.{$noExtraText}",
             ];
         } else {
             // With brand name text
@@ -1087,6 +1107,7 @@ Example response format:
                 '8bit' => "An epic fantasy-themed logo. The centerpiece is the word \"{$brandUpper}\" in ornate medieval high-fantasy typography with engraved polished gold, beveled edges and filigree.{$customElement} Glowing blue arcane crystals, ancient metal structures, magical geometric forms, {$fantColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. Fantasy RPG design, 4k.{$noExtraText}",
                 'dotmatrix' => "A stippled dot art logo with \"{$brandUpper}\" text.{$customElement} {$profColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. Professional dot art design, 4k.{$noExtraText}",
                 'lego' => "A glossy sticker-style logo with \"{$brandUpper}\" in a decorative banner.{$customElement} Thick clean outlines, soft shadows, toy plastic material. {$profColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. Sticker design, 4k.{$noExtraText}",
+                'minimalist' => "A minimalist logo design with \"{$brandUpper}\" in a stylish sans-serif font.{$customElement} Clean, modern, and simple, using flat design principles. Subtle geometric shapes or symbols, {$profColor} Plain or white background. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No gradients, no shadows, no clutter. Visually balanced professional minimalist design, 4k.{$noExtraText}",
             ];
         }
 
@@ -1192,6 +1213,33 @@ Example response format:
                     . $legoText . "\n"
                     . "Composition: Centered composition, 1:1 square ratio, isolated on a pure white background.\n"
                     . "Quality: Professional LEGO illustration, crisp clean artwork, high contrast, 4K resolution.";
+            } elseif ($style === 'minimalist') {
+                $minimalistSubject = trim($dalleDesc) ?: 'an abstract symbol';
+                $minimalistColors = !empty($colorPalette) && is_array($colorPalette) 
+                    ? "Color palette: {$dalleColorList}."
+                    : "Color palette: navy blue and gray.";
+                
+                if ($iconOnly) {
+                    $prompt = "Design one ultra-minimalist logo icon for {$minimalistSubject}. "
+                        . "Use exactly one simple symbol built from 1-2 geometric primitives only. "
+                        . "Flat vector look, monoline or solid fill, generous negative space, no decoration. "
+                        . $minimalistColors . " "
+                        . "Background: plain white. Composition: centered 1:1. "
+                        . "Hard constraints: NO text, NO letters, NO numbers, NO tagline, NO border badge, NO scene, NO collage, NO multiple options. "
+                        . "Output exactly one clean icon mark.";
+                } else {
+                    $prompt = "Design one ultra-minimalist logo for brand \"{$brandUpper}\". "
+                        . "Concept cue for the icon: {$minimalistSubject}. "
+                        . "Layout rule: one simple geometric icon on the left + one horizontal wordmark on the right. "
+                        . "Typography rule: use a clean sans-serif, uppercase, clear spacing, high legibility. "
+                        . "Text must read EXACTLY \"{$brandUpper}\" with correct spelling and all letters present. "
+                        . "Do not change, split, stylize into symbols, or omit any characters in \"{$brandUpper}\". "
+                        . "The ONLY text allowed is \"{$brandUpper}\". No tagline, no extra words, no hidden letters. "
+                        . $minimalistColors . " "
+                        . "Background: plain white. Flat design only: no gradients, no shadows, no textures, no 3D. "
+                        . "Hard constraints: one logo only, no collage, no grid, no mockup, no busy elements. "
+                        . "Prioritize simplicity, whitespace, and text readability over decoration.";
+                }
             } else {
                 $prompt = "A high-resolution 3D render of a logo made of polished sterling silver with a shiny metallic texture, floating on a {$chromeBg} in a minimalistic studio setup, rendered in 4K HDR for hyper-detailed clarity.";
             }
@@ -1293,7 +1341,7 @@ Example response format:
             'status' => 'pending',
         ]);
 
-        // Create price log entry (pending)
+        // Create price log entry (pending) - log actual count for this request, note batch in preview
         $priceLog = AiLogoPrice::create([
             'user_id' => $request->user()->id,
             'ai_logo_request_id' => $logoRequest->id,
@@ -1305,10 +1353,10 @@ Example response format:
             'image_size' => $imageSize,
             'num_inference_steps' => $imageModel === 'recraft' ? 0 : ($imageModel === 'dalle' ? 0 : ($isPro ? 28 : 8)),
             'guidance_scale' => ($imageModel === 'recraft' || $imageModel === 'dalle') ? 0 : 3.50,
-            'cost_per_image' => $costEstimate['cost_per_image'],
-            'estimated_cost_usd' => $costEstimate['estimated_cost_usd'],
+            'cost_per_image' => $costPerImage,
+            'estimated_cost_usd' => $estimatedCostForThisImage,
             'status' => 'pending',
-            'prompt_preview' => substr($prompt, 0, 255),
+            'prompt_preview' => substr($prompt, 0, 240) . ($totalCount > 1 ? " [img " . ($batchIndex + 1) . "/{$totalCount}]" : ''),
         ]);
 
         $startTime = microtime(true);
@@ -1385,10 +1433,15 @@ Example response format:
                     }
                 }
 
-                $recraftResponse = Http::withHeaders([
+                $recraftUrl = $recraftBaseUrl . $recraftEndpoint;
+                $recraftResponse = $this->httpWithResolvedDns($recraftUrl, [
                     'Authorization' => 'Bearer ' . $recraftKey,
                     'Content-Type' => 'application/json',
-                ])->timeout(120)->post($recraftBaseUrl . $recraftEndpoint, $recraftBody);
+                ])->retry(3, 2000, function (\Exception $e, \Illuminate\Http\Client\PendingRequest $request) {
+                    // Retry on connection errors and 5xx server errors
+                    return $e instanceof \Illuminate\Http\Client\ConnectionException
+                        || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
+                })->timeout(120)->post($recraftUrl, $recraftBody);
 
                 $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
 
@@ -1471,14 +1524,15 @@ Example response format:
 
                 // DALL-E 3 only supports n=1, so loop for each image
                 for ($i = 0; $i < $imageCount; $i++) {
-                    $dalleResponse = Http::withHeaders([
+                    $dalleUrl = config('services.openai.base_url') . '/images/generations';
+                    $dalleResponse = $this->httpWithResolvedDns($dalleUrl, [
                         'Authorization' => 'Bearer ' . config('services.openai.api_key'),
                         'Content-Type' => 'application/json',
                     ])->retry(3, 2000, function (\Exception $e, \Illuminate\Http\Client\PendingRequest $request) {
                         // Retry on connection errors and 5xx server errors
                         return $e instanceof \Illuminate\Http\Client\ConnectionException
                             || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
-                    })->timeout(120)->post(config('services.openai.base_url') . '/images/generations', [
+                    })->timeout(120)->post($dalleUrl, [
                         'model' => 'dall-e-3',
                         'prompt' => $prompt,
                         'n' => 1,
@@ -1554,10 +1608,13 @@ Example response format:
                 $endpoint = 'https://fal.run/fal-ai/flux-pro/v1.1';
                 $allImages = [];
                 for ($i = 0; $i < $imageCount; $i++) {
-                    $proResponse = Http::withHeaders([
+                    $proResponse = $this->httpWithResolvedDns($endpoint, [
                         'Authorization' => 'Key ' . config('services.fal.key'),
                         'Content-Type' => 'application/json',
-                    ])->timeout(120)->post($endpoint, [
+                    ])->retry(3, 3000, function (\Exception $e, \Illuminate\Http\Client\PendingRequest $request) {
+                        return $e instanceof \Illuminate\Http\Client\ConnectionException
+                            || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
+                    })->timeout(120)->post($endpoint, [
                         'prompt' => $prompt,
                         'image_size' => [
                             'width' => $proSize,
@@ -1599,10 +1656,13 @@ Example response format:
                 }
             } else {
                 $endpoint = 'https://fal.run/fal-ai/flux/schnell';
-                $response = Http::withHeaders([
+                $response = $this->httpWithResolvedDns($endpoint, [
                     'Authorization' => 'Key ' . config('services.fal.key'),
                     'Content-Type' => 'application/json',
-                ])->timeout(120)->post($endpoint, [
+                ])->retry(3, 3000, function (\Exception $e, \Illuminate\Http\Client\PendingRequest $request) {
+                    return $e instanceof \Illuminate\Http\Client\ConnectionException
+                        || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
+                })->timeout(120)->post($endpoint, [
                     'prompt' => $prompt,
                     'image_size' => [
                         'width' => 512,
@@ -1668,10 +1728,14 @@ Example response format:
                     if (!$imgUrl || str_starts_with($imgUrl, 'data:')) continue;
 
                     try {
-                        $bgResponse = Http::withHeaders([
+                        $birefnetUrl = 'https://fal.run/fal-ai/birefnet';
+                        $bgResponse = $this->httpWithResolvedDns($birefnetUrl, [
                             'Authorization' => 'Key ' . $falKey,
                             'Content-Type' => 'application/json',
-                        ])->timeout(60)->post('https://fal.run/fal-ai/birefnet', [
+                        ])->retry(3, 2000, function (\Exception $e, \Illuminate\Http\Client\PendingRequest $request) {
+                            return $e instanceof \Illuminate\Http\Client\ConnectionException
+                                || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
+                        })->timeout(60)->post($birefnetUrl, [
                             'image_url' => $imgUrl,
                             'model' => 'General Use (Light)',
                             'operating_resolution' => '1024x1024',
@@ -1710,10 +1774,14 @@ Example response format:
                     if (!$rasterUrl) continue;
 
                     try {
-                        $svgResponse = Http::withHeaders([
+                        $vectorizeUrl = 'https://fal.run/fal-ai/recraft/vectorize';
+                        $svgResponse = $this->httpWithResolvedDns($vectorizeUrl, [
                             'Authorization' => 'Key ' . config('services.fal.key'),
                             'Content-Type' => 'application/json',
-                        ])->timeout(120)->post('https://fal.run/fal-ai/recraft/vectorize', [
+                        ])->retry(3, 2000, function (\Exception $e, \Illuminate\Http\Client\PendingRequest $request) {
+                            return $e instanceof \Illuminate\Http\Client\ConnectionException
+                                || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
+                        })->timeout(120)->post($vectorizeUrl, [
                             'image_url' => $rasterUrl,
                         ]);
 
@@ -1798,7 +1866,7 @@ Example response format:
                 'response_time_ms' => $elapsedMs,
             ]);
 
-            // Update price log with actual cost and completion
+            // Update price log with actual cost and completion (charge for actual images in THIS request only)
             $actualImageCount = count($images);
             if ($imageModel === 'recraft') {
                 $actualCost = \App\Services\RecraftPricing::estimateLogoCost(
@@ -1873,6 +1941,22 @@ Example response format:
         } catch (\Exception $e) {
             $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
 
+            // Log connection errors separately for monitoring
+            if ($e instanceof \Illuminate\Http\Client\ConnectionException) {
+                \Log::error('Logo generation connection error - NO CHARGE', [
+                    'message' => $e->getMessage(),
+                    'user_id' => $request->user()->id,
+                    'image_model' => $imageModel ?? 'unknown',
+                    'elapsed_ms' => $elapsedMs,
+                ]);
+            } else {
+                \Log::error('Logo generation error - NO CHARGE', [
+                    'message' => $e->getMessage(),
+                    'user_id' => $request->user()->id,
+                    'trace' => $e->getTraceAsString(),
+                ]);
+            }
+
             try {
                 $logoRequest->update([
                     'status' => 'error',
@@ -1888,8 +1972,14 @@ Example response format:
                 ]);
             } catch (\Throwable $_) {}
 
+            // Provide specific error message for connection failures
+            $userMessage = $e instanceof \Illuminate\Http\Client\ConnectionException
+                ? 'Unable to connect to the AI service. Please try again in a moment. Your account was not charged.'
+                : $this->friendlyErrorMessage('Logo generation failed: ' . $e->getMessage());
+
             return response()->json([
-                'error' => $this->friendlyErrorMessage('Logo generation failed: ' . $e->getMessage()),
+                'error' => $userMessage,
+                'credit_balance' => (float) $request->user()->credit_balance,
             ], 500);
         }
     }
@@ -2382,10 +2472,14 @@ Example response format:
         $startTime = microtime(true);
 
         try {
-            $response = Http::withHeaders([
+            $fluxUltraUrl = 'https://fal.run/fal-ai/flux-pro/v1.1-ultra';
+            $response = $this->httpWithResolvedDns($fluxUltraUrl, [
                 'Authorization' => 'Key ' . config('services.fal.key'),
                 'Content-Type' => 'application/json',
-            ])->timeout(180)->post('https://fal.run/fal-ai/flux-pro/v1.1-ultra', array_filter([
+            ])->retry(3, 2000, function (\Exception $e, \Illuminate\Http\Client\PendingRequest $request) {
+                return $e instanceof \Illuminate\Http\Client\ConnectionException
+                    || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
+            })->timeout(180)->post($fluxUltraUrl, array_filter([
                 'prompt' => $prompt,
                 'image_size' => 'square_hd',
                 'num_inference_steps' => 28,
@@ -2513,10 +2607,14 @@ Example response format:
 
         try {
             // Step 1: Remove background
-            $bgResponse = Http::withHeaders([
+            $birefnetUrl = 'https://fal.run/fal-ai/birefnet';
+            $bgResponse = $this->httpWithResolvedDns($birefnetUrl, [
                 'Authorization' => 'Key ' . $falKey,
                 'Content-Type' => 'application/json',
-            ])->timeout(60)->post('https://fal.run/fal-ai/birefnet', [
+            ])->retry(3, 2000, function (\Exception $e, \Illuminate\Http\Client\PendingRequest $request) {
+                return $e instanceof \Illuminate\Http\Client\ConnectionException
+                    || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
+            })->timeout(60)->post($birefnetUrl, [
                 'image_url' => $imageUrl,
                 'model' => 'General Use (Light)',
                 'operating_resolution' => '1024x1024',
@@ -2541,10 +2639,14 @@ Example response format:
             }
 
             // Step 2: Upscale with Aura SR (2x sharpening)
-            $upscaleResponse = Http::withHeaders([
+            $auraSrUrl = 'https://fal.run/fal-ai/aura-sr';
+            $upscaleResponse = $this->httpWithResolvedDns($auraSrUrl, [
                 'Authorization' => 'Key ' . $falKey,
                 'Content-Type' => 'application/json',
-            ])->timeout(180)->post('https://fal.run/fal-ai/aura-sr', [
+            ])->retry(3, 2000, function (\Exception $e, \Illuminate\Http\Client\PendingRequest $request) {
+                return $e instanceof \Illuminate\Http\Client\ConnectionException
+                    || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
+            })->timeout(180)->post($auraSrUrl, [
                 'image_url' => $transparentUrl,
                 'upscaling_factor' => 2,
             ]);
@@ -2663,11 +2765,16 @@ Example response format:
             $recraftKey = config('services.recraft.key');
             $recraftBaseUrl = config('services.recraft.base_url', 'https://external.api.recraft.ai');
 
-            $bgResponse = Http::withHeaders([
+            $recraftBgUrl = $recraftBaseUrl . '/v1/images/removeBackground';
+            $bgResponse = $this->httpWithResolvedDns($recraftBgUrl, [
                 'Authorization' => 'Bearer ' . $recraftKey,
-            ])->timeout(60)->attach(
+            ])->retry(3, 2000, function (\Exception $e, \Illuminate\Http\Client\PendingRequest $request) {
+                // Retry on connection errors and 5xx server errors
+                return $e instanceof \Illuminate\Http\Client\ConnectionException
+                    || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
+            })->timeout(60)->attach(
                 'file', $imageContents, 'logo.' . $ext
-            )->post($recraftBaseUrl . '/v1/images/removeBackground', [
+            )->post($recraftBgUrl, [
                 'response_format' => 'url',
             ]);
 
@@ -2733,11 +2840,64 @@ Example response format:
                 'processing_time_ms' => $elapsedMs,
             ]);
         } catch (\Exception $e) {
-            \Log::error('Logo bg removal error: ' . $e->getMessage());
+            if ($e instanceof \Illuminate\Http\Client\ConnectionException) {
+                \Log::error('Background removal connection error - NO CHARGE', [
+                    'error' => $e->getMessage(),
+                    'user_id' => $request->user()->id,
+                ]);
+            } else {
+                \Log::error('Logo bg removal error: ' . $e->getMessage());
+            }
+            
+            $userMessage = $e instanceof \Illuminate\Http\Client\ConnectionException
+                ? 'Unable to connect to the AI service. Please try again in a moment. Your account was not charged.'
+                : 'Background removal failed: ' . $e->getMessage();
+                
             return response()->json([
-                'error' => 'Background removal failed: ' . $e->getMessage(),
+                'error' => $userMessage,
             ], 500);
         }
+    }
+
+    /**
+     * Build an HTTP client with pre-resolved DNS to work around Docker Desktop DNS issues.
+     *
+     * Docker Desktop's internal DNS resolver (127.0.0.11) can return stale results
+     * after the first request, causing "Connection refused" errors on subsequent
+     * calls to the same hostname. By resolving the hostname upfront via PHP's
+     * gethostbyname() (which uses the system resolver / configured DNS servers)
+     * and passing it via CURLOPT_RESOLVE, we bypass Docker's DNS entirely.
+     *
+     * @param  string  $url  The full URL being requested (e.g. https://fal.run/fal-ai/flux/schnell)
+     * @param  array   $headers  Headers to attach to the request
+     * @return \Illuminate\Http\Client\PendingRequest
+     */
+    private function httpWithResolvedDns(string $url, array $headers = []): \Illuminate\Http\Client\PendingRequest
+    {
+        $parsed = parse_url($url);
+        $host = $parsed['host'] ?? '';
+        $port = $parsed['port'] ?? ($parsed['scheme'] === 'https' ? 443 : 80);
+
+        $curlOptions = [
+            CURLOPT_FRESH_CONNECT => true,
+            CURLOPT_FORBID_REUSE  => true,
+        ];
+
+        // Pre-resolve hostname and pass to curl to bypass Docker's DNS
+        if ($host) {
+            $cacheKey = 'dns_resolve_' . $host;
+            $ip = Cache::remember($cacheKey, 300, function () use ($host) {
+                $resolved = gethostbyname($host);
+                // gethostbyname returns the hostname unchanged if resolution fails
+                return ($resolved !== $host) ? $resolved : null;
+            });
+
+            if ($ip) {
+                $curlOptions[CURLOPT_RESOLVE] = ["{$host}:{$port}:{$ip}"];
+            }
+        }
+
+        return Http::withHeaders($headers)->withOptions(['curl' => $curlOptions]);
     }
 
     /**

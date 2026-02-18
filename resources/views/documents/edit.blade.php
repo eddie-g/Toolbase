@@ -5194,6 +5194,9 @@
             const addBlankPageUrl = "{{ route('documents.addBlankPage', $document) }}";
             const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
             let pdfVersion = Date.now();
+            const documentMimeType = @json($document->mime_type);
+            const isImageDocument = documentMimeType && documentMimeType.startsWith('image/');
+            const viewer = document.getElementById('viewer');
 
             // Theme switcher
             const themeToggle = document.getElementById('theme-toggle');
@@ -5341,13 +5344,10 @@
             const DEBUG_KEEP_ANNOTATIONS = true; // Set to false to delete annotations after save
             
             const documentId = "{{ $document->id }}";
-            const documentMimeType = @json($document->mime_type);
-            const isImageDocument = documentMimeType && documentMimeType.startsWith('image/');
             // Keep a single generic overlay pipeline for all PDFs.
             // Doc-specific debug behavior is disabled by default.
             const overlayDebug539HeadingOnly = false;
             const annotationsStorageKey = `pdf-annotations-${documentId}`;
-            const viewer = document.getElementById('viewer');
             const status = document.getElementById('status');
             const zoomLabel = document.getElementById('zoom-label');
             const zoomOutBtn = document.getElementById('zoom-out');

@@ -321,8 +321,13 @@
                         <div class="flex items-center gap-2 mb-1">
                             <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
                             <span class="font-semibold">Pricing Breakdown</span>
+                            <span class="ml-auto text-[10px] opacity-75" x-text="'(' + logoCount + ' image' + (logoCount > 1 ? 's' : '') + ')'"></span>
                         </div>
                         <div class="ml-5.5 space-y-0.5 text-[11px]">
+                            <div class="flex justify-between opacity-70">
+                                <span>Per Image:</span>
+                                <span class="font-mono" x-text="'$' + logoCostPerImage.toFixed(4)"></span>
+                            </div>
                             <div class="flex justify-between">
                                 <span>Base API Cost:</span>
                                 <span class="font-mono" x-text="'$' + logoBaseCost.toFixed(4)"></span>
@@ -332,7 +337,7 @@
                                 <span class="font-mono" x-text="'+ $' + logoMarkup.toFixed(4)"></span>
                             </div>
                             <div class="flex justify-between pt-1 border-t border-blue-300 dark:border-blue-700 font-semibold">
-                                <span>Your Cost:</span>
+                                <span>Total Cost:</span>
                                 <span class="font-mono" x-text="'$' + logoCostTotal.toFixed(4)"></span>
                             </div>
                         </div>
@@ -525,6 +530,16 @@
                                         <div class="text-xs font-semibold"
                                             :class="logoStyle === 'lego' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Lego</div>
                                         <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Glossy sticker</div>
+                                    </button>
+                                    <button type="button" @click="selectStyle('minimalist')"
+                                        class="group rounded-xl border-2 p-3 transition-all text-center"
+                                        :class="logoStyle === 'minimalist' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                                        <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                                            <svg class="w-6 h-6" :class="logoStyle === 'minimalist' ? 'text-emerald-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"></path></svg>
+                                        </div>
+                                        <div class="text-xs font-semibold"
+                                            :class="logoStyle === 'minimalist' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Minimalist</div>
+                                        <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Flat design</div>
                                     </button>
                                 </div>
 
@@ -771,7 +786,7 @@
                 },
 
                 getStyleLabel() {
-                    const labels = { chrome: 'Chrome', professional: 'Professional', fantasy: 'Fantasy', future: 'Future', retro: 'Retro', '8bit': '8-Bit', dotmatrix: 'Dot Matrix', lego: 'Lego' };
+                    const labels = { chrome: 'Chrome', professional: 'Professional', fantasy: 'Fantasy', future: 'Future', retro: 'Retro', '8bit': '8-Bit', dotmatrix: 'Dot Matrix', lego: 'Lego', minimalist: 'Minimalist' };
                     return labels[this.logoStyle] || 'Professional';
                 },
                 selectStyle(style) {
@@ -876,6 +891,8 @@
                                     domain: domain,
                                     style: this.logoStyle,
                                     count: 1,
+                                    total_count: totalCount,
+                                    batch_index: i,
                                     custom_prompt: this.logoPrompt.trim() || null,
                                     pro: this.logoProMode,
                                     pro_size: this.logoProMode ? parseInt(this.logoProSize) : null,
@@ -930,6 +947,11 @@
                             }
                         } catch (e) {
                             this.logoError = 'Network error generating logo ' + (i + 1) + '.';
+                        }
+
+                        // Add 300ms delay between requests to prevent connection pool exhaustion
+                        if (i < totalCount - 1) {
+                            await new Promise(resolve => setTimeout(resolve, 300));
                         }
                     }
 
