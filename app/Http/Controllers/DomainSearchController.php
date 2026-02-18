@@ -18,9 +18,11 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use App\Traits\ResolvesExternalDns;
 
 class DomainSearchController extends Controller
 {
+    use ResolvesExternalDns;
     private const DEFAULT_TLDS = ['com', 'ai', 'net', 'org'];
     private const GENERATE_CATEGORIES = ['space', 'tech', 'fantasy', 'scifi', 'romance', 'mystery', 'thriller', 'horror', 'adventure', 'historical', 'drama', 'action'];
     private const CATEGORY_RESULT_LIMIT = 10;
@@ -1359,629 +1361,81 @@ Example response format:
             'prompt_preview' => substr($prompt, 0, 240) . ($totalCount > 1 ? " [img " . ($batchIndex + 1) . "/{$totalCount}]" : ''),
         ]);
 
-        $startTime = microtime(true);
-
-        try {
-            if ($imageModel === 'recraft') {
-                // ── Recraft path (vector or raster) ──
-                $recraftBaseUrl = config('services.recraft.base_url', 'https://external.api.recraft.ai');
-                $recraftKey = config('services.recraft.key');
-                $allImages = [];
-                $isVector = $outputFormat === 'vector';
-
-                // Build Recraft-specific prompt (simpler, Recraft handles generation natively)
-                $recraftPrompt = $prompt;
-
-                // Choose style and endpoint based on output format and model
-                // Vector always uses vector_illustration; raster uses digital_illustration for both v2/v3
-                $recraftStyle = $isVector
-                    ? 'vector_illustration'
-                    : 'digital_illustration';
-                $recraftEndpoint = $isVector
-                    ? '/v1/images/generations/vector'
-                    : '/v1/images/generations/raster';
-
-                // Build request body
-                $recraftBody = [
-                    'prompt' => $recraftPrompt,
-                    'style' => $recraftStyle,
-                    'model' => $isPro ? 'recraftv3' : 'recraftv2',
-                    'n' => $imageCount,
-                    'size' => '1024x1024',
-                    'response_format' => 'url',
-                ];
-
-                // Add substyle if provided
-                if (!empty($recraftSubstyle)) {
-                    $recraftBody['substyle'] = $recraftSubstyle;
-                }
-
-                // Add color controls if a palette is selected
-                if (!empty($colorPalette) && is_array($colorPalette)) {
-                    $recraftColors = [];
-                    foreach ($colorPalette as $hex) {
-                        $hex = ltrim($hex, '#');
-                        $r = hexdec(substr($hex, 0, 2));
-                        $g = hexdec(substr($hex, 2, 2));
-                        $b = hexdec(substr($hex, 4, 2));
-                        $recraftColors[] = ['rgb' => [$r, $g, $b]];
-                    }
-                    $recraftBody['controls'] = ['colors' => $recraftColors];
-                }
-
-                // Add no_text control for icon-only mode (V3 only)
-                if ($iconOnly && $isPro) {
-                    $recraftBody['controls'] = array_merge($recraftBody['controls'] ?? [], ['no_text' => true]);
-                }
-
-                // Add background color control
-                if ($bgColor !== 'white') {
-                    $bgHex = match($bgColor) {
-                        'black' => '#000000',
-                        'transparent' => null,
-                        default => str_starts_with($bgColor, '#') ? $bgColor : null,
-                    };
-                    if ($bgHex) {
-                        $hex = ltrim($bgHex, '#');
-                        $r = hexdec(substr($hex, 0, 2));
-                        $g = hexdec(substr($hex, 2, 2));
-                        $b = hexdec(substr($hex, 4, 2));
-                        $recraftBody['controls'] = array_merge(
-                            $recraftBody['controls'] ?? [],
-                            ['background_color' => ['rgb' => [$r, $g, $b]]]
-                        );
-                    }
-                }
-
-                $recraftUrl = $recraftBaseUrl . $recraftEndpoint;
-                $recraftResponse = $this->httpWithResolvedDns($recraftUrl, [
-                    'Authorization' => 'Bearer ' . $recraftKey,
-                    'Content-Type' => 'application/json',
-                ])->retry(3, 2000, function (\Exception $e, \Illuminate\Http\Client\PendingRequest $request) {
-                    // Retry on connection errors and 5xx server errors
-                    return $e instanceof \Illuminate\Http\Client\ConnectionException
-                        || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
-                })->timeout(120)->post($recraftUrl, $recraftBody);
-
-                $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
-
-                if (!$recraftResponse->successful()) {
-                    $recraftError = $recraftResponse->json('error.message')
-                        ?? $recraftResponse->json('detail')
-                        ?? $recraftResponse->json('message')
-                        ?? 'Unknown Recraft error (HTTP ' . $recraftResponse->status() . ')';
-
-                    \Log::error('Recraft ' . $outputFormat . ' generation failed', [
-                        'status' => $recraftResponse->status(),
-                        'body' => substr($recraftResponse->body(), 0, 500),
-                    ]);
-
-                    $logoRequest->update([
-                        'status' => 'failed',
-                        'fal_status_code' => $recraftResponse->status(),
-                        'error_message' => $recraftError,
-                        'response_time_ms' => $elapsedMs,
-                    ]);
-                    $priceLog->update(['status' => 'failed', 'response_time_ms' => $elapsedMs]);
-
-                    return response()->json(['error' => $this->friendlyErrorMessage('Recraft ' . $outputFormat . ' generation failed: ' . $recraftError)], 500);
-                }
-
-                $recraftData = $recraftResponse->json();
-                $recraftCreditsUsed = $recraftData['credits'] ?? null;
-
-                foreach ($recraftData['data'] ?? [] as $recraftImg) {
-                    $imgUrl = $recraftImg['url'] ?? null;
-                    if ($imgUrl) {
-                        $imgEntry = [
-                            'url' => $imgUrl,
-                            'image_id' => $recraftImg['image_id'] ?? null,
-                        ];
-                        // Vector endpoint returns SVG natively — strip BG programmatically
-                        if ($isVector) {
-                            try {
-                                $svgContent = Http::timeout(15)->get($imgUrl)->body();
-                                if ($svgContent && str_contains($svgContent, '<svg')) {
-                                    $cleanedSvg = $this->removeSvgBackground($svgContent);
-                                    if ($cleanedSvg) {
-                                        // Store the cleaned SVG as a data URI so we keep the transparent version
-                                        $imgEntry['url'] = 'data:image/svg+xml;base64,' . base64_encode($cleanedSvg);
-                                        $imgEntry['svg_url'] = $imgEntry['url'];
-                                        $imgEntry['transparent'] = true;
-                                    } else {
-                                        $imgEntry['svg_url'] = $imgUrl;
-                                    }
-                                } else {
-                                    $imgEntry['svg_url'] = $imgUrl;
-                                }
-                            } catch (\Exception $e) {
-                                \Log::warning('SVG background strip failed', ['error' => $e->getMessage()]);
-                                $imgEntry['svg_url'] = $imgUrl;
-                            }
-                        }
-                        $allImages[] = $imgEntry;
-                    }
-                }
-
-                $data = ['images' => $allImages, 'seed' => null];
-                $responseStatus = count($allImages) > 0 ? 200 : 500;
-
-                if (count($allImages) === 0) {
-                    $logoRequest->update([
-                        'status' => 'failed',
-                        'error_message' => 'Recraft returned no images',
-                        'response_time_ms' => $elapsedMs,
-                    ]);
-                    $priceLog->update(['status' => 'failed', 'response_time_ms' => $elapsedMs]);
-                    return response()->json(['error' => 'Recraft returned no ' . $outputFormat . ' images. Please try again.'], 500);
-                }
-
-            } elseif ($imageModel === 'dalle') {
-                // ── DALL-E 3 path ──
-                $dalleQuality = $isPro ? 'hd' : 'standard';
-                $dalleSize = '1024x1024';
-                $allImages = [];
-
-                // DALL-E 3 only supports n=1, so loop for each image
-                for ($i = 0; $i < $imageCount; $i++) {
-                    $dalleUrl = config('services.openai.base_url') . '/images/generations';
-                    $dalleResponse = $this->httpWithResolvedDns($dalleUrl, [
-                        'Authorization' => 'Bearer ' . config('services.openai.api_key'),
-                        'Content-Type' => 'application/json',
-                    ])->retry(3, 2000, function (\Exception $e, \Illuminate\Http\Client\PendingRequest $request) {
-                        // Retry on connection errors and 5xx server errors
-                        return $e instanceof \Illuminate\Http\Client\ConnectionException
-                            || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
-                    })->timeout(120)->post($dalleUrl, [
-                        'model' => 'dall-e-3',
-                        'prompt' => $prompt,
-                        'n' => 1,
-                        'size' => $dalleSize,
-                        'quality' => $dalleQuality,
-                        'response_format' => 'url',
-                    ]);
-
-                    if ($dalleResponse->successful()) {
-                        $dalleData = $dalleResponse->json();
-                        foreach ($dalleData['data'] ?? [] as $dImg) {
-                            $allImages[] = ['url' => $dImg['url'], 'revised_prompt' => $dImg['revised_prompt'] ?? null];
-                        }
-                    } else {
-                        $errJson = $dalleResponse->json();
-                        $errMsg = $errJson['error']['message'] ?? '';
-                        $errType = $errJson['error']['type'] ?? '';
-
-                        // Content filter — return immediately with a friendly message
-                        if (str_contains($errMsg, 'content filters') || str_contains($errType, 'content_policy')) {
-                            $logoRequest->update([
-                                'status' => 'failed',
-                                'error_message' => 'Content policy violation',
-                                'response_time_ms' => (int) ((microtime(true) - $startTime) * 1000),
-                            ]);
-                            $priceLog->update(['status' => 'failed', 'response_time_ms' => (int) ((microtime(true) - $startTime) * 1000)]);
-                            return response()->json([
-                                'error' => 'Your prompt was flagged by the AI safety filter. Please rephrase your description and try again — avoid violent, sexual, or trademarked content.',
-                            ], 422);
-                        }
-
-                        // Billing limit — return immediately with a friendly message
-                        if (str_contains($errMsg, 'Billing hard limit') || str_contains($errMsg, 'billing')) {
-                            $logoRequest->update([
-                                'status' => 'failed',
-                                'error_message' => 'DALL-E service unavailable',
-                                'response_time_ms' => (int) ((microtime(true) - $startTime) * 1000),
-                            ]);
-                            $priceLog->update(['status' => 'failed', 'response_time_ms' => (int) ((microtime(true) - $startTime) * 1000)]);
-                            return response()->json([
-                                'error' => 'DALL-E 3 is temporarily unavailable. Please use another model.',
-                            ], 503);
-                        }
-
-                        \Log::warning('DALL-E image ' . ($i + 1) . ' failed', [
-                            'status' => $dalleResponse->status(),
-                            'body' => substr($dalleResponse->body(), 0, 500),
-                        ]);
-                    }
-                }
-
-                $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
-                $data = ['images' => $allImages, 'seed' => null];
-                $responseStatus = count($allImages) > 0 ? 200 : 500;
-
-                if (count($allImages) === 0) {
-                    $lastBody = isset($dalleResponse) ? $dalleResponse->body() : 'No response';
-                    $dalleError = 'All DALL-E image generations failed';
-                    if (isset($dalleResponse)) {
-                        $errJson = $dalleResponse->json();
-                        $dalleError = $errJson['error']['message'] ?? $dalleError;
-                    }
-                    $logoRequest->update([
-                        'status' => 'failed',
-                        'error_message' => $dalleError,
-                        'response_time_ms' => $elapsedMs,
-                    ]);
-                    $priceLog->update(['status' => 'failed', 'response_time_ms' => $elapsedMs]);
-                    return response()->json(['error' => $this->friendlyErrorMessage('Failed to generate DALL-E logos: ' . $dalleError)], 500);
-                }
-            } elseif ($isPro) {
-                // Flux Pro v1.1 only supports num_images=1, so loop for each image
-                $endpoint = 'https://fal.run/fal-ai/flux-pro/v1.1';
-                $allImages = [];
-                for ($i = 0; $i < $imageCount; $i++) {
-                    $proResponse = $this->httpWithResolvedDns($endpoint, [
-                        'Authorization' => 'Key ' . config('services.fal.key'),
-                        'Content-Type' => 'application/json',
-                    ])->retry(3, 3000, function (\Exception $e, \Illuminate\Http\Client\PendingRequest $request) {
-                        return $e instanceof \Illuminate\Http\Client\ConnectionException
-                            || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
-                    })->timeout(120)->post($endpoint, [
-                        'prompt' => $prompt,
-                        'image_size' => [
-                            'width' => $proSize,
-                            'height' => $proSize,
-                        ],
-                        'num_images' => 1,
-                        'num_inference_steps' => 28,
-                        'safety_tolerance' => 5,
-                        'sync_mode' => true,
-                    ]);
-
-                    if ($proResponse->successful()) {
-                        $proData = $proResponse->json();
-                        $proImages = $proData['images'] ?? [];
-                        foreach ($proImages as $pImg) {
-                            $allImages[] = $pImg;
-                        }
-                    } else {
-                        \Log::warning('PRO image ' . ($i + 1) . ' failed', [
-                            'status' => $proResponse->status(),
-                            'body' => substr($proResponse->body(), 0, 500),
-                        ]);
-                    }
-                }
-
-                // Build a synthetic response-like structure
-                $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
-                $data = ['images' => $allImages, 'seed' => null];
-                $responseStatus = count($allImages) > 0 ? 200 : 500;
-
-                if (count($allImages) === 0) {
-                    $logoRequest->update([
-                        'status' => 'failed',
-                        'error_message' => 'All PRO image generations failed',
-                        'response_time_ms' => $elapsedMs,
-                    ]);
-                    $priceLog->update(['status' => 'failed', 'response_time_ms' => $elapsedMs]);
-                    return response()->json(['error' => 'Failed to generate PRO logos. Please try again.'], 500);
-                }
-            } else {
-                $endpoint = 'https://fal.run/fal-ai/flux/schnell';
-                $response = $this->httpWithResolvedDns($endpoint, [
-                    'Authorization' => 'Key ' . config('services.fal.key'),
-                    'Content-Type' => 'application/json',
-                ])->retry(3, 3000, function (\Exception $e, \Illuminate\Http\Client\PendingRequest $request) {
-                    return $e instanceof \Illuminate\Http\Client\ConnectionException
-                        || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
-                })->timeout(120)->post($endpoint, [
-                    'prompt' => $prompt,
-                    'image_size' => [
-                        'width' => 512,
-                        'height' => 512,
-                    ],
-                    'num_images' => $imageCount,
-                    'num_inference_steps' => 8,
-                    'guidance_scale' => 3.5,
-                    'sync_mode' => true,
-                ]);
-
-                $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
-
-                if (!$response->successful()) {
-                    \Log::error('Fal.ai logo generation failed', [
-                        'status' => $response->status(),
-                        'body' => $response->body(),
-                    ]);
-                    $falError = $response->json('detail') ?? $response->json('message') ?? 'Unknown error';
-
-                    $logoRequest->update([
-                        'status' => 'failed',
-                        'fal_status_code' => $response->status(),
-                        'error_message' => $falError,
-                        'response_time_ms' => $elapsedMs,
-                    ]);
-
-                    $priceLog->update([
-                        'status' => 'failed',
-                        'response_time_ms' => $elapsedMs,
-                    ]);
-
-                    return response()->json([
-                        'error' => 'Failed to generate logo: ' . $falError,
-                    ], 500);
-                }
-
-                $data = $response->json();
-                $responseStatus = $response->status();
-            }
-            $images = $data['images'] ?? [];
-            $seed = $data['seed'] ?? null;
-
-            // Extract URLs for DB storage (keep base64 data URIs temporarily;
-            // they'll be redacted by the nightly logos:redact-base64 command)
-            $imageUrls = [];
-            foreach ($images as &$img) {
-                $url = is_array($img) ? ($img['url'] ?? '') : (string) $img;
-                $imageUrls[] = $url;
-            }
-            unset($img);
-
-            // NOTE: Local storage now happens AFTER bg removal & vectorization (see below)
-
-            // Skip post-processing for Recraft (native vector output, bg handled server-side)
-            if ($imageModel !== 'recraft') {
-                // If transparent or custom color background, remove background via birefnet
-                $needsBgRemoval = ($bgColor === 'transparent' || str_starts_with($bgColor, '#'));
-            if ($needsBgRemoval) {
-                $falKey = config('services.fal.key');
-                foreach ($images as $i => &$img) {
-                    $imgUrl = is_array($img) ? ($img['url'] ?? '') : (string) $img;
-                    if (!$imgUrl || str_starts_with($imgUrl, 'data:')) continue;
-
-                    try {
-                        $birefnetUrl = 'https://fal.run/fal-ai/birefnet';
-                        $bgResponse = $this->httpWithResolvedDns($birefnetUrl, [
-                            'Authorization' => 'Key ' . $falKey,
-                            'Content-Type' => 'application/json',
-                        ])->retry(3, 2000, function (\Exception $e, \Illuminate\Http\Client\PendingRequest $request) {
-                            return $e instanceof \Illuminate\Http\Client\ConnectionException
-                                || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
-                        })->timeout(60)->post($birefnetUrl, [
-                            'image_url' => $imgUrl,
-                            'model' => 'General Use (Light)',
-                            'operating_resolution' => '1024x1024',
-                            'output_format' => 'png',
-                        ]);
-
-                        if ($bgResponse->successful()) {
-                            $bgData = $bgResponse->json();
-                            $transparentUrl = $bgData['image']['url'] ?? null;
-                            if ($transparentUrl) {
-                                if (is_array($img)) {
-                                    $img['url'] = $transparentUrl;
-                                    $img['transparent'] = true;
-                                } else {
-                                    $images[$i] = ['url' => $transparentUrl, 'transparent' => true];
-                                }
-                            }
-                        } else {
-                            \Log::warning('Background removal failed for image ' . $i, [
-                                'status' => $bgResponse->status(),
-                            ]);
-                        }
-                    } catch (\Exception $bgEx) {
-                        \Log::warning('Background removal exception for image ' . $i, [
-                            'error' => $bgEx->getMessage(),
-                        ]);
-                    }
-                }
-                unset($img);
-            }
-
-            // If vector output format selected, vectorize each image to SVG
-            if ($outputFormat === 'vector') {
-                foreach ($images as $i => &$img) {
-                    $rasterUrl = $img['url'] ?? (is_string($img) ? $img : null);
-                    if (!$rasterUrl) continue;
-
-                    try {
-                        $vectorizeUrl = 'https://fal.run/fal-ai/recraft/vectorize';
-                        $svgResponse = $this->httpWithResolvedDns($vectorizeUrl, [
-                            'Authorization' => 'Key ' . config('services.fal.key'),
-                            'Content-Type' => 'application/json',
-                        ])->retry(3, 2000, function (\Exception $e, \Illuminate\Http\Client\PendingRequest $request) {
-                            return $e instanceof \Illuminate\Http\Client\ConnectionException
-                                || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
-                        })->timeout(120)->post($vectorizeUrl, [
-                            'image_url' => $rasterUrl,
-                        ]);
-
-                        if ($svgResponse->successful()) {
-                            $svgData = $svgResponse->json();
-                            $svgUrl = $svgData['image']['url'] ?? ($svgData['images'][0]['url'] ?? null);
-                            if ($svgUrl) {
-                                $img['svg_url'] = $svgUrl;
-                            }
-                        } else {
-                            \Log::warning('SVG vectorization failed for image ' . $i, [
-                                'status' => $svgResponse->status(),
-                                'body' => $svgResponse->body(),
-                            ]);
-                        }
-                    } catch (\Exception $svgEx) {
-                        \Log::warning('SVG vectorization exception for image ' . $i, [
-                            'error' => $svgEx->getMessage(),
-                        ]);
-                    }
-                }
-                unset($img);
-            }
-            } // end if ($imageModel !== 'recraft')
-
-            // Persist ALL generated images to local storage AFTER all transformations
-            // (bg removal, vectorization). This ensures we store the final processed images.
-            $storedImageUrls = [];
-            $storedImagePaths = [];
-            foreach ($images as $idx => &$img) {
-                // For vector logos, prefer the SVG URL
-                $imgUrl = null;
-                if (is_array($img)) {
-                    $imgUrl = $img['svg_url'] ?? $img['url'] ?? '';
-                } else {
-                    $imgUrl = (string) $img;
-                }
-
-                if (!$imgUrl || str_starts_with($imgUrl, 'data:') || $imgUrl === '[base64-omitted]') {
-                    continue;
-                }
-
-                $stored = $this->storeRemoteLogoImage(
-                    imageUrl: $imgUrl,
-                    requestId: (int) $logoRequest->id,
-                    userId: (int) $request->user()->id,
-                    domain: $domain,
-                    index: (int) $idx + 1
-                );
-
-                if ($stored) {
-                    $storedImagePaths[] = $stored['path'];
-                    $storedImageUrls[] = $stored['url'];
-                    if (is_array($img)) {
-                        $img['stored_path'] = $stored['path'];
-                        $img['stored_url'] = $stored['url'];
-                    } else {
-                        $img = [
-                            'url' => $imgUrl,
-                            'stored_path' => $stored['path'],
-                            'stored_url' => $stored['url'],
-                        ];
-                    }
-                }
-            }
-            unset($img);
-
-            // Attach seed to each image for PRO consistency
-            $imagesWithSeed = array_map(function ($img) use ($seed) {
-                if (is_array($img)) {
-                    $img['seed'] = $seed;
-                }
-                return $img;
-            }, $images);
-
-            $logoRequest->update([
-                'status' => 'completed',
-                'fal_status_code' => $responseStatus,
-                'seed_number' => is_numeric($seed) ? (int) $seed : null,
-                'storage_type' => !empty($storedImagePaths) ? 'path' : 'url',
-                'image_urls' => !empty($storedImageUrls) ? $storedImageUrls : $imageUrls,
-                'response_time_ms' => $elapsedMs,
-            ]);
-
-            // Update price log with actual cost and completion (charge for actual images in THIS request only)
-            $actualImageCount = count($images);
-            if ($imageModel === 'recraft') {
-                $actualCost = \App\Services\RecraftPricing::estimateLogoCost(
-                    imageCount: $actualImageCount,
-                    size: '1024x1024',
-                    isPro: $isPro,
-                    type: $outputFormat,
-                );
-            } elseif ($imageModel === 'dalle') {
-                $actualCost = AiLogoPrice::estimateDalleCost(
-                    imageCount: $actualImageCount,
-                    resolution: '1024x1024',
-                    quality: $isPro ? 'hd' : 'standard',
-                );
-            } else {
-                $actualCost = AiLogoPrice::estimateCost(
-                    imageCount: $actualImageCount,
-                    isPro: $isPro,
-                    proSize: $proSize,
-                    style: $style,
-                    bgColor: $bgColor,
-                    outputFormat: $outputFormat,
-                );
-            }
-            $priceLog->update([
-                'status' => 'completed',
-                'image_count' => $actualImageCount,
-                'actual_cost_usd' => $actualCost['estimated_cost_usd'],
-                'response_time_ms' => $elapsedMs,
-            ]);
-
-            // Deduct actual cost from user's credit balance
-            $totalCost = (float) $actualCost['estimated_cost_usd'];
-            if ($totalCost > 0) {
-                $breakdown = $actualCost['breakdown'] ?? [];
-                CreditTransaction::debit(
-                    userId: $request->user()->id,
-                    amount: $totalCost,
-                    service: 'logo_generation',
-                    modelName: $modelName,
-                    description: $domain ? "{$actualImageCount} logo(s) for {$domain}" : "{$actualImageCount} icon-only logo(s)",
-                    metadata: [
-                        'domain' => $domain,
-                        'style' => $style,
-                        'image_count' => $actualImageCount,
-                        'resolution' => $imageModel === 'recraft' ? '1024x1024' : ($imageModel === 'dalle' ? '1024x1024' : ($isPro ? "{$proSize}x{$proSize}" : '512x512')),
-                        'pro' => $isPro,
-                        'icon_only' => $iconOnly,
-                        'bg_color' => $bgColor,
-                        'image_model' => $imageModel,
-                        'breakdown' => $breakdown,
-                    ],
-                );
-            }
-
-            // Refresh user balance after debit
-            $user->refresh();
-
-            return response()->json([
-                'logo_request_id' => (int) $logoRequest->id,
-                'images' => $imagesWithSeed,
+        // ── Dispatch the generation job to the queue ──
+        \App\Jobs\GenerateLogoJob::dispatch(
+            userId: $user->id,
+            logoRequestId: $logoRequest->id,
+            priceLogId: $priceLog->id,
+            params: [
+                'image_model' => $imageModel,
+                'output_format' => $outputFormat,
+                'is_pro' => $isPro,
+                'pro_size' => $proSize,
+                'image_count' => $imageCount,
                 'prompt' => $prompt,
-                'seed' => $seed,
                 'bg_color' => $bgColor,
-                'credit_balance' => (float) $user->credit_balance,
-                'cost' => [
-                    'image_count' => $actualImageCount,
-                    'cost_per_image' => $costEstimate['cost_per_image'],
-                    'total_cost' => $actualCost['estimated_cost_usd'],
-                ],
-            ]);
-        } catch (\Exception $e) {
-            $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
+                'domain' => $domain,
+                'style' => $style,
+                'icon_only' => $iconOnly,
+                'color_palette' => $colorPalette,
+                'recraft_substyle' => $recraftSubstyle,
+                'total_count' => $totalCount,
+                'cost_per_image' => $costPerImage,
+                'model_name' => $modelName,
+            ],
+        );
 
-            // Log connection errors separately for monitoring
-            if ($e instanceof \Illuminate\Http\Client\ConnectionException) {
-                \Log::error('Logo generation connection error - NO CHARGE', [
-                    'message' => $e->getMessage(),
-                    'user_id' => $request->user()->id,
-                    'image_model' => $imageModel ?? 'unknown',
-                    'elapsed_ms' => $elapsedMs,
-                ]);
-            } else {
-                \Log::error('Logo generation error - NO CHARGE', [
-                    'message' => $e->getMessage(),
-                    'user_id' => $request->user()->id,
-                    'trace' => $e->getTraceAsString(),
-                ]);
-            }
+        return response()->json([
+            'logo_request_id' => (int) $logoRequest->id,
+            'status' => 'queued',
+            'message' => 'Logo generation has been queued. Poll /domain-search/logo-status/' . $logoRequest->id . ' for results.',
+            'credit_balance' => (float) $user->credit_balance,
+            'estimated_cost' => $estimatedCostForThisImage,
+        ]);
+    }
 
-            try {
-                $logoRequest->update([
-                    'status' => 'error',
-                    'error_message' => $e->getMessage(),
-                    'response_time_ms' => $elapsedMs,
-                ]);
-            } catch (\Throwable $_) {}
-
-            try {
-                $priceLog->update([
-                    'status' => 'error',
-                    'response_time_ms' => $elapsedMs,
-                ]);
-            } catch (\Throwable $_) {}
-
-            // Provide specific error message for connection failures
-            $userMessage = $e instanceof \Illuminate\Http\Client\ConnectionException
-                ? 'Unable to connect to the AI service. Please try again in a moment. Your account was not charged.'
-                : $this->friendlyErrorMessage('Logo generation failed: ' . $e->getMessage());
-
-            return response()->json([
-                'error' => $userMessage,
-                'credit_balance' => (float) $request->user()->credit_balance,
-            ], 500);
+    /**
+     * Poll the status of a queued logo generation job.
+     *
+     * Returns one of:
+     *  - { status: "pending"|"processing" }   → keep polling
+     *  - { status: "completed", ... }          → job done, here are your images
+     *  - { status: "failed"|"error", error }   → job failed, stop polling
+     */
+    public function logoStatus(Request $request, AiLogoRequest $logoRequest)
+    {
+        // Make sure the user owns this request
+        if (!$request->user() || $logoRequest->user_id !== $request->user()->id) {
+            return response()->json(['error' => 'Unauthorized'], 403);
         }
+
+        $status = $logoRequest->status;
+
+        if (in_array($status, ['pending', 'processing'])) {
+            return response()->json(['status' => $status]);
+        }
+
+        if ($status === 'completed') {
+            $resultData = $logoRequest->result_data
+                ? json_decode($logoRequest->result_data, true)
+                : null;
+
+            // Refresh user balance
+            $request->user()->refresh();
+
+            return response()->json(array_merge([
+                'status' => 'completed',
+                'logo_request_id' => (int) $logoRequest->id,
+                'credit_balance' => (float) $request->user()->credit_balance,
+            ], $resultData ?? []));
+        }
+
+        // failed or error
+        return response()->json([
+            'status' => $status,
+            'error' => $logoRequest->error_message ?? 'Logo generation failed.',
+            'credit_balance' => (float) $request->user()->credit_balance,
+        ]);
     }
 
     /**
@@ -2857,47 +2311,6 @@ Example response format:
                 'error' => $userMessage,
             ], 500);
         }
-    }
-
-    /**
-     * Build an HTTP client with pre-resolved DNS to work around Docker Desktop DNS issues.
-     *
-     * Docker Desktop's internal DNS resolver (127.0.0.11) can return stale results
-     * after the first request, causing "Connection refused" errors on subsequent
-     * calls to the same hostname. By resolving the hostname upfront via PHP's
-     * gethostbyname() (which uses the system resolver / configured DNS servers)
-     * and passing it via CURLOPT_RESOLVE, we bypass Docker's DNS entirely.
-     *
-     * @param  string  $url  The full URL being requested (e.g. https://fal.run/fal-ai/flux/schnell)
-     * @param  array   $headers  Headers to attach to the request
-     * @return \Illuminate\Http\Client\PendingRequest
-     */
-    private function httpWithResolvedDns(string $url, array $headers = []): \Illuminate\Http\Client\PendingRequest
-    {
-        $parsed = parse_url($url);
-        $host = $parsed['host'] ?? '';
-        $port = $parsed['port'] ?? ($parsed['scheme'] === 'https' ? 443 : 80);
-
-        $curlOptions = [
-            CURLOPT_FRESH_CONNECT => true,
-            CURLOPT_FORBID_REUSE  => true,
-        ];
-
-        // Pre-resolve hostname and pass to curl to bypass Docker's DNS
-        if ($host) {
-            $cacheKey = 'dns_resolve_' . $host;
-            $ip = Cache::remember($cacheKey, 300, function () use ($host) {
-                $resolved = gethostbyname($host);
-                // gethostbyname returns the hostname unchanged if resolution fails
-                return ($resolved !== $host) ? $resolved : null;
-            });
-
-            if ($ip) {
-                $curlOptions[CURLOPT_RESOLVE] = ["{$host}:{$port}:{$ip}"];
-            }
-        }
-
-        return Http::withHeaders($headers)->withOptions(['curl' => $curlOptions]);
     }
 
     /**

@@ -126,6 +126,7 @@ Route::post('/domain-search/generate-and-check', [DomainSearchController::class,
 Route::post('/domain-search/ai-generate', [DomainSearchController::class, 'aiGenerate'])->middleware(['auth:sanctum'])->name('domainSearch.aiGenerate');
 Route::post('/domain-search/generate-logo', [DomainSearchController::class, 'generateLogo'])->name('domainSearch.generateLogo');
 Route::get('/domain-search/generate-logo', fn () => response()->json(['error' => 'POST method required.'], 405));
+Route::get('/domain-search/logo-status/{logoRequest}', [DomainSearchController::class, 'logoStatus'])->name('domainSearch.logoStatus');
 Route::post('/domain-search/logo-similar-ideas', [DomainSearchController::class, 'logoSimilarIdeas'])->name('domainSearch.logoSimilarIdeas');
 Route::post('/domain-search/generate-pro-logo', [DomainSearchController::class, 'generateProLogo'])->name('domainSearch.generateProLogo');
 Route::post('/domain-search/estimate-logo-price', [DomainSearchController::class, 'estimateLogoPrice'])->name('domainSearch.estimateLogoPrice');

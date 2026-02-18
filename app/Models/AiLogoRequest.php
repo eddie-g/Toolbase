@@ -21,6 +21,7 @@ class AiLogoRequest extends Model
         'width',
         'height',
         'image_urls',
+        'result_data',
         'fal_status_code',
         'error_message',
         'response_time_ms',

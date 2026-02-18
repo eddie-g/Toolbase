@@ -881,7 +881,8 @@
                     this.logoSeedNumber = null;
                     this.zoomedLogoUrl = null;
 
-                    // Generate one image at a time so results stream in progressively
+                    // Step 1: Dispatch all jobs (they return immediately with job IDs)
+                    const pendingJobs = [];
                     for (let i = 0; i < totalCount; i++) {
                         try {
                             const response = await fetch('/domain-search/generate-logo', {
@@ -914,44 +915,95 @@
                             const data = await response.json();
 
                             if (!response.ok) {
-                                this.logoError = data.error || 'Failed to generate logo ' + (i + 1) + '.';
+                                this.logoError = data.error || 'Failed to queue logo ' + (i + 1) + '.';
                                 if (data.credit_balance !== undefined) {
                                     this.creditBalance = parseFloat(data.credit_balance);
                                 }
-                                if (response.status === 402) break; // insufficient balance, stop all
+                                if (response.status === 402) break;
                                 continue;
                             }
 
-                            // Keep the first request ID for editor links
+                            if (data.logo_request_id) {
+                                pendingJobs.push(data.logo_request_id);
+                            }
+
                             if (!this.logoRequestId) {
                                 this.logoRequestId = data.logo_request_id || null;
-                                this.logoBgResult = data.bg_color || 'white';
                             }
 
-                            // Store seed number from response
-                            if (data.seed) {
-                                this.logoSeedNumber = data.seed;
-                            }
-
-                            const newImages = (data.images || []).map((img) => ({
-                                ...img,
-                                seed: data.seed || null,
-                                describing: false,
-                                removingBg: false,
-                            }));
-                            this.logoImages = [...this.logoImages, ...newImages];
-
-                            // Update balance from server after each successful generation
                             if (data.credit_balance !== undefined) {
                                 this.creditBalance = parseFloat(data.credit_balance);
                             }
                         } catch (e) {
-                            this.logoError = 'Network error generating logo ' + (i + 1) + '.';
+                            this.logoError = 'Network error queuing logo ' + (i + 1) + '.';
+                        }
+                    }
+
+                    if (pendingJobs.length === 0) {
+                        if (!this.logoError) {
+                            this.logoError = 'No logos were queued. Please try again.';
+                        }
+                        this.logoLoading = false;
+                        return;
+                    }
+
+                    // Step 2: Poll for results every 2 seconds
+                    const completedJobs = new Set();
+                    const failedJobs = new Set();
+                    const maxPollTime = 5 * 60 * 1000; // 5 min timeout
+                    const pollStart = Date.now();
+
+                    while (completedJobs.size + failedJobs.size < pendingJobs.length) {
+                        if (Date.now() - pollStart > maxPollTime) {
+                            this.logoError = 'Logo generation timed out. Some images may still be processing.';
+                            break;
                         }
 
-                        // Add 300ms delay between requests to prevent connection pool exhaustion
-                        if (i < totalCount - 1) {
-                            await new Promise(resolve => setTimeout(resolve, 300));
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+
+                        for (const jobId of pendingJobs) {
+                            if (completedJobs.has(jobId) || failedJobs.has(jobId)) continue;
+
+                            try {
+                                const statusRes = await fetch('/domain-search/logo-status/' + jobId, {
+                                    headers: this.headers(),
+                                });
+                                const statusData = await statusRes.json();
+
+                                if (statusData.status === 'completed') {
+                                    completedJobs.add(jobId);
+
+                                    if (statusData.seed) {
+                                        this.logoSeedNumber = statusData.seed;
+                                    }
+
+                                    if (statusData.bg_color) {
+                                        this.logoBgResult = statusData.bg_color;
+                                    }
+
+                                    const newImages = (statusData.images || []).map((img) => ({
+                                        ...img,
+                                        seed: statusData.seed || null,
+                                        describing: false,
+                                        removingBg: false,
+                                    }));
+                                    this.logoImages = [...this.logoImages, ...newImages];
+
+                                    if (statusData.credit_balance !== undefined) {
+                                        this.creditBalance = parseFloat(statusData.credit_balance);
+                                    }
+                                } else if (statusData.status === 'failed' || statusData.status === 'error') {
+                                    failedJobs.add(jobId);
+                                    this.logoError = statusData.error || 'Logo generation failed.';
+
+                                    if (statusData.credit_balance !== undefined) {
+                                        this.creditBalance = parseFloat(statusData.credit_balance);
+                                    }
+                                }
+                                // 'pending' or 'processing' — keep polling
+                            } catch (e) {
+                                // Network error during poll — will retry next iteration
+                            }
                         }
                     }
 
