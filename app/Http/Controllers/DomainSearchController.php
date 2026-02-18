@@ -866,17 +866,44 @@ Example response format:
             'count' => 'nullable|integer|min:1|max:4',
             'pro' => 'nullable|boolean',
             'pro_size' => 'nullable|integer|in:512,1024,1536',
-            'style' => 'nullable|string|in:professional,fantasy,future,vector',
+            'style' => 'nullable|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego',
             'bg_color' => 'nullable|string|max:20',
+            'image_model' => 'nullable|string|in:flux,dalle,recraft',
+            'output_format' => 'nullable|string|in:raster,vector',
+            'image_format' => 'nullable|string|in:png,bmp',
+            'recraft_substyle' => 'nullable|string|max:60',
         ]);
 
-        $estimate = AiLogoPrice::estimateCost(
-            imageCount: (int) $request->input('count', 4),
-            isPro: (bool) $request->input('pro', false),
-            proSize: (int) $request->input('pro_size', 1024),
-            style: $request->input('style', 'professional'),
-            bgColor: $request->input('bg_color', 'white'),
-        );
+        $imageModel = $request->input('image_model', 'flux');
+        $outputFormat = $request->input('output_format', 'raster');
+
+        if ($imageModel === 'recraft') {
+            $estimate = \App\Services\RecraftPricing::estimateLogoCost(
+                imageCount: (int) $request->input('count', 4),
+                size: '1024x1024',
+                isPro: (bool) $request->input('pro', false),
+                type: $outputFormat,
+            );
+        } elseif ($imageModel === 'dalle') {
+            $estimate = AiLogoPrice::estimateDalleCost(
+                imageCount: (int) $request->input('count', 4),
+                resolution: '1024x1024',
+                quality: (bool) $request->input('pro', false) ? 'hd' : 'standard',
+            );
+        } else {
+            $estimate = AiLogoPrice::estimateCost(
+                imageCount: (int) $request->input('count', 4),
+                isPro: (bool) $request->input('pro', false),
+                proSize: (int) $request->input('pro_size', 1024),
+                style: $request->input('style', 'professional'),
+                bgColor: $request->input('bg_color', 'white'),
+                outputFormat: $outputFormat,
+            );
+        }
+
+        // Include user's current balance in the estimate response
+        $user = $request->user();
+        $estimate['credit_balance'] = $user ? (float) $user->credit_balance : 0;
 
         return response()->json($estimate);
     }
@@ -891,20 +918,26 @@ Example response format:
 
         $request->validate([
             'domain' => 'nullable|string|max:100',
-            'style' => 'required|string|in:professional,fantasy,future,vector',
+            'style' => 'required|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego',
             'count' => 'nullable|integer|min:1|max:4',
             'custom_prompt' => 'required|string|min:2|max:500',
             'pro' => 'nullable|boolean',
             'pro_size' => 'nullable|integer|in:512,1024,1536',
             'icon_only' => 'nullable|boolean',
             'bg_color' => 'nullable|string|max:20',
+            'image_model' => 'nullable|string|in:flux,dalle,recraft',
+            'output_format' => 'nullable|string|in:raster,vector',
+            'image_format' => 'nullable|string|in:png,bmp',
+            'recraft_substyle' => 'nullable|string|max:60',
+            'color_palette' => 'nullable|array|max:5',
+            'color_palette.*' => 'string|max:20',
         ]);
 
         $iconOnly = (bool) $request->input('icon_only', false);
-        $domain = $request->input('domain', '');
+        $domain = $request->input('domain') ? trim($request->input('domain')) : null;
 
         // Domain is required unless icon-only mode
-        if (!$iconOnly && !trim($domain)) {
+        if (!$iconOnly && !$domain) {
             return response()->json([
                 'error' => 'Domain name is required when Text in Logo is enabled.',
             ], 422);
@@ -916,15 +949,63 @@ Example response format:
         $isPro = (bool) $request->input('pro', false);
         $proSize = (int) $request->input('pro_size', 1024);
         $bgColor = $request->input('bg_color', 'white');
+        $imageModel = $request->input('image_model', 'flux');
+        $outputFormat = $request->input('output_format', 'raster');
+        $imageFormat = $request->input('image_format', 'png');
+        $colorPalette = $request->input('color_palette');
+        $recraftSubstyle = $request->input('recraft_substyle');
 
-        // Calculate cost estimate from real fal.ai pricing API
-        $costEstimate = AiLogoPrice::estimateCost(
-            imageCount: $imageCount,
-            isPro: $isPro,
-            proSize: $proSize,
-            style: $style,
-            bgColor: $bgColor,
-        );
+        // DALL-E always produces raster
+        if ($imageModel === 'dalle') {
+            $outputFormat = 'raster';
+        }
+
+        // ── Balance check: reject if user can't afford the estimated cost ──
+        $user = $request->user();
+        $userBalance = (float) $user->credit_balance;
+
+        // Quick pre-check with a generous minimum threshold
+        if ($userBalance <= 0) {
+            return response()->json([
+                'error' => 'Insufficient balance. Please add credits before generating logos.',
+                'credit_balance' => $userBalance,
+            ], 402);
+        }
+
+        // Calculate cost estimate
+        if ($imageModel === 'recraft') {
+            $costEstimate = \App\Services\RecraftPricing::estimateLogoCost(
+                imageCount: $imageCount,
+                size: '1024x1024',
+                isPro: $isPro,
+                type: $outputFormat,
+            );
+        } elseif ($imageModel === 'dalle') {
+            $costEstimate = AiLogoPrice::estimateDalleCost(
+                imageCount: $imageCount,
+                resolution: '1024x1024',
+                quality: $isPro ? 'hd' : 'standard',
+            );
+        } else {
+            $costEstimate = AiLogoPrice::estimateCost(
+                imageCount: $imageCount,
+                isPro: $isPro,
+                proSize: $proSize,
+                style: $style,
+                bgColor: $bgColor,
+                outputFormat: $outputFormat,
+            );
+        }
+
+        // ── Precise balance check against estimated cost ──
+        $estimatedTotal = (float) ($costEstimate['estimated_cost_usd'] ?? 0);
+        if ($estimatedTotal > 0 && $userBalance < $estimatedTotal) {
+            return response()->json([
+                'error' => 'Insufficient balance. This generation costs ~$' . number_format($estimatedTotal, 4) . ' but your balance is $' . number_format($userBalance, 4) . '. Please add credits.',
+                'credit_balance' => $userBalance,
+                'estimated_cost' => $estimatedTotal,
+            ], 402);
+        }
 
         // Extract the core brand concept from the domain name (strip TLD if present)
         $brandName = preg_replace('/\.(com|net|org|io|co|ai|app|dev|xyz|tech|me)$/i', '', $domain);
@@ -950,6 +1031,14 @@ Example response format:
         }
 
         // Typography-first prompts with style hooks and avoidance language
+        // Build color palette instruction
+        if (!empty($colorPalette) && is_array($colorPalette)) {
+            $colorNames = implode(', ', $colorPalette);
+            $colorInstruction = "Use exactly this color palette for the logo artwork and typography: {$colorNames}. These colors are only for the logo elements, NOT the background.";
+        } else {
+            $colorInstruction = null; // Let style defaults apply
+        }
+
         // Determine background color instruction
         $bgInstruction = match($bgColor) {
             'black' => 'isolated on a solid black background',
@@ -965,30 +1054,240 @@ Example response format:
             $conceptHint = $customElement ? $customElement : ' A unique abstract symbol.';
             $noExtraText = " There is absolutely NO text, NO letters, NO words, NO numbers, NO typography anywhere in the image. Zero text of any kind. Pure graphic symbol only.";
 
+            $profColor = $colorInstruction ?? 'navy blue and gold color palette.';
+            $fantColor = $colorInstruction ?? 'rich emerald green and antique gold color palette.';
+            $futColor = $colorInstruction ?? 'glowing neon cyan and electric purple color palette,';
+            $retroColor = $colorInstruction ?? 'red, green, blue and yellow color palette.';
+
             $stylePrompts = [
-                'professional' => "A premium corporate icon mark.{$conceptHint} A single bold geometric symbol. Monolithic, thick lines, emblem style, navy blue and gold color palette. Secure, established, Fortune 500 quality. Clean vector art, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no gradients, no cluttered details, avoid photorealism, avoid messy lines. High contrast, professional design, 4k.{$noExtraText}",
-                'fantasy' => "An epic fantasy-themed icon mark.{$conceptHint} A single ornate magical symbol. Elven runes, enchanted forest motifs, mythical creatures, ancient scrollwork, Lord of the Rings inspired aesthetics, rich emerald green and antique gold color palette. Clean vector art, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no cluttered details, avoid photorealism, avoid messy lines. Epic fantasy design, 4k.{$noExtraText}",
-                'future' => "A futuristic sci-fi icon mark.{$conceptHint} A single sleek angular geometric symbol. Holographic elements, circuit board patterns, space-age aesthetics, glowing neon cyan and electric purple color palette, starfield accents, advanced technology motifs. Clean vector art, centered 1:1 square composition, {$bgInstruction}. No cluttered details, avoid photorealism, avoid messy lines. Futuristic sci-fi design, 4k.{$noExtraText}",
-                'vector' => "A minimalist flat vector icon mark.{$conceptHint} Simple geometric shapes, solid flat colors, clean precise lines, no gradients, no shadows, no textures, no 3D effects. Centered 1:1 square composition, {$bgInstruction}. SVG-ready, print-ready, scalable design. Avoid photorealism, avoid messy lines, avoid cluttered details. Ultra-clean flat vector art, 4k.{$noExtraText}",
+                'professional' => "A premium corporate icon mark.{$conceptHint} A single bold geometric symbol. Monolithic, thick lines, emblem style, {$profColor} Secure, established, Fortune 500 quality. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no gradients, no cluttered details, avoid photorealism, avoid messy lines. High contrast, professional design, 4k.{$noExtraText}",
+                'fantasy' => "An epic fantasy-themed icon mark.{$conceptHint} A single ornate magical symbol. Elven runes, enchanted forest motifs, mythical creatures, ancient scrollwork, Lord of the Rings inspired aesthetics, {$fantColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no cluttered details, avoid photorealism, avoid messy lines. Epic fantasy design, 4k.{$noExtraText}",
+                'future' => "A futuristic sci-fi icon mark.{$conceptHint} A single sleek angular geometric symbol. Holographic elements, circuit board patterns, space-age aesthetics, {$futColor} starfield accents, advanced technology motifs. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No cluttered details, avoid photorealism, avoid messy lines. Futuristic sci-fi design, 4k.{$noExtraText}",
+                'retro' => "A vibrant retro vector design icon mark.{$conceptHint} Surrounded by a colorful retro sunburst, {$retroColor} Captures the essence of a fun vacation feel, minimalist retro style. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No cluttered details, avoid photorealism. Retro design, 4k.{$noExtraText}",
+                'chrome' => "A premium corporate icon mark.{$conceptHint} A single bold geometric symbol. Monolithic, thick lines, emblem style, {$profColor} Secure, established, Fortune 500 quality. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no gradients, no cluttered details, avoid photorealism, avoid messy lines. High contrast, professional design, 4k.{$noExtraText}",
+                '8bit' => "An epic fantasy-themed icon mark.{$conceptHint} A single ornate magical symbol. Engraved polished gold with beveled edges, intricate filigree and ornamental carvings, glowing blue arcane crystals, ancient metal structures, magical geometric forms, {$fantColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. Fantasy RPG design, 4k.{$noExtraText}",
+                'dotmatrix' => "A stippled dot art icon mark.{$conceptHint} A single bold symbol rendered entirely in stippling technique. {$profColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. Professional dot art design, 4k.{$noExtraText}",
+                'lego' => "A glossy sticker-style icon mark.{$conceptHint} Thick clean outlines, soft shadows, toy plastic material. {$profColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. Sticker design, 4k.{$noExtraText}",
             ];
         } else {
             // With brand name text
             $noExtraText = " The ONLY text in the entire image is \"{$brandUpper}\". Do not add any other words, letters, taglines, slogans, or captions anywhere in the image.";
 
+            $profColor = $colorInstruction ?? 'navy blue and gold color palette.';
+            $fantColor = $colorInstruction ?? 'rich emerald green and antique gold color palette.';
+            $futColor = $colorInstruction ?? 'glowing neon cyan and electric purple color palette,';
+            $retroColor = $colorInstruction ?? 'red, green, blue and yellow color palette.';
+
             $stylePrompts = [
-                'professional' => "A premium corporate logo. The centerpiece is the word \"{$brandUpper}\" in an elegant, refined custom serif typeface with perfectly spaced letters.{$customElement} Monolithic, thick lines, emblem style, navy blue and gold color palette. Secure, established, Fortune 500 quality. Clean vector art, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no gradients, no cluttered details, avoid photorealism, avoid messy lines. High contrast, professional design, 4k.{$noExtraText}",
-                'fantasy' => "An epic fantasy-themed logo. The centerpiece is the word \"{$brandUpper}\" in an ornate, medieval-inspired custom typeface with elegant serifs and decorative flourishes.{$customElement} Elven runes, enchanted forest motifs, mythical creatures, ancient scrollwork, Lord of the Rings inspired aesthetics, rich emerald green and antique gold color palette. Clean vector art, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no cluttered details, avoid photorealism, avoid messy lines. Epic fantasy design, 4k.{$noExtraText}",
-                'future' => "A futuristic sci-fi logo. The centerpiece is the word \"{$brandUpper}\" in a sleek, angular, cyberpunk-inspired custom typeface with sharp edges and neon accents.{$customElement} Holographic elements, circuit board patterns, space-age aesthetics, glowing neon cyan and electric purple color palette, starfield accents, advanced technology motifs. Clean vector art, centered 1:1 square composition, {$bgInstruction}. No cluttered details, avoid photorealism, avoid messy lines. Futuristic sci-fi design, 4k.{$noExtraText}",
-                'vector' => "A minimalist flat vector logo for \"{$brandUpper}\". Simple geometric shapes, solid flat colors, clean precise lines, no gradients, no shadows, no textures, no 3D effects.{$customElement} Bold readable typography, centered 1:1 square composition, {$bgInstruction}. SVG-ready, print-ready, scalable design. Avoid photorealism, avoid messy lines, avoid cluttered details. Ultra-clean flat vector art, 4k.{$noExtraText}",
+                'professional' => "A premium corporate logo. The centerpiece is the word \"{$brandUpper}\" in an elegant, refined custom serif typeface with perfectly spaced letters.{$customElement} Monolithic, thick lines, emblem style, {$profColor} Secure, established, Fortune 500 quality. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no gradients, no cluttered details, avoid photorealism, avoid messy lines. High contrast, professional design, 4k.{$noExtraText}",
+                'fantasy' => "An epic fantasy-themed logo. The centerpiece is the word \"{$brandUpper}\" in an ornate, medieval-inspired custom typeface with elegant serifs and decorative flourishes.{$customElement} Elven runes, enchanted forest motifs, mythical creatures, ancient scrollwork, Lord of the Rings inspired aesthetics, {$fantColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no cluttered details, avoid photorealism, avoid messy lines. Epic fantasy design, 4k.{$noExtraText}",
+                'future' => "A futuristic sci-fi logo. The centerpiece is the word \"{$brandUpper}\" in a sleek, angular, cyberpunk-inspired custom typeface with sharp edges and neon accents.{$customElement} Holographic elements, circuit board patterns, space-age aesthetics, {$futColor} starfield accents, advanced technology motifs. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No cluttered details, avoid photorealism, avoid messy lines. Futuristic sci-fi design, 4k.{$noExtraText}",
+                'retro' => "A vibrant retro vector design logo. The centerpiece is the word \"{$brandUpper}\" in a bold retro typeface.{$customElement} Surrounded by a colorful retro sunburst, {$retroColor} Captures the essence of a fun vacation feel, minimalist retro style. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No cluttered details, avoid photorealism. Retro design, 4k.{$noExtraText}",
+                'chrome' => "A premium corporate logo. The centerpiece is the word \"{$brandUpper}\" in an elegant, refined custom serif typeface with perfectly spaced letters.{$customElement} Monolithic, thick lines, emblem style, {$profColor} Secure, established, Fortune 500 quality. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no gradients, no cluttered details, avoid photorealism, avoid messy lines. High contrast, professional design, 4k.{$noExtraText}",
+                '8bit' => "An epic fantasy-themed logo. The centerpiece is the word \"{$brandUpper}\" in ornate medieval high-fantasy typography with engraved polished gold, beveled edges and filigree.{$customElement} Glowing blue arcane crystals, ancient metal structures, magical geometric forms, {$fantColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. Fantasy RPG design, 4k.{$noExtraText}",
+                'dotmatrix' => "A stippled dot art logo with \"{$brandUpper}\" text.{$customElement} {$profColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. Professional dot art design, 4k.{$noExtraText}",
+                'lego' => "A glossy sticker-style logo with \"{$brandUpper}\" in a decorative banner.{$customElement} Thick clean outlines, soft shadows, toy plastic material. {$profColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. Sticker design, 4k.{$noExtraText}",
             ];
         }
 
         $prompt = $stylePrompts[$style];
 
+        // ── Build a DALL-E-specific prompt (structured, anti-collage format) ──
+        if ($imageModel === 'dalle') {
+            $dalleDesc = trim($customPrompt ?? '');
+
+            // Color line
+            $dalleColorLine = !empty($colorPalette) && is_array($colorPalette)
+                ? implode(' and ', $colorPalette)
+                : match($style) {
+                    'fantasy' => 'emerald green and antique gold',
+                    'future'  => 'neon cyan and electric purple',
+                    'retro'   => 'red, green, blue and yellow',
+                    default   => 'navy blue and gold',
+                };
+
+            // Build a descriptive color list for the prompt
+            // DALL-E responds better to named colors + hex than raw hex alone
+            if (!empty($colorPalette) && is_array($colorPalette)) {
+                $namedColors = [];
+                foreach ($colorPalette as $hex) {
+                    $namedColors[] = $hex . ' (' . self::hexToColorName($hex) . ')';
+                }
+                $dalleColorList = implode(', ', $namedColors);
+            } else {
+                $dalleColorList = $dalleColorLine;
+            }
+
+            // Background for chrome template
+            $chromeBg = match($bgColor) {
+                'black' => 'dark black background',
+                'white' => 'pure white background',
+                default => str_starts_with($bgColor, '#')
+                    ? "{$bgColor} background"
+                    : 'soft light gray background',
+            };
+
+            // Chrome style uses 3D metallic render template
+            if ($style === 'chrome') {
+                // Determine the symbol description
+                $chromeSymbol = $dalleDesc ?: 'logo symbol';
+
+                if ($iconOnly) {
+                    // Icon-only: single 3D object
+                    $prompt = "A high-resolution 3D render of the {$chromeSymbol} made of polished sterling silver with a shiny metallic texture, floating on a {$chromeBg} in a minimalistic studio setup. The logo is captured from a frontal close-up, illuminated by soft diffused studio light with soft shadows, showcasing micro-etched patterns and a sleek and modern ambiance, with a faint geometric lines subtly integrated, rendered in 4K HDR for hyper-detailed clarity.";
+                } else {
+                    // Text ON: symbol + brand name as 3D chrome logo
+                    $prompt = "A high-resolution 3D render of a custom chrome logo featuring a realistic {$chromeSymbol} and the exact word \"{$brandUpper}\".\n\n"
+                        . "The text must read exactly: {$brandUpper}\n"
+                        . "No spelling changes.\n"
+                        . "No missing letters.\n"
+                        . "No extra letters.\n\n"
+                        . "The word {$brandUpper} is a physical 3D extruded object made of polished sterling silver chrome with real thickness and depth.\n\n"
+                        . "Use clean, modern, geometric sans-serif typography.\n\n"
+                        . "Avoid ornamental script, gothic, or decorative fonts.\n\n"
+                        . "The letters must be clear, legible, evenly spaced, and perfectly readable.\n\n"
+                        . "The vehicle and the text share the same polished chrome metallic material.\n\n"
+                        . "{$chromeBg}.\n"
+                        . "Minimal presentation.\n"
+                        . "Soft uniform lighting.\n\n"
+                        . "Ultra-clean professional 3D logo render.\n\n"
+                        . "4K resolution.";
+                }
+            } elseif ($style === 'retro') {
+                // Retro vibrant sunburst style
+                $retroSubject = $dalleDesc ?: ($iconOnly ? 'logo symbol' : "{$brandUpper} logo");
+                $prompt = "A vibrant retro vector design featuring {$retroSubject} on vacation. Surrounded by a colorful retro sunburst with red, green, blue and yellow, the design captures the essence of a fun vacation, on a plain full black background, suitable for t-shirt printing, minimalist retro style";
+                if (!$iconOnly) {
+                    $prompt .= ". The only text in the design is \"{$brandUpper}\".";
+                }
+            } elseif ($style === '8bit') {
+                // 8-bit pixel-art arcade style
+                $eightBitText = $iconOnly ? 'a retro arcade icon' : "the brand name \"{$brandUpper}\"";
+                $prompt = "Design a retro 8-bit pixel-art logo for {$eightBitText}.\n"
+                    . "Style: classic 1980s arcade game title screen, chunky pixel typography, crisp square pixels, limited 16-color palette, high contrast, clean silhouette, readable at small sizes.\n"
+                    . "Include: icon + wordmark, centered composition, transparent or solid single-color background, subtle pixel glow/shadow, no gradients, no anti-aliasing, no blur.\n"
+                    . "Output: vector-like clean edges, branding-ready, multiple variations of colorways and layout, exact text must read \"{$brandUpper}\" with correct spelling.";
+            } elseif ($style === 'dotmatrix') {
+                // Dot matrix stippling art style
+                $dotSubject = $dalleDesc ?: 'an iconic symbol';
+                $prompt = "A highly detailed stippled dot art illustration of {$dotSubject}.\n"
+                    . "Style: Pure stippling technique using only black dots of varying sizes and densities to create shading and depth.\n"
+                    . "Technique: Pointillism, dot work, no lines, no hatching, only circular dots, high-contrast monochromatic artwork.\n"
+                    . "The entire image is composed of thousands of carefully placed dots - smaller dots for lighter areas, larger/denser dots for darker areas.\n"
+                    . "Composition: Centered portrait-style composition, detailed facial features and textures rendered entirely in dots, isolated on pure white background.\n"
+                    . "Quality: Professional engraving-style stipple art, museum-quality pointillism, sharp detailed dot work, 4K resolution.\n"
+                    . "No text, no words, no letters anywhere in the image.";
+            } elseif ($style === 'lego') {
+                // Lego sticker style
+                $legoSubject = $dalleDesc ?: 'cute characters';
+                $legoText = $iconOnly ? '' : "\nText: The text \"{$brandUpper}\" is displayed in a decorative banner or ribbon, using clean rounded typography with thick outlines.";
+                $legoColors = !empty($colorPalette) && is_array($colorPalette) 
+                    ? "\nColors: Use this exact color palette for the characters and design elements: {$dalleColorList}."
+                    : "\nColors: Use vibrant, friendly colors suitable for toy-like sticker characters.";
+                $prompt = "Style: Sticker style with thick clean outlines, soft shadows underneath, and glossy toy plastic material.\n"
+                    . "Inspired by cute LEGO fan art.\n"
+                    . "Minimal detail, smooth surfaces, friendly and wholesome aesthetic.\n"
+                    . "Subject: {$legoSubject} rendered in a simplified, adorable LEGO style with bold black outlines and vibrant glossy colors.\n"
+                    . $legoColors . "\n"
+                    . $legoText . "\n"
+                    . "Composition: Centered composition, 1:1 square ratio, isolated on a pure white background.\n"
+                    . "Quality: Professional LEGO illustration, crisp clean artwork, high contrast, 4K resolution.";
+            } else {
+                $prompt = "A high-resolution 3D render of a logo made of polished sterling silver with a shiny metallic texture, floating on a {$chromeBg} in a minimalistic studio setup, rendered in 4K HDR for hyper-detailed clarity.";
+            }
+        }
+
+        // ── Build a Recraft-specific structured logo prompt (max 1000 chars) ──
+        if ($imageModel === 'recraft') {
+            $lines = [];
+            $subjectDesc = trim($customPrompt ?? '');
+
+            // ── Style + Theme (no need to say "vector" — the endpoint handles that) ──
+            $theme = match($style) {
+                'fantasy' => 'dark fantasy, mythical',
+                'future'  => 'futuristic sci-fi, cyberpunk',
+                'retro'   => 'vibrant retro, colorful sunburst, vacation feel',
+                default   => 'premium corporate, clean',
+            };
+            $lines[] = "Style: Logo, flat minimalist emblem. {$theme}.";
+
+            // ── Subject ──
+            if ($iconOnly) {
+                $lines[] = $subjectDesc
+                    ? "Subject: Bold geometric silhouette of {$subjectDesc}. All elements merged into one unified icon."
+                    : 'Subject: Abstract geometric silhouette symbol, one unified icon shape.';
+            } else {
+                $lines[] = $subjectDesc
+                    ? "Subject: Logo with \"{$brandUpper}\" and a geometric silhouette of {$subjectDesc}, merged into one emblem."
+                    : "Subject: Logo with \"{$brandUpper}\" and a geometric silhouette emblem mark.";
+            }
+
+            // ── Silhouette ──
+            $lines[] = 'Silhouette: Single filled shape like a rubber stamp. No internal line-art or contour lines. Features implied only by outer contour. Negative space only as clean cut-outs.';
+
+            // ── Text ──
+            $lines[] = $iconOnly
+                ? 'Text: Zero text, letters, or characters of any kind.'
+                : "Text: Only \"{$brandUpper}\" in clean sans-serif. No taglines or decorative text.";
+
+            // ── Design ──
+            $lines[] = 'Design: Thick monolithic lines, bold chunky shapes, smooth geometric curves. Recognisable at any size.';
+
+            // ── Color ──
+            if (!empty($colorPalette) && is_array($colorPalette)) {
+                $paletteHexes = implode(', ', $colorPalette);
+                $colorDesc = $paletteHexes;
+            } else {
+                $colorDesc = match($style) {
+                    'fantasy' => 'emerald green and antique gold',
+                    'future'  => 'neon cyan and electric purple',
+                    'retro'   => 'red, green, blue and yellow',
+                    default   => 'navy blue and gold',
+                };
+            }
+            $lines[] = "Color: Silhouette uses {$colorDesc}. Colors apply only to the logo shape, not the background.";
+
+            // ── Background ──
+            $bgDesc = match($bgColor) {
+                'black' => '#000000 black',
+                'transparent' => 'transparent',
+                default => str_starts_with($bgColor, '#')
+                    ? $bgColor
+                    : '#FFFFFF white',
+            };
+            $lines[] = "Background: Solid {$bgDesc}, uniform, no texture or gradient.";
+
+            // ── Composition + Rendering ──
+            $lines[] = 'Composition: Centered 1:1 square, equal breathing room, bilateral symmetry.';
+            $lines[] = 'Rendering: No gradients, shadows, glows, bevels or textures. Flat color fills, clean edges. Production-ready logo mark.';
+
+            $prompt = implode("\n", $lines);
+        }
+
+        // Determine model name for logging
+        if ($imageModel === 'recraft') {
+            $formatTag = $outputFormat === 'vector' ? 'vector' : 'raster';
+            $modelName = $isPro ? "recraft-v3-{$formatTag}" : "recraft-v2-{$formatTag}";
+            $imageSize = '1024x1024';
+            $requestType = $isPro
+                ? ($outputFormat === 'vector' ? 'logo_recraft_v3' : 'logo_recraft_v3_raster')
+                : ($outputFormat === 'vector' ? 'logo_recraft_vector' : 'logo_recraft_raster');
+        } elseif ($imageModel === 'dalle') {
+            $modelName = 'dall-e-3';
+            $imageSize = '1024x1024';
+            $requestType = $isPro ? 'logo_dalle_hd' : 'logo_dalle';
+        } else {
+            $modelName = $isPro ? 'fal-ai/flux-pro/v1.1' : 'fal-ai/flux/schnell';
+            $imageSize = $isPro ? $proSize . 'x' . $proSize : '512x512';
+            $requestType = $isPro ? 'logo_pro' : 'logo_generation';
+        }
+
         $logoRequest = AiLogoRequest::create([
             'user_id' => $request->user()->id,
             'domain' => $domain,
             'style' => $style . ($isPro ? '_pro' : ''),
+            'model' => $modelName,
+            'seed_number' => null,
             'prompt' => $prompt,
             'original_prompt' => $customPrompt ? trim((string) $customPrompt) : null,
             'status' => 'pending',
@@ -1000,12 +1299,12 @@ Example response format:
             'ai_logo_request_id' => $logoRequest->id,
             'session' => session()->getId(),
             'user_email' => $request->user()->email,
-            'request_type' => $isPro ? 'logo_pro' : 'logo_generation',
-            'model_name' => $isPro ? 'fal-ai/flux-pro/v1.1' : 'fal-ai/flux/schnell',
+            'request_type' => $requestType,
+            'model_name' => $modelName,
             'image_count' => $imageCount,
-            'image_size' => $isPro ? $proSize . 'x' . $proSize : '512x512',
-            'num_inference_steps' => $isPro ? 28 : 8,
-            'guidance_scale' => 3.50,
+            'image_size' => $imageSize,
+            'num_inference_steps' => $imageModel === 'recraft' ? 0 : ($imageModel === 'dalle' ? 0 : ($isPro ? 28 : 8)),
+            'guidance_scale' => ($imageModel === 'recraft' || $imageModel === 'dalle') ? 0 : 3.50,
             'cost_per_image' => $costEstimate['cost_per_image'],
             'estimated_cost_usd' => $costEstimate['estimated_cost_usd'],
             'status' => 'pending',
@@ -1015,20 +1314,250 @@ Example response format:
         $startTime = microtime(true);
 
         try {
-            $endpoint = $isPro
-                ? 'https://fal.run/fal-ai/flux-pro/v1.1'
-                : 'https://fal.run/fal-ai/flux/schnell';
+            if ($imageModel === 'recraft') {
+                // ── Recraft path (vector or raster) ──
+                $recraftBaseUrl = config('services.recraft.base_url', 'https://external.api.recraft.ai');
+                $recraftKey = config('services.recraft.key');
+                $allImages = [];
+                $isVector = $outputFormat === 'vector';
 
-            $timeout = $isPro ? 120 : 120;
+                // Build Recraft-specific prompt (simpler, Recraft handles generation natively)
+                $recraftPrompt = $prompt;
 
-            if ($isPro) {
+                // Choose style and endpoint based on output format and model
+                // Vector always uses vector_illustration; raster uses digital_illustration for both v2/v3
+                $recraftStyle = $isVector
+                    ? 'vector_illustration'
+                    : 'digital_illustration';
+                $recraftEndpoint = $isVector
+                    ? '/v1/images/generations/vector'
+                    : '/v1/images/generations/raster';
+
+                // Build request body
+                $recraftBody = [
+                    'prompt' => $recraftPrompt,
+                    'style' => $recraftStyle,
+                    'model' => $isPro ? 'recraftv3' : 'recraftv2',
+                    'n' => $imageCount,
+                    'size' => '1024x1024',
+                    'response_format' => 'url',
+                ];
+
+                // Add substyle if provided
+                if (!empty($recraftSubstyle)) {
+                    $recraftBody['substyle'] = $recraftSubstyle;
+                }
+
+                // Add color controls if a palette is selected
+                if (!empty($colorPalette) && is_array($colorPalette)) {
+                    $recraftColors = [];
+                    foreach ($colorPalette as $hex) {
+                        $hex = ltrim($hex, '#');
+                        $r = hexdec(substr($hex, 0, 2));
+                        $g = hexdec(substr($hex, 2, 2));
+                        $b = hexdec(substr($hex, 4, 2));
+                        $recraftColors[] = ['rgb' => [$r, $g, $b]];
+                    }
+                    $recraftBody['controls'] = ['colors' => $recraftColors];
+                }
+
+                // Add no_text control for icon-only mode (V3 only)
+                if ($iconOnly && $isPro) {
+                    $recraftBody['controls'] = array_merge($recraftBody['controls'] ?? [], ['no_text' => true]);
+                }
+
+                // Add background color control
+                if ($bgColor !== 'white') {
+                    $bgHex = match($bgColor) {
+                        'black' => '#000000',
+                        'transparent' => null,
+                        default => str_starts_with($bgColor, '#') ? $bgColor : null,
+                    };
+                    if ($bgHex) {
+                        $hex = ltrim($bgHex, '#');
+                        $r = hexdec(substr($hex, 0, 2));
+                        $g = hexdec(substr($hex, 2, 2));
+                        $b = hexdec(substr($hex, 4, 2));
+                        $recraftBody['controls'] = array_merge(
+                            $recraftBody['controls'] ?? [],
+                            ['background_color' => ['rgb' => [$r, $g, $b]]]
+                        );
+                    }
+                }
+
+                $recraftResponse = Http::withHeaders([
+                    'Authorization' => 'Bearer ' . $recraftKey,
+                    'Content-Type' => 'application/json',
+                ])->timeout(120)->post($recraftBaseUrl . $recraftEndpoint, $recraftBody);
+
+                $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
+
+                if (!$recraftResponse->successful()) {
+                    $recraftError = $recraftResponse->json('error.message')
+                        ?? $recraftResponse->json('detail')
+                        ?? $recraftResponse->json('message')
+                        ?? 'Unknown Recraft error (HTTP ' . $recraftResponse->status() . ')';
+
+                    \Log::error('Recraft ' . $outputFormat . ' generation failed', [
+                        'status' => $recraftResponse->status(),
+                        'body' => substr($recraftResponse->body(), 0, 500),
+                    ]);
+
+                    $logoRequest->update([
+                        'status' => 'failed',
+                        'fal_status_code' => $recraftResponse->status(),
+                        'error_message' => $recraftError,
+                        'response_time_ms' => $elapsedMs,
+                    ]);
+                    $priceLog->update(['status' => 'failed', 'response_time_ms' => $elapsedMs]);
+
+                    return response()->json(['error' => $this->friendlyErrorMessage('Recraft ' . $outputFormat . ' generation failed: ' . $recraftError)], 500);
+                }
+
+                $recraftData = $recraftResponse->json();
+                $recraftCreditsUsed = $recraftData['credits'] ?? null;
+
+                foreach ($recraftData['data'] ?? [] as $recraftImg) {
+                    $imgUrl = $recraftImg['url'] ?? null;
+                    if ($imgUrl) {
+                        $imgEntry = [
+                            'url' => $imgUrl,
+                            'image_id' => $recraftImg['image_id'] ?? null,
+                        ];
+                        // Vector endpoint returns SVG natively — strip BG programmatically
+                        if ($isVector) {
+                            try {
+                                $svgContent = Http::timeout(15)->get($imgUrl)->body();
+                                if ($svgContent && str_contains($svgContent, '<svg')) {
+                                    $cleanedSvg = $this->removeSvgBackground($svgContent);
+                                    if ($cleanedSvg) {
+                                        // Store the cleaned SVG as a data URI so we keep the transparent version
+                                        $imgEntry['url'] = 'data:image/svg+xml;base64,' . base64_encode($cleanedSvg);
+                                        $imgEntry['svg_url'] = $imgEntry['url'];
+                                        $imgEntry['transparent'] = true;
+                                    } else {
+                                        $imgEntry['svg_url'] = $imgUrl;
+                                    }
+                                } else {
+                                    $imgEntry['svg_url'] = $imgUrl;
+                                }
+                            } catch (\Exception $e) {
+                                \Log::warning('SVG background strip failed', ['error' => $e->getMessage()]);
+                                $imgEntry['svg_url'] = $imgUrl;
+                            }
+                        }
+                        $allImages[] = $imgEntry;
+                    }
+                }
+
+                $data = ['images' => $allImages, 'seed' => null];
+                $responseStatus = count($allImages) > 0 ? 200 : 500;
+
+                if (count($allImages) === 0) {
+                    $logoRequest->update([
+                        'status' => 'failed',
+                        'error_message' => 'Recraft returned no images',
+                        'response_time_ms' => $elapsedMs,
+                    ]);
+                    $priceLog->update(['status' => 'failed', 'response_time_ms' => $elapsedMs]);
+                    return response()->json(['error' => 'Recraft returned no ' . $outputFormat . ' images. Please try again.'], 500);
+                }
+
+            } elseif ($imageModel === 'dalle') {
+                // ── DALL-E 3 path ──
+                $dalleQuality = $isPro ? 'hd' : 'standard';
+                $dalleSize = '1024x1024';
+                $allImages = [];
+
+                // DALL-E 3 only supports n=1, so loop for each image
+                for ($i = 0; $i < $imageCount; $i++) {
+                    $dalleResponse = Http::withHeaders([
+                        'Authorization' => 'Bearer ' . config('services.openai.api_key'),
+                        'Content-Type' => 'application/json',
+                    ])->retry(3, 2000, function (\Exception $e, \Illuminate\Http\Client\PendingRequest $request) {
+                        // Retry on connection errors and 5xx server errors
+                        return $e instanceof \Illuminate\Http\Client\ConnectionException
+                            || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
+                    })->timeout(120)->post(config('services.openai.base_url') . '/images/generations', [
+                        'model' => 'dall-e-3',
+                        'prompt' => $prompt,
+                        'n' => 1,
+                        'size' => $dalleSize,
+                        'quality' => $dalleQuality,
+                        'response_format' => 'url',
+                    ]);
+
+                    if ($dalleResponse->successful()) {
+                        $dalleData = $dalleResponse->json();
+                        foreach ($dalleData['data'] ?? [] as $dImg) {
+                            $allImages[] = ['url' => $dImg['url'], 'revised_prompt' => $dImg['revised_prompt'] ?? null];
+                        }
+                    } else {
+                        $errJson = $dalleResponse->json();
+                        $errMsg = $errJson['error']['message'] ?? '';
+                        $errType = $errJson['error']['type'] ?? '';
+
+                        // Content filter — return immediately with a friendly message
+                        if (str_contains($errMsg, 'content filters') || str_contains($errType, 'content_policy')) {
+                            $logoRequest->update([
+                                'status' => 'failed',
+                                'error_message' => 'Content policy violation',
+                                'response_time_ms' => (int) ((microtime(true) - $startTime) * 1000),
+                            ]);
+                            $priceLog->update(['status' => 'failed', 'response_time_ms' => (int) ((microtime(true) - $startTime) * 1000)]);
+                            return response()->json([
+                                'error' => 'Your prompt was flagged by the AI safety filter. Please rephrase your description and try again — avoid violent, sexual, or trademarked content.',
+                            ], 422);
+                        }
+
+                        // Billing limit — return immediately with a friendly message
+                        if (str_contains($errMsg, 'Billing hard limit') || str_contains($errMsg, 'billing')) {
+                            $logoRequest->update([
+                                'status' => 'failed',
+                                'error_message' => 'DALL-E service unavailable',
+                                'response_time_ms' => (int) ((microtime(true) - $startTime) * 1000),
+                            ]);
+                            $priceLog->update(['status' => 'failed', 'response_time_ms' => (int) ((microtime(true) - $startTime) * 1000)]);
+                            return response()->json([
+                                'error' => 'DALL-E 3 is temporarily unavailable. Please use another model.',
+                            ], 503);
+                        }
+
+                        \Log::warning('DALL-E image ' . ($i + 1) . ' failed', [
+                            'status' => $dalleResponse->status(),
+                            'body' => substr($dalleResponse->body(), 0, 500),
+                        ]);
+                    }
+                }
+
+                $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
+                $data = ['images' => $allImages, 'seed' => null];
+                $responseStatus = count($allImages) > 0 ? 200 : 500;
+
+                if (count($allImages) === 0) {
+                    $lastBody = isset($dalleResponse) ? $dalleResponse->body() : 'No response';
+                    $dalleError = 'All DALL-E image generations failed';
+                    if (isset($dalleResponse)) {
+                        $errJson = $dalleResponse->json();
+                        $dalleError = $errJson['error']['message'] ?? $dalleError;
+                    }
+                    $logoRequest->update([
+                        'status' => 'failed',
+                        'error_message' => $dalleError,
+                        'response_time_ms' => $elapsedMs,
+                    ]);
+                    $priceLog->update(['status' => 'failed', 'response_time_ms' => $elapsedMs]);
+                    return response()->json(['error' => $this->friendlyErrorMessage('Failed to generate DALL-E logos: ' . $dalleError)], 500);
+                }
+            } elseif ($isPro) {
                 // Flux Pro v1.1 only supports num_images=1, so loop for each image
+                $endpoint = 'https://fal.run/fal-ai/flux-pro/v1.1';
                 $allImages = [];
                 for ($i = 0; $i < $imageCount; $i++) {
                     $proResponse = Http::withHeaders([
                         'Authorization' => 'Key ' . config('services.fal.key'),
                         'Content-Type' => 'application/json',
-                    ])->timeout($timeout)->post($endpoint, [
+                    ])->timeout(120)->post($endpoint, [
                         'prompt' => $prompt,
                         'image_size' => [
                             'width' => $proSize,
@@ -1069,10 +1598,11 @@ Example response format:
                     return response()->json(['error' => 'Failed to generate PRO logos. Please try again.'], 500);
                 }
             } else {
+                $endpoint = 'https://fal.run/fal-ai/flux/schnell';
                 $response = Http::withHeaders([
                     'Authorization' => 'Key ' . config('services.fal.key'),
                     'Content-Type' => 'application/json',
-                ])->timeout($timeout)->post($endpoint, [
+                ])->timeout(120)->post($endpoint, [
                     'prompt' => $prompt,
                     'image_size' => [
                         'width' => 512,
@@ -1127,8 +1657,10 @@ Example response format:
 
             // NOTE: Local storage now happens AFTER bg removal & vectorization (see below)
 
-            // If transparent or custom color background, remove background via birefnet
-            $needsBgRemoval = ($bgColor === 'transparent' || str_starts_with($bgColor, '#'));
+            // Skip post-processing for Recraft (native vector output, bg handled server-side)
+            if ($imageModel !== 'recraft') {
+                // If transparent or custom color background, remove background via birefnet
+                $needsBgRemoval = ($bgColor === 'transparent' || str_starts_with($bgColor, '#'));
             if ($needsBgRemoval) {
                 $falKey = config('services.fal.key');
                 foreach ($images as $i => &$img) {
@@ -1171,8 +1703,8 @@ Example response format:
                 unset($img);
             }
 
-            // If vector style, vectorize each image to SVG
-            if ($style === 'vector') {
+            // If vector output format selected, vectorize each image to SVG
+            if ($outputFormat === 'vector') {
                 foreach ($images as $i => &$img) {
                     $rasterUrl = $img['url'] ?? (is_string($img) ? $img : null);
                     if (!$rasterUrl) continue;
@@ -1205,6 +1737,7 @@ Example response format:
                 }
                 unset($img);
             }
+            } // end if ($imageModel !== 'recraft')
 
             // Persist ALL generated images to local storage AFTER all transformations
             // (bg removal, vectorization). This ensures we store the final processed images.
@@ -1259,6 +1792,7 @@ Example response format:
             $logoRequest->update([
                 'status' => 'completed',
                 'fal_status_code' => $responseStatus,
+                'seed_number' => is_numeric($seed) ? (int) $seed : null,
                 'storage_type' => !empty($storedImagePaths) ? 'path' : 'url',
                 'image_urls' => !empty($storedImageUrls) ? $storedImageUrls : $imageUrls,
                 'response_time_ms' => $elapsedMs,
@@ -1266,13 +1800,29 @@ Example response format:
 
             // Update price log with actual cost and completion
             $actualImageCount = count($images);
-            $actualCost = AiLogoPrice::estimateCost(
-                imageCount: $actualImageCount,
-                isPro: $isPro,
-                proSize: $proSize,
-                style: $style,
-                bgColor: $bgColor,
-            );
+            if ($imageModel === 'recraft') {
+                $actualCost = \App\Services\RecraftPricing::estimateLogoCost(
+                    imageCount: $actualImageCount,
+                    size: '1024x1024',
+                    isPro: $isPro,
+                    type: $outputFormat,
+                );
+            } elseif ($imageModel === 'dalle') {
+                $actualCost = AiLogoPrice::estimateDalleCost(
+                    imageCount: $actualImageCount,
+                    resolution: '1024x1024',
+                    quality: $isPro ? 'hd' : 'standard',
+                );
+            } else {
+                $actualCost = AiLogoPrice::estimateCost(
+                    imageCount: $actualImageCount,
+                    isPro: $isPro,
+                    proSize: $proSize,
+                    style: $style,
+                    bgColor: $bgColor,
+                    outputFormat: $outputFormat,
+                );
+            }
             $priceLog->update([
                 'status' => 'completed',
                 'image_count' => $actualImageCount,
@@ -1288,20 +1838,24 @@ Example response format:
                     userId: $request->user()->id,
                     amount: $totalCost,
                     service: 'logo_generation',
-                    modelName: $isPro ? 'fal-ai/flux-pro/v1.1' : 'fal-ai/flux/schnell',
+                    modelName: $modelName,
                     description: $domain ? "{$actualImageCount} logo(s) for {$domain}" : "{$actualImageCount} icon-only logo(s)",
                     metadata: [
                         'domain' => $domain,
                         'style' => $style,
                         'image_count' => $actualImageCount,
-                        'resolution' => $isPro ? "{$proSize}x{$proSize}" : '512x512',
+                        'resolution' => $imageModel === 'recraft' ? '1024x1024' : ($imageModel === 'dalle' ? '1024x1024' : ($isPro ? "{$proSize}x{$proSize}" : '512x512')),
                         'pro' => $isPro,
                         'icon_only' => $iconOnly,
                         'bg_color' => $bgColor,
+                        'image_model' => $imageModel,
                         'breakdown' => $breakdown,
                     ],
                 );
             }
+
+            // Refresh user balance after debit
+            $user->refresh();
 
             return response()->json([
                 'logo_request_id' => (int) $logoRequest->id,
@@ -1309,6 +1863,7 @@ Example response format:
                 'prompt' => $prompt,
                 'seed' => $seed,
                 'bg_color' => $bgColor,
+                'credit_balance' => (float) $user->credit_balance,
                 'cost' => [
                     'image_count' => $actualImageCount,
                     'cost_per_image' => $costEstimate['cost_per_image'],
@@ -1318,21 +1873,48 @@ Example response format:
         } catch (\Exception $e) {
             $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
 
-            $logoRequest->update([
-                'status' => 'error',
-                'error_message' => $e->getMessage(),
-                'response_time_ms' => $elapsedMs,
-            ]);
+            try {
+                $logoRequest->update([
+                    'status' => 'error',
+                    'error_message' => $e->getMessage(),
+                    'response_time_ms' => $elapsedMs,
+                ]);
+            } catch (\Throwable $_) {}
 
-            $priceLog->update([
-                'status' => 'error',
-                'response_time_ms' => $elapsedMs,
-            ]);
+            try {
+                $priceLog->update([
+                    'status' => 'error',
+                    'response_time_ms' => $elapsedMs,
+                ]);
+            } catch (\Throwable $_) {}
 
             return response()->json([
-                'error' => 'Logo generation failed: ' . $e->getMessage(),
+                'error' => $this->friendlyErrorMessage('Logo generation failed: ' . $e->getMessage()),
             ], 500);
         }
+    }
+
+    /**
+     * Convert raw API error messages into user-friendly text.
+     */
+    private function friendlyErrorMessage(string $raw): string
+    {
+        if (str_contains($raw, 'content filters') || str_contains($raw, 'content_policy') || str_contains($raw, 'safety system')) {
+            return 'Your prompt was flagged by the AI safety filter. Please rephrase your description and try again — avoid violent, sexual, or trademarked content.';
+        }
+        if (str_contains($raw, 'rate limit') || str_contains($raw, 'Rate limit')) {
+            return 'The AI service is temporarily busy. Please wait a moment and try again.';
+        }
+        if (str_contains($raw, 'Billing hard limit') || str_contains($raw, 'billing')) {
+            return 'DALL-E 3 is temporarily unavailable. Please use another model.';
+        }
+        if (str_contains($raw, 'quota')) {
+            return 'The AI service quota has been reached. Please try again later or switch to a different model.';
+        }
+        if (str_contains($raw, 'invalid_api_key') || str_contains($raw, 'Incorrect API key')) {
+            return 'There is a configuration issue with the AI service. Please contact support.';
+        }
+        return $raw;
     }
 
     /**
@@ -1570,7 +2152,7 @@ Example response format:
         );
         $relativePath = sprintf('logos/%d/%d/edited/%s', (int) $user->id, (int) $logoRequest->id, $filename);
         Storage::disk('public')->put($relativePath, $binary);
-        $publicUrl = Storage::disk('public')->url($relativePath);
+        $publicUrl = '/storage/' . $relativePath;
 
         $urls = array_values((array) $logoRequest->image_urls);
         if ($imageIndex >= 0 && $imageIndex < count($urls)) {
@@ -1693,7 +2275,7 @@ Example response format:
         return (2.0 * $shared) / (count($gramsA) + count($gramsB));
     }
 
-    private function storeRemoteLogoImage(int $requestId, int $userId, string $domain, string $imageUrl, int $index): ?array
+    private function storeRemoteLogoImage(int $requestId, int $userId, ?string $domain, string $imageUrl, int $index): ?array
     {
         try {
             $response = Http::timeout(45)->get($imageUrl);
@@ -1723,7 +2305,7 @@ Example response format:
                 }
             }
 
-            $safeDomain = Str::slug($domain) ?: 'logo';
+            $safeDomain = $domain ? (Str::slug($domain) ?: 'logo') : 'logo';
             $filename = sprintf('%s-%d-%02d.%s', $safeDomain, $requestId, $index, $extension);
             $relativePath = sprintf('logos/%d/%d/%s', $userId, $requestId, $filename);
 
@@ -1731,7 +2313,7 @@ Example response format:
 
             return [
                 'path' => $relativePath,
-                'url' => Storage::disk('public')->url($relativePath),
+                'url' => '/storage/' . $relativePath,
             ];
         } catch (\Throwable $e) {
             \Log::warning('Exception while storing generated logo image', [
@@ -1774,6 +2356,8 @@ Example response format:
             'user_id' => $request->user()->id,
             'domain' => $domain,
             'style' => $style . '_pro',
+            'model' => 'fal-ai/flux-pro/v1.1-ultra',
+            'seed_number' => is_numeric($seed) ? (int) $seed : null,
             'prompt' => $prompt,
             'status' => 'pending',
         ]);
@@ -2032,32 +2616,77 @@ Example response format:
             'image_url' => 'required|string',
         ]);
 
-        $imageUrl = $request->input('image_url');
-        $falKey = config('services.fal.key');
+        // ── Balance check for background removal ($0.01) ──
+        $user = $request->user();
+        $bgRemovalCost = 0.01;
+        if ((float) $user->credit_balance < $bgRemovalCost) {
+            return response()->json([
+                'error' => 'Insufficient balance. Background removal costs ~$0.01. Please add credits.',
+                'credit_balance' => (float) $user->credit_balance,
+            ], 402);
+        }
 
+        $imageUrl = $request->input('image_url');
         $startTime = microtime(true);
 
         try {
+            // Download the image so we can upload it as a file to Recraft
+            // Handle local storage paths (e.g. /storage/logos/...)
+            if (str_starts_with($imageUrl, '/storage/')) {
+                $localPath = storage_path('app/public/' . substr($imageUrl, 9));
+                if (!file_exists($localPath)) {
+                    return response()->json([
+                        'error' => 'Source image not found on disk.',
+                    ], 500);
+                }
+                $imageContents = file_get_contents($localPath);
+            } elseif (str_starts_with($imageUrl, 'data:')) {
+                // Handle base64 data URIs
+                $parts = explode(',', $imageUrl, 2);
+                $imageContents = base64_decode($parts[1] ?? '');
+            } else {
+                $imageContents = Http::timeout(30)->get($imageUrl)->body();
+            }
+
+            if (!$imageContents) {
+                return response()->json([
+                    'error' => 'Could not download the source image.',
+                ], 500);
+            }
+
+            // Determine file extension from URL or default to png
+            $ext = 'png';
+            if (preg_match('/\.(png|jpg|jpeg|webp|svg)(\?|$)/i', $imageUrl, $m)) {
+                $ext = strtolower($m[1]);
+            }
+
+            $recraftKey = config('services.recraft.key');
+            $recraftBaseUrl = config('services.recraft.base_url', 'https://external.api.recraft.ai');
+
             $bgResponse = Http::withHeaders([
-                'Authorization' => 'Key ' . $falKey,
-                'Content-Type' => 'application/json',
-            ])->timeout(60)->post('https://fal.run/fal-ai/birefnet', [
-                'image_url' => $imageUrl,
-                'model' => 'General Use (Light)',
-                'operating_resolution' => '1024x1024',
-                'output_format' => 'png',
+                'Authorization' => 'Bearer ' . $recraftKey,
+            ])->timeout(60)->attach(
+                'file', $imageContents, 'logo.' . $ext
+            )->post($recraftBaseUrl . '/v1/images/removeBackground', [
+                'response_format' => 'url',
             ]);
 
             if (!$bgResponse->successful()) {
-                $bgError = $bgResponse->json('detail') ?? $bgResponse->json('message') ?? 'Unknown error';
-                \Log::error('Background removal failed', ['status' => $bgResponse->status(), 'body' => $bgResponse->body()]);
+                $bgError = $bgResponse->json('error.message')
+                    ?? $bgResponse->json('detail')
+                    ?? $bgResponse->json('message')
+                    ?? 'Unknown error (HTTP ' . $bgResponse->status() . ')';
+                \Log::error('Recraft background removal failed', [
+                    'status' => $bgResponse->status(),
+                    'body' => substr($bgResponse->body(), 0, 500),
+                ]);
                 return response()->json([
                     'error' => 'Background removal failed: ' . $bgError,
                 ], 500);
             }
 
             $bgData = $bgResponse->json();
-            $transparentUrl = $bgData['image']['url'] ?? null;
+            $transparentUrl = $bgData['image']['url'] ?? ($bgData['data'][0]['url'] ?? null);
 
             if (!$transparentUrl) {
                 return response()->json([
@@ -2067,31 +2696,34 @@ Example response format:
 
             $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
 
+            // Recraft remove_bg costs 10 units = $0.01
+            $cost = \App\Services\RecraftPricing::estimate('remove_bg', 'tools')['usd'];
+
             // Log the cost
             AiLogoPrice::create([
                 'user_id' => $request->user()->id,
                 'session' => session()->getId(),
                 'user_email' => $request->user()->email,
                 'request_type' => 'logo_bg_removal',
-                'model_name' => 'fal-ai/birefnet',
+                'model_name' => 'recraft/removeBackground',
                 'image_count' => 1,
                 'image_size' => '1024x1024',
                 'num_inference_steps' => 0,
                 'guidance_scale' => 0,
-                'cost_per_image' => 0.005,
-                'estimated_cost_usd' => 0.005,
-                'actual_cost_usd' => 0.005,
+                'cost_per_image' => $cost,
+                'estimated_cost_usd' => $cost,
+                'actual_cost_usd' => $cost,
                 'status' => 'completed',
-                'prompt_preview' => 'Background removal via birefnet',
+                'prompt_preview' => 'Background removal via Recraft',
                 'response_time_ms' => $elapsedMs,
             ]);
 
             // Deduct cost from credit balance
             CreditTransaction::debit(
                 userId: $request->user()->id,
-                amount: 0.005,
+                amount: $cost,
                 service: 'logo_bg_removal',
-                modelName: 'fal-ai/birefnet',
+                modelName: 'recraft/removeBackground',
                 description: 'Logo background removal',
             );
 
@@ -2105,6 +2737,154 @@ Example response format:
             return response()->json([
                 'error' => 'Background removal failed: ' . $e->getMessage(),
             ], 500);
+        }
+    }
+
+    /**
+     * Convert a hex colour to an approximate human-readable name.
+     * DALL-E responds much better to named colours than raw hex codes.
+     */
+    private static function hexToColorName(string $hex): string
+    {
+        $hex = ltrim($hex, '#');
+        if (strlen($hex) === 3) {
+            $hex = $hex[0].$hex[0].$hex[1].$hex[1].$hex[2].$hex[2];
+        }
+        $r = hexdec(substr($hex, 0, 2));
+        $g = hexdec(substr($hex, 2, 2));
+        $b = hexdec(substr($hex, 4, 2));
+
+        // Named colour map — closest match by Euclidean distance
+        $colors = [
+            'red'           => [255, 0, 0],
+            'dark red'      => [139, 0, 0],
+            'crimson'       => [220, 20, 60],
+            'orange red'    => [255, 69, 0],
+            'orange'        => [255, 165, 0],
+            'dark orange'   => [255, 140, 0],
+            'gold'          => [255, 215, 0],
+            'yellow'        => [255, 255, 0],
+            'lime green'    => [50, 205, 50],
+            'green'         => [0, 128, 0],
+            'dark green'    => [0, 100, 0],
+            'emerald green' => [80, 200, 120],
+            'teal'          => [0, 128, 128],
+            'cyan'          => [0, 255, 255],
+            'sky blue'      => [135, 206, 235],
+            'blue'          => [0, 0, 255],
+            'royal blue'    => [65, 105, 225],
+            'navy blue'     => [0, 0, 128],
+            'dark blue'     => [0, 0, 139],
+            'electric purple'=> [191, 0, 255],
+            'purple'        => [128, 0, 128],
+            'dark purple'   => [48, 0, 48],
+            'magenta'       => [255, 0, 255],
+            'hot pink'      => [255, 105, 180],
+            'pink'          => [255, 192, 203],
+            'brown'         => [139, 69, 19],
+            'maroon'        => [128, 0, 0],
+            'white'         => [255, 255, 255],
+            'light gray'    => [211, 211, 211],
+            'gray'          => [128, 128, 128],
+            'dark gray'     => [64, 64, 64],
+            'black'         => [0, 0, 0],
+            'coral'         => [255, 127, 80],
+            'salmon'        => [250, 128, 114],
+            'olive'         => [128, 128, 0],
+            'mint green'    => [152, 255, 152],
+            'lavender'      => [230, 230, 250],
+            'indigo'        => [75, 0, 130],
+            'turquoise'     => [64, 224, 208],
+        ];
+
+        $bestName = 'color';
+        $bestDist = PHP_INT_MAX;
+        foreach ($colors as $name => [$cr, $cg, $cb]) {
+            $dist = ($r - $cr) ** 2 + ($g - $cg) ** 2 + ($b - $cb) ** 2;
+            if ($dist < $bestDist) {
+                $bestDist = $dist;
+                $bestName = $name;
+            }
+        }
+
+        return $bestName;
+    }
+
+    /**
+     * Programmatically strip the background from an AI-generated SVG.
+     *
+     * AI-generated SVGs (e.g. Recraft) typically include the background as the
+     * first <rect> or <path> child of the root <svg>. This removes that element
+     * at zero cost, giving a transparent-background SVG.
+     */
+    private function removeSvgBackground(string $svgContent): ?string
+    {
+        try {
+            $dom = new \DOMDocument();
+            // Suppress warnings from potentially messy SVG markup
+            @$dom->loadXML($svgContent);
+
+            $svgElements = $dom->getElementsByTagName('svg');
+            if ($svgElements->length === 0) {
+                return null;
+            }
+
+            $svg = $svgElements->item(0);
+
+            // Get the SVG's viewBox or width/height to determine full-canvas coverage
+            $viewBox = $svg->getAttribute('viewBox');
+            $svgWidth = $svg->getAttribute('width');
+            $svgHeight = $svg->getAttribute('height');
+
+            // Find the first child element (skip text nodes)
+            $firstElement = null;
+            foreach ($svg->childNodes as $child) {
+                if ($child->nodeType === XML_ELEMENT_NODE) {
+                    $firstElement = $child;
+                    break;
+                }
+            }
+
+            if (!$firstElement) {
+                return null;
+            }
+
+            $shouldRemove = false;
+
+            if ($firstElement->tagName === 'rect') {
+                // Check if it's a full-canvas rectangle (background)
+                $x = (float) ($firstElement->getAttribute('x') ?: 0);
+                $y = (float) ($firstElement->getAttribute('y') ?: 0);
+                $w = $firstElement->getAttribute('width');
+                $h = $firstElement->getAttribute('height');
+
+                // If rect starts at origin and matches SVG dimensions, it's a background
+                if ($x <= 0 && $y <= 0 && $w && $h) {
+                    $shouldRemove = true;
+                }
+            } elseif ($firstElement->tagName === 'path') {
+                // Some SVGs use a path for the background — check if it has a fill
+                // that looks like a solid background (no stroke, simple fill)
+                $d = $firstElement->getAttribute('d');
+                $fill = $firstElement->getAttribute('fill');
+                // A background path is typically a simple rectangle-like path (M...H...V...Z)
+                if ($fill && preg_match('/^[Mm]\s*[\d.\-]+[\s,]+[\d.\-]+\s*[HhVv]/', $d)) {
+                    $shouldRemove = true;
+                }
+            }
+
+            if ($shouldRemove) {
+                $svg->removeChild($firstElement);
+            }
+
+            $result = $dom->saveXML();
+            // Remove XML declaration if present, keep just the SVG
+            $result = preg_replace('/^<\?xml[^?]*\?>\s*/i', '', $result);
+
+            return $result;
+        } catch (\Exception $e) {
+            \Log::warning('SVG background removal parse error', ['error' => $e->getMessage()]);
+            return null;
         }
     }
 }

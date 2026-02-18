@@ -61,14 +61,22 @@ return [
         'image_model' => env('OPENAI_IMAGE_MODEL', 'dall-e-3'),
         'base_url' => env('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
         'pricing' => [
-            'dalle3_1024x1024' => 0.040, // $0.040 per standard 1024x1024 image
-            'dalle3_1024x1792' => 0.080, // $0.080 per standard 1024x1792 image
-            'dalle3_1792x1024' => 0.080, // $0.080 per standard 1792x1024 image
+            'dalle3_standard_1024x1024' => 0.040,
+            'dalle3_standard_1024x1792' => 0.080,
+            'dalle3_standard_1792x1024' => 0.080,
+            'dalle3_hd_1024x1024' => 0.080,
+            'dalle3_hd_1024x1792' => 0.120,
+            'dalle3_hd_1792x1024' => 0.120,
         ],
     ],
 
     'fal' => [
         'key' => env('FAL_AI_KEY'),
+    ],
+
+    'recraft' => [
+        'key' => env('RECRAFT_KEY'),
+        'base_url' => env('RECRAFT_BASE_URL', 'https://external.api.recraft.ai'),
     ],
 
     'logo_editor_enabled' => env('LOGO_EDITOR_ENABLED', false),

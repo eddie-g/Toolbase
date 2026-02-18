@@ -133,6 +133,7 @@ Route::post('/domain-search/describe-logo', [DomainSearchController::class, 'des
 Route::post('/domain-search/upscale-logo', [DomainSearchController::class, 'upscaleLogo'])->name('domainSearch.upscaleLogo');
 Route::get('/domain-search/upscale-logo', fn () => response()->json(['error' => 'POST method required.'], 405));
 Route::post('/domain-search/remove-logo-bg', [DomainSearchController::class, 'removeLogoBg'])->name('domainSearch.removeLogoBg');
+Route::get('/domain-search/remove-logo-bg', fn () => response()->json(['error' => 'POST method required.'], 405));
 Route::get('/logos/{logoRequest}/edit', [DomainSearchController::class, 'editLogo'])->name('logos.edit');
 Route::post('/logos/{logoRequest}/save-edited', [DomainSearchController::class, 'saveEditedLogo'])->name('logos.saveEdited');
 
