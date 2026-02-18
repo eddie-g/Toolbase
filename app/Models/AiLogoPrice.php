@@ -100,7 +100,7 @@ class AiLogoPrice extends Model
     }
 
     /**
-     * Estimate logo generation cost from real fal.ai pricing.
+     * Estimate logo generation cost from real fal.ai pricing with 50% markup.
      *
      * @param int    $imageCount  Number of images
      * @param bool   $isPro       Whether using flux-pro/v1.1
@@ -115,60 +115,155 @@ class AiLogoPrice extends Model
         int $proSize = 1024,
         string $style = 'professional',
         string $bgColor = 'white',
+        string $outputFormat = 'raster',
     ): array {
+        $resolution = $isPro ? $proSize : 512;
+        $modelName = $isPro ? 'flux-pro' : 'flux-schnell';
+        $resolutionStr = "{$resolution}x{$resolution}";
+        
+        // Try to get pricing from ai_rates table
+        $dbRate = \App\Models\AiRate::where('model_name', $modelName)
+            ->where('model_variant', 'standard')
+            ->where('resolution', $resolutionStr)
+            ->where('is_active', true)
+            ->first();
+        
         $pricing = self::fetchUnitPrices();
         $source = $pricing['source'];
         $prices = $pricing['prices'];
-
-        // Determine generation model and megapixels
         $modelId = $isPro ? 'fal-ai/flux-pro/v1.1' : 'fal-ai/flux/schnell';
-        $resolution = $isPro ? $proSize : 512;
         $megapixels = ($resolution * $resolution) / 1_000_000;
-
-        // Base generation cost: price_per_megapixel × megapixels × image_count
+        
+        // Calculate base generation cost
         $genPricePerMp = $prices[$modelId]['price'] ?? self::FALLBACK_PRICES[$modelId]['price'];
-        $genCostPerImage = round($genPricePerMp * $megapixels, 6);
+        $baseGenCostPerImage = round($genPricePerMp * $megapixels, 6);
+        
+        // Apply markup to generation cost
+        if ($dbRate) {
+            $genCostPerImage = (float) $dbRate->user_cost_usd;
+            $markupPercentage = (float) $dbRate->markup_percentage;
+        } else {
+            $markupPercentage = 50.00;
+            $genCostPerImage = round($baseGenCostPerImage * 1.5, 6);
+        }
+        
+        $baseGenCostTotal = round($baseGenCostPerImage * $imageCount, 6);
         $genCostTotal = round($genCostPerImage * $imageCount, 6);
 
-        // Add-on costs
+        // Add-on costs (apply same 50% markup)
         $bgRemoveCost = 0;
+        $bgRemoveBaseCost = 0;
         $vectorizeCost = 0;
+        $vectorizeBaseCost = 0;
 
-        // Background removal via birefnet (for transparent or custom hex colors)
+        // Background removal via birefnet
         $needsBgRemove = $bgColor === 'transparent' || preg_match('/^#[0-9a-fA-F]{6}$/', $bgColor);
         if ($needsBgRemove) {
             $birefnetPrice = $prices['fal-ai/birefnet']['price'] ?? self::FALLBACK_PRICES['fal-ai/birefnet']['price'];
-            // birefnet charges per compute-second; typical call ~2-3 seconds
-            $bgRemoveCost = round($birefnetPrice * 3 * $imageCount, 6);
+            $bgRemoveBaseCost = round($birefnetPrice * 3 * $imageCount, 6);
+            $bgRemoveCost = round($bgRemoveBaseCost * 1.5, 6); // 50% markup
         }
 
-        // SVG vectorization via recraft (for vector style)
-        if ($style === 'vector') {
+        // SVG vectorization via recraft
+        $needsVectorize = $outputFormat === 'vector';
+        if ($needsVectorize) {
             $vectorPrice = $prices['fal-ai/recraft/vectorize']['price'] ?? self::FALLBACK_PRICES['fal-ai/recraft/vectorize']['price'];
-            $vectorizeCost = round($vectorPrice * $imageCount, 6);
+            $vectorizeBaseCost = round($vectorPrice * $imageCount, 6);
+            $vectorizeCost = round($vectorizeBaseCost * 1.5, 6); // 50% markup
         }
 
-        $totalCostPerImage = round($genCostPerImage + ($needsBgRemove ? ($birefnetPrice * 3) : 0) + ($style === 'vector' ? $vectorPrice : 0), 6);
+        $baseCostPerImage = round($baseGenCostPerImage + ($needsBgRemove ? ($birefnetPrice * 3) : 0) + ($needsVectorize ? $vectorPrice : 0), 6);
+        $totalCostPerImage = round($genCostPerImage + ($needsBgRemove ? ($bgRemoveCost / $imageCount) : 0) + ($needsVectorize ? ($vectorizeCost / $imageCount) : 0), 6);
+        
+        $baseCostTotal = round($baseGenCostTotal + $bgRemoveBaseCost + $vectorizeBaseCost, 6);
         $totalCost = round($genCostTotal + $bgRemoveCost + $vectorizeCost, 6);
+        $markupAmount = round($totalCost - $baseCostTotal, 6);
 
         return [
             'image_count' => $imageCount,
             'model' => $modelId,
-            'resolution' => "{$resolution}x{$resolution}",
+            'resolution' => $resolutionStr,
             'megapixels' => round($megapixels, 3),
             'cost_per_image' => $totalCostPerImage,
             'estimated_cost_usd' => $totalCost,
+            'base_cost_per_image' => $baseCostPerImage,
+            'base_cost_total' => $baseCostTotal,
+            'markup_percentage' => $markupPercentage,
+            'markup_amount' => $markupAmount,
             'breakdown' => [
                 'generation' => $genCostTotal,
                 'bg_removal' => $bgRemoveCost,
                 'vectorize' => $vectorizeCost,
             ],
-            'source' => $source,
+            'source' => $dbRate ? 'database' : 'static_with_markup',
             'prices' => [
                 'gen_per_mp' => $genPricePerMp,
                 'birefnet_per_sec' => $needsBgRemove ? $birefnetPrice : null,
-                'vectorize_per_img' => $style === 'vector' ? $vectorPrice : null,
+                'vectorize_per_img' => $needsVectorize ? $vectorPrice : null,
             ],
+        ];
+    }
+
+    /**
+     * Estimate cost for DALL-E 3 image generation with 50% markup from ai_rates table.
+     */
+    public static function estimateDalleCost(
+        int $imageCount = 4,
+        string $resolution = '1024x1024',
+        string $quality = 'standard',
+    ): array {
+        // Try to get pricing from ai_rates table
+        $dbRate = \App\Models\AiRate::where('model_name', 'dall-e-3')
+            ->where('model_variant', $quality)
+            ->where('resolution', $resolution)
+            ->where('is_active', true)
+            ->first();
+        
+        // Fallback to static pricing with 50% markup if not in database
+        if ($dbRate) {
+            $baseCost = (float) $dbRate->base_cost_usd;
+            $costPerImage = (float) $dbRate->user_cost_usd;
+            $markupPercentage = (float) $dbRate->markup_percentage;
+        } else {
+            $basePrices = [
+                'standard' => [
+                    '1024x1024' => 0.04,
+                    '1024x1792' => 0.08,
+                    '1792x1024' => 0.08,
+                ],
+                'hd' => [
+                    '1024x1024' => 0.08,
+                    '1024x1792' => 0.12,
+                    '1792x1024' => 0.12,
+                ],
+            ];
+            
+            $baseCost = $basePrices[$quality][$resolution] ?? 0.04;
+            $markupPercentage = 50.00;
+            $costPerImage = round($baseCost * 1.5, 6); // 50% markup
+        }
+
+        $baseCostTotal = round($baseCost * $imageCount, 6);
+        $totalCost = round($costPerImage * $imageCount, 6);
+        $markupAmount = round($totalCost - $baseCostTotal, 6);
+
+        return [
+            'image_count' => $imageCount,
+            'model' => 'dall-e-3',
+            'resolution' => $resolution,
+            'quality' => $quality,
+            'cost_per_image' => $costPerImage,
+            'estimated_cost_usd' => $totalCost,
+            'base_cost_per_image' => $baseCost,
+            'base_cost_total' => $baseCostTotal,
+            'markup_percentage' => $markupPercentage,
+            'markup_amount' => $markupAmount,
+            'breakdown' => [
+                'generation' => $totalCost,
+                'bg_removal' => 0,
+                'vectorize' => 0,
+            ],
+            'source' => $dbRate ? 'database' : 'static_with_markup',
         ];
     }
 

@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
+  <defs>
+    <linearGradient id="silver" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#e8e8e8"/>
+      <stop offset="20%" style="stop-color:#d4d4d4"/>
+      <stop offset="40%" style="stop-color:#f0f0f0"/>
+      <stop offset="60%" style="stop-color:#c8c8c8"/>
+      <stop offset="80%" style="stop-color:#e0e0e0"/>
+      <stop offset="100%" style="stop-color:#d0d0d0"/>
+    </linearGradient>
+    <linearGradient id="silver2" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#f5f5f5;stop-opacity:0.6"/>
+      <stop offset="100%" style="stop-color:#b0b0b0;stop-opacity:0.3"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="35%" cy="30%" r="55%">
+      <stop offset="0%" style="stop-color:#ffffff;stop-opacity:0.5"/>
+      <stop offset="100%" style="stop-color:#ffffff;stop-opacity:0"/>
+    </radialGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#000" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+  <rect width="400" height="400" fill="#f5f5f5"/>
+  <path d="M200 80 C140 80 90 140 90 210 C90 290 140 340 200 350 C260 340 310 290 310 210 C310 140 260 80 200 80 Z" fill="url(#silver)" stroke="#b8b8b8" stroke-width="1" filter="url(#shadow)"/>
+  <path d="M200 80 C140 80 90 140 90 210 C90 290 140 340 200 350 C260 340 310 290 310 210 C310 140 260 80 200 80 Z" fill="url(#glow)"/>
+  <circle cx="310" cy="200" r="50" fill="#f5f5f5"/>
+  <circle cx="310" cy="200" r="50" fill="none" stroke="#b8b8b8" stroke-width="0.5" stroke-dasharray="2,2"/>
+  <path d="M200 80 C195 60 210 40 220 35" stroke="url(#silver)" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <path d="M220 38 C235 30 255 35 260 50 C250 45 230 45 220 38 Z" fill="url(#silver)" stroke="#b8b8b8" stroke-width="0.5"/>
+  <g stroke="#a0a0a0" stroke-width="0.8" fill="none" opacity="0.5">
+    <path d="M140 220 L160 220 L160 240 L180 240"/>
+    <path d="M140 250 L155 250 L155 270"/>
+    <path d="M150 200 L170 200"/>
+    <circle cx="180" cy="240" r="2" fill="#a0a0a0"/>
+    <circle cx="155" cy="270" r="2" fill="#a0a0a0"/>
+    <circle cx="170" cy="200" r="2" fill="#a0a0a0"/>
+    <rect x="160" y="280" width="30" height="15" rx="2"/>
+    <path d="M190 287 L210 287"/>
+  </g>
+  <text x="200" y="390" text-anchor="middle" fill="#999" font-family="system-ui,sans-serif" font-size="14" font-weight="600" letter-spacing="2">CHROME</text>
+</svg>
