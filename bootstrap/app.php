@@ -1,5 +1,10 @@
 <?php
 
+// Ensure files written by PHP (view cache, config cache, etc.) are always
+// world-writable. This prevents permission errors when artisan runs as root
+// (via `sail artisan`) and the sail web process later tries to overwrite them.
+umask(0000);
+
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
