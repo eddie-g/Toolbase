@@ -1254,72 +1254,61 @@ Example response format:
             $lines = [];
             $subjectDesc = trim($customPrompt ?? '');
 
-            // ── Style + Theme (no need to say "vector" — the endpoint handles that) ──
-            $theme = match($style) {
-                'fantasy' => 'dark fantasy, mythical',
-                'future'  => 'futuristic sci-fi, cyberpunk',
-                'retro'   => 'vibrant retro, colorful sunburst, vacation feel',
-                default   => 'premium corporate, clean',
-            };
-            $lines[] = "Style: Logo, flat minimalist emblem. {$theme}.";
+            // Style
+            $lines[] = 'Style: Flat minimalist logo.';
 
-            // ── Subject ──
-            if ($iconOnly) {
-                $lines[] = $subjectDesc
-                    ? "Subject: Bold geometric silhouette of {$subjectDesc}. All elements merged into one unified icon."
-                    : 'Subject: Abstract geometric silhouette symbol, one unified icon shape.';
-            } else {
-                $lines[] = $subjectDesc
-                    ? "Subject: Logo with \"{$brandUpper}\" and a geometric silhouette of {$subjectDesc}, merged into one emblem."
-                    : "Subject: Logo with \"{$brandUpper}\" and a geometric silhouette emblem mark.";
-            }
-
-            // ── Silhouette ──
-            $lines[] = 'Silhouette: Single filled shape like a rubber stamp. No internal line-art or contour lines. Features implied only by outer contour. Negative space only as clean cut-outs.';
-
-            // ── Text ──
-            $lines[] = $iconOnly
-                ? 'Text: Zero text, letters, or characters of any kind.'
-                : "Text: Only \"{$brandUpper}\" in clean sans-serif. No taglines or decorative text.";
-
-            // ── Design ──
-            $lines[] = 'Design: Thick monolithic lines, bold chunky shapes, smooth geometric curves. Recognisable at any size.';
-
-            // ── Color ──
-            if (!empty($colorPalette) && is_array($colorPalette)) {
-                $paletteHexes = implode(', ', $colorPalette);
-                $colorDesc = $paletteHexes;
-            } else {
-                $colorDesc = match($style) {
-                    'fantasy' => 'emerald green and antique gold',
-                    'future'  => 'neon cyan and electric purple',
-                    'retro'   => 'red, green, blue and yellow',
-                    default   => 'navy blue and gold',
-                };
-            }
-            $lines[] = "Color: Silhouette uses {$colorDesc}. Colors apply only to the logo shape, not the background.";
-
-            // ── Background ──
-            $bgDesc = match($bgColor) {
-                'black' => '#000000 black',
-                'transparent' => 'transparent',
-                default => str_starts_with($bgColor, '#')
-                    ? $bgColor
-                    : '#FFFFFF white',
-            };
-            $lines[] = "Background: Solid {$bgDesc}, uniform, no texture or gradient.";
-
-            // ── Composition + Rendering ──
-            $lines[] = 'Composition: Centered 1:1 square, equal breathing room, bilateral symmetry.';
-            $lines[] = 'Rendering: No gradients, shadows, glows, bevels or textures. Flat color fills, clean edges. Production-ready logo mark.';
-
-            // ── Shape Container ──
+            // PRIMARY STRUCTURE (only if shape is not 'none')
             if ($logoShape && $logoShape !== 'none') {
                 $shapeUpper = strtoupper($logoShape);
-                $lines[] = "Container: Centered logo inside a PERFECT {$shapeUpper}-shaped geometric container.";
-            } else {
-                $lines[] = 'Container: The logo is free-floating with NO container, NO badge, NO emblem, NO geometric frame, and NO enclosing shape.';
+                $enclosure = $iconOnly ? 'silhouette' : 'logo+text';
+                $lines[] = "PRIMARY: PERFECT {$shapeUpper} container is dominant. {$enclosure} fully enclosed inside. Must remain outermost shape.";
             }
+
+            // Subject
+            $subject = $subjectDesc ?: ($iconOnly ? 'Abstract geometric symbol' : 'Emblem mark');
+            $lines[] = $iconOnly 
+                ? "Subject: Bold silhouette of {$subject}."
+                : "Subject: {$subject} with \"{$brandUpper}\".";
+
+            // Silhouette + Design
+            $lines[] = 'Single filled shape. No line-art. Outer contour only. Negative space as cut-outs. Thick shapes, smooth curves.';
+
+            // Color
+            if (!empty($colorPalette) && is_array($colorPalette)) {
+                $colorDesc = implode(', ', $colorPalette);
+            } else {
+                $colorDesc = match($style) {
+                    'fantasy' => 'emerald green, antique gold',
+                    'future'  => 'neon cyan, electric purple',
+                    'retro'   => 'red, green, blue, yellow',
+                    default   => 'navy blue, gold',
+                };
+            }
+            $colorLine = "Color: {$colorDesc}.";
+            if ($logoShape && $logoShape !== 'none') {
+                $colorLine .= ' Container uses same colors.';
+            }
+            $lines[] = $colorLine;
+
+            // Background
+            $bgDesc = match($bgColor) {
+                'black' => '#000000',
+                'transparent' => 'transparent',
+                default => str_starts_with($bgColor, '#') ? $bgColor : '#FFFFFF',
+            };
+            $lines[] = "Background: {$bgDesc}.";
+
+            // Composition + Rendering
+            $comp = 'Centered 1:1.';
+            if ($logoShape && $logoShape !== 'none') {
+                $comp .= ' ' . ucfirst($logoShape) . ' dominant.';
+            }
+            $lines[] = $comp;
+            $lines[] = 'Flat fills only. No gradients, shadows, glows, textures.';
+
+            // Text
+            $textLine = $iconOnly ? 'Text: None.' : "Text: \"{$brandUpper}\" in sans-serif.";
+            $lines[] = $textLine;
 
             $prompt = implode("\n", $lines);
         }
@@ -1327,10 +1316,10 @@ Example response format:
         // Determine model name for logging
         if ($imageModel === 'recraft') {
             $formatTag = $outputFormat === 'vector' ? 'vector' : 'raster';
-            $modelName = $isPro ? "recraft-v3-{$formatTag}" : "recraft-v2-{$formatTag}";
+            $modelName = $isPro ? "recraft-v4-{$formatTag}" : "recraft-v2-{$formatTag}";
             $imageSize = '1024x1024';
             $requestType = $isPro
-                ? ($outputFormat === 'vector' ? 'logo_recraft_v3' : 'logo_recraft_v3_raster')
+                ? ($outputFormat === 'vector' ? 'logo_recraft_v4' : 'logo_recraft_v4_raster')
                 : ($outputFormat === 'vector' ? 'logo_recraft_vector' : 'logo_recraft_raster');
         } elseif ($imageModel === 'dalle') {
             $modelName = 'dall-e-3';

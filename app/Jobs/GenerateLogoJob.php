@@ -344,7 +344,7 @@ class GenerateLogoJob implements ShouldQueue
         $recraftBody = [
             'prompt' => $prompt,
             'style' => $recraftStyle,
-            'model' => $isPro ? 'recraftv3' : 'recraftv2',
+            'model' => $isPro ? 'recraftv4' : 'recraftv2',
             'n' => $imageCount,
             'size' => '1024x1024',
             'response_format' => 'url',
@@ -367,7 +367,7 @@ class GenerateLogoJob implements ShouldQueue
             $recraftBody['controls'] = ['colors' => $recraftColors];
         }
 
-        // No text control (V3 only)
+        // No text control (V3+ only)
         if ($iconOnly && $isPro) {
             $recraftBody['controls'] = array_merge($recraftBody['controls'] ?? [], ['no_text' => true]);
         }

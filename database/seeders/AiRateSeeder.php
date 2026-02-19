@@ -142,7 +142,7 @@ class AiRateSeeder extends Seeder
                 'notes' => 'Recraft V2 Vector (44 units @ $0.001/unit)',
             ],
             
-            // Recraft V3 (PRO)
+            // Recraft V3 (Deprecated - replaced by V4)
             [
                 'model_name' => 'recraft-v3',
                 'model_variant' => 'raster',
@@ -150,8 +150,8 @@ class AiRateSeeder extends Seeder
                 'base_cost_usd' => 0.040,
                 'markup_percentage' => 50.00,
                 'user_cost_usd' => 0.060,
-                'is_active' => true,
-                'notes' => 'Recraft V3 Raster (40 units @ $0.001/unit)',
+                'is_active' => false,
+                'notes' => 'Recraft V3 Raster (40 units @ $0.001/unit) - Deprecated',
             ],
             [
                 'model_name' => 'recraft-v3',
@@ -160,8 +160,30 @@ class AiRateSeeder extends Seeder
                 'base_cost_usd' => 0.080,
                 'markup_percentage' => 50.00,
                 'user_cost_usd' => 0.120,
+                'is_active' => false,
+                'notes' => 'Recraft V3 Vector (80 units @ $0.001/unit) - Deprecated',
+            ],
+            
+            // Recraft V4 (PRO)
+            [
+                'model_name' => 'recraft-v4',
+                'model_variant' => 'raster',
+                'resolution' => '1024x1024',
+                'base_cost_usd' => 0.040,
+                'markup_percentage' => 50.00,
+                'user_cost_usd' => 0.060,
                 'is_active' => true,
-                'notes' => 'Recraft V3 Vector (80 units @ $0.001/unit)',
+                'notes' => 'Recraft V4 Raster (40 units @ $0.001/unit)',
+            ],
+            [
+                'model_name' => 'recraft-v4',
+                'model_variant' => 'vector',
+                'resolution' => '1024x1024',
+                'base_cost_usd' => 0.080,
+                'markup_percentage' => 50.00,
+                'user_cost_usd' => 0.120,
+                'is_active' => true,
+                'notes' => 'Recraft V4 Vector (80 units @ $0.001/unit)',
             ],
         ];
 
