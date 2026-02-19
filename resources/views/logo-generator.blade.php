@@ -975,13 +975,17 @@
                         return;
                     }
 
-                    // Step 2: Poll for results every 2 seconds
+                    // Step 2: Poll for completion with adaptive interval.
+                    // Interval backs off while all jobs are still pending (avoids hammering),
+                    // but resets to a short value whenever any job resolves so remaining
+                    // jobs are detected quickly (they usually finish within seconds of each other).
                     const completedJobs = new Set();
                     const failedJobs = new Set();
                     const maxPollTime = 5 * 60 * 1000; // 5 min timeout
                     const pollStart = Date.now();
-                    let pollInterval = 4000;       // start at 4 s
-                    const maxPollInterval = 15000; // cap at 15 s (v4 takes 10–30 s)
+                    const minPollInterval = 3000; // floor: 3 s
+                    const maxPollInterval = 8000; // ceiling: 8 s — reset to min on any completion
+                    let pollInterval = minPollInterval;
 
                     while (completedJobs.size + failedJobs.size < pendingJobs.length) {
                         if (Date.now() - pollStart > maxPollTime) {
@@ -990,8 +994,8 @@
                         }
 
                         await new Promise(resolve => setTimeout(resolve, pollInterval));
-                        pollInterval = Math.min(Math.round(pollInterval * 1.6), maxPollInterval);
 
+                        let anyResolved = false;
                         for (const jobId of pendingJobs) {
                             if (completedJobs.has(jobId) || failedJobs.has(jobId)) continue;
 
@@ -1003,6 +1007,7 @@
 
                                 if (statusData.status === 'completed') {
                                     completedJobs.add(jobId);
+                                    anyResolved = true;
 
                                     if (statusData.seed) {
                                         this.logoSeedNumber = statusData.seed;
@@ -1025,6 +1030,7 @@
                                     }
                                 } else if (statusData.status === 'failed' || statusData.status === 'error') {
                                     failedJobs.add(jobId);
+                                    anyResolved = true;
                                     this.logoError = statusData.error || 'Logo generation failed.';
 
                                     if (statusData.credit_balance !== undefined) {
@@ -1035,6 +1041,14 @@
                             } catch (e) {
                                 // Network error during poll — will retry next iteration
                             }
+                        }
+
+                        // A job just finished — siblings are likely nearly done too, so
+                        // poll quickly. Otherwise back off gradually to ease server load.
+                        if (anyResolved) {
+                            pollInterval = minPollInterval;
+                        } else {
+                            pollInterval = Math.min(Math.round(pollInterval * 1.5), maxPollInterval);
                         }
                     }
 
