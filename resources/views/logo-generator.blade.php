@@ -980,6 +980,8 @@
                     const failedJobs = new Set();
                     const maxPollTime = 5 * 60 * 1000; // 5 min timeout
                     const pollStart = Date.now();
+                    let pollInterval = 4000;       // start at 4 s
+                    const maxPollInterval = 15000; // cap at 15 s (v4 takes 10–30 s)
 
                     while (completedJobs.size + failedJobs.size < pendingJobs.length) {
                         if (Date.now() - pollStart > maxPollTime) {
@@ -987,7 +989,8 @@
                             break;
                         }
 
-                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        await new Promise(resolve => setTimeout(resolve, pollInterval));
+                        pollInterval = Math.min(Math.round(pollInterval * 1.6), maxPollInterval);
 
                         for (const jobId of pendingJobs) {
                             if (completedJobs.has(jobId) || failedJobs.has(jobId)) continue;

@@ -330,7 +330,12 @@ class GenerateLogoJob implements ShouldQueue
     // ──────────────────────────────────────────────────────────────
 
     /**
-     * Generate images via Recraft (v2/v3, raster or vector).
+     * Generate images via Recraft (v4 Pro or v2 regular, raster or vector).
+     *
+     * V4 (Pro): unified endpoint /v1/images/generations, model=recraftv4 or recraftv4_vector.
+     *           `style` and `substyle` are NOT supported by V4.
+     * V2 (Regular): endpoint per type (/raster or /vector), model=recraftv2.
+     *               Supports `style`, `substyle`.
      */
     private function generateRecraft(string $prompt, int $imageCount, string $outputFormat, bool $isPro, string $bgColor, bool $iconOnly, ?array $colorPalette, ?string $recraftSubstyle): array
     {
@@ -338,23 +343,41 @@ class GenerateLogoJob implements ShouldQueue
         $recraftKey = config('services.recraft.key');
         $isVector = $outputFormat === 'vector';
 
-        $recraftStyle = $isVector ? 'vector_illustration' : 'digital_illustration';
-        $recraftEndpoint = $isVector ? '/v1/images/generations/vector' : '/v1/images/generations/raster';
+        if ($isPro) {
+            // ── Recraft V4 ────────────────────────────────────────────────
+            // Single unified endpoint; vector vs raster encoded in model name.
+            // No `style` or `substyle` parameters supported.
+            $recraftEndpoint = '/v1/images/generations';
+            $recraftModel    = $isVector ? 'recraftv4_vector' : 'recraftv4';
 
-        $recraftBody = [
-            'prompt' => $prompt,
-            'style' => $recraftStyle,
-            'model' => $isPro ? 'recraftv4' : 'recraftv2',
-            'n' => $imageCount,
-            'size' => '1024x1024',
-            'response_format' => 'url',
-        ];
+            $recraftBody = [
+                'prompt'          => $prompt,
+                'model'           => $recraftModel,
+                'n'               => $imageCount,
+                'size'            => '1024x1024',
+                'response_format' => 'url',
+            ];
+        } else {
+            // ── Recraft V2 ────────────────────────────────────────────────
+            // Separate endpoints per type; supports style/substyle.
+            $recraftEndpoint = $isVector ? '/v1/images/generations/vector' : '/v1/images/generations/raster';
+            $recraftStyle    = $isVector ? 'vector_illustration' : 'digital_illustration';
 
-        if (!empty($recraftSubstyle)) {
-            $recraftBody['substyle'] = $recraftSubstyle;
+            $recraftBody = [
+                'prompt'          => $prompt,
+                'style'           => $recraftStyle,
+                'model'           => 'recraftv2',
+                'n'               => $imageCount,
+                'size'            => '1024x1024',
+                'response_format' => 'url',
+            ];
+
+            if (!empty($recraftSubstyle)) {
+                $recraftBody['substyle'] = $recraftSubstyle;
+            }
         }
 
-        // Color palette
+        // Color palette — supported by all models
         if (!empty($colorPalette) && is_array($colorPalette)) {
             $recraftColors = [];
             foreach ($colorPalette as $hex) {
@@ -367,12 +390,9 @@ class GenerateLogoJob implements ShouldQueue
             $recraftBody['controls'] = ['colors' => $recraftColors];
         }
 
-        // No text control (V3+ only)
-        if ($iconOnly && $isPro) {
-            $recraftBody['controls'] = array_merge($recraftBody['controls'] ?? [], ['no_text' => true]);
-        }
+        // no_text control is V3 only — not applicable here (v2 or v4)
 
-        // Background color
+        // Background color — supported by all models
         if ($bgColor !== 'white') {
             $bgHex = match($bgColor) {
                 'black' => '#000000',
