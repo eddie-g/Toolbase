@@ -1253,42 +1253,19 @@ Example response format:
         if ($imageModel === 'recraft') {
             $lines = [];
             $subjectDesc = trim($customPrompt ?? '');
-
-            // Style
-            $lines[] = 'Style: Flat minimalist logo.';
-
-            // PRIMARY STRUCTURE (only if shape is not 'none')
-            if ($logoShape && $logoShape !== 'none') {
-                $shapeUpper = strtoupper($logoShape);
-                $enclosure = $iconOnly ? 'silhouette' : 'logo+text';
-                $lines[] = "PRIMARY: PERFECT {$shapeUpper} container is dominant. {$enclosure} fully enclosed inside. Must remain outermost shape.";
-            }
-
-            // Subject
             $subject = $subjectDesc ?: ($iconOnly ? 'Abstract geometric symbol' : 'Emblem mark');
-            $lines[] = $iconOnly 
-                ? "Subject: Bold silhouette of {$subject}."
-                : "Subject: {$subject} with \"{$brandUpper}\".";
 
-            // Silhouette + Design
-            $lines[] = 'Single filled shape. No line-art. Outer contour only. Negative space as cut-outs. Thick shapes, smooth curves.';
-
-            // Color
+            // Color block (shared across all styles)
             if (!empty($colorPalette) && is_array($colorPalette)) {
                 $colorDesc = implode(', ', $colorPalette);
             } else {
                 $colorDesc = match($style) {
-                    'fantasy' => 'emerald green, antique gold',
-                    'future'  => 'neon cyan, electric purple',
+                    'fantasy' => 'emerald green, antique gold, deep crimson',
+                    'future'  => 'neon cyan, electric purple, deep black',
                     'retro'   => 'red, green, blue, yellow',
                     default   => 'navy blue, gold',
                 };
             }
-            $colorLine = "Color: {$colorDesc}.";
-            if ($logoShape && $logoShape !== 'none') {
-                $colorLine .= ' Container uses same colors.';
-            }
-            $lines[] = $colorLine;
 
             // Background
             $bgDesc = match($bgColor) {
@@ -1296,19 +1273,70 @@ Example response format:
                 'transparent' => 'transparent',
                 default => str_starts_with($bgColor, '#') ? $bgColor : '#FFFFFF',
             };
-            $lines[] = "Background: {$bgDesc}.";
 
-            // Composition + Rendering
-            $comp = 'Centered 1:1.';
+            // Shape container block (all styles)
+            $shapeBlock = '';
             if ($logoShape && $logoShape !== 'none') {
-                $comp .= ' ' . ucfirst($logoShape) . ' dominant.';
+                $shapeUpper = strtoupper($logoShape);
+                $enclosure = $iconOnly ? 'subject' : 'logo+text';
+                $shapeBlock = "PRIMARY: PERFECT {$shapeUpper} container is dominant. {$enclosure} fully enclosed inside. Must remain outermost shape.";
             }
-            $lines[] = $comp;
-            $lines[] = 'Flat fills only. No gradients, shadows, glows, textures.';
 
-            // Text
-            $textLine = $iconOnly ? 'Text: None.' : "Text: \"{$brandUpper}\" in sans-serif.";
-            $lines[] = $textLine;
+            if ($style === 'fantasy') {
+                // ── High Fantasy (LOTR-inspired) ───────────────────────────
+                $lines[] = 'Style: High fantasy illustration, Lord of the Rings inspired, rich detail, painterly textures, ornate.';
+                if ($shapeBlock) $lines[] = $shapeBlock;
+                $lines[] = $iconOnly
+                    ? "Subject: {$subject}. Detailed fantasy creature or symbol, intricate linework, fine detail, mythical presence."
+                    : "Subject: {$subject} with \"{$brandUpper}\" in ornate medieval serif typeface with decorative flourishes.";
+                $lines[] = 'Elven scrollwork, ancient runes, enchanted forest motifs, mythical textures, aged parchment feel.';
+                $lines[] = "Colors: {$colorDesc}. Rich shading, metallic highlights, deep jewel tones.";
+                $lines[] = "Background: {$bgDesc}. Centered 1:1.";
+                $lines[] = 'Epic, cinematic, high-detail. No flat fills. No minimalism.';
+                if (!$iconOnly) $lines[] = "Text: \"{$brandUpper}\" only, no other words.";
+
+            } elseif ($style === 'future' || $style === 'scifi') {
+                // ── Futuristic / Sci-Fi ─────────────────────────────────────
+                $lines[] = 'Style: Futuristic sci-fi logo, sleek, high-tech, sharp geometry.';
+                if ($shapeBlock) $lines[] = $shapeBlock;
+                $lines[] = $iconOnly
+                    ? "Subject: {$subject}. Angular geometric symbol, circuit-board details, holographic feel."
+                    : "Subject: {$subject} with \"{$brandUpper}\" in sharp cyberpunk typeface.";
+                $lines[] = "Colors: {$colorDesc}. Glowing neon accents on dark field.";
+                $lines[] = "Background: {$bgDesc}. Centered 1:1.";
+                $lines[] = 'No organic shapes. No gradients except neon glow. No clutter.';
+                if (!$iconOnly) $lines[] = "Text: \"{$brandUpper}\" only.";
+
+            } elseif ($style === 'retro') {
+                // ── Retro ───────────────────────────────────────────────────
+                $lines[] = 'Style: Bold retro vintage logo, screen-print aesthetic, limited palette.';
+                if ($shapeBlock) $lines[] = $shapeBlock;
+                $lines[] = $iconOnly
+                    ? "Subject: {$subject}. Bold retro icon, strong outlines, vintage poster feel."
+                    : "Subject: {$subject} with \"{$brandUpper}\" in a bold retro slab-serif.";
+                $lines[] = "Colors: {$colorDesc}. Hard edges, flat fills, halftone textures.";
+                $lines[] = "Background: {$bgDesc}. Centered 1:1.";
+                $lines[] = 'No photorealism. No gradients. Classic American retro design.';
+                if (!$iconOnly) $lines[] = "Text: \"{$brandUpper}\" only.";
+
+            } else {
+                // ── Flat Minimalist (default: minimalist, chrome, default) ──
+                $lines[] = 'Style: Flat minimalist logo.';
+                if ($shapeBlock) $lines[] = $shapeBlock;
+                $lines[] = $iconOnly
+                    ? "Subject: Bold silhouette of {$subject}."
+                    : "Subject: {$subject} with \"{$brandUpper}\".";
+                $lines[] = 'Single filled shape. No line-art. Thick shapes, smooth curves. Negative space as cut-outs.';
+                $colorLine = "Color: {$colorDesc}.";
+                if ($logoShape && $logoShape !== 'none') $colorLine .= ' Container uses same colors.';
+                $lines[] = $colorLine;
+                $lines[] = "Background: {$bgDesc}.";
+                $comp = 'Centered 1:1.';
+                if ($logoShape && $logoShape !== 'none') $comp .= ' ' . ucfirst($logoShape) . ' dominant.';
+                $lines[] = $comp;
+                $lines[] = 'Flat fills only. No gradients, shadows, glows, textures.';
+                $lines[] = $iconOnly ? 'Text: None.' : "Text: \"{$brandUpper}\" in sans-serif.";
+            }
 
             $prompt = implode("\n", $lines);
         }
