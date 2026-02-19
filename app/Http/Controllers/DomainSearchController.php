@@ -946,6 +946,7 @@ Example response format:
             'image_format' => 'nullable|string|in:png,bmp',
             'recraft_substyle' => 'nullable|string|max:60',
             'logo_shape' => 'nullable|string|in:none,circle,hexagon,triangle,square,pentagon',
+            'logo_detail' => 'nullable|string|in:min,medium,max',
             'color_palette' => 'nullable|array|max:5',
             'color_palette.*' => 'string|max:20',
         ]);
@@ -974,6 +975,7 @@ Example response format:
         $colorPalette = $request->input('color_palette');
         $recraftSubstyle = $request->input('recraft_substyle');
         $logoShape = $request->input('logo_shape', 'none');
+        $logoDetail = $request->input('logo_detail', 'max');
 
         // DALL-E always produces raster
         if ($imageModel === 'dalle') {
@@ -1284,49 +1286,119 @@ Example response format:
 
             if ($style === 'fantasy') {
                 // ── High Fantasy (LOTR-inspired) ───────────────────────────
-                $lines[] = 'Style: High fantasy illustration, Lord of the Rings inspired, rich detail, painterly textures, ornate.';
+                $lines[] = match($logoDetail) {
+                    'min'    => 'Style: Fantasy logo.',
+                    'medium' => 'Style: High fantasy logo, Lord of the Rings inspired, ornate.',
+                    default  => 'Style: High fantasy illustration, Lord of the Rings inspired, rich detail, painterly textures, ornate.',
+                };
                 if ($shapeBlock) $lines[] = $shapeBlock;
-                $lines[] = $iconOnly
-                    ? "Subject: {$subject}. Detailed fantasy creature or symbol, intricate linework, fine detail, mythical presence."
-                    : "Subject: {$subject} with \"{$brandUpper}\" in ornate medieval serif typeface with decorative flourishes.";
-                $lines[] = 'Elven scrollwork, ancient runes, enchanted forest motifs, mythical textures, aged parchment feel.';
-                $lines[] = "Colors: {$colorDesc}. Rich shading, metallic highlights, deep jewel tones.";
+                if ($iconOnly) {
+                    $lines[] = match($logoDetail) {
+                        'min'    => "Subject: {$subject}. Bold fantasy symbol.",
+                        'medium' => "Subject: {$subject}. Fantasy symbol with fine detail and mythical presence.",
+                        default  => "Subject: {$subject}. Detailed fantasy creature or symbol, intricate linework, fine detail, mythical presence.",
+                    };
+                } else {
+                    $lines[] = match($logoDetail) {
+                        'min'    => "Subject: {$subject} with \"{$brandUpper}\" in fantasy serif.",
+                        'medium' => "Subject: {$subject} with \"{$brandUpper}\" in ornate medieval serif with decorative flourishes.",
+                        default  => "Subject: {$subject} with \"{$brandUpper}\" in ornate medieval serif typeface with decorative flourishes.",
+                    };
+                }
+                if ($logoDetail !== 'min') {
+                    $lines[] = $logoDetail === 'medium'
+                        ? 'Scrollwork, rune accents, enchanted forest motifs.'
+                        : 'Elven scrollwork, ancient runes, enchanted forest motifs, mythical textures, aged parchment feel.';
+                }
+                $lines[] = $logoDetail === 'max'
+                    ? "Colors: {$colorDesc}. Rich shading, metallic highlights, deep jewel tones."
+                    : "Colors: {$colorDesc}.";
                 $lines[] = "Background: {$bgDesc}. Centered 1:1.";
-                $lines[] = 'Epic, cinematic, high-detail. No flat fills. No minimalism.';
+                if ($logoDetail !== 'min') {
+                    $lines[] = $logoDetail === 'medium'
+                        ? 'No flat fills. No minimalism.'
+                        : 'Epic, cinematic, high-detail. No flat fills. No minimalism.';
+                }
                 if (!$iconOnly) $lines[] = "Text: \"{$brandUpper}\" only, no other words.";
 
             } elseif ($style === 'future' || $style === 'scifi') {
                 // ── Futuristic / Sci-Fi ─────────────────────────────────────
-                $lines[] = 'Style: Futuristic sci-fi logo, sleek, high-tech, sharp geometry.';
+                $lines[] = match($logoDetail) {
+                    'min'    => 'Style: Futuristic sci-fi logo.',
+                    'medium' => 'Style: Futuristic sci-fi logo, sleek, high-tech.',
+                    default  => 'Style: Futuristic sci-fi logo, sleek, high-tech, sharp geometry.',
+                };
                 if ($shapeBlock) $lines[] = $shapeBlock;
-                $lines[] = $iconOnly
-                    ? "Subject: {$subject}. Angular geometric symbol, circuit-board details, holographic feel."
-                    : "Subject: {$subject} with \"{$brandUpper}\" in sharp cyberpunk typeface.";
-                $lines[] = "Colors: {$colorDesc}. Glowing neon accents on dark field.";
+                if ($iconOnly) {
+                    $lines[] = match($logoDetail) {
+                        'min'    => "Subject: {$subject}. Angular geometric symbol.",
+                        'medium' => "Subject: {$subject}. Geometric symbol with circuit details.",
+                        default  => "Subject: {$subject}. Angular geometric symbol, circuit-board details, holographic feel.",
+                    };
+                } else {
+                    $lines[] = match($logoDetail) {
+                        'min'    => "Subject: {$subject} with \"{$brandUpper}\" in sharp typeface.",
+                        default  => "Subject: {$subject} with \"{$brandUpper}\" in sharp cyberpunk typeface.",
+                    };
+                }
+                $lines[] = $logoDetail === 'max'
+                    ? "Colors: {$colorDesc}. Glowing neon accents on dark field."
+                    : "Colors: {$colorDesc}.";
                 $lines[] = "Background: {$bgDesc}. Centered 1:1.";
-                $lines[] = 'No organic shapes. No gradients except neon glow. No clutter.';
+                if ($logoDetail !== 'min') {
+                    $lines[] = 'No organic shapes. No gradients except neon glow. No clutter.';
+                }
                 if (!$iconOnly) $lines[] = "Text: \"{$brandUpper}\" only.";
 
             } elseif ($style === 'retro') {
                 // ── Retro ───────────────────────────────────────────────────
-                $lines[] = 'Style: Bold retro vintage logo, screen-print aesthetic, limited palette.';
+                $lines[] = match($logoDetail) {
+                    'min'    => 'Style: Retro vintage logo.',
+                    'medium' => 'Style: Bold retro vintage logo, screen-print aesthetic.',
+                    default  => 'Style: Bold retro vintage logo, screen-print aesthetic, limited palette.',
+                };
                 if ($shapeBlock) $lines[] = $shapeBlock;
-                $lines[] = $iconOnly
-                    ? "Subject: {$subject}. Bold retro icon, strong outlines, vintage poster feel."
-                    : "Subject: {$subject} with \"{$brandUpper}\" in a bold retro slab-serif.";
-                $lines[] = "Colors: {$colorDesc}. Hard edges, flat fills, halftone textures.";
+                if ($iconOnly) {
+                    $lines[] = match($logoDetail) {
+                        'min'    => "Subject: {$subject}. Bold retro icon.",
+                        'medium' => "Subject: {$subject}. Bold retro icon, strong outlines.",
+                        default  => "Subject: {$subject}. Bold retro icon, strong outlines, vintage poster feel.",
+                    };
+                } else {
+                    $lines[] = match($logoDetail) {
+                        'min'    => "Subject: {$subject} with \"{$brandUpper}\" in retro font.",
+                        default  => "Subject: {$subject} with \"{$brandUpper}\" in a bold retro slab-serif.",
+                    };
+                }
+                $lines[] = $logoDetail === 'max'
+                    ? "Colors: {$colorDesc}. Hard edges, flat fills, halftone textures."
+                    : "Colors: {$colorDesc}. Hard edges, flat fills.";
                 $lines[] = "Background: {$bgDesc}. Centered 1:1.";
-                $lines[] = 'No photorealism. No gradients. Classic American retro design.';
+                if ($logoDetail !== 'min') {
+                    $lines[] = 'No photorealism. No gradients. Classic American retro design.';
+                }
                 if (!$iconOnly) $lines[] = "Text: \"{$brandUpper}\" only.";
 
             } else {
                 // ── Flat Minimalist (default: minimalist, chrome, default) ──
-                $lines[] = 'Style: Flat minimalist logo.';
+                $lines[] = match($logoDetail) {
+                    'min'    => 'Style: Clean minimal logo.',
+                    default  => 'Style: Flat minimalist logo.',
+                };
                 if ($shapeBlock) $lines[] = $shapeBlock;
-                $lines[] = $iconOnly
-                    ? "Subject: Bold silhouette of {$subject}."
-                    : "Subject: {$subject} with \"{$brandUpper}\".";
-                $lines[] = 'Single filled shape. No line-art. Thick shapes, smooth curves. Negative space as cut-outs.';
+                if ($iconOnly) {
+                    $lines[] = match($logoDetail) {
+                        'min'    => "Subject: {$subject}.",
+                        default  => "Subject: Bold silhouette of {$subject}.",
+                    };
+                } else {
+                    $lines[] = "Subject: {$subject} with \"{$brandUpper}\".";
+                }
+                if ($logoDetail !== 'min') {
+                    $lines[] = $logoDetail === 'medium'
+                        ? 'Single filled shape. No line-art. Thick shapes, smooth curves.'
+                        : 'Single filled shape. No line-art. Thick shapes, smooth curves. Negative space as cut-outs.';
+                }
                 $colorLine = "Color: {$colorDesc}.";
                 if ($logoShape && $logoShape !== 'none') $colorLine .= ' Container uses same colors.';
                 $lines[] = $colorLine;
@@ -1334,7 +1406,9 @@ Example response format:
                 $comp = 'Centered 1:1.';
                 if ($logoShape && $logoShape !== 'none') $comp .= ' ' . ucfirst($logoShape) . ' dominant.';
                 $lines[] = $comp;
-                $lines[] = 'Flat fills only. No gradients, shadows, glows, textures.';
+                if ($logoDetail !== 'min') {
+                    $lines[] = 'Flat fills only. No gradients, shadows, glows, textures.';
+                }
                 $lines[] = $iconOnly ? 'Text: None.' : "Text: \"{$brandUpper}\" in sans-serif.";
             }
 

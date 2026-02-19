@@ -256,6 +256,19 @@
                                         </div>
                                     </div>
 
+                                    {{-- Detail Level (mobile, inside palette panel, Recraft only) --}}
+                                    <div x-show="showStylePanel === 'palette' && logoImageModel === 'recraft'" x-transition class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                                        <h4 class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">Detail Level</h4>
+                                        <div class="grid grid-cols-3 gap-2">
+                                            <template x-for="level in [{id:'min',label:'Min'},{id:'medium',label:'Medium'},{id:'max',label:'Max'}]" :key="level.id">
+                                                <button type="button" @click="logoDetail = level.id"
+                                                    class="py-2 rounded-xl border-2 text-xs font-medium text-center transition-all"
+                                                    :class="logoDetail === level.id ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300' : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'"
+                                                    x-text="level.label"></button>
+                                            </template>
+                                        </div>
+                                    </div>
+
                                     {{-- Background --}}
                                     <div x-show="showStylePanel === 'background'">
                                         <div class="space-y-3">
@@ -719,6 +732,19 @@
                         </div>
                     </div>
 
+                    {{-- Detail Level Section (Recraft only) --}}
+                    <div x-show="logoImageModel === 'recraft'" x-transition class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                        <h3 class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">Detail Level</h3>
+                        <div class="grid grid-cols-3 gap-1.5">
+                            <template x-for="level in [{id:'min',label:'Min'},{id:'medium',label:'Medium'},{id:'max',label:'Max'}]" :key="level.id">
+                                <button type="button" @click="logoDetail = level.id"
+                                    class="py-1.5 px-1 rounded-lg border-2 text-[10px] font-medium text-center transition-all"
+                                    :class="logoDetail === level.id ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300' : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'"
+                                    x-text="level.label"></button>
+                            </template>
+                        </div>
+                    </div>
+
                     {{-- Background Section --}}
                     <div class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
                         <h3 class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">Background</h3>
@@ -786,6 +812,7 @@
                 logoCustomColors: ['#1e3a5f', '#d4af37', '#333333'],
                 recraftSubstyle: null,
                 logoShape: 'none',
+                logoDetail: 'max',
                 showStylePanel: null,
                 showStyleModal: false,
                 colorPalettes: [
@@ -932,6 +959,7 @@
                                     color_palette: this.logoColorPalette !== 'default' ? this.getSelectedPaletteColors() : null,
                                     recraft_substyle: this.logoImageModel === 'recraft' ? (this.recraftSubstyle || null) : null,
                                     logo_shape: this.logoImageModel === 'recraft' ? this.logoShape : null,
+                                    logo_detail: this.logoImageModel === 'recraft' ? this.logoDetail : null,
                                 }),
                             });
 
