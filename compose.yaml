@@ -29,13 +29,7 @@ services:
             IGNITION_LOCAL_SITES_PATH: '${PWD}'
         volumes:
             - '.:/var/www/html'
-        # Fix permissions on every start so root-owned artisan cache files
-        # don't block the sail web process. chmod runs as root before
-        # supervisord hands off to the sail user.
-        command: >
-            bash -c "
-            chmod -R ugo+rwX /var/www/html/storage /var/www/html/bootstrap/cache &&
-            /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf"
+            - './docker/supervisord.conf:/etc/supervisor/conf.d/supervisord.conf'
         networks:
             - sail
         depends_on:
