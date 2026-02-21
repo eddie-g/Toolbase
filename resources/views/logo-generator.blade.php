@@ -57,7 +57,7 @@
                                         : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'">
                                     Flux
                                 </button>
-                                <button type="button" @click="logoImageModel = 'dalle'; logoOutputFormat = 'raster'; if (!['chrome','retro','8bit','dotmatrix','lego'].includes(logoStyle)) { logoStyle = 'chrome'; logoIconOnly = true; } fetchLogoPrice()"
+                                <button type="button" @click="logoImageModel = 'dalle'; logoOutputFormat = 'raster'; if (!['chrome','retro','8bit','dotmatrix','lego','greetingcard'].includes(logoStyle)) { logoStyle = 'chrome'; logoIconOnly = true; } fetchLogoPrice()"
                                     class="px-3 py-1.5 rounded-md text-xs font-semibold transition-all"
                                     :class="logoImageModel === 'dalle'
                                         ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
@@ -170,7 +170,7 @@
                     <div class="mb-5 lg:hidden flex gap-2">
                         <button type="button" @click="showStylePanel = 'palette'"
                             class="flex-1 flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl border-2 transition-all text-left"
-                            :class="logoColorPalette !== 'default' ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                            :class="logoColorPalette !== 'none' ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
                             <div class="flex h-5 w-14 rounded-md overflow-hidden flex-shrink-0 border border-gray-200 dark:border-gray-600">
                                 <template x-for="(c, ci) in getSelectedPalettePreview()" :key="ci">
                                     <div class="flex-1" :style="'background-color: ' + c"></div>
@@ -208,7 +208,16 @@
                                 <div class="flex-1 overflow-y-auto px-5 py-5">
                                     {{-- Color Palette (mobile slide-out) --}}
                                     <div x-show="showStylePanel === 'palette'">
-                                        <div class="grid grid-cols-3 gap-2">
+                                        <div class="grid grid-cols-2 gap-2">
+                                            {{-- None / AI picks --}}
+                                            <button type="button" @click="logoColorPalette = 'none'"
+                                                class="rounded-xl border-2 p-2 transition-all"
+                                                :class="logoColorPalette === 'none' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                                                <div class="flex h-6 rounded-md overflow-hidden items-center justify-center bg-gray-100 dark:bg-gray-700">
+                                                    <span class="text-[10px] text-gray-400 dark:text-gray-400 font-medium">AI Picks</span>
+                                                </div>
+                                                <div class="mt-1.5 text-[11px] font-medium text-center" :class="logoColorPalette === 'none' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-500 dark:text-gray-400'">None</div>
+                                            </button>
                                             <template x-for="p in colorPalettes" :key="p.id">
                                                 <button type="button" @click="logoColorPalette = p.id"
                                                     class="rounded-xl border-2 p-2 transition-all"
@@ -222,7 +231,14 @@
                                                 </button>
                                             </template>
                                         </div>
-                                        <div x-show="logoColorPalette === 'custom'" x-transition class="mt-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-xl">
+                                        {{-- Full-width Choose Custom button --}}
+                                        <button type="button" @click="logoColorPalette = 'custom'"
+                                            class="mt-2 w-full py-2.5 rounded-xl border-2 text-xs font-semibold transition-all flex items-center justify-center gap-2"
+                                            :class="logoColorPalette === 'custom' ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300' : 'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'">
+                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/></svg>
+                                            Choose Custom
+                                        </button>
+                                        <div x-show="logoColorPalette === 'custom'" x-transition class="mt-3 p-3 bg-gray-50 dark:bg-gray-800 rounded-xl">
                                             <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">Custom Colors</label>
                                             <div class="flex items-center gap-2 flex-wrap">
                                                 <template x-for="(c, ci) in logoCustomColors" :key="ci">
@@ -243,11 +259,11 @@
                                         </div>
                                     </div>
 
-                                    {{-- Shape Container (mobile, inside palette panel, Recraft only) --}}
-                                    <div x-show="showStylePanel === 'palette' && logoImageModel === 'recraft'" x-transition class="mt-5 pt-4 border-t border-gray-200 dark:border-gray-700">
+                                    {{-- Shape Container (mobile, inside palette panel, Recraft/Flux) --}}
+                                    <div x-show="showStylePanel === 'palette' && ['recraft','flux'].includes(logoImageModel)" x-transition class="mt-5 pt-4 border-t border-gray-200 dark:border-gray-700">
                                         <h4 class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">Shape Container</h4>
                                         <div class="grid grid-cols-3 gap-2">
-                                            <template x-for="shape in ['none','circle','square','triangle','pentagon','hexagon']" :key="shape">
+                                            <template x-for="shape in ['none','circle','square','triangle','pentagon','hexagon','heart']" :key="shape">
                                                 <button type="button" @click="logoShape = shape"
                                                     class="py-2 rounded-xl border-2 text-xs font-medium text-center capitalize transition-all"
                                                     :class="logoShape === shape ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300' : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'"
@@ -398,10 +414,10 @@
                                                 : logoBgResult === 'black'
                                                     ? 'background-color: #000'
                                                     : 'background-color: #fff'">
-                                        <img :src="img.url" :alt="'Logo ' + (idx+1)" class="w-full h-full object-cover" />
+                                        <img :src="img.stored_url || img.url" :alt="'Logo ' + (idx+1)" class="w-full h-full object-cover" />
                                     </div>
                                     <div class="p-2 flex gap-1.5 flex-wrap">
-                                        <a :href="img.url" :download="logoDomain + '-logo-' + (idx+1) + '.png'" target="_blank" class="flex-1 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition text-center">Save</a>
+                                        <a :href="img.stored_url || img.url" :download="logoDomain + '-logo-' + (idx+1) + '.png'" target="_blank" class="flex-1 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition text-center">Save</a>
                                         <a x-show="img.svg_url" :href="img.svg_url" :download="logoDomain + '-logo-' + (idx+1) + '.svg'" target="_blank" class="flex-1 py-1.5 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 text-xs font-medium text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-800/40 transition text-center">SVG</a>
                                         @if(config('services.logo_editor_enabled'))
                                         <a :href="logoEditorUrl(idx, img)"
@@ -567,6 +583,16 @@
                                             :class="logoStyle === 'minimalist' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Minimalist</div>
                                         <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Flat design</div>
                                     </button>
+                                    <button type="button" @click="selectStyle('greetingcard')"
+                                        class="group rounded-xl border-2 p-3 transition-all text-center"
+                                        :class="logoStyle === 'greetingcard' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                                        <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                                            <svg class="w-6 h-6" :class="logoStyle === 'greetingcard' ? 'text-emerald-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"></path></svg>
+                                        </div>
+                                        <div class="text-xs font-semibold"
+                                            :class="logoStyle === 'greetingcard' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Greeting Card</div>
+                                        <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Watercolor & gouache</div>
+                                    </button>
                                 </div>
 
                                 {{-- Flux/Recraft styles --}}
@@ -610,6 +636,16 @@
                                         <div class="text-xs font-semibold"
                                             :class="logoStyle === 'retro' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Retro</div>
                                         <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Vintage & classic</div>
+                                    </button>
+                                    <button type="button" @click="selectStyle('greetingcard')"
+                                        class="group rounded-xl border-2 p-3 transition-all text-center"
+                                        :class="logoStyle === 'greetingcard' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                                        <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                                            <svg class="w-6 h-6" :class="logoStyle === 'greetingcard' ? 'text-emerald-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"></path></svg>
+                                        </div>
+                                        <div class="text-xs font-semibold"
+                                            :class="logoStyle === 'greetingcard' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Greeting Card</div>
+                                        <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Watercolor & gouache</div>
                                     </button>
                                 </div>
                             </div>
@@ -655,6 +691,7 @@
             </div>
 
             {{-- Palette Sidebar (right of form) --}}
+            @auth
             <div class="hidden lg:block w-56 flex-shrink-0 sticky top-28" x-transition>
                 {{-- Balance --}}
                 <div class="mb-3 bg-white dark:bg-gray-900 rounded-2xl shadow-lg shadow-gray-200/50 dark:shadow-black/20 border border-gray-200 dark:border-gray-800 px-4 py-3 flex items-center justify-between">
@@ -683,6 +720,15 @@
 
                 <div class="bg-white dark:bg-gray-900 rounded-2xl shadow-lg shadow-gray-200/50 dark:shadow-black/20 border border-gray-200 dark:border-gray-800 p-4">
                     <h3 class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">Palette</h3>
+                    {{-- None option --}}
+                    <button type="button" @click="logoColorPalette = 'none'"
+                        class="w-full mb-2 rounded-xl border-2 p-1.5 transition-all flex items-center gap-2"
+                        :class="logoColorPalette === 'none' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/20' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                        <div class="flex-1 h-5 rounded-md bg-gray-100 dark:bg-gray-700 flex items-center justify-center">
+                            <span class="text-[10px] font-medium text-gray-400">AI Picks</span>
+                        </div>
+                        <div class="text-[10px] font-medium" :class="logoColorPalette === 'none' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-500 dark:text-gray-400'">None</div>
+                    </button>
                     <div class="grid grid-cols-2 gap-2">
                         <template x-for="p in colorPalettes" :key="p.id">
                             <button type="button" @click="logoColorPalette = p.id"
@@ -697,8 +743,15 @@
                             </button>
                         </template>
                     </div>
+                    {{-- Full-width Choose Custom button --}}
+                    <button type="button" @click="logoColorPalette = 'custom'"
+                        class="mt-2 w-full py-2 rounded-xl border-2 text-[11px] font-semibold transition-all flex items-center justify-center gap-1.5"
+                        :class="logoColorPalette === 'custom' ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300' : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/></svg>
+                        Choose Custom
+                    </button>
                     {{-- Custom palette color pickers --}}
-                    <div x-show="logoColorPalette === 'custom'" x-transition class="mt-3 p-2.5 bg-gray-50 dark:bg-gray-800 rounded-xl">
+                    <div x-show="logoColorPalette === 'custom'" x-transition class="mt-2 p-2.5 bg-gray-50 dark:bg-gray-800 rounded-xl">
                         <label class="block text-[10px] font-medium text-gray-500 dark:text-gray-400 mb-2">Custom Colors</label>
                         <div class="flex items-center gap-1.5 flex-wrap">
                             <template x-for="(c, ci) in logoCustomColors" :key="ci">
@@ -719,11 +772,11 @@
                     </div>
                 </div>
 
-                    {{-- Shape Container Section (Recraft only) --}}
-                    <div x-show="logoImageModel === 'recraft'" x-transition class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                    {{-- Shape Container Section (Recraft/Flux) --}}
+                    <div x-show="['recraft','flux'].includes(logoImageModel)" x-transition class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
                         <h3 class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">Shape Container</h3>
                         <div class="grid grid-cols-3 gap-1.5">
-                            <template x-for="shape in ['none','circle','square','triangle','pentagon','hexagon']" :key="shape">
+                            <template x-for="shape in ['none','circle','square','triangle','pentagon','hexagon','heart']" :key="shape">
                                 <button type="button" @click="logoShape = shape"
                                     class="py-1.5 px-1 rounded-lg border-2 text-[10px] font-medium text-center capitalize transition-all"
                                     :class="logoShape === shape ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300' : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'"
@@ -776,6 +829,7 @@
                     </div>
                 </div>
             </div>
+            @endauth
 
             </div>{{-- /flex --}}
         </div>
@@ -808,7 +862,7 @@
                 logoBgColor: 'white',
                 logoBgCustom: '#ffffff',
                 logoBgResult: 'white',
-                logoColorPalette: 'default',
+                logoColorPalette: 'none',
                 logoCustomColors: ['#1e3a5f', '#d4af37', '#333333'],
                 recraftSubstyle: null,
                 logoShape: 'none',
@@ -816,16 +870,10 @@
                 showStylePanel: null,
                 showStyleModal: false,
                 colorPalettes: [
-                    { id: 'default', name: 'Default', colors: ['#1B2A4A', '#C9A84C', '#2C2C2C'] },
-                    { id: 'ocean', name: 'Ocean', colors: ['#0077B6', '#00B4D8', '#90E0EF'] },
-                    { id: 'sunset', name: 'Sunset', colors: ['#FF6B35', '#F7C59F', '#1A535C'] },
-                    { id: 'forest', name: 'Forest', colors: ['#2D6A4F', '#52B788', '#D8F3DC'] },
-                    { id: 'royal', name: 'Royal', colors: ['#7B2CBF', '#C77DFF', '#E0AAFF'] },
-                    { id: 'fire', name: 'Fire', colors: ['#D00000', '#E85D04', '#FFBA08'] },
-                    { id: 'mono', name: 'Monochrome', colors: ['#212529', '#6C757D', '#DEE2E6'] },
+                    { id: 'fire',   name: 'Fire',   colors: ['#D00000', '#E85D04', '#FFBA08'] },
                     { id: 'pastel', name: 'Pastel', colors: ['#FFB5A7', '#FCD5CE', '#A2D2FF'] },
-                    { id: 'neon', name: 'Neon', colors: ['#39FF14', '#FF073A', '#00F0FF'] },
-                    { id: 'custom', name: 'Custom', colors: ['#1e3a5f', '#d4af37', '#888888'] },
+                    { id: 'royal',  name: 'Royal',  colors: ['#7B2CBF', '#C77DFF', '#E0AAFF'] },
+                    { id: 'ice',    name: 'Ice',    colors: ['#0077B6', '#00B4D8', '#90E0EF'] },
                 ],
                 logoRequestId: null,
                 logoSeedNumber: null,
@@ -840,7 +888,7 @@
                 },
 
                 getStyleLabel() {
-                    const labels = { chrome: 'Chrome', professional: 'Professional', fantasy: 'Fantasy', future: 'Future', retro: 'Retro', '8bit': '8-Bit', dotmatrix: 'Dot Matrix', lego: 'Lego', minimalist: 'Minimalist' };
+                    const labels = { chrome: 'Chrome', professional: 'Professional', fantasy: 'Fantasy', future: 'Future', retro: 'Retro', '8bit': '8-Bit', dotmatrix: 'Dot Matrix', lego: 'Lego', minimalist: 'Minimalist', greetingcard: 'Greeting Card' };
                     return labels[this.logoStyle] || 'Professional';
                 },
                 selectStyle(style) {
@@ -856,16 +904,20 @@
                 },
 
                 getSelectedPalettePreview() {
-                    const p = this.colorPalettes.find(p => p.id === this.logoColorPalette);
+                    if (this.logoColorPalette === 'none') return ['#e5e7eb', '#e5e7eb', '#e5e7eb'];
                     if (this.logoColorPalette === 'custom') return this.logoCustomColors.slice(0, 3);
-                    return p ? p.colors : ['#1B2A4A', '#C9A84C', '#2C2C2C'];
+                    const p = this.colorPalettes.find(p => p.id === this.logoColorPalette);
+                    return p ? p.colors : ['#e5e7eb', '#e5e7eb', '#e5e7eb'];
                 },
                 getSelectedPaletteName() {
+                    if (this.logoColorPalette === 'none') return 'AI Picks';
+                    if (this.logoColorPalette === 'custom') return 'Custom';
                     const p = this.colorPalettes.find(p => p.id === this.logoColorPalette);
-                    return p ? p.name : 'Default';
+                    return p ? p.name : 'AI Picks';
                 },
 
                 getSelectedPaletteColors() {
+                    if (this.logoColorPalette === 'none') return null;
                     if (this.logoColorPalette === 'custom') return this.logoCustomColors;
                     const p = this.colorPalettes.find(p => p.id === this.logoColorPalette);
                     return p ? p.colors : null;
@@ -956,9 +1008,9 @@
                                     image_model: this.logoImageModel,
                                     output_format: this.logoImageModel === 'dalle' ? 'raster' : this.logoOutputFormat,
                                     image_format: this.logoImageModel === 'dalle' ? this.logoImageFormat : null,
-                                    color_palette: this.logoColorPalette !== 'default' ? this.getSelectedPaletteColors() : null,
+                                    color_palette: this.logoColorPalette !== 'none' ? this.getSelectedPaletteColors() : null,
                                     recraft_substyle: this.logoImageModel === 'recraft' ? (this.recraftSubstyle || null) : null,
-                                    logo_shape: this.logoImageModel === 'recraft' ? this.logoShape : null,
+                                    logo_shape: ['recraft','flux'].includes(this.logoImageModel) ? this.logoShape : null,
                                     logo_detail: this.logoImageModel === 'recraft' ? this.logoDetail : null,
                                 }),
                             });
@@ -1068,6 +1120,7 @@
                                 // 'pending' or 'processing' — keep polling
                             } catch (e) {
                                 // Network error during poll — will retry next iteration
+                                console.warn('[logo-poll] fetch error for job', jobId, e);
                             }
                         }
 
@@ -1088,7 +1141,8 @@
 
                 zoomLogo(idx) {
                     if (idx === undefined || !this.logoImages[idx]) return;
-                    this.zoomedLogoUrl = this.logoImages[idx].url;
+                    const zi = this.logoImages[idx];
+                    this.zoomedLogoUrl = zi.stored_url || zi.url;
                 },
 
                 useSeed(seed) {
@@ -1120,7 +1174,7 @@
                         const response = await fetch('/domain-search/describe-logo', {
                             method: 'POST',
                             headers: this.headers(),
-                            body: JSON.stringify({ image_url: img.url }),
+                            body: JSON.stringify({ image_url: img.stored_url || img.url }),
                         });
 
                         if (response.ok) {
@@ -1158,7 +1212,7 @@
                         const response = await fetch('/domain-search/remove-logo-bg', {
                             method: 'POST',
                             headers: this.headers(),
-                            body: JSON.stringify({ image_url: img.url }),
+                            body: JSON.stringify({ image_url: img.stored_url || img.url }),
                         });
 
                         if (response.ok) {

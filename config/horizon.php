@@ -212,6 +212,21 @@ return [
             'nice' => 0,
         ],
 
+        // Domain name generation via Gemini AI + availability check
+        'supervisor-domains' => [
+            'connection' => 'redis',
+            'queue' => ['domain-generation'],
+            'balance' => 'auto',
+            'autoScalingStrategy' => 'time',
+            'maxProcesses' => 1,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 128,
+            'tries' => 2,
+            'timeout' => 120,
+            'nice' => 0,
+        ],
+
         // Logo generation: long-running AI API calls (5-120s each)
         'supervisor-logos' => [
             'connection' => 'redis',
@@ -235,6 +250,11 @@ return [
                 'balanceMaxShift' => 1,
                 'balanceCooldown' => 3,
             ],
+            'supervisor-domains' => [
+                'maxProcesses' => 10,
+                'balanceMaxShift' => 2,
+                'balanceCooldown' => 3,
+            ],
             'supervisor-logos' => [
                 'maxProcesses' => 20,
                 'balanceMaxShift' => 3,
@@ -244,6 +264,9 @@ return [
 
         'local' => [
             'supervisor-default' => [
+                'maxProcesses' => 3,
+            ],
+            'supervisor-domains' => [
                 'maxProcesses' => 3,
             ],
             'supervisor-logos' => [

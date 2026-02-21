@@ -1486,18 +1486,15 @@
                     let streamMode = false;
 
                     try {
-                        // Step 1: Generate names with AI + check availability in one call
                         const aiResponse = await fetch('/domain-search/ai-generate', {
                             method: 'POST',
                             headers: this.headers(),
                             body: JSON.stringify({
                                 prompt: finalPrompt,
                                 tlds: this.tlds,
-                                stream: false,
                             }),
                         });
 
-                        // Handle 419 CSRF error specifically
                         if (aiResponse.status === 419) {
                             this.error = 'Session expired. Please refresh the page and try again.';
                             return;
@@ -1506,7 +1503,6 @@
                         const aiData = await aiResponse.json();
 
                         if (!aiResponse.ok) {
-                            // Handle authentication error specifically
                             if (aiResponse.status === 401 && aiData.authenticated === false) {
                                 this.error = aiData.error || 'You must be logged in to use AI Generator.';
                                 return;

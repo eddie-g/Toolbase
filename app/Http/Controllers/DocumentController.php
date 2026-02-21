@@ -16,6 +16,44 @@ use Illuminate\Support\Str;
 
 class DocumentController extends Controller
 {
+    private function resolvePythonBinaryForPdfEditor(?string $requiredModule = null): string
+    {
+        $candidates = array_values(array_unique([
+            base_path('python/venv/bin/python'),
+            'python3',
+            '/usr/bin/python3',
+        ]));
+
+        foreach ($candidates as $candidate) {
+            if (str_contains($candidate, '/') && !is_executable($candidate)) {
+                continue;
+            }
+
+            if (!$requiredModule) {
+                return $candidate;
+            }
+
+            if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $requiredModule)) {
+                break;
+            }
+
+            $probeOutput = [];
+            $probeExitCode = 1;
+            $probeCommand = sprintf(
+                '%s -c %s 2>&1',
+                escapeshellarg($candidate),
+                escapeshellarg("import {$requiredModule}")
+            );
+            exec($probeCommand, $probeOutput, $probeExitCode);
+
+            if ($probeExitCode === 0) {
+                return $candidate;
+            }
+        }
+
+        return 'python3';
+    }
+
     public function index()
     {
         $documents = Document::latest()->get();
@@ -53,9 +91,11 @@ class DocumentController extends Controller
 
         // Auto-download fonts for this PDF in background
         $fullPath = Storage::path($storedPath);
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
         $fontScript = base_path('python/pdf-editor/auto_download_fonts.py');
         $fontCommand = sprintf(
-            'python3 %s %s > /dev/null 2>&1 &',
+            '%s %s %s > /dev/null 2>&1 &',
+            escapeshellarg($pythonBinary),
             escapeshellarg($fontScript),
             escapeshellarg($fullPath)
         );
@@ -68,6 +108,8 @@ class DocumentController extends Controller
 
     public function createFromTemplate(Request $request)
     {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
         $validated = $request->validate([
             'template' => ['required', 'string', 'in:clean_modern,bold_red,classic_blue'],
         ]);
@@ -88,7 +130,8 @@ class DocumentController extends Controller
 
         $script = base_path('python/pdf-editor/generate_invoice_template.py');
         $command = sprintf(
-            'python3 %s %s %s 2>&1',
+            '%s %s %s %s 2>&1',
+            escapeshellarg($pythonBinary),
             escapeshellarg($script),
             escapeshellarg($templateKey),
             escapeshellarg($storedFull)
@@ -119,7 +162,8 @@ class DocumentController extends Controller
         // Auto-download fonts
         $fontScript = base_path('python/pdf-editor/auto_download_fonts.py');
         $fontCommand = sprintf(
-            'python3 %s %s > /dev/null 2>&1 &',
+            '%s %s %s > /dev/null 2>&1 &',
+            escapeshellarg($pythonBinary),
             escapeshellarg($fontScript),
             escapeshellarg($storedFull)
         );
@@ -132,6 +176,8 @@ class DocumentController extends Controller
 
     public function createSimpleInvoice(Request $request)
     {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
         $validated = $request->validate([
             'company_name'     => ['nullable', 'string', 'max:200'],
             'company_address'  => ['nullable', 'string', 'max:500'],
@@ -182,7 +228,8 @@ class DocumentController extends Controller
 
         $script = base_path('python/pdf-editor/generate_simple_invoice.py');
         $command = sprintf(
-            'python3 %s %s < %s 2>&1',
+            '%s %s %s < %s 2>&1',
+            escapeshellarg($pythonBinary),
             escapeshellarg($script),
             escapeshellarg($storedFull),
             escapeshellarg($tmpPayload)
@@ -217,7 +264,8 @@ class DocumentController extends Controller
         // Auto-download fonts
         $fontScript = base_path('python/pdf-editor/auto_download_fonts.py');
         $fontCommand = sprintf(
-            'python3 %s %s > /dev/null 2>&1 &',
+            '%s %s %s > /dev/null 2>&1 &',
+            escapeshellarg($pythonBinary),
             escapeshellarg($fontScript),
             escapeshellarg($storedFull)
         );
@@ -237,6 +285,8 @@ class DocumentController extends Controller
      */
     public function createFromGuidedTemplate(Request $request)
     {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
         $validated = $request->validate([
             '_template_type' => ['required', 'string', 'in:newsletter,business'],
             '_template_slug' => ['required', 'string', 'max:100'],
@@ -280,7 +330,8 @@ class DocumentController extends Controller
 
         $script = base_path('python/pdf-editor/generate_template.py');
         $command = sprintf(
-            'python3 %s %s < %s 2>&1',
+            '%s %s %s < %s 2>&1',
+            escapeshellarg($pythonBinary),
             escapeshellarg($script),
             escapeshellarg($storedFull),
             escapeshellarg($tmpPayload)
@@ -317,7 +368,8 @@ class DocumentController extends Controller
         // Auto-download fonts
         $fontScript = base_path('python/pdf-editor/auto_download_fonts.py');
         $fontCommand = sprintf(
-            'python3 %s %s > /dev/null 2>&1 &',
+            '%s %s %s > /dev/null 2>&1 &',
+            escapeshellarg($pythonBinary),
             escapeshellarg($fontScript),
             escapeshellarg($storedFull)
         );
@@ -333,6 +385,8 @@ class DocumentController extends Controller
      */
     public function regenerateInvoice(Request $request, Document $document)
     {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
         $validated = $request->validate([
             'company_name'     => ['nullable', 'string', 'max:200'],
             'company_address'  => ['nullable', 'string', 'max:500'],
@@ -362,7 +416,8 @@ class DocumentController extends Controller
 
         $script = base_path('python/pdf-editor/generate_simple_invoice.py');
         $command = sprintf(
-            'python3 %s %s < %s 2>&1',
+            '%s %s %s < %s 2>&1',
+            escapeshellarg($pythonBinary),
             escapeshellarg($script),
             escapeshellarg($storedFull),
             escapeshellarg($tmpPayload)
@@ -388,7 +443,8 @@ class DocumentController extends Controller
         // Auto-download fonts
         $fontScript = base_path('python/pdf-editor/auto_download_fonts.py');
         $fontCommand = sprintf(
-            'python3 %s %s > /dev/null 2>&1 &',
+            '%s %s %s > /dev/null 2>&1 &',
+            escapeshellarg($pythonBinary),
             escapeshellarg($fontScript),
             escapeshellarg($storedFull)
         );
@@ -402,6 +458,8 @@ class DocumentController extends Controller
      */
     public function regenerateTemplate(Request $request, Document $document)
     {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
         $data = $request->all();
         $templateType = $data['template_type'] ?? '';
         $templateSlug = $data['template_slug'] ?? '';
@@ -419,7 +477,8 @@ class DocumentController extends Controller
 
         $script = base_path('python/pdf-editor/generate_template.py');
         $command = sprintf(
-            'python3 %s %s < %s 2>&1',
+            '%s %s %s < %s 2>&1',
+            escapeshellarg($pythonBinary),
             escapeshellarg($script),
             escapeshellarg($storedFull),
             escapeshellarg($tmpPayload)
@@ -447,7 +506,8 @@ class DocumentController extends Controller
         // Auto-download fonts
         $fontScript = base_path('python/pdf-editor/auto_download_fonts.py');
         $fontCommand = sprintf(
-            'python3 %s %s > /dev/null 2>&1 &',
+            '%s %s %s > /dev/null 2>&1 &',
+            escapeshellarg($pythonBinary),
             escapeshellarg($fontScript),
             escapeshellarg($storedFull)
         );
@@ -477,6 +537,8 @@ class DocumentController extends Controller
      */
     public function convertHtmlToPdf(Request $request, Document $document)
     {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
         $html = $request->input('html', '');
         $css  = $request->input('css', '');
         $formData = $request->input('form_data', null); // New: Allow saving form state
@@ -498,7 +560,8 @@ class DocumentController extends Controller
 
         $script = base_path('python/pdf-editor/html_to_pdf.py');
         $command = sprintf(
-            'python3 %s %s < %s 2>&1',
+            '%s %s %s < %s 2>&1',
+            escapeshellarg($pythonBinary),
             escapeshellarg($script),
             escapeshellarg($storedFull),
             escapeshellarg($tmpPayload)
@@ -526,6 +589,8 @@ class DocumentController extends Controller
 
     public function processOcr(Document $document)
     {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
         // Run OCR extraction in background
         $fullPath = Storage::path($document->path);
         $pythonScript = base_path('python/pdf-editor/extract_pdf_text.py');
@@ -533,7 +598,8 @@ class DocumentController extends Controller
         
         // Execute Python script in background (non-blocking)
         $command = sprintf(
-            'python3 %s %s %d > /dev/null 2>&1 &',
+            '%s %s %s %d > /dev/null 2>&1 &',
+            escapeshellarg($pythonBinary),
             escapeshellarg($pythonScript),
             escapeshellarg($fullPath),
             $documentId
@@ -549,6 +615,8 @@ class DocumentController extends Controller
 
     public function processFitz(Document $document)
     {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
         // Run PyMuPDF extraction in background
         $fullPath = Storage::path($document->path);
         $pythonScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
@@ -558,7 +626,8 @@ class DocumentController extends Controller
         
         // Execute Python script in background (non-blocking)
         $command = sprintf(
-            'python3 %s %s %d %s %s > /dev/null 2>&1 &',
+            '%s %s %s %d %s %s > /dev/null 2>&1 &',
+            escapeshellarg($pythonBinary),
             escapeshellarg($pythonScript),
             escapeshellarg($fullPath),
             $documentId,
@@ -576,6 +645,8 @@ class DocumentController extends Controller
 
     public function getFitzExtractionData(Document $document)
     {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
         $userEmail = auth()->user()->email ?? 'guest';
         $sessionId = session()->getId();
         
@@ -622,7 +693,8 @@ class DocumentController extends Controller
                 $escapedPath = escapeshellarg($fullPath);
                 $escapedJsonPath = escapeshellarg($embeddedFontsPath);
                 $command = sprintf(
-                    'python3 -c "import sys, json; sys.path.insert(0, \'%s\'); from extract_pdf_pymupdf import extract_embedded_fonts; fonts = extract_embedded_fonts(%s, %d); f = open(%s, \'w\'); json.dump(fonts, f); f.close()" 2>&1',
+                    '%s -c "import sys, json; sys.path.insert(0, \'%s\'); from extract_pdf_pymupdf import extract_embedded_fonts; fonts = extract_embedded_fonts(%s, %d); f = open(%s, \'w\'); json.dump(fonts, f); f.close()" 2>&1',
+                    escapeshellarg($pythonBinary),
                     base_path('python/pdf-editor'),
                     $escapedPath,
                     $docId,
@@ -790,6 +862,8 @@ class DocumentController extends Controller
 
     public function flattenRotations(Request $request, Document $document)
     {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
         $validated = $request->validate([
             'pdf' => ['required', 'file', 'mimes:pdf', 'max:20480'],
         ]);
@@ -801,7 +875,8 @@ class DocumentController extends Controller
         $pythonScript = base_path('python/pdf-editor/flatten_pdf_rotations.py');
         
         $command = sprintf(
-            'python3 %s %s %s 2>&1',
+            '%s %s %s %s 2>&1',
+            escapeshellarg($pythonBinary),
             escapeshellarg($pythonScript),
             escapeshellarg($tempPath),
             escapeshellarg($outputPath)
@@ -830,6 +905,8 @@ class DocumentController extends Controller
 
     public function applyRotations(Request $request, Document $document)
     {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
         $validated = $request->validate([
             'pdf' => ['required', 'file', 'mimes:pdf', 'max:20480'],
             'rotations' => ['required', 'string'], // JSON string
@@ -853,7 +930,8 @@ class DocumentController extends Controller
             $tempOutputPath = tempnam(sys_get_temp_dir(), 'rotated_') . '.pdf';
             
             $command = sprintf(
-                'python3 %s %s %s %d %d 2>&1',
+                '%s %s %s %s %d %d 2>&1',
+                escapeshellarg($pythonBinary),
                 escapeshellarg($pythonScript),
                 escapeshellarg($tempPath),
                 escapeshellarg($tempOutputPath),
@@ -1067,6 +1145,8 @@ class DocumentController extends Controller
 
     public function prepareOverlay(Request $request, Document $document)
     {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
         // Check if the PDF file exists on disk
         $fullPath = Storage::path($document->path);
         if (!file_exists($fullPath)) {
@@ -1078,11 +1158,12 @@ class DocumentController extends Controller
         $sessionId = session()->getId();
         $forceRefresh = $request->boolean('force_refresh', false);
 
-        $runFitzExtraction = function () use ($document, $fullPath, $userEmail, $sessionId) {
+        $runFitzExtraction = function () use ($document, $fullPath, $userEmail, $sessionId, $pythonBinary) {
             $pythonScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
             $documentId = $document->id;
             $command = sprintf(
-                'python3 %s %s %d %s %s 2>&1',
+                '%s %s %s %d %s %s 2>&1',
+                escapeshellarg($pythonBinary),
                 escapeshellarg($pythonScript),
                 escapeshellarg($fullPath),
                 $documentId,
@@ -1101,6 +1182,7 @@ class DocumentController extends Controller
             if ($returnCode !== 0) {
                 \Log::error('Forced PDF extraction failed', [
                     'document_id' => $document->id,
+                    'python_binary' => $pythonBinary,
                     'returnCode' => $returnCode,
                     'output' => implode("\n", $output),
                 ]);
@@ -1136,7 +1218,7 @@ class DocumentController extends Controller
             [$returnCode, $output] = $runFitzExtraction();
             
             if ($returnCode !== 0) {
-                \Log::error('PDF extraction failed', ['document_id' => $document->id, 'returnCode' => $returnCode, 'output' => implode("\n", $output)]);
+                \Log::error('PDF extraction failed', ['document_id' => $document->id, 'python_binary' => $pythonBinary, 'returnCode' => $returnCode, 'output' => implode("\n", $output)]);
                 return response()->json(['success' => false, 'error' => 'Failed to extract PDF text. Please try again.'], 500);
             }
             
@@ -1253,7 +1335,8 @@ class DocumentController extends Controller
         
         $pythonScript = base_path('python/pdf-editor/create_clean_pdf.py');
         $command = sprintf(
-            'python3 %s %s %s %s 2>&1',
+            '%s %s %s %s %s 2>&1',
+            escapeshellarg($pythonBinary),
             escapeshellarg($pythonScript),
             escapeshellarg($fullPath),
             escapeshellarg($extractionFile),
@@ -1268,7 +1351,7 @@ class DocumentController extends Controller
         }
         
         if ($returnCode !== 0) {
-            \Log::error('Failed to create clean PDF', ['output' => implode("\n", $output)]);
+            \Log::error('Failed to create clean PDF', ['python_binary' => $pythonBinary, 'output' => implode("\n", $output)]);
             return response()->json(['success' => false, 'error' => 'Failed to prepare PDF for editing.'], 500);
         }
 
@@ -1277,6 +1360,8 @@ class DocumentController extends Controller
 
     public function saveEdits(Request $request, Document $document)
     {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
         $validated = $request->validate([
             'edits' => ['required', 'array'],
             'edits.*.page_number' => ['required', 'integer'],
@@ -1501,7 +1586,8 @@ class DocumentController extends Controller
             // Surgical mode: redact and reinsert only changed blocks.
             $pythonScript = base_path('python/pdf-editor/apply_pdf_edits.py');
             $command = sprintf(
-                'python3 %s %s %s 2>&1',
+                '%s %s %s %s 2>&1',
+                escapeshellarg($pythonBinary),
                 escapeshellarg($pythonScript),
                 escapeshellarg($fullPath),
                 escapeshellarg($editsFile)
@@ -1541,7 +1627,8 @@ class DocumentController extends Controller
             $cleanPath = Storage::path('temp/clean_' . $document->id . '.pdf');
             $cleanScript = base_path('python/pdf-editor/create_clean_pdf.py');
             $cleanCommand = sprintf(
-                'python3 %s %s %s %s 2>&1',
+                '%s %s %s %s %s 2>&1',
+                escapeshellarg($pythonBinary),
                 escapeshellarg($cleanScript),
                 escapeshellarg($fullPath),
                 escapeshellarg($extractionFile),
@@ -1582,7 +1669,8 @@ class DocumentController extends Controller
             }
 
             $command = sprintf(
-                'python3 %s %s %s %s %s %s %s 2>&1',
+                '%s %s %s %s %s %s %s %s 2>&1',
+                escapeshellarg($pythonBinary),
                 escapeshellarg($pythonScript),
                 escapeshellarg($cleanPath),
                 escapeshellarg('@' . $extractionFile),
@@ -1628,7 +1716,8 @@ class DocumentController extends Controller
                 $userEmail = auth()->user()->email ?? 'guest';
                 $sessionId = session()->getId();
                 $refreshCommand = sprintf(
-                    'python3 %s %s %d %s %s 2>&1',
+                    '%s %s %s %d %s %s 2>&1',
+                    escapeshellarg($pythonBinary),
                     escapeshellarg($extractScript),
                     escapeshellarg($fullPath),
                     $document->id,
@@ -1665,7 +1754,8 @@ class DocumentController extends Controller
                     
                     $pythonScript = base_path('python/pdf-editor/create_clean_pdf.py');
                     $cleanCommand = sprintf(
-                        'python3 %s %s %s %s 2>&1',
+                        '%s %s %s %s %s 2>&1',
+                        escapeshellarg($pythonBinary),
                         escapeshellarg($pythonScript),
                         escapeshellarg($fullPath),
                         escapeshellarg($extractionFile),
@@ -1760,6 +1850,8 @@ class DocumentController extends Controller
     
     public function getFonts(Document $document)
     {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
         // Use the path column like other methods
         $pdfPath = Storage::path($document->path);
         
@@ -1770,7 +1862,8 @@ class DocumentController extends Controller
         // Run Python script to extract fonts
         $pythonScript = base_path('python/pdf-editor/extract_pdf_fonts.py');
         $command = sprintf(
-            'python3 %s %s 2>&1',
+            '%s %s %s 2>&1',
+            escapeshellarg($pythonBinary),
             escapeshellarg($pythonScript),
             escapeshellarg($pdfPath)
         );
@@ -1787,6 +1880,8 @@ class DocumentController extends Controller
 
     public function matchFonts(Document $document)
     {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
         // Get the PyMuPDF extraction data to analyze fonts
         $fitzExtraction = $document->pdfExtractionsFitz()->latest()->first();
         
@@ -1812,7 +1907,8 @@ class DocumentController extends Controller
         // Run install_fonts.py script with output CSS path
         $pythonScript = base_path('python/pdf-editor/install_fonts.py');
         $command = sprintf(
-            'python3 %s %s %s 2>&1',
+            '%s %s %s %s 2>&1',
+            escapeshellarg($pythonBinary),
             escapeshellarg($pythonScript),
             escapeshellarg($tempJsonPath),
             escapeshellarg($outputCssPath)
@@ -1862,6 +1958,8 @@ class DocumentController extends Controller
 
     public function reorderPages(Request $request, Document $document)
     {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
         $validated = $request->validate([
             'page_order' => ['required', 'array'],
             'page_order.*' => ['required', 'integer', 'min:0'],
@@ -1880,7 +1978,8 @@ class DocumentController extends Controller
         $pageOrderStr = implode(',', $pageOrder);
         
         $command = sprintf(
-            'python3 %s %s %s %s 2>&1',
+            '%s %s %s %s %s 2>&1',
+            escapeshellarg($pythonBinary),
             escapeshellarg($pythonScript),
             escapeshellarg($inputPath),
             escapeshellarg($tempOutputPath),
@@ -1976,7 +2075,8 @@ class DocumentController extends Controller
             $currentSessionId = session()->getId();
             
             $extractCommand = sprintf(
-                'python3 %s %s %d %s %s 2>&1',
+                '%s %s %s %d %s %s 2>&1',
+                escapeshellarg($pythonBinary),
                 escapeshellarg($pythonScript),
                 escapeshellarg($inputPath),
                 $document->id,
@@ -2014,6 +2114,8 @@ class DocumentController extends Controller
 
     public function addBlankPage(Request $request, Document $document)
     {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
         $validated = $request->validate([
             'insert_after' => ['nullable', 'integer'],
             'size_reference' => ['nullable', 'integer'],
@@ -2028,7 +2130,8 @@ class DocumentController extends Controller
         $pythonScript = base_path('python/pdf-editor/add_blank_page.py');
 
         $command = sprintf(
-            'python3 %s %s %s %s %s 2>&1',
+            '%s %s %s %s %s %s 2>&1',
+            escapeshellarg($pythonBinary),
             escapeshellarg($pythonScript),
             escapeshellarg($inputPath),
             escapeshellarg($tempOutputPath),
@@ -2093,7 +2196,8 @@ class DocumentController extends Controller
             $currentSessionId = session()->getId();
             
             $extractCommand = sprintf(
-                'python3 %s %s %d %s %s 2>&1',
+                '%s %s %s %d %s %s 2>&1',
+                escapeshellarg($pythonBinary),
                 escapeshellarg($pythonScript),
                 escapeshellarg($inputPath),
                 $document->id,
@@ -2125,6 +2229,8 @@ class DocumentController extends Controller
     
     public function rotatePage(Request $request, Document $document)
     {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
         try {
             \Log::info('Rotate page request', [
                 'document_id' => $document->id,
@@ -2157,7 +2263,8 @@ class DocumentController extends Controller
         $pythonScript = base_path('python/pdf-editor/rotate_pdf_page.py');
 
         $command = sprintf(
-            'python3 %s %s %s %s %s 2>&1',
+            '%s %s %s %s %s %s 2>&1',
+            escapeshellarg($pythonBinary),
             escapeshellarg($pythonScript),
             escapeshellarg($inputPath),
             escapeshellarg($tempOutputPath),
@@ -2207,7 +2314,8 @@ class DocumentController extends Controller
             $currentSessionId = session()->getId();
             
             $extractCommand = sprintf(
-                'python3 %s %s %d %s %s 2>&1',
+                '%s %s %s %d %s %s 2>&1',
+                escapeshellarg($pythonBinary),
                 escapeshellarg($pythonScript),
                 escapeshellarg($inputPath),
                 $document->id,
@@ -2461,6 +2569,8 @@ class DocumentController extends Controller
 
     public function applyAnnotationsDirect(Request $request, Document $document)
     {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
         $validated = $request->validate([
             'annotations' => 'required|array',
             'annotations.*.type' => 'required|string',
@@ -2537,7 +2647,8 @@ class DocumentController extends Controller
 
         $script = base_path('python/pdf-editor/apply_annotations_direct.py');
         $command = sprintf(
-            'python3 %s %s %s 2>&1',
+            '%s %s %s %s 2>&1',
+            escapeshellarg($pythonBinary),
             escapeshellarg($script),
             escapeshellarg($pdfPath),
             escapeshellarg($annotationsFile)
@@ -2617,6 +2728,8 @@ class DocumentController extends Controller
 
     public function convertToPdfA(Request $request, Document $document)
     {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
         $validated = $request->validate([
             'level' => ['required', 'string', 'in:1b,2b,3b,2u'],
             'embed_fonts' => ['boolean'],
@@ -2633,7 +2746,8 @@ class DocumentController extends Controller
 
         // Build command
         $command = sprintf(
-            'python3 %s %s %s --level %s %s %s --json 2>&1',
+            '%s %s %s %s --level %s %s %s --json 2>&1',
+            escapeshellarg($pythonBinary),
             escapeshellarg($pythonScript),
             escapeshellarg($inputPath),
             escapeshellarg($tempOutputPath),
@@ -2803,6 +2917,8 @@ class DocumentController extends Controller
 
     public function convertToWord(Request $request, Document $document)
     {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
         $validated = $request->validate([
             'layout' => ['required', 'string', 'in:flow,exact'],
             'include_images' => ['boolean'],
@@ -2818,7 +2934,8 @@ class DocumentController extends Controller
         $pythonScript = base_path('python/pdf-editor/convert_to_word.py');
 
         $command = sprintf(
-            'python3 %s %s %s --layout %s %s %s --json 2>&1',
+            '%s %s %s %s --layout %s %s %s --json 2>&1',
+            escapeshellarg($pythonBinary),
             escapeshellarg($pythonScript),
             escapeshellarg($inputPath),
             escapeshellarg($tempOutputPath),
@@ -2910,6 +3027,8 @@ class DocumentController extends Controller
 
     public function convertToExcel(Request $request, Document $document)
     {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
         $validated = $request->validate([
             'mode' => ['required', 'string', 'in:tables,all'],
             'merge_cells' => ['boolean'],
@@ -2925,7 +3044,8 @@ class DocumentController extends Controller
         $pythonScript = base_path('python/pdf-editor/convert_to_excel.py');
 
         $command = sprintf(
-            'python3 %s %s %s --mode %s %s %s --json 2>&1',
+            '%s %s %s %s --mode %s %s %s --json 2>&1',
+            escapeshellarg($pythonBinary),
             escapeshellarg($pythonScript),
             escapeshellarg($inputPath),
             escapeshellarg($tempOutputPath),
@@ -3017,6 +3137,8 @@ class DocumentController extends Controller
 
     public function splitPdf(Request $request, Document $document)
     {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
         $validated = $request->validate([
             'mode' => ['required', 'string', 'in:each,specific,range,custom'],
             'page' => ['nullable', 'integer', 'min:1'],
@@ -3031,7 +3153,7 @@ class DocumentController extends Controller
         $pythonScript = base_path('python/pdf-editor/split_pdf.py');
 
         // Build command
-        $command = 'python3 ' . escapeshellarg($pythonScript)
+        $command = escapeshellarg($pythonBinary) . ' ' . escapeshellarg($pythonScript)
             . ' ' . escapeshellarg($inputPath)
             . ' ' . escapeshellarg($outputDir)
             . ' --mode ' . escapeshellarg($mode);

@@ -1,0 +1,214 @@
+{
+  "_comment": "Recraft logo prompt templates. Edit strings here; variable substitution happens at runtime. Available variables: {subject}, {brand}, {colors}, {bg}, {SHAPE} (uppercase), {Shape} (ucfirst), {enclosure} ('Subject' or 'Logo and text').",
+
+  "default_colors": {
+    "fantasy":    "emerald green, antique gold, deep crimson",
+    "future":     "neon cyan, electric purple, deep black",
+    "retro":      "red, green, blue, yellow",
+    "minimalist": "navy blue, gold"
+  },
+
+  "shape_block": "PRIMARY: PERFECT {SHAPE} container is dominant. {enclosure} fully enclosed inside. Must remain outermost shape.",
+
+  "styles": {
+
+    "fantasy": {
+      "style_line": {
+        "min":    "Style: Fantasy logo.",
+        "medium": "Style: High fantasy logo, Lord of the Rings inspired, ornate.",
+        "max":    "Style: High fantasy illustration, Lord of the Rings inspired, rich detail, painterly textures, ornate."
+      },
+
+      "with_shape": {
+        "primary":      "PRIMARY: PERFECT {SHAPE} outermost boundary. {enclosure} fully enclosed inside. Nothing outside.",
+
+        "subject_icon": {
+          "min":    "Subject: {subject}.",
+          "medium": "Subject: {subject} with fine detail and mythical presence.",
+          "max":    "Subject: {subject} with ornate detail, intricate linework, mythical presence."
+        },
+        "subject_text": {
+          "min":    "Subject: {subject} with ornate serif text \"{brand}\".",
+          "max":    "Subject: {subject} with ornate medieval serif text \"{brand}\"."
+        },
+
+        "detail": {
+          "medium": "Scrollwork, rune accents, enchanted forest motifs.",
+          "max":    "Elven scrollwork, ancient runes, mythical textures."
+        },
+
+        "background": {
+          "min": "Background: {bg}. Empty outside the {Shape}.",
+          "max": "Background: {bg}. Completely empty outside the {Shape}. Isolated emblem, no backdrop, no environment, no scenery."
+        },
+
+        "colors": {
+          "max":     "Colors: {colors}. Rich shading, metallic highlights.",
+          "default": "Colors: {colors}."
+        },
+
+        "footer_icon": "Text: None. Centered 1:1 square.",
+        "footer_text": "Text: {brand} only. Centered 1:1 square."
+      },
+
+      "no_shape": {
+        "subject_icon": {
+          "min":    "Subject: {subject}. Bold fantasy symbol.",
+          "medium": "Subject: {subject}. Fantasy symbol with fine detail and mythical presence.",
+          "max":    "Subject: {subject}. Detailed fantasy creature or symbol, intricate linework, fine detail, mythical presence."
+        },
+        "subject_text": {
+          "min":    "Subject: {subject} with \"{brand}\" in fantasy serif.",
+          "medium": "Subject: {subject} with \"{brand}\" in ornate medieval serif with decorative flourishes.",
+          "max":    "Subject: {subject} with \"{brand}\" in ornate medieval serif typeface with decorative flourishes."
+        },
+
+        "detail": {
+          "medium": "Scrollwork, rune accents, enchanted forest motifs.",
+          "max":    "Elven scrollwork, ancient runes, enchanted forest motifs, mythical textures, aged parchment feel."
+        },
+
+        "colors": {
+          "max":     "Colors: {colors}. Rich shading, metallic highlights, deep jewel tones.",
+          "default": "Colors: {colors}."
+        },
+
+        "background": "Background: {bg}. Centered 1:1.",
+
+        "quality": {
+          "medium": "No flat fills. No minimalism.",
+          "max":    "Epic, cinematic, high-detail. No flat fills. No minimalism."
+        },
+
+        "text_icon":  "Text: None.",
+        "text_brand": "Text: \"{brand}\" only, no other words."
+      }
+    },
+
+    "future": {
+  "style_line": {
+    "min":    "Style: Mythic cosmic fantasy logo.",
+    "medium": "Style: Mythic cosmic fantasy logo, celestial, star-forged.",
+    "max":    "Style: Mythic cosmic fantasy logo, celestial, star-forged, ancient astral geometry."
+  },
+
+  "subject_icon": {
+    "min":    "Subject: {subject}. Mythic celestial symbol.",
+    "medium": "Subject: {subject}. Celestial symbol with astral energy and starborn details.",
+    "max":    "Subject: {subject}. Mythic celestial symbol, starborn geometry, astral energy, cosmic aether presence."
+  },
+
+  "subject_text": {
+    "min":    "Subject: {subject} with \"{brand}\" in mythic cosmic typeface.",
+    "max":    "Subject: {subject} with \"{brand}\" in ornate celestial typeface, star-forged and ancient."
+  },
+
+  "colors": {
+    "max":     "Colors: {colors}. Celestial glow, nebula highlights, cosmic aether illumination.",
+    "default": "Colors: {colors}."
+  },
+
+  "background": "Background: {bg}. Centered 1:1.",
+
+  "quality": "No earthly elements. Mythic cosmic atmosphere. Celestial geometry, astral presence, starborn scale.",
+
+  "text_icon":  "Text: None.",
+  "text_brand": "Text: \"{brand}\" only."
+}
+,
+
+    "retro": {
+      "style_line": {
+        "min":    "Style: Retro vintage logo.",
+        "medium": "Style: Bold retro vintage logo, screen-print aesthetic.",
+        "max":    "Style: Bold retro vintage logo, screen-print aesthetic, limited palette."
+      },
+
+      "subject_icon": {
+        "min":    "Subject: {subject}. Bold retro icon.",
+        "medium": "Subject: {subject}. Bold retro icon, strong outlines.",
+        "max":    "Subject: {subject}. Bold retro icon, strong outlines, vintage poster feel."
+      },
+      "subject_text": {
+        "min":    "Subject: {subject} with \"{brand}\" in retro font.",
+        "max":    "Subject: {subject} with \"{brand}\" in a bold retro slab-serif."
+      },
+
+      "colors": {
+        "max":     "Colors: {colors}. Hard edges, flat fills, halftone textures.",
+        "default": "Colors: {colors}. Hard edges, flat fills."
+      },
+
+      "background": "Background: {bg}. Centered 1:1.",
+      "quality":    "No photorealism. No gradients. Classic American retro design.",
+
+      "text_icon":  "Text: None.",
+      "text_brand": "Text: \"{brand}\" only."
+    },
+
+    "minimalist": {
+      "style_line": {
+        "min": "Style: Clean minimal logo.",
+        "max": "Style: Flat minimalist logo."
+      },
+
+      "subject_icon": {
+        "min": "Subject: {subject}.",
+        "max": "Subject: Bold silhouette of {subject}."
+      },
+      "subject_text": "Subject: {subject} with \"{brand}\".",
+
+      "shape_quality": "Single filled shape. No line-art. Thick shapes, smooth curves.",
+      "quality": {
+        "medium": "Single filled shape. No line-art. Thick shapes, smooth curves.",
+        "max":    "Single filled shape. No line-art. Thick shapes, smooth curves. Negative space as cut-outs."
+      },
+
+      "colors":        "Color: {colors}.",
+      "colors_shaped": "Color: {colors}. Container uses same colors.",
+      "background":    "Background: {bg}.",
+
+      "comp":          "Centered 1:1.",
+      "comp_shaped":   "Centered 1:1. {Shape} dominant.",
+
+      "flat_fills":    "Flat fills only. No gradients, shadows, glows, textures.",
+
+      "text_icon":  "Text: None.",
+      "text_brand": "Text: \"{brand}\" in sans-serif."
+    },
+
+    "greetingcard": {
+      "style_line": {
+        "min":    "Style: Hand-painted watercolor greeting card illustration.",
+        "medium": "Style: Hand-painted watercolor greeting card illustration. Soft color washes, visible paper grain.",
+        "max":    "Style: Hand-painted watercolor greeting card illustration. Soft washes, visible paper grain texture, uneven deckled edges."
+      },
+
+      "subject_icon": {
+        "min":    "Subject: {subject}.",
+        "medium": "Subject: {subject}. Soft watercolor rendering with gentle painted edges.",
+        "max":    "Subject: {subject}. Soft watercolor rendering, painterly edges, delicate wet-on-wet blooms."
+      },
+      "subject_text": {
+        "min":    "Subject: {subject} with \"{brand}\" in hand-lettered script.",
+        "max":    "Subject: {subject} with \"{brand}\" in elegant hand-lettered watercolor script with soft ink variation."
+      },
+
+      "colors": {
+        "max":     "Colors: {colors}. Muted pastel tones, soft translucent watercolor layering.",
+        "default": "Colors: {colors}. Soft watercolor washes."
+      },
+
+      "background": "Background: {bg}. Centered 1:1.",
+
+      "quality": {
+        "min":    "High-quality gouache textures, dreamy lighting. No hard lines.",
+        "max":    "High-quality gouache textures, dreamy soft lighting. No hard digital lines, no flat fills, no 3D renders."
+      },
+
+      "text_icon":  "Text: None.",
+      "text_brand": "Text: \"{brand}\" in hand-lettered script only, no other text."
+    }
+
+  }
+}

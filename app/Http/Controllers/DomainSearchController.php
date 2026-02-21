@@ -454,9 +454,8 @@ class DomainSearchController extends Controller
      */
     public function aiGenerate(Request $request, DeveloperChatClient $client)
     {
-        // Check authentication - supports both session auth and Bearer token (Sanctum)
         $user = $request->user();
-        
+
         if (!$user) {
             return response()->json([
                 'error' => 'You must be logged in to use AI Generator.',
@@ -469,7 +468,6 @@ class DomainSearchController extends Controller
             'prompt' => 'required|string|min:3|max:4000',
             'tlds' => 'nullable|array',
             'tlds.*' => ['required', Rule::in($this->getAvailableTlds())],
-            'stream' => 'nullable|boolean',
         ]);
 
         $prompt = $request->input('prompt');
@@ -477,15 +475,13 @@ class DomainSearchController extends Controller
         if (!is_array($tlds) || count($tlds) === 0) {
             $tlds = $this->getDefaultSelectedTlds();
         }
-        $stream = $request->boolean('stream');
 
         try {
             // Calculate how many names to generate so all fit in one Namecheap batch (max 50 domains)
             $tldCount = count($tlds);
             $maxNames = $tldCount > 0 ? (int) floor(50 / $tldCount) : 20;
-            $maxNames = max(5, min($maxNames, 25)); // clamp between 5–25
+            $maxNames = max(5, min($maxNames, 25));
 
-            // Create system prompt for domain generation
             $systemPrompt = "You are a creative domain name generator. Generate {$maxNames} unique, brandable domain names based on the user's request. Return ONLY a JSON object with a 'domains' array containing domain name strings (without TLDs). Names should be:
 - Short (4-15 characters)
 - Memorable and brandable
@@ -498,87 +494,61 @@ Example response format:
 
             $messages = [
                 ['role' => 'system', 'content' => $systemPrompt],
-                ['role' => 'user', 'content' => $prompt],
+                ['role' => 'user',   'content' => $prompt],
             ];
 
-            // Call Gemini API
             $data = $client->chat(
                 $messages,
-                0.9, // Higher temperature for creativity
+                0.9,
                 ['type' => 'json_object'],
-                ['timeout' => 120]
+                ['timeout' => 120],
             );
 
             $reply = $data['reply'];
-            
-            \Log::info('AI Domain Generation - Raw Reply', [
-                'user_id' => $user->id,
-                'prompt' => $prompt,
-                'reply' => $reply,
-                'reply_type' => gettype($reply),
-            ]);
-            
-            // Parse JSON response
             $responseData = is_string($reply) ? json_decode($reply, true) : $reply;
-            
+
             if (json_last_error() !== JSON_ERROR_NONE) {
-                \Log::error('JSON Parse Error', [
-                    'error' => json_last_error_msg(),
-                    'reply' => $reply,
-                ]);
                 throw new \Exception('Invalid JSON response from AI: ' . json_last_error_msg());
             }
-            
+
             $domains = $responseData['domains'] ?? [];
-            
-            if (empty($domains)) {
-                \Log::warning('No domains in response', [
-                    'response_data' => $responseData,
-                ]);
-            }
 
-            // Store request in database
-            AiDomainRequest::create([
-                'user_id' => $user->id,
-                'prompt' => $prompt,
-                'response' => $responseData,
-                'model' => $data['response']['model'] ?? 'gemini-2.0-flash',
-                'usage' => $data['response']['usageMetadata'] ?? null,
-            ]);
-
-            // Log to ai_price_log for tracking
+            // Log usage
             $usageMetadata = $data['response']['usageMetadata'] ?? [];
-            $inputTokens = $usageMetadata['promptTokenCount'] ?? 0;
+            $inputTokens  = $usageMetadata['promptTokenCount']    ?? 0;
             $outputTokens = $usageMetadata['candidatesTokenCount'] ?? 0;
-            $totalTokens = $usageMetadata['totalTokenCount'] ?? ($inputTokens + $outputTokens);
-            
-            // Calculate estimated cost (Gemini Flash pricing: $0.15 per 1M input, $0.60 per 1M output)
+            $totalTokens  = $usageMetadata['totalTokenCount'] ?? ($inputTokens + $outputTokens);
             $estimatedCost = ($inputTokens * 0.00000015) + ($outputTokens * 0.00000060);
-            
-            AiPriceLog::create([
-                'session' => session()->getId(),
-                'document_id' => null,
-                'user_email' => $user->email,
-                'request_type' => 'domain_generation',
-                'model_name' => $data['response']['model'] ?? 'gemini-2.0-flash',
-                'input_tokens' => $inputTokens,
-                'output_tokens' => $outputTokens,
-                'total_tokens' => $totalTokens,
-                'image_count' => 0,
-                'image_size' => null,
-                'cost_usd' => null,
-                'estimated_cost_usd' => $estimatedCost,
-                'prompt_preview' => substr($prompt, 0, 255),
-                'status' => 'completed',
+
+            AiDomainRequest::create([
+                'user_id'  => $user->id,
+                'status'   => 'completed',
+                'prompt'   => $prompt,
+                'tlds'     => $tlds,
+                'response' => $responseData,
+                'model'    => $data['response']['model'] ?? 'gemini-2.0-flash',
+                'usage'    => $usageMetadata ?: null,
             ]);
 
-            if ($stream) {
-                return response()->json([
-                    'domains' => $domains,
-                    'model' => $data['response']['model'] ?? 'gemini-2.0-flash',
-                    'usage' => $data['response']['usageMetadata'] ?? null,
-                    'error' => null,
-                ]);
+            AiPriceLog::create([
+                'session'            => session()->getId(),
+                'document_id'        => null,
+                'user_email'         => $user->email,
+                'request_type'       => 'domain_generation',
+                'model_name'         => $data['response']['model'] ?? 'gemini-2.0-flash',
+                'input_tokens'       => $inputTokens,
+                'output_tokens'      => $outputTokens,
+                'total_tokens'       => $totalTokens,
+                'image_count'        => 0,
+                'image_size'         => null,
+                'cost_usd'           => null,
+                'estimated_cost_usd' => $estimatedCost,
+                'prompt_preview'     => substr($prompt, 0, 255),
+                'status'             => 'completed',
+            ]);
+
+            if (empty($domains)) {
+                return response()->json(['error' => 'No domain names could be generated.', 'domains' => []], 422);
             }
 
             $check = $this->checkDomainAvailability($domains, $tlds);
@@ -586,41 +556,28 @@ Example response format:
             return response()->json([
                 'domains' => $domains,
                 'results' => $check['results'],
-                'model' => $data['response']['model'] ?? 'gemini-2.0-flash',
-                'usage' => $data['response']['usageMetadata'] ?? null,
-                'error' => $check['error'],
+                'model'   => $data['response']['model'] ?? 'gemini-2.0-flash',
+                'usage'   => $usageMetadata ?: null,
+                'error'   => $check['error'],
             ], $check['error'] ? 500 : 200);
 
         } catch (\Illuminate\Http\Client\RequestException $e) {
-            $statusCode = $e->response?->status();
-            $errorBody = $e->response?->json();
-            
             \Log::error('AI Domain Generation - API Error', [
                 'user_id' => $user->id,
-                'prompt' => $prompt,
-                'status' => $statusCode,
-                'error' => $errorBody,
-                'message' => $e->getMessage(),
+                'prompt'  => $prompt,
+                'status'  => $e->response?->status(),
+                'error'   => $e->response?->json(),
             ]);
-
-            return response()->json([
-                'error' => 'AI service error. Please try again.',
-                'domains' => [],
-                'debug' => config('app.debug') ? $errorBody : null,
-            ], 500);
-            
+            return response()->json(['error' => 'AI service error. Please try again.', 'domains' => []], 500);
         } catch (\Exception $e) {
             \Log::error('AI Domain Generation Error', [
                 'user_id' => $user->id,
-                'prompt' => $prompt,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
+                'error'   => $e->getMessage(),
             ]);
-
             return response()->json([
-                'error' => 'Failed to generate domains. Please try again.',
+                'error'  => 'Failed to generate domains. Please try again.',
                 'domains' => [],
-                'debug' => config('app.debug') ? $e->getMessage() : null,
+                'debug'  => config('app.debug') ? $e->getMessage() : null,
             ], 500);
         }
     }
@@ -777,7 +734,7 @@ Example response format:
         }
 
         $request->validate([
-            'image_url' => 'required|url|max:2000',
+            'image_url' => 'required|string|max:2000',
         ]);
 
         $imageUrl = $request->input('image_url');
@@ -787,14 +744,30 @@ Example response format:
             $model = config('services.gemini.model', 'gemini-2.0-flash');
             $baseUrl = config('services.gemini.base_url', 'https://generativelanguage.googleapis.com/v1beta');
 
-            // Fetch the image and send as base64 inline_data
-            $imageData = Http::timeout(15)->get($imageUrl);
-            if (!$imageData->successful()) {
-                return response()->json(['error' => 'Could not fetch the image.'], 422);
+            // Fetch the image — support local storage paths as well as external URLs
+            if (str_starts_with($imageUrl, '/storage/')) {
+                $localPath = storage_path('app/public/' . substr($imageUrl, 9));
+                if (!file_exists($localPath)) {
+                    return response()->json(['error' => 'Source image not found on disk.'], 422);
+                }
+                $imageBytes = file_get_contents($localPath);
+                $ext = strtolower(pathinfo($localPath, PATHINFO_EXTENSION));
+                $mimeType = match($ext) {
+                    'webp' => 'image/webp',
+                    'png'  => 'image/png',
+                    'jpg', 'jpeg' => 'image/jpeg',
+                    'svg'  => 'image/svg+xml',
+                    default => 'image/png',
+                };
+            } else {
+                $imageData = Http::timeout(15)->get($imageUrl);
+                if (!$imageData->successful()) {
+                    return response()->json(['error' => 'Could not fetch the image.'], 422);
+                }
+                $imageBytes = $imageData->body();
+                $mimeType = $imageData->header('Content-Type') ?: 'image/png';
             }
 
-            $imageBytes = $imageData->body();
-            $mimeType = $imageData->header('Content-Type') ?: 'image/png';
             $base64Image = base64_encode($imageBytes);
 
             $response = Http::timeout(30)->post(
@@ -880,7 +853,7 @@ Example response format:
             'count' => 'nullable|integer|min:1|max:4',
             'pro' => 'nullable|boolean',
             'pro_size' => 'nullable|integer|in:512,1024,1536',
-            'style' => 'nullable|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego',
+            'style' => 'nullable|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,greetingcard',
             'bg_color' => 'nullable|string|max:20',
             'image_model' => 'nullable|string|in:flux,dalle,recraft',
             'output_format' => 'nullable|string|in:raster,vector',
@@ -932,7 +905,7 @@ Example response format:
 
         $request->validate([
             'domain' => 'nullable|string|max:100',
-            'style' => 'required|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,minimalist',
+            'style' => 'required|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,minimalist,greetingcard',
             'count' => 'nullable|integer|min:1|max:4',
             'total_count' => 'nullable|integer|min:1|max:4',
             'batch_index' => 'nullable|integer|min:0|max:3',
@@ -945,7 +918,7 @@ Example response format:
             'output_format' => 'nullable|string|in:raster,vector',
             'image_format' => 'nullable|string|in:png,bmp',
             'recraft_substyle' => 'nullable|string|max:60',
-            'logo_shape' => 'nullable|string|in:none,circle,hexagon,triangle,square,pentagon',
+            'logo_shape' => 'nullable|string|in:none,circle,hexagon,triangle,square,pentagon,heart',
             'logo_detail' => 'nullable|string|in:min,medium,max',
             'color_palette' => 'nullable|array|max:5',
             'color_palette.*' => 'string|max:20',
@@ -1059,7 +1032,7 @@ Example response format:
         // Build color palette instruction
         if (!empty($colorPalette) && is_array($colorPalette)) {
             $colorNames = implode(', ', $colorPalette);
-            $colorInstruction = "Use exactly this color palette for the logo artwork and typography: {$colorNames}. These colors are only for the logo elements, NOT the background.";
+            $colorInstruction = "MANDATORY COLOR PALETTE — use ONLY these exact colors for ALL logo artwork: {$colorNames}. Apply these colors strictly. Do not introduce any other colors. The background color is separate and defined below.";
         } else {
             $colorInstruction = null; // Let style defaults apply
         }
@@ -1073,51 +1046,20 @@ Example response format:
                 : 'isolated on a solid white background',
         };
 
-        if ($iconOnly) {
-            // Icon-only mode: no text at all, pure symbol/icon
-            // Use custom element if provided, otherwise use a generic concept hint without the brand name
-            $conceptHint = $customElement ? $customElement : ' A unique abstract symbol.';
-            $noExtraText = " There is absolutely NO text, NO letters, NO words, NO numbers, NO typography anywhere in the image. Zero text of any kind. Pure graphic symbol only.";
+        // Build Flux prompt from JSON template (edit config/flux_prompts.json to change wording)
+        $prompt = \App\Services\FluxPromptBuilder::build(
+            style:            $style,
+            iconOnly:         $iconOnly,
+            concept:          $customElement,
+            colorInstruction: $colorInstruction,
+            bgInstruction:    $bgInstruction,
+            brandUpper:       $brandUpper,
+        );
 
-            $profColor = $colorInstruction ?? 'navy blue and gold color palette.';
-            $fantColor = $colorInstruction ?? 'rich emerald green and antique gold color palette.';
-            $futColor = $colorInstruction ?? 'glowing neon cyan and electric purple color palette,';
-            $retroColor = $colorInstruction ?? 'red, green, blue and yellow color palette.';
-
-            $stylePrompts = [
-                'professional' => "A premium corporate icon mark.{$conceptHint} A single bold geometric symbol. Monolithic, thick lines, emblem style, {$profColor} Secure, established, Fortune 500 quality. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no gradients, no cluttered details, avoid photorealism, avoid messy lines. High contrast, professional design, 4k.{$noExtraText}",
-                'fantasy' => "An epic fantasy-themed icon mark.{$conceptHint} A single ornate magical symbol. Elven runes, enchanted forest motifs, mythical creatures, ancient scrollwork, Lord of the Rings inspired aesthetics, {$fantColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no cluttered details, avoid photorealism, avoid messy lines. Epic fantasy design, 4k.{$noExtraText}",
-                'future' => "A futuristic sci-fi icon mark.{$conceptHint} A single sleek angular geometric symbol. Holographic elements, circuit board patterns, space-age aesthetics, {$futColor} starfield accents, advanced technology motifs. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No cluttered details, avoid photorealism, avoid messy lines. Futuristic sci-fi design, 4k.{$noExtraText}",
-                'retro' => "A vibrant retro vector design icon mark.{$conceptHint} Surrounded by a colorful retro sunburst, {$retroColor} Captures the essence of a fun vacation feel, minimalist retro style. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No cluttered details, avoid photorealism. Retro design, 4k.{$noExtraText}",
-                'chrome' => "A premium corporate icon mark.{$conceptHint} A single bold geometric symbol. Monolithic, thick lines, emblem style, {$profColor} Secure, established, Fortune 500 quality. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no gradients, no cluttered details, avoid photorealism, avoid messy lines. High contrast, professional design, 4k.{$noExtraText}",
-                '8bit' => "An epic fantasy-themed icon mark.{$conceptHint} A single ornate magical symbol. Engraved polished gold with beveled edges, intricate filigree and ornamental carvings, glowing blue arcane crystals, ancient metal structures, magical geometric forms, {$fantColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. Fantasy RPG design, 4k.{$noExtraText}",
-                'dotmatrix' => "A stippled dot art icon mark.{$conceptHint} A single bold symbol rendered entirely in stippling technique. {$profColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. Professional dot art design, 4k.{$noExtraText}",
-                'lego' => "A glossy sticker-style icon mark.{$conceptHint} Thick clean outlines, soft shadows, toy plastic material. {$profColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. Sticker design, 4k.{$noExtraText}",
-                'minimalist' => "A minimalist icon mark.{$conceptHint} A single clean, modern symbol using flat design principles. Subtle geometric shapes, {$profColor} Plain or white background. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No gradients, no shadows, no clutter. Visually balanced professional minimalist design, 4k.{$noExtraText}",
-            ];
-        } else {
-            // With brand name text
-            $noExtraText = " The ONLY text in the entire image is \"{$brandUpper}\". Do not add any other words, letters, taglines, slogans, or captions anywhere in the image.";
-
-            $profColor = $colorInstruction ?? 'navy blue and gold color palette.';
-            $fantColor = $colorInstruction ?? 'rich emerald green and antique gold color palette.';
-            $futColor = $colorInstruction ?? 'glowing neon cyan and electric purple color palette,';
-            $retroColor = $colorInstruction ?? 'red, green, blue and yellow color palette.';
-
-            $stylePrompts = [
-                'professional' => "A premium corporate logo. The centerpiece is the word \"{$brandUpper}\" in an elegant, refined custom serif typeface with perfectly spaced letters.{$customElement} Monolithic, thick lines, emblem style, {$profColor} Secure, established, Fortune 500 quality. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no gradients, no cluttered details, avoid photorealism, avoid messy lines. High contrast, professional design, 4k.{$noExtraText}",
-                'fantasy' => "An epic fantasy-themed logo. The centerpiece is the word \"{$brandUpper}\" in an ornate, medieval-inspired custom typeface with elegant serifs and decorative flourishes.{$customElement} Elven runes, enchanted forest motifs, mythical creatures, ancient scrollwork, Lord of the Rings inspired aesthetics, {$fantColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no cluttered details, avoid photorealism, avoid messy lines. Epic fantasy design, 4k.{$noExtraText}",
-                'future' => "A futuristic sci-fi logo. The centerpiece is the word \"{$brandUpper}\" in a sleek, angular, cyberpunk-inspired custom typeface with sharp edges and neon accents.{$customElement} Holographic elements, circuit board patterns, space-age aesthetics, {$futColor} starfield accents, advanced technology motifs. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No cluttered details, avoid photorealism, avoid messy lines. Futuristic sci-fi design, 4k.{$noExtraText}",
-                'retro' => "A vibrant retro vector design logo. The centerpiece is the word \"{$brandUpper}\" in a bold retro typeface.{$customElement} Surrounded by a colorful retro sunburst, {$retroColor} Captures the essence of a fun vacation feel, minimalist retro style. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No cluttered details, avoid photorealism. Retro design, 4k.{$noExtraText}",
-                'chrome' => "A premium corporate logo. The centerpiece is the word \"{$brandUpper}\" in an elegant, refined custom serif typeface with perfectly spaced letters.{$customElement} Monolithic, thick lines, emblem style, {$profColor} Secure, established, Fortune 500 quality. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no gradients, no cluttered details, avoid photorealism, avoid messy lines. High contrast, professional design, 4k.{$noExtraText}",
-                '8bit' => "An epic fantasy-themed logo. The centerpiece is the word \"{$brandUpper}\" in ornate medieval high-fantasy typography with engraved polished gold, beveled edges and filigree.{$customElement} Glowing blue arcane crystals, ancient metal structures, magical geometric forms, {$fantColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. Fantasy RPG design, 4k.{$noExtraText}",
-                'dotmatrix' => "A stippled dot art logo with \"{$brandUpper}\" text.{$customElement} {$profColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. Professional dot art design, 4k.{$noExtraText}",
-                'lego' => "A glossy sticker-style logo with \"{$brandUpper}\" in a decorative banner.{$customElement} Thick clean outlines, soft shadows, toy plastic material. {$profColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. Sticker design, 4k.{$noExtraText}",
-                'minimalist' => "A minimalist logo design with \"{$brandUpper}\" in a stylish sans-serif font.{$customElement} Clean, modern, and simple, using flat design principles. Subtle geometric shapes or symbols, {$profColor} Plain or white background. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No gradients, no shadows, no clutter. Visually balanced professional minimalist design, 4k.{$noExtraText}",
-            ];
+        // Prepend shape container instruction for Flux
+        if ($imageModel === 'flux' && !empty($logoShape) && $logoShape !== 'none') {
+            $prompt = 'PERFECT ' . strtoupper($logoShape) . ' shaped container. All logo artwork fits entirely within the ' . $logoShape . '. ' . $prompt;
         }
-
-        $prompt = $stylePrompts[$style];
 
         // ── Build a DALL-E-specific prompt (structured, anti-collage format) ──
         if ($imageModel === 'dalle') {
@@ -1246,6 +1188,23 @@ Example response format:
                         . "Hard constraints: one logo only, no collage, no grid, no mockup, no busy elements. "
                         . "Prioritize simplicity, whitespace, and text readability over decoration.";
                 }
+            } elseif ($style === 'greetingcard') {
+                $gcSubject = $dalleDesc ?: ($iconOnly ? 'a floral arrangement' : "{$brandUpper} lettering");
+                $gcColors  = !empty($colorPalette) && is_array($colorPalette)
+                    ? "Color palette: {$dalleColorList}. Applied as soft watercolor washes."
+                    : 'Muted pastel palette — soft rose, sage green, lavender, ivory.';
+                $gcText = $iconOnly
+                    ? ' No text, no letters, no words anywhere in the image.'
+                    : " Include the brand name \"{$brandUpper}\" in elegant hand-lettered watercolor script. The ONLY text anywhere is \"{$brandUpper}\"."
+                    ;
+                $prompt = "Hand-painted watercolor greeting card illustration. "
+                    . "Subject: {$gcSubject}. "
+                    . "Soft color washes, visible paper grain texture, uneven deckled edges. "
+                    . $gcColors . ' '
+                    . "Dreamy soft lighting, high-quality gouache textures. "
+                    . "No hard digital lines, no flat vector fills, no photorealism. "
+                    . "Centered 1:1 square composition, isolated on a plain white background."
+                    . $gcText;
             } else {
                 $prompt = "A high-resolution 3D render of a logo made of polished sterling silver with a shiny metallic texture, floating on a {$chromeBg} in a minimalistic studio setup, rendered in 4K HDR for hyper-detailed clarity.";
             }
@@ -1253,166 +1212,29 @@ Example response format:
 
         // ── Build a Recraft-specific structured logo prompt (max 1000 chars) ──
         if ($imageModel === 'recraft') {
-            $lines = [];
             $subjectDesc = trim($customPrompt ?? '');
-            $subject = $subjectDesc ?: ($iconOnly ? 'Abstract geometric symbol' : 'Emblem mark');
+            $subject     = $subjectDesc ?: ($iconOnly ? 'Abstract geometric symbol' : 'Emblem mark');
 
-            // Color block (shared across all styles)
-            if (!empty($colorPalette) && is_array($colorPalette)) {
-                $colorDesc = implode(', ', $colorPalette);
-            } else {
-                $colorDesc = match($style) {
-                    'fantasy' => 'emerald green, antique gold, deep crimson',
-                    'future'  => 'neon cyan, electric purple, deep black',
-                    'retro'   => 'red, green, blue, yellow',
-                    default   => 'navy blue, gold',
-                };
-            }
+            $colorDesc = (!empty($colorPalette) && is_array($colorPalette))
+                ? implode(', ', $colorPalette)
+                : \App\Services\RecraftPromptBuilder::defaultColors($style);
 
-            // Background
             $bgDesc = match($bgColor) {
-                'black' => '#000000',
+                'black'       => '#000000',
                 'transparent' => 'transparent',
-                default => str_starts_with($bgColor, '#') ? $bgColor : '#FFFFFF',
+                default       => str_starts_with($bgColor, '#') ? $bgColor : '#FFFFFF',
             };
 
-            // Shape container block (all styles)
-            $shapeBlock = '';
-            if ($logoShape && $logoShape !== 'none') {
-                $shapeUpper = strtoupper($logoShape);
-                $enclosure = $iconOnly ? 'subject' : 'logo+text';
-                $shapeBlock = "PRIMARY: PERFECT {$shapeUpper} container is dominant. {$enclosure} fully enclosed inside. Must remain outermost shape.";
-            }
-
-            if ($style === 'fantasy') {
-                // ── High Fantasy (LOTR-inspired) ───────────────────────────
-                $lines[] = match($logoDetail) {
-                    'min'    => 'Style: Fantasy logo.',
-                    'medium' => 'Style: High fantasy logo, Lord of the Rings inspired, ornate.',
-                    default  => 'Style: High fantasy illustration, Lord of the Rings inspired, rich detail, painterly textures, ornate.',
-                };
-                if ($shapeBlock) $lines[] = $shapeBlock;
-                if ($iconOnly) {
-                    $lines[] = match($logoDetail) {
-                        'min'    => "Subject: {$subject}. Bold fantasy symbol.",
-                        'medium' => "Subject: {$subject}. Fantasy symbol with fine detail and mythical presence.",
-                        default  => "Subject: {$subject}. Detailed fantasy creature or symbol, intricate linework, fine detail, mythical presence.",
-                    };
-                } else {
-                    $lines[] = match($logoDetail) {
-                        'min'    => "Subject: {$subject} with \"{$brandUpper}\" in fantasy serif.",
-                        'medium' => "Subject: {$subject} with \"{$brandUpper}\" in ornate medieval serif with decorative flourishes.",
-                        default  => "Subject: {$subject} with \"{$brandUpper}\" in ornate medieval serif typeface with decorative flourishes.",
-                    };
-                }
-                if ($logoDetail !== 'min') {
-                    $lines[] = $logoDetail === 'medium'
-                        ? 'Scrollwork, rune accents, enchanted forest motifs.'
-                        : 'Elven scrollwork, ancient runes, enchanted forest motifs, mythical textures, aged parchment feel.';
-                }
-                $lines[] = $logoDetail === 'max'
-                    ? "Colors: {$colorDesc}. Rich shading, metallic highlights, deep jewel tones."
-                    : "Colors: {$colorDesc}.";
-                $lines[] = "Background: {$bgDesc}. Centered 1:1.";
-                if ($logoDetail !== 'min') {
-                    $lines[] = $logoDetail === 'medium'
-                        ? 'No flat fills. No minimalism.'
-                        : 'Epic, cinematic, high-detail. No flat fills. No minimalism.';
-                }
-                if (!$iconOnly) $lines[] = "Text: \"{$brandUpper}\" only, no other words.";
-
-            } elseif ($style === 'future' || $style === 'scifi') {
-                // ── Futuristic / Sci-Fi ─────────────────────────────────────
-                $lines[] = match($logoDetail) {
-                    'min'    => 'Style: Futuristic sci-fi logo.',
-                    'medium' => 'Style: Futuristic sci-fi logo, sleek, high-tech.',
-                    default  => 'Style: Futuristic sci-fi logo, sleek, high-tech, sharp geometry.',
-                };
-                if ($shapeBlock) $lines[] = $shapeBlock;
-                if ($iconOnly) {
-                    $lines[] = match($logoDetail) {
-                        'min'    => "Subject: {$subject}. Angular geometric symbol.",
-                        'medium' => "Subject: {$subject}. Geometric symbol with circuit details.",
-                        default  => "Subject: {$subject}. Angular geometric symbol, circuit-board details, holographic feel.",
-                    };
-                } else {
-                    $lines[] = match($logoDetail) {
-                        'min'    => "Subject: {$subject} with \"{$brandUpper}\" in sharp typeface.",
-                        default  => "Subject: {$subject} with \"{$brandUpper}\" in sharp cyberpunk typeface.",
-                    };
-                }
-                $lines[] = $logoDetail === 'max'
-                    ? "Colors: {$colorDesc}. Glowing neon accents on dark field."
-                    : "Colors: {$colorDesc}.";
-                $lines[] = "Background: {$bgDesc}. Centered 1:1.";
-                if ($logoDetail !== 'min') {
-                    $lines[] = 'No organic shapes. No gradients except neon glow. No clutter.';
-                }
-                if (!$iconOnly) $lines[] = "Text: \"{$brandUpper}\" only.";
-
-            } elseif ($style === 'retro') {
-                // ── Retro ───────────────────────────────────────────────────
-                $lines[] = match($logoDetail) {
-                    'min'    => 'Style: Retro vintage logo.',
-                    'medium' => 'Style: Bold retro vintage logo, screen-print aesthetic.',
-                    default  => 'Style: Bold retro vintage logo, screen-print aesthetic, limited palette.',
-                };
-                if ($shapeBlock) $lines[] = $shapeBlock;
-                if ($iconOnly) {
-                    $lines[] = match($logoDetail) {
-                        'min'    => "Subject: {$subject}. Bold retro icon.",
-                        'medium' => "Subject: {$subject}. Bold retro icon, strong outlines.",
-                        default  => "Subject: {$subject}. Bold retro icon, strong outlines, vintage poster feel.",
-                    };
-                } else {
-                    $lines[] = match($logoDetail) {
-                        'min'    => "Subject: {$subject} with \"{$brandUpper}\" in retro font.",
-                        default  => "Subject: {$subject} with \"{$brandUpper}\" in a bold retro slab-serif.",
-                    };
-                }
-                $lines[] = $logoDetail === 'max'
-                    ? "Colors: {$colorDesc}. Hard edges, flat fills, halftone textures."
-                    : "Colors: {$colorDesc}. Hard edges, flat fills.";
-                $lines[] = "Background: {$bgDesc}. Centered 1:1.";
-                if ($logoDetail !== 'min') {
-                    $lines[] = 'No photorealism. No gradients. Classic American retro design.';
-                }
-                if (!$iconOnly) $lines[] = "Text: \"{$brandUpper}\" only.";
-
-            } else {
-                // ── Flat Minimalist (default: minimalist, chrome, default) ──
-                $lines[] = match($logoDetail) {
-                    'min'    => 'Style: Clean minimal logo.',
-                    default  => 'Style: Flat minimalist logo.',
-                };
-                if ($shapeBlock) $lines[] = $shapeBlock;
-                if ($iconOnly) {
-                    $lines[] = match($logoDetail) {
-                        'min'    => "Subject: {$subject}.",
-                        default  => "Subject: Bold silhouette of {$subject}.",
-                    };
-                } else {
-                    $lines[] = "Subject: {$subject} with \"{$brandUpper}\".";
-                }
-                if ($logoDetail !== 'min') {
-                    $lines[] = $logoDetail === 'medium'
-                        ? 'Single filled shape. No line-art. Thick shapes, smooth curves.'
-                        : 'Single filled shape. No line-art. Thick shapes, smooth curves. Negative space as cut-outs.';
-                }
-                $colorLine = "Color: {$colorDesc}.";
-                if ($logoShape && $logoShape !== 'none') $colorLine .= ' Container uses same colors.';
-                $lines[] = $colorLine;
-                $lines[] = "Background: {$bgDesc}.";
-                $comp = 'Centered 1:1.';
-                if ($logoShape && $logoShape !== 'none') $comp .= ' ' . ucfirst($logoShape) . ' dominant.';
-                $lines[] = $comp;
-                if ($logoDetail !== 'min') {
-                    $lines[] = 'Flat fills only. No gradients, shadows, glows, textures.';
-                }
-                $lines[] = $iconOnly ? 'Text: None.' : "Text: \"{$brandUpper}\" in sans-serif.";
-            }
-
-            $prompt = implode("\n", $lines);
+            $prompt = \App\Services\RecraftPromptBuilder::build(
+                style:      $style,
+                logoDetail: $logoDetail,
+                logoShape:  $logoShape,
+                iconOnly:   $iconOnly,
+                subject:    $subject,
+                brandUpper: $brandUpper,
+                colorDesc:  $colorDesc,
+                bgDesc:     $bgDesc,
+            );
         }
 
         // Determine model name for logging
@@ -1463,6 +1285,13 @@ Example response format:
         ]);
 
         // ── Dispatch the generation job to the queue ──
+        // For Recraft: stagger each job by 5 s × batch_index so they hit the Recraft API
+        // one at a time rather than all at once (Recraft throttles beyond ~3 concurrent reqs,
+        // causing the last job to wait an extra 20+ s before even starting to generate).
+        $recraftDelay = ($imageModel === 'recraft' && $batchIndex > 0)
+            ? now()->addSeconds($batchIndex * 5)
+            : null;
+
         \App\Jobs\GenerateLogoJob::dispatch(
             userId: $user->id,
             logoRequestId: $logoRequest->id,
@@ -1484,7 +1313,7 @@ Example response format:
                 'cost_per_image' => $costPerImage,
                 'model_name' => $modelName,
             ],
-        );
+        )->delay($recraftDelay);
 
         return response()->json([
             'logo_request_id' => (int) $logoRequest->id,

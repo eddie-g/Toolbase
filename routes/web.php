@@ -14,6 +14,10 @@ Route::get('/', function () {
     return view('home');
 })->name('home');
 
+Route::get('/docs/logo-generator', function () {
+    return view('docs.logo-generator');
+})->name('docs.logoGenerator');
+
 Route::get('/fix-migration-3', function () {
     \Illuminate\Support\Facades\Artisan::call('migrate', ['--force' => true]);
     return 'Migrated: ' . \Illuminate\Support\Facades\Artisan::output();

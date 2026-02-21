@@ -31,6 +31,7 @@
                     <a href="/domain-search" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Domain Search</a>
                     <a href="/logo-generator" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Logo Generator</a>
                     <a href="/prices" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Prices</a>
+                    <a href="{{ route('docs.logoGenerator') }}" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Docs</a>
                     <a href="#faq" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">FAQ</a>
                 </nav>
             @endif
