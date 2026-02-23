@@ -126,8 +126,9 @@ Route::post('/domain-search/check', [DomainSearchController::class, 'check'])->n
 Route::post('/domain-search/check-start', [DomainSearchController::class, 'checkStart'])->middleware(['throttle:10,1'])->name('domainSearch.checkStart');
 Route::get('/domain-search/check-poll', [DomainSearchController::class, 'checkPoll'])->name('domainSearch.checkPoll');
 Route::post('/domain-search/generate', [DomainSearchController::class, 'generate'])->name('domainSearch.generate');
+Route::post('/domain-search/toggle-saved', [DomainSearchController::class, 'toggleSavedDomain'])->middleware('auth')->name('domainSearch.toggleSaved');
 Route::post('/domain-search/generate-and-check', [DomainSearchController::class, 'generateAndCheck'])->name('domainSearch.generateAndCheck');
-Route::post('/domain-search/ai-generate', [DomainSearchController::class, 'aiGenerate'])->middleware(['auth:sanctum'])->name('domainSearch.aiGenerate');
+Route::post('/domain-search/ai-generate', [DomainSearchController::class, 'aiGenerate'])->name('domainSearch.aiGenerate');
 Route::post('/domain-search/generate-logo', [DomainSearchController::class, 'generateLogo'])->name('domainSearch.generateLogo');
 Route::get('/domain-search/generate-logo', fn () => response()->json(['error' => 'POST method required.'], 405));
 Route::get('/domain-search/logo-status/{logoRequest}', [DomainSearchController::class, 'logoStatus'])->name('domainSearch.logoStatus');

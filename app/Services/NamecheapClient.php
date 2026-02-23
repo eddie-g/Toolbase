@@ -208,6 +208,63 @@ class NamecheapClient
     }
 
     /**
+     * Check availability for a flat list of fully-qualified domain names.
+     * Unlike checkAvailability(), this does NOT build a cross product —
+     * it sends exactly the FQDNs you provide, batched in chunks of 50.
+     *
+     * @param  string[]  $fqdns  e.g. ['flash.com', 'nova.ai', 'bolt.net']
+     * @return array{results: array, error: string|null}
+     */
+    public function checkFqdns(array $fqdns): array
+    {
+        $fqdns = array_values(array_filter(array_map('strtolower', $fqdns)));
+
+        if (empty($fqdns)) {
+            return ['results' => [], 'error' => null];
+        }
+
+        $results = [];
+        $uncached = [];
+
+        foreach ($fqdns as $domain) {
+            $cached = Cache::get("nc-domain:{$domain}");
+            if ($cached !== null) {
+                $results[] = $cached;
+            } else {
+                $uncached[] = $domain;
+            }
+        }
+
+        $chunks = array_chunk($uncached, self::MAX_DOMAINS_PER_REQUEST);
+        $errors = [];
+
+        foreach ($chunks as $chunk) {
+            try {
+                $chunkResults = $this->apiCheck($chunk);
+                foreach ($chunkResults as $result) {
+                    Cache::put(
+                        "nc-domain:{$result['domain']}",
+                        $result,
+                        now()->addMinutes(self::CACHE_TTL_MINUTES)
+                    );
+                    $results[] = $result;
+                }
+            } catch (\Throwable $e) {
+                Log::error('Namecheap checkFqdns error', [
+                    'message' => $e->getMessage(),
+                    'domains' => $chunk,
+                ]);
+                $errors[] = $e->getMessage();
+            }
+        }
+
+        return [
+            'results' => $results,
+            'error' => !empty($errors) ? implode('; ', $errors) : null,
+        ];
+    }
+
+    /**
      * Sanitize a domain base name (strip TLD, lowercase, remove invalid chars).
      */
     private function sanitizeName(string $name): string

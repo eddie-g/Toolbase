@@ -122,7 +122,7 @@
     {{-- ─── Mobile Nav Overlay ─────────────────────────────────────────── --}}
     <div x-show="mobileNav" x-cloak @click="mobileNav = false" class="fixed inset-0 z-40 bg-black/50 lg:hidden backdrop-blur-sm"></div>
     <aside x-show="mobileNav" x-cloak x-transition:enter="transition ease-out duration-200" x-transition:enter-start="-translate-x-full" x-transition:enter-end="translate-x-0" x-transition:leave="transition ease-in duration-150" x-transition:leave-start="translate-x-0" x-transition:leave-end="-translate-x-full"
-        class="fixed top-0 left-0 z-50 w-72 h-full bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 overflow-y-auto sidebar-scroll pt-16 lg:hidden">
+        class="fixed top-16 left-0 z-50 w-72 h-[calc(100vh-4rem)] bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 overflow-y-auto sidebar-scroll lg:hidden">
         @include('docs._sidebar')
     </aside>
 
@@ -130,7 +130,7 @@
     <div class="flex pt-16 min-h-screen">
 
         {{-- Left Sidebar (desktop) --}}
-        <aside class="hidden lg:flex flex-col w-64 fixed top-16 bottom-0 left-0 border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 overflow-y-auto sidebar-scroll z-30">
+        <aside class="hidden lg:block w-64 fixed top-16 bottom-0 left-0 border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 overflow-y-auto sidebar-scroll z-30">
             @include('docs._sidebar')
         </aside>
 

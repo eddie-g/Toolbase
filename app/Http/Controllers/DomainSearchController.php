@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\AiDomainRequest;
 use App\Models\AiLogoRequest;
+use App\Models\SavedDomain;
 use App\Models\AiLogoPrice;
 use App\Models\AiPriceLog;
 use App\Models\CreditTransaction;
@@ -24,19 +25,67 @@ class DomainSearchController extends Controller
 {
     use ResolvesExternalDns;
     private const DEFAULT_TLDS = ['com', 'ai', 'net', 'org'];
-    private const GENERATE_CATEGORIES = ['space', 'tech', 'fantasy', 'scifi', 'romance', 'mystery', 'thriller', 'horror', 'adventure', 'historical', 'drama', 'action'];
+    private const GENERATE_CATEGORIES = ['tech', 'fantasy', 'scifi', 'horror', 'romance'];
     private const CATEGORY_RESULT_LIMIT = 10;
 
-    public function index()
+    /**
+     * Common English stop words and filler words to exclude from domain generation.
+     * These are too generic, grammatical, or meaningless as domain names.
+     */
+    private const STOP_WORDS = [
+        // Articles & determiners
+        'the', 'a', 'an', 'this', 'that', 'these', 'those', 'all', 'both', 'each',
+        'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'any', 'every',
+        // Conjunctions
+        'and', 'but', 'or', 'yet', 'for', 'nor', 'so',
+        // Prepositions
+        'of', 'in', 'to', 'on', 'at', 'by', 'up', 'as', 'if', 'into', 'via',
+        'from', 'with', 'about', 'above', 'after', 'along', 'among', 'around',
+        'before', 'behind', 'below', 'beneath', 'beside', 'between', 'beyond',
+        'down', 'during', 'except', 'inside', 'near', 'off', 'out', 'outside',
+        'over', 'past', 'since', 'through', 'throughout', 'under', 'until',
+        'upon', 'within', 'without',
+        // Pronouns
+        'he', 'she', 'it', 'we', 'they', 'his', 'her', 'its', 'our', 'their',
+        'him', 'them', 'me', 'my', 'you', 'your', 'who', 'whom', 'which', 'what',
+        // Common verbs (too generic)
+        'is', 'are', 'was', 'were', 'be', 'been', 'being', 'has', 'have', 'had',
+        'do', 'does', 'did', 'will', 'would', 'shall', 'should', 'may', 'might',
+        'must', 'can', 'could', 'get', 'got', 'let', 'put', 'set', 'use', 'used',
+        'say', 'said', 'see', 'seem', 'seemed', 'know', 'make', 'take', 'come',
+        'give', 'find', 'goes', 'look', 'keep', 'call', 'try', 'ask', 'need',
+        // Common adjectives too vague for branding
+        'new', 'old', 'good', 'bad', 'big', 'small', 'large', 'long', 'high',
+        'low', 'great', 'little', 'own', 'right', 'sure', 'real', 'true', 'full',
+        'open', 'same', 'just', 'only', 'even', 'back', 'very', 'also', 'well',
+        // Adverbs / filler
+        'not', 'now', 'then', 'when', 'where', 'how', 'why', 'here', 'there',
+        'again', 'once', 'never', 'always', 'often', 'still', 'too', 'much',
+        'many', 'own', 'same', 'last', 'next', 'first', 'second', 'rather',
+    ];
+
+    public function index(Request $request)
     {
         $tldOptions = $this->getTldOptions();
         $availableTlds = array_column($tldOptions, 'tld');
 
         $defaultTlds = $this->getDefaultSelectedTlds($availableTlds);
 
+        $remainingAiRequests = 25;
+        if (!$request->user()) {
+            $key = 'ai-domain-gen:' . $request->ip();
+            $remainingAiRequests = \Illuminate\Support\Facades\RateLimiter::remaining($key, 25);
+        }
+
+        $savedDomains = $request->user()
+            ? SavedDomain::where('user_id', $request->user()->id)->pluck('domain')->all()
+            : [];
+
         return view('domain-search', [
             'tldOptions' => $tldOptions,
             'defaultTlds' => $defaultTlds,
+            'remainingAiRequests' => $remainingAiRequests,
+            'savedDomains' => $savedDomains,
         ]);
     }
 
@@ -80,11 +129,19 @@ class DomainSearchController extends Controller
             'prefix' => 'nullable|string|max:30|regex:/^[a-zA-Z0-9-]*$/',
             'suffix' => 'nullable|string|max:30|regex:/^[a-zA-Z0-9-]*$/',
             'category' => ['required', Rule::in(self::GENERATE_CATEGORIES)],
+            'min_length' => 'nullable|integer|min:3|max:14',
+            'max_length' => 'nullable|integer|min:3|max:14',
         ]);
 
-        $prefix = $this->sanitizeDomainLabelPart((string) $request->input('prefix', ''));
-        $suffix = $this->sanitizeDomainLabelPart((string) $request->input('suffix', ''));
-        $category = strtolower((string) $request->input('category'));
+        $prefix    = $this->sanitizeDomainLabelPart((string) $request->input('prefix', ''));
+        $suffix    = $this->sanitizeDomainLabelPart((string) $request->input('suffix', ''));
+        $category  = strtolower((string) $request->input('category'));
+        $minLength = (int) $request->input('min_length', 3);
+        $maxLength = (int) $request->input('max_length', 12);
+
+        if ($minLength > $maxLength) {
+            [$minLength, $maxLength] = [$maxLength, $minLength];
+        }
 
         if ($prefix === '' && $suffix === '') {
             return response()->json([
@@ -93,9 +150,31 @@ class DomainSearchController extends Controller
             ], 422);
         }
 
-        $names = $this->generateCategoryDomains($prefix, $suffix, $category);
+        $names = $this->generateCategoryDomains($prefix, $suffix, $category, $minLength, $maxLength);
 
         return response()->json(['names' => $names, 'error' => null]);
+    }
+
+    public function toggleSavedDomain(Request $request)
+    {
+        $request->validate([
+            'domain' => 'required|string|max:253',
+        ]);
+
+        $user   = $request->user();
+        $domain = strtolower(trim($request->input('domain')));
+
+        $existing = SavedDomain::where('user_id', $user->id)
+            ->where('domain', $domain)
+            ->first();
+
+        if ($existing) {
+            $existing->delete();
+            return response()->json(['saved' => false]);
+        }
+
+        SavedDomain::create(['user_id' => $user->id, 'domain' => $domain]);
+        return response()->json(['saved' => true]);
     }
 
     /**
@@ -457,11 +536,30 @@ class DomainSearchController extends Controller
         $user = $request->user();
 
         if (!$user) {
-            return response()->json([
-                'error' => 'You must be logged in to use AI Generator.',
-                'domains' => [],
-                'authenticated' => false,
-            ], 401);
+            $ip = $request->ip();
+            $key = 'ai-domain-gen:' . $ip;
+            
+            if (\Illuminate\Support\Facades\RateLimiter::tooManyAttempts($key, 25)) {
+                return response()->json([
+                    'error' => 'Unlimited domain search with account, otherwise 25 free AI Generator requests per day',
+                    'domains' => [],
+                    'authenticated' => false,
+                ], 429);
+            }
+            
+            \Illuminate\Support\Facades\RateLimiter::hit($key, 86400); // 24 hours
+            
+            // Also update the count in the db sessions table
+            $sessionId = $request->session()->getId();
+            if ($sessionId) {
+                try {
+                    \Illuminate\Support\Facades\DB::table('sessions')
+                        ->where('id', $sessionId)
+                        ->increment('free_domain_requests');
+                } catch (\Exception $e) {
+                    // Ignore if sessions table is not used or doesn't exist
+                }
+            }
         }
 
         $request->validate([
@@ -482,12 +580,19 @@ class DomainSearchController extends Controller
             $maxNames = $tldCount > 0 ? (int) floor(50 / $tldCount) : 20;
             $maxNames = max(5, min($maxNames, 25));
 
-            $systemPrompt = "You are a creative domain name generator. Generate {$maxNames} unique, brandable domain names based on the user's request. Return ONLY a JSON object with a 'domains' array containing domain name strings (without TLDs). Names should be:
-- Short (4-15 characters)
-- Memorable and brandable
-- Easy to spell and pronounce
-- Related to the user's prompt
-- Creative but professional
+            $systemPrompt = "You are a creative domain name generator. Generate {$maxNames} unique, brandable domain names based on the user's request. Return ONLY a JSON object with a 'domains' array containing domain name strings (without TLDs).
+
+STRICT RULES — every name MUST follow all of these:
+1. A single concatenated word (no spaces, no underscores). Hyphens are allowed only when intentional for branding (e.g. \"e-flux\").
+2. NO common English stop words, articles, conjunctions, or prepositions anywhere in the name. Forbidden words: the, a, an, and, or, but, of, for, in, on, at, to, with, this, that, these, those, it, is, be, by, as, up, do.
+3. Short: 4–15 characters total.
+4. Memorable and brandable — sounds like a real product or company name.
+5. Easy to spell and pronounce.
+6. Directly related to or evocative of the user's prompt.
+7. Creative, modern, and professional — prefer portmanteaus, blends, or invented words over generic dictionary phrases.
+
+Good examples: techflow, cloudnova, pixelforge, datazen, codecraft, velorix, snapvault, lumiq
+Bad examples: thedesign, thisapp, andmore, forall, topmatch (contain stop words or are generic phrases)
 
 Example response format:
 {\"domains\": [\"techflow\", \"cloudnova\", \"pixelforge\", \"datazen\", \"codecraft\"]}";
@@ -513,6 +618,23 @@ Example response format:
 
             $domains = $responseData['domains'] ?? [];
 
+            // Sanitise: remove stop-word-containing names and non-domain characters
+            $stopWords = ['the','a','an','and','or','but','of','for','in','on','at','to','with','this','that','these','those','it','is','be','by','as','up','do'];
+            $domains = array_values(array_filter($domains, function ($name) use ($stopWords) {
+                $name = strtolower(trim($name));
+                if (!preg_match('/^[a-z0-9][a-z0-9\-]{2,}[a-z0-9]$/i', $name)) {
+                    return false; // invalid domain characters or too short
+                }
+                // Split on hyphens and check each segment
+                $segments = explode('-', $name);
+                foreach ($segments as $seg) {
+                    if (in_array($seg, $stopWords, true)) {
+                        return false;
+                    }
+                }
+                return true;
+            }));
+
             // Log usage
             $usageMetadata = $data['response']['usageMetadata'] ?? [];
             $inputTokens  = $usageMetadata['promptTokenCount']    ?? 0;
@@ -520,20 +642,22 @@ Example response format:
             $totalTokens  = $usageMetadata['totalTokenCount'] ?? ($inputTokens + $outputTokens);
             $estimatedCost = ($inputTokens * 0.00000015) + ($outputTokens * 0.00000060);
 
-            AiDomainRequest::create([
-                'user_id'  => $user->id,
-                'status'   => 'completed',
-                'prompt'   => $prompt,
-                'tlds'     => $tlds,
-                'response' => $responseData,
-                'model'    => $data['response']['model'] ?? 'gemini-2.0-flash',
-                'usage'    => $usageMetadata ?: null,
-            ]);
+            if ($user) {
+                AiDomainRequest::create([
+                    'user_id'  => $user->id,
+                    'status'   => 'completed',
+                    'prompt'   => $prompt,
+                    'tlds'     => $tlds,
+                    'response' => $responseData,
+                    'model'    => $data['response']['model'] ?? 'gemini-2.0-flash',
+                    'usage'    => $usageMetadata ?: null,
+                ]);
+            }
 
             AiPriceLog::create([
                 'session'            => session()->getId(),
                 'document_id'        => null,
-                'user_email'         => $user->email,
+                'user_email'         => $user?->email,
                 'request_type'       => 'domain_generation',
                 'model_name'         => $data['response']['model'] ?? 'gemini-2.0-flash',
                 'input_tokens'       => $inputTokens,
@@ -563,7 +687,7 @@ Example response format:
 
         } catch (\Illuminate\Http\Client\RequestException $e) {
             \Log::error('AI Domain Generation - API Error', [
-                'user_id' => $user->id,
+                'user_id' => $user?->id,
                 'prompt'  => $prompt,
                 'status'  => $e->response?->status(),
                 'error'   => $e->response?->json(),
@@ -571,7 +695,7 @@ Example response format:
             return response()->json(['error' => 'AI service error. Please try again.', 'domains' => []], 500);
         } catch (\Exception $e) {
             \Log::error('AI Domain Generation Error', [
-                'user_id' => $user->id,
+                'user_id' => $user?->id,
                 'error'   => $e->getMessage(),
             ]);
             return response()->json([
@@ -671,19 +795,33 @@ Example response format:
         return substr($clean, 0, 30);
     }
 
-    private function generateCategoryDomains(string $prefix, string $suffix, string $category): array
+    private function generateCategoryDomains(string $prefix, string $suffix, string $category, int $minLength = 3, int $maxLength = 12): array
     {
         $column = 'category_' . $category;
 
-        $rows = DB::table('dictionary')
-            ->select('word', $column, 'length')
+        $baseQuery = fn() => DB::table('word_scores')
+            ->select('word', $column)
             ->whereNotNull('word')
-            ->where('length', '>=', 3)
-            ->where('length', '<=', 12)
             ->where($column, '>', 0)
+            ->whereNotIn('word', self::STOP_WORDS)
             ->orderByDesc($column)
-            ->limit(250)
-            ->get();
+            ->limit(100);
+
+        // First pass: prefer words within the requested length range
+        $rows = $baseQuery()
+            ->whereRaw('CHAR_LENGTH(word) >= ?', [$minLength])
+            ->whereRaw('CHAR_LENGTH(word) <= ?', [$maxLength])
+            ->get()
+            ->shuffle();
+
+        // Fallback: if fewer than 20 results, widen to full range
+        if ($rows->count() < 20) {
+            $rows = $baseQuery()
+                ->whereRaw('CHAR_LENGTH(word) >= 3')
+                ->whereRaw('CHAR_LENGTH(word) <= 12')
+                ->get()
+                ->shuffle();
+        }
 
         $names = [];
         foreach ($rows as $row) {

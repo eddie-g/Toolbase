@@ -15,7 +15,11 @@
     $loginPaddingClass = $compact ? 'px-4 py-2' : 'px-6 py-2.5';
 @endphp
 
-<header class="fixed top-0 left-0 right-0 z-50 bg-white/80 dark:bg-gray-900/80 backdrop-blur-lg border-b border-gray-200 dark:border-gray-800">
+<header
+    x-data="{ mobileMenuOpen: false }"
+    @keydown.escape.window="mobileMenuOpen = false"
+    class="fixed top-0 left-0 right-0 z-50 bg-white/80 dark:bg-gray-900/80 backdrop-blur-lg border-b border-gray-200 dark:border-gray-800"
+>
     <div class="container mx-auto px-4 sm:px-6 lg:px-8">
         <div class="flex items-center justify-between {{ $heightClass }}">
             <a href="{{ $homeHref }}" class="flex items-center gap-3" style="text-decoration:none;">
@@ -36,7 +40,7 @@
                 </nav>
             @endif
 
-            <div class="flex items-center gap-4">
+            <div class="flex items-center gap-2 sm:gap-4">
                 <button data-theme-toggle class="p-2 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition" type="button" style="background:transparent;">
                     <svg class="{{ $iconSizeClass }} block dark:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>
@@ -46,15 +50,32 @@
                     </svg>
                 </button>
 
+                @if ($showNavigation || $showAuthControls)
+                    <button
+                        type="button"
+                        class="md:hidden p-2 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
+                        @click="mobileMenuOpen = !mobileMenuOpen"
+                        :aria-expanded="mobileMenuOpen ? 'true' : 'false'"
+                        aria-label="Toggle menu"
+                    >
+                        <svg x-show="!mobileMenuOpen" class="{{ $iconSizeClass }}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
+                        <svg x-show="mobileMenuOpen" class="{{ $iconSizeClass }}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                @endif
+
                 @if ($showAuthControls)
                     @guest
-                        <a href="{{ route('filament.admin.auth.login') }}" class="hidden sm:inline-flex items-center gap-2 {{ $loginPaddingClass }} bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition" style="text-decoration:none;">
+                        <a href="{{ route('filament.admin.auth.login') }}" class="hidden md:inline-flex items-center gap-2 {{ $loginPaddingClass }} bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition" style="text-decoration:none;">
                             Login
                         </a>
                     @endguest
 
                     @auth
-                        <div class="relative ml-2" x-data="{ open: false }">
+                        <div class="relative ml-2 hidden md:block" x-data="{ open: false }">
                             <button @click="open = !open" type="button" class="flex items-center justify-center w-10 h-10 rounded-full bg-gray-700 text-white hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-white transition" id="user-menu-button" aria-expanded="false" aria-haspopup="true" style="padding:0;">
                                 <span class="sr-only">Open user menu</span>
                                 @if(Auth::user()->avatar)
@@ -81,6 +102,56 @@
                 @endif
             </div>
         </div>
+
+        @if ($showNavigation || $showAuthControls)
+            <div
+                x-show="mobileMenuOpen"
+                x-transition:enter="transition ease-out duration-150"
+                x-transition:enter-start="opacity-0 -translate-y-1"
+                x-transition:enter-end="opacity-100 translate-y-0"
+                x-transition:leave="transition ease-in duration-100"
+                x-transition:leave-start="opacity-100 translate-y-0"
+                x-transition:leave-end="opacity-0 -translate-y-1"
+                @click.away="mobileMenuOpen = false"
+                class="md:hidden pb-4"
+            >
+                <div class="rounded-xl border border-gray-200 dark:border-gray-700 bg-white/95 dark:bg-gray-900/95 backdrop-blur p-3 space-y-3">
+                    @if ($showNavigation)
+                        <nav class="flex flex-col">
+                            <a @click="mobileMenuOpen = false" href="/pdf-editor" class="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">PDF Editor</a>
+                            <a @click="mobileMenuOpen = false" href="/domain-search" class="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Domain Search</a>
+                            <a @click="mobileMenuOpen = false" href="/logo-generator" class="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Logo Generator</a>
+                            <a @click="mobileMenuOpen = false" href="/prices" class="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Prices</a>
+                            <a @click="mobileMenuOpen = false" href="{{ route('docs.logoGenerator') }}" class="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Docs</a>
+                            <a @click="mobileMenuOpen = false" href="#faq" class="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">FAQ</a>
+                        </nav>
+                    @endif
+
+                    @if ($showAuthControls)
+                        <div class="border-t border-gray-200 dark:border-gray-700 pt-3">
+                            @guest
+                                <a href="{{ route('filament.admin.auth.login') }}" class="inline-flex w-full items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition" style="text-decoration:none;">
+                                    Login
+                                </a>
+                            @endguest
+
+                            @auth
+                                <div class="px-1 pb-2">
+                                    <p class="text-xs text-gray-500 dark:text-gray-400">Signed in as</p>
+                                    <p class="text-sm font-medium text-gray-900 dark:text-white truncate">{{ Auth::user()->name }}</p>
+                                </div>
+                                <a @click="mobileMenuOpen = false" href="/admin" class="block px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Dashboard</a>
+                                <a @click="mobileMenuOpen = false" href="{{ route('filament.admin.pages.security') }}" class="block px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Security</a>
+                                <form method="POST" action="{{ route('filament.admin.auth.logout') }}" class="mt-1">
+                                    @csrf
+                                    <button type="submit" class="w-full text-left px-3 py-2 rounded-lg text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Sign out</button>
+                                </form>
+                            @endauth
+                        </div>
+                    @endif
+                </div>
+            </div>
+        @endif
     </div>
 </header>
 
