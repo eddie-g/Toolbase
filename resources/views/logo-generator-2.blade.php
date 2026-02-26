@@ -61,7 +61,7 @@
                     </div>
                     <button 
                         @click="generateLogo()"
-                        :disabled="generating || !logoDomain"
+                        :disabled="generating || (useLogoText && !logoDomain)"
                         class="px-3 md:px-6 py-2 md:py-3 bg-violet-600 hover:bg-violet-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm md:text-base font-semibold rounded-lg transition-colors shadow-lg whitespace-nowrap"
                     >
                         <span x-show="!generating" class="hidden md:inline">Generate Logos</span>
@@ -78,30 +78,43 @@
             </div>
 
             <!-- Expandable Text & Prompt Panel -->
-            <div x-show="showTextPromptPanel" x-cloak x-transition class="border-t border-gray-200 bg-gray-50 px-6 py-4">
-                <div class="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <!-- Logo Text Input -->
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-900 mb-2">Logo Text</label>
+            <div x-show="showTextPromptPanel" x-cloak x-transition class="border-t border-gray-200 bg-gray-50 px-3 md:px-6 py-6">
+                <div class="max-w-5xl mx-auto space-y-5">
+                    <!-- Logo Text Input with Toggle -->
+                    <div class="space-y-3">
+                        <div class="flex items-center justify-between">
+                            <label class="block text-sm font-semibold text-gray-900">Logo Text</label>
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input 
+                                    type="checkbox" 
+                                    x-model="useLogoText"
+                                    @change="if (!useLogoText) logoDomain = ''; fetchLogoPrice();"
+                                    class="w-4 h-4 text-violet-600 bg-white border-gray-300 rounded focus:ring-violet-500"
+                                >
+                                <span class="text-xs font-medium text-gray-600">Enable text in logo</span>
+                            </label>
+                        </div>
                         <input 
                             type="text" 
                             x-model="logoDomain"
                             @input="fetchLogoPrice()"
-                            placeholder="e.g., TechStart, CloudSync, etc."
-                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent bg-white"
+                            :disabled="!useLogoText"
+                            placeholder="e.g., TechStart, CloudSync, DataFlow, etc."
+                            class="w-full px-4 py-3.5 text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent bg-white disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
                         >
                     </div>
 
-                    <!-- Prompt -->
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-900 mb-2">Custom Prompt (Optional)</label>
+                    <!-- Custom Prompt -->
+                    <div class="space-y-3">
+                        <label class="block text-sm font-semibold text-gray-900">Custom Prompt (Optional)</label>
                         <textarea 
                             x-model="logoPrompt"
                             @input="fetchLogoPrice()"
-                            rows="3"
-                            placeholder="Describe your logo style, colors, mood..."
-                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent resize-none bg-white"
+                            rows="4"
+                            placeholder="Describe your logo in detail: style (modern, vintage, minimalist), mood (professional, playful, elegant), imagery (abstract shapes, tech elements, nature), colors, and any specific elements you want..."
+                            class="w-full px-4 py-3.5 text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent resize-y bg-white leading-relaxed"
                         ></textarea>
+                        <p class="text-xs text-gray-500">💡 Tip: Be specific about style, colors, and elements you want in your logo for best results</p>
                     </div>
                 </div>
             </div>
@@ -714,6 +727,7 @@
                 logoColorPalette: 'none',
                 showTextPromptPanel: false,
                 showLeftPanel: window.innerWidth >= 1024,
+                useLogoText: true,
                 logoCustomColors: ['#1e3a5f', '#d4af37', '#333333'],
                 backgroundColor: 'white',
                 shapeContainer: '',
@@ -901,11 +915,6 @@
                 },
 
                 async fetchLogoPrice() {
-                    if (!this.logoDomain) {
-                        this.logoPrice = 0;
-                        return;
-                    }
-
                     try {
                         const response = await fetch('/domain-search/estimate-logo-price', {
                             method: 'POST',
@@ -916,7 +925,7 @@
                             body: JSON.stringify({
                                 model: this.selectedModel,
                                 count: this.logoCount,
-                                domain: this.logoDomain,
+                                domain: this.useLogoText ? this.logoDomain : null,
                                 prompt: this.logoPrompt
                             })
                         });
@@ -932,7 +941,7 @@
                 },
 
                 async generateLogo() {
-                    if (!this.logoDomain || this.generating) return;
+                    if ((this.useLogoText && !this.logoDomain) || this.generating) return;
 
                     this.generating = true;
                     this.error = null;
@@ -941,7 +950,7 @@
                     try {
                         const payload = {
                             model: this.selectedModel,
-                            domain: this.logoDomain,
+                            domain: this.useLogoText ? this.logoDomain : null,
                             prompt: this.logoPrompt,
                             style: this.logoStyle,
                             count: this.logoCount,
