@@ -66,7 +66,10 @@
                         <span x-text="showGenerationSettings ? 'Hide' : 'Settings'"></span>
                     </button>
                     <div class="hidden md:block text-right">
-                        <div class="text-sm text-gray-500 dark:text-gray-400">Estimated Cost</div>
+                        <div class="flex items-center justify-end gap-2">
+                            <div class="text-sm text-gray-500 dark:text-gray-400">Estimated Cost</div>
+                            <span class="px-2 py-0.5 bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400 text-xs font-semibold rounded" x-text="logoCount + ' logo' + (logoCount > 1 ? 's' : '')"></span>
+                        </div>
                         <div class="text-lg font-bold text-gray-900 dark:text-white" x-text="'$' + logoPrice.toFixed(2)"></div>
                     </div>
                     <button 
@@ -107,7 +110,7 @@
                         </div>
 
                         <!-- Detail Level -->
-                        <div x-show="selectedModel === 'recraft' || selectedModel === 'dalle'">
+                        <div>
                             <label class="block text-sm font-semibold text-gray-900 dark:text-white mb-3">Detail Level</label>
                             <div class="grid grid-cols-3 gap-2">
                                 <template x-for="level in [{id:'min',label:'Minimal'},{id:'medium',label:'Medium'},{id:'max',label:'Maximum'}]" :key="level.id">
@@ -120,6 +123,7 @@
                                     ></button>
                                 </template>
                             </div>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-2" x-show="selectedModel === 'flux'">Only available for Ray and Cosmo models</p>
                         </div>
                     </div>
                 </div>
