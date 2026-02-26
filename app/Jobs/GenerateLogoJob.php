@@ -32,6 +32,11 @@ class GenerateLogoJob implements ShouldQueue
     public int $timeout = 300;
 
     /**
+     * Ensure hard timeouts are marked failed instead of lingering.
+     */
+    public bool $failOnTimeout = true;
+
+    /**
      * All the parameters needed to generate and process the logo.
      */
     public array $params;

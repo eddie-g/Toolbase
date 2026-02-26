@@ -125,9 +125,10 @@ class DomainSearchController extends Controller
         return view('logo-generator');
     }
 
-    public function logoGenerator2()
+    public function logoGenerator2(Request $request)
     {
-        return view('logo-generator-2');
+        $user = $request->user();
+        return view('logo-generator-2', ['logoUser' => $user]);
     }
 
     public function check(Request $request)
@@ -1384,6 +1385,7 @@ class DomainSearchController extends Controller
             colorInstruction: $colorInstruction,
             bgInstruction:    $bgInstruction,
             brandUpper:       $brandUpper,
+            outputFormat:     $outputFormat,
             detail:           $logoDetail ?? 'max',
         );
 

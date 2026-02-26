@@ -60,6 +60,7 @@ class FluxPromptBuilder
      * @param string|null $colorInstruction Full color instruction string, or null to use style default
      * @param string      $bgInstruction    Background instruction string (e.g. "isolated on a solid white background")
      * @param string      $brandUpper       Brand name, already uppercased
+     * @param string      $outputFormat     'raster'|'vector'
      */
     public static function build(
         string  $style,
@@ -68,11 +69,13 @@ class FluxPromptBuilder
         ?string $colorInstruction,
         string  $bgInstruction,
         string  $brandUpper,
+        string  $outputFormat = 'raster',
         ?string $detail = 'max',
     ): string {
         $detail ??= 'max';
         $tpl    = self::templates();
         $mode   = $iconOnly ? 'icon_only' : 'with_brand';
+        $format = $outputFormat === 'vector' ? 'vector' : 'raster';
 
         // Resolve concept: use provided value or fall back to the JSON default
         $conceptValue = $concept !== ''
@@ -86,8 +89,12 @@ class FluxPromptBuilder
         $noTextTemplate = $tpl['no_text'][$mode] ?? '';
         $noTextValue    = str_replace('{brand}', $brandUpper, $noTextTemplate);
 
-        // Pick the prompt template (fall back to 'professional' if style not found)
-        $promptTemplate = $tpl[$mode][$style] ?? $tpl[$mode]['professional'] ?? '';
+        // Pick the prompt template by output format, then fall back to legacy flat keys.
+        $promptTemplate = $tpl[$format][$mode][$style]
+            ?? $tpl[$format][$mode]['professional']
+            ?? $tpl[$mode][$style]
+            ?? $tpl[$mode]['professional']
+            ?? '';
 
         $body = self::sub($promptTemplate, [
             'brand'   => $brandUpper,
@@ -97,15 +104,15 @@ class FluxPromptBuilder
             'no_text' => $noTextValue,
         ]);
 
-        // When custom colors are provided, also prepend them at the very start of the
-        // prompt so early tokens (which diffusion models weight most heavily) lock in
-        // the palette before style/content tokens are processed.
-        if ($colorInstruction !== null) {
+        // For raster only, prepend custom colors to front-load palette guidance.
+        // Vector templates already contain structured color instructions; avoid duplication.
+        if ($colorInstruction !== null && $format === 'raster') {
             $body = $colorsValue . ' ' . $body;
         }
 
-        // Append detail quality modifier
-        $qualitySuffix = $tpl['quality'][$detail] ?? $tpl['quality']['max'] ?? '';
+        // Append detail quality modifier (vector uses its own quality vocabulary).
+        $qualityKey    = $format === 'vector' ? 'quality_vector' : 'quality';
+        $qualitySuffix = $tpl[$qualityKey][$detail] ?? $tpl[$qualityKey]['max'] ?? '';
         if ($qualitySuffix !== '') {
             $body = rtrim($body, '. ') . '.' . $qualitySuffix;
         }
