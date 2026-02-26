@@ -923,17 +923,24 @@
                                 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
                             },
                             body: JSON.stringify({
-                                model: this.selectedModel,
                                 count: this.logoCount,
-                                domain: this.useLogoText ? this.logoDomain : null,
-                                prompt: this.logoPrompt
+                                pro: false,
+                                pro_size: 1024,
+                                style: this.logoStyle,
+                                bg_color: this.backgroundColor,
+                                image_model: this.selectedModel,
+                                output_format: 'raster',
+                                image_format: null,
+                                recraft_substyle: null
                             })
                         });
 
-                        const data = await response.json();
-                        this.logoPrice = data.price || 0;
-                        if (data.credit_balance !== undefined) {
-                            this.creditBalance = parseFloat(data.credit_balance);
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.logoPrice = parseFloat(data.estimated_cost_usd) || 0;
+                            if (data.credit_balance !== undefined) {
+                                this.creditBalance = parseFloat(data.credit_balance);
+                            }
                         }
                     } catch (err) {
                         console.error('Price estimate error:', err);
@@ -948,42 +955,123 @@
                     this.logoImages = [];
 
                     try {
-                        const payload = {
-                            model: this.selectedModel,
-                            domain: this.useLogoText ? this.logoDomain : null,
-                            prompt: this.logoPrompt,
-                            style: this.logoStyle,
-                            count: this.logoCount,
-                            color_palette: this.logoColorPalette !== 'none' ? this.getSelectedPaletteColors() : null,
-                            background: this.backgroundColor,
-                            shape_container: this.shapeContainer,
-                            detail_level: this.detailLevel,
-                            seed: this.seed
-                        };
+                        // Step 1: Queue all logo generation jobs
+                        const totalCount = this.logoCount;
+                        const pendingJobs = [];
 
-                        const response = await fetch('/domain-search/generate-logo', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
-                            },
-                            body: JSON.stringify(payload)
-                        });
+                        for (let i = 0; i < totalCount; i++) {
+                            const payload = {
+                                domain: this.useLogoText ? this.logoDomain : null,
+                                custom_prompt: this.logoPrompt || '',
+                                style: this.logoStyle,
+                                count: 1,
+                                total_count: totalCount,
+                                batch_index: i,
+                                pro: false,
+                                pro_size: 1024,
+                                icon_only: !this.useLogoText,
+                                bg_color: this.backgroundColor,
+                                image_model: this.selectedModel,
+                                output_format: 'raster',
+                                image_format: null,
+                                color_palette: this.logoColorPalette !== 'none' ? this.getSelectedPaletteColors() : null,
+                                logo_shape: this.shapeContainer || 'none',
+                                logo_detail: this.detailLevel || 'medium'
+                            };
 
-                        if (!response.ok) {
-                            throw new Error('Generation failed');
+                            const response = await fetch('/domain-search/generate-logo', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+                                },
+                                body: JSON.stringify(payload)
+                            });
+
+                            if (!response.ok) {
+                                const data = await response.json();
+                                this.error = data.error || 'Failed to queue logo generation';
+                                if (data.credit_balance !== undefined) {
+                                    this.creditBalance = parseFloat(data.credit_balance);
+                                }
+                                if (response.status === 402) break;
+                                continue;
+                            }
+
+                            const data = await response.json();
+
+                            if (data.logo_request_id) {
+                                pendingJobs.push(data.logo_request_id);
+                            }
+
+                            if (data.credit_balance !== undefined) {
+                                this.creditBalance = parseFloat(data.credit_balance);
+                            }
                         }
 
-                        const data = await response.json();
-                        
-                        if (data.credit_balance !== undefined) {
-                            this.creditBalance = parseFloat(data.credit_balance);
+                        if (pendingJobs.length === 0) {
+                            if (!this.error) {
+                                this.error = 'Failed to queue logo generation. Please try again.';
+                            }
+                            this.generating = false;
+                            return;
                         }
 
-                        if (data.error) {
-                            this.error = data.error;
-                        } else {
-                            this.logoImages = data.images || [];
+                        // Step 2: Poll for completion
+                        const completedJobs = new Set();
+                        const failedJobs = new Set();
+                        const maxPollTime = 5 * 60 * 1000; // 5 minutes
+                        const pollStart = Date.now();
+                        const pollInterval = 3000; // 3 seconds
+
+                        while (completedJobs.size + failedJobs.size < pendingJobs.length) {
+                            if (Date.now() - pollStart > maxPollTime) {
+                                this.error = 'Logo generation timed out. Some images may still be processing.';
+                                break;
+                            }
+
+                            await new Promise(resolve => setTimeout(resolve, pollInterval));
+
+                            for (const jobId of pendingJobs) {
+                                if (completedJobs.has(jobId) || failedJobs.has(jobId)) continue;
+
+                                try {
+                                    const statusRes = await fetch('/domain-search/logo-status/' + jobId, {
+                                        headers: {
+                                            'Content-Type': 'application/json',
+                                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+                                        }
+                                    });
+
+                                    const statusData = await statusRes.json();
+
+                                    if (statusData.status === 'completed') {
+                                        completedJobs.add(jobId);
+
+                                        const newImages = (statusData.images || []).map(img => ({
+                                            url: img.url,
+                                            seed: statusData.seed || null
+                                        }));
+                                        this.logoImages = [...this.logoImages, ...newImages];
+
+                                        if (statusData.credit_balance !== undefined) {
+                                            this.creditBalance = parseFloat(statusData.credit_balance);
+                                        }
+                                    } else if (statusData.status === 'failed' || statusData.status === 'error') {
+                                        failedJobs.add(jobId);
+                                        this.error = statusData.error || 'Logo generation failed.';
+
+                                        if (statusData.credit_balance !== undefined) {
+                                            this.creditBalance = parseFloat(statusData.credit_balance);
+                                        }
+                                    }
+                                } catch (e) {
+                                    console.error('Polling error:', e);
+                                }
+                            }
+                        }
+
+                        if (this.logoImages.length > 0) {
                             this.queueSimilarIdeasLookup();
                         }
                     } catch (err) {
