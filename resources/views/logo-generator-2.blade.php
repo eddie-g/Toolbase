@@ -61,7 +61,7 @@
                     </div>
                     <button 
                         @click="generateLogo()"
-                        :disabled="generating || (useLogoText && !logoDomain)"
+                        :disabled="generating || (!logoDomain && !logoPrompt)"
                         class="px-3 md:px-6 py-2 md:py-3 bg-violet-600 hover:bg-violet-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm md:text-base font-semibold rounded-lg transition-colors shadow-lg whitespace-nowrap"
                     >
                         <span x-show="!generating" class="hidden md:inline">Generate Logos</span>
@@ -941,7 +941,7 @@
                 },
 
                 async generateLogo() {
-                    if ((this.useLogoText && !this.logoDomain) || this.generating) return;
+                    if ((!this.logoDomain && !this.logoPrompt) || this.generating) return;
 
                     this.generating = true;
                     this.error = null;
