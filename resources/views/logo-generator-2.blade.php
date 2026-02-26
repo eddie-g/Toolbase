@@ -154,15 +154,21 @@
 
                     <!-- Style -->
                     <div>
-                        <label class="block text-sm font-semibold text-gray-900 mb-2">Style</label>
-                        <button 
-                            @click="showStyleModal = true"
-                            class="w-full px-4 py-3 border border-gray-300 rounded-lg text-left hover:bg-gray-50 flex items-center justify-between"
-                        >
-                            <span x-text="logoStyle || 'Select a style'"></span>
-                            <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-                            </svg>
+                        <button type="button" @click="showStyleModal = true"
+                            class="mb-3 w-full bg-white rounded-xl shadow border border-gray-200 p-3 flex items-center gap-3 hover:border-gray-300 transition-all group text-left">
+                            <div class="w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 bg-gray-100 flex items-center justify-center">
+                                <template x-if="logoStyle === 'chrome'">
+                                    <img src="/images/chrome-preview.svg" alt="Chrome" class="w-full h-full object-cover" />
+                                </template>
+                                <template x-if="logoStyle !== 'chrome'">
+                                    <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.53 16.122a3 3 0 00-5.78 1.128 2.25 2.25 0 01-2.4 2.245 4.5 4.5 0 008.4-2.245c0-.399-.078-.78-.22-1.128zm0 0a15.998 15.998 0 003.388-1.62m-5.043-.025a15.994 15.994 0 011.622-3.395m3.42 3.42a15.995 15.995 0 004.764-4.648l3.876-5.814a1.151 1.151 0 00-1.597-1.597L14.146 6.32a15.996 15.996 0 00-4.649 4.763m3.42 3.42a6.776 6.776 0 00-3.42-3.42"></path></svg>
+                                </template>
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <div class="text-[10px] font-medium text-gray-400 uppercase tracking-wider">Style</div>
+                                <div class="text-sm font-semibold text-gray-900 truncate" x-text="getStyleLabel()"></div>
+                            </div>
+                            <svg class="w-4 h-4 text-gray-400 group-hover:text-gray-500 transition" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
                         </button>
                     </div>
 
@@ -452,70 +458,183 @@
         </div>
 
         <!-- Style Selection Modal -->
-        <div x-show="showStyleModal" x-cloak class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" @click.self="showStyleModal = false">
-            <div class="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[80vh] overflow-y-auto" @click.stop>
-                <div class="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-                    <h3 class="text-xl font-bold text-gray-900">Choose a Style</h3>
-                    <button @click="showStyleModal = false" class="text-gray-400 hover:text-gray-600">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+        <div x-show="showStyleModal" x-cloak x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" @click.self="showStyleModal = false" @keydown.escape.window="showStyleModal = false">
+            <div class="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden" @click.stop
+                x-transition:enter="ease-out duration-200" x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100">
+                <div class="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+                    <h3 class="text-base font-semibold text-gray-900">Choose Style</h3>
+                    <button @click="showStyleModal = false" class="p-1 rounded-lg hover:bg-gray-100 transition">
+                        <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                         </svg>
                     </button>
                 </div>
-                
-                <div class="p-6">
-                    <!-- DALL-E Styles -->
-                    <div x-show="selectedModel === 'dalle'" class="space-y-4">
-                        <h4 class="font-semibold text-gray-900">DALL-E Styles</h4>
-                        <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
-                            <template x-for="style in dalleStyles" :key="style">
-                                <button 
-                                    @click="selectStyle(style)"
-                                    :class="logoStyle === style ? 'ring-2 ring-violet-600 bg-violet-50' : 'hover:bg-gray-50'"
-                                    class="px-4 py-3 border border-gray-200 rounded-lg text-left transition-all"
-                                >
-                                    <span class="font-medium text-gray-900" x-text="style"></span>
-                                </button>
-                            </template>
+                <div class="p-5">
+                    <!-- DALL-E styles -->
+                    <div x-show="selectedModel === 'dalle'">
+                        <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                            <button type="button" @click="selectStyle('professional')"
+                                class="group rounded-xl border-2 p-3 transition-all text-center"
+                                :class="logoStyle === 'professional' ? 'border-violet-500 ring-2 ring-violet-200 bg-violet-50' : 'border-gray-200 hover:border-gray-300'">
+                                <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
+                                    <svg class="w-6 h-6" :class="logoStyle === 'professional' ? 'text-violet-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path></svg>
+                                </div>
+                                <div class="text-xs font-semibold"
+                                    :class="logoStyle === 'professional' ? 'text-violet-700' : 'text-gray-600'">Professional</div>
+                                <div class="text-[10px] text-gray-400 mt-0.5">Clean & modern</div>
+                            </button>
+                            <button type="button" @click="selectStyle('fantasy')"
+                                class="group rounded-xl border-2 p-3 transition-all text-center"
+                                :class="logoStyle === 'fantasy' ? 'border-violet-500 ring-2 ring-violet-200 bg-violet-50' : 'border-gray-200 hover:border-gray-300'">
+                                <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
+                                    <svg class="w-6 h-6" :class="logoStyle === 'fantasy' ? 'text-violet-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z"></path></svg>
+                                </div>
+                                <div class="text-xs font-semibold"
+                                    :class="logoStyle === 'fantasy' ? 'text-violet-700' : 'text-gray-600'">Fantasy</div>
+                                <div class="text-[10px] text-gray-400 mt-0.5">Magical & ornate</div>
+                            </button>
+                            <button type="button" @click="selectStyle('future')"
+                                class="group rounded-xl border-2 p-3 transition-all text-center"
+                                :class="logoStyle === 'future' ? 'border-violet-500 ring-2 ring-violet-200 bg-violet-50' : 'border-gray-200 hover:border-gray-300'">
+                                <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
+                                    <svg class="w-6 h-6" :class="logoStyle === 'future' ? 'text-violet-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z"></path></svg>
+                                </div>
+                                <div class="text-xs font-semibold"
+                                    :class="logoStyle === 'future' ? 'text-violet-700' : 'text-gray-600'">Future</div>
+                                <div class="text-[10px] text-gray-400 mt-0.5">Techy & sci-fi</div>
+                            </button>
+                            <button type="button" @click="selectStyle('retro')"
+                                class="group rounded-xl border-2 p-3 transition-all text-center"
+                                :class="logoStyle === 'retro' ? 'border-violet-500 ring-2 ring-violet-200 bg-violet-50' : 'border-gray-200 hover:border-gray-300'">
+                                <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
+                                    <svg class="w-6 h-6" :class="logoStyle === 'retro' ? 'text-violet-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                </div>
+                                <div class="text-xs font-semibold"
+                                    :class="logoStyle === 'retro' ? 'text-violet-700' : 'text-gray-600'">Retro</div>
+                                <div class="text-[10px] text-gray-400 mt-0.5">Vintage & classic</div>
+                            </button>
+                            <button type="button" @click="selectStyle('greetingcard')"
+                                class="group rounded-xl border-2 p-3 transition-all text-center"
+                                :class="logoStyle === 'greetingcard' ? 'border-violet-500 ring-2 ring-violet-200 bg-violet-50' : 'border-gray-200 hover:border-gray-300'">
+                                <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
+                                    <svg class="w-6 h-6" :class="logoStyle === 'greetingcard' ? 'text-violet-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"></path></svg>
+                                </div>
+                                <div class="text-xs font-semibold"
+                                    :class="logoStyle === 'greetingcard' ? 'text-violet-700' : 'text-gray-600'">Greeting Card</div>
+                                <div class="text-[10px] text-gray-400 mt-0.5">Watercolor & gouache</div>
+                            </button>
+                            <button type="button" @click="selectStyle('custom')"
+                                class="col-span-2 sm:col-span-3 group rounded-xl border-2 p-3 transition-all text-center"
+                                :class="logoStyle === 'custom' ? 'border-purple-500 ring-2 ring-purple-200 bg-purple-50' : 'border-gray-200 hover:border-gray-300'">
+                                <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
+                                    <svg class="w-6 h-6" :class="logoStyle === 'custom' ? 'text-purple-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"></path></svg>
+                                </div>
+                                <div class="text-xs font-semibold" :class="logoStyle === 'custom' ? 'text-purple-700' : 'text-gray-600'">Custom Prompt</div>
+                                <div class="text-[10px] text-gray-400 mt-0.5">Write your own full prompt</div>
+                            </button>
+                        </div>
+                        <div class="mt-5 mb-4">
+                            <div class="w-full h-px bg-gradient-to-r from-transparent via-violet-400/70 to-transparent"></div>
+                            <div class="text-center -mt-3">
+                                <span class="inline-flex px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider bg-white text-violet-600">Dalle3 specific styles</span>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                            <button type="button" @click="selectStyle('chrome')"
+                                class="group rounded-xl border-2 p-2 transition-all text-center"
+                                :class="logoStyle === 'chrome' ? 'border-violet-500 ring-2 ring-violet-200 bg-violet-50' : 'border-gray-200 hover:border-gray-300'">
+                                <div class="aspect-square rounded-lg overflow-hidden bg-gray-100 mb-2">
+                                    <img src="/images/chrome-preview.svg" alt="Chrome style" class="w-full h-full object-cover" />
+                                </div>
+                                <div class="text-xs font-semibold"
+                                    :class="logoStyle === 'chrome' ? 'text-violet-700' : 'text-gray-600'">Chrome (Chome)</div>
+                                <div class="text-[10px] text-gray-400 mt-0.5">3D metallic render</div>
+                                <span class="inline-block mt-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-100 text-amber-700">Icon Only</span>
+                            </button>
+                            <button type="button" @click="selectStyle('dotmatrix')"
+                                class="group rounded-xl border-2 p-3 transition-all text-center"
+                                :class="logoStyle === 'dotmatrix' ? 'border-violet-500 ring-2 ring-violet-200 bg-violet-50' : 'border-gray-200 hover:border-gray-300'">
+                                <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
+                                    <svg class="w-6 h-6" :class="logoStyle === 'dotmatrix' ? 'text-violet-600' : 'text-gray-400'" fill="currentColor" viewBox="0 0 24 24"><circle cx="6" cy="6" r="1.5"/><circle cx="12" cy="6" r="1.5"/><circle cx="18" cy="6" r="1.5"/><circle cx="6" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="18" cy="12" r="1.5"/><circle cx="6" cy="18" r="1.5"/><circle cx="12" cy="18" r="1.5"/><circle cx="18" cy="18" r="1.5"/></svg>
+                                </div>
+                                <div class="text-xs font-semibold"
+                                    :class="logoStyle === 'dotmatrix' ? 'text-violet-700' : 'text-gray-600'">Dot Matrix</div>
+                                <div class="text-[10px] text-gray-400 mt-0.5">Stipple art</div>
+                                <span class="inline-block mt-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-100 text-amber-700">Icon Only</span>
+                            </button>
+                            <button type="button" @click="selectStyle('8bit')"
+                                class="group rounded-xl border-2 p-3 transition-all text-center"
+                                :class="logoStyle === '8bit' ? 'border-violet-500 ring-2 ring-violet-200 bg-violet-50' : 'border-gray-200 hover:border-gray-300'">
+                                <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
+                                    <svg class="w-6 h-6" :class="logoStyle === '8bit' ? 'text-violet-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z"></path></svg>
+                                </div>
+                                <div class="text-xs font-semibold"
+                                    :class="logoStyle === '8bit' ? 'text-violet-700' : 'text-gray-600'">8-Bit</div>
+                                <div class="text-[10px] text-gray-400 mt-0.5">Fantasy RPG</div>
+                            </button>
                         </div>
                     </div>
 
-                    <!-- Flux/Recraft Styles -->
-                    <div x-show="selectedModel !== 'dalle'" class="space-y-4">
-                        <h4 class="font-semibold text-gray-900">Logo Styles</h4>
-                        <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
-                            <template x-for="style in fluxRecraftStyles" :key="style">
-                                <button 
-                                    @click="selectStyle(style)"
-                                    :class="logoStyle === style ? 'ring-2 ring-violet-600 bg-violet-50' : 'hover:bg-gray-50'"
-                                    class="px-4 py-3 border border-gray-200 rounded-lg text-left transition-all"
-                                >
-                                    <span class="font-medium text-gray-900" x-text="style"></span>
-                                </button>
-                            </template>
-                        </div>
-
-                        <h4 class="font-semibold text-gray-900 mt-6">Special Effects</h4>
-                        <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
-                            <template x-for="style in ['chrome', 'dotmatrix', '8bit']" :key="style">
-                                <button 
-                                    @click="selectStyle(style)"
-                                    :class="logoStyle === style ? 'ring-2 ring-violet-600 bg-violet-50' : 'hover:bg-gray-50'"
-                                    class="px-4 py-3 border border-gray-200 rounded-lg text-left transition-all"
-                                >
-                                    <span class="font-medium text-gray-900" x-text="style"></span>
-                                </button>
-                            </template>
-                        </div>
-                    </div>
-
-                    <!-- None Option -->
-                    <div class="mt-6">
-                        <button 
-                            @click="selectStyle(null)"
-                            class="w-full px-4 py-3 border-2 border-dashed border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50 transition-all"
-                        >
-                            No specific style
+                    <!-- Flux/Recraft styles -->
+                    <div x-show="selectedModel !== 'dalle'" class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                        <button type="button" @click="selectStyle('professional')"
+                            class="group rounded-xl border-2 p-3 transition-all text-center"
+                            :class="logoStyle === 'professional' ? 'border-violet-500 ring-2 ring-violet-200 bg-violet-50' : 'border-gray-200 hover:border-gray-300'">
+                            <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
+                                <svg class="w-6 h-6" :class="logoStyle === 'professional' ? 'text-violet-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path></svg>
+                            </div>
+                            <div class="text-xs font-semibold"
+                                :class="logoStyle === 'professional' ? 'text-violet-700' : 'text-gray-600'">Professional</div>
+                            <div class="text-[10px] text-gray-400 mt-0.5">Clean & modern</div>
+                        </button>
+                        <button type="button" @click="selectStyle('fantasy')"
+                            class="group rounded-xl border-2 p-3 transition-all text-center"
+                            :class="logoStyle === 'fantasy' ? 'border-violet-500 ring-2 ring-violet-200 bg-violet-50' : 'border-gray-200 hover:border-gray-300'">
+                            <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
+                                <svg class="w-6 h-6" :class="logoStyle === 'fantasy' ? 'text-violet-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z"></path></svg>
+                            </div>
+                            <div class="text-xs font-semibold"
+                                :class="logoStyle === 'fantasy' ? 'text-violet-700' : 'text-gray-600'">Fantasy</div>
+                            <div class="text-[10px] text-gray-400 mt-0.5">Magical & ornate</div>
+                        </button>
+                        <button type="button" @click="selectStyle('future')"
+                            class="group rounded-xl border-2 p-3 transition-all text-center"
+                            :class="logoStyle === 'future' ? 'border-violet-500 ring-2 ring-violet-200 bg-violet-50' : 'border-gray-200 hover:border-gray-300'">
+                            <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
+                                <svg class="w-6 h-6" :class="logoStyle === 'future' ? 'text-violet-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z"></path></svg>
+                            </div>
+                            <div class="text-xs font-semibold"
+                                :class="logoStyle === 'future' ? 'text-violet-700' : 'text-gray-600'">Future</div>
+                            <div class="text-[10px] text-gray-400 mt-0.5">Techy & sci-fi</div>
+                        </button>
+                        <button type="button" @click="selectStyle('retro')"
+                            class="group rounded-xl border-2 p-3 transition-all text-center"
+                            :class="logoStyle === 'retro' ? 'border-violet-500 ring-2 ring-violet-200 bg-violet-50' : 'border-gray-200 hover:border-gray-300'">
+                            <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
+                                <svg class="w-6 h-6" :class="logoStyle === 'retro' ? 'text-violet-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                            </div>
+                            <div class="text-xs font-semibold"
+                                :class="logoStyle === 'retro' ? 'text-violet-700' : 'text-gray-600'">Retro</div>
+                            <div class="text-[10px] text-gray-400 mt-0.5">Vintage & classic</div>
+                        </button>
+                        <button type="button" @click="selectStyle('greetingcard')"
+                            class="group rounded-xl border-2 p-3 transition-all text-center"
+                            :class="logoStyle === 'greetingcard' ? 'border-violet-500 ring-2 ring-violet-200 bg-violet-50' : 'border-gray-200 hover:border-gray-300'">
+                            <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
+                                <svg class="w-6 h-6" :class="logoStyle === 'greetingcard' ? 'text-violet-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"></path></svg>
+                            </div>
+                            <div class="text-xs font-semibold"
+                                :class="logoStyle === 'greetingcard' ? 'text-violet-700' : 'text-gray-600'">Greeting Card</div>
+                            <div class="text-[10px] text-gray-400 mt-0.5">Watercolor & gouache</div>
+                        </button>
+                        <button type="button" @click="selectStyle('custom')"
+                            class="col-span-2 sm:col-span-3 group rounded-xl border-2 p-3 transition-all text-center"
+                            :class="logoStyle === 'custom' ? 'border-purple-500 ring-2 ring-purple-200 bg-purple-50' : 'border-gray-200 hover:border-gray-300'">
+                            <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
+                                <svg class="w-6 h-6" :class="logoStyle === 'custom' ? 'text-purple-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"></path></svg>
+                            </div>
+                            <div class="text-xs font-semibold" :class="logoStyle === 'custom' ? 'text-purple-700' : 'text-gray-600'">Custom Prompt</div>
+                            <div class="text-[10px] text-gray-400 mt-0.5">Write your own full prompt</div>
                         </button>
                     </div>
                 </div>
@@ -541,7 +660,7 @@
                 logoCount: 2,
                 logoDomain: '',
                 logoPrompt: '',
-                logoStyle: null,
+                logoStyle: 'professional',
                 logoColorPalette: 'none',
                 logoCustomColors: ['#1e3a5f', '#d4af37', '#333333'],
                 backgroundColor: 'white',
@@ -574,16 +693,6 @@
                     { id: 'pastel', name: 'Pastel', colors: ['#FFB5A7', '#FCD5CE', '#A2D2FF'] },
                     { id: 'royal',  name: 'Royal',  colors: ['#7B2CBF', '#C77DFF', '#E0AAFF'] },
                     { id: 'ice',    name: 'Ice',    colors: ['#0077B6', '#00B4D8', '#90E0EF'] },
-                ],
-                dalleStyles: [
-                    'minimalist', 'geometric', 'gradient', 'abstract', 'modern', 'vintage',
-                    'hand-drawn', 'mascot', 'lettermark', 'emblem', 'badge', 'line art',
-                    'flat design', 'isometric', '3D', 'neon', 'retro', 'professional'
-                ],
-                fluxRecraftStyles: [
-                    'minimalist', 'geometric', 'abstract', 'modern', 'vintage',
-                    'mascot', 'lettermark', 'emblem', 'badge', 'line art',
-                    'flat design', 'isometric', '3D', 'neon', 'retro'
                 ],
 
                 normalizeHexColor(value, fallback = '#ffffff') {
@@ -726,6 +835,11 @@
                     } catch (e) {
                         this.paletteError = 'Network error deleting palette.';
                     }
+                },
+
+                getStyleLabel() {
+                    const labels = { chrome: 'Chrome', professional: 'Professional', fantasy: 'Fantasy', future: 'Future', retro: 'Retro', '8bit': '8-Bit', dotmatrix: 'Dot Matrix', greetingcard: 'Greeting Card', custom: 'Custom Prompt' };
+                    return labels[this.logoStyle] || 'Professional';
                 },
 
                 selectStyle(style) {
