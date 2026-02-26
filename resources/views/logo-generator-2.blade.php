@@ -17,12 +17,12 @@
     <div x-data="logoGenerator()" x-init="init()" class="h-screen flex flex-col">
         <!-- Top Bar -->
         <div class="bg-white border-b border-gray-200">
-            <div class="px-6 py-4 flex items-center justify-between">
-                <div class="flex items-center gap-3">
+            <div class="px-3 md:px-6 py-3 md:py-4 flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2 md:gap-3 min-w-0">
                     <!-- Hamburger Menu Toggle -->
                     <button 
                         @click="showLeftPanel = !showLeftPanel"
-                        class="p-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-gray-700"
+                        class="flex-shrink-0 p-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-gray-700"
                         :aria-label="showLeftPanel ? 'Hide sidebar' : 'Show sidebar'"
                     >
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -30,21 +30,21 @@
                         </svg>
                     </button>
                     
-                    <div class="p-2 bg-violet-100 rounded-lg">
-                        <svg class="w-6 h-6 text-violet-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <div class="flex-shrink-0 p-2 bg-violet-100 rounded-lg">
+                        <svg class="w-5 h-5 md:w-6 md:h-6 text-violet-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 008 10.172V5L7 4z"/>
                         </svg>
                     </div>
-                    <div>
+                    <div class="min-w-0">
                         <div class="flex items-center gap-2">
-                            <h1 class="text-xl font-bold text-gray-900">AI Logo Lab</h1>
-                            <span class="px-2 py-1 bg-violet-100 text-violet-700 text-xs font-semibold rounded">EXPERIMENTAL</span>
+                            <h1 class="text-base md:text-xl font-bold text-gray-900 truncate">AI Logo Lab</h1>
+                            <span class="hidden sm:inline-block px-2 py-1 bg-violet-100 text-violet-700 text-xs font-semibold rounded flex-shrink-0">EXPERIMENTAL</span>
                         </div>
-                        <p class="text-sm text-gray-500">Full-screen studio workspace</p>
+                        <p class="hidden md:block text-sm text-gray-500">Full-screen studio workspace</p>
                     </div>
                     <button 
                         @click="showTextPromptPanel = !showTextPromptPanel"
-                        class="ml-4 px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-2 text-sm font-medium text-gray-700"
+                        class="hidden lg:flex ml-4 px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors items-center gap-2 text-sm font-medium text-gray-700"
                     >
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
@@ -53,24 +53,25 @@
                     </button>
                 </div>
                 
-                <!-- Cost Display -->
-                <div class="flex items-center gap-4">
-                    <div class="text-right">
+                <!-- Cost Display & Generate Button -->
+                <div class="flex items-center gap-2 md:gap-4">
+                    <div class="hidden md:block text-right">
                         <div class="text-sm text-gray-500">Estimated Cost</div>
                         <div class="text-lg font-bold text-gray-900" x-text="'$' + logoPrice.toFixed(2)"></div>
                     </div>
                     <button 
                         @click="generateLogo()"
                         :disabled="generating || !logoDomain"
-                        class="px-6 py-3 bg-violet-600 hover:bg-violet-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors shadow-lg"
+                        class="px-3 md:px-6 py-2 md:py-3 bg-violet-600 hover:bg-violet-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm md:text-base font-semibold rounded-lg transition-colors shadow-lg whitespace-nowrap"
                     >
-                        <span x-show="!generating">Generate Logos</span>
+                        <span x-show="!generating" class="hidden md:inline">Generate Logos</span>
+                        <span x-show="!generating" class="md:hidden">Generate</span>
                         <span x-show="generating" class="flex items-center gap-2">
-                            <svg class="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+                            <svg class="animate-spin h-4 w-4 md:h-5 md:w-5" fill="none" viewBox="0 0 24 24">
                                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                             </svg>
-                            Generating...
+                            <span class="hidden md:inline">Generating...</span>
                         </span>
                     </button>
                 </div>
@@ -131,7 +132,7 @@
                 x-transition:leave="transition-transform ease-in duration-150"
                 x-transition:leave-start="translate-x-0"
                 x-transition:leave-end="-translate-x-full"
-                class="w-96 bg-white border-r border-gray-200 overflow-y-auto fixed lg:relative inset-y-0 left-0 z-20 lg:z-0"
+                class="w-80 lg:w-96 bg-white border-r border-gray-200 overflow-y-auto fixed lg:relative inset-y-0 left-0 z-20 lg:z-0"
                 x-cloak
             >
                 <div class="p-6 space-y-6">
