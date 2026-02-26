@@ -133,7 +133,7 @@
                 x-transition:leave="transition-opacity ease-in duration-150"
                 x-transition:leave-start="opacity-100"
                 x-transition:leave-end="opacity-0"
-                class="lg:hidden fixed inset-0 bg-black bg-opacity-50 z-10"
+                class="lg:hidden fixed inset-0 top-16 bg-black bg-opacity-50 z-10"
                 x-cloak
             ></div>
             
@@ -146,7 +146,7 @@
                 x-transition:leave="transition-transform ease-in duration-150"
                 x-transition:leave-start="translate-x-0"
                 x-transition:leave-end="-translate-x-full"
-                class="w-80 lg:w-96 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 overflow-y-auto fixed lg:relative inset-y-0 left-0 z-20 lg:z-0"
+                class="w-80 lg:w-96 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 overflow-y-auto fixed lg:relative top-16 lg:top-0 bottom-0 left-0 z-20 lg:z-0"
                 x-cloak
             >
                 <div class="p-6 space-y-6">
