@@ -14,7 +14,7 @@ class ImportCategoryWords extends Command
     protected $description = 'Import fastText word scores from JSON files into the dictionary table.';
 
     private const CATEGORIES = [
-        'horror', 'fantasy', 'scifi', 'tech', 'romance',
+        'horror', 'fantasy', 'scifi', 'tech', 'romance', 'mtg',
     ];
 
     public function handle(): int

@@ -9,6 +9,7 @@ class SavedDomain extends Model
 {
     protected $fillable = [
         'user_id',
+        'admin_id',
         'domain',
         'is_available',
         'is_premium',
@@ -26,5 +27,10 @@ class SavedDomain extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function admin(): BelongsTo
+    {
+        return $this->belongsTo(Admin::class);
     }
 }

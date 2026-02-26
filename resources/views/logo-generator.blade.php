@@ -16,6 +16,7 @@
         }
     </style>
 </head>
+@php($logoUser = auth()->user() ?? auth('admin')->user())
 <body class="bg-gray-50 dark:bg-gray-950 antialiased min-h-screen">
 
     <x-site-header />
@@ -42,65 +43,77 @@
 
             <div class="flex gap-6 items-start">
 
-            <div class="flex-1 min-w-0 bg-white dark:bg-gray-900 rounded-2xl shadow-lg shadow-gray-200/50 dark:shadow-black/20 border border-gray-200 dark:border-gray-800 p-6 mb-8">
-                @auth
-                    {{-- Text in Logo toggle --}}
-                    <div class="flex items-center justify-between mb-5">
-                        <span class="text-base font-semibold text-gray-800 dark:text-gray-200">Text in Logo</span>
-                        <div class="flex items-center gap-4">
-                            {{-- Image Model Switch --}}
-                            <div class="flex items-center bg-gray-100 dark:bg-gray-800 rounded-lg p-0.5">
-                                <button type="button" @click="logoImageModel = 'flux'; if (logoStyle === 'chrome') { logoStyle = 'professional'; logoIconOnly = false; } fetchLogoPrice()"
-                                    class="px-3 py-1.5 rounded-md text-xs font-semibold transition-all"
-                                    :class="logoImageModel === 'flux'
-                                        ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
-                                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'">
-                                    Flux
-                                </button>
-                                <button type="button" @click="logoImageModel = 'dalle'; logoOutputFormat = 'raster'; if (!['chrome','retro','8bit','dotmatrix','lego','greetingcard'].includes(logoStyle)) { logoStyle = 'chrome'; logoIconOnly = true; } fetchLogoPrice()"
-                                    class="px-3 py-1.5 rounded-md text-xs font-semibold transition-all"
-                                    :class="logoImageModel === 'dalle'
-                                        ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
-                                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'">
-                                    DALL-E 3
-                                </button>
-                                <button type="button" @click="logoImageModel = 'recraft'; if (logoStyle === 'chrome') { logoStyle = 'professional'; logoIconOnly = false; } fetchLogoPrice()"
-                                    class="px-3 py-1.5 rounded-md text-xs font-semibold transition-all"
-                                    :class="logoImageModel === 'recraft'
-                                        ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
-                                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'">
-                                    Recraft
-                                </button>
-                            </div>
-                            <button type="button" @click="if ((logoStyle === 'chrome' || logoStyle === 'dotmatrix') && logoIconOnly) { $dispatch('chrome-text-error'); return; } logoIconOnly = !logoIconOnly"
-                            class="relative inline-flex h-9 w-16 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900"
-                            :class="!logoIconOnly ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-600'"
-                            role="switch" :aria-checked="(!logoIconOnly).toString()">
-                            <span class="pointer-events-none relative inline-block h-7 w-7 transform rounded-full bg-white shadow ring-0 transition-transform duration-200 ease-in-out"
-                                :class="!logoIconOnly ? 'translate-x-7' : 'translate-x-0.5'" style="top: 1px;">
-                                <span class="absolute inset-0 flex h-full w-full items-center justify-center transition-opacity duration-200"
-                                    :class="!logoIconOnly ? 'opacity-0' : 'opacity-100'" aria-hidden="true">
-                                    <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 12 12"><path d="M4 8l2-2m0 0l2-2M6 6L4 4m2 2l2 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                                </span>
-                                <span class="absolute inset-0 flex h-full w-full items-center justify-center transition-opacity duration-200"
-                                    :class="!logoIconOnly ? 'opacity-100' : 'opacity-0'" aria-hidden="true">
-                                    <svg class="h-4 w-4 text-emerald-600" fill="currentColor" viewBox="0 0 12 12"><path d="M3.707 5.293a1 1 0 00-1.414 1.414l1.414-1.414zM5 8l-.707.707a1 1 0 001.414 0L5 8zm4.707-3.293a1 1 0 00-1.414-1.414l1.414 1.414zm-7.414 2l2 2 1.414-1.414-2-2-1.414 1.414zm3.414 2l4-4-1.414-1.414-4 4 1.414 1.414z"/></svg>
-                                </span>
-                            </span>
-                        </button>
-                            <span class="text-xs font-medium ml-1" :class="!logoIconOnly ? 'text-gray-700 dark:text-gray-300' : 'text-gray-400 dark:text-gray-500'" x-text="!logoIconOnly ? 'Text in Logo' : 'Icon Only'"></span>
-                        </div>
-                        {{-- Chrome icon-only restriction notice --}}
-                        <div x-show="false" x-ref="chromeTextError"
-                            @chrome-text-error.window="$el.style.display = 'flex'; setTimeout(() => $el.style.display = 'none', 3000)"
-                            class="items-center gap-1.5 mt-1 px-2.5 py-1.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 text-xs font-medium" style="display: none;">
-                            <svg class="w-3.5 h-3.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg>
-                            Text in logo is not available for this style (icon-only)
+            <div id="logo_main" class="flex-1 min-w-0 bg-white dark:bg-gray-900 rounded-2xl shadow-lg shadow-gray-200/50 dark:shadow-black/20 border border-gray-200 dark:border-gray-800 p-6 mb-8">
+                @if ($logoUser)
+                    {{-- AI Model selector --}}
+                    <div class="mb-5">
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Choose your model</label>
+                        <div class="grid grid-cols-3 gap-2">
+                            {{-- Fast (Flux) --}}
+                            <button type="button" @click="logoImageModel = 'flux'; if (!['professional','fantasy','future','retro','greetingcard','custom'].includes(logoStyle)) { logoStyle = 'professional'; } logoIconOnly = false; fetchLogoPrice()"
+                                class="flex flex-col gap-2 px-3 py-3 rounded-xl border-2 transition-all"
+                                :class="logoImageModel === 'flux' ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                                <span class="text-sm font-bold w-full text-center" :class="logoImageModel === 'flux' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-700 dark:text-gray-300'">Fast</span>
+                                <div class="w-full space-y-1.5">
+                                    <div class="flex items-center justify-between text-xs leading-none" :class="logoImageModel === 'flux' ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-500 dark:text-gray-400'">
+                                        <span class="font-medium">Text</span>
+                                        <span class="text-sm tracking-tight">★★★☆☆</span>
+                                    </div>
+                                    <div class="flex items-center justify-between text-xs leading-none" :class="logoImageModel === 'flux' ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-500 dark:text-gray-400'">
+                                        <span class="font-medium">Quality</span>
+                                        <span class="text-sm tracking-tight">★★★☆☆</span>
+                                    </div>
+                                    <div class="flex items-center justify-between text-xs leading-none font-semibold" :class="logoImageModel === 'flux' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-300'">
+                                        <span>Cost</span>
+                                        <span x-text="formatCardPrice(modelCardPricePerImage.flux)"></span>
+                                    </div>
+                                </div>
+                            </button>
+                            {{-- Balanced (Recraft) --}}
+                            <button type="button" @click="logoImageModel = 'recraft'; if (!['professional','fantasy','future','retro','greetingcard','custom'].includes(logoStyle)) { logoStyle = 'professional'; } logoIconOnly = false; fetchLogoPrice()"
+                                class="flex flex-col gap-2 px-3 py-3 rounded-xl border-2 transition-all"
+                                :class="logoImageModel === 'recraft' ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                                <span class="text-sm font-bold w-full text-center" :class="logoImageModel === 'recraft' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-700 dark:text-gray-300'">Balanced</span>
+                                <div class="w-full space-y-1.5">
+                                    <div class="flex items-center justify-between text-xs leading-none" :class="logoImageModel === 'recraft' ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-500 dark:text-gray-400'">
+                                        <span class="font-medium">Text</span>
+                                        <span class="text-sm tracking-tight">★★★☆☆</span>
+                                    </div>
+                                    <div class="flex items-center justify-between text-xs leading-none" :class="logoImageModel === 'recraft' ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-500 dark:text-gray-400'">
+                                        <span class="font-medium">Quality</span>
+                                        <span class="text-sm tracking-tight">★★★★☆</span>
+                                    </div>
+                                    <div class="flex items-center justify-between text-xs leading-none font-semibold" :class="logoImageModel === 'recraft' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-300'">
+                                        <span>Cost</span>
+                                        <span x-text="formatCardPrice(modelCardPricePerImage.recraft)"></span>
+                                    </div>
+                                </div>
+                            </button>
+                            {{-- Pro (DALL-E) --}}
+                            <button type="button" @click="logoImageModel = 'dalle'; logoOutputFormat = 'raster'; if (!['professional','fantasy','future','retro','greetingcard','chrome','8bit','dotmatrix','custom'].includes(logoStyle)) { logoStyle = 'professional'; } if (!['chrome','dotmatrix'].includes(logoStyle)) { logoIconOnly = false; } fetchLogoPrice()"
+                                class="flex flex-col gap-2 px-3 py-3 rounded-xl border-2 transition-all"
+                                :class="logoImageModel === 'dalle' ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                                <span class="text-sm font-bold w-full text-center" :class="logoImageModel === 'dalle' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-700 dark:text-gray-300'">Pro</span>
+                                <div class="w-full space-y-1.5">
+                                    <div class="flex items-center justify-between text-xs leading-none" :class="logoImageModel === 'dalle' ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-500 dark:text-gray-400'">
+                                        <span class="font-medium">Text</span>
+                                        <span class="text-sm tracking-tight">★★★★★</span>
+                                    </div>
+                                    <div class="flex items-center justify-between text-xs leading-none" :class="logoImageModel === 'dalle' ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-500 dark:text-gray-400'">
+                                        <span class="font-medium">Quality</span>
+                                        <span class="text-sm tracking-tight">★★★★★</span>
+                                    </div>
+                                    <div class="flex items-center justify-between text-xs leading-none font-semibold" :class="logoImageModel === 'dalle' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-300'">
+                                        <span>Cost</span>
+                                        <span x-text="formatCardPrice(modelCardPricePerImage.dalle)"></span>
+                                    </div>
+                                </div>
+                            </button>
                         </div>
                     </div>
 
                     <div class="mb-5" x-show="!logoIconOnly" x-transition>
-                        <label for="logo-domain" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Domain Name</label>
+                        <label for="logo-domain" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Text in Logo</label>
                         <div class="relative">
                             <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
                                 <svg class="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -116,23 +129,28 @@
                                 class="w-full pl-12 pr-4 py-3.5 rounded-xl border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition text-base"
                             />
                         </div>
-                        <p class="mt-2 text-xs text-gray-400 dark:text-gray-500">Enter a brand or domain name to generate a logo for.</p>
+                        <p class="mt-2 text-xs text-gray-400 dark:text-gray-500">Enter the text you want included in your logo.</p>
                     </div>
 
                     <div class="mb-5">
-                        <label for="logo-prompt" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Describe Your Logo <span class="text-red-400 font-normal">*</span></label>
+                        <label for="logo-prompt" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            <span x-text="logoStyle === 'custom' ? 'Custom Prompt' : 'Describe Your Logo'"></span>
+                            <span class="text-red-400 font-normal">*</span>
+                            <span x-show="logoStyle === 'custom'" class="ml-1 px-1.5 py-0.5 text-[10px] font-semibold rounded bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 uppercase tracking-wide">Full Prompt</span>
+                        </label>
                         <textarea
                             id="logo-prompt"
                             x-model="logoPrompt"
-                            rows="2"
-                            placeholder="e.g. a rocket launching into space, a shield with a lion, abstract waves..."
+                            :rows="logoStyle === 'custom' ? 6 : 2"
+                            :placeholder="logoStyle === 'custom' ? 'Write your full image prompt here. Palette and background settings below will be appended automatically.' : 'e.g. a rocket launching into space, a shield with a lion, abstract waves...'"
                             class="w-full px-4 py-3 rounded-xl border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition text-sm resize-none"
                         ></textarea>
-                        <p class="mt-1.5 text-xs text-gray-400 dark:text-gray-500">Click <span class="font-semibold">Use as Prompt</span> on a generated logo to quickly iterate.</p>
+                        <p x-show="logoStyle !== 'custom'" class="mt-1.5 text-xs text-gray-400 dark:text-gray-500">Click <span class="font-semibold">Use as Prompt</span> on a generated logo to quickly iterate.</p>
+                        <p x-show="logoStyle === 'custom'" class="mt-1.5 text-xs text-violet-500 dark:text-violet-400">Your prompt is sent directly to the AI. Use the palette &amp; background options to append color and background constraints.</p>
                     </div>
 
                     {{-- Output Format section --}}
-                    <div class="mb-5">
+                    <div class="mb-5" x-show="logoStyle !== 'custom'" x-transition>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Output Format</label>
 
                         {{-- Flux / Recraft: Vector vs Raster --}}
@@ -244,7 +262,7 @@
                                                 <template x-for="(c, ci) in logoCustomColors" :key="ci">
                                                     <div class="relative">
                                                         <div class="w-10 h-10 rounded-lg border-2 border-gray-300 dark:border-gray-600 cursor-pointer shadow-sm" :style="'background-color: ' + c"></div>
-                                                        <input type="color" :value="c" @input="logoCustomColors[ci] = $event.target.value" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                                                    <input type="color" :value="normalizeHexColor(c)" @input="logoCustomColors[ci] = normalizeHexColor($event.target.value)" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
                                                     </div>
                                                 </template>
                                                 <button type="button" @click="logoCustomColors.length < 5 && logoCustomColors.push('#888888')" x-show="logoCustomColors.length < 5"
@@ -256,11 +274,45 @@
                                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"></path></svg>
                                                 </button>
                                             </div>
+                                            <div x-show="canManagePalettes" class="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+                                                <label class="block text-[11px] font-medium text-gray-600 dark:text-gray-400 mb-1.5">Save Palette</label>
+                                                <div class="flex items-center gap-2">
+                                                    <input type="text" x-model="savedPaletteName" maxlength="60" placeholder="Palette name"
+                                                        class="flex-1 px-2.5 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-xs text-gray-700 dark:text-gray-200 placeholder-gray-400 focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition" />
+                                                    <button type="button" @click="saveCurrentPalette()"
+                                                        class="px-3 py-2 rounded-lg text-xs font-semibold transition"
+                                                        :class="paletteSaving ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700 text-white'"
+                                                        :disabled="paletteSaving"
+                                                        x-text="paletteSaving ? 'Saving...' : 'Save'"></button>
+                                                </div>
+                                                <p class="mt-1.5 text-[10px] text-red-500" x-show="paletteError" x-text="paletteError"></p>
+                                                <p class="mt-1.5 text-[10px] text-emerald-600 dark:text-emerald-400" x-show="paletteSuccess" x-text="paletteSuccess"></p>
+
+                                                <div class="mt-2.5 space-y-1.5">
+                                                    <template x-for="palette in savedPalettes" :key="palette.id">
+                                                        <div class="flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-1.5">
+                                                            <button type="button" @click="applySavedPalette(palette)" class="flex-1 min-w-0 flex items-center gap-2 text-left">
+                                                                <div class="flex h-4 w-14 rounded overflow-hidden border border-gray-200 dark:border-gray-600">
+                                                                    <template x-for="(c, ci) in palette.colors" :key="ci">
+                                                                        <div class="flex-1" :style="'background-color: ' + c"></div>
+                                                                    </template>
+                                                                </div>
+                                                                <span class="text-[11px] text-gray-700 dark:text-gray-300 truncate" x-text="palette.name"></span>
+                                                            </button>
+                                                            <button type="button" @click.stop="deleteSavedPalette(palette.id)"
+                                                                class="p-1 rounded text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition"
+                                                                title="Delete palette">
+                                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7h6m-7 0V5a1 1 0 011-1h4a1 1 0 011 1v2"></path></svg>
+                                                            </button>
+                                                        </div>
+                                                    </template>
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
 
-                                    {{-- Shape Container (mobile, inside palette panel, Recraft/Flux) --}}
-                                    <div x-show="showStylePanel === 'palette' && ['recraft','flux'].includes(logoImageModel)" x-transition class="mt-5 pt-4 border-t border-gray-200 dark:border-gray-700">
+                                    {{-- Shape Container (mobile, inside palette panel, Recraft/DALL-E) --}}
+                                    <div x-show="showStylePanel === 'palette' && ['recraft','dalle'].includes(logoImageModel) && logoStyle !== 'custom'" x-transition class="mt-5 pt-4 border-t border-gray-200 dark:border-gray-700">
                                         <h4 class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">Shape Container</h4>
                                         <div class="grid grid-cols-3 gap-2">
                                             <template x-for="shape in ['none','circle','square','triangle','pentagon','hexagon','heart']" :key="shape">
@@ -272,8 +324,8 @@
                                         </div>
                                     </div>
 
-                                    {{-- Detail Level (mobile, inside palette panel, Recraft only) --}}
-                                    <div x-show="showStylePanel === 'palette' && logoImageModel === 'recraft'" x-transition class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                                    {{-- Detail Level (mobile, inside palette panel, Recraft + DALL-E) --}}
+                                    <div x-show="showStylePanel === 'palette' && (logoImageModel === 'recraft' || logoImageModel === 'dalle') && logoStyle !== 'custom'" x-transition class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
                                         <h4 class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">Detail Level</h4>
                                         <div class="grid grid-cols-3 gap-2">
                                             <template x-for="level in [{id:'min',label:'Min'},{id:'medium',label:'Medium'},{id:'max',label:'Max'}]" :key="level.id">
@@ -306,7 +358,7 @@
                                                 :class="logoBgColor === 'custom' ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'border-gray-200 dark:border-gray-700'">
                                                 <div class="relative flex-shrink-0">
                                                     <div class="w-8 h-8 rounded-lg border border-gray-200 dark:border-gray-600 cursor-pointer" :style="'background-color: ' + logoBgCustom"></div>
-                                                    <input type="color" x-model="logoBgCustom" @input="logoBgColor = 'custom'; fetchLogoPrice()" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                                                    <input type="color" :value="normalizeHexColor(logoBgCustom)" @input="logoBgCustom = normalizeHexColor($event.target.value); logoBgColor = 'custom'; fetchLogoPrice()" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
                                                 </div>
                                                 <span class="text-sm font-medium text-gray-700 dark:text-gray-300">Custom Color</span>
                                                 <span class="text-xs text-gray-400 ml-auto font-mono" x-text="logoBgCustom"></span>
@@ -357,35 +409,7 @@
                         <span>Insufficient balance (<strong x-text="'$' + creditBalance.toFixed(4)"></strong>). <a href="/admin/add-credits" class="underline font-semibold hover:text-red-900 dark:hover:text-red-100">Add credits</a></span>
                     </div>
 
-                    {{-- Pricing Breakdown (50% markup) --}}
-                    <div x-show="!logoPriceLoading && logoBaseCost > 0" x-transition
-                        class="mb-3 px-3.5 py-2.5 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 text-blue-700 dark:text-blue-300 text-xs">
-                        <div class="flex items-center gap-2 mb-1">
-                            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
-                            <span class="font-semibold">Pricing Breakdown</span>
-                            <span class="ml-auto text-[10px] opacity-75" x-text="'(' + logoCount + ' image' + (logoCount > 1 ? 's' : '') + ')'"></span>
-                        </div>
-                        <div class="ml-5.5 space-y-0.5 text-[11px]">
-                            <div class="flex justify-between opacity-70">
-                                <span>Per Image:</span>
-                                <span class="font-mono" x-text="'$' + logoCostPerImage.toFixed(4)"></span>
-                            </div>
-                            <div class="flex justify-between">
-                                <span>Base API Cost:</span>
-                                <span class="font-mono" x-text="'$' + logoBaseCost.toFixed(4)"></span>
-                            </div>
-                            <div class="flex justify-between">
-                                <span>Markup (50%):</span>
-                                <span class="font-mono" x-text="'+ $' + logoMarkup.toFixed(4)"></span>
-                            </div>
-                            <div class="flex justify-between pt-1 border-t border-blue-300 dark:border-blue-700 font-semibold">
-                                <span>Total Cost:</span>
-                                <span class="font-mono" x-text="'$' + logoCostTotal.toFixed(4)"></span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <button type="button" @click="generateLogo()" :disabled="logoLoading || (!logoIconOnly && !logoDomain.trim()) || !logoPrompt.trim() || (!logoPriceLoading && creditBalance < logoCostTotal)"
+                    <button type="button" @click="generateLogo()" :disabled="logoLoading || (logoStyle !== 'custom' && !logoIconOnly && !logoDomain.trim()) || !logoPrompt.trim() || (!logoPriceLoading && creditBalance < logoCostTotal)"
                         class="w-full py-3.5 px-6 rounded-xl font-semibold text-base transition flex items-center justify-center gap-2 disabled:cursor-not-allowed text-white"
                         :class="logoProMode
                             ? 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 disabled:from-gray-300 disabled:to-gray-300 dark:disabled:from-gray-700 dark:disabled:to-gray-700'
@@ -520,79 +544,110 @@
                             {{-- Style Grid --}}
                             <div class="p-5">
                                 {{-- DALL-E styles --}}
-                                <div x-show="logoImageModel === 'dalle'" class="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                                    <button type="button" @click="selectStyle('chrome')"
-                                        class="group rounded-xl border-2 p-2 transition-all text-center"
-                                        :class="logoStyle === 'chrome' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
-                                        <div class="aspect-square rounded-lg overflow-hidden bg-gray-100 dark:bg-gray-800 mb-2">
-                                            <img src="/images/chrome-preview.svg" alt="Chrome style" class="w-full h-full object-cover" />
+                                <div x-show="logoImageModel === 'dalle'">
+                                    <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                                        <button type="button" @click="selectStyle('professional')"
+                                            class="group rounded-xl border-2 p-3 transition-all text-center"
+                                            :class="logoStyle === 'professional' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                                            <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                                                <svg class="w-6 h-6" :class="logoStyle === 'professional' ? 'text-emerald-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path></svg>
+                                            </div>
+                                            <div class="text-xs font-semibold"
+                                                :class="logoStyle === 'professional' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Professional</div>
+                                            <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Clean & modern</div>
+                                        </button>
+                                        <button type="button" @click="selectStyle('fantasy')"
+                                            class="group rounded-xl border-2 p-3 transition-all text-center"
+                                            :class="logoStyle === 'fantasy' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                                            <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                                                <svg class="w-6 h-6" :class="logoStyle === 'fantasy' ? 'text-emerald-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z"></path></svg>
+                                            </div>
+                                            <div class="text-xs font-semibold"
+                                                :class="logoStyle === 'fantasy' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Fantasy</div>
+                                            <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Magical & ornate</div>
+                                        </button>
+                                        <button type="button" @click="selectStyle('future')"
+                                            class="group rounded-xl border-2 p-3 transition-all text-center"
+                                            :class="logoStyle === 'future' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                                            <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                                                <svg class="w-6 h-6" :class="logoStyle === 'future' ? 'text-emerald-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z"></path></svg>
+                                            </div>
+                                            <div class="text-xs font-semibold"
+                                                :class="logoStyle === 'future' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Future</div>
+                                            <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Techy & sci-fi</div>
+                                        </button>
+                                        <button type="button" @click="selectStyle('retro')"
+                                            class="group rounded-xl border-2 p-3 transition-all text-center"
+                                            :class="logoStyle === 'retro' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                                            <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                                                <svg class="w-6 h-6" :class="logoStyle === 'retro' ? 'text-emerald-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                            </div>
+                                            <div class="text-xs font-semibold"
+                                                :class="logoStyle === 'retro' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Retro</div>
+                                            <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Vintage & classic</div>
+                                        </button>
+                                        <button type="button" @click="selectStyle('greetingcard')"
+                                            class="group rounded-xl border-2 p-3 transition-all text-center"
+                                            :class="logoStyle === 'greetingcard' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                                            <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                                                <svg class="w-6 h-6" :class="logoStyle === 'greetingcard' ? 'text-emerald-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"></path></svg>
+                                            </div>
+                                            <div class="text-xs font-semibold"
+                                                :class="logoStyle === 'greetingcard' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Greeting Card</div>
+                                            <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Watercolor & gouache</div>
+                                        </button>
+                                        @if(config('services.logo_custom_prompt_enabled'))
+                                        <button type="button" @click="selectStyle('custom')"
+                                            class="col-span-2 sm:col-span-3 group rounded-xl border-2 p-3 transition-all text-center"
+                                            :class="logoStyle === 'custom' ? 'border-violet-500 ring-2 ring-violet-200 dark:ring-violet-800 bg-violet-50 dark:bg-violet-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                                            <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                                                <svg class="w-6 h-6" :class="logoStyle === 'custom' ? 'text-violet-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"></path></svg>
+                                            </div>
+                                            <div class="text-xs font-semibold" :class="logoStyle === 'custom' ? 'text-violet-700 dark:text-violet-300' : 'text-gray-600 dark:text-gray-400'">Custom Prompt</div>
+                                            <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Write your own full prompt</div>
+                                        </button>
+                                        @endif
+                                    </div>
+                                    <div class="mt-5 mb-4">
+                                        <div class="w-full h-px bg-gradient-to-r from-transparent via-emerald-400/70 to-transparent"></div>
+                                        <div class="text-center -mt-3">
+                                            <span class="inline-flex px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider bg-white dark:bg-gray-900 text-emerald-600 dark:text-emerald-400">Dalle3 specific styles</span>
                                         </div>
-                                        <div class="text-xs font-semibold"
-                                            :class="logoStyle === 'chrome' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Chrome</div>
-                                        <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">3D metallic render</div>
-                                        <span class="inline-block mt-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">Icon Only</span>
-                                    </button>
-                                    <button type="button" @click="selectStyle('retro')"
-                                        class="group rounded-xl border-2 p-3 transition-all text-center"
-                                        :class="logoStyle === 'retro' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
-                                        <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
-                                            <svg class="w-6 h-6" :class="logoStyle === 'retro' ? 'text-emerald-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                                        </div>
-                                        <div class="text-xs font-semibold"
-                                            :class="logoStyle === 'retro' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Retro</div>
-                                        <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Vibrant sunburst</div>
-                                    </button>
-                                    <button type="button" @click="selectStyle('8bit')"
-                                        class="group rounded-xl border-2 p-3 transition-all text-center"
-                                        :class="logoStyle === '8bit' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
-                                        <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
-                                            <svg class="w-6 h-6" :class="logoStyle === '8bit' ? 'text-emerald-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z"></path></svg>
-                                        </div>
-                                        <div class="text-xs font-semibold"
-                                            :class="logoStyle === '8bit' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">8-Bit</div>
-                                        <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Fantasy RPG</div>
-                                    </button>
-                                    <button type="button" @click="selectStyle('dotmatrix')"
-                                        class="group rounded-xl border-2 p-3 transition-all text-center"
-                                        :class="logoStyle === 'dotmatrix' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
-                                        <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
-                                            <svg class="w-6 h-6" :class="logoStyle === 'dotmatrix' ? 'text-emerald-600' : 'text-gray-400'" fill="currentColor" viewBox="0 0 24 24"><circle cx="6" cy="6" r="1.5"/><circle cx="12" cy="6" r="1.5"/><circle cx="18" cy="6" r="1.5"/><circle cx="6" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="18" cy="12" r="1.5"/><circle cx="6" cy="18" r="1.5"/><circle cx="12" cy="18" r="1.5"/><circle cx="18" cy="18" r="1.5"/></svg>
-                                        </div>
-                                        <div class="text-xs font-semibold"
-                                            :class="logoStyle === 'dotmatrix' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Dot Matrix</div>
-                                        <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Stipple art</div>
-                                        <span class="inline-block mt-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">Icon Only</span>
-                                    </button>
-                                    <button type="button" @click="selectStyle('lego')"
-                                        class="group rounded-xl border-2 p-3 transition-all text-center"
-                                        :class="logoStyle === 'lego' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
-                                        <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
-                                            <svg class="w-6 h-6" :class="logoStyle === 'lego' ? 'text-emerald-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15.182 15.182a4.5 4.5 0 01-6.364 0M21 12a9 9 0 11-18 0 9 9 0 0118 0zM9.75 9.75c0 .414-.168.75-.375.75S9 10.164 9 9.75 9.168 9 9.375 9s.375.336.375.75zm-.375 0h.008v.015h-.008V9.75zm5.625 0c0 .414-.168.75-.375.75s-.375-.336-.375-.75.168-.75.375-.75.375.336.375.75zm-.375 0h.008v.015h-.008V9.75z"></path></svg>
-                                        </div>
-                                        <div class="text-xs font-semibold"
-                                            :class="logoStyle === 'lego' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Lego</div>
-                                        <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Glossy sticker</div>
-                                    </button>
-                                    <button type="button" @click="selectStyle('minimalist')"
-                                        class="group rounded-xl border-2 p-3 transition-all text-center"
-                                        :class="logoStyle === 'minimalist' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
-                                        <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
-                                            <svg class="w-6 h-6" :class="logoStyle === 'minimalist' ? 'text-emerald-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"></path></svg>
-                                        </div>
-                                        <div class="text-xs font-semibold"
-                                            :class="logoStyle === 'minimalist' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Minimalist</div>
-                                        <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Flat design</div>
-                                    </button>
-                                    <button type="button" @click="selectStyle('greetingcard')"
-                                        class="group rounded-xl border-2 p-3 transition-all text-center"
-                                        :class="logoStyle === 'greetingcard' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
-                                        <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
-                                            <svg class="w-6 h-6" :class="logoStyle === 'greetingcard' ? 'text-emerald-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"></path></svg>
-                                        </div>
-                                        <div class="text-xs font-semibold"
-                                            :class="logoStyle === 'greetingcard' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Greeting Card</div>
-                                        <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Watercolor & gouache</div>
-                                    </button>
+                                    </div>
+                                    <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                                        <button type="button" @click="selectStyle('chrome')"
+                                            class="group rounded-xl border-2 p-2 transition-all text-center"
+                                            :class="logoStyle === 'chrome' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                                            <div class="aspect-square rounded-lg overflow-hidden bg-gray-100 dark:bg-gray-800 mb-2">
+                                                <img src="/images/chrome-preview.svg" alt="Chrome style" class="w-full h-full object-cover" />
+                                            </div>
+                                            <div class="text-xs font-semibold"
+                                                :class="logoStyle === 'chrome' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Chrome (Chome)</div>
+                                            <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">3D metallic render</div>
+                                            <span class="inline-block mt-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">Icon Only</span>
+                                        </button>
+                                        <button type="button" @click="selectStyle('dotmatrix')"
+                                            class="group rounded-xl border-2 p-3 transition-all text-center"
+                                            :class="logoStyle === 'dotmatrix' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                                            <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                                                <svg class="w-6 h-6" :class="logoStyle === 'dotmatrix' ? 'text-emerald-600' : 'text-gray-400'" fill="currentColor" viewBox="0 0 24 24"><circle cx="6" cy="6" r="1.5"/><circle cx="12" cy="6" r="1.5"/><circle cx="18" cy="6" r="1.5"/><circle cx="6" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="18" cy="12" r="1.5"/><circle cx="6" cy="18" r="1.5"/><circle cx="12" cy="18" r="1.5"/><circle cx="18" cy="18" r="1.5"/></svg>
+                                            </div>
+                                            <div class="text-xs font-semibold"
+                                                :class="logoStyle === 'dotmatrix' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Dot Matrix</div>
+                                            <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Stipple art</div>
+                                            <span class="inline-block mt-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">Icon Only</span>
+                                        </button>
+                                        <button type="button" @click="selectStyle('8bit')"
+                                            class="group rounded-xl border-2 p-3 transition-all text-center"
+                                            :class="logoStyle === '8bit' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                                            <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                                                <svg class="w-6 h-6" :class="logoStyle === '8bit' ? 'text-emerald-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z"></path></svg>
+                                            </div>
+                                            <div class="text-xs font-semibold"
+                                                :class="logoStyle === '8bit' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">8-Bit</div>
+                                            <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Fantasy RPG</div>
+                                        </button>
+                                    </div>
                                 </div>
 
                                 {{-- Flux/Recraft styles --}}
@@ -647,6 +702,17 @@
                                             :class="logoStyle === 'greetingcard' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Greeting Card</div>
                                         <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Watercolor & gouache</div>
                                     </button>
+                                    @if(config('services.logo_custom_prompt_enabled'))
+                                    <button type="button" @click="selectStyle('custom')"
+                                        class="col-span-2 sm:col-span-3 group rounded-xl border-2 p-3 transition-all text-center"
+                                        :class="logoStyle === 'custom' ? 'border-violet-500 ring-2 ring-violet-200 dark:ring-violet-800 bg-violet-50 dark:bg-violet-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                                        <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                                            <svg class="w-6 h-6" :class="logoStyle === 'custom' ? 'text-violet-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"></path></svg>
+                                        </div>
+                                        <div class="text-xs font-semibold" :class="logoStyle === 'custom' ? 'text-violet-700 dark:text-violet-300' : 'text-gray-600 dark:text-gray-400'">Custom Prompt</div>
+                                        <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Write your own full prompt</div>
+                                    </button>
+                                    @endif
                                 </div>
                             </div>
                         </div>
@@ -687,16 +753,36 @@
                         <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">Please log in to use the AI Logo Generator</p>
                         <a href="/admin/login" class="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold transition">Log In</a>
                     </div>
-                @endauth
+                @endif
             </div>
 
             {{-- Palette Sidebar (right of form) --}}
-            @auth
-            <div class="hidden lg:block w-56 flex-shrink-0 sticky top-28" x-transition>
+            @if ($logoUser)
+            <div id="logo_sidebar" class="hidden lg:block w-56 flex-shrink-0 sticky top-28" x-transition>
                 {{-- Balance --}}
                 <div class="mb-3 bg-white dark:bg-gray-900 rounded-2xl shadow-lg shadow-gray-200/50 dark:shadow-black/20 border border-gray-200 dark:border-gray-800 px-4 py-3 flex items-center justify-between">
                     <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Balance</span>
                     <span class="text-sm font-bold" :class="creditBalance < 0.01 ? 'text-red-500' : 'text-emerald-600 dark:text-emerald-400'" x-text="'$' + creditBalance.toFixed(4)"></span>
+                </div>
+
+                {{-- Text in Logo toggle --}}
+                <div class="mb-3 bg-white dark:bg-gray-900 rounded-2xl shadow-lg shadow-gray-200/50 dark:shadow-black/20 border border-gray-200 dark:border-gray-800 px-4 py-3">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider" x-text="!logoIconOnly ? 'Text in Logo' : 'Icon Only'"></span>
+                        <button type="button" @click="if ((logoStyle === 'chrome' || logoStyle === 'dotmatrix') && logoIconOnly) { $dispatch('chrome-text-error-desktop'); return; } logoIconOnly = !logoIconOnly"
+                            class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900"
+                            :class="!logoIconOnly ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-600'"
+                            role="switch" :aria-checked="(!logoIconOnly).toString()">
+                            <span class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition-transform duration-200 ease-in-out"
+                                :class="!logoIconOnly ? 'translate-x-5' : 'translate-x-0'"></span>
+                        </button>
+                    </div>
+                    <div x-show="false"
+                        @chrome-text-error-desktop.window="$el.style.display = 'flex'; setTimeout(() => $el.style.display = 'none', 3000)"
+                        class="items-center gap-1.5 mt-2 px-2.5 py-1.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 text-xs font-medium" style="display: none;">
+                        <svg class="w-3.5 h-3.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg>
+                        Text in logo is not available for this style (icon-only)
+                    </div>
                 </div>
 
                 {{-- Style Trigger (opens modal) --}}
@@ -757,7 +843,7 @@
                             <template x-for="(c, ci) in logoCustomColors" :key="ci">
                                 <div class="relative">
                                     <div class="w-8 h-8 rounded-lg border-2 border-gray-300 dark:border-gray-600 cursor-pointer shadow-sm" :style="'background-color: ' + c"></div>
-                                    <input type="color" :value="c" @input="logoCustomColors[ci] = $event.target.value" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                                    <input type="color" :value="normalizeHexColor(c)" @input="logoCustomColors[ci] = normalizeHexColor($event.target.value)" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
                                 </div>
                             </template>
                             <button type="button" @click="logoCustomColors.length < 5 && logoCustomColors.push('#888888')" x-show="logoCustomColors.length < 5"
@@ -769,11 +855,45 @@
                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"></path></svg>
                             </button>
                         </div>
+                        <div x-show="canManagePalettes" class="mt-2.5 pt-2.5 border-t border-gray-200 dark:border-gray-700">
+                            <label class="block text-[10px] font-medium text-gray-500 dark:text-gray-400 mb-1.5">Save Palette</label>
+                            <div class="flex items-center gap-1.5">
+                                <input type="text" x-model="savedPaletteName" maxlength="60" placeholder="Palette name"
+                                    class="flex-1 px-2.5 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-[11px] text-gray-700 dark:text-gray-200 placeholder-gray-400 focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition" />
+                                <button type="button" @click="saveCurrentPalette()"
+                                    class="px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition"
+                                    :class="paletteSaving ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700 text-white'"
+                                    :disabled="paletteSaving"
+                                    x-text="paletteSaving ? 'Saving...' : 'Save'"></button>
+                            </div>
+                            <p class="mt-1 text-[10px] text-red-500" x-show="paletteError" x-text="paletteError"></p>
+                            <p class="mt-1 text-[10px] text-emerald-600 dark:text-emerald-400" x-show="paletteSuccess" x-text="paletteSuccess"></p>
+
+                            <div class="mt-2 space-y-1">
+                                <template x-for="palette in savedPalettes" :key="palette.id">
+                                    <div class="flex items-center gap-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-1">
+                                        <button type="button" @click="applySavedPalette(palette)" class="flex-1 min-w-0 flex items-center gap-1.5 text-left">
+                                            <div class="flex h-3.5 w-12 rounded overflow-hidden border border-gray-200 dark:border-gray-600">
+                                                <template x-for="(c, ci) in palette.colors" :key="ci">
+                                                    <div class="flex-1" :style="'background-color: ' + c"></div>
+                                                </template>
+                                            </div>
+                                            <span class="text-[10px] text-gray-700 dark:text-gray-300 truncate" x-text="palette.name"></span>
+                                        </button>
+                                        <button type="button" @click.stop="deleteSavedPalette(palette.id)"
+                                            class="p-1 rounded text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition"
+                                            title="Delete palette">
+                                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7h6m-7 0V5a1 1 0 011-1h4a1 1 0 011 1v2"></path></svg>
+                                        </button>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
-                    {{-- Shape Container Section (Recraft/Flux) --}}
-                    <div x-show="['recraft','flux'].includes(logoImageModel)" x-transition class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                    {{-- Shape Container Section (Recraft/DALL-E) --}}
+                    <div x-show="['recraft','dalle'].includes(logoImageModel) && logoStyle !== 'custom'" x-transition class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
                         <h3 class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">Shape Container</h3>
                         <div class="grid grid-cols-3 gap-1.5">
                             <template x-for="shape in ['none','circle','square','triangle','pentagon','hexagon','heart']" :key="shape">
@@ -785,8 +905,8 @@
                         </div>
                     </div>
 
-                    {{-- Detail Level Section (Recraft only) --}}
-                    <div x-show="logoImageModel === 'recraft'" x-transition class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                    {{-- Detail Level Section (Recraft + DALL-E) --}}
+                    <div x-show="(logoImageModel === 'recraft' || logoImageModel === 'dalle') && logoStyle !== 'custom'" x-transition class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
                         <h3 class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">Detail Level</h3>
                         <div class="grid grid-cols-3 gap-1.5">
                             <template x-for="level in [{id:'min',label:'Min'},{id:'medium',label:'Medium'},{id:'max',label:'Max'}]" :key="level.id">
@@ -820,7 +940,7 @@
                                 :class="logoBgColor === 'custom' ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'border-gray-200 dark:border-gray-700'">
                                 <div class="relative flex-shrink-0">
                                     <div class="w-5 h-5 rounded border border-gray-200 dark:border-gray-600 cursor-pointer" :style="'background-color: ' + logoBgCustom"></div>
-                                    <input type="color" x-model="logoBgCustom" @input="logoBgColor = 'custom'; fetchLogoPrice()" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                                    <input type="color" :value="normalizeHexColor(logoBgCustom)" @input="logoBgCustom = normalizeHexColor($event.target.value); logoBgColor = 'custom'; fetchLogoPrice()" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
                                 </div>
                                 <span class="text-[11px] font-medium text-gray-600 dark:text-gray-400">Custom</span>
                                 <span class="text-[10px] text-gray-400 ml-auto font-mono" x-text="logoBgCustom"></span>
@@ -829,34 +949,44 @@
                     </div>
                 </div>
             </div>
-            @endauth
+            @endif
 
             </div>{{-- /flex --}}
         </div>
     </main>
 
     <script>
-        function logoGenerator() {
-            return {
+        const registerLogoGenerator = () => {
+            Alpine.data('logoGenerator', () => ({
                 logoDomain: '',
                 logoPrompt: '',
-                logoStyle: 'chrome',
+                logoStyle: 'professional',
                 logoCount: 4,
                 logoCostPerImage: 0.003,
                 logoCostTotal: 0.012,
                 logoCostSource: 'loading',
-                logoBaseCost: 0,
-                logoMarkup: 0,
                 logoPriceLoading: false,
+                modelCardPricePerImage: {
+                    flux: null,
+                    recraft: null,
+                    dalle: null,
+                },
+                canManagePalettes: @js((bool) $logoUser),
+                savedPalettes: [],
+                savedPaletteName: '',
+                paletteSaving: false,
+                paletteLoading: false,
+                paletteError: null,
+                paletteSuccess: null,
                 logoLoading: false,
                 logoImages: [],
                 logoError: null,
                 zoomedLogoUrl: null,
-                creditBalance: {{ auth()->user() ? auth()->user()->credit_balance : 0 }},
+                creditBalance: @js((float) ($logoUser->credit_balance ?? 0)),
                 logoProMode: false,
                 logoProSize: '1024',
                 logoIconOnly: false,
-                logoImageModel: 'flux',
+                logoImageModel: 'dalle',
                 logoOutputFormat: 'raster',
                 logoImageFormat: 'png',
                 logoBgColor: 'white',
@@ -882,13 +1012,178 @@
                 similarIdeasError: null,
                 similarIdeasDebounce: null,
 
+                normalizeHexColor(value, fallback = '#ffffff') {
+                    const v = String(value || '').trim();
+                    return /^#[0-9a-fA-F]{6}$/.test(v) ? v : fallback;
+                },
+
                 init() {
+                    const queryParams = new URLSearchParams(window.location.search || '');
+                    const initialDomain = (queryParams.get('domain') || '').trim();
+                    if (initialDomain) {
+                        this.logoDomain = initialDomain;
+                    }
+
+                    const initialStyle = (queryParams.get('style') || '').trim();
+                    const validStyles = ['chrome','professional','fantasy','future','retro','8bit','dotmatrix','lego','minimalist','greetingcard','custom'];
+                    if (validStyles.includes(initialStyle)) {
+                        this.logoStyle = initialStyle;
+                    } else {
+                        const stripped = initialStyle.replace(/_pro$/, '');
+                        if (validStyles.includes(stripped)) this.logoStyle = stripped;
+                    }
+
+                    const initialModel = (queryParams.get('model') || '').trim();
+                    if (['flux','recraft','dalle'].includes(initialModel)) this.logoImageModel = initialModel;
+
+                    const initialShape = (queryParams.get('shape') || '').trim();
+                    if (initialShape) this.logoShape = initialShape;
+
+                    const initialDetail = (queryParams.get('detail') || '').trim();
+                    if (['min','medium','max'].includes(initialDetail)) this.logoDetail = initialDetail;
+
+                    const initialBg = (queryParams.get('bg') || '').trim();
+                    if (initialBg) {
+                        if (initialBg.startsWith('#')) {
+                            this.logoBgColor = 'custom';
+                            this.logoBgCustom = this.normalizeHexColor(initialBg);
+                        } else if (['white','black','transparent'].includes(initialBg)) {
+                            this.logoBgColor = initialBg;
+                        }
+                    }
+
+                    if (queryParams.get('icon_only') === '1') this.logoIconOnly = true;
+
+                    this.logoBgCustom = this.normalizeHexColor(this.logoBgCustom);
+                    this.logoCustomColors = (Array.isArray(this.logoCustomColors) ? this.logoCustomColors : [])
+                        .map((c) => this.normalizeHexColor(c))
+                        .slice(0, 5);
+                    if (this.logoCustomColors.length < 2) {
+                        this.logoCustomColors = ['#1e3a5f', '#d4af37', '#333333'];
+                    }
                     this.fetchLogoPrice();
+                    this.fetchModelCardPrices();
+                    this.fetchSavedPalettes();
                     this.$watch('logoPrompt', (val) => this.queueSimilarIdeasLookup(val));
                 },
 
+                formatCardPrice(value) {
+                    const amount = Number(value);
+                    if (!Number.isFinite(amount) || amount <= 0) return '...';
+                    const digits = amount < 0.01 ? 4 : 3;
+                    return '$' + amount.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '');
+                },
+
+                normalizePaletteColors(colors) {
+                    if (!Array.isArray(colors)) return [];
+                    return colors
+                        .map((color) => this.normalizeHexColor(color, ''))
+                        .filter((color) => /^#[0-9a-fA-F]{6}$/.test(color))
+                        .map((color) => color.toUpperCase())
+                        .slice(0, 5);
+                },
+
+                async fetchSavedPalettes() {
+                    if (!this.canManagePalettes) return;
+                    this.paletteLoading = true;
+                    this.paletteError = null;
+                    try {
+                        const response = await fetch('/domain-search/logo-palettes', {
+                            method: 'GET',
+                            headers: this.headers(),
+                        });
+                        const data = await response.json().catch(() => ({}));
+                        if (!response.ok) {
+                            this.paletteError = data.error || 'Failed to load saved palettes.';
+                            return;
+                        }
+                        const incoming = Array.isArray(data.palettes) ? data.palettes : [];
+                        this.savedPalettes = incoming
+                            .map((p) => ({
+                                id: p.id,
+                                name: String(p.name || '').trim(),
+                                colors: this.normalizePaletteColors(p.colors),
+                            }))
+                            .filter((p) => p.id && p.name && p.colors.length >= 2);
+                    } catch (e) {
+                        this.paletteError = 'Network error loading saved palettes.';
+                    } finally {
+                        this.paletteLoading = false;
+                    }
+                },
+
+                async saveCurrentPalette() {
+                    if (!this.canManagePalettes || this.paletteSaving) return;
+                    const name = String(this.savedPaletteName || '').trim();
+                    if (!name) {
+                        this.paletteError = 'Enter a palette name.';
+                        this.paletteSuccess = null;
+                        return;
+                    }
+                    const colors = this.normalizePaletteColors(this.logoCustomColors);
+                    if (colors.length < 2) {
+                        this.paletteError = 'Palette needs at least 2 colors.';
+                        this.paletteSuccess = null;
+                        return;
+                    }
+
+                    this.paletteSaving = true;
+                    this.paletteError = null;
+                    this.paletteSuccess = null;
+
+                    try {
+                        const response = await fetch('/domain-search/logo-palettes', {
+                            method: 'POST',
+                            headers: this.headers(),
+                            body: JSON.stringify({ name, colors }),
+                        });
+                        const data = await response.json().catch(() => ({}));
+                        if (!response.ok) {
+                            this.paletteError = data.error || 'Failed to save palette.';
+                            return;
+                        }
+                        await this.fetchSavedPalettes();
+                        this.paletteSuccess = 'Palette saved.';
+                    } catch (e) {
+                        this.paletteError = 'Network error saving palette.';
+                    } finally {
+                        this.paletteSaving = false;
+                    }
+                },
+
+                applySavedPalette(palette) {
+                    const colors = this.normalizePaletteColors(palette?.colors || []);
+                    if (colors.length < 2) return;
+                    this.logoCustomColors = colors;
+                    this.logoColorPalette = 'custom';
+                    this.savedPaletteName = String(palette?.name || '').trim();
+                    this.paletteError = null;
+                    this.paletteSuccess = `Loaded "${this.savedPaletteName}".`;
+                },
+
+                async deleteSavedPalette(paletteId) {
+                    if (!this.canManagePalettes || !paletteId) return;
+                    this.paletteError = null;
+                    this.paletteSuccess = null;
+                    try {
+                        const response = await fetch('/domain-search/logo-palettes/' + encodeURIComponent(paletteId), {
+                            method: 'DELETE',
+                            headers: this.headers(),
+                        });
+                        const data = await response.json().catch(() => ({}));
+                        if (!response.ok) {
+                            this.paletteError = data.error || 'Failed to delete palette.';
+                            return;
+                        }
+                        this.savedPalettes = this.savedPalettes.filter((p) => Number(p.id) !== Number(paletteId));
+                        this.paletteSuccess = 'Palette deleted.';
+                    } catch (e) {
+                        this.paletteError = 'Network error deleting palette.';
+                    }
+                },
+
                 getStyleLabel() {
-                    const labels = { chrome: 'Chrome', professional: 'Professional', fantasy: 'Fantasy', future: 'Future', retro: 'Retro', '8bit': '8-Bit', dotmatrix: 'Dot Matrix', lego: 'Lego', minimalist: 'Minimalist', greetingcard: 'Greeting Card' };
+                    const labels = { chrome: 'Chrome', professional: 'Professional', fantasy: 'Fantasy', future: 'Future', retro: 'Retro', '8bit': '8-Bit', dotmatrix: 'Dot Matrix', lego: 'Lego', minimalist: 'Minimalist', greetingcard: 'Greeting Card', custom: 'Custom Prompt' };
                     return labels[this.logoStyle] || 'Professional';
                 },
                 selectStyle(style) {
@@ -941,7 +1236,7 @@
                 async fetchLogoPrice() {
                     this.logoPriceLoading = true;
                     try {
-                        const bgColor = this.logoBgColor === 'custom' ? this.logoBgCustom : this.logoBgColor;
+                        const bgColor = this.logoBgColor === 'custom' ? this.normalizeHexColor(this.logoBgCustom) : this.logoBgColor;
                         const response = await fetch('/domain-search/estimate-logo-price', {
                             method: 'POST',
                             headers: this.headers(),
@@ -962,8 +1257,6 @@
                             this.logoCostPerImage = parseFloat(data.cost_per_image) || 0.003;
                             this.logoCostTotal = parseFloat(data.estimated_cost_usd) || (this.logoCount * 0.003);
                             this.logoCostSource = data.source || 'fallback';
-                            this.logoBaseCost = parseFloat(data.base_cost_total) || 0;
-                            this.logoMarkup = parseFloat(data.markup_amount) || 0;
                             if (data.credit_balance !== undefined) {
                                 this.creditBalance = parseFloat(data.credit_balance);
                             }
@@ -972,6 +1265,42 @@
                     } finally {
                         this.logoPriceLoading = false;
                     }
+                },
+
+                async fetchModelCardPrices() {
+                    const basePayload = {
+                        count: 1,
+                        pro: false,
+                        pro_size: 512,
+                        style: 'professional',
+                        bg_color: 'white',
+                        output_format: 'raster',
+                        image_format: null,
+                        recraft_substyle: null,
+                    };
+
+                    const requests = [
+                        { key: 'flux', payload: { ...basePayload, image_model: 'flux' } },
+                        { key: 'recraft', payload: { ...basePayload, image_model: 'recraft' } },
+                        { key: 'dalle', payload: { ...basePayload, image_model: 'dalle', image_format: 'png' } },
+                    ];
+
+                    await Promise.all(requests.map(async ({ key, payload }) => {
+                        try {
+                            const response = await fetch('/domain-search/estimate-logo-price', {
+                                method: 'POST',
+                                headers: this.headers(),
+                                body: JSON.stringify(payload),
+                            });
+                            if (!response.ok) return;
+                            const data = await response.json();
+                            const cost = parseFloat(data.cost_per_image);
+                            if (Number.isFinite(cost) && cost > 0) {
+                                this.modelCardPricePerImage[key] = cost;
+                            }
+                        } catch (e) {
+                        }
+                    }));
                 },
 
                 async generateLogo() {
@@ -1004,14 +1333,14 @@
                                     pro: this.logoProMode,
                                     pro_size: this.logoProMode ? parseInt(this.logoProSize) : null,
                                     icon_only: this.logoIconOnly,
-                                    bg_color: this.logoBgColor === 'custom' ? this.logoBgCustom : this.logoBgColor,
+                                    bg_color: this.logoBgColor === 'custom' ? this.normalizeHexColor(this.logoBgCustom) : this.logoBgColor,
                                     image_model: this.logoImageModel,
                                     output_format: this.logoImageModel === 'dalle' ? 'raster' : this.logoOutputFormat,
                                     image_format: this.logoImageModel === 'dalle' ? this.logoImageFormat : null,
                                     color_palette: this.logoColorPalette !== 'none' ? this.getSelectedPaletteColors() : null,
                                     recraft_substyle: this.logoImageModel === 'recraft' ? (this.recraftSubstyle || null) : null,
-                                    logo_shape: ['recraft','flux'].includes(this.logoImageModel) ? this.logoShape : null,
-                                    logo_detail: this.logoImageModel === 'recraft' ? this.logoDetail : null,
+                                    logo_shape: ['recraft','dalle'].includes(this.logoImageModel) ? this.logoShape : null,
+                                    logo_detail: ['recraft', 'dalle'].includes(this.logoImageModel) ? this.logoDetail : null,
                                 }),
                             });
 
@@ -1095,6 +1424,9 @@
 
                                     if (statusData.bg_color) {
                                         this.logoBgResult = statusData.bg_color;
+                                        if (typeof statusData.bg_color === 'string' && statusData.bg_color.startsWith('#')) {
+                                            this.logoBgCustom = this.normalizeHexColor(statusData.bg_color);
+                                        }
                                     }
 
                                     const newImages = (statusData.images || []).map((img) => ({
@@ -1220,6 +1552,7 @@
                             if (data.transparent_url) {
                                 this.setLogoImageState(idx, {
                                     url: data.transparent_url,
+                                    stored_url: data.transparent_url,
                                     transparent: true,
                                     removingBg: false,
                                 });
@@ -1285,7 +1618,13 @@
                         this.similarIdeasLoading = false;
                     }
                 },
-            };
+            }));
+        };
+
+        if (window.Alpine) {
+            registerLogoGenerator();
+        } else {
+            document.addEventListener('alpine:init', registerLogoGenerator, { once: true });
         }
     </script>
 </body>

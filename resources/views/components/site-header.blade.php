@@ -13,6 +13,8 @@
     $brandSizeClass = $compact ? 'text-xl' : 'text-2xl';
     $iconSizeClass = $compact ? 'h-5 w-5' : 'h-6 w-6';
     $loginPaddingClass = $compact ? 'px-4 py-2' : 'px-6 py-2.5';
+    $headerUser = auth()->user() ?? auth('admin')->user();
+    $isAdmin = auth('admin')->check();
 @endphp
 
 <header
@@ -36,7 +38,7 @@
                     <a href="/logo-generator" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Logo Generator</a>
                     <a href="/prices" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Prices</a>
                     <a href="{{ route('docs.logoGenerator') }}" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Docs</a>
-                    <a href="#faq" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">FAQ</a>
+                    <a href="/browse-logos" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Browse Logos</a>
                 </nav>
             @endif
 
@@ -68,18 +70,16 @@
                 @endif
 
                 @if ($showAuthControls)
-                    @guest
-                        <a href="{{ route('filament.admin.auth.login') }}" class="hidden md:inline-flex items-center gap-2 {{ $loginPaddingClass }} bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition" style="text-decoration:none;">
+                    @if(!$headerUser)
+                        <a href="{{ route('login') }}" class="hidden md:inline-flex items-center gap-2 {{ $loginPaddingClass }} bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition" style="text-decoration:none;">
                             Login
                         </a>
-                    @endguest
-
-                    @auth
+                    @else
                         <div class="relative ml-2 hidden md:block" x-data="{ open: false }">
                             <button @click="open = !open" type="button" class="flex items-center justify-center w-10 h-10 rounded-full bg-gray-700 text-white hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-white transition" id="user-menu-button" aria-expanded="false" aria-haspopup="true" style="padding:0;">
                                 <span class="sr-only">Open user menu</span>
-                                @if(Auth::user()->avatar)
-                                    <img class="h-9 w-9 rounded-full object-cover border-2 border-gray-600" src="{{ Auth::user()->avatar }}" alt="">
+                                @if($headerUser->avatar ?? null)
+                                    <img class="h-9 w-9 rounded-full object-cover border-2 border-gray-600" src="{{ $headerUser->avatar }}" alt="">
                                 @else
                                     <svg class="h-6 w-6 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
                                 @endif
@@ -88,17 +88,21 @@
                             <div x-show="open" @click.away="open = false" x-transition:enter="transition ease-out duration-100" x-transition:enter-start="transform opacity-0 scale-95" x-transition:enter-end="transform opacity-100 scale-100" x-transition:leave="transition ease-in duration-75" x-transition:leave-start="transform opacity-100 scale-100" x-transition:leave-end="transform opacity-0 scale-95" class="absolute right-0 z-50 mt-2 w-48 origin-top-right rounded-xl bg-white dark:bg-[#1a2332] py-2 shadow-2xl ring-1 ring-black/5 dark:ring-white/10 focus:outline-none border border-gray-200 dark:border-gray-700/50 dark:backdrop-blur-xl" role="menu" aria-orientation="vertical" aria-labelledby="user-menu-button" tabindex="-1">
                                 <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700/50 mb-1">
                                     <p class="text-xs text-gray-500 dark:text-gray-400">Signed in as</p>
-                                    <p class="text-sm font-medium text-gray-900 dark:text-white truncate">{{ Auth::user()->name }}</p>
+                                    <p class="text-sm font-medium text-gray-900 dark:text-white truncate">{{ $headerUser->name }}</p>
                                 </div>
-                                <a href="/admin" class="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50 dark:hover:text-white transition-colors" role="menuitem" tabindex="-1">Dashboard</a>
+                                @if($isAdmin)
+                                <a href="/admin" class="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50 dark:hover:text-white transition-colors" role="menuitem" tabindex="-1">Admin Dashboard</a>
                                 <a href="{{ route('filament.admin.pages.security') }}" class="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50 dark:hover:text-white transition-colors" role="menuitem" tabindex="-1">Security</a>
-                                <form method="POST" action="{{ route('filament.admin.auth.logout') }}">
+                                @else
+                                <a href="/portal" class="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50 dark:hover:text-white transition-colors" role="menuitem" tabindex="-1">My Dashboard</a>
+                                @endif
+                                <form method="POST" action="{{ $isAdmin ? route('filament.admin.auth.logout') : route('logout') }}">
                                     @csrf
                                     <button type="submit" class="block w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700/50 hover:text-red-700 dark:hover:text-red-300 transition-colors" role="menuitem" tabindex="-1" style="border-radius:0;">Sign out</button>
                                 </form>
                             </div>
                         </div>
-                    @endauth
+                    @endif
                 @endif
             </div>
         </div>
@@ -123,30 +127,32 @@
                             <a @click="mobileMenuOpen = false" href="/logo-generator" class="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Logo Generator</a>
                             <a @click="mobileMenuOpen = false" href="/prices" class="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Prices</a>
                             <a @click="mobileMenuOpen = false" href="{{ route('docs.logoGenerator') }}" class="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Docs</a>
-                            <a @click="mobileMenuOpen = false" href="#faq" class="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">FAQ</a>
+                            <a @click="mobileMenuOpen = false" href="/browse-logos" class="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Browse Logos</a>
                         </nav>
                     @endif
 
                     @if ($showAuthControls)
                         <div class="border-t border-gray-200 dark:border-gray-700 pt-3">
-                            @guest
-                                <a href="{{ route('filament.admin.auth.login') }}" class="inline-flex w-full items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition" style="text-decoration:none;">
+                            @if(!$headerUser)
+                                <a href="{{ route('login') }}" class="inline-flex w-full items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition" style="text-decoration:none;">
                                     Login
                                 </a>
-                            @endguest
-
-                            @auth
+                            @else
                                 <div class="px-1 pb-2">
                                     <p class="text-xs text-gray-500 dark:text-gray-400">Signed in as</p>
-                                    <p class="text-sm font-medium text-gray-900 dark:text-white truncate">{{ Auth::user()->name }}</p>
+                                    <p class="text-sm font-medium text-gray-900 dark:text-white truncate">{{ $headerUser->name }}</p>
                                 </div>
-                                <a @click="mobileMenuOpen = false" href="/admin" class="block px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Dashboard</a>
+                                @if($isAdmin)
+                                <a @click="mobileMenuOpen = false" href="/admin" class="block px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Admin Dashboard</a>
                                 <a @click="mobileMenuOpen = false" href="{{ route('filament.admin.pages.security') }}" class="block px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Security</a>
-                                <form method="POST" action="{{ route('filament.admin.auth.logout') }}" class="mt-1">
+                                @else
+                                <a @click="mobileMenuOpen = false" href="/portal" class="block px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">My Dashboard</a>
+                                @endif
+                                <form method="POST" action="{{ $isAdmin ? route('filament.admin.auth.logout') : route('logout') }}" class="mt-1">
                                     @csrf
                                     <button type="submit" class="w-full text-left px-3 py-2 rounded-lg text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Sign out</button>
                                 </form>
-                            @endauth
+                            @endif
                         </div>
                     @endif
                 </div>

@@ -1,0 +1,96 @@
+{
+  "_comment": "DALL-E 3 logo prompt templates. Variables: {brand}, {subject}, {colors}, {bg}, {chrome_bg}, {shape_block}, {no_text}.",
+  "default_colors": {
+    "professional": "navy blue and gold",
+    "fantasy": "emerald green and antique gold",
+    "future": "neon cyan and electric purple",
+    "retro": "red, green, blue and yellow",
+    "chrome": "silver chrome",
+    "8bit": "limited retro 16-color palette",
+    "dotmatrix": "black and white",
+    "lego": "vibrant toy colors",
+    "minimalist": "navy blue and gray",
+    "greetingcard": "soft rose, sage green, lavender, ivory"
+  },
+  "default_subject": {
+    "icon_only": "logo symbol",
+    "with_brand": "clean brand mark"
+  },
+  "shape_block": "Hard shape constraint: the entire logo is fully enclosed inside a perfect {SHAPE} container. Nothing extends outside the {shape}.",
+  "no_text": {
+    "icon_only": "No text, no letters, no words, no numbers anywhere in the image.",
+    "with_brand": "The ONLY text allowed is exactly \"{brand}\" with correct spelling."
+  },
+  "icon_only": {
+    "chrome": "A high-resolution 3D render of {subject} made of polished sterling silver chrome with realistic reflections and depth. {shape_block} Background: {chrome_bg}. Front-facing, soft studio lighting, ultra-clean composition, logo-only output. {no_text}",
+    "professional": "Design one professional minimalist logo icon for {subject}. Flat vector-like style, clean geometry, strong silhouette, highly legible at small sizes. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "fantasy": "Create one fantasy-style emblem icon for {subject}. Ornamental curves, magical motifs, high-contrast silhouette. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "future": "Design one futuristic tech logo icon for {subject}. Sharp geometry, dynamic forward motion, clean negative space. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "retro": "A vibrant retro icon for {subject} with strong vintage forms and bold contrast. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "8bit": "Design a retro 8-bit pixel-art icon for {subject}. Chunky square pixels, classic arcade style, clean silhouette. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "dotmatrix": "Create a detailed dot-matrix stipple icon of {subject}. Pure dot work, no line-art, high-contrast monochrome style. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "lego": "Create a sticker-style toy-plastic icon for {subject}, thick outlines and glossy material. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "minimalist": "Create one ultra-minimalist icon for {subject} using 1-2 simple geometric primitives, generous whitespace, flat design. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "greetingcard": "Hand-painted watercolor icon illustration of {subject}. Soft washes, visible paper grain, gentle painterly edges. Colors: {colors}. Background: {bg}. {shape_block} {no_text}"
+  },
+  "icon_only_medium": {
+    "chrome": "A detailed 3D render of {subject} cast in polished sterling silver chrome. Richer surface micro-detail and more dramatic specular highlights than a flat icon, but still clean and logo-appropriate. Background: {chrome_bg}. {shape_block} {no_text}",
+    "professional": "A polished professional logo icon for {subject} with refined linework, subtle gradient depth, and precise geometric construction — more detailed than a flat icon but still clean and scalable. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "fantasy": "A richly detailed fantasy emblem icon for {subject} in Warcraft universe style — subtle magical glow accents. Still an icon/emblem, but with painterly richness. No decorative borders, no skulls, no moons, no stars, no ornamental frames around the edges. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "future": "A refined futuristic tech icon for {subject} glowing neon edge-lighting, and complex geometric depth — more intricate than a flat icon but still a clean logo form. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "retro": "A detailed vintage icon for {subject} with fine crosshatching, engraving linework, aged paper texture, and classic badge-style depth — richer than a flat icon but still a contained emblem. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "8bit": "A detailed 16-bit SNES-era pixel-art icon for {subject} with dithered shading, richer color depth, and fine sprite detail — more refined than chunky 8-bit but still a pixel icon. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "dotmatrix": "A dense stipple icon of {subject} with rich tonal gradients built from fine dot-work — more elaborate than a simple silhouette but still a contained icon. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "lego": "A detailed sticker-style toy icon for {subject} with visible brick texture, glossy plastic sheen, and layered depth — richer than a flat outline but still a clean logo. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "minimalist": "A refined minimalist icon for {subject} with exquisitely calibrated negative space and a single bold geometric form — more deliberate and premium than a basic shape. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "greetingcard": "A detailed watercolor icon of {subject} with wet-on-wet washes, visible dry-brush grain, and layered glazing — more painterly depth than a simple wash, still a contained icon. Colors: {colors}. Background: {bg}. {shape_block} {no_text}"
+  },
+  "icon_only_max": {
+    "chrome": "A breathtaking 8K photorealistic render of {subject} sculpted in polished sterling silver chrome. Cinematic studio lighting with dramatic specular highlights, deep reflections, complex surface detail, and flawless casting quality. Front-facing, centered on {bg} background. {shape_block} {no_text}",
+    "professional": "A highly detailed professional logo artwork for {subject}. Rich vector illustration with micro detail, subtle gradients, fine linework, and precise geometric construction. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "fantasy": "An epic high-fantasy full-color illustration in the style of Lord of the Rings concept art — {subject}. Photorealistic painterly render with dramatic volumetric lighting, rich atmospheric depth. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "future": "A hyper-detailed cinematic sci-fi render of {subject}. deep space atmosphere. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "retro": "A lush, highly detailed vintage illustration of {subject} — rich crosshatching, fine engraving lines, aged paper texture, classic poster typography influences. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "8bit": "An exquisitely detailed 16-bit SNES-era pixel art masterpiece of {subject}. Dense pixel detail, dithered shading, rich color depth, and perfect sprite-art composition. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "dotmatrix": "An incredibly dense and detailed stipple engraving of {subject}. Thousands of precision dots creating cinematic tonal range, fine crosshatch detail, and photorealistic depth from pure dot-work. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "lego": "A stunningly detailed photorealistic render of {subject} built from LEGO bricks, with ABS plastic sheen, visible stud detail, dramatic studio lighting and crisp depth of field. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "minimalist": "A refined ultra-minimalist composition for {subject} — exquisitely balanced negative space, single bold geometric form, premium Swiss design aesthetic. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "greetingcard": "A museum-quality watercolor painting of {subject} — rich wet-on-wet washes, visible dry-brush texture, luminous glazing layers, botanical illustration precision. Colors: {colors}. Background: {bg}. {shape_block} {no_text}"
+  },
+  "with_brand": {
+    "chrome": "A high-resolution 3D render of a chrome logo featuring {subject} and the exact word \"{brand}\". The word \"{brand}\" is a real extruded chrome object with clear legibility and proper spacing. {shape_block} Background: {chrome_bg}. Front-facing, soft studio lighting, premium presentation. {no_text}",
+    "professional": "Design one professional modern logo for brand \"{brand}\". Concept cue: {subject}. Layout: clean icon + readable sans-serif wordmark. Colors: {colors}. Background: {bg}. {shape_block} Flat vector-like style, no collage, no mockup. {no_text}",
+    "fantasy": "Create one fantasy-style logo for brand \"{brand}\". Concept cue: {subject}. Include a stylized emblem and a readable decorative wordmark. Colors: {colors}. Background: {bg}. {shape_block} No collage, no scene background. {no_text}",
+    "future": "Design one futuristic tech logo for brand \"{brand}\". Concept cue: {subject}. Include a modern symbol and sleek sans-serif wordmark. Colors: {colors}. Background: {bg}. {shape_block} Clean, high-contrast logo output only. {no_text}",
+    "retro": "Create one retro vector logo for brand \"{brand}\" with a bold vintage wordmark and strong simple icon forms. Colors: {colors}. Background: {bg}. {shape_block} Minimalist retro style. {no_text}",
+    "8bit": "Design one 8-bit pixel-art logo for brand \"{brand}\" with readable pixel typography and a companion icon. Colors: {colors}. Background: {bg}. {shape_block} Crisp square pixels, no blur, no anti-aliasing. {no_text}",
+    "dotmatrix": "Create one dot-matrix/stipple logo for brand \"{brand}\" with a central symbol and legible wordmark treatment. Colors: {colors}. Background: {bg}. {shape_block} Pure dot-work aesthetic. {no_text}",
+    "lego": "Create one glossy toy-sticker style logo for brand \"{brand}\" with a playful icon and readable rounded wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "minimalist": "Design one ultra-minimalist logo for brand \"{brand}\" with a simple geometric icon and clean wordmark. Colors: {colors}. Background: {bg}. {shape_block} Flat design only, no gradients or shadows. {no_text}",
+    "greetingcard": "Hand-painted watercolor logo for brand \"{brand}\" featuring {subject}. Soft washes, paper grain texture, elegant lettering. Colors: {colors}. Background: {bg}. {shape_block} {no_text}"
+  },
+  "with_brand_medium": {
+    "chrome": "A detailed 3D chrome logo for brand \"{brand}\" featuring {subject}. Richer surface detail and more dramatic reflections than a flat render, extruded chrome wordmark with clear legibility. Background: {chrome_bg}. {shape_block} {no_text}",
+    "professional": "A polished professional logo for brand \"{brand}\" — {subject}. Refined icon with subtle gradient depth, fine linework, and a clean well-spaced wordmark. More detail than a flat icon, still crisp and scalable. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "fantasy": "A richly detailed fantasy logo for brand \"{brand}\" — {subject}. Illuminated manuscript emblem with knotwork borders, jewel-toned ink washes, fine ornamental filigree, and a decorative hand-lettered wordmark. Still a logo, not a scene. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "future": "A refined futuristic logo for brand \"{brand}\" — {subject}. Layered holographic circuit detail, glowing neon edge-lighting, and a sleek illuminated wordmark. More intricate than minimal but still a clean logo. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "retro": "A detailed vintage logo for brand \"{brand}\" — {subject}. Fine engraving linework, aged texture, badge-style depth, and a bold classic wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "8bit": "A detailed 16-bit pixel art logo for brand \"{brand}\" — {subject}. Dithered shading, richer color depth, and a pixel-perfect wordmark — more refined than chunky 8-bit. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "dotmatrix": "A dense stipple logo for brand \"{brand}\" — {subject}. Rich tonal dot-work with a fine crosshatch wordmark treatment. More elaborate than a simple icon. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "lego": "A detailed toy-brick logo for brand \"{brand}\" — {subject}. Visible stud detail, glossy plastic sheen, layered depth, and a chunky rounded wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "minimalist": "A refined minimalist logo for brand \"{brand}\" — {subject}. Exquisitely balanced negative space, one precise geometric element, and an elegant clean wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "greetingcard": "A detailed watercolor logo for brand \"{brand}\" — {subject}. Layered wet washes, dry-brush grain, and an elegant hand-lettered wordmark. More painterly than a simple wash. Colors: {colors}. Background: {bg}. {shape_block} {no_text}"
+  },
+  "with_brand_max": {
+    "chrome": "A breathtaking 8K photorealistic chrome logo for brand \"{brand}\" featuring {subject}. Extruded chrome wordmark with deep reflections, dramatic caustic lighting, and cinematic depth. {shape_block} Background: {chrome_bg}. {no_text}",
+    "professional": "A richly detailed premium logo for brand \"{brand}\". Concept: {subject}. Sophisticated icon with fine linework, subtle gradients, and a clean polished wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "fantasy": "An epic high-fantasy cinematic logo for brand \"{brand}\" in the style of Lord of the Rings — {subject}. Dramatic painterly illustration, glowing magical energy, ancient runes, volumetric light, and a majestic decorative wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "future": "A hyper-detailed cinematic sci-fi logo for brand \"{brand}\" — {subject}. Holographic circuits, neon energy fields, hard-surface mech detail, and a sleek illuminated wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "retro": "A richly detailed vintage poster logo for brand \"{brand}\" featuring {subject}. Fine engraving lines, aged texture, ornate borders, and a bold classic wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "8bit": "A highly detailed 16-bit pixel art logo for brand \"{brand}\" with {subject}. Dense dithered sprites, rich color depth, and pixel-perfect wordmark typography. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "dotmatrix": "An intricately detailed stipple engraving logo for brand \"{brand}\" featuring {subject}. Thousands of precision dots, cinematic tonal range, and a fine crosshatch wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "lego": "A photorealistic LEGO logo for brand \"{brand}\" featuring {subject} — visible ABS studs, brick assembly detail, dramatic studio lighting, and a bold blocky wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "minimalist": "An exquisitely refined minimalist logo for brand \"{brand}\" — {subject}. Masterful use of negative space, single precise geometric element, premium Swiss grid composition, and an elegant wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "greetingcard": "A museum-quality watercolor logo for brand \"{brand}\" featuring {subject}. Rich wet-on-wet washes, luminous glazing, botanical precision, and elegant hand-lettered wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}"
+  }
+}

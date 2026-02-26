@@ -1,214 +1,68 @@
 {
-  "_comment": "Recraft logo prompt templates. Edit strings here; variable substitution happens at runtime. Available variables: {subject}, {brand}, {colors}, {bg}, {SHAPE} (uppercase), {Shape} (ucfirst), {enclosure} ('Subject' or 'Logo and text').",
-
+  "_comment": "Recraft logo prompt templates. Variables: {brand}, {subject}, {colors}, {bg}, {shape_block}, {no_text}.",
   "default_colors": {
-    "fantasy":    "emerald green, antique gold, deep crimson",
-    "future":     "neon cyan, electric purple, deep black",
-    "retro":      "red, green, blue, yellow",
-    "minimalist": "navy blue, gold"
+    "professional": "navy blue and gold",
+    "fantasy": "emerald green, antique gold, deep crimson",
+    "future": "neon cyan, electric purple, deep black",
+    "retro": "red, green, blue, yellow",
+    "minimalist": "navy blue, gold",
+    "greetingcard": "soft rose, sage green, lavender, ivory"
   },
-
-  "shape_block": "PRIMARY: PERFECT {SHAPE} container is dominant. {enclosure} fully enclosed inside. Must remain outermost shape.",
-
-  "styles": {
-
-    "fantasy": {
-      "style_line": {
-        "min":    "Style: Fantasy logo.",
-        "medium": "Style: High fantasy logo, Lord of the Rings inspired, ornate.",
-        "max":    "Style: High fantasy illustration, Lord of the Rings inspired, rich detail, painterly textures, ornate."
-      },
-
-      "with_shape": {
-        "primary":      "PRIMARY: PERFECT {SHAPE} outermost boundary. {enclosure} fully enclosed inside. Nothing outside.",
-
-        "subject_icon": {
-          "min":    "Subject: {subject}.",
-          "medium": "Subject: {subject} with fine detail and mythical presence.",
-          "max":    "Subject: {subject} with ornate detail, intricate linework, mythical presence."
-        },
-        "subject_text": {
-          "min":    "Subject: {subject} with ornate serif text \"{brand}\".",
-          "max":    "Subject: {subject} with ornate medieval serif text \"{brand}\"."
-        },
-
-        "detail": {
-          "medium": "Scrollwork, rune accents, enchanted forest motifs.",
-          "max":    "Elven scrollwork, ancient runes, mythical textures."
-        },
-
-        "background": {
-          "min": "Background: {bg}. Empty outside the {Shape}.",
-          "max": "Background: {bg}. Completely empty outside the {Shape}. Isolated emblem, no backdrop, no environment, no scenery."
-        },
-
-        "colors": {
-          "max":     "Colors: {colors}. Rich shading, metallic highlights.",
-          "default": "Colors: {colors}."
-        },
-
-        "footer_icon": "Text: None. Centered 1:1 square.",
-        "footer_text": "Text: {brand} only. Centered 1:1 square."
-      },
-
-      "no_shape": {
-        "subject_icon": {
-          "min":    "Subject: {subject}. Bold fantasy symbol.",
-          "medium": "Subject: {subject}. Fantasy symbol with fine detail and mythical presence.",
-          "max":    "Subject: {subject}. Detailed fantasy creature or symbol, intricate linework, fine detail, mythical presence."
-        },
-        "subject_text": {
-          "min":    "Subject: {subject} with \"{brand}\" in fantasy serif.",
-          "medium": "Subject: {subject} with \"{brand}\" in ornate medieval serif with decorative flourishes.",
-          "max":    "Subject: {subject} with \"{brand}\" in ornate medieval serif typeface with decorative flourishes."
-        },
-
-        "detail": {
-          "medium": "Scrollwork, rune accents, enchanted forest motifs.",
-          "max":    "Elven scrollwork, ancient runes, enchanted forest motifs, mythical textures, aged parchment feel."
-        },
-
-        "colors": {
-          "max":     "Colors: {colors}. Rich shading, metallic highlights, deep jewel tones.",
-          "default": "Colors: {colors}."
-        },
-
-        "background": "Background: {bg}. Centered 1:1.",
-
-        "quality": {
-          "medium": "No flat fills. No minimalism.",
-          "max":    "Epic, cinematic, high-detail. No flat fills. No minimalism."
-        },
-
-        "text_icon":  "Text: None.",
-        "text_brand": "Text: \"{brand}\" only, no other words."
-      }
-    },
-
-    "future": {
-  "style_line": {
-    "min":    "Style: Mythic cosmic fantasy logo.",
-    "medium": "Style: Mythic cosmic fantasy logo, celestial, star-forged.",
-    "max":    "Style: Mythic cosmic fantasy logo, celestial, star-forged, ancient astral geometry."
+  "default_subject": {
+    "icon_only": "logo symbol",
+    "with_brand": "clean brand mark"
   },
-
-  "subject_icon": {
-    "min":    "Subject: {subject}. Mythic celestial symbol.",
-    "medium": "Subject: {subject}. Celestial symbol with astral energy and starborn details.",
-    "max":    "Subject: {subject}. Mythic celestial symbol, starborn geometry, astral energy, cosmic aether presence."
+  "shape_block": "Hard shape constraint: the entire logo is fully enclosed inside a perfect {SHAPE} container. Nothing extends outside the {Shape}.",
+  "no_text": {
+    "icon_only": "No text, no letters, no words, no numbers anywhere in the image.",
+    "with_brand": "The ONLY text allowed is exactly \"{brand}\" with correct spelling."
   },
-
-  "subject_text": {
-    "min":    "Subject: {subject} with \"{brand}\" in mythic cosmic typeface.",
-    "max":    "Subject: {subject} with \"{brand}\" in ornate celestial typeface, star-forged and ancient."
+  "icon_only": {
+    "professional": "Minimalist logo icon for {subject}. Flat vector style, clean geometry, strong silhouette. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "fantasy": "Fantasy logo icon for {subject}. Bold fantasy symbol, ornamental accents, magical motifs. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "future": "Futuristic sci-fi logo icon for {subject}. Clean sci-fi symbol, sharp geometry, dynamic forward motion. Colors: {colors}. Background: {bg}. Solid plain background only — no space, no galaxies, no nebulas, no starfields. {shape_block} {no_text}",
+    "retro": "Retro vintage logo icon for {subject}. Bold retro icon, strong shapes, vintage contrast. Colors: {colors}. Hard edges, flat fills. Background: {bg}. {shape_block} {no_text}",
+    "minimalist": "Clean minimal logo icon for {subject}. Single bold shape, generous negative space, flat design. Color: {colors}. Background: {bg}. {shape_block} Flat fills only. No gradients, shadows, or glows. {no_text}",
+    "greetingcard": "Hand-painted watercolor logo icon for {subject}. Gentle painted edges, soft color washes. Colors: {colors}. Background: {bg}. {shape_block} {no_text}"
   },
-
-  "colors": {
-    "max":     "Colors: {colors}. Celestial glow, nebula highlights, cosmic aether illumination.",
-    "default": "Colors: {colors}."
+  "icon_only_medium": {
+    "professional": "Polished professional logo icon for {subject}. Refined linework, subtle gradient depth, precise geometric construction — more detailed than a flat icon, still clean and scalable. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "fantasy": "High fantasy logo icon for {subject}. Lord of the Rings inspired, ornate. Mythical presence, scrollwork and rune accents, enchanted forest motifs. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "future": "Futuristic sci-fi logo icon for {subject}. Sleek, high-tech. Neon edge-lighting and layered circuit detail. Colors: {colors}. Background: {bg}. Solid plain background — no space, no galaxies, no starfields. No atmospheric effects. {shape_block} {no_text}",
+    "retro": "Bold retro vintage logo icon for {subject}. Screen-print aesthetic, strong outlines, halftone textures. Colors: {colors}. Hard edges, flat fills. Background: {bg}. No photorealism, no gradients. Classic American retro design. {shape_block} {no_text}",
+    "minimalist": "Flat minimalist logo icon for {subject}. Bold silhouette, single filled shape — no line-art, thick shapes, smooth curves. Color: {colors}. Background: {bg}. {shape_block} Flat fills only. No gradients, shadows, or glows. {no_text}",
+    "greetingcard": "Hand-painted watercolor logo icon for {subject}. Soft color washes, visible paper grain, gentle painted edges. Colors: {colors}. Background: {bg}. {shape_block} High-quality gouache textures, dreamy lighting. No hard lines. {no_text}"
   },
-
-  "background": "Background: {bg}. Centered 1:1.",
-
-  "quality": "No earthly elements. Mythic cosmic atmosphere. Celestial geometry, astral presence, starborn scale.",
-
-  "text_icon":  "Text: None.",
-  "text_brand": "Text: \"{brand}\" only."
-}
-,
-
-    "retro": {
-      "style_line": {
-        "min":    "Style: Retro vintage logo.",
-        "medium": "Style: Bold retro vintage logo, screen-print aesthetic.",
-        "max":    "Style: Bold retro vintage logo, screen-print aesthetic, limited palette."
-      },
-
-      "subject_icon": {
-        "min":    "Subject: {subject}. Bold retro icon.",
-        "medium": "Subject: {subject}. Bold retro icon, strong outlines.",
-        "max":    "Subject: {subject}. Bold retro icon, strong outlines, vintage poster feel."
-      },
-      "subject_text": {
-        "min":    "Subject: {subject} with \"{brand}\" in retro font.",
-        "max":    "Subject: {subject} with \"{brand}\" in a bold retro slab-serif."
-      },
-
-      "colors": {
-        "max":     "Colors: {colors}. Hard edges, flat fills, halftone textures.",
-        "default": "Colors: {colors}. Hard edges, flat fills."
-      },
-
-      "background": "Background: {bg}. Centered 1:1.",
-      "quality":    "No photorealism. No gradients. Classic American retro design.",
-
-      "text_icon":  "Text: None.",
-      "text_brand": "Text: \"{brand}\" only."
-    },
-
-    "minimalist": {
-      "style_line": {
-        "min": "Style: Clean minimal logo.",
-        "max": "Style: Flat minimalist logo."
-      },
-
-      "subject_icon": {
-        "min": "Subject: {subject}.",
-        "max": "Subject: Bold silhouette of {subject}."
-      },
-      "subject_text": "Subject: {subject} with \"{brand}\".",
-
-      "shape_quality": "Single filled shape. No line-art. Thick shapes, smooth curves.",
-      "quality": {
-        "medium": "Single filled shape. No line-art. Thick shapes, smooth curves.",
-        "max":    "Single filled shape. No line-art. Thick shapes, smooth curves. Negative space as cut-outs."
-      },
-
-      "colors":        "Color: {colors}.",
-      "colors_shaped": "Color: {colors}. Container uses same colors.",
-      "background":    "Background: {bg}.",
-
-      "comp":          "Centered 1:1.",
-      "comp_shaped":   "Centered 1:1. {Shape} dominant.",
-
-      "flat_fills":    "Flat fills only. No gradients, shadows, glows, textures.",
-
-      "text_icon":  "Text: None.",
-      "text_brand": "Text: \"{brand}\" in sans-serif."
-    },
-
-    "greetingcard": {
-      "style_line": {
-        "min":    "Style: Hand-painted watercolor greeting card illustration.",
-        "medium": "Style: Hand-painted watercolor greeting card illustration. Soft color washes, visible paper grain.",
-        "max":    "Style: Hand-painted watercolor greeting card illustration. Soft washes, visible paper grain texture, uneven deckled edges."
-      },
-
-      "subject_icon": {
-        "min":    "Subject: {subject}.",
-        "medium": "Subject: {subject}. Soft watercolor rendering with gentle painted edges.",
-        "max":    "Subject: {subject}. Soft watercolor rendering, painterly edges, delicate wet-on-wet blooms."
-      },
-      "subject_text": {
-        "min":    "Subject: {subject} with \"{brand}\" in hand-lettered script.",
-        "max":    "Subject: {subject} with \"{brand}\" in elegant hand-lettered watercolor script with soft ink variation."
-      },
-
-      "colors": {
-        "max":     "Colors: {colors}. Muted pastel tones, soft translucent watercolor layering.",
-        "default": "Colors: {colors}. Soft watercolor washes."
-      },
-
-      "background": "Background: {bg}. Centered 1:1.",
-
-      "quality": {
-        "min":    "High-quality gouache textures, dreamy lighting. No hard lines.",
-        "max":    "High-quality gouache textures, dreamy soft lighting. No hard digital lines, no flat fills, no 3D renders."
-      },
-
-      "text_icon":  "Text: None.",
-      "text_brand": "Text: \"{brand}\" in hand-lettered script only, no other text."
-    }
-
+  "icon_only_max": {
+    "professional": "Highly detailed professional logo icon for {subject}. Rich vector illustration, micro detail, subtle gradients, fine linework, precise geometric construction. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "fantasy": "High fantasy illustration logo icon for {subject}. Lord of the Rings inspired, rich detail, painterly textures, ornate. Elven scrollwork, ancient runes, mythical textures, intricate linework. Colors: {colors}. Rich shading, metallic highlights, deep jewel tones. Background: {bg}. {shape_block} Epic, cinematic, high-detail. No flat fills. No minimalism. {no_text}",
+    "future": "Hyper-detailed cinematic sci-fi logo icon for {subject}. Holographic energy fields, neon circuit tracery, hard-surface mech detail. Subject drawn as a contained logo emblem — retains its own natural shape, NOT distorted to match container. Colors: {colors}. Holographic glow, neon circuit highlights. Background: {bg}. Solid plain background only — no space, no galaxies, no nebulas, no starfields. No atmospheric effects behind the logo. {shape_block} {no_text}",
+    "retro": "Bold retro vintage logo icon for {subject}. Screen-print aesthetic, limited palette, strong outlines, vintage poster feel, fine crosshatching and halftone textures. Colors: {colors}. Hard edges, flat fills, halftone textures. Background: {bg}. No photorealism. No gradients. Classic American retro design. {shape_block} {no_text}",
+    "minimalist": "Flat minimalist logo icon for {subject}. Bold silhouette, single geometric form — no line-art, thick shapes, smooth curves, negative space as cut-outs. Color: {colors}. Background: {bg}. {shape_block} Flat fills only. No gradients, shadows, glows, or textures. {no_text}",
+    "greetingcard": "Hand-painted watercolor logo icon for {subject}. Soft washes, visible paper grain, uneven deckled edges, painterly edges, delicate wet-on-wet blooms. Colors: {colors}. Muted pastel tones, soft translucent watercolor layering. Background: {bg}. {shape_block} High-quality gouache textures, dreamy soft lighting. No hard digital lines, no flat fills, no 3D renders. {no_text}"
+  },
+  "with_brand": {
+    "professional": "Minimalist brand logo for \"{brand}\". Concept: {subject}. Clean icon with readable wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "fantasy": "Fantasy brand logo for \"{brand}\". Concept: {subject}. Bold fantasy symbol with brand in ornate fantasy serif. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "future": "Futuristic sci-fi brand logo for \"{brand}\". Concept: {subject}. Clean sci-fi symbol with brand in sci-fi typeface. Colors: {colors}. Background: {bg}. Solid plain background — no space, no galaxies, no starfields. {shape_block} {no_text}",
+    "retro": "Retro vintage brand logo for \"{brand}\". Concept: {subject}. Bold retro icon with brand in retro font. Colors: {colors}. Hard edges, flat fills. Background: {bg}. {shape_block} {no_text}",
+    "minimalist": "Clean minimal brand logo for \"{brand}\". Concept: {subject}. Single bold shape with clean wordmark. Color: {colors}. Background: {bg}. {shape_block} Flat fills only. {no_text}",
+    "greetingcard": "Hand-painted watercolor brand logo for \"{brand}\". Concept: {subject}. Soft watercolor washes with brand in hand-lettered script. Colors: {colors}. Background: {bg}. {shape_block} {no_text}"
+  },
+  "with_brand_medium": {
+    "professional": "Polished professional brand logo for \"{brand}\". Concept: {subject}. Refined icon with subtle depth, fine linework, and a clean well-spaced wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "fantasy": "High fantasy brand logo for \"{brand}\". Lord of the Rings inspired, ornate. Concept: {subject}. Mythical presence, scrollwork and rune accents, decorative hand-lettered wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "future": "Futuristic sci-fi brand logo for \"{brand}\". Sleek, high-tech. Concept: {subject}. Neon edge-lighting, layered circuit detail, sleek illuminated wordmark. Colors: {colors}. Background: {bg}. Solid plain background — no space, no galaxies, no starfields. No atmospheric effects. {shape_block} {no_text}",
+    "retro": "Bold retro vintage brand logo for \"{brand}\". Screen-print aesthetic. Concept: {subject}. Bold retro icon with strong outlines and classic bold wordmark. Colors: {colors}. Hard edges, flat fills. Background: {bg}. No photorealism, no gradients. Classic American retro design. {shape_block} {no_text}",
+    "minimalist": "Flat minimalist brand logo for \"{brand}\". Concept: {subject}. Bold silhouette with elegant clean wordmark — no line-art, thick shapes, smooth curves. Color: {colors}. Background: {bg}. {shape_block} Flat fills only. {no_text}",
+    "greetingcard": "Hand-painted watercolor brand logo for \"{brand}\". Concept: {subject}. Soft color washes, paper grain, brand in hand-lettered watercolor script with soft ink variation. Colors: {colors}. Background: {bg}. {shape_block} High-quality gouache textures, dreamy lighting. No hard lines. {no_text}"
+  },
+  "with_brand_max": {
+    "professional": "Highly detailed premium brand logo for \"{brand}\". Concept: {subject}. Sophisticated icon with fine linework, subtle gradients, and a polished clean wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "fantasy": "High fantasy illustration brand logo for \"{brand}\". Lord of the Rings inspired, rich detail, painterly textures, ornate. Concept: {subject}. Elven scrollwork, ancient runes, mythical textures, majestic decorative wordmark. Colors: {colors}. Rich shading, metallic highlights, deep jewel tones. Background: {bg}. {shape_block} Epic, cinematic, high-detail. No flat fills. No minimalism. {no_text}",
+    "future": "Hyper-detailed cinematic sci-fi brand logo for \"{brand}\". Concept: {subject}. Holographic circuits, neon energy fields, hard-surface mech detail, sleek illuminated wordmark. Subject drawn as a contained logo emblem. Colors: {colors}. Holographic glow, neon circuit highlights. Background: {bg}. Solid plain background only — no space, no galaxies, no nebulas, no starfields. No atmospheric effects. {shape_block} {no_text}",
+    "retro": "Bold retro vintage brand logo for \"{brand}\". Screen-print aesthetic, limited palette. Concept: {subject}. Strong outlines, vintage poster feel, bold retro slab-serif wordmark, halftone textures. Colors: {colors}. Hard edges, flat fills, halftone textures. Background: {bg}. No photorealism. No gradients. Classic American retro design. {shape_block} {no_text}",
+    "minimalist": "Flat minimalist brand logo for \"{brand}\". Concept: {subject}. Bold silhouette, exquisitely balanced negative space as cut-outs, elegant clean wordmark. Color: {colors}. Background: {bg}. {shape_block} Flat fills only. No gradients, shadows, glows, or textures. {no_text}",
+    "greetingcard": "Hand-painted watercolor brand logo for \"{brand}\". Concept: {subject}. Rich wet washes, paper grain, delicate wet-on-wet blooms, elegant hand-lettered watercolor script wordmark. Colors: {colors}. Muted pastel tones, soft translucent layering. Background: {bg}. {shape_block} High-quality gouache textures, dreamy soft lighting. No hard digital lines, no flat fills, no 3D renders. {no_text}"
   }
 }

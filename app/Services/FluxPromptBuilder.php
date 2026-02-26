@@ -68,7 +68,9 @@ class FluxPromptBuilder
         ?string $colorInstruction,
         string  $bgInstruction,
         string  $brandUpper,
+        ?string $detail = 'max',
     ): string {
+        $detail ??= 'max';
         $tpl    = self::templates();
         $mode   = $iconOnly ? 'icon_only' : 'with_brand';
 
@@ -100,6 +102,12 @@ class FluxPromptBuilder
         // the palette before style/content tokens are processed.
         if ($colorInstruction !== null) {
             $body = $colorsValue . ' ' . $body;
+        }
+
+        // Append detail quality modifier
+        $qualitySuffix = $tpl['quality'][$detail] ?? $tpl['quality']['max'] ?? '';
+        if ($qualitySuffix !== '') {
+            $body = rtrim($body, '. ') . '.' . $qualitySuffix;
         }
 
         return $body;

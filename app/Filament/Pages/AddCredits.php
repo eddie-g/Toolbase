@@ -16,6 +16,8 @@ class AddCredits extends Page
 
     protected static ?int $navigationSort = 1;
 
+    protected static bool $shouldRegisterNavigation = false;
+
     protected static string $view = 'filament.pages.add-credits';
 
     public function getViewData(): array

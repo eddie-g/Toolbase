@@ -4,8 +4,10 @@ namespace App\Jobs;
 
 use App\Models\AiLogoPrice;
 use App\Models\AiLogoRequest;
+use App\Models\Admin;
 use App\Models\CreditTransaction;
 use App\Models\User;
+use App\Services\FalBalanceService;
 use App\Services\RecraftPricing;
 use App\Traits\ResolvesExternalDns;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -34,6 +36,7 @@ class GenerateLogoJob implements ShouldQueue
      */
     public array $params;
     public int $userId;
+    public ?int $adminId = null;
     public int $logoRequestId;
     public int $priceLogId;
 
@@ -45,8 +48,10 @@ class GenerateLogoJob implements ShouldQueue
         int $logoRequestId,
         int $priceLogId,
         array $params,
+        ?int $adminId = null,
     ) {
         $this->userId = $userId;
+        $this->adminId = $adminId;
         $this->logoRequestId = $logoRequestId;
         $this->priceLogId = $priceLogId;
         $this->params = $params;
@@ -62,13 +67,15 @@ class GenerateLogoJob implements ShouldQueue
     {
         $logoRequest = AiLogoRequest::find($this->logoRequestId);
         $priceLog = AiLogoPrice::find($this->priceLogId);
-        $user = User::find($this->userId);
+        $admin = $this->adminId ? Admin::find($this->adminId) : null;
+        $user = $admin ?? User::find($this->userId);
 
         if (!$logoRequest || !$priceLog || !$user) {
             Log::error('[GenerateLogoJob] Missing records', [
                 'logo_request_id' => $this->logoRequestId,
                 'price_log_id' => $this->priceLogId,
                 'user_id' => $this->userId,
+                'admin_id' => $this->adminId,
             ]);
             return;
         }
@@ -94,6 +101,8 @@ class GenerateLogoJob implements ShouldQueue
         $totalCount = $this->params['total_count'];
         $costPerImage = $this->params['cost_per_image'];
         $modelName = $this->params['model_name'];
+        $logoShape = $this->params['logo_shape'] ?? 'none';
+        $logoDetail = $this->params['logo_detail'] ?? 'max';
 
         try {
             if ($imageModel === 'recraft') {
@@ -253,25 +262,40 @@ class GenerateLogoJob implements ShouldQueue
             // ── Debit user ──
             if ($totalCost > 0) {
                 $breakdown = $actualCost['breakdown'] ?? [];
-                CreditTransaction::debit(
-                    userId: $this->userId,
-                    amount: $totalCost,
-                    service: 'logo_generation',
-                    modelName: $modelName,
-                    description: $domain ? "{$actualImageCount} logo(s) for {$domain}" : "{$actualImageCount} icon-only logo(s)",
-                    metadata: [
-                        'domain' => $domain,
-                        'style' => $style,
-                        'image_count' => $actualImageCount,
-                        'resolution' => $imageModel === 'recraft' ? '1024x1024' : ($imageModel === 'dalle' ? '1024x1024' : ($isPro ? "{$proSize}x{$proSize}" : '512x512')),
-                        'pro' => $isPro,
-                        'icon_only' => $iconOnly,
-                        'bg_color' => $bgColor,
-                        'image_model' => $imageModel,
-                        'breakdown' => $breakdown,
-                        'queued' => true,
-                    ],
-                );
+                if ($admin) {
+                    $admin->debitBalance($totalCost);
+                } else {
+                    CreditTransaction::debit(
+                        userId: $this->userId,
+                        amount: $totalCost,
+                        service: 'logo_generation',
+                        modelName: $modelName,
+                        description: $domain ? "{$actualImageCount} logo(s) for {$domain}" : "{$actualImageCount} icon-only logo(s)",
+                        metadata: [
+                            'domain' => $domain,
+                            'style' => $style,
+                            'image_count' => $actualImageCount,
+                            'resolution' => $imageModel === 'recraft' ? '1024x1024' : ($imageModel === 'dalle' ? '1024x1024' : ($isPro ? "{$proSize}x{$proSize}" : '512x512')),
+                            'pro' => $isPro,
+                            'icon_only' => $iconOnly,
+                            'bg_color' => $bgColor,
+                            'image_model' => $imageModel,
+                            'breakdown' => $breakdown,
+                            'queued' => true,
+                        ],
+                    );
+                }
+
+                // ── Track fal.ai spend in our own balance ledger ──
+                if (!in_array($imageModel, ['recraft', 'dalle'])) {
+                    FalBalanceService::debit(
+                        amount: $totalCost,
+                        model: $modelName,
+                        logoRequestId: $this->logoRequestId,
+                    );
+                }
+
+
             }
 
             // Store result data in the logo request for the polling endpoint
@@ -281,6 +305,11 @@ class GenerateLogoJob implements ShouldQueue
                     'prompt' => $prompt,
                     'seed' => $seed,
                     'bg_color' => $bgColor,
+                    'image_model' => $imageModel,
+                    'style' => $style,
+                    'icon_only' => $iconOnly,
+                    'logo_shape' => $logoShape,
+                    'logo_detail' => $logoDetail,
                     'cost' => [
                         'image_count' => $actualImageCount,
                         'cost_per_image' => $costPerImage,
@@ -315,7 +344,7 @@ class GenerateLogoJob implements ShouldQueue
                     'status' => 'error',
                     'error_message' => $isConnection
                         ? 'Unable to connect to the AI service. Your account was not charged.'
-                        : $e->getMessage(),
+                        : $this->friendlyErrorMessage($e->getMessage()),
                     'response_time_ms' => $elapsedMs,
                 ]);
                 $priceLog->update(['status' => 'error', 'response_time_ms' => $elapsedMs]);
@@ -426,9 +455,17 @@ class GenerateLogoJob implements ShouldQueue
                 ?? $recraftResponse->json('message')
                 ?? 'Unknown Recraft error (HTTP ' . $recraftResponse->status() . ')';
 
+            // Also check the raw body for error codes not surfaced via JSON fields
+            $recraftBody = $recraftResponse->body();
+            if (str_contains($recraftBody, 'not_enough_credits')) {
+                $recraftError = 'Model currently unavailable, please try a different model.';
+            } else {
+                $recraftError = $this->friendlyErrorMessage($recraftError);
+            }
+
             Log::error('Recraft ' . $outputFormat . ' generation failed', [
                 'status' => $recraftResponse->status(),
-                'body' => substr($recraftResponse->body(), 0, 500),
+                'body' => substr($recraftBody, 0, 500),
             ]);
 
             return ['error' => $recraftError, 'status_code' => $recraftResponse->status()];
@@ -473,9 +510,91 @@ class GenerateLogoJob implements ShouldQueue
     }
 
     /**
-     * Generate images via DALL-E 3.
+     * Generate images via GPT Image 1.5.
+     * Routes to the new gpt-image-1.5 model. DALL-E 3 is preserved as generateDalle3() below.
      */
     private function generateDalle(string $prompt, int $imageCount, bool $isPro): array
+    {
+        return $this->generateGptImage15($prompt, $imageCount, $isPro);
+    }
+
+    /**
+     * Generate images via GPT Image 1.5 (OpenAI /images/generations).
+     *
+     * Quality mapping: standard → medium ($0.042 / img), hd → high ($0.167 / img)
+     * Response may contain 'url' or 'b64_json'; both are handled.
+     */
+    private function generateGptImage15(string $prompt, int $imageCount, bool $isPro): array
+    {
+        $quality = $isPro ? 'high' : 'medium';
+        $allImages = [];
+
+        for ($i = 0; $i < $imageCount; $i++) {
+            $apiUrl = config('services.openai.base_url') . '/images/generations';
+            $response = $this->httpWithResolvedDns($apiUrl, [
+                'Authorization' => 'Bearer ' . config('services.openai.api_key'),
+                'Content-Type' => 'application/json',
+            ])->retry(3, 2000, function (\Exception $e) {
+                return $e instanceof \Illuminate\Http\Client\ConnectionException
+                    || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
+            })->timeout(120)->post($apiUrl, [
+                'model'   => 'gpt-image-1.5',
+                'prompt'  => $prompt,
+                'n'       => 1,
+                'size'    => '1024x1024',
+                'quality' => $quality,
+            ]);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                foreach ($data['data'] ?? [] as $img) {
+                    if (!empty($img['url'])) {
+                        $allImages[] = [
+                            'url'            => $img['url'],
+                            'revised_prompt' => $img['revised_prompt'] ?? null,
+                        ];
+                    } elseif (!empty($img['b64_json'])) {
+                        // Store base64 image directly to local disk
+                        $stored = $this->storeBase64LogoImage($img['b64_json'], $i + 1);
+                        if ($stored) {
+                            $allImages[] = [
+                                'url'            => $stored['url'],
+                                'stored_path'    => $stored['path'],
+                                'stored_url'     => $stored['url'],
+                                'revised_prompt' => $img['revised_prompt'] ?? null,
+                            ];
+                        }
+                    }
+                }
+            } else {
+                $errJson = $response->json();
+                $errMsg  = $errJson['error']['message'] ?? '';
+                $errType = $errJson['error']['type'] ?? '';
+
+                if (str_contains($errMsg, 'content filters') || str_contains($errType, 'content_policy')) {
+                    return ['error' => 'Your prompt was flagged by the AI safety filter. Please rephrase your description.', 'status_code' => 422];
+                }
+
+                if (str_contains($errMsg, 'Billing hard limit') || str_contains($errMsg, 'billing')) {
+                    return ['error' => 'GPT Image 1.5 is temporarily unavailable. Please use another model.', 'status_code' => 503];
+                }
+
+                Log::warning('GPT Image 1.5 image ' . ($i + 1) . ' failed', [
+                    'status' => $response->status(),
+                    'body'   => substr($response->body(), 0, 500),
+                ]);
+            }
+        }
+
+        return ['images' => $allImages, 'seed' => null];
+    }
+
+    /**
+     * Generate images via DALL-E 3 (backup — kept for rollback purposes).
+     *
+     * @deprecated Use generateGptImage15() via generateDalle() instead.
+     */
+    private function generateDalle3(string $prompt, int $imageCount, bool $isPro): array
     {
         $dalleQuality = $isPro ? 'hd' : 'standard';
         $allImages = [];
@@ -528,11 +647,12 @@ class GenerateLogoJob implements ShouldQueue
     }
 
     /**
-     * Generate images via Flux Pro v1.1.
+     * Generate images via FLUX.2 [flex] (fal-ai/flux-2-flex).
+     * Upgraded from flux-pro/v1.1 ($0.04/MP) — better typography, adjustable steps, $0.05/MP.
      */
     private function generateFluxPro(string $prompt, int $imageCount, int $proSize): array
     {
-        $endpoint = 'https://fal.run/fal-ai/flux-pro/v1.1';
+        $endpoint = 'https://fal.run/fal-ai/flux-2-flex';
         $allImages = [];
 
         for ($i = 0; $i < $imageCount; $i++) {
@@ -550,7 +670,9 @@ class GenerateLogoJob implements ShouldQueue
                 ],
                 'num_images' => 1,
                 'num_inference_steps' => 28,
+                'guidance_scale' => 3.5,
                 'safety_tolerance' => 5,
+                'enable_prompt_expansion' => false, // Keep prompts precise for logo generation
                 'sync_mode' => true,
             ]);
 
@@ -559,9 +681,13 @@ class GenerateLogoJob implements ShouldQueue
                     $allImages[] = $pImg;
                 }
             } else {
+                $proBody = $proResponse->body();
+                if (str_contains($proBody, 'not_enough_credits')) {
+                    return ['error' => 'Model currently unavailable, please try a different model.', 'status_code' => 400];
+                }
                 Log::warning('PRO image ' . ($i + 1) . ' failed', [
                     'status' => $proResponse->status(),
-                    'body' => substr($proResponse->body(), 0, 500),
+                    'body' => substr($proBody, 0, 500),
                 ]);
             }
         }
@@ -594,10 +720,15 @@ class GenerateLogoJob implements ShouldQueue
         ]);
 
         if (!$response->successful()) {
-            $falError = $response->json('detail') ?? $response->json('message') ?? 'Unknown error';
+            $falBody = $response->body();
+            $falError = $this->friendlyErrorMessage(
+                str_contains($falBody, 'not_enough_credits')
+                    ? 'not_enough_credits'
+                    : ($response->json('detail') ?? $response->json('message') ?? 'Unknown error')
+            );
             Log::error('Fal.ai logo generation failed', [
                 'status' => $response->status(),
-                'body' => $response->body(),
+                'body' => $falBody,
             ]);
             return ['error' => $falError, 'status_code' => $response->status()];
         }
@@ -613,6 +744,18 @@ class GenerateLogoJob implements ShouldQueue
     /**
      * Apply background removal and/or vectorization to generated images.
      */
+
+    /**
+     * Convert known API error codes/messages into user-friendly strings.
+     */
+    private function friendlyErrorMessage(string $raw): string
+    {
+        if (str_contains($raw, 'not_enough_credits')) {
+            return 'Model currently unavailable, please try a different model.';
+        }
+        return $raw;
+    }
+
     private function postProcess(array $images, string $bgColor, string $outputFormat): array
     {
         $needsBgRemoval = ($bgColor === 'transparent' || str_starts_with($bgColor, '#'));
@@ -695,6 +838,41 @@ class GenerateLogoJob implements ShouldQueue
         }
 
         return $images;
+    }
+
+    /**
+     * Decode a base64 image and store it locally (used for gpt-image-1.5 b64_json responses).
+     */
+    private function storeBase64LogoImage(string $b64Data, int $index): ?array
+    {
+        try {
+            $imageData = base64_decode($b64Data, true);
+            if ($imageData === false) {
+                Log::warning('[GenerateLogoJob] Invalid base64 image data', [
+                    'request_id' => $this->logoRequestId,
+                    'index'      => $index,
+                ]);
+                return null;
+            }
+
+            $domain    = $this->params['domain'] ?? null;
+            $safeDomain = $domain ? (Str::slug($domain) ?: 'logo') : 'logo';
+            $filename  = sprintf('%s-%d-%02d.png', $safeDomain, $this->logoRequestId, $index);
+            $relativePath = sprintf('logos/%d/%d/%s', $this->userId, $this->logoRequestId, $filename);
+
+            Storage::disk('public')->put($relativePath, $imageData);
+
+            return [
+                'path' => $relativePath,
+                'url'  => '/storage/' . $relativePath,
+            ];
+        } catch (\Throwable $e) {
+            Log::warning('[GenerateLogoJob] Exception storing base64 logo image', [
+                'request_id' => $this->logoRequestId,
+                'error'      => $e->getMessage(),
+            ]);
+            return null;
+        }
     }
 
     /**

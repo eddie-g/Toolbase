@@ -34,8 +34,6 @@ class SavedDomainResource extends Resource
         return $table
             ->defaultSort('created_at', 'desc')
             ->columns([
-                Tables\Columns\TextColumn::make('user.name')
-                    ->label('User')->searchable()->sortable(),
                 Tables\Columns\TextColumn::make('domain')
                     ->searchable()->sortable()
                     ->url(fn (SavedDomain $record): string =>
@@ -64,10 +62,14 @@ class SavedDomainResource extends Resource
                     ->label('Availability')
                     ->options(['1' => 'Available', '0' => 'Taken'])
                     ->placeholder('All'),
-                Tables\Filters\SelectFilter::make('user')
-                    ->label('User')->relationship('user', 'name')->searchable(),
             ])
-            ->actions([Tables\Actions\DeleteAction::make()])
+            ->actions([
+                Tables\Actions\Action::make('makeLogo')
+                    ->label('Make Logo')
+                    ->icon('heroicon-o-sparkles')
+                    ->url(fn (SavedDomain $record): string => '/logo-generator?domain=' . urlencode($record->domain)),
+                Tables\Actions\DeleteAction::make(),
+            ])
             ->bulkActions([Tables\Actions\BulkActionGroup::make([
                 Tables\Actions\DeleteBulkAction::make(),
             ])]);

@@ -1,0 +1,36 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class FalBalanceLedger extends Model
+{
+    protected $table = 'fal_balance_ledger';
+
+    protected $fillable = [
+        'type',
+        'amount',
+        'balance_after',
+        'description',
+        'model',
+        'logo_request_id',
+    ];
+
+    protected $casts = [
+        'amount'       => 'float',
+        'balance_after' => 'float',
+    ];
+
+    // ─── Scopes ──────────────────────────────────────────────────────────────
+
+    public function scopeCredits($query)
+    {
+        return $query->where('type', 'credit');
+    }
+
+    public function scopeDebits($query)
+    {
+        return $query->where('type', 'debit');
+    }
+}

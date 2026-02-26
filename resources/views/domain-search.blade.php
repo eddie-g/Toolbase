@@ -17,6 +17,7 @@
         .progress-bar { transition: width 0.3s ease; }
     </style>
 </head>
+@php($isDomainSearchLoggedIn = auth()->check() || auth('admin')->check())
 <body class="bg-gray-50 dark:bg-gray-950 antialiased min-h-screen">
 
     <!-- Header -->
@@ -48,7 +49,7 @@
             <!-- Mode Tabs -->
             <div class="flex bg-gray-100 dark:bg-gray-800 rounded-xl p-1 mb-8">
                 <button
-                    @click="mode = 'direct'"
+                    @click="setMode('direct')"
                     class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all"
                     :class="mode === 'direct'
                         ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
@@ -60,7 +61,7 @@
                     Check Domains
                 </button>
                 <button
-                    @click="mode = 'generate'"
+                    @click="setMode('generate')"
                     class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all"
                     :class="mode === 'generate'
                         ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
@@ -72,7 +73,7 @@
                     Generate Ideas
                 </button>
                 <button
-                    @click="mode = 'ai'"
+                    @click="setMode('ai')"
                     class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all"
                     :class="mode === 'ai'
                         ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
@@ -111,6 +112,53 @@
                             />
                         </div>
                         <p class="mt-2 text-xs text-gray-400 dark:text-gray-500">Separate multiple names with commas or spaces. No TLD needed.</p>
+
+                        <!-- File Upload Drop Zone -->
+                        <div class="mt-3">
+                            <!-- Loaded state -->
+                            <template x-if="fileNames.length > 0">
+                                <div class="flex items-center justify-between gap-3 px-4 py-3 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/20">
+                                    <div class="flex items-center gap-2 min-w-0">
+                                        <svg class="w-4 h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v8"></path></svg>
+                                        <span class="text-sm text-emerald-700 dark:text-emerald-300 font-medium truncate">
+                                            <span x-text="fileNames.length"></span> names loaded
+                                            <span class="font-normal opacity-70" x-text="fileNameLoaded ? 'from ' + fileNameLoaded : ''"></span>
+                                        </span>
+                                    </div>
+                                    <button type="button" @click="fileNames = []; fileNameLoaded = ''; query = ''"
+                                        class="flex-shrink-0 text-xs text-emerald-600 dark:text-emerald-400 hover:text-red-500 dark:hover:text-red-400 transition font-medium">
+                                        Clear
+                                    </button>
+                                </div>
+                            </template>
+
+                            <!-- Drop zone -->
+                            <template x-if="fileNames.length === 0">
+                                <label
+                                    class="flex flex-col items-center gap-2 w-full cursor-pointer rounded-xl border-2 border-dashed px-4 py-5 transition"
+                                    :class="fileDragOver
+                                        ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20'
+                                        : 'border-gray-300 dark:border-gray-700 hover:border-blue-400 dark:hover:border-blue-600'"
+                                    @dragover.prevent="fileDragOver = true"
+                                    @dragleave.prevent="fileDragOver = false"
+                                    @drop.prevent="fileDragOver = false; handleFileUpload($event.dataTransfer.files[0])">
+                                    <svg class="w-7 h-7 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v8"></path></svg>
+                                    <span class="text-sm text-gray-500 dark:text-gray-400">Drag &amp; drop a <strong>.csv</strong> or <strong>.txt</strong> file, or <span class="text-blue-600 dark:text-blue-400">click to browse</span></span>
+                                    <span class="text-xs text-gray-400 dark:text-gray-500">Up to 100 domain names — one per line or comma-separated</span>
+                                    <input type="file" class="hidden" accept=".csv,.txt,text/csv,text/plain"
+                                        @change="handleFileUpload($event.target.files[0]); $event.target.value = ''" />
+                                </label>
+                            </template>
+
+                            <!-- Parse error -->
+                            <p x-show="fileUploadError" x-cloak class="mt-1.5 text-xs text-red-500" x-text="fileUploadError"></p>
+
+                            <!-- Guest upload remaining count -->
+                            <p x-show="!isLoggedIn && !fileUploadError" x-cloak class="mt-1.5 text-xs text-gray-400 dark:text-gray-500">
+                                <span x-text="remainingFileUploads"></span> of 5 free file uploads remaining today &mdash;
+                                <a href="/login" class="text-blue-500 hover:underline">log in</a> for unlimited
+                            </p>
+                        </div>
                     </div>
 
                     <div class="mb-6">
@@ -153,7 +201,7 @@
                         </div>
                     </div>
 
-                    <button type="submit" :disabled="loading || !query.trim() || tlds.length === 0"
+                    <button type="submit" :disabled="loading || (!query.trim() && fileNames.length === 0) || tlds.length === 0"
                         class="w-full py-3.5 px-6 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 dark:disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-semibold text-base transition flex items-center justify-center gap-2">
                         <template x-if="loading">
                             <svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -219,8 +267,17 @@
 
                     <div class="mb-5">
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                            Word Length
-                            <span class="ml-1 font-normal text-gray-400 dark:text-gray-500" x-text="'(' + wordMinLength + '–' + wordMaxLength + ' letters)'"></span>
+                            Total Name Length
+                            <span class="ml-1 font-normal text-gray-400 dark:text-gray-500" x-text="(function(){
+                                const pre = prefixWord.trim().replace(/[^a-zA-Z0-9-]/g,'').length;
+                                const suf = suffixWord.trim().replace(/[^a-zA-Z0-9-]/g,'').length;
+                                const affix = pre + suf;
+                                let s = '(' + wordMinLength + '\u2013' + wordMaxLength + ' letters total';
+                                if (affix > 0) {
+                                    s += ', core word: ' + Math.max(1, wordMinLength - affix) + '\u2013' + Math.max(1, wordMaxLength - affix);
+                                }
+                                return s + ')';
+                            })()"></span>
                         </label>
                         <div class="flex items-center gap-4">
                             <div class="flex items-center gap-2 flex-1">
@@ -309,8 +366,8 @@
                         <div class="flex items-baseline justify-between mb-2">
                             <label for="ai-prompt" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Describe Your Domain Idea</label>
                             <span class="text-xs tabular-nums"
-                                  :class="aiPrompt.length > 90 ? (aiPrompt.length >= 100 ? 'text-red-500 font-semibold' : 'text-amber-500') : 'text-gray-400 dark:text-gray-500'"
-                                  x-text="aiPrompt.length + ' / 100'"></span>
+                                  :class="aiPrompt.length > 180 ? (aiPrompt.length >= 200 ? 'text-red-500 font-semibold' : 'text-amber-500') : 'text-gray-400 dark:text-gray-500'"
+                                  x-text="aiPrompt.length + ' / 200'"></span>
                         </div>
                         <div class="relative">
                                 <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
@@ -322,7 +379,7 @@
                                     id="ai-prompt"
                                     x-model="aiPrompt"
                                     rows="2"
-                                    maxlength="100"
+                                    maxlength="200"
                                     placeholder="e.g., I need a domain for a modern fitness tracking app that focuses on mindfulness and wellness..."
                                     class="w-full pl-12 pr-4 py-3.5 rounded-xl border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition text-base resize-none"
                                 ></textarea>
@@ -330,7 +387,49 @@
                             <p class="mt-2 text-xs text-gray-400 dark:text-gray-500">Describe your domain idea. You can specify character length as well, the prompt is very flexible.</p>
                         </div>
 
-                        <!-- Logo Generator CTA -->
+                        <!-- Prompt Modifier -->
+                        <div class="mb-5">
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                Creative Modifier
+                                <span class="ml-1.5 text-xs font-normal text-gray-400 dark:text-gray-500">(optional twist on your idea)</span>
+                            </label>
+                            <div class="grid grid-cols-3 gap-2">
+                                <button type="button"
+                                    @click="promptModifier = ''"
+                                    class="px-3 py-2.5 rounded-xl border text-sm font-medium transition flex flex-col items-center gap-1"
+                                    :class="promptModifier === ''
+                                        ? 'bg-indigo-100 dark:bg-indigo-900/30 border-indigo-300 dark:border-indigo-600 text-indigo-700 dark:text-indigo-300'
+                                        : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-300'">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                    None
+                                </button>
+                                <button type="button"
+                                    @click="promptModifier = 'phonetic'"
+                                    class="px-3 py-2.5 rounded-xl border text-sm font-medium transition flex flex-col items-center gap-1"
+                                    :class="promptModifier === 'phonetic'
+                                        ? 'bg-indigo-100 dark:bg-indigo-900/30 border-indigo-300 dark:border-indigo-600 text-indigo-700 dark:text-indigo-300'
+                                        : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-300'">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>
+                                    Phonetic Twist
+                                </button>
+                                <button type="button"
+                                    @click="promptModifier = 'numbers'"
+                                    class="px-3 py-2.5 rounded-xl border text-sm font-medium transition flex flex-col items-center gap-1"
+                                    :class="promptModifier === 'numbers'
+                                        ? 'bg-indigo-100 dark:bg-indigo-900/30 border-indigo-300 dark:border-indigo-600 text-indigo-700 dark:text-indigo-300'
+                                        : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-300'">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                                    Number Blend
+                                </button>
+                            </div>
+                            <!-- Modifier hint -->
+                            <p x-show="promptModifier === 'phonetic'" x-cloak class="mt-2 text-xs text-indigo-500 dark:text-indigo-400">
+                                Suggests names using homophones and soundalike spellings — e.g. &ldquo;Phyre&rdquo; instead of &ldquo;Fire&rdquo;, or &ldquo;Kore&rdquo; instead of &ldquo;Core&rdquo;.
+                            </p>
+                            <p x-show="promptModifier === 'numbers'" x-cloak class="mt-2 text-xs text-indigo-500 dark:text-indigo-400">
+                                Blends numbers into names in a clever, readable way &mdash; e.g. &ldquo;Studio360&rdquo;, &ldquo;4geLabs&rdquo;, &ldquo;Cloud9ly&rdquo;, or &ldquo;Nex7a&rdquo;.
+                            </p>
+                        </div>
                         <div class="mb-5">
                             <a href="/logo-generator"
                                 class="group flex items-center gap-3 w-full p-3.5 rounded-xl border border-dashed border-indigo-300 dark:border-indigo-700 bg-indigo-50/50 dark:bg-indigo-900/10 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition">
@@ -405,11 +504,11 @@
                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                                 </svg>
-                                @auth
+                                @if($isDomainSearchLoggedIn)
                                     <span>AI usage tracked for billing. Domain searches remain private.</span>
                                 @else
                                     <span>Unlimited domain search with account, otherwise <span x-text="remainingAiRequests"></span> free AI Generator requests remaining today. <a href="/admin/login" class="text-indigo-600 hover:underline">Login for unlimited requests</a></span>
-                                @endauth
+                                @endif
                             </p>
                         </div>
                 </form>
@@ -445,7 +544,7 @@
                 <div class="mb-4">
                     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
                         <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
-                            <span x-text="mode === 'generate' ? 'Generated Results' : 'Results'"></span>
+                            <span x-text="mode === 'direct' ? 'Check Domains Results' : (mode === 'generate' ? 'Generate Ideas Results' : 'AI Generator Results')"></span>
                         </h2>
                         <div class="flex items-center gap-3">
                             <div class="flex items-center gap-3 text-sm">
@@ -563,44 +662,118 @@
                                             <div class="absolute top-full right-3 border-4 border-transparent border-t-gray-900 dark:border-t-gray-700"></div>
                                         </div>
                                     </div>
-                                    <!-- Heart / save -->
-                                    <template x-if="isLoggedIn && group.bestAvailableDomain">
-                                        <button type="button"
-                                            @click.stop="toggleSaved(group.bestAvailableDomain)"
-                                            class="flex items-center justify-center w-8 h-8 rounded-lg border transition"
-                                            :class="isSaved(group.bestAvailableDomain)
-                                                ? 'bg-rose-50 dark:bg-rose-900/20 border-rose-300 dark:border-rose-700 text-rose-500'
-                                                : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-300 dark:text-gray-600 hover:text-rose-400 hover:border-rose-300'"
-                                            :title="isSaved(group.bestAvailableDomain) ? 'Remove from favorites' : 'Save to favorites'">
-                                            <svg class="w-4 h-4" :fill="isSaved(group.bestAvailableDomain) ? 'currentColor' : 'none'" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"></path>
-                                            </svg>
-                                        </button>
+                                    <!-- One-click logo design (show if any TLD is available) -->
+                                    <template x-if="group.bestAvailableDomain">
+                                        <a :href="'/logo-generator?domain=' + encodeURIComponent(group.bestAvailableDomain || '')"
+                                           class="inline-flex items-center h-8 px-2.5 rounded-lg text-xs font-semibold border border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition"
+                                           title="Design a logo for this domain">
+                                            Design
+                                        </a>
                                     </template>
                                 </div>
                             </div>
 
-                            <!-- TLD badge row — each badge links to Namecheap for that specific domain -->
-                            <div class="flex flex-wrap gap-2 mb-3">
+                            <!-- TLD badge row: available → Namecheap link; taken → RDAP lookup -->
+                            <div class="flex flex-wrap gap-2" :class="rdapOpen && group.tlds.some(r => r.domain === rdapOpen) ? 'mb-2' : 'mb-3'">
                                 <template x-for="r in group.tlds" :key="r.domain">
-                                    <a :href="'https://www.namecheap.com/domains/registration/results/?domain=' + r.domain"
-                                       target="_blank"
-                                       class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border transition hover:opacity-80 hover:shadow-sm"
-                                       :class="r.premium && r.available
-                                           ? 'bg-amber-100 dark:bg-amber-900/30 border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300'
-                                           : r.available
-                                               ? 'bg-emerald-100 dark:bg-emerald-900/30 border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-300'
-                                               : r.error
-                                                   ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 text-amber-600 dark:text-amber-400'
-                                                   : 'bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500'">
-                                        <span class="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                                              :class="r.premium && r.available ? 'bg-amber-500' : r.available ? 'bg-emerald-500' : r.error ? 'bg-amber-400' : 'bg-gray-400 dark:bg-gray-600'"></span>
-                                        <span x-text="r.tld"></span>
-                                        <span x-show="r.premium && r.available && r.premium_price" class="opacity-70" x-text="r.premium_price ? '$' + Number(r.premium_price).toLocaleString() : ''"></span>
-                                    </a>
+                                    <div class="inline-flex rounded-lg border overflow-hidden text-xs font-semibold transition hover:shadow-sm"
+                                         :class="r.premium && r.available
+                                             ? 'bg-amber-100 dark:bg-amber-900/30 border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300'
+                                             : r.available
+                                                 ? 'bg-emerald-100 dark:bg-emerald-900/30 border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-300'
+                                                 : r.error
+                                                     ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 text-amber-600 dark:text-amber-400'
+                                                     : rdapOpen === r.domain
+                                                         ? 'bg-blue-100 dark:bg-blue-900/30 border-blue-400 dark:border-blue-600 text-blue-700 dark:text-blue-300'
+                                                         : 'bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500'">
+                                        <!-- Clickable TLD portion -->
+                                        <a :href="r.available ? 'https://www.namecheap.com/domains/registration/results/?domain=' + r.domain : r.error ? 'https://www.godaddy.com/domainsearch/find?checkAvail=1&domainToCheck=' + r.domain : '#'"
+                                           :target="(r.available || r.error) ? '_blank' : '_self'"
+                                           :title="r.available ? 'Register on Namecheap' : r.error ? 'Check on GoDaddy (TLD unsupported by Namecheap)' : 'Click for registration info'"
+                                           @click="if (!r.available && !r.error) { $event.preventDefault(); fetchRdap(r.domain); }"
+                                           class="flex items-center gap-1.5 px-2.5 py-1 hover:opacity-80 transition-opacity">
+                                            <span class="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                                                  :class="r.premium && r.available ? 'bg-amber-500' : r.available ? 'bg-emerald-500' : r.error ? 'bg-amber-400' : rdapOpen === r.domain ? 'bg-blue-500' : 'bg-gray-400 dark:bg-gray-600'"></span>
+                                            <span x-text="r.tld"></span>
+                                            <span x-show="r.premium && r.available && r.premium_price" class="opacity-70" x-text="r.premium_price ? '$' + Number(r.premium_price).toLocaleString() : ''"></span>
+                                            <span x-show="r.error" class="opacity-60 font-normal">· GD</span>
+                                            <template x-if="!r.available && !r.error && rdapLoading === r.domain">
+                                                <svg class="w-3 h-3 animate-spin opacity-60" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
+                                            </template>
+                                            <template x-if="!r.available && !r.error && rdapLoading !== r.domain">
+                                                <svg class="w-3 h-3 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                            </template>
+                                        </a>
+                                        <!-- Divider + heart (logged-in users only) -->
+                                        <template x-if="isLoggedIn">
+                                            <div class="flex items-center">
+                                                <span class="w-px self-stretch bg-current opacity-20"></span>
+                                                <button type="button"
+                                                    @click.prevent.stop="toggleSaved(r.domain, r.available, r.premium, r.premium_price)"
+                                                    class="flex items-center self-stretch px-1.5 transition-opacity"
+                                                    :class="isSaved(r.domain) ? 'text-rose-500 bg-rose-50 dark:bg-rose-900/30 opacity-100' : 'opacity-40 hover:opacity-100'"
+                                                    :title="isSaved(r.domain) ? 'Remove from saved' : 'Save domain'">
+                                                    <svg class="w-3 h-3" :fill="isSaved(r.domain) ? 'currentColor' : 'none'" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"></path>
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                        </template>
+                                    </div>
                                 </template>
                             </div>
 
+                            <!-- RDAP info panel — shown when a taken domain in this group is selected -->
+                            <template x-if="rdapOpen && group.tlds.some(r => r.domain === rdapOpen)">
+                                <div class="mb-3 rounded-xl border border-blue-200 dark:border-blue-800/50 bg-blue-50/40 dark:bg-blue-900/10 p-3">
+                                    <div class="flex items-center justify-between mb-2">
+                                        <span class="flex items-center gap-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wide">
+                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path></svg>
+                                            RDAP
+                                            <span class="normal-case font-mono font-medium" x-text="rdapOpen"></span>
+                                        </span>
+                                        <button type="button" @click="rdapOpen = null" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 flex items-center justify-center w-5 h-5 rounded">
+                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                        </button>
+                                    </div>
+                                    <!-- Loading -->
+                                    <div x-show="rdapLoading === rdapOpen" class="flex items-center gap-2 text-xs text-gray-400 dark:text-gray-500">
+                                        <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
+                                        Fetching registration data…
+                                    </div>
+                                    <!-- Error -->
+                                    <div x-show="rdap[rdapOpen] && rdap[rdapOpen].error && rdapLoading !== rdapOpen"
+                                         class="text-xs text-red-400" x-text="(rdap[rdapOpen] || {}).error"></div>
+                                    <!-- Data -->
+                                    <div x-show="rdap[rdapOpen] && !rdap[rdapOpen].error && rdapLoading !== rdapOpen"
+                                         class="space-y-1.5">
+                                        <div x-show="(rdap[rdapOpen] || {}).status" class="grid gap-x-3 text-xs" style="grid-template-columns:5rem 1fr">
+                                            <span class="text-gray-400 dark:text-gray-500">Status</span>
+                                            <span class="text-gray-700 dark:text-gray-300 break-words" x-text="(rdap[rdapOpen] || {}).status"></span>
+                                        </div>
+                                        <div x-show="(rdap[rdapOpen] || {}).created" class="grid gap-x-3 text-xs" style="grid-template-columns:5rem 1fr">
+                                            <span class="text-gray-400 dark:text-gray-500">Created</span>
+                                            <span class="text-gray-700 dark:text-gray-300 font-mono" x-text="(rdap[rdapOpen] || {}).created"></span>
+                                        </div>
+                                        <div x-show="(rdap[rdapOpen] || {}).expires" class="grid gap-x-3 text-xs" style="grid-template-columns:5rem 1fr">
+                                            <span class="text-gray-400 dark:text-gray-500">Expires</span>
+                                            <span class="text-gray-700 dark:text-gray-300 font-mono" x-text="(rdap[rdapOpen] || {}).expires"></span>
+                                        </div>
+                                        <div x-show="(rdap[rdapOpen] || {}).changed" class="grid gap-x-3 text-xs" style="grid-template-columns:5rem 1fr">
+                                            <span class="text-gray-400 dark:text-gray-500">Changed</span>
+                                            <span class="text-gray-700 dark:text-gray-300 font-mono" x-text="(rdap[rdapOpen] || {}).changed"></span>
+                                        </div>
+                                        <div x-show="(rdap[rdapOpen] || {}).registrar" class="grid gap-x-3 text-xs" style="grid-template-columns:5rem 1fr">
+                                            <span class="text-gray-400 dark:text-gray-500">Registrar</span>
+                                            <span class="text-gray-700 dark:text-gray-300" x-text="(rdap[rdapOpen] || {}).registrar + ((rdap[rdapOpen] || {}).registrarId ? ' (#' + rdap[rdapOpen].registrarId + ')' : '')"></span>
+                                        </div>
+                                        <div x-show="(rdap[rdapOpen] || {}).nameservers" class="grid gap-x-3 text-xs" style="grid-template-columns:5rem 1fr">
+                                            <span class="text-gray-400 dark:text-gray-500">Nameservers</span>
+                                            <span class="text-gray-700 dark:text-gray-300 font-mono break-all" x-text="(rdap[rdapOpen] || {}).nameservers"></span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
 
                         </div>
                     </template>
@@ -627,13 +800,27 @@
         function domainSearch() {
             return {
                 mode: 'direct',
+                resultsByMode: {
+                    direct: [],
+                    generate: [],
+                    ai: [],
+                },
+                searchedByMode: {
+                    direct: false,
+                    generate: false,
+                    ai: false,
+                },
+                fileNames: [],
+                fileNameLoaded: '',
+                fileUploadError: '',
+                fileDragOver: false,
                 query: '',
                 prefixWord: '',
                 suffixWord: '',
                 selectedCategory: 'tech',
                 wordMinLength: 4,
                 wordMaxLength: 10,
-                isLoggedIn: {{ auth()->check() ? 'true' : 'false' }},
+                isLoggedIn: {{ (auth()->check() || auth('admin')->check()) ? 'true' : 'false' }},
                 savedDomains: new Set(@json($savedDomains ?? [])),
                 categoryOptions: [
                     { value: 'tech',    label: 'Tech' },
@@ -641,11 +828,17 @@
                     { value: 'scifi',   label: 'Sci-Fi' },
                     { value: 'horror',  label: 'Horror' },
                     { value: 'romance', label: 'Romance' },
+                    { value: 'mtg',     label: 'MTG' },
                 ],
                 aiPrompt: '',
+                promptModifier: '',
                 aiUsage: null,
                 aiCostText: '$0.00',
                 remainingAiRequests: {{ $remainingAiRequests ?? 25 }},
+                remainingFileUploads: {{ $remainingFileUploads ?? 5 }},
+                rdap: {},
+                rdapLoading: null,
+                rdapOpen: null,
                 excluded: [],
                 tlds: [],
                 tldOptions: Array.isArray(domainSearchTldOptions) ? domainSearchTldOptions : [],
@@ -660,7 +853,7 @@
                 filterExt: '',
                 progress: 0,
                 statusText: 'Starting...',
-                viewMode: 'list',
+                viewMode: 'grid',
                 pollInterval: null,
                 init() {
                     const normalize = (raw) => String(raw || '').toLowerCase().replace(/^\./, '').replace(/[^a-z0-9-]/g, '');
@@ -680,6 +873,21 @@
 
                     this.tlds = selected.length ? [...new Set(selected)] : [...new Set(domainSearchDefaultTlds.map((tld) => normalize(tld)))];
                     this.updateTldSuggestions();
+                },
+
+                setMode(nextMode) {
+                    if (nextMode === this.mode) return;
+
+                    this.resultsByMode[this.mode] = Array.isArray(this.results) ? [...this.results] : [];
+                    this.searchedByMode[this.mode] = !!this.searched;
+
+                    this.mode = nextMode;
+
+                    this.results = Array.isArray(this.resultsByMode[nextMode]) ? [...this.resultsByMode[nextMode]] : [];
+                    this.searched = !!this.searchedByMode[nextMode];
+                    this.error = null;
+                    this.filter = 'all';
+                    this.filterExt = '';
                 },
 
                 normalizeTld(raw) {
@@ -810,18 +1018,21 @@
                     return this.savedDomains.has((domain || '').toLowerCase());
                 },
 
-                async toggleSaved(domain) {
+                async toggleSaved(domain, isAvailable = null, isPremium = null, premiumPrice = null) {
                     if (!this.isLoggedIn) return;
                     const d = (domain || '').toLowerCase();
                     try {
                         const response = await fetch('{{ route('domainSearch.toggleSaved') }}', {
                             method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
-                            },
-                            body: JSON.stringify({ domain: d }),
+                            headers: this.headers(),
+                            body: JSON.stringify({
+                                domain: d,
+                                is_available: isAvailable,
+                                is_premium: isPremium ?? false,
+                                premium_price: premiumPrice ?? null,
+                            }),
                         });
+                        if (!response.ok) return;
                         const data = await response.json();
                         if (data.saved) {
                             this.savedDomains.add(d);
@@ -832,14 +1043,6 @@
                     } catch (e) {
                         // silent fail
                     }
-                },
-
-                buildAiPrompt(basePrompt) {
-                    const trimmedPrompt = (basePrompt || '').trim();
-                    if (this.excluded.length === 0) return trimmedPrompt;
-
-                    const prefix = "\n\nand it's NOT ";
-                    return trimmedPrompt + prefix + this.excluded.join(', ');
                 },
 
                 get resultExtensions() {
@@ -901,6 +1104,20 @@
                 },
 
                 async searchDirect() {
+                    // If names were loaded from a file, use the array path via check-start
+                    if (this.fileNames.length > 0) {
+                        if (this.tlds.length === 0) return;
+                        this.loading = true;
+                        this.error = null;
+                        this.results = [];
+                        this.searched = true;
+                        this.filter = 'all';
+                        this.filterExt = '';
+                        this.statusText = `Checking ${this.fileNames.length} domains from file...`;
+                        this.startAvailabilityPolling(this.fileNames);
+                        return;
+                    }
+
                     if (!this.query.trim() || this.tlds.length === 0) return;
 
                     this.loading = true;
@@ -1020,6 +1237,127 @@
                     }
                 },
 
+                async handleFileUpload(file) {
+                    this.fileUploadError = '';
+                    if (!file) return;
+
+                    const allowed = ['text/plain', 'text/csv', 'application/csv', 'application/vnd.ms-excel'];
+                    const ext = file.name.split('.').pop().toLowerCase();
+                    if (!allowed.includes(file.type) && !['csv', 'txt'].includes(ext)) {
+                        this.fileUploadError = 'Only .csv and .txt files are supported.';
+                        return;
+                    }
+
+                    // Rate-limit check for guests
+                    if (!this.isLoggedIn) {
+                        try {
+                            const res = await fetch('/domain-search/record-file-upload', {
+                                method: 'POST',
+                                headers: this.headers(),
+                            });
+                            const data = await res.json();
+                            if (!data.allowed) {
+                                this.fileUploadError = data.error || 'File upload limit reached. Log in for unlimited uploads.';
+                                return;
+                            }
+                            if (data.remaining !== null && data.remaining !== undefined) {
+                                this.remainingFileUploads = data.remaining;
+                            }
+                        } catch (err) {
+                            // If the check itself fails, allow the upload (fail open)
+                        }
+                    }
+
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const names = this.parseFileNames(e.target.result);
+                        if (names.length === 0) {
+                            this.fileUploadError = 'No valid domain names found in the file.';
+                            return;
+                        }
+                        this.fileNames = names;
+                        this.fileNameLoaded = file.name;
+                        this.query = ''; // clear manual input when file is loaded
+                    };
+                    reader.onerror = () => { this.fileUploadError = 'Failed to read the file.'; };
+                    reader.readAsText(file);
+                },
+
+                parseFileNames(text) {
+                    // Split on newlines first, then commas/semicolons/tabs within each line
+                    const tokens = [];
+                    for (const line of text.split(/\r?\n/)) {
+                        const trimmed = line.trim();
+                        if (!trimmed || trimmed.startsWith('#')) continue; // blank or comment
+                        // Split line by comma, semicolon, tab, or space
+                        for (const tok of trimmed.split(/[,;\t\s]+/)) {
+                            tokens.push(tok.trim());
+                        }
+                    }
+
+                    const seen = new Set();
+                    const names = [];
+                    for (const tok of tokens) {
+                        if (!tok) continue;
+                        // Strip surrounding quotes
+                        const unquoted = tok.replace(/^["']|["']$/g, '');
+                        // If it looks like a FQDN, strip the TLD(s) — take everything before first dot
+                        const base = unquoted.split('.')[0];
+                        // Sanitize: lowercase, keep only a-z0-9 and hyphens
+                        const clean = base.toLowerCase().replace(/[^a-z0-9-]/g, '').replace(/^-+|-+$/g, '');
+                        if (clean.length < 2 || seen.has(clean)) continue;
+                        seen.add(clean);
+                        names.push(clean);
+                        if (names.length >= 100) break;
+                    }
+                    return names;
+                },
+
+                async fetchRdap(domain) {
+                    // Toggle closed if already open
+                    if (this.rdapOpen === domain) {
+                        this.rdapOpen = null;
+                        return;
+                    }
+                    this.rdapOpen = domain;
+                    // Return cached data
+                    if (this.rdap[domain]) return;
+
+                    this.rdapLoading = domain;
+                    try {
+                        const res = await fetch(`https://rdap.org/domain/${encodeURIComponent(domain)}`, {
+                            headers: { 'Accept': 'application/rdap+json, application/json' },
+                        });
+                        if (!res.ok) throw new Error('HTTP ' + res.status);
+                        const d = await res.json();
+
+                        const getDate = (action) => {
+                            const ev = (d.events || []).find(e => e.eventAction === action);
+                            return ev ? ev.eventDate.slice(0, 10) : null;
+                        };
+
+                        // Registrar entity
+                        const regEntity = (d.entities || []).find(e => (e.roles || []).includes('registrar'));
+                        const vcardFn = regEntity?.vcardArray?.[1]?.find?.(f => f[0] === 'fn');
+                        const regName = vcardFn ? vcardFn[3] : null;
+                        const regId = regEntity?.publicIds?.find?.(p => p.type === 'IANA Registrar ID')?.identifier ?? null;
+
+                        this.rdap[domain] = {
+                            status:      (d.status || []).join(', ') || null,
+                            created:     getDate('registration'),
+                            expires:     getDate('expiration'),
+                            changed:     getDate('last changed'),
+                            registrar:   regName,
+                            registrarId: regId,
+                            nameservers: (d.nameservers || []).map(n => (n.ldhName || '').toLowerCase()).filter(Boolean).join(', ') || null,
+                        };
+                    } catch (e) {
+                        this.rdap[domain] = { error: 'Could not retrieve registration data for this domain.' };
+                    } finally {
+                        this.rdapLoading = null;
+                    }
+                },
+
                 startAvailabilityPolling(domains) {
                     if (this.pollInterval) {
                         clearInterval(this.pollInterval);
@@ -1098,11 +1436,61 @@
                     });
                 },
 
+                async pollAiGeneration(jobId) {
+                    const startedAt = Date.now();
+                    const timeoutMs = 5 * 60 * 1000;
+
+                    while (Date.now() - startedAt < timeoutMs) {
+                        await new Promise((resolve) => setTimeout(resolve, 1500));
+
+                        const res = await fetch(`/domain-search/ai-status/${jobId}`, {
+                            headers: this.headers(),
+                        });
+
+                        const data = await res.json();
+
+                        if (!res.ok) {
+                            this.error = data.error || 'Failed to retrieve AI generation status.';
+                            return;
+                        }
+
+                        if (data.status === 'pending' || data.status === 'processing') {
+                            this.statusText = data.status === 'processing'
+                                ? 'Generating AI suggestions...'
+                                : 'Queued for AI generation...';
+                            continue;
+                        }
+
+                        if (data.status === 'failed') {
+                            this.error = data.error || 'AI generation failed.';
+                            return;
+                        }
+
+                        if (data.status === 'completed') {
+                            this.aiUsage = data.usage || null;
+                            this.aiCostText = this.computeAiCost(this.aiUsage);
+
+                            const domains = data.domains || [];
+                            if (domains.length === 0) {
+                                this.error = data.error || 'No domain names could be generated.';
+                                return;
+                            }
+
+                            this.results = this.sortResults(data.results || []);
+                            this.statusText = 'Done!';
+                            if (data.error) {
+                                this.error = data.error;
+                            }
+                            return;
+                        }
+                    }
+
+                    this.error = 'AI generation timed out. Please try again.';
+                },
+
                 async searchAI() {
                     const promptVal = this.aiPrompt.trim();
                     if (!promptVal) return;
-
-                    const finalPrompt = this.buildAiPrompt(promptVal);
 
                     this.loading = true;
                     this.error = null;
@@ -1112,15 +1500,15 @@
                     this.filterExt = '';
                     this.statusText = 'Generating AI suggestions...';
 
-                    let streamMode = false;
-
                     try {
                         const aiResponse = await fetch('/domain-search/ai-generate', {
                             method: 'POST',
                             headers: this.headers(),
                             body: JSON.stringify({
-                                prompt: finalPrompt,
+                                prompt: promptVal,
                                 tlds: this.tlds,
+                                prompt_modifier: this.promptModifier || 'none',
+                                excluded: this.excluded,
                             }),
                         });
 
@@ -1149,40 +1537,23 @@
                             return;
                         }
 
-                        const domains = aiData.domains || [];
-                        this.aiUsage = aiData.usage || null;
-                        this.aiCostText = this.computeAiCost(this.aiUsage);
-                        
+                        if (!aiData.job_id) {
+                            this.error = 'AI queue did not return a job ID.';
+                            return;
+                        }
+
                         if (this.remainingAiRequests > 0) {
                             this.remainingAiRequests--;
                         }
 
-                        if (domains.length === 0) {
-                            this.error = 'No domain names could be generated.';
-                            return;
-                        }
-
-                        // Results come back inline from the single batched Namecheap call
-                        if (aiData.results && aiData.results.length > 0) {
-                            this.results = this.sortResults(aiData.results);
-                            this.statusText = 'Done!';
-                            if (aiData.error) {
-                                this.error = aiData.error;
-                            }
-                        } else {
-                            // Fallback: poll-based availability check (WHOIS mode)
-                            this.statusText = `Checking ${domains.length} domains...`;
-                            this.startAvailabilityPolling(domains);
-                            streamMode = true;
-                        }
+                        this.statusText = 'Queued for AI generation...';
+                        await this.pollAiGeneration(aiData.job_id);
                         return;
 
                     } catch (e) {
                         this.error = 'Network error. Please try again.';
                     } finally {
-                        if (!streamMode) {
-                            this.loading = false;
-                        }
+                        this.loading = false;
                     }
                 },
             };

@@ -2,9 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\GenerateAiDomainsJob;
 use App\Models\AiDomainRequest;
 use App\Models\AiLogoRequest;
+use App\Models\Admin;
 use App\Models\SavedDomain;
+use App\Models\SavedLogoPalette;
 use App\Models\AiLogoPrice;
 use App\Models\AiPriceLog;
 use App\Models\CreditTransaction;
@@ -17,6 +20,8 @@ use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use App\Traits\ResolvesExternalDns;
@@ -25,8 +30,22 @@ class DomainSearchController extends Controller
 {
     use ResolvesExternalDns;
     private const DEFAULT_TLDS = ['com', 'ai', 'net', 'org'];
-    private const GENERATE_CATEGORIES = ['tech', 'fantasy', 'scifi', 'horror', 'romance'];
+    private const GENERATE_CATEGORIES = ['tech', 'fantasy', 'scifi', 'horror', 'romance', 'mtg'];
     private const CATEGORY_RESULT_LIMIT = 10;
+
+    public function __construct()
+    {
+        // Filament authenticates admins on the "admin" guard.
+        // Most controller code uses $request->user(), which reads the default guard.
+        // This resolver keeps existing checks working for both web and admin sessions.
+        $this->middleware(function ($request, $next) {
+            if (!$request->user() && Auth::guard('admin')->check()) {
+                $request->setUserResolver(fn () => Auth::guard('admin')->user());
+            }
+
+            return $next($request);
+        });
+    }
 
     /**
      * Common English stop words and filler words to exclude from domain generation.
@@ -72,19 +91,31 @@ class DomainSearchController extends Controller
         $defaultTlds = $this->getDefaultSelectedTlds($availableTlds);
 
         $remainingAiRequests = 25;
+        $remainingFileUploads = 5;
         if (!$request->user()) {
-            $key = 'ai-domain-gen:' . $request->ip();
-            $remainingAiRequests = \Illuminate\Support\Facades\RateLimiter::remaining($key, 25);
+            $ip = $request->ip();
+            $remainingAiRequests = \Illuminate\Support\Facades\RateLimiter::remaining('ai-domain-gen:' . $ip, 25);
+            $remainingFileUploads = \Illuminate\Support\Facades\RateLimiter::remaining('domain-file-upload:' . $ip, 5);
         }
 
-        $savedDomains = $request->user()
-            ? SavedDomain::where('user_id', $request->user()->id)->pluck('domain')->all()
-            : [];
+        $currentUser = $request->user();
+        if ($currentUser && $this->isAdmin($currentUser)) {
+            if ($this->supportsAdminSavedDomains()) {
+                $savedDomains = SavedDomain::where('admin_id', $currentUser->id)->pluck('domain')->all();
+            } else {
+                $savedDomains = (array) $request->session()->get('admin_saved_domains', []);
+            }
+        } elseif ($currentUser) {
+            $savedDomains = SavedDomain::where('user_id', $currentUser->id)->pluck('domain')->all();
+        } else {
+            $savedDomains = [];
+        }
 
         return view('domain-search', [
             'tldOptions' => $tldOptions,
             'defaultTlds' => $defaultTlds,
             'remainingAiRequests' => $remainingAiRequests,
+            'remainingFileUploads' => $remainingFileUploads,
             'savedDomains' => $savedDomains,
         ]);
     }
@@ -92,6 +123,11 @@ class DomainSearchController extends Controller
     public function logoGenerator()
     {
         return view('logo-generator');
+    }
+
+    public function logoGenerator2()
+    {
+        return view('logo-generator-2');
     }
 
     public function check(Request $request)
@@ -150,7 +186,13 @@ class DomainSearchController extends Controller
             ], 422);
         }
 
-        $names = $this->generateCategoryDomains($prefix, $suffix, $category, $minLength, $maxLength);
+        // Adjust the word-score length filter to account for prefix + suffix lengths,
+        // so the slider represents the total combined name length.
+        $affix   = strlen($prefix) + strlen($suffix);
+        $wordMin = max(1, $minLength - $affix);
+        $wordMax = max(1, $maxLength - $affix);
+
+        $names = $this->generateCategoryDomains($prefix, $suffix, $category, $wordMin, $wordMax);
 
         return response()->json(['names' => $names, 'error' => null]);
     }
@@ -158,11 +200,63 @@ class DomainSearchController extends Controller
     public function toggleSavedDomain(Request $request)
     {
         $request->validate([
-            'domain' => 'required|string|max:253',
+            'domain'        => 'required|string|max:253',
+            'is_available'  => 'nullable|boolean',
+            'is_premium'    => 'nullable|boolean',
+            'premium_price' => 'nullable|numeric|min:0',
         ]);
 
         $user   = $request->user();
         $domain = strtolower(trim($request->input('domain')));
+
+        if (!$user) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+
+        $availabilityData = [
+            'is_available'  => $request->input('is_available'),
+            'is_premium'    => $request->boolean('is_premium', false),
+            'premium_price' => $request->input('premium_price'),
+            'checked_at'    => now(),
+        ];
+
+        // Admins persist favorites via admin_id
+        if ($this->isAdmin($user)) {
+            if ($this->supportsAdminSavedDomains()) {
+                $existing = SavedDomain::where('admin_id', $user->id)
+                    ->where('domain', $domain)
+                    ->first();
+
+                if ($existing) {
+                    $existing->delete();
+                    return response()->json(['saved' => false]);
+                }
+
+                SavedDomain::create(array_merge([
+                    'admin_id' => $user->id,
+                    'user_id'  => null,
+                    'domain'   => $domain,
+                ], $availabilityData));
+                return response()->json(['saved' => true]);
+            }
+
+            // Fallback for environments where migration hasn't been applied yet
+            $saved = (array) $request->session()->get('admin_saved_domains', []);
+            $saved = array_values(array_unique(array_map(
+                fn ($d) => strtolower(trim((string) $d)),
+                $saved
+            )));
+
+            if (in_array($domain, $saved, true)) {
+                $saved = array_values(array_filter($saved, fn ($d) => $d !== $domain));
+                $request->session()->put('admin_saved_domains', $saved);
+                return response()->json(['saved' => false]);
+            }
+
+            $saved[] = $domain;
+            $request->session()->put('admin_saved_domains', array_values(array_unique($saved)));
+            return response()->json(['saved' => true]);
+        }
 
         $existing = SavedDomain::where('user_id', $user->id)
             ->where('domain', $domain)
@@ -173,8 +267,135 @@ class DomainSearchController extends Controller
             return response()->json(['saved' => false]);
         }
 
-        SavedDomain::create(['user_id' => $user->id, 'domain' => $domain]);
+        SavedDomain::create(array_merge([
+            'user_id' => $user->id,
+            'domain'  => $domain,
+        ], $availabilityData));
         return response()->json(['saved' => true]);
+    }
+
+    public function listLogoPalettes(Request $request)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+        if (!Schema::hasTable('saved_logo_palettes')) {
+            return response()->json(['error' => 'Saved palettes table is missing. Run migrations first.'], 503);
+        }
+
+        $query = SavedLogoPalette::query();
+        if ($this->isAdmin($user)) {
+            $query->where('admin_id', $user->id);
+        } else {
+            $query->where('user_id', $user->id);
+        }
+
+        $palettes = $query
+            ->orderBy('name')
+            ->orderByDesc('id')
+            ->get(['id', 'name', 'colors', 'updated_at'])
+            ->map(function (SavedLogoPalette $palette) {
+                $colors = collect($palette->colors ?? [])
+                    ->map(fn ($color) => strtoupper((string) $color))
+                    ->filter(fn ($color) => preg_match('/^#[0-9A-F]{6}$/', $color))
+                    ->values()
+                    ->all();
+
+                return [
+                    'id' => (int) $palette->id,
+                    'name' => $palette->name,
+                    'colors' => $colors,
+                    'updated_at' => optional($palette->updated_at)->toISOString(),
+                ];
+            })
+            ->values();
+
+        return response()->json([
+            'palettes' => $palettes,
+        ]);
+    }
+
+    public function saveLogoPalette(Request $request)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+        if (!Schema::hasTable('saved_logo_palettes')) {
+            return response()->json(['error' => 'Saved palettes table is missing. Run migrations first.'], 503);
+        }
+
+        $validated = $request->validate([
+            'name' => 'required|string|min:1|max:60',
+            'colors' => 'required|array|min:2|max:5',
+            'colors.*' => ['required', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
+        ]);
+
+        $name = trim($validated['name']);
+        $colors = collect($validated['colors'])
+            ->map(fn ($color) => strtoupper(trim((string) $color)))
+            ->values()
+            ->all();
+
+        $query = SavedLogoPalette::query()->where('name', $name);
+        $attrs = [
+            'name' => $name,
+            'colors' => $colors,
+        ];
+
+        if ($this->isAdmin($user)) {
+            $query->where('admin_id', $user->id);
+            $attrs['admin_id'] = $user->id;
+            $attrs['user_id'] = null;
+        } else {
+            $query->where('user_id', $user->id);
+            $attrs['user_id'] = $user->id;
+            $attrs['admin_id'] = null;
+        }
+
+        $palette = $query->first();
+        if ($palette) {
+            $palette->fill($attrs);
+            $palette->save();
+        } else {
+            $palette = SavedLogoPalette::create($attrs);
+        }
+
+        return response()->json([
+            'saved' => true,
+            'palette' => [
+                'id' => (int) $palette->id,
+                'name' => $palette->name,
+                'colors' => $colors,
+                'updated_at' => optional($palette->updated_at)->toISOString(),
+            ],
+        ]);
+    }
+
+    public function deleteLogoPalette(Request $request, SavedLogoPalette $palette)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+        if (!Schema::hasTable('saved_logo_palettes')) {
+            return response()->json(['error' => 'Saved palettes table is missing. Run migrations first.'], 503);
+        }
+
+        $isOwner = $this->isAdmin($user)
+            ? (int) $palette->admin_id === (int) $user->id
+            : (int) $palette->user_id === (int) $user->id;
+
+        if (!$isOwner) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        $palette->delete();
+
+        return response()->json([
+            'deleted' => true,
+        ]);
     }
 
     /**
@@ -531,7 +752,7 @@ class DomainSearchController extends Controller
     /**
      * Generate domain names using AI based on user prompt.
      */
-    public function aiGenerate(Request $request, DeveloperChatClient $client)
+    public function aiGenerate(Request $request)
     {
         $user = $request->user();
 
@@ -566,144 +787,114 @@ class DomainSearchController extends Controller
             'prompt' => 'required|string|min:3|max:4000',
             'tlds' => 'nullable|array',
             'tlds.*' => ['required', Rule::in($this->getAvailableTlds())],
+            'prompt_modifier' => 'nullable|string|in:none,phonetic,numbers',
+            'excluded' => 'nullable|array|max:100',
+            'excluded.*' => 'nullable|string|max:100',
         ]);
 
         $prompt = $request->input('prompt');
         $tlds = $request->input('tlds', $this->getDefaultSelectedTlds());
+        $promptModifier = strtolower((string) $request->input('prompt_modifier', 'none'));
+        $excluded = collect($request->input('excluded', []))
+            ->map(fn ($name) => strtolower(trim((string) $name)))
+            ->filter(fn ($name) => $name !== '')
+            ->map(fn ($name) => preg_replace('/[^a-z0-9-]/', '', $name))
+            ->filter(fn ($name) => $name !== '')
+            ->values()
+            ->all();
         if (!is_array($tlds) || count($tlds) === 0) {
             $tlds = $this->getDefaultSelectedTlds();
         }
 
-        try {
-            // Calculate how many names to generate so all fit in one Namecheap batch (max 50 domains)
-            $tldCount = count($tlds);
-            $maxNames = $tldCount > 0 ? (int) floor(50 / $tldCount) : 20;
-            $maxNames = max(5, min($maxNames, 25));
+        $jobId = Str::uuid()->toString();
+        $ownerToken = $this->resolveAiJobOwnerToken($request);
 
-            $systemPrompt = "You are a creative domain name generator. Generate {$maxNames} unique, brandable domain names based on the user's request. Return ONLY a JSON object with a 'domains' array containing domain name strings (without TLDs).
+        Cache::put('ai-domain-job:' . $jobId, [
+            'status' => 'pending',
+            'done' => false,
+            'owner' => $ownerToken,
+            'queued_at' => now()->toISOString(),
+            'user_id' => $user?->id,
+        ], now()->addMinutes(30));
 
-STRICT RULES — every name MUST follow all of these:
-1. A single concatenated word (no spaces, no underscores). Hyphens are allowed only when intentional for branding (e.g. \"e-flux\").
-2. NO common English stop words, articles, conjunctions, or prepositions anywhere in the name. Forbidden words: the, a, an, and, or, but, of, for, in, on, at, to, with, this, that, these, those, it, is, be, by, as, up, do.
-3. Short: 4–15 characters total.
-4. Memorable and brandable — sounds like a real product or company name.
-5. Easy to spell and pronounce.
-6. Directly related to or evocative of the user's prompt.
-7. Creative, modern, and professional — prefer portmanteaus, blends, or invented words over generic dictionary phrases.
+        GenerateAiDomainsJob::dispatch($jobId, $prompt, $tlds, $promptModifier, $excluded, $user?->id);
 
-Good examples: techflow, cloudnova, pixelforge, datazen, codecraft, velorix, snapvault, lumiq
-Bad examples: thedesign, thisapp, andmore, forall, topmatch (contain stop words or are generic phrases)
+        return response()->json([
+            'job_id' => $jobId,
+            'status' => 'pending',
+            'queued' => true,
+        ], 202);
+    }
 
-Example response format:
-{\"domains\": [\"techflow\", \"cloudnova\", \"pixelforge\", \"datazen\", \"codecraft\"]}";
-
-            $messages = [
-                ['role' => 'system', 'content' => $systemPrompt],
-                ['role' => 'user',   'content' => $prompt],
-            ];
-
-            $data = $client->chat(
-                $messages,
-                0.9,
-                ['type' => 'json_object'],
-                ['timeout' => 120],
-            );
-
-            $reply = $data['reply'];
-            $responseData = is_string($reply) ? json_decode($reply, true) : $reply;
-
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                throw new \Exception('Invalid JSON response from AI: ' . json_last_error_msg());
-            }
-
-            $domains = $responseData['domains'] ?? [];
-
-            // Sanitise: remove stop-word-containing names and non-domain characters
-            $stopWords = ['the','a','an','and','or','but','of','for','in','on','at','to','with','this','that','these','those','it','is','be','by','as','up','do'];
-            $domains = array_values(array_filter($domains, function ($name) use ($stopWords) {
-                $name = strtolower(trim($name));
-                if (!preg_match('/^[a-z0-9][a-z0-9\-]{2,}[a-z0-9]$/i', $name)) {
-                    return false; // invalid domain characters or too short
-                }
-                // Split on hyphens and check each segment
-                $segments = explode('-', $name);
-                foreach ($segments as $seg) {
-                    if (in_array($seg, $stopWords, true)) {
-                        return false;
-                    }
-                }
-                return true;
-            }));
-
-            // Log usage
-            $usageMetadata = $data['response']['usageMetadata'] ?? [];
-            $inputTokens  = $usageMetadata['promptTokenCount']    ?? 0;
-            $outputTokens = $usageMetadata['candidatesTokenCount'] ?? 0;
-            $totalTokens  = $usageMetadata['totalTokenCount'] ?? ($inputTokens + $outputTokens);
-            $estimatedCost = ($inputTokens * 0.00000015) + ($outputTokens * 0.00000060);
-
-            if ($user) {
-                AiDomainRequest::create([
-                    'user_id'  => $user->id,
-                    'status'   => 'completed',
-                    'prompt'   => $prompt,
-                    'tlds'     => $tlds,
-                    'response' => $responseData,
-                    'model'    => $data['response']['model'] ?? 'gemini-2.0-flash',
-                    'usage'    => $usageMetadata ?: null,
-                ]);
-            }
-
-            AiPriceLog::create([
-                'session'            => session()->getId(),
-                'document_id'        => null,
-                'user_email'         => $user?->email,
-                'request_type'       => 'domain_generation',
-                'model_name'         => $data['response']['model'] ?? 'gemini-2.0-flash',
-                'input_tokens'       => $inputTokens,
-                'output_tokens'      => $outputTokens,
-                'total_tokens'       => $totalTokens,
-                'image_count'        => 0,
-                'image_size'         => null,
-                'cost_usd'           => null,
-                'estimated_cost_usd' => $estimatedCost,
-                'prompt_preview'     => substr($prompt, 0, 255),
-                'status'             => 'completed',
-            ]);
-
-            if (empty($domains)) {
-                return response()->json(['error' => 'No domain names could be generated.', 'domains' => []], 422);
-            }
-
-            $check = $this->checkDomainAvailability($domains, $tlds);
-
-            return response()->json([
-                'domains' => $domains,
-                'results' => $check['results'],
-                'model'   => $data['response']['model'] ?? 'gemini-2.0-flash',
-                'usage'   => $usageMetadata ?: null,
-                'error'   => $check['error'],
-            ], $check['error'] ? 500 : 200);
-
-        } catch (\Illuminate\Http\Client\RequestException $e) {
-            \Log::error('AI Domain Generation - API Error', [
-                'user_id' => $user?->id,
-                'prompt'  => $prompt,
-                'status'  => $e->response?->status(),
-                'error'   => $e->response?->json(),
-            ]);
-            return response()->json(['error' => 'AI service error. Please try again.', 'domains' => []], 500);
-        } catch (\Exception $e) {
-            \Log::error('AI Domain Generation Error', [
-                'user_id' => $user?->id,
-                'error'   => $e->getMessage(),
-            ]);
-            return response()->json([
-                'error'  => 'Failed to generate domains. Please try again.',
-                'domains' => [],
-                'debug'  => config('app.debug') ? $e->getMessage() : null,
-            ], 500);
+    public function aiStatus(Request $request, string $jobId)
+    {
+        if (!preg_match('/^[a-f0-9\-]{36}$/i', $jobId)) {
+            return response()->json(['error' => 'Invalid job ID.'], 400);
         }
+
+        $cacheKey = 'ai-domain-job:' . $jobId;
+        $state = Cache::get($cacheKey);
+
+        if (!$state) {
+            return response()->json(['error' => 'Job not found or expired.'], 404);
+        }
+
+        $ownerToken = $this->resolveAiJobOwnerToken($request);
+        if (($state['owner'] ?? null) !== $ownerToken) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        return response()->json([
+            'status' => $state['status'] ?? 'pending',
+            'done' => (bool) ($state['done'] ?? false),
+            'domains' => $state['domains'] ?? [],
+            'results' => $state['results'] ?? [],
+            'model' => $state['model'] ?? null,
+            'usage' => $state['usage'] ?? null,
+            'error' => $state['error'] ?? null,
+        ]);
+    }
+
+    private function resolveAiJobOwnerToken(Request $request): string
+    {
+        $user = $request->user();
+        if ($user) {
+            return 'user:' . $user->id;
+        }
+
+        return 'guest:' . $request->ip() . ':' . $request->session()->getId();
+    }
+
+    private function supportsAdminSavedDomains(): bool
+    {
+        try {
+            return Schema::hasColumn('saved_domains', 'admin_id');
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    public function recordFileUpload(Request $request)
+    {
+        // Logged-in users have unlimited file uploads
+        if ($request->user()) {
+            return response()->json(['allowed' => true, 'remaining' => null]);
+        }
+
+        $key = 'domain-file-upload:' . $request->ip();
+
+        if (\Illuminate\Support\Facades\RateLimiter::tooManyAttempts($key, 5)) {
+            return response()->json([
+                'allowed'   => false,
+                'remaining' => 0,
+                'error'     => 'You have used all 5 free file uploads for today. Log in for unlimited uploads.',
+            ], 429);
+        }
+
+        \Illuminate\Support\Facades\RateLimiter::hit($key, 86400); // 24-hour window
+        $remaining = \Illuminate\Support\Facades\RateLimiter::remaining($key, 5);
+
+        return response()->json(['allowed' => true, 'remaining' => $remaining]);
     }
 
     private function getAvailableTlds(): array
@@ -813,15 +1004,6 @@ Example response format:
             ->whereRaw('CHAR_LENGTH(word) <= ?', [$maxLength])
             ->get()
             ->shuffle();
-
-        // Fallback: if fewer than 20 results, widen to full range
-        if ($rows->count() < 20) {
-            $rows = $baseQuery()
-                ->whereRaw('CHAR_LENGTH(word) >= 3')
-                ->whereRaw('CHAR_LENGTH(word) <= 12')
-                ->get()
-                ->shuffle();
-        }
 
         $names = [];
         foreach ($rows as $row) {
@@ -953,12 +1135,12 @@ Example response format:
             $description = preg_replace('/^["\']+|["\']+$/', '', $description); // Strip wrapping quotes
 
             // Deduct Gemini vision cost (~$0.0001 per call)
-            CreditTransaction::debit(
-                userId: $request->user()->id,
-                amount: 0.0001,
-                service: 'logo_describe',
-                modelName: $model,
-                description: 'AI logo analysis (Gemini Vision)',
+            $this->debitUserBalance(
+                $request->user(),
+                0.0001,
+                'logo_describe',
+                $model,
+                'AI logo analysis (Gemini Vision)',
             );
 
             return response()->json([
@@ -1029,6 +1211,7 @@ Example response format:
         // Include user's current balance in the estimate response
         $user = $request->user();
         $estimate['credit_balance'] = $user ? (float) $user->credit_balance : 0;
+        unset($estimate['base_cost_total'], $estimate['markup_amount']);
 
         return response()->json($estimate);
     }
@@ -1043,11 +1226,11 @@ Example response format:
 
         $request->validate([
             'domain' => 'nullable|string|max:100',
-            'style' => 'required|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,minimalist,greetingcard',
+            'style' => 'required|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,minimalist,greetingcard' . (config('services.logo_custom_prompt_enabled') ? ',custom' : ''),
             'count' => 'nullable|integer|min:1|max:4',
             'total_count' => 'nullable|integer|min:1|max:4',
             'batch_index' => 'nullable|integer|min:0|max:3',
-            'custom_prompt' => 'required|string|min:2|max:500',
+            'custom_prompt' => 'required|string|min:2|max:2000',
             'pro' => 'nullable|boolean',
             'pro_size' => 'nullable|integer|in:512,1024,1536',
             'icon_only' => 'nullable|boolean',
@@ -1065,8 +1248,8 @@ Example response format:
         $iconOnly = (bool) $request->input('icon_only', false);
         $domain = $request->input('domain') ? trim($request->input('domain')) : null;
 
-        // Domain is required unless icon-only mode
-        if (!$iconOnly && !$domain) {
+        // Domain is required unless icon-only mode or custom style
+        if (!$iconOnly && !$domain && $style !== 'custom') {
             return response()->json([
                 'error' => 'Domain name is required when Text in Logo is enabled.',
             ], 422);
@@ -1077,6 +1260,15 @@ Example response format:
         $totalCount = $request->input('total_count', $imageCount);
         $batchIndex = $request->input('batch_index', 0);
         $customPrompt = $request->input('custom_prompt');
+
+        // ── Trademark / copyright guard ──────────────────────────────────────
+        if ($customPrompt) {
+            $trademarkCheck = \App\Services\TrademarkFilter::check($customPrompt);
+            if (!$trademarkCheck['safe']) {
+                return response()->json(['error' => $trademarkCheck['message']], 422);
+            }
+        }
+
         $isPro = (bool) $request->input('pro', false);
         $proSize = (int) $request->input('pro_size', 1024);
         $bgColor = $request->input('bg_color', 'white');
@@ -1192,29 +1384,13 @@ Example response format:
             colorInstruction: $colorInstruction,
             bgInstruction:    $bgInstruction,
             brandUpper:       $brandUpper,
+            detail:           $logoDetail ?? 'max',
         );
 
-        // Prepend shape container instruction for Flux
-        if ($imageModel === 'flux' && !empty($logoShape) && $logoShape !== 'none') {
-            $prompt = 'PERFECT ' . strtoupper($logoShape) . ' shaped container. All logo artwork fits entirely within the ' . $logoShape . '. ' . $prompt;
-        }
-
-        // ── Build a DALL-E-specific prompt (structured, anti-collage format) ──
+        // ── Build a DALL-E-specific prompt from JSON templates ──
         if ($imageModel === 'dalle') {
             $dalleDesc = trim($customPrompt ?? '');
 
-            // Color line
-            $dalleColorLine = !empty($colorPalette) && is_array($colorPalette)
-                ? implode(' and ', $colorPalette)
-                : match($style) {
-                    'fantasy' => 'emerald green and antique gold',
-                    'future'  => 'neon cyan and electric purple',
-                    'retro'   => 'red, green, blue and yellow',
-                    default   => 'navy blue and gold',
-                };
-
-            // Build a descriptive color list for the prompt
-            // DALL-E responds better to named colors + hex than raw hex alone
             if (!empty($colorPalette) && is_array($colorPalette)) {
                 $namedColors = [];
                 foreach ($colorPalette as $hex) {
@@ -1222,10 +1398,16 @@ Example response format:
                 }
                 $dalleColorList = implode(', ', $namedColors);
             } else {
-                $dalleColorList = $dalleColorLine;
+                $dalleColorList = \App\Services\DallePromptBuilder::defaultColors($style);
             }
 
-            // Background for chrome template
+            $dalleBg = match($bgColor) {
+                'black' => 'solid black',
+                'white' => 'solid white',
+                'transparent' => 'transparent',
+                default => str_starts_with($bgColor, '#') ? "solid {$bgColor}" : 'solid white',
+            };
+
             $chromeBg = match($bgColor) {
                 'black' => 'dark black background',
                 'white' => 'pure white background',
@@ -1234,118 +1416,17 @@ Example response format:
                     : 'soft light gray background',
             };
 
-            // Chrome style uses 3D metallic render template
-            if ($style === 'chrome') {
-                // Determine the symbol description
-                $chromeSymbol = $dalleDesc ?: 'logo symbol';
-
-                if ($iconOnly) {
-                    // Icon-only: single 3D object
-                    $prompt = "A high-resolution 3D render of the {$chromeSymbol} made of polished sterling silver with a shiny metallic texture, floating on a {$chromeBg} in a minimalistic studio setup. The logo is captured from a frontal close-up, illuminated by soft diffused studio light with soft shadows, showcasing micro-etched patterns and a sleek and modern ambiance, with a faint geometric lines subtly integrated, rendered in 4K HDR for hyper-detailed clarity.";
-                } else {
-                    // Text ON: symbol + brand name as 3D chrome logo
-                    $prompt = "A high-resolution 3D render of a custom chrome logo featuring a realistic {$chromeSymbol} and the exact word \"{$brandUpper}\".\n\n"
-                        . "The text must read exactly: {$brandUpper}\n"
-                        . "No spelling changes.\n"
-                        . "No missing letters.\n"
-                        . "No extra letters.\n\n"
-                        . "The word {$brandUpper} is a physical 3D extruded object made of polished sterling silver chrome with real thickness and depth.\n\n"
-                        . "Use clean, modern, geometric sans-serif typography.\n\n"
-                        . "Avoid ornamental script, gothic, or decorative fonts.\n\n"
-                        . "The letters must be clear, legible, evenly spaced, and perfectly readable.\n\n"
-                        . "The vehicle and the text share the same polished chrome metallic material.\n\n"
-                        . "{$chromeBg}.\n"
-                        . "Minimal presentation.\n"
-                        . "Soft uniform lighting.\n\n"
-                        . "Ultra-clean professional 3D logo render.\n\n"
-                        . "4K resolution.";
-                }
-            } elseif ($style === 'retro') {
-                // Retro vibrant sunburst style
-                $retroSubject = $dalleDesc ?: ($iconOnly ? 'logo symbol' : "{$brandUpper} logo");
-                $prompt = "A vibrant retro vector design featuring {$retroSubject} on vacation. Surrounded by a colorful retro sunburst with red, green, blue and yellow, the design captures the essence of a fun vacation, on a plain full black background, suitable for t-shirt printing, minimalist retro style";
-                if (!$iconOnly) {
-                    $prompt .= ". The only text in the design is \"{$brandUpper}\".";
-                }
-            } elseif ($style === '8bit') {
-                // 8-bit pixel-art arcade style
-                $eightBitText = $iconOnly ? 'a retro arcade icon' : "the brand name \"{$brandUpper}\"";
-                $prompt = "Design a retro 8-bit pixel-art logo for {$eightBitText}.\n"
-                    . "Style: classic 1980s arcade game title screen, chunky pixel typography, crisp square pixels, limited 16-color palette, high contrast, clean silhouette, readable at small sizes.\n"
-                    . "Include: icon + wordmark, centered composition, transparent or solid single-color background, subtle pixel glow/shadow, no gradients, no anti-aliasing, no blur.\n"
-                    . "Output: vector-like clean edges, branding-ready, multiple variations of colorways and layout, exact text must read \"{$brandUpper}\" with correct spelling.";
-            } elseif ($style === 'dotmatrix') {
-                // Dot matrix stippling art style
-                $dotSubject = $dalleDesc ?: 'an iconic symbol';
-                $prompt = "A highly detailed stippled dot art illustration of {$dotSubject}.\n"
-                    . "Style: Pure stippling technique using only black dots of varying sizes and densities to create shading and depth.\n"
-                    . "Technique: Pointillism, dot work, no lines, no hatching, only circular dots, high-contrast monochromatic artwork.\n"
-                    . "The entire image is composed of thousands of carefully placed dots - smaller dots for lighter areas, larger/denser dots for darker areas.\n"
-                    . "Composition: Centered portrait-style composition, detailed facial features and textures rendered entirely in dots, isolated on pure white background.\n"
-                    . "Quality: Professional engraving-style stipple art, museum-quality pointillism, sharp detailed dot work, 4K resolution.\n"
-                    . "No text, no words, no letters anywhere in the image.";
-            } elseif ($style === 'lego') {
-                // Lego sticker style
-                $legoSubject = $dalleDesc ?: 'cute characters';
-                $legoText = $iconOnly ? '' : "\nText: The text \"{$brandUpper}\" is displayed in a decorative banner or ribbon, using clean rounded typography with thick outlines.";
-                $legoColors = !empty($colorPalette) && is_array($colorPalette) 
-                    ? "\nColors: Use this exact color palette for the characters and design elements: {$dalleColorList}."
-                    : "\nColors: Use vibrant, friendly colors suitable for toy-like sticker characters.";
-                $prompt = "Style: Sticker style with thick clean outlines, soft shadows underneath, and glossy toy plastic material.\n"
-                    . "Inspired by cute LEGO fan art.\n"
-                    . "Minimal detail, smooth surfaces, friendly and wholesome aesthetic.\n"
-                    . "Subject: {$legoSubject} rendered in a simplified, adorable LEGO style with bold black outlines and vibrant glossy colors.\n"
-                    . $legoColors . "\n"
-                    . $legoText . "\n"
-                    . "Composition: Centered composition, 1:1 square ratio, isolated on a pure white background.\n"
-                    . "Quality: Professional LEGO illustration, crisp clean artwork, high contrast, 4K resolution.";
-            } elseif ($style === 'minimalist') {
-                $minimalistSubject = trim($dalleDesc) ?: 'an abstract symbol';
-                $minimalistColors = !empty($colorPalette) && is_array($colorPalette) 
-                    ? "Color palette: {$dalleColorList}."
-                    : "Color palette: navy blue and gray.";
-                
-                if ($iconOnly) {
-                    $prompt = "Design one ultra-minimalist logo icon for {$minimalistSubject}. "
-                        . "Use exactly one simple symbol built from 1-2 geometric primitives only. "
-                        . "Flat vector look, monoline or solid fill, generous negative space, no decoration. "
-                        . $minimalistColors . " "
-                        . "Background: plain white. Composition: centered 1:1. "
-                        . "Hard constraints: NO text, NO letters, NO numbers, NO tagline, NO border badge, NO scene, NO collage, NO multiple options. "
-                        . "Output exactly one clean icon mark.";
-                } else {
-                    $prompt = "Design one ultra-minimalist logo for brand \"{$brandUpper}\". "
-                        . "Concept cue for the icon: {$minimalistSubject}. "
-                        . "Layout rule: one simple geometric icon on the left + one horizontal wordmark on the right. "
-                        . "Typography rule: use a clean sans-serif, uppercase, clear spacing, high legibility. "
-                        . "Text must read EXACTLY \"{$brandUpper}\" with correct spelling and all letters present. "
-                        . "Do not change, split, stylize into symbols, or omit any characters in \"{$brandUpper}\". "
-                        . "The ONLY text allowed is \"{$brandUpper}\". No tagline, no extra words, no hidden letters. "
-                        . $minimalistColors . " "
-                        . "Background: plain white. Flat design only: no gradients, no shadows, no textures, no 3D. "
-                        . "Hard constraints: one logo only, no collage, no grid, no mockup, no busy elements. "
-                        . "Prioritize simplicity, whitespace, and text readability over decoration.";
-                }
-            } elseif ($style === 'greetingcard') {
-                $gcSubject = $dalleDesc ?: ($iconOnly ? 'a floral arrangement' : "{$brandUpper} lettering");
-                $gcColors  = !empty($colorPalette) && is_array($colorPalette)
-                    ? "Color palette: {$dalleColorList}. Applied as soft watercolor washes."
-                    : 'Muted pastel palette — soft rose, sage green, lavender, ivory.';
-                $gcText = $iconOnly
-                    ? ' No text, no letters, no words anywhere in the image.'
-                    : " Include the brand name \"{$brandUpper}\" in elegant hand-lettered watercolor script. The ONLY text anywhere is \"{$brandUpper}\"."
-                    ;
-                $prompt = "Hand-painted watercolor greeting card illustration. "
-                    . "Subject: {$gcSubject}. "
-                    . "Soft color washes, visible paper grain texture, uneven deckled edges. "
-                    . $gcColors . ' '
-                    . "Dreamy soft lighting, high-quality gouache textures. "
-                    . "No hard digital lines, no flat vector fills, no photorealism. "
-                    . "Centered 1:1 square composition, isolated on a plain white background."
-                    . $gcText;
-            } else {
-                $prompt = "A high-resolution 3D render of a logo made of polished sterling silver with a shiny metallic texture, floating on a {$chromeBg} in a minimalistic studio setup, rendered in 4K HDR for hyper-detailed clarity.";
-            }
+            $prompt = \App\Services\DallePromptBuilder::build(
+                style: $style,
+                iconOnly: $iconOnly,
+                subject: $dalleDesc,
+                brandUpper: $brandUpper,
+                colorList: $dalleColorList,
+                bgInstruction: $dalleBg,
+                chromeBg: $chromeBg,
+                logoShape: $logoShape,
+                detail: $logoDetail,
+            );
         }
 
         // ── Build a Recraft-specific structured logo prompt (max 1000 chars) ──
@@ -1375,6 +1456,21 @@ Example response format:
             );
         }
 
+        // ── Custom style: bypass all prompt builders, use raw user prompt + palette/bg ──
+        if ($style === 'custom') {
+            $rawCustom = trim($customPrompt ?? '');
+            if ($colorInstruction) {
+                $rawCustom .= "\n" . $colorInstruction;
+            }
+            $bgHint = match($bgColor) {
+                'black'       => 'solid black',
+                'transparent' => 'transparent',
+                default       => str_starts_with($bgColor, '#') ? "solid {$bgColor}" : 'solid white',
+            };
+            $rawCustom .= "\nBackground: {$bgHint}.";
+            $prompt = $rawCustom;
+        }
+
         // Determine model name for logging
         if ($imageModel === 'recraft') {
             $formatTag = $outputFormat === 'vector' ? 'vector' : 'raster';
@@ -1384,17 +1480,17 @@ Example response format:
                 ? ($outputFormat === 'vector' ? 'logo_recraft_v4' : 'logo_recraft_v4_raster')
                 : ($outputFormat === 'vector' ? 'logo_recraft_vector' : 'logo_recraft_raster');
         } elseif ($imageModel === 'dalle') {
-            $modelName = 'dall-e-3';
+            $modelName = 'gpt-image-1.5';
             $imageSize = '1024x1024';
             $requestType = $isPro ? 'logo_dalle_hd' : 'logo_dalle';
         } else {
-            $modelName = $isPro ? 'fal-ai/flux-pro/v1.1' : 'fal-ai/flux/schnell';
+            $modelName = $isPro ? 'fal-ai/flux-2-flex' : 'fal-ai/flux/schnell';
             $imageSize = $isPro ? $proSize . 'x' . $proSize : '512x512';
             $requestType = $isPro ? 'logo_pro' : 'logo_generation';
         }
 
         $logoRequest = AiLogoRequest::create([
-            'user_id' => $request->user()->id,
+            'user_id' => $this->isAdmin($user) ? null : $user->id,
             'domain' => $domain,
             'style' => $style . ($isPro ? '_pro' : ''),
             'model' => $modelName,
@@ -1406,10 +1502,10 @@ Example response format:
 
         // Create price log entry (pending) - log actual count for this request, note batch in preview
         $priceLog = AiLogoPrice::create([
-            'user_id' => $request->user()->id,
+            'user_id' => $this->isAdmin($user) ? null : $user->id,
             'ai_logo_request_id' => $logoRequest->id,
             'session' => session()->getId(),
-            'user_email' => $request->user()->email,
+            'user_email' => $user->email,
             'request_type' => $requestType,
             'model_name' => $modelName,
             'image_count' => $imageCount,
@@ -1423,15 +1519,9 @@ Example response format:
         ]);
 
         // ── Dispatch the generation job to the queue ──
-        // For Recraft: stagger each job by 5 s × batch_index so they hit the Recraft API
-        // one at a time rather than all at once (Recraft throttles beyond ~3 concurrent reqs,
-        // causing the last job to wait an extra 20+ s before even starting to generate).
-        $recraftDelay = ($imageModel === 'recraft' && $batchIndex > 0)
-            ? now()->addSeconds($batchIndex * 5)
-            : null;
-
         \App\Jobs\GenerateLogoJob::dispatch(
-            userId: $user->id,
+            userId: $this->isAdmin($user) ? 0 : $user->id,
+            adminId: $this->isAdmin($user) ? $user->id : null,
             logoRequestId: $logoRequest->id,
             priceLogId: $priceLog->id,
             params: [
@@ -1450,8 +1540,10 @@ Example response format:
                 'total_count' => $totalCount,
                 'cost_per_image' => $costPerImage,
                 'model_name' => $modelName,
+                'logo_shape' => $logoShape,
+                'logo_detail' => $logoDetail,
             ],
-        )->delay($recraftDelay);
+        );
 
         return response()->json([
             'logo_request_id' => (int) $logoRequest->id,
@@ -1472,8 +1564,13 @@ Example response format:
      */
     public function logoStatus(Request $request, AiLogoRequest $logoRequest)
     {
-        // Make sure the user owns this request
-        if (!$request->user() || $logoRequest->user_id !== $request->user()->id) {
+        $currentUser = $request->user();
+
+        // Admins can view any logo request; regular users only see their own
+        if (!$currentUser) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+        if (!$this->isAdmin($currentUser) && $logoRequest->user_id !== $currentUser->id) {
             return response()->json(['error' => 'Unauthorized'], 403);
         }
 
@@ -1489,12 +1586,12 @@ Example response format:
                 : null;
 
             // Refresh user balance
-            $request->user()->refresh();
+            $currentUser->refresh();
 
             return response()->json(array_merge([
                 'status' => 'completed',
                 'logo_request_id' => (int) $logoRequest->id,
-                'credit_balance' => (float) $request->user()->credit_balance,
+                'credit_balance' => (float) $currentUser->credit_balance,
             ], $resultData ?? []));
         }
 
@@ -1502,8 +1599,33 @@ Example response format:
         return response()->json([
             'status' => $status,
             'error' => $logoRequest->error_message ?? 'Logo generation failed.',
-            'credit_balance' => (float) $request->user()->credit_balance,
+            'credit_balance' => (float) $currentUser->credit_balance,
         ]);
+    }
+
+    private function isAdmin(?object $user): bool
+    {
+        return $user instanceof Admin;
+    }
+
+    private function debitUserBalance(
+        \Illuminate\Foundation\Auth\User|Admin $user,
+        float $amount,
+        string $service,
+        string $modelName,
+        string $description,
+    ): void {
+        if ($user instanceof Admin) {
+            $user->debitBalance($amount);
+        } else {
+            CreditTransaction::debit(
+                userId: $user->id,
+                amount: $amount,
+                service: $service,
+                modelName: $modelName,
+                description: $description,
+            );
+        }
     }
 
     /**
@@ -2348,12 +2470,12 @@ Example response format:
             ]);
 
             // Deduct cost from credit balance
-            CreditTransaction::debit(
-                userId: $request->user()->id,
-                amount: $cost,
-                service: 'logo_bg_removal',
-                modelName: 'recraft/removeBackground',
-                description: 'Logo background removal',
+            $this->debitUserBalance(
+                $request->user(),
+                $cost,
+                'logo_bg_removal',
+                'recraft/removeBackground',
+                'Logo background removal',
             );
 
             return response()->json([

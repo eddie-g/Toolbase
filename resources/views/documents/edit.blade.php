@@ -3024,7 +3024,7 @@
                         </button>
                         
                         @guest
-                            <a href="{{ route('filament.admin.auth.login') }}" class="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition">
+                            <a href="{{ route('login') }}" class="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition">
                                 Login
                             </a>
                         @endguest
@@ -3045,9 +3045,12 @@
                                         <p class="text-xs text-gray-400">Signed in as</p>
                                         <p class="text-sm font-medium text-white truncate">{{ Auth::user()->name }}</p>
                                     </div>
-                                    <a href="/admin" class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-700/50 hover:text-white transition-colors" role="menuitem" tabindex="-1">Dashboard</a>
+                                    @if(auth()->guard('admin')->check())
+                                    <a href="/admin" class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-700/50 hover:text-white transition-colors" role="menuitem" tabindex="-1">Admin Dashboard</a>
                                     <a href="{{ route('filament.admin.pages.security') }}" class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-700/50 hover:text-white transition-colors" role="menuitem" tabindex="-1">Security</a>
-                                    <form method="POST" action="{{ route('filament.admin.auth.logout') }}">
+                                    @endif
+                                    <a href="/portal" class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-700/50 hover:text-white transition-colors" role="menuitem" tabindex="-1">My Dashboard</a>
+                                    <form method="POST" action="{{ route('logout') }}">
                                         @csrf
                                         <button type="submit" class="block w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-gray-700/50 hover:text-red-300 transition-colors" role="menuitem" tabindex="-1">Sign out</button>
                                     </form>
@@ -3423,10 +3426,10 @@
                         <h3 class="mb-2 text-2xl font-bold text-white">Sign in required</h3>
                         <p class="mb-6 text-gray-400">Please sign in to your account to use the AI Generator features.</p>
                         <div class="flex flex-col gap-3">
-                            <a href="{{ route('filament.admin.auth.login') }}" class="px-6 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-semibold rounded-lg transition-colors">
+                            <a href="{{ route('login') }}" class="px-6 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-semibold rounded-lg transition-colors">
                                 Sign In
                             </a>
-                            <a href="{{ route('filament.admin.auth.register') }}" class="px-6 py-2.5 bg-gray-700 hover:bg-gray-600 text-white font-semibold rounded-lg transition-colors">
+                            <a href="{{ route('register') }}" class="px-6 py-2.5 bg-gray-700 hover:bg-gray-600 text-white font-semibold rounded-lg transition-colors">
                                 Create Account
                             </a>
                         </div>
@@ -4771,7 +4774,7 @@
                 <p style="font-size:13px; color:rgba(255,255,255,0.5); margin:0 0 24px; line-height:1.5;">You need to be logged in to use the export and conversion features. Sign in to unlock full functionality.</p>
                 <div style="display:flex; gap:10px; justify-content:center;">
                     <button id="login-required-close" style="padding:10px 20px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:transparent; color:#e5e7eb; font-size:13px; cursor:pointer; transition:all .15s;">Cancel</button>
-                    <a href="{{ route('filament.admin.auth.login') }}" style="display:inline-flex; align-items:center; gap:6px; padding:10px 24px; border-radius:10px; border:none; background:linear-gradient(135deg, #3b82f6, #2563eb); color:#fff; font-size:13px; font-weight:600; cursor:pointer; text-decoration:none; transition:all .15s;">
+                    <a href="{{ route('login') }}" style="display:inline-flex; align-items:center; gap:6px; padding:10px 24px; border-radius:10px; border:none; background:linear-gradient(135deg, #3b82f6, #2563eb); color:#fff; font-size:13px; font-weight:600; cursor:pointer; text-decoration:none; transition:all .15s;">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
                         Sign In
                     </a>
@@ -11945,7 +11948,7 @@
 
             // Auth status for gating features
             const isAuthenticated = @json(Auth::check());
-            const loginUrl = "{{ route('filament.admin.auth.login') }}";
+            const loginUrl = "{{ route('login') }}";
 
             // PDF base name for filenames
             const pdfBaseName = @json(pathinfo($document->original_name, PATHINFO_FILENAME));

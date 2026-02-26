@@ -144,6 +144,56 @@ SEEDS: dict[str, list[str]] = {
         "fearless", "intrepid", "bold", "heroic", "perilous", "uncharted",
     ],
 
+    "mtg": [
+        # Mana & colors
+        "mana", "plains", "island", "swamp", "mountain", "forest",
+        "white", "blue", "black", "red", "green", "colorless", "multicolor",
+        "aura", "enchantment", "artifact", "sorcery", "instant",
+        # Card types & mechanics
+        "creature", "planeswalker", "legendary", "token", "counter",
+        "flying", "trample", "haste", "vigilance", "deathtouch", "lifelink",
+        "hexproof", "indestructible", "flash", "reach", "menace",
+        "proliferate", "cascade", "convoke", "delve", "affinity",
+        "kicker", "flashback", "cycling", "madness", "morph", "scry",
+        "devour", "exalted", "infect", "wither", "annihilator", "dredge",
+        "storm", "splice", "replicate", "buyback", "phasing", "banding",
+        # Iconic creatures & tribes
+        "dragon", "angel", "demon", "zombie", "vampire", "merfolk",
+        "goblin", "elf", "wizard", "shaman", "warrior", "knight",
+        "elemental", "sphinx", "hydra", "wurm", "phoenix", "titan",
+        "dragonlord", "archon", "praetor", "avatar", "incarnation",
+        "sliver", "eldrazi", "phyrexian", "shapeshifter", "berserker",
+        "cleric", "rogue", "artificer", "druid", "assassin", "soldier",
+        # Planeswalkers
+        "jace", "liliana", "gideon", "chandra", "nissa", "sorin",
+        "elspeth", "garruk", "ajani", "teferi", "karn", "nicol",
+        "vraska", "ral", "angrath", "huatli", "saheeli", "samut",
+        "kiora", "tamiyo", "tibalt", "nahiri", "xenagos", "domri",
+        # Planes & locations
+        "ravnica", "zendikar", "innistrad", "theros", "dominaria",
+        "mirrodin", "kamigawa", "alara", "lorwyn", "shadowmoor",
+        "kaladesh", "amonkhet", "ixalan", "eldraine", "strixhaven",
+        "kaldheim", "fiora", "tarkir", "shandalar", "phyrexia",
+        "mercadia", "ulgrotha", "rath", "serra", "conclave",
+        # Guilds & factions
+        "dimir", "gruul", "boros", "selesnya", "golgari", "izzet",
+        "orzhov", "rakdos", "simic", "azorius", "abzan", "jeskai",
+        "sultai", "mardu", "temur", "esper", "jund", "naya",
+        "grixis", "bant", "nephilim", "syndicate",
+        # Spells & effects
+        "counterspell", "lightning", "wrath", "exile", "destroy",
+        "reanimate", "proliferate", "tutor", "scry", "loot", "ramp",
+        "sacrifice", "discard", "mill", "bounce", "flicker", "blink",
+        "transmute", "cipher", "overload", "evolve", "unleash",
+        # Lore & atmosphere
+        "eternal", "undying", "undead", "necromancy", "prophecy",
+        "apocalypse", "revival", "ascension", "dominion", "tempest",
+        "weatherlight", "compleation", "praetor", "elder", "ancient",
+        "omnipotence", "sovereignty", "covenant", "crusade", "judgment",
+        "exodus", "stronghold", "urza", "mishra", "yawgmoth", "emrakul",
+        "kozilek", "ulamog", "bolas", "urabrask", "sheoldred",
+    ],
+
     "tech": [
         # Hardware / compute
         "cpu", "gpu", "ram", "ssd", "nvme", "processor", "chipset", "transistor",

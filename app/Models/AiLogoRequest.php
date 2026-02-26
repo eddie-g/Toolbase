@@ -26,12 +26,14 @@ class AiLogoRequest extends Model
         'error_message',
         'response_time_ms',
         'is_favourited',
+        'is_showcase',
     ];
 
     protected $casts = [
-        'image_urls' => 'array',
+        'image_urls'   => 'array',
         'is_favourited' => 'boolean',
-        'seed_number' => 'integer',
+        'is_showcase'  => 'boolean',
+        'seed_number'  => 'integer',
     ];
 
     public function user()
