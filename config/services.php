@@ -80,6 +80,7 @@ return [
     ],
 
     'logo_editor_enabled' => env('LOGO_EDITOR_ENABLED', false),
+    'logo_custom_prompt_enabled' => env('LOGO_CUSTOM_PROMPT_ENABLED', false),
 
     'stripe' => [
         'key' => env('STRIPE_KEY'),
@@ -96,5 +97,11 @@ return [
     ],
 
     'domain_lookup' => env('DOMAIN_LOOKUP', 'whois'), // 'namecheap' or 'whois'
+
+    'godaddy' => [
+        'api_key'    => env('GODADDY_API_KEY', ''),
+        'api_secret' => env('GODADDY_API_SECRET', ''),
+        'base_url'   => env('GODADDY_BASE_URL', 'https://api.godaddy.com'),
+    ],
 
 ];

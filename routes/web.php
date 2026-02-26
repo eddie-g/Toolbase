@@ -4,6 +4,7 @@ use App\Http\Controllers\DocumentController;
 use App\Http\Controllers\DeveloperChatController;
 use App\Http\Controllers\DomainSearchController;
 use App\Http\Controllers\AIController;
+use App\Http\Controllers\BrowseLogosController;
 use App\Http\Controllers\ComplianceController;
 use App\Http\Controllers\CreditController;
 use App\Http\Controllers\OverlayEditorTestController;
@@ -13,6 +14,16 @@ use Illuminate\Support\Facades\Route;
 Route::get('/', function () {
     return view('home');
 })->name('home');
+
+Route::get('/browse-logos', [BrowseLogosController::class, 'index'])->name('browse-logos');
+
+Route::get('/dashboard', function () {
+    return redirect('/portal');
+})->middleware('auth')->name('user.dashboard');
+
+Route::get('/docs/logo-generator', function () {
+    return view('docs.logo-generator');
+})->name('docs.logoGenerator');
 
 Route::get('/fix-migration-3', function () {
     \Illuminate\Support\Facades\Artisan::call('migrate', ['--force' => true]);
@@ -115,6 +126,7 @@ Route::get('/ai/add-to-pdf', function() {
 // Domain Search
 Route::get('/domain-search', [DomainSearchController::class, 'index'])->name('domainSearch.index');
 Route::get('/logo-generator', [DomainSearchController::class, 'logoGenerator'])->name('domainSearch.logoGenerator');
+Route::get('/logo-generator-2', [DomainSearchController::class, 'logoGenerator2'])->name('domainSearch.logoGenerator2');
 Route::get('/domain-search/faq', function () {
     return view('domain-search-faq');
 })->name('domainSearch.faq');
@@ -122,10 +134,15 @@ Route::post('/domain-search/check', [DomainSearchController::class, 'check'])->n
 Route::post('/domain-search/check-start', [DomainSearchController::class, 'checkStart'])->middleware(['throttle:10,1'])->name('domainSearch.checkStart');
 Route::get('/domain-search/check-poll', [DomainSearchController::class, 'checkPoll'])->name('domainSearch.checkPoll');
 Route::post('/domain-search/generate', [DomainSearchController::class, 'generate'])->name('domainSearch.generate');
+Route::post('/domain-search/toggle-saved', [DomainSearchController::class, 'toggleSavedDomain'])->middleware('auth:web,admin')->name('domainSearch.toggleSaved');
+Route::get('/domain-search/toggle-saved', fn () => response()->json(['error' => 'POST method required.'], 405));
 Route::post('/domain-search/generate-and-check', [DomainSearchController::class, 'generateAndCheck'])->name('domainSearch.generateAndCheck');
-Route::post('/domain-search/ai-generate', [DomainSearchController::class, 'aiGenerate'])->middleware(['auth:sanctum'])->name('domainSearch.aiGenerate');
+Route::post('/domain-search/ai-generate', [DomainSearchController::class, 'aiGenerate'])->name('domainSearch.aiGenerate');
+Route::get('/domain-search/ai-status/{jobId}', [DomainSearchController::class, 'aiStatus'])->name('domainSearch.aiStatus');
+Route::post('/domain-search/record-file-upload', [DomainSearchController::class, 'recordFileUpload'])->middleware(['throttle:20,1'])->name('domainSearch.recordFileUpload');
 Route::post('/domain-search/generate-logo', [DomainSearchController::class, 'generateLogo'])->name('domainSearch.generateLogo');
 Route::get('/domain-search/generate-logo', fn () => response()->json(['error' => 'POST method required.'], 405));
+Route::get('/domain-search/logo-status/{logoRequest}', [DomainSearchController::class, 'logoStatus'])->name('domainSearch.logoStatus');
 Route::post('/domain-search/logo-similar-ideas', [DomainSearchController::class, 'logoSimilarIdeas'])->name('domainSearch.logoSimilarIdeas');
 Route::post('/domain-search/generate-pro-logo', [DomainSearchController::class, 'generateProLogo'])->name('domainSearch.generateProLogo');
 Route::post('/domain-search/estimate-logo-price', [DomainSearchController::class, 'estimateLogoPrice'])->name('domainSearch.estimateLogoPrice');
@@ -134,6 +151,9 @@ Route::post('/domain-search/upscale-logo', [DomainSearchController::class, 'upsc
 Route::get('/domain-search/upscale-logo', fn () => response()->json(['error' => 'POST method required.'], 405));
 Route::post('/domain-search/remove-logo-bg', [DomainSearchController::class, 'removeLogoBg'])->name('domainSearch.removeLogoBg');
 Route::get('/domain-search/remove-logo-bg', fn () => response()->json(['error' => 'POST method required.'], 405));
+Route::get('/domain-search/logo-palettes', [DomainSearchController::class, 'listLogoPalettes'])->middleware('auth:web,admin')->name('domainSearch.logoPalettes.list');
+Route::post('/domain-search/logo-palettes', [DomainSearchController::class, 'saveLogoPalette'])->middleware('auth:web,admin')->name('domainSearch.logoPalettes.save');
+Route::delete('/domain-search/logo-palettes/{palette}', [DomainSearchController::class, 'deleteLogoPalette'])->middleware('auth:web,admin')->name('domainSearch.logoPalettes.delete');
 Route::get('/logos/{logoRequest}/edit', [DomainSearchController::class, 'editLogo'])->name('logos.edit');
 Route::post('/logos/{logoRequest}/save-edited', [DomainSearchController::class, 'saveEditedLogo'])->name('logos.saveEdited');
 

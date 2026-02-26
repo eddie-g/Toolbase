@@ -10,6 +10,7 @@
         "filament/filament": "^3.2",
         "laravel/fortify": "^1.34",
         "laravel/framework": "^12.0",
+        "laravel/horizon": "^5.44",
         "laravel/sanctum": "^4.3",
         "laravel/socialite": "^5.24",
         "laravel/tinker": "^2.10.1",

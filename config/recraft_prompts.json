@@ -1,0 +1,68 @@
+{
+  "_comment": "Recraft logo prompt templates. Variables: {brand}, {subject}, {colors}, {bg}, {shape_block}, {no_text}.",
+  "default_colors": {
+    "professional": "navy blue and gold",
+    "fantasy": "emerald green, antique gold, deep crimson",
+    "future": "neon cyan, electric purple, deep black",
+    "retro": "red, green, blue, yellow",
+    "minimalist": "navy blue, gold",
+    "greetingcard": "soft rose, sage green, lavender, ivory"
+  },
+  "default_subject": {
+    "icon_only": "logo symbol",
+    "with_brand": "clean brand mark"
+  },
+  "shape_block": "Hard shape constraint: the entire logo is fully enclosed inside a perfect {SHAPE} container. Nothing extends outside the {Shape}.",
+  "no_text": {
+    "icon_only": "No text, no letters, no words, no numbers anywhere in the image.",
+    "with_brand": "The ONLY text allowed is exactly \"{brand}\" with correct spelling."
+  },
+  "icon_only": {
+    "professional": "Minimalist logo icon for {subject}. Flat vector style, clean geometry, strong silhouette. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "fantasy": "Fantasy logo icon for {subject}. Bold fantasy symbol, ornamental accents, magical motifs. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "future": "Futuristic sci-fi logo icon for {subject}. Clean sci-fi symbol, sharp geometry, dynamic forward motion. Colors: {colors}. Background: {bg}. Solid plain background only — no space, no galaxies, no nebulas, no starfields. {shape_block} {no_text}",
+    "retro": "Retro vintage logo icon for {subject}. Bold retro icon, strong shapes, vintage contrast. Colors: {colors}. Hard edges, flat fills. Background: {bg}. {shape_block} {no_text}",
+    "minimalist": "Clean minimal logo icon for {subject}. Single bold shape, generous negative space, flat design. Color: {colors}. Background: {bg}. {shape_block} Flat fills only. No gradients, shadows, or glows. {no_text}",
+    "greetingcard": "Hand-painted watercolor logo icon for {subject}. Gentle painted edges, soft color washes. Colors: {colors}. Background: {bg}. {shape_block} {no_text}"
+  },
+  "icon_only_medium": {
+    "professional": "Polished professional logo icon for {subject}. Refined linework, subtle gradient depth, precise geometric construction — more detailed than a flat icon, still clean and scalable. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "fantasy": "High fantasy logo icon for {subject}. Lord of the Rings inspired, ornate. Mythical presence, scrollwork and rune accents, enchanted forest motifs. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "future": "Futuristic sci-fi logo icon for {subject}. Sleek, high-tech. Neon edge-lighting and layered circuit detail. Colors: {colors}. Background: {bg}. Solid plain background — no space, no galaxies, no starfields. No atmospheric effects. {shape_block} {no_text}",
+    "retro": "Bold retro vintage logo icon for {subject}. Screen-print aesthetic, strong outlines, halftone textures. Colors: {colors}. Hard edges, flat fills. Background: {bg}. No photorealism, no gradients. Classic American retro design. {shape_block} {no_text}",
+    "minimalist": "Flat minimalist logo icon for {subject}. Bold silhouette, single filled shape — no line-art, thick shapes, smooth curves. Color: {colors}. Background: {bg}. {shape_block} Flat fills only. No gradients, shadows, or glows. {no_text}",
+    "greetingcard": "Hand-painted watercolor logo icon for {subject}. Soft color washes, visible paper grain, gentle painted edges. Colors: {colors}. Background: {bg}. {shape_block} High-quality gouache textures, dreamy lighting. No hard lines. {no_text}"
+  },
+  "icon_only_max": {
+    "professional": "Highly detailed professional logo icon for {subject}. Rich vector illustration, micro detail, subtle gradients, fine linework, precise geometric construction. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "fantasy": "High fantasy illustration logo icon for {subject}. Lord of the Rings inspired, rich detail, painterly textures, ornate. Elven scrollwork, ancient runes, mythical textures, intricate linework. Colors: {colors}. Rich shading, metallic highlights, deep jewel tones. Background: {bg}. {shape_block} Epic, cinematic, high-detail. No flat fills. No minimalism. {no_text}",
+    "future": "Hyper-detailed cinematic sci-fi logo icon for {subject}. Holographic energy fields, neon circuit tracery, hard-surface mech detail. Subject drawn as a contained logo emblem — retains its own natural shape, NOT distorted to match container. Colors: {colors}. Holographic glow, neon circuit highlights. Background: {bg}. Solid plain background only — no space, no galaxies, no nebulas, no starfields. No atmospheric effects behind the logo. {shape_block} {no_text}",
+    "retro": "Bold retro vintage logo icon for {subject}. Screen-print aesthetic, limited palette, strong outlines, vintage poster feel, fine crosshatching and halftone textures. Colors: {colors}. Hard edges, flat fills, halftone textures. Background: {bg}. No photorealism. No gradients. Classic American retro design. {shape_block} {no_text}",
+    "minimalist": "Flat minimalist logo icon for {subject}. Bold silhouette, single geometric form — no line-art, thick shapes, smooth curves, negative space as cut-outs. Color: {colors}. Background: {bg}. {shape_block} Flat fills only. No gradients, shadows, glows, or textures. {no_text}",
+    "greetingcard": "Hand-painted watercolor logo icon for {subject}. Soft washes, visible paper grain, uneven deckled edges, painterly edges, delicate wet-on-wet blooms. Colors: {colors}. Muted pastel tones, soft translucent watercolor layering. Background: {bg}. {shape_block} High-quality gouache textures, dreamy soft lighting. No hard digital lines, no flat fills, no 3D renders. {no_text}"
+  },
+  "with_brand": {
+    "professional": "Minimalist brand logo for \"{brand}\". Concept: {subject}. Clean icon with readable wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "fantasy": "Fantasy brand logo for \"{brand}\". Concept: {subject}. Bold fantasy symbol with brand in ornate fantasy serif. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "future": "Futuristic sci-fi brand logo for \"{brand}\". Concept: {subject}. Clean sci-fi symbol with brand in sci-fi typeface. Colors: {colors}. Background: {bg}. Solid plain background — no space, no galaxies, no starfields. {shape_block} {no_text}",
+    "retro": "Retro vintage brand logo for \"{brand}\". Concept: {subject}. Bold retro icon with brand in retro font. Colors: {colors}. Hard edges, flat fills. Background: {bg}. {shape_block} {no_text}",
+    "minimalist": "Clean minimal brand logo for \"{brand}\". Concept: {subject}. Single bold shape with clean wordmark. Color: {colors}. Background: {bg}. {shape_block} Flat fills only. {no_text}",
+    "greetingcard": "Hand-painted watercolor brand logo for \"{brand}\". Concept: {subject}. Soft watercolor washes with brand in hand-lettered script. Colors: {colors}. Background: {bg}. {shape_block} {no_text}"
+  },
+  "with_brand_medium": {
+    "professional": "Polished professional brand logo for \"{brand}\". Concept: {subject}. Refined icon with subtle depth, fine linework, and a clean well-spaced wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "fantasy": "High fantasy brand logo for \"{brand}\". Lord of the Rings inspired, ornate. Concept: {subject}. Mythical presence, scrollwork and rune accents, decorative hand-lettered wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "future": "Futuristic sci-fi brand logo for \"{brand}\". Sleek, high-tech. Concept: {subject}. Neon edge-lighting, layered circuit detail, sleek illuminated wordmark. Colors: {colors}. Background: {bg}. Solid plain background — no space, no galaxies, no starfields. No atmospheric effects. {shape_block} {no_text}",
+    "retro": "Bold retro vintage brand logo for \"{brand}\". Screen-print aesthetic. Concept: {subject}. Bold retro icon with strong outlines and classic bold wordmark. Colors: {colors}. Hard edges, flat fills. Background: {bg}. No photorealism, no gradients. Classic American retro design. {shape_block} {no_text}",
+    "minimalist": "Flat minimalist brand logo for \"{brand}\". Concept: {subject}. Bold silhouette with elegant clean wordmark — no line-art, thick shapes, smooth curves. Color: {colors}. Background: {bg}. {shape_block} Flat fills only. {no_text}",
+    "greetingcard": "Hand-painted watercolor brand logo for \"{brand}\". Concept: {subject}. Soft color washes, paper grain, brand in hand-lettered watercolor script with soft ink variation. Colors: {colors}. Background: {bg}. {shape_block} High-quality gouache textures, dreamy lighting. No hard lines. {no_text}"
+  },
+  "with_brand_max": {
+    "professional": "Highly detailed premium brand logo for \"{brand}\". Concept: {subject}. Sophisticated icon with fine linework, subtle gradients, and a polished clean wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "fantasy": "High fantasy illustration brand logo for \"{brand}\". Lord of the Rings inspired, rich detail, painterly textures, ornate. Concept: {subject}. Elven scrollwork, ancient runes, mythical textures, majestic decorative wordmark. Colors: {colors}. Rich shading, metallic highlights, deep jewel tones. Background: {bg}. {shape_block} Epic, cinematic, high-detail. No flat fills. No minimalism. {no_text}",
+    "future": "Hyper-detailed cinematic sci-fi brand logo for \"{brand}\". Concept: {subject}. Holographic circuits, neon energy fields, hard-surface mech detail, sleek illuminated wordmark. Subject drawn as a contained logo emblem. Colors: {colors}. Holographic glow, neon circuit highlights. Background: {bg}. Solid plain background only — no space, no galaxies, no nebulas, no starfields. No atmospheric effects. {shape_block} {no_text}",
+    "retro": "Bold retro vintage brand logo for \"{brand}\". Screen-print aesthetic, limited palette. Concept: {subject}. Strong outlines, vintage poster feel, bold retro slab-serif wordmark, halftone textures. Colors: {colors}. Hard edges, flat fills, halftone textures. Background: {bg}. No photorealism. No gradients. Classic American retro design. {shape_block} {no_text}",
+    "minimalist": "Flat minimalist brand logo for \"{brand}\". Concept: {subject}. Bold silhouette, exquisitely balanced negative space as cut-outs, elegant clean wordmark. Color: {colors}. Background: {bg}. {shape_block} Flat fills only. No gradients, shadows, glows, or textures. {no_text}",
+    "greetingcard": "Hand-painted watercolor brand logo for \"{brand}\". Concept: {subject}. Rich wet washes, paper grain, delicate wet-on-wet blooms, elegant hand-lettered watercolor script wordmark. Colors: {colors}. Muted pastel tones, soft translucent layering. Background: {bg}. {shape_block} High-quality gouache textures, dreamy soft lighting. No hard digital lines, no flat fills, no 3D renders. {no_text}"
+  }
+}

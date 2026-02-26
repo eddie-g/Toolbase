@@ -2,8 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\GenerateAiDomainsJob;
 use App\Models\AiDomainRequest;
 use App\Models\AiLogoRequest;
+use App\Models\Admin;
+use App\Models\SavedDomain;
+use App\Models\SavedLogoPalette;
 use App\Models\AiLogoPrice;
 use App\Models\AiPriceLog;
 use App\Models\CreditTransaction;
@@ -16,31 +20,114 @@ use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use App\Traits\ResolvesExternalDns;
 
 class DomainSearchController extends Controller
 {
+    use ResolvesExternalDns;
     private const DEFAULT_TLDS = ['com', 'ai', 'net', 'org'];
-    private const GENERATE_CATEGORIES = ['space', 'tech', 'fantasy', 'scifi', 'romance', 'mystery', 'thriller', 'horror', 'adventure', 'historical', 'drama', 'action'];
+    private const GENERATE_CATEGORIES = ['tech', 'fantasy', 'scifi', 'horror', 'romance', 'mtg'];
     private const CATEGORY_RESULT_LIMIT = 10;
 
-    public function index()
+    public function __construct()
+    {
+        // Filament authenticates admins on the "admin" guard.
+        // Most controller code uses $request->user(), which reads the default guard.
+        // This resolver keeps existing checks working for both web and admin sessions.
+        $this->middleware(function ($request, $next) {
+            if (!$request->user() && Auth::guard('admin')->check()) {
+                $request->setUserResolver(fn () => Auth::guard('admin')->user());
+            }
+
+            return $next($request);
+        });
+    }
+
+    /**
+     * Common English stop words and filler words to exclude from domain generation.
+     * These are too generic, grammatical, or meaningless as domain names.
+     */
+    private const STOP_WORDS = [
+        // Articles & determiners
+        'the', 'a', 'an', 'this', 'that', 'these', 'those', 'all', 'both', 'each',
+        'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'any', 'every',
+        // Conjunctions
+        'and', 'but', 'or', 'yet', 'for', 'nor', 'so',
+        // Prepositions
+        'of', 'in', 'to', 'on', 'at', 'by', 'up', 'as', 'if', 'into', 'via',
+        'from', 'with', 'about', 'above', 'after', 'along', 'among', 'around',
+        'before', 'behind', 'below', 'beneath', 'beside', 'between', 'beyond',
+        'down', 'during', 'except', 'inside', 'near', 'off', 'out', 'outside',
+        'over', 'past', 'since', 'through', 'throughout', 'under', 'until',
+        'upon', 'within', 'without',
+        // Pronouns
+        'he', 'she', 'it', 'we', 'they', 'his', 'her', 'its', 'our', 'their',
+        'him', 'them', 'me', 'my', 'you', 'your', 'who', 'whom', 'which', 'what',
+        // Common verbs (too generic)
+        'is', 'are', 'was', 'were', 'be', 'been', 'being', 'has', 'have', 'had',
+        'do', 'does', 'did', 'will', 'would', 'shall', 'should', 'may', 'might',
+        'must', 'can', 'could', 'get', 'got', 'let', 'put', 'set', 'use', 'used',
+        'say', 'said', 'see', 'seem', 'seemed', 'know', 'make', 'take', 'come',
+        'give', 'find', 'goes', 'look', 'keep', 'call', 'try', 'ask', 'need',
+        // Common adjectives too vague for branding
+        'new', 'old', 'good', 'bad', 'big', 'small', 'large', 'long', 'high',
+        'low', 'great', 'little', 'own', 'right', 'sure', 'real', 'true', 'full',
+        'open', 'same', 'just', 'only', 'even', 'back', 'very', 'also', 'well',
+        // Adverbs / filler
+        'not', 'now', 'then', 'when', 'where', 'how', 'why', 'here', 'there',
+        'again', 'once', 'never', 'always', 'often', 'still', 'too', 'much',
+        'many', 'own', 'same', 'last', 'next', 'first', 'second', 'rather',
+    ];
+
+    public function index(Request $request)
     {
         $tldOptions = $this->getTldOptions();
         $availableTlds = array_column($tldOptions, 'tld');
 
         $defaultTlds = $this->getDefaultSelectedTlds($availableTlds);
 
+        $remainingAiRequests = 25;
+        $remainingFileUploads = 5;
+        if (!$request->user()) {
+            $ip = $request->ip();
+            $remainingAiRequests = \Illuminate\Support\Facades\RateLimiter::remaining('ai-domain-gen:' . $ip, 25);
+            $remainingFileUploads = \Illuminate\Support\Facades\RateLimiter::remaining('domain-file-upload:' . $ip, 5);
+        }
+
+        $currentUser = $request->user();
+        if ($currentUser && $this->isAdmin($currentUser)) {
+            if ($this->supportsAdminSavedDomains()) {
+                $savedDomains = SavedDomain::where('admin_id', $currentUser->id)->pluck('domain')->all();
+            } else {
+                $savedDomains = (array) $request->session()->get('admin_saved_domains', []);
+            }
+        } elseif ($currentUser) {
+            $savedDomains = SavedDomain::where('user_id', $currentUser->id)->pluck('domain')->all();
+        } else {
+            $savedDomains = [];
+        }
+
         return view('domain-search', [
             'tldOptions' => $tldOptions,
             'defaultTlds' => $defaultTlds,
+            'remainingAiRequests' => $remainingAiRequests,
+            'remainingFileUploads' => $remainingFileUploads,
+            'savedDomains' => $savedDomains,
         ]);
     }
 
     public function logoGenerator()
     {
         return view('logo-generator');
+    }
+
+    public function logoGenerator2()
+    {
+        return view('logo-generator-2');
     }
 
     public function check(Request $request)
@@ -78,11 +165,19 @@ class DomainSearchController extends Controller
             'prefix' => 'nullable|string|max:30|regex:/^[a-zA-Z0-9-]*$/',
             'suffix' => 'nullable|string|max:30|regex:/^[a-zA-Z0-9-]*$/',
             'category' => ['required', Rule::in(self::GENERATE_CATEGORIES)],
+            'min_length' => 'nullable|integer|min:3|max:14',
+            'max_length' => 'nullable|integer|min:3|max:14',
         ]);
 
-        $prefix = $this->sanitizeDomainLabelPart((string) $request->input('prefix', ''));
-        $suffix = $this->sanitizeDomainLabelPart((string) $request->input('suffix', ''));
-        $category = strtolower((string) $request->input('category'));
+        $prefix    = $this->sanitizeDomainLabelPart((string) $request->input('prefix', ''));
+        $suffix    = $this->sanitizeDomainLabelPart((string) $request->input('suffix', ''));
+        $category  = strtolower((string) $request->input('category'));
+        $minLength = (int) $request->input('min_length', 3);
+        $maxLength = (int) $request->input('max_length', 12);
+
+        if ($minLength > $maxLength) {
+            [$minLength, $maxLength] = [$maxLength, $minLength];
+        }
 
         if ($prefix === '' && $suffix === '') {
             return response()->json([
@@ -91,9 +186,216 @@ class DomainSearchController extends Controller
             ], 422);
         }
 
-        $names = $this->generateCategoryDomains($prefix, $suffix, $category);
+        // Adjust the word-score length filter to account for prefix + suffix lengths,
+        // so the slider represents the total combined name length.
+        $affix   = strlen($prefix) + strlen($suffix);
+        $wordMin = max(1, $minLength - $affix);
+        $wordMax = max(1, $maxLength - $affix);
+
+        $names = $this->generateCategoryDomains($prefix, $suffix, $category, $wordMin, $wordMax);
 
         return response()->json(['names' => $names, 'error' => null]);
+    }
+
+    public function toggleSavedDomain(Request $request)
+    {
+        $request->validate([
+            'domain'        => 'required|string|max:253',
+            'is_available'  => 'nullable|boolean',
+            'is_premium'    => 'nullable|boolean',
+            'premium_price' => 'nullable|numeric|min:0',
+        ]);
+
+        $user   = $request->user();
+        $domain = strtolower(trim($request->input('domain')));
+
+        if (!$user) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+
+        $availabilityData = [
+            'is_available'  => $request->input('is_available'),
+            'is_premium'    => $request->boolean('is_premium', false),
+            'premium_price' => $request->input('premium_price'),
+            'checked_at'    => now(),
+        ];
+
+        // Admins persist favorites via admin_id
+        if ($this->isAdmin($user)) {
+            if ($this->supportsAdminSavedDomains()) {
+                $existing = SavedDomain::where('admin_id', $user->id)
+                    ->where('domain', $domain)
+                    ->first();
+
+                if ($existing) {
+                    $existing->delete();
+                    return response()->json(['saved' => false]);
+                }
+
+                SavedDomain::create(array_merge([
+                    'admin_id' => $user->id,
+                    'user_id'  => null,
+                    'domain'   => $domain,
+                ], $availabilityData));
+                return response()->json(['saved' => true]);
+            }
+
+            // Fallback for environments where migration hasn't been applied yet
+            $saved = (array) $request->session()->get('admin_saved_domains', []);
+            $saved = array_values(array_unique(array_map(
+                fn ($d) => strtolower(trim((string) $d)),
+                $saved
+            )));
+
+            if (in_array($domain, $saved, true)) {
+                $saved = array_values(array_filter($saved, fn ($d) => $d !== $domain));
+                $request->session()->put('admin_saved_domains', $saved);
+                return response()->json(['saved' => false]);
+            }
+
+            $saved[] = $domain;
+            $request->session()->put('admin_saved_domains', array_values(array_unique($saved)));
+            return response()->json(['saved' => true]);
+        }
+
+        $existing = SavedDomain::where('user_id', $user->id)
+            ->where('domain', $domain)
+            ->first();
+
+        if ($existing) {
+            $existing->delete();
+            return response()->json(['saved' => false]);
+        }
+
+        SavedDomain::create(array_merge([
+            'user_id' => $user->id,
+            'domain'  => $domain,
+        ], $availabilityData));
+        return response()->json(['saved' => true]);
+    }
+
+    public function listLogoPalettes(Request $request)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+        if (!Schema::hasTable('saved_logo_palettes')) {
+            return response()->json(['error' => 'Saved palettes table is missing. Run migrations first.'], 503);
+        }
+
+        $query = SavedLogoPalette::query();
+        if ($this->isAdmin($user)) {
+            $query->where('admin_id', $user->id);
+        } else {
+            $query->where('user_id', $user->id);
+        }
+
+        $palettes = $query
+            ->orderBy('name')
+            ->orderByDesc('id')
+            ->get(['id', 'name', 'colors', 'updated_at'])
+            ->map(function (SavedLogoPalette $palette) {
+                $colors = collect($palette->colors ?? [])
+                    ->map(fn ($color) => strtoupper((string) $color))
+                    ->filter(fn ($color) => preg_match('/^#[0-9A-F]{6}$/', $color))
+                    ->values()
+                    ->all();
+
+                return [
+                    'id' => (int) $palette->id,
+                    'name' => $palette->name,
+                    'colors' => $colors,
+                    'updated_at' => optional($palette->updated_at)->toISOString(),
+                ];
+            })
+            ->values();
+
+        return response()->json([
+            'palettes' => $palettes,
+        ]);
+    }
+
+    public function saveLogoPalette(Request $request)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+        if (!Schema::hasTable('saved_logo_palettes')) {
+            return response()->json(['error' => 'Saved palettes table is missing. Run migrations first.'], 503);
+        }
+
+        $validated = $request->validate([
+            'name' => 'required|string|min:1|max:60',
+            'colors' => 'required|array|min:2|max:5',
+            'colors.*' => ['required', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
+        ]);
+
+        $name = trim($validated['name']);
+        $colors = collect($validated['colors'])
+            ->map(fn ($color) => strtoupper(trim((string) $color)))
+            ->values()
+            ->all();
+
+        $query = SavedLogoPalette::query()->where('name', $name);
+        $attrs = [
+            'name' => $name,
+            'colors' => $colors,
+        ];
+
+        if ($this->isAdmin($user)) {
+            $query->where('admin_id', $user->id);
+            $attrs['admin_id'] = $user->id;
+            $attrs['user_id'] = null;
+        } else {
+            $query->where('user_id', $user->id);
+            $attrs['user_id'] = $user->id;
+            $attrs['admin_id'] = null;
+        }
+
+        $palette = $query->first();
+        if ($palette) {
+            $palette->fill($attrs);
+            $palette->save();
+        } else {
+            $palette = SavedLogoPalette::create($attrs);
+        }
+
+        return response()->json([
+            'saved' => true,
+            'palette' => [
+                'id' => (int) $palette->id,
+                'name' => $palette->name,
+                'colors' => $colors,
+                'updated_at' => optional($palette->updated_at)->toISOString(),
+            ],
+        ]);
+    }
+
+    public function deleteLogoPalette(Request $request, SavedLogoPalette $palette)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+        if (!Schema::hasTable('saved_logo_palettes')) {
+            return response()->json(['error' => 'Saved palettes table is missing. Run migrations first.'], 503);
+        }
+
+        $isOwner = $this->isAdmin($user)
+            ? (int) $palette->admin_id === (int) $user->id
+            : (int) $palette->user_id === (int) $user->id;
+
+        if (!$isOwner) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        $palette->delete();
+
+        return response()->json([
+            'deleted' => true,
+        ]);
     }
 
     /**
@@ -450,177 +752,149 @@ class DomainSearchController extends Controller
     /**
      * Generate domain names using AI based on user prompt.
      */
-    public function aiGenerate(Request $request, DeveloperChatClient $client)
+    public function aiGenerate(Request $request)
     {
-        // Check authentication - supports both session auth and Bearer token (Sanctum)
         $user = $request->user();
-        
+
         if (!$user) {
-            return response()->json([
-                'error' => 'You must be logged in to use AI Generator.',
-                'domains' => [],
-                'authenticated' => false,
-            ], 401);
+            $ip = $request->ip();
+            $key = 'ai-domain-gen:' . $ip;
+            
+            if (\Illuminate\Support\Facades\RateLimiter::tooManyAttempts($key, 25)) {
+                return response()->json([
+                    'error' => 'Unlimited domain search with account, otherwise 25 free AI Generator requests per day',
+                    'domains' => [],
+                    'authenticated' => false,
+                ], 429);
+            }
+            
+            \Illuminate\Support\Facades\RateLimiter::hit($key, 86400); // 24 hours
+            
+            // Also update the count in the db sessions table
+            $sessionId = $request->session()->getId();
+            if ($sessionId) {
+                try {
+                    \Illuminate\Support\Facades\DB::table('sessions')
+                        ->where('id', $sessionId)
+                        ->increment('free_domain_requests');
+                } catch (\Exception $e) {
+                    // Ignore if sessions table is not used or doesn't exist
+                }
+            }
         }
 
         $request->validate([
             'prompt' => 'required|string|min:3|max:4000',
             'tlds' => 'nullable|array',
             'tlds.*' => ['required', Rule::in($this->getAvailableTlds())],
-            'stream' => 'nullable|boolean',
+            'prompt_modifier' => 'nullable|string|in:none,phonetic,numbers',
+            'excluded' => 'nullable|array|max:100',
+            'excluded.*' => 'nullable|string|max:100',
         ]);
 
         $prompt = $request->input('prompt');
         $tlds = $request->input('tlds', $this->getDefaultSelectedTlds());
+        $promptModifier = strtolower((string) $request->input('prompt_modifier', 'none'));
+        $excluded = collect($request->input('excluded', []))
+            ->map(fn ($name) => strtolower(trim((string) $name)))
+            ->filter(fn ($name) => $name !== '')
+            ->map(fn ($name) => preg_replace('/[^a-z0-9-]/', '', $name))
+            ->filter(fn ($name) => $name !== '')
+            ->values()
+            ->all();
         if (!is_array($tlds) || count($tlds) === 0) {
             $tlds = $this->getDefaultSelectedTlds();
         }
-        $stream = $request->boolean('stream');
 
-        try {
-            // Calculate how many names to generate so all fit in one Namecheap batch (max 50 domains)
-            $tldCount = count($tlds);
-            $maxNames = $tldCount > 0 ? (int) floor(50 / $tldCount) : 20;
-            $maxNames = max(5, min($maxNames, 25)); // clamp between 5–25
+        $jobId = Str::uuid()->toString();
+        $ownerToken = $this->resolveAiJobOwnerToken($request);
 
-            // Create system prompt for domain generation
-            $systemPrompt = "You are a creative domain name generator. Generate {$maxNames} unique, brandable domain names based on the user's request. Return ONLY a JSON object with a 'domains' array containing domain name strings (without TLDs). Names should be:
-- Short (4-15 characters)
-- Memorable and brandable
-- Easy to spell and pronounce
-- Related to the user's prompt
-- Creative but professional
+        Cache::put('ai-domain-job:' . $jobId, [
+            'status' => 'pending',
+            'done' => false,
+            'owner' => $ownerToken,
+            'queued_at' => now()->toISOString(),
+            'user_id' => $user?->id,
+        ], now()->addMinutes(30));
 
-Example response format:
-{\"domains\": [\"techflow\", \"cloudnova\", \"pixelforge\", \"datazen\", \"codecraft\"]}";
+        GenerateAiDomainsJob::dispatch($jobId, $prompt, $tlds, $promptModifier, $excluded, $user?->id);
 
-            $messages = [
-                ['role' => 'system', 'content' => $systemPrompt],
-                ['role' => 'user', 'content' => $prompt],
-            ];
+        return response()->json([
+            'job_id' => $jobId,
+            'status' => 'pending',
+            'queued' => true,
+        ], 202);
+    }
 
-            // Call Gemini API
-            $data = $client->chat(
-                $messages,
-                0.9, // Higher temperature for creativity
-                ['type' => 'json_object'],
-                ['timeout' => 120]
-            );
-
-            $reply = $data['reply'];
-            
-            \Log::info('AI Domain Generation - Raw Reply', [
-                'user_id' => $user->id,
-                'prompt' => $prompt,
-                'reply' => $reply,
-                'reply_type' => gettype($reply),
-            ]);
-            
-            // Parse JSON response
-            $responseData = is_string($reply) ? json_decode($reply, true) : $reply;
-            
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                \Log::error('JSON Parse Error', [
-                    'error' => json_last_error_msg(),
-                    'reply' => $reply,
-                ]);
-                throw new \Exception('Invalid JSON response from AI: ' . json_last_error_msg());
-            }
-            
-            $domains = $responseData['domains'] ?? [];
-            
-            if (empty($domains)) {
-                \Log::warning('No domains in response', [
-                    'response_data' => $responseData,
-                ]);
-            }
-
-            // Store request in database
-            AiDomainRequest::create([
-                'user_id' => $user->id,
-                'prompt' => $prompt,
-                'response' => $responseData,
-                'model' => $data['response']['model'] ?? 'gemini-2.0-flash',
-                'usage' => $data['response']['usageMetadata'] ?? null,
-            ]);
-
-            // Log to ai_price_log for tracking
-            $usageMetadata = $data['response']['usageMetadata'] ?? [];
-            $inputTokens = $usageMetadata['promptTokenCount'] ?? 0;
-            $outputTokens = $usageMetadata['candidatesTokenCount'] ?? 0;
-            $totalTokens = $usageMetadata['totalTokenCount'] ?? ($inputTokens + $outputTokens);
-            
-            // Calculate estimated cost (Gemini Flash pricing: $0.15 per 1M input, $0.60 per 1M output)
-            $estimatedCost = ($inputTokens * 0.00000015) + ($outputTokens * 0.00000060);
-            
-            AiPriceLog::create([
-                'session' => session()->getId(),
-                'document_id' => null,
-                'user_email' => $user->email,
-                'request_type' => 'domain_generation',
-                'model_name' => $data['response']['model'] ?? 'gemini-2.0-flash',
-                'input_tokens' => $inputTokens,
-                'output_tokens' => $outputTokens,
-                'total_tokens' => $totalTokens,
-                'image_count' => 0,
-                'image_size' => null,
-                'cost_usd' => null,
-                'estimated_cost_usd' => $estimatedCost,
-                'prompt_preview' => substr($prompt, 0, 255),
-                'status' => 'completed',
-            ]);
-
-            if ($stream) {
-                return response()->json([
-                    'domains' => $domains,
-                    'model' => $data['response']['model'] ?? 'gemini-2.0-flash',
-                    'usage' => $data['response']['usageMetadata'] ?? null,
-                    'error' => null,
-                ]);
-            }
-
-            $check = $this->checkDomainAvailability($domains, $tlds);
-
-            return response()->json([
-                'domains' => $domains,
-                'results' => $check['results'],
-                'model' => $data['response']['model'] ?? 'gemini-2.0-flash',
-                'usage' => $data['response']['usageMetadata'] ?? null,
-                'error' => $check['error'],
-            ], $check['error'] ? 500 : 200);
-
-        } catch (\Illuminate\Http\Client\RequestException $e) {
-            $statusCode = $e->response?->status();
-            $errorBody = $e->response?->json();
-            
-            \Log::error('AI Domain Generation - API Error', [
-                'user_id' => $user->id,
-                'prompt' => $prompt,
-                'status' => $statusCode,
-                'error' => $errorBody,
-                'message' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'error' => 'AI service error. Please try again.',
-                'domains' => [],
-                'debug' => config('app.debug') ? $errorBody : null,
-            ], 500);
-            
-        } catch (\Exception $e) {
-            \Log::error('AI Domain Generation Error', [
-                'user_id' => $user->id,
-                'prompt' => $prompt,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-
-            return response()->json([
-                'error' => 'Failed to generate domains. Please try again.',
-                'domains' => [],
-                'debug' => config('app.debug') ? $e->getMessage() : null,
-            ], 500);
+    public function aiStatus(Request $request, string $jobId)
+    {
+        if (!preg_match('/^[a-f0-9\-]{36}$/i', $jobId)) {
+            return response()->json(['error' => 'Invalid job ID.'], 400);
         }
+
+        $cacheKey = 'ai-domain-job:' . $jobId;
+        $state = Cache::get($cacheKey);
+
+        if (!$state) {
+            return response()->json(['error' => 'Job not found or expired.'], 404);
+        }
+
+        $ownerToken = $this->resolveAiJobOwnerToken($request);
+        if (($state['owner'] ?? null) !== $ownerToken) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        return response()->json([
+            'status' => $state['status'] ?? 'pending',
+            'done' => (bool) ($state['done'] ?? false),
+            'domains' => $state['domains'] ?? [],
+            'results' => $state['results'] ?? [],
+            'model' => $state['model'] ?? null,
+            'usage' => $state['usage'] ?? null,
+            'error' => $state['error'] ?? null,
+        ]);
+    }
+
+    private function resolveAiJobOwnerToken(Request $request): string
+    {
+        $user = $request->user();
+        if ($user) {
+            return 'user:' . $user->id;
+        }
+
+        return 'guest:' . $request->ip() . ':' . $request->session()->getId();
+    }
+
+    private function supportsAdminSavedDomains(): bool
+    {
+        try {
+            return Schema::hasColumn('saved_domains', 'admin_id');
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    public function recordFileUpload(Request $request)
+    {
+        // Logged-in users have unlimited file uploads
+        if ($request->user()) {
+            return response()->json(['allowed' => true, 'remaining' => null]);
+        }
+
+        $key = 'domain-file-upload:' . $request->ip();
+
+        if (\Illuminate\Support\Facades\RateLimiter::tooManyAttempts($key, 5)) {
+            return response()->json([
+                'allowed'   => false,
+                'remaining' => 0,
+                'error'     => 'You have used all 5 free file uploads for today. Log in for unlimited uploads.',
+            ], 429);
+        }
+
+        \Illuminate\Support\Facades\RateLimiter::hit($key, 86400); // 24-hour window
+        $remaining = \Illuminate\Support\Facades\RateLimiter::remaining($key, 5);
+
+        return response()->json(['allowed' => true, 'remaining' => $remaining]);
     }
 
     private function getAvailableTlds(): array
@@ -712,19 +986,24 @@ Example response format:
         return substr($clean, 0, 30);
     }
 
-    private function generateCategoryDomains(string $prefix, string $suffix, string $category): array
+    private function generateCategoryDomains(string $prefix, string $suffix, string $category, int $minLength = 3, int $maxLength = 12): array
     {
         $column = 'category_' . $category;
 
-        $rows = DB::table('dictionary')
-            ->select('word', $column, 'length')
+        $baseQuery = fn() => DB::table('word_scores')
+            ->select('word', $column)
             ->whereNotNull('word')
-            ->where('length', '>=', 3)
-            ->where('length', '<=', 12)
             ->where($column, '>', 0)
+            ->whereNotIn('word', self::STOP_WORDS)
             ->orderByDesc($column)
-            ->limit(250)
-            ->get();
+            ->limit(100);
+
+        // First pass: prefer words within the requested length range
+        $rows = $baseQuery()
+            ->whereRaw('CHAR_LENGTH(word) >= ?', [$minLength])
+            ->whereRaw('CHAR_LENGTH(word) <= ?', [$maxLength])
+            ->get()
+            ->shuffle();
 
         $names = [];
         foreach ($rows as $row) {
@@ -775,7 +1054,7 @@ Example response format:
         }
 
         $request->validate([
-            'image_url' => 'required|url|max:2000',
+            'image_url' => 'required|string|max:2000',
         ]);
 
         $imageUrl = $request->input('image_url');
@@ -785,14 +1064,30 @@ Example response format:
             $model = config('services.gemini.model', 'gemini-2.0-flash');
             $baseUrl = config('services.gemini.base_url', 'https://generativelanguage.googleapis.com/v1beta');
 
-            // Fetch the image and send as base64 inline_data
-            $imageData = Http::timeout(15)->get($imageUrl);
-            if (!$imageData->successful()) {
-                return response()->json(['error' => 'Could not fetch the image.'], 422);
+            // Fetch the image — support local storage paths as well as external URLs
+            if (str_starts_with($imageUrl, '/storage/')) {
+                $localPath = storage_path('app/public/' . substr($imageUrl, 9));
+                if (!file_exists($localPath)) {
+                    return response()->json(['error' => 'Source image not found on disk.'], 422);
+                }
+                $imageBytes = file_get_contents($localPath);
+                $ext = strtolower(pathinfo($localPath, PATHINFO_EXTENSION));
+                $mimeType = match($ext) {
+                    'webp' => 'image/webp',
+                    'png'  => 'image/png',
+                    'jpg', 'jpeg' => 'image/jpeg',
+                    'svg'  => 'image/svg+xml',
+                    default => 'image/png',
+                };
+            } else {
+                $imageData = Http::timeout(15)->get($imageUrl);
+                if (!$imageData->successful()) {
+                    return response()->json(['error' => 'Could not fetch the image.'], 422);
+                }
+                $imageBytes = $imageData->body();
+                $mimeType = $imageData->header('Content-Type') ?: 'image/png';
             }
 
-            $imageBytes = $imageData->body();
-            $mimeType = $imageData->header('Content-Type') ?: 'image/png';
             $base64Image = base64_encode($imageBytes);
 
             $response = Http::timeout(30)->post(
@@ -840,12 +1135,12 @@ Example response format:
             $description = preg_replace('/^["\']+|["\']+$/', '', $description); // Strip wrapping quotes
 
             // Deduct Gemini vision cost (~$0.0001 per call)
-            CreditTransaction::debit(
-                userId: $request->user()->id,
-                amount: 0.0001,
-                service: 'logo_describe',
-                modelName: $model,
-                description: 'AI logo analysis (Gemini Vision)',
+            $this->debitUserBalance(
+                $request->user(),
+                0.0001,
+                'logo_describe',
+                $model,
+                'AI logo analysis (Gemini Vision)',
             );
 
             return response()->json([
@@ -878,7 +1173,7 @@ Example response format:
             'count' => 'nullable|integer|min:1|max:4',
             'pro' => 'nullable|boolean',
             'pro_size' => 'nullable|integer|in:512,1024,1536',
-            'style' => 'nullable|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego',
+            'style' => 'nullable|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,greetingcard',
             'bg_color' => 'nullable|string|max:20',
             'image_model' => 'nullable|string|in:flux,dalle,recraft',
             'output_format' => 'nullable|string|in:raster,vector',
@@ -916,6 +1211,7 @@ Example response format:
         // Include user's current balance in the estimate response
         $user = $request->user();
         $estimate['credit_balance'] = $user ? (float) $user->credit_balance : 0;
+        unset($estimate['base_cost_total'], $estimate['markup_amount']);
 
         return response()->json($estimate);
     }
@@ -930,11 +1226,11 @@ Example response format:
 
         $request->validate([
             'domain' => 'nullable|string|max:100',
-            'style' => 'required|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,minimalist',
+            'style' => 'required|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,minimalist,greetingcard' . (config('services.logo_custom_prompt_enabled') ? ',custom' : ''),
             'count' => 'nullable|integer|min:1|max:4',
             'total_count' => 'nullable|integer|min:1|max:4',
             'batch_index' => 'nullable|integer|min:0|max:3',
-            'custom_prompt' => 'required|string|min:2|max:500',
+            'custom_prompt' => 'required|string|min:2|max:2000',
             'pro' => 'nullable|boolean',
             'pro_size' => 'nullable|integer|in:512,1024,1536',
             'icon_only' => 'nullable|boolean',
@@ -943,6 +1239,8 @@ Example response format:
             'output_format' => 'nullable|string|in:raster,vector',
             'image_format' => 'nullable|string|in:png,bmp',
             'recraft_substyle' => 'nullable|string|max:60',
+            'logo_shape' => 'nullable|string|in:none,circle,hexagon,triangle,square,pentagon,heart',
+            'logo_detail' => 'nullable|string|in:min,medium,max',
             'color_palette' => 'nullable|array|max:5',
             'color_palette.*' => 'string|max:20',
         ]);
@@ -950,8 +1248,8 @@ Example response format:
         $iconOnly = (bool) $request->input('icon_only', false);
         $domain = $request->input('domain') ? trim($request->input('domain')) : null;
 
-        // Domain is required unless icon-only mode
-        if (!$iconOnly && !$domain) {
+        // Domain is required unless icon-only mode or custom style
+        if (!$iconOnly && !$domain && $style !== 'custom') {
             return response()->json([
                 'error' => 'Domain name is required when Text in Logo is enabled.',
             ], 422);
@@ -962,6 +1260,15 @@ Example response format:
         $totalCount = $request->input('total_count', $imageCount);
         $batchIndex = $request->input('batch_index', 0);
         $customPrompt = $request->input('custom_prompt');
+
+        // ── Trademark / copyright guard ──────────────────────────────────────
+        if ($customPrompt) {
+            $trademarkCheck = \App\Services\TrademarkFilter::check($customPrompt);
+            if (!$trademarkCheck['safe']) {
+                return response()->json(['error' => $trademarkCheck['message']], 422);
+            }
+        }
+
         $isPro = (bool) $request->input('pro', false);
         $proSize = (int) $request->input('pro_size', 1024);
         $bgColor = $request->input('bg_color', 'white');
@@ -970,6 +1277,8 @@ Example response format:
         $imageFormat = $request->input('image_format', 'png');
         $colorPalette = $request->input('color_palette');
         $recraftSubstyle = $request->input('recraft_substyle');
+        $logoShape = $request->input('logo_shape', 'none');
+        $logoDetail = $request->input('logo_detail', 'max');
 
         // DALL-E always produces raster
         if ($imageModel === 'dalle') {
@@ -1053,7 +1362,7 @@ Example response format:
         // Build color palette instruction
         if (!empty($colorPalette) && is_array($colorPalette)) {
             $colorNames = implode(', ', $colorPalette);
-            $colorInstruction = "Use exactly this color palette for the logo artwork and typography: {$colorNames}. These colors are only for the logo elements, NOT the background.";
+            $colorInstruction = "MANDATORY COLOR PALETTE — use ONLY these exact colors for ALL logo artwork: {$colorNames}. Apply these colors strictly. Do not introduce any other colors. The background color is separate and defined below.";
         } else {
             $colorInstruction = null; // Let style defaults apply
         }
@@ -1067,68 +1376,21 @@ Example response format:
                 : 'isolated on a solid white background',
         };
 
-        if ($iconOnly) {
-            // Icon-only mode: no text at all, pure symbol/icon
-            // Use custom element if provided, otherwise use a generic concept hint without the brand name
-            $conceptHint = $customElement ? $customElement : ' A unique abstract symbol.';
-            $noExtraText = " There is absolutely NO text, NO letters, NO words, NO numbers, NO typography anywhere in the image. Zero text of any kind. Pure graphic symbol only.";
+        // Build Flux prompt from JSON template (edit config/flux_prompts.json to change wording)
+        $prompt = \App\Services\FluxPromptBuilder::build(
+            style:            $style,
+            iconOnly:         $iconOnly,
+            concept:          $customElement,
+            colorInstruction: $colorInstruction,
+            bgInstruction:    $bgInstruction,
+            brandUpper:       $brandUpper,
+            detail:           $logoDetail ?? 'max',
+        );
 
-            $profColor = $colorInstruction ?? 'navy blue and gold color palette.';
-            $fantColor = $colorInstruction ?? 'rich emerald green and antique gold color palette.';
-            $futColor = $colorInstruction ?? 'glowing neon cyan and electric purple color palette,';
-            $retroColor = $colorInstruction ?? 'red, green, blue and yellow color palette.';
-
-            $stylePrompts = [
-                'professional' => "A premium corporate icon mark.{$conceptHint} A single bold geometric symbol. Monolithic, thick lines, emblem style, {$profColor} Secure, established, Fortune 500 quality. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no gradients, no cluttered details, avoid photorealism, avoid messy lines. High contrast, professional design, 4k.{$noExtraText}",
-                'fantasy' => "An epic fantasy-themed icon mark.{$conceptHint} A single ornate magical symbol. Elven runes, enchanted forest motifs, mythical creatures, ancient scrollwork, Lord of the Rings inspired aesthetics, {$fantColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no cluttered details, avoid photorealism, avoid messy lines. Epic fantasy design, 4k.{$noExtraText}",
-                'future' => "A futuristic sci-fi icon mark.{$conceptHint} A single sleek angular geometric symbol. Holographic elements, circuit board patterns, space-age aesthetics, {$futColor} starfield accents, advanced technology motifs. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No cluttered details, avoid photorealism, avoid messy lines. Futuristic sci-fi design, 4k.{$noExtraText}",
-                'retro' => "A vibrant retro vector design icon mark.{$conceptHint} Surrounded by a colorful retro sunburst, {$retroColor} Captures the essence of a fun vacation feel, minimalist retro style. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No cluttered details, avoid photorealism. Retro design, 4k.{$noExtraText}",
-                'chrome' => "A premium corporate icon mark.{$conceptHint} A single bold geometric symbol. Monolithic, thick lines, emblem style, {$profColor} Secure, established, Fortune 500 quality. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no gradients, no cluttered details, avoid photorealism, avoid messy lines. High contrast, professional design, 4k.{$noExtraText}",
-                '8bit' => "An epic fantasy-themed icon mark.{$conceptHint} A single ornate magical symbol. Engraved polished gold with beveled edges, intricate filigree and ornamental carvings, glowing blue arcane crystals, ancient metal structures, magical geometric forms, {$fantColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. Fantasy RPG design, 4k.{$noExtraText}",
-                'dotmatrix' => "A stippled dot art icon mark.{$conceptHint} A single bold symbol rendered entirely in stippling technique. {$profColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. Professional dot art design, 4k.{$noExtraText}",
-                'lego' => "A glossy sticker-style icon mark.{$conceptHint} Thick clean outlines, soft shadows, toy plastic material. {$profColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. Sticker design, 4k.{$noExtraText}",
-                'minimalist' => "A minimalist icon mark.{$conceptHint} A single clean, modern symbol using flat design principles. Subtle geometric shapes, {$profColor} Plain or white background. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No gradients, no shadows, no clutter. Visually balanced professional minimalist design, 4k.{$noExtraText}",
-            ];
-        } else {
-            // With brand name text
-            $noExtraText = " The ONLY text in the entire image is \"{$brandUpper}\". Do not add any other words, letters, taglines, slogans, or captions anywhere in the image.";
-
-            $profColor = $colorInstruction ?? 'navy blue and gold color palette.';
-            $fantColor = $colorInstruction ?? 'rich emerald green and antique gold color palette.';
-            $futColor = $colorInstruction ?? 'glowing neon cyan and electric purple color palette,';
-            $retroColor = $colorInstruction ?? 'red, green, blue and yellow color palette.';
-
-            $stylePrompts = [
-                'professional' => "A premium corporate logo. The centerpiece is the word \"{$brandUpper}\" in an elegant, refined custom serif typeface with perfectly spaced letters.{$customElement} Monolithic, thick lines, emblem style, {$profColor} Secure, established, Fortune 500 quality. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no gradients, no cluttered details, avoid photorealism, avoid messy lines. High contrast, professional design, 4k.{$noExtraText}",
-                'fantasy' => "An epic fantasy-themed logo. The centerpiece is the word \"{$brandUpper}\" in an ornate, medieval-inspired custom typeface with elegant serifs and decorative flourishes.{$customElement} Elven runes, enchanted forest motifs, mythical creatures, ancient scrollwork, Lord of the Rings inspired aesthetics, {$fantColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no cluttered details, avoid photorealism, avoid messy lines. Epic fantasy design, 4k.{$noExtraText}",
-                'future' => "A futuristic sci-fi logo. The centerpiece is the word \"{$brandUpper}\" in a sleek, angular, cyberpunk-inspired custom typeface with sharp edges and neon accents.{$customElement} Holographic elements, circuit board patterns, space-age aesthetics, {$futColor} starfield accents, advanced technology motifs. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No cluttered details, avoid photorealism, avoid messy lines. Futuristic sci-fi design, 4k.{$noExtraText}",
-                'retro' => "A vibrant retro vector design logo. The centerpiece is the word \"{$brandUpper}\" in a bold retro typeface.{$customElement} Surrounded by a colorful retro sunburst, {$retroColor} Captures the essence of a fun vacation feel, minimalist retro style. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No cluttered details, avoid photorealism. Retro design, 4k.{$noExtraText}",
-                'chrome' => "A premium corporate logo. The centerpiece is the word \"{$brandUpper}\" in an elegant, refined custom serif typeface with perfectly spaced letters.{$customElement} Monolithic, thick lines, emblem style, {$profColor} Secure, established, Fortune 500 quality. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No shadows, no 3D effects, no gradients, no cluttered details, avoid photorealism, avoid messy lines. High contrast, professional design, 4k.{$noExtraText}",
-                '8bit' => "An epic fantasy-themed logo. The centerpiece is the word \"{$brandUpper}\" in ornate medieval high-fantasy typography with engraved polished gold, beveled edges and filigree.{$customElement} Glowing blue arcane crystals, ancient metal structures, magical geometric forms, {$fantColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. Fantasy RPG design, 4k.{$noExtraText}",
-                'dotmatrix' => "A stippled dot art logo with \"{$brandUpper}\" text.{$customElement} {$profColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. Professional dot art design, 4k.{$noExtraText}",
-                'lego' => "A glossy sticker-style logo with \"{$brandUpper}\" in a decorative banner.{$customElement} Thick clean outlines, soft shadows, toy plastic material. {$profColor} Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. Sticker design, 4k.{$noExtraText}",
-                'minimalist' => "A minimalist logo design with \"{$brandUpper}\" in a stylish sans-serif font.{$customElement} Clean, modern, and simple, using flat design principles. Subtle geometric shapes or symbols, {$profColor} Plain or white background. Clean flat artwork, centered 1:1 square composition, {$bgInstruction}. No gradients, no shadows, no clutter. Visually balanced professional minimalist design, 4k.{$noExtraText}",
-            ];
-        }
-
-        $prompt = $stylePrompts[$style];
-
-        // ── Build a DALL-E-specific prompt (structured, anti-collage format) ──
+        // ── Build a DALL-E-specific prompt from JSON templates ──
         if ($imageModel === 'dalle') {
             $dalleDesc = trim($customPrompt ?? '');
 
-            // Color line
-            $dalleColorLine = !empty($colorPalette) && is_array($colorPalette)
-                ? implode(' and ', $colorPalette)
-                : match($style) {
-                    'fantasy' => 'emerald green and antique gold',
-                    'future'  => 'neon cyan and electric purple',
-                    'retro'   => 'red, green, blue and yellow',
-                    default   => 'navy blue and gold',
-                };
-
-            // Build a descriptive color list for the prompt
-            // DALL-E responds better to named colors + hex than raw hex alone
             if (!empty($colorPalette) && is_array($colorPalette)) {
                 $namedColors = [];
                 foreach ($colorPalette as $hex) {
@@ -1136,10 +1398,16 @@ Example response format:
                 }
                 $dalleColorList = implode(', ', $namedColors);
             } else {
-                $dalleColorList = $dalleColorLine;
+                $dalleColorList = \App\Services\DallePromptBuilder::defaultColors($style);
             }
 
-            // Background for chrome template
+            $dalleBg = match($bgColor) {
+                'black' => 'solid black',
+                'white' => 'solid white',
+                'transparent' => 'transparent',
+                default => str_starts_with($bgColor, '#') ? "solid {$bgColor}" : 'solid white',
+            };
+
             $chromeBg = match($bgColor) {
                 'black' => 'dark black background',
                 'white' => 'pure white background',
@@ -1148,190 +1416,81 @@ Example response format:
                     : 'soft light gray background',
             };
 
-            // Chrome style uses 3D metallic render template
-            if ($style === 'chrome') {
-                // Determine the symbol description
-                $chromeSymbol = $dalleDesc ?: 'logo symbol';
-
-                if ($iconOnly) {
-                    // Icon-only: single 3D object
-                    $prompt = "A high-resolution 3D render of the {$chromeSymbol} made of polished sterling silver with a shiny metallic texture, floating on a {$chromeBg} in a minimalistic studio setup. The logo is captured from a frontal close-up, illuminated by soft diffused studio light with soft shadows, showcasing micro-etched patterns and a sleek and modern ambiance, with a faint geometric lines subtly integrated, rendered in 4K HDR for hyper-detailed clarity.";
-                } else {
-                    // Text ON: symbol + brand name as 3D chrome logo
-                    $prompt = "A high-resolution 3D render of a custom chrome logo featuring a realistic {$chromeSymbol} and the exact word \"{$brandUpper}\".\n\n"
-                        . "The text must read exactly: {$brandUpper}\n"
-                        . "No spelling changes.\n"
-                        . "No missing letters.\n"
-                        . "No extra letters.\n\n"
-                        . "The word {$brandUpper} is a physical 3D extruded object made of polished sterling silver chrome with real thickness and depth.\n\n"
-                        . "Use clean, modern, geometric sans-serif typography.\n\n"
-                        . "Avoid ornamental script, gothic, or decorative fonts.\n\n"
-                        . "The letters must be clear, legible, evenly spaced, and perfectly readable.\n\n"
-                        . "The vehicle and the text share the same polished chrome metallic material.\n\n"
-                        . "{$chromeBg}.\n"
-                        . "Minimal presentation.\n"
-                        . "Soft uniform lighting.\n\n"
-                        . "Ultra-clean professional 3D logo render.\n\n"
-                        . "4K resolution.";
-                }
-            } elseif ($style === 'retro') {
-                // Retro vibrant sunburst style
-                $retroSubject = $dalleDesc ?: ($iconOnly ? 'logo symbol' : "{$brandUpper} logo");
-                $prompt = "A vibrant retro vector design featuring {$retroSubject} on vacation. Surrounded by a colorful retro sunburst with red, green, blue and yellow, the design captures the essence of a fun vacation, on a plain full black background, suitable for t-shirt printing, minimalist retro style";
-                if (!$iconOnly) {
-                    $prompt .= ". The only text in the design is \"{$brandUpper}\".";
-                }
-            } elseif ($style === '8bit') {
-                // 8-bit pixel-art arcade style
-                $eightBitText = $iconOnly ? 'a retro arcade icon' : "the brand name \"{$brandUpper}\"";
-                $prompt = "Design a retro 8-bit pixel-art logo for {$eightBitText}.\n"
-                    . "Style: classic 1980s arcade game title screen, chunky pixel typography, crisp square pixels, limited 16-color palette, high contrast, clean silhouette, readable at small sizes.\n"
-                    . "Include: icon + wordmark, centered composition, transparent or solid single-color background, subtle pixel glow/shadow, no gradients, no anti-aliasing, no blur.\n"
-                    . "Output: vector-like clean edges, branding-ready, multiple variations of colorways and layout, exact text must read \"{$brandUpper}\" with correct spelling.";
-            } elseif ($style === 'dotmatrix') {
-                // Dot matrix stippling art style
-                $dotSubject = $dalleDesc ?: 'an iconic symbol';
-                $prompt = "A highly detailed stippled dot art illustration of {$dotSubject}.\n"
-                    . "Style: Pure stippling technique using only black dots of varying sizes and densities to create shading and depth.\n"
-                    . "Technique: Pointillism, dot work, no lines, no hatching, only circular dots, high-contrast monochromatic artwork.\n"
-                    . "The entire image is composed of thousands of carefully placed dots - smaller dots for lighter areas, larger/denser dots for darker areas.\n"
-                    . "Composition: Centered portrait-style composition, detailed facial features and textures rendered entirely in dots, isolated on pure white background.\n"
-                    . "Quality: Professional engraving-style stipple art, museum-quality pointillism, sharp detailed dot work, 4K resolution.\n"
-                    . "No text, no words, no letters anywhere in the image.";
-            } elseif ($style === 'lego') {
-                // Lego sticker style
-                $legoSubject = $dalleDesc ?: 'cute characters';
-                $legoText = $iconOnly ? '' : "\nText: The text \"{$brandUpper}\" is displayed in a decorative banner or ribbon, using clean rounded typography with thick outlines.";
-                $legoColors = !empty($colorPalette) && is_array($colorPalette) 
-                    ? "\nColors: Use this exact color palette for the characters and design elements: {$dalleColorList}."
-                    : "\nColors: Use vibrant, friendly colors suitable for toy-like sticker characters.";
-                $prompt = "Style: Sticker style with thick clean outlines, soft shadows underneath, and glossy toy plastic material.\n"
-                    . "Inspired by cute LEGO fan art.\n"
-                    . "Minimal detail, smooth surfaces, friendly and wholesome aesthetic.\n"
-                    . "Subject: {$legoSubject} rendered in a simplified, adorable LEGO style with bold black outlines and vibrant glossy colors.\n"
-                    . $legoColors . "\n"
-                    . $legoText . "\n"
-                    . "Composition: Centered composition, 1:1 square ratio, isolated on a pure white background.\n"
-                    . "Quality: Professional LEGO illustration, crisp clean artwork, high contrast, 4K resolution.";
-            } elseif ($style === 'minimalist') {
-                $minimalistSubject = trim($dalleDesc) ?: 'an abstract symbol';
-                $minimalistColors = !empty($colorPalette) && is_array($colorPalette) 
-                    ? "Color palette: {$dalleColorList}."
-                    : "Color palette: navy blue and gray.";
-                
-                if ($iconOnly) {
-                    $prompt = "Design one ultra-minimalist logo icon for {$minimalistSubject}. "
-                        . "Use exactly one simple symbol built from 1-2 geometric primitives only. "
-                        . "Flat vector look, monoline or solid fill, generous negative space, no decoration. "
-                        . $minimalistColors . " "
-                        . "Background: plain white. Composition: centered 1:1. "
-                        . "Hard constraints: NO text, NO letters, NO numbers, NO tagline, NO border badge, NO scene, NO collage, NO multiple options. "
-                        . "Output exactly one clean icon mark.";
-                } else {
-                    $prompt = "Design one ultra-minimalist logo for brand \"{$brandUpper}\". "
-                        . "Concept cue for the icon: {$minimalistSubject}. "
-                        . "Layout rule: one simple geometric icon on the left + one horizontal wordmark on the right. "
-                        . "Typography rule: use a clean sans-serif, uppercase, clear spacing, high legibility. "
-                        . "Text must read EXACTLY \"{$brandUpper}\" with correct spelling and all letters present. "
-                        . "Do not change, split, stylize into symbols, or omit any characters in \"{$brandUpper}\". "
-                        . "The ONLY text allowed is \"{$brandUpper}\". No tagline, no extra words, no hidden letters. "
-                        . $minimalistColors . " "
-                        . "Background: plain white. Flat design only: no gradients, no shadows, no textures, no 3D. "
-                        . "Hard constraints: one logo only, no collage, no grid, no mockup, no busy elements. "
-                        . "Prioritize simplicity, whitespace, and text readability over decoration.";
-                }
-            } else {
-                $prompt = "A high-resolution 3D render of a logo made of polished sterling silver with a shiny metallic texture, floating on a {$chromeBg} in a minimalistic studio setup, rendered in 4K HDR for hyper-detailed clarity.";
-            }
+            $prompt = \App\Services\DallePromptBuilder::build(
+                style: $style,
+                iconOnly: $iconOnly,
+                subject: $dalleDesc,
+                brandUpper: $brandUpper,
+                colorList: $dalleColorList,
+                bgInstruction: $dalleBg,
+                chromeBg: $chromeBg,
+                logoShape: $logoShape,
+                detail: $logoDetail,
+            );
         }
 
         // ── Build a Recraft-specific structured logo prompt (max 1000 chars) ──
         if ($imageModel === 'recraft') {
-            $lines = [];
             $subjectDesc = trim($customPrompt ?? '');
+            $subject     = $subjectDesc ?: ($iconOnly ? 'Abstract geometric symbol' : 'Emblem mark');
 
-            // ── Style + Theme (no need to say "vector" — the endpoint handles that) ──
-            $theme = match($style) {
-                'fantasy' => 'dark fantasy, mythical',
-                'future'  => 'futuristic sci-fi, cyberpunk',
-                'retro'   => 'vibrant retro, colorful sunburst, vacation feel',
-                default   => 'premium corporate, clean',
-            };
-            $lines[] = "Style: Logo, flat minimalist emblem. {$theme}.";
+            $colorDesc = (!empty($colorPalette) && is_array($colorPalette))
+                ? implode(', ', $colorPalette)
+                : \App\Services\RecraftPromptBuilder::defaultColors($style);
 
-            // ── Subject ──
-            if ($iconOnly) {
-                $lines[] = $subjectDesc
-                    ? "Subject: Bold geometric silhouette of {$subjectDesc}. All elements merged into one unified icon."
-                    : 'Subject: Abstract geometric silhouette symbol, one unified icon shape.';
-            } else {
-                $lines[] = $subjectDesc
-                    ? "Subject: Logo with \"{$brandUpper}\" and a geometric silhouette of {$subjectDesc}, merged into one emblem."
-                    : "Subject: Logo with \"{$brandUpper}\" and a geometric silhouette emblem mark.";
-            }
-
-            // ── Silhouette ──
-            $lines[] = 'Silhouette: Single filled shape like a rubber stamp. No internal line-art or contour lines. Features implied only by outer contour. Negative space only as clean cut-outs.';
-
-            // ── Text ──
-            $lines[] = $iconOnly
-                ? 'Text: Zero text, letters, or characters of any kind.'
-                : "Text: Only \"{$brandUpper}\" in clean sans-serif. No taglines or decorative text.";
-
-            // ── Design ──
-            $lines[] = 'Design: Thick monolithic lines, bold chunky shapes, smooth geometric curves. Recognisable at any size.';
-
-            // ── Color ──
-            if (!empty($colorPalette) && is_array($colorPalette)) {
-                $paletteHexes = implode(', ', $colorPalette);
-                $colorDesc = $paletteHexes;
-            } else {
-                $colorDesc = match($style) {
-                    'fantasy' => 'emerald green and antique gold',
-                    'future'  => 'neon cyan and electric purple',
-                    'retro'   => 'red, green, blue and yellow',
-                    default   => 'navy blue and gold',
-                };
-            }
-            $lines[] = "Color: Silhouette uses {$colorDesc}. Colors apply only to the logo shape, not the background.";
-
-            // ── Background ──
             $bgDesc = match($bgColor) {
-                'black' => '#000000 black',
+                'black'       => '#000000',
                 'transparent' => 'transparent',
-                default => str_starts_with($bgColor, '#')
-                    ? $bgColor
-                    : '#FFFFFF white',
+                default       => str_starts_with($bgColor, '#') ? $bgColor : '#FFFFFF',
             };
-            $lines[] = "Background: Solid {$bgDesc}, uniform, no texture or gradient.";
 
-            // ── Composition + Rendering ──
-            $lines[] = 'Composition: Centered 1:1 square, equal breathing room, bilateral symmetry.';
-            $lines[] = 'Rendering: No gradients, shadows, glows, bevels or textures. Flat color fills, clean edges. Production-ready logo mark.';
+            $prompt = \App\Services\RecraftPromptBuilder::build(
+                style:      $style,
+                logoDetail: $logoDetail,
+                logoShape:  $logoShape,
+                iconOnly:   $iconOnly,
+                subject:    $subject,
+                brandUpper: $brandUpper,
+                colorDesc:  $colorDesc,
+                bgDesc:     $bgDesc,
+            );
+        }
 
-            $prompt = implode("\n", $lines);
+        // ── Custom style: bypass all prompt builders, use raw user prompt + palette/bg ──
+        if ($style === 'custom') {
+            $rawCustom = trim($customPrompt ?? '');
+            if ($colorInstruction) {
+                $rawCustom .= "\n" . $colorInstruction;
+            }
+            $bgHint = match($bgColor) {
+                'black'       => 'solid black',
+                'transparent' => 'transparent',
+                default       => str_starts_with($bgColor, '#') ? "solid {$bgColor}" : 'solid white',
+            };
+            $rawCustom .= "\nBackground: {$bgHint}.";
+            $prompt = $rawCustom;
         }
 
         // Determine model name for logging
         if ($imageModel === 'recraft') {
             $formatTag = $outputFormat === 'vector' ? 'vector' : 'raster';
-            $modelName = $isPro ? "recraft-v3-{$formatTag}" : "recraft-v2-{$formatTag}";
+            $modelName = $isPro ? "recraft-v4-{$formatTag}" : "recraft-v2-{$formatTag}";
             $imageSize = '1024x1024';
             $requestType = $isPro
-                ? ($outputFormat === 'vector' ? 'logo_recraft_v3' : 'logo_recraft_v3_raster')
+                ? ($outputFormat === 'vector' ? 'logo_recraft_v4' : 'logo_recraft_v4_raster')
                 : ($outputFormat === 'vector' ? 'logo_recraft_vector' : 'logo_recraft_raster');
         } elseif ($imageModel === 'dalle') {
-            $modelName = 'dall-e-3';
+            $modelName = 'gpt-image-1.5';
             $imageSize = '1024x1024';
             $requestType = $isPro ? 'logo_dalle_hd' : 'logo_dalle';
         } else {
-            $modelName = $isPro ? 'fal-ai/flux-pro/v1.1' : 'fal-ai/flux/schnell';
+            $modelName = $isPro ? 'fal-ai/flux-2-flex' : 'fal-ai/flux/schnell';
             $imageSize = $isPro ? $proSize . 'x' . $proSize : '512x512';
             $requestType = $isPro ? 'logo_pro' : 'logo_generation';
         }
 
         $logoRequest = AiLogoRequest::create([
-            'user_id' => $request->user()->id,
+            'user_id' => $this->isAdmin($user) ? null : $user->id,
             'domain' => $domain,
             'style' => $style . ($isPro ? '_pro' : ''),
             'model' => $modelName,
@@ -1343,10 +1502,10 @@ Example response format:
 
         // Create price log entry (pending) - log actual count for this request, note batch in preview
         $priceLog = AiLogoPrice::create([
-            'user_id' => $request->user()->id,
+            'user_id' => $this->isAdmin($user) ? null : $user->id,
             'ai_logo_request_id' => $logoRequest->id,
             'session' => session()->getId(),
-            'user_email' => $request->user()->email,
+            'user_email' => $user->email,
             'request_type' => $requestType,
             'model_name' => $modelName,
             'image_count' => $imageCount,
@@ -1359,628 +1518,113 @@ Example response format:
             'prompt_preview' => substr($prompt, 0, 240) . ($totalCount > 1 ? " [img " . ($batchIndex + 1) . "/{$totalCount}]" : ''),
         ]);
 
-        $startTime = microtime(true);
-
-        try {
-            if ($imageModel === 'recraft') {
-                // ── Recraft path (vector or raster) ──
-                $recraftBaseUrl = config('services.recraft.base_url', 'https://external.api.recraft.ai');
-                $recraftKey = config('services.recraft.key');
-                $allImages = [];
-                $isVector = $outputFormat === 'vector';
-
-                // Build Recraft-specific prompt (simpler, Recraft handles generation natively)
-                $recraftPrompt = $prompt;
-
-                // Choose style and endpoint based on output format and model
-                // Vector always uses vector_illustration; raster uses digital_illustration for both v2/v3
-                $recraftStyle = $isVector
-                    ? 'vector_illustration'
-                    : 'digital_illustration';
-                $recraftEndpoint = $isVector
-                    ? '/v1/images/generations/vector'
-                    : '/v1/images/generations/raster';
-
-                // Build request body
-                $recraftBody = [
-                    'prompt' => $recraftPrompt,
-                    'style' => $recraftStyle,
-                    'model' => $isPro ? 'recraftv3' : 'recraftv2',
-                    'n' => $imageCount,
-                    'size' => '1024x1024',
-                    'response_format' => 'url',
-                ];
-
-                // Add substyle if provided
-                if (!empty($recraftSubstyle)) {
-                    $recraftBody['substyle'] = $recraftSubstyle;
-                }
-
-                // Add color controls if a palette is selected
-                if (!empty($colorPalette) && is_array($colorPalette)) {
-                    $recraftColors = [];
-                    foreach ($colorPalette as $hex) {
-                        $hex = ltrim($hex, '#');
-                        $r = hexdec(substr($hex, 0, 2));
-                        $g = hexdec(substr($hex, 2, 2));
-                        $b = hexdec(substr($hex, 4, 2));
-                        $recraftColors[] = ['rgb' => [$r, $g, $b]];
-                    }
-                    $recraftBody['controls'] = ['colors' => $recraftColors];
-                }
-
-                // Add no_text control for icon-only mode (V3 only)
-                if ($iconOnly && $isPro) {
-                    $recraftBody['controls'] = array_merge($recraftBody['controls'] ?? [], ['no_text' => true]);
-                }
-
-                // Add background color control
-                if ($bgColor !== 'white') {
-                    $bgHex = match($bgColor) {
-                        'black' => '#000000',
-                        'transparent' => null,
-                        default => str_starts_with($bgColor, '#') ? $bgColor : null,
-                    };
-                    if ($bgHex) {
-                        $hex = ltrim($bgHex, '#');
-                        $r = hexdec(substr($hex, 0, 2));
-                        $g = hexdec(substr($hex, 2, 2));
-                        $b = hexdec(substr($hex, 4, 2));
-                        $recraftBody['controls'] = array_merge(
-                            $recraftBody['controls'] ?? [],
-                            ['background_color' => ['rgb' => [$r, $g, $b]]]
-                        );
-                    }
-                }
-
-                $recraftUrl = $recraftBaseUrl . $recraftEndpoint;
-                $recraftResponse = $this->httpWithResolvedDns($recraftUrl, [
-                    'Authorization' => 'Bearer ' . $recraftKey,
-                    'Content-Type' => 'application/json',
-                ])->retry(3, 2000, function (\Exception $e, \Illuminate\Http\Client\PendingRequest $request) {
-                    // Retry on connection errors and 5xx server errors
-                    return $e instanceof \Illuminate\Http\Client\ConnectionException
-                        || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
-                })->timeout(120)->post($recraftUrl, $recraftBody);
-
-                $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
-
-                if (!$recraftResponse->successful()) {
-                    $recraftError = $recraftResponse->json('error.message')
-                        ?? $recraftResponse->json('detail')
-                        ?? $recraftResponse->json('message')
-                        ?? 'Unknown Recraft error (HTTP ' . $recraftResponse->status() . ')';
-
-                    \Log::error('Recraft ' . $outputFormat . ' generation failed', [
-                        'status' => $recraftResponse->status(),
-                        'body' => substr($recraftResponse->body(), 0, 500),
-                    ]);
-
-                    $logoRequest->update([
-                        'status' => 'failed',
-                        'fal_status_code' => $recraftResponse->status(),
-                        'error_message' => $recraftError,
-                        'response_time_ms' => $elapsedMs,
-                    ]);
-                    $priceLog->update(['status' => 'failed', 'response_time_ms' => $elapsedMs]);
-
-                    return response()->json(['error' => $this->friendlyErrorMessage('Recraft ' . $outputFormat . ' generation failed: ' . $recraftError)], 500);
-                }
-
-                $recraftData = $recraftResponse->json();
-                $recraftCreditsUsed = $recraftData['credits'] ?? null;
-
-                foreach ($recraftData['data'] ?? [] as $recraftImg) {
-                    $imgUrl = $recraftImg['url'] ?? null;
-                    if ($imgUrl) {
-                        $imgEntry = [
-                            'url' => $imgUrl,
-                            'image_id' => $recraftImg['image_id'] ?? null,
-                        ];
-                        // Vector endpoint returns SVG natively — strip BG programmatically
-                        if ($isVector) {
-                            try {
-                                $svgContent = Http::timeout(15)->get($imgUrl)->body();
-                                if ($svgContent && str_contains($svgContent, '<svg')) {
-                                    $cleanedSvg = $this->removeSvgBackground($svgContent);
-                                    if ($cleanedSvg) {
-                                        // Store the cleaned SVG as a data URI so we keep the transparent version
-                                        $imgEntry['url'] = 'data:image/svg+xml;base64,' . base64_encode($cleanedSvg);
-                                        $imgEntry['svg_url'] = $imgEntry['url'];
-                                        $imgEntry['transparent'] = true;
-                                    } else {
-                                        $imgEntry['svg_url'] = $imgUrl;
-                                    }
-                                } else {
-                                    $imgEntry['svg_url'] = $imgUrl;
-                                }
-                            } catch (\Exception $e) {
-                                \Log::warning('SVG background strip failed', ['error' => $e->getMessage()]);
-                                $imgEntry['svg_url'] = $imgUrl;
-                            }
-                        }
-                        $allImages[] = $imgEntry;
-                    }
-                }
-
-                $data = ['images' => $allImages, 'seed' => null];
-                $responseStatus = count($allImages) > 0 ? 200 : 500;
-
-                if (count($allImages) === 0) {
-                    $logoRequest->update([
-                        'status' => 'failed',
-                        'error_message' => 'Recraft returned no images',
-                        'response_time_ms' => $elapsedMs,
-                    ]);
-                    $priceLog->update(['status' => 'failed', 'response_time_ms' => $elapsedMs]);
-                    return response()->json(['error' => 'Recraft returned no ' . $outputFormat . ' images. Please try again.'], 500);
-                }
-
-            } elseif ($imageModel === 'dalle') {
-                // ── DALL-E 3 path ──
-                $dalleQuality = $isPro ? 'hd' : 'standard';
-                $dalleSize = '1024x1024';
-                $allImages = [];
-
-                // DALL-E 3 only supports n=1, so loop for each image
-                for ($i = 0; $i < $imageCount; $i++) {
-                    $dalleUrl = config('services.openai.base_url') . '/images/generations';
-                    $dalleResponse = $this->httpWithResolvedDns($dalleUrl, [
-                        'Authorization' => 'Bearer ' . config('services.openai.api_key'),
-                        'Content-Type' => 'application/json',
-                    ])->retry(3, 2000, function (\Exception $e, \Illuminate\Http\Client\PendingRequest $request) {
-                        // Retry on connection errors and 5xx server errors
-                        return $e instanceof \Illuminate\Http\Client\ConnectionException
-                            || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
-                    })->timeout(120)->post($dalleUrl, [
-                        'model' => 'dall-e-3',
-                        'prompt' => $prompt,
-                        'n' => 1,
-                        'size' => $dalleSize,
-                        'quality' => $dalleQuality,
-                        'response_format' => 'url',
-                    ]);
-
-                    if ($dalleResponse->successful()) {
-                        $dalleData = $dalleResponse->json();
-                        foreach ($dalleData['data'] ?? [] as $dImg) {
-                            $allImages[] = ['url' => $dImg['url'], 'revised_prompt' => $dImg['revised_prompt'] ?? null];
-                        }
-                    } else {
-                        $errJson = $dalleResponse->json();
-                        $errMsg = $errJson['error']['message'] ?? '';
-                        $errType = $errJson['error']['type'] ?? '';
-
-                        // Content filter — return immediately with a friendly message
-                        if (str_contains($errMsg, 'content filters') || str_contains($errType, 'content_policy')) {
-                            $logoRequest->update([
-                                'status' => 'failed',
-                                'error_message' => 'Content policy violation',
-                                'response_time_ms' => (int) ((microtime(true) - $startTime) * 1000),
-                            ]);
-                            $priceLog->update(['status' => 'failed', 'response_time_ms' => (int) ((microtime(true) - $startTime) * 1000)]);
-                            return response()->json([
-                                'error' => 'Your prompt was flagged by the AI safety filter. Please rephrase your description and try again — avoid violent, sexual, or trademarked content.',
-                            ], 422);
-                        }
-
-                        // Billing limit — return immediately with a friendly message
-                        if (str_contains($errMsg, 'Billing hard limit') || str_contains($errMsg, 'billing')) {
-                            $logoRequest->update([
-                                'status' => 'failed',
-                                'error_message' => 'DALL-E service unavailable',
-                                'response_time_ms' => (int) ((microtime(true) - $startTime) * 1000),
-                            ]);
-                            $priceLog->update(['status' => 'failed', 'response_time_ms' => (int) ((microtime(true) - $startTime) * 1000)]);
-                            return response()->json([
-                                'error' => 'DALL-E 3 is temporarily unavailable. Please use another model.',
-                            ], 503);
-                        }
-
-                        \Log::warning('DALL-E image ' . ($i + 1) . ' failed', [
-                            'status' => $dalleResponse->status(),
-                            'body' => substr($dalleResponse->body(), 0, 500),
-                        ]);
-                    }
-                }
-
-                $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
-                $data = ['images' => $allImages, 'seed' => null];
-                $responseStatus = count($allImages) > 0 ? 200 : 500;
-
-                if (count($allImages) === 0) {
-                    $lastBody = isset($dalleResponse) ? $dalleResponse->body() : 'No response';
-                    $dalleError = 'All DALL-E image generations failed';
-                    if (isset($dalleResponse)) {
-                        $errJson = $dalleResponse->json();
-                        $dalleError = $errJson['error']['message'] ?? $dalleError;
-                    }
-                    $logoRequest->update([
-                        'status' => 'failed',
-                        'error_message' => $dalleError,
-                        'response_time_ms' => $elapsedMs,
-                    ]);
-                    $priceLog->update(['status' => 'failed', 'response_time_ms' => $elapsedMs]);
-                    return response()->json(['error' => $this->friendlyErrorMessage('Failed to generate DALL-E logos: ' . $dalleError)], 500);
-                }
-            } elseif ($isPro) {
-                // Flux Pro v1.1 only supports num_images=1, so loop for each image
-                $endpoint = 'https://fal.run/fal-ai/flux-pro/v1.1';
-                $allImages = [];
-                for ($i = 0; $i < $imageCount; $i++) {
-                    $proResponse = $this->httpWithResolvedDns($endpoint, [
-                        'Authorization' => 'Key ' . config('services.fal.key'),
-                        'Content-Type' => 'application/json',
-                    ])->retry(3, 3000, function (\Exception $e, \Illuminate\Http\Client\PendingRequest $request) {
-                        return $e instanceof \Illuminate\Http\Client\ConnectionException
-                            || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
-                    })->timeout(120)->post($endpoint, [
-                        'prompt' => $prompt,
-                        'image_size' => [
-                            'width' => $proSize,
-                            'height' => $proSize,
-                        ],
-                        'num_images' => 1,
-                        'num_inference_steps' => 28,
-                        'safety_tolerance' => 5,
-                        'sync_mode' => true,
-                    ]);
-
-                    if ($proResponse->successful()) {
-                        $proData = $proResponse->json();
-                        $proImages = $proData['images'] ?? [];
-                        foreach ($proImages as $pImg) {
-                            $allImages[] = $pImg;
-                        }
-                    } else {
-                        \Log::warning('PRO image ' . ($i + 1) . ' failed', [
-                            'status' => $proResponse->status(),
-                            'body' => substr($proResponse->body(), 0, 500),
-                        ]);
-                    }
-                }
-
-                // Build a synthetic response-like structure
-                $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
-                $data = ['images' => $allImages, 'seed' => null];
-                $responseStatus = count($allImages) > 0 ? 200 : 500;
-
-                if (count($allImages) === 0) {
-                    $logoRequest->update([
-                        'status' => 'failed',
-                        'error_message' => 'All PRO image generations failed',
-                        'response_time_ms' => $elapsedMs,
-                    ]);
-                    $priceLog->update(['status' => 'failed', 'response_time_ms' => $elapsedMs]);
-                    return response()->json(['error' => 'Failed to generate PRO logos. Please try again.'], 500);
-                }
-            } else {
-                $endpoint = 'https://fal.run/fal-ai/flux/schnell';
-                $response = $this->httpWithResolvedDns($endpoint, [
-                    'Authorization' => 'Key ' . config('services.fal.key'),
-                    'Content-Type' => 'application/json',
-                ])->retry(3, 3000, function (\Exception $e, \Illuminate\Http\Client\PendingRequest $request) {
-                    return $e instanceof \Illuminate\Http\Client\ConnectionException
-                        || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
-                })->timeout(120)->post($endpoint, [
-                    'prompt' => $prompt,
-                    'image_size' => [
-                        'width' => 512,
-                        'height' => 512,
-                    ],
-                    'num_images' => $imageCount,
-                    'num_inference_steps' => 8,
-                    'guidance_scale' => 3.5,
-                    'sync_mode' => true,
-                ]);
-
-                $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
-
-                if (!$response->successful()) {
-                    \Log::error('Fal.ai logo generation failed', [
-                        'status' => $response->status(),
-                        'body' => $response->body(),
-                    ]);
-                    $falError = $response->json('detail') ?? $response->json('message') ?? 'Unknown error';
-
-                    $logoRequest->update([
-                        'status' => 'failed',
-                        'fal_status_code' => $response->status(),
-                        'error_message' => $falError,
-                        'response_time_ms' => $elapsedMs,
-                    ]);
-
-                    $priceLog->update([
-                        'status' => 'failed',
-                        'response_time_ms' => $elapsedMs,
-                    ]);
-
-                    return response()->json([
-                        'error' => 'Failed to generate logo: ' . $falError,
-                    ], 500);
-                }
-
-                $data = $response->json();
-                $responseStatus = $response->status();
-            }
-            $images = $data['images'] ?? [];
-            $seed = $data['seed'] ?? null;
-
-            // Extract URLs for DB storage (keep base64 data URIs temporarily;
-            // they'll be redacted by the nightly logos:redact-base64 command)
-            $imageUrls = [];
-            foreach ($images as &$img) {
-                $url = is_array($img) ? ($img['url'] ?? '') : (string) $img;
-                $imageUrls[] = $url;
-            }
-            unset($img);
-
-            // NOTE: Local storage now happens AFTER bg removal & vectorization (see below)
-
-            // Skip post-processing for Recraft (native vector output, bg handled server-side)
-            if ($imageModel !== 'recraft') {
-                // If transparent or custom color background, remove background via birefnet
-                $needsBgRemoval = ($bgColor === 'transparent' || str_starts_with($bgColor, '#'));
-            if ($needsBgRemoval) {
-                $falKey = config('services.fal.key');
-                foreach ($images as $i => &$img) {
-                    $imgUrl = is_array($img) ? ($img['url'] ?? '') : (string) $img;
-                    if (!$imgUrl || str_starts_with($imgUrl, 'data:')) continue;
-
-                    try {
-                        $birefnetUrl = 'https://fal.run/fal-ai/birefnet';
-                        $bgResponse = $this->httpWithResolvedDns($birefnetUrl, [
-                            'Authorization' => 'Key ' . $falKey,
-                            'Content-Type' => 'application/json',
-                        ])->retry(3, 2000, function (\Exception $e, \Illuminate\Http\Client\PendingRequest $request) {
-                            return $e instanceof \Illuminate\Http\Client\ConnectionException
-                                || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
-                        })->timeout(60)->post($birefnetUrl, [
-                            'image_url' => $imgUrl,
-                            'model' => 'General Use (Light)',
-                            'operating_resolution' => '1024x1024',
-                            'output_format' => 'png',
-                        ]);
-
-                        if ($bgResponse->successful()) {
-                            $bgData = $bgResponse->json();
-                            $transparentUrl = $bgData['image']['url'] ?? null;
-                            if ($transparentUrl) {
-                                if (is_array($img)) {
-                                    $img['url'] = $transparentUrl;
-                                    $img['transparent'] = true;
-                                } else {
-                                    $images[$i] = ['url' => $transparentUrl, 'transparent' => true];
-                                }
-                            }
-                        } else {
-                            \Log::warning('Background removal failed for image ' . $i, [
-                                'status' => $bgResponse->status(),
-                            ]);
-                        }
-                    } catch (\Exception $bgEx) {
-                        \Log::warning('Background removal exception for image ' . $i, [
-                            'error' => $bgEx->getMessage(),
-                        ]);
-                    }
-                }
-                unset($img);
-            }
-
-            // If vector output format selected, vectorize each image to SVG
-            if ($outputFormat === 'vector') {
-                foreach ($images as $i => &$img) {
-                    $rasterUrl = $img['url'] ?? (is_string($img) ? $img : null);
-                    if (!$rasterUrl) continue;
-
-                    try {
-                        $vectorizeUrl = 'https://fal.run/fal-ai/recraft/vectorize';
-                        $svgResponse = $this->httpWithResolvedDns($vectorizeUrl, [
-                            'Authorization' => 'Key ' . config('services.fal.key'),
-                            'Content-Type' => 'application/json',
-                        ])->retry(3, 2000, function (\Exception $e, \Illuminate\Http\Client\PendingRequest $request) {
-                            return $e instanceof \Illuminate\Http\Client\ConnectionException
-                                || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
-                        })->timeout(120)->post($vectorizeUrl, [
-                            'image_url' => $rasterUrl,
-                        ]);
-
-                        if ($svgResponse->successful()) {
-                            $svgData = $svgResponse->json();
-                            $svgUrl = $svgData['image']['url'] ?? ($svgData['images'][0]['url'] ?? null);
-                            if ($svgUrl) {
-                                $img['svg_url'] = $svgUrl;
-                            }
-                        } else {
-                            \Log::warning('SVG vectorization failed for image ' . $i, [
-                                'status' => $svgResponse->status(),
-                                'body' => $svgResponse->body(),
-                            ]);
-                        }
-                    } catch (\Exception $svgEx) {
-                        \Log::warning('SVG vectorization exception for image ' . $i, [
-                            'error' => $svgEx->getMessage(),
-                        ]);
-                    }
-                }
-                unset($img);
-            }
-            } // end if ($imageModel !== 'recraft')
-
-            // Persist ALL generated images to local storage AFTER all transformations
-            // (bg removal, vectorization). This ensures we store the final processed images.
-            $storedImageUrls = [];
-            $storedImagePaths = [];
-            foreach ($images as $idx => &$img) {
-                // For vector logos, prefer the SVG URL
-                $imgUrl = null;
-                if (is_array($img)) {
-                    $imgUrl = $img['svg_url'] ?? $img['url'] ?? '';
-                } else {
-                    $imgUrl = (string) $img;
-                }
-
-                if (!$imgUrl || str_starts_with($imgUrl, 'data:') || $imgUrl === '[base64-omitted]') {
-                    continue;
-                }
-
-                $stored = $this->storeRemoteLogoImage(
-                    imageUrl: $imgUrl,
-                    requestId: (int) $logoRequest->id,
-                    userId: (int) $request->user()->id,
-                    domain: $domain,
-                    index: (int) $idx + 1
-                );
-
-                if ($stored) {
-                    $storedImagePaths[] = $stored['path'];
-                    $storedImageUrls[] = $stored['url'];
-                    if (is_array($img)) {
-                        $img['stored_path'] = $stored['path'];
-                        $img['stored_url'] = $stored['url'];
-                    } else {
-                        $img = [
-                            'url' => $imgUrl,
-                            'stored_path' => $stored['path'],
-                            'stored_url' => $stored['url'],
-                        ];
-                    }
-                }
-            }
-            unset($img);
-
-            // Attach seed to each image for PRO consistency
-            $imagesWithSeed = array_map(function ($img) use ($seed) {
-                if (is_array($img)) {
-                    $img['seed'] = $seed;
-                }
-                return $img;
-            }, $images);
-
-            $logoRequest->update([
-                'status' => 'completed',
-                'fal_status_code' => $responseStatus,
-                'seed_number' => is_numeric($seed) ? (int) $seed : null,
-                'storage_type' => !empty($storedImagePaths) ? 'path' : 'url',
-                'image_urls' => !empty($storedImageUrls) ? $storedImageUrls : $imageUrls,
-                'response_time_ms' => $elapsedMs,
-            ]);
-
-            // Update price log with actual cost and completion (charge for actual images in THIS request only)
-            $actualImageCount = count($images);
-            if ($imageModel === 'recraft') {
-                $actualCost = \App\Services\RecraftPricing::estimateLogoCost(
-                    imageCount: $actualImageCount,
-                    size: '1024x1024',
-                    isPro: $isPro,
-                    type: $outputFormat,
-                );
-            } elseif ($imageModel === 'dalle') {
-                $actualCost = AiLogoPrice::estimateDalleCost(
-                    imageCount: $actualImageCount,
-                    resolution: '1024x1024',
-                    quality: $isPro ? 'hd' : 'standard',
-                );
-            } else {
-                $actualCost = AiLogoPrice::estimateCost(
-                    imageCount: $actualImageCount,
-                    isPro: $isPro,
-                    proSize: $proSize,
-                    style: $style,
-                    bgColor: $bgColor,
-                    outputFormat: $outputFormat,
-                );
-            }
-            $priceLog->update([
-                'status' => 'completed',
-                'image_count' => $actualImageCount,
-                'actual_cost_usd' => $actualCost['estimated_cost_usd'],
-                'response_time_ms' => $elapsedMs,
-            ]);
-
-            // Deduct actual cost from user's credit balance
-            $totalCost = (float) $actualCost['estimated_cost_usd'];
-            if ($totalCost > 0) {
-                $breakdown = $actualCost['breakdown'] ?? [];
-                CreditTransaction::debit(
-                    userId: $request->user()->id,
-                    amount: $totalCost,
-                    service: 'logo_generation',
-                    modelName: $modelName,
-                    description: $domain ? "{$actualImageCount} logo(s) for {$domain}" : "{$actualImageCount} icon-only logo(s)",
-                    metadata: [
-                        'domain' => $domain,
-                        'style' => $style,
-                        'image_count' => $actualImageCount,
-                        'resolution' => $imageModel === 'recraft' ? '1024x1024' : ($imageModel === 'dalle' ? '1024x1024' : ($isPro ? "{$proSize}x{$proSize}" : '512x512')),
-                        'pro' => $isPro,
-                        'icon_only' => $iconOnly,
-                        'bg_color' => $bgColor,
-                        'image_model' => $imageModel,
-                        'breakdown' => $breakdown,
-                    ],
-                );
-            }
-
-            // Refresh user balance after debit
-            $user->refresh();
-
-            return response()->json([
-                'logo_request_id' => (int) $logoRequest->id,
-                'images' => $imagesWithSeed,
+        // ── Dispatch the generation job to the queue ──
+        \App\Jobs\GenerateLogoJob::dispatch(
+            userId: $this->isAdmin($user) ? 0 : $user->id,
+            adminId: $this->isAdmin($user) ? $user->id : null,
+            logoRequestId: $logoRequest->id,
+            priceLogId: $priceLog->id,
+            params: [
+                'image_model' => $imageModel,
+                'output_format' => $outputFormat,
+                'is_pro' => $isPro,
+                'pro_size' => $proSize,
+                'image_count' => $imageCount,
                 'prompt' => $prompt,
-                'seed' => $seed,
                 'bg_color' => $bgColor,
-                'credit_balance' => (float) $user->credit_balance,
-                'cost' => [
-                    'image_count' => $actualImageCount,
-                    'cost_per_image' => $costEstimate['cost_per_image'],
-                    'total_cost' => $actualCost['estimated_cost_usd'],
-                ],
-            ]);
-        } catch (\Exception $e) {
-            $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
+                'domain' => $domain,
+                'style' => $style,
+                'icon_only' => $iconOnly,
+                'color_palette' => $colorPalette,
+                'recraft_substyle' => $recraftSubstyle,
+                'total_count' => $totalCount,
+                'cost_per_image' => $costPerImage,
+                'model_name' => $modelName,
+                'logo_shape' => $logoShape,
+                'logo_detail' => $logoDetail,
+            ],
+        );
 
-            // Log connection errors separately for monitoring
-            if ($e instanceof \Illuminate\Http\Client\ConnectionException) {
-                \Log::error('Logo generation connection error - NO CHARGE', [
-                    'message' => $e->getMessage(),
-                    'user_id' => $request->user()->id,
-                    'image_model' => $imageModel ?? 'unknown',
-                    'elapsed_ms' => $elapsedMs,
-                ]);
-            } else {
-                \Log::error('Logo generation error - NO CHARGE', [
-                    'message' => $e->getMessage(),
-                    'user_id' => $request->user()->id,
-                    'trace' => $e->getTraceAsString(),
-                ]);
-            }
+        return response()->json([
+            'logo_request_id' => (int) $logoRequest->id,
+            'status' => 'queued',
+            'message' => 'Logo generation has been queued. Poll /domain-search/logo-status/' . $logoRequest->id . ' for results.',
+            'credit_balance' => (float) $user->credit_balance,
+            'estimated_cost' => $estimatedCostForThisImage,
+        ]);
+    }
 
-            try {
-                $logoRequest->update([
-                    'status' => 'error',
-                    'error_message' => $e->getMessage(),
-                    'response_time_ms' => $elapsedMs,
-                ]);
-            } catch (\Throwable $_) {}
+    /**
+     * Poll the status of a queued logo generation job.
+     *
+     * Returns one of:
+     *  - { status: "pending"|"processing" }   → keep polling
+     *  - { status: "completed", ... }          → job done, here are your images
+     *  - { status: "failed"|"error", error }   → job failed, stop polling
+     */
+    public function logoStatus(Request $request, AiLogoRequest $logoRequest)
+    {
+        $currentUser = $request->user();
 
-            try {
-                $priceLog->update([
-                    'status' => 'error',
-                    'response_time_ms' => $elapsedMs,
-                ]);
-            } catch (\Throwable $_) {}
+        // Admins can view any logo request; regular users only see their own
+        if (!$currentUser) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+        if (!$this->isAdmin($currentUser) && $logoRequest->user_id !== $currentUser->id) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
 
-            // Provide specific error message for connection failures
-            $userMessage = $e instanceof \Illuminate\Http\Client\ConnectionException
-                ? 'Unable to connect to the AI service. Please try again in a moment. Your account was not charged.'
-                : $this->friendlyErrorMessage('Logo generation failed: ' . $e->getMessage());
+        $status = $logoRequest->status;
 
-            return response()->json([
-                'error' => $userMessage,
-                'credit_balance' => (float) $request->user()->credit_balance,
-            ], 500);
+        if (in_array($status, ['pending', 'processing'])) {
+            return response()->json(['status' => $status]);
+        }
+
+        if ($status === 'completed') {
+            $resultData = $logoRequest->result_data
+                ? json_decode($logoRequest->result_data, true)
+                : null;
+
+            // Refresh user balance
+            $currentUser->refresh();
+
+            return response()->json(array_merge([
+                'status' => 'completed',
+                'logo_request_id' => (int) $logoRequest->id,
+                'credit_balance' => (float) $currentUser->credit_balance,
+            ], $resultData ?? []));
+        }
+
+        // failed or error
+        return response()->json([
+            'status' => $status,
+            'error' => $logoRequest->error_message ?? 'Logo generation failed.',
+            'credit_balance' => (float) $currentUser->credit_balance,
+        ]);
+    }
+
+    private function isAdmin(?object $user): bool
+    {
+        return $user instanceof Admin;
+    }
+
+    private function debitUserBalance(
+        \Illuminate\Foundation\Auth\User|Admin $user,
+        float $amount,
+        string $service,
+        string $modelName,
+        string $description,
+    ): void {
+        if ($user instanceof Admin) {
+            $user->debitBalance($amount);
+        } else {
+            CreditTransaction::debit(
+                userId: $user->id,
+                amount: $amount,
+                service: $service,
+                modelName: $modelName,
+                description: $description,
+            );
         }
     }
 
@@ -2826,12 +2470,12 @@ Example response format:
             ]);
 
             // Deduct cost from credit balance
-            CreditTransaction::debit(
-                userId: $request->user()->id,
-                amount: $cost,
-                service: 'logo_bg_removal',
-                modelName: 'recraft/removeBackground',
-                description: 'Logo background removal',
+            $this->debitUserBalance(
+                $request->user(),
+                $cost,
+                'logo_bg_removal',
+                'recraft/removeBackground',
+                'Logo background removal',
             );
 
             return response()->json([
@@ -2857,47 +2501,6 @@ Example response format:
                 'error' => $userMessage,
             ], 500);
         }
-    }
-
-    /**
-     * Build an HTTP client with pre-resolved DNS to work around Docker Desktop DNS issues.
-     *
-     * Docker Desktop's internal DNS resolver (127.0.0.11) can return stale results
-     * after the first request, causing "Connection refused" errors on subsequent
-     * calls to the same hostname. By resolving the hostname upfront via PHP's
-     * gethostbyname() (which uses the system resolver / configured DNS servers)
-     * and passing it via CURLOPT_RESOLVE, we bypass Docker's DNS entirely.
-     *
-     * @param  string  $url  The full URL being requested (e.g. https://fal.run/fal-ai/flux/schnell)
-     * @param  array   $headers  Headers to attach to the request
-     * @return \Illuminate\Http\Client\PendingRequest
-     */
-    private function httpWithResolvedDns(string $url, array $headers = []): \Illuminate\Http\Client\PendingRequest
-    {
-        $parsed = parse_url($url);
-        $host = $parsed['host'] ?? '';
-        $port = $parsed['port'] ?? ($parsed['scheme'] === 'https' ? 443 : 80);
-
-        $curlOptions = [
-            CURLOPT_FRESH_CONNECT => true,
-            CURLOPT_FORBID_REUSE  => true,
-        ];
-
-        // Pre-resolve hostname and pass to curl to bypass Docker's DNS
-        if ($host) {
-            $cacheKey = 'dns_resolve_' . $host;
-            $ip = Cache::remember($cacheKey, 300, function () use ($host) {
-                $resolved = gethostbyname($host);
-                // gethostbyname returns the hostname unchanged if resolution fails
-                return ($resolved !== $host) ? $resolved : null;
-            });
-
-            if ($ip) {
-                $curlOptions[CURLOPT_RESOLVE] = ["{$host}:{$port}:{$ip}"];
-            }
-        }
-
-        return Http::withHeaders($headers)->withOptions(['curl' => $curlOptions]);
     }
 
     /**

@@ -1,5 +1,10 @@
 <?php
 
+// Ensure files written by PHP (view cache, config cache, etc.) are always
+// world-writable. This prevents permission errors when artisan runs as root
+// (via `sail artisan`) and the sail web process later tries to overwrite them.
+umask(0000);
+
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -11,6 +16,10 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        $middleware->alias([
+            'admin' => \App\Http\Middleware\EnsureIsAdmin::class,
+        ]);
+
         $middleware->validateCsrfTokens(except: [
             '/ai/chat',
             '/ai/sections',

@@ -54,6 +54,19 @@ class Logos extends Page
             ->send();
     }
 
+    public function toggleShowcase(int $id): void
+    {
+        $logo = AiLogoRequest::find($id);
+        if (!$logo) return;
+
+        $logo->update(['is_showcase' => !$logo->is_showcase]);
+
+        Notification::make()
+            ->title($logo->is_showcase ? 'Added to showcase' : 'Removed from showcase')
+            ->success()
+            ->send();
+    }
+
     public function getViewData(): array
     {
         $query = AiLogoRequest::query()
@@ -72,6 +85,10 @@ class Logos extends Page
 
         if ($this->filterFavourites === 'favourites') {
             $query->where('is_favourited', true);
+        }
+
+        if ($this->filterFavourites === 'showcase') {
+            $query->where('is_showcase', true);
         }
 
         $logos = $query->orderByDesc('created_at')->paginate(24);
@@ -107,6 +124,7 @@ class Logos extends Page
                     'domain' => $logo->domain,
                     'style' => $logo->style,
                     'is_favourited' => (bool) $logo->is_favourited,
+                    'is_showcase' => (bool) $logo->is_showcase,
                     'size_bytes' => $sizeBytes,
                     'size_human' => $sizeBytes ? $this->humanFileSize($sizeBytes) : null,
                     'created_at' => $logo->created_at,

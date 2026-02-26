@@ -98,7 +98,6 @@ class NamecheapClient
 
         // Batch uncached domains into chunks of 50 (Namecheap limit)
         $chunks = array_chunk($uncached, self::MAX_DOMAINS_PER_REQUEST);
-        $errors = [];
 
         foreach ($chunks as $chunk) {
             try {
@@ -112,17 +111,58 @@ class NamecheapClient
                     $results[] = $result;
                 }
             } catch (\Throwable $e) {
-                Log::error('Namecheap API error', [
-                    'message' => $e->getMessage(),
-                    'domains' => $chunk,
+                $errMsg = $e->getMessage();
+                Log::warning('Namecheap batch error — retrying individually', [
+                    'message' => $errMsg,
+                    'chunk_size' => count($chunk),
                 ]);
-                $errors[] = $e->getMessage();
+
+                // Retry each domain individually so one bad TLD doesn't kill the whole chunk
+                foreach ($chunk as $domain) {
+                    try {
+                        $single = $this->apiCheck([$domain]);
+                        foreach ($single as $result) {
+                            Cache::put(
+                                "nc-domain:{$result['domain']}",
+                                $result,
+                                now()->addMinutes(self::CACHE_TTL_MINUTES)
+                            );
+                            $results[] = $result;
+                        }
+                    } catch (\Throwable $e2) {
+                        // Namecheap can't check this TLD — try GoDaddy as a fallback
+                        Log::info('Namecheap unsupported TLD, trying GoDaddy', ['domain' => $domain, 'error' => $e2->getMessage()]);
+                        $gdClient = app(GoDaddyClient::class);
+                        if ($gdClient->isConfigured()) {
+                            $gdResults = $gdClient->checkFqdns([$domain]);
+                            foreach ($gdResults['results'] as $result) {
+                                // Store under the Namecheap cache key so future Namecheap calls hit cache too
+                                Cache::put("nc-domain:{$result['domain']}", $result, now()->addMinutes(self::CACHE_TTL_MINUTES));
+                                $results[] = $result;
+                            }
+                        } else {
+                            $tldPart    = str_contains($domain, '.') ? '.' . substr($domain, strpos($domain, '.') + 1) : '';
+                            $placeholder = [
+                                'domain'        => $domain,
+                                'available'     => false,
+                                'taken'         => false,
+                                'for_sale'      => false,
+                                'premium'       => false,
+                                'premium_price' => null,
+                                'tld'           => $tldPart,
+                                'error'         => 'Unsupported TLD',
+                            ];
+                            Cache::put("nc-domain:{$domain}", $placeholder, now()->addMinutes(self::CACHE_TTL_MINUTES));
+                            $results[] = $placeholder;
+                        }
+                    }
+                }
             }
         }
 
         return [
             'results' => $results,
-            'error' => !empty($errors) ? implode('; ', $errors) : null,
+            'error'   => null,
         ];
     }
 
@@ -205,6 +245,99 @@ class NamecheapClient
         }
 
         return $results;
+    }
+
+    /**
+     * Check availability for a flat list of fully-qualified domain names.
+     * Unlike checkAvailability(), this does NOT build a cross product —
+     * it sends exactly the FQDNs you provide, batched in chunks of 50.
+     *
+     * @param  string[]  $fqdns  e.g. ['flash.com', 'nova.ai', 'bolt.net']
+     * @return array{results: array, error: string|null}
+     */
+    public function checkFqdns(array $fqdns): array
+    {
+        $fqdns = array_values(array_filter(array_map('strtolower', $fqdns)));
+
+        if (empty($fqdns)) {
+            return ['results' => [], 'error' => null];
+        }
+
+        $results = [];
+        $uncached = [];
+
+        foreach ($fqdns as $domain) {
+            $cached = Cache::get("nc-domain:{$domain}");
+            if ($cached !== null) {
+                $results[] = $cached;
+            } else {
+                $uncached[] = $domain;
+            }
+        }
+
+        $chunks = array_chunk($uncached, self::MAX_DOMAINS_PER_REQUEST);
+
+        foreach ($chunks as $chunk) {
+            try {
+                $chunkResults = $this->apiCheck($chunk);
+                foreach ($chunkResults as $result) {
+                    Cache::put(
+                        "nc-domain:{$result['domain']}",
+                        $result,
+                        now()->addMinutes(self::CACHE_TTL_MINUTES)
+                    );
+                    $results[] = $result;
+                }
+            } catch (\Throwable $e) {
+                Log::warning('Namecheap checkFqdns batch error — retrying individually', [
+                    'message' => $e->getMessage(),
+                    'chunk_size' => count($chunk),
+                ]);
+
+                foreach ($chunk as $domain) {
+                    try {
+                        $single = $this->apiCheck([$domain]);
+                        foreach ($single as $result) {
+                            Cache::put(
+                                "nc-domain:{$result['domain']}",
+                                $result,
+                                now()->addMinutes(self::CACHE_TTL_MINUTES)
+                            );
+                            $results[] = $result;
+                        }
+                    } catch (\Throwable $e2) {
+                        Log::info('Namecheap checkFqdns unsupported TLD, trying GoDaddy', ['domain' => $domain, 'error' => $e2->getMessage()]);
+                        $gdClient = app(GoDaddyClient::class);
+                        if ($gdClient->isConfigured()) {
+                            $gdResults = $gdClient->checkFqdns([$domain]);
+                            foreach ($gdResults['results'] as $result) {
+                                Cache::put("nc-domain:{$result['domain']}", $result, now()->addMinutes(self::CACHE_TTL_MINUTES));
+                                $results[] = $result;
+                            }
+                        } else {
+                            $tldPart    = str_contains($domain, '.') ? '.' . substr($domain, strpos($domain, '.') + 1) : '';
+                            $placeholder = [
+                                'domain'        => $domain,
+                                'available'     => false,
+                                'taken'         => false,
+                                'for_sale'      => false,
+                                'premium'       => false,
+                                'premium_price' => null,
+                                'tld'           => $tldPart,
+                                'error'         => 'Unsupported TLD',
+                            ];
+                            Cache::put("nc-domain:{$domain}", $placeholder, now()->addMinutes(self::CACHE_TTL_MINUTES));
+                            $results[] = $placeholder;
+                        }
+                    }
+                }
+            }
+        }
+
+        return [
+            'results' => $results,
+            'error'   => null,
+        ];
     }
 
     /**

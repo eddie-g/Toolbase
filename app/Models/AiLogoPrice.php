@@ -52,9 +52,9 @@ class AiLogoPrice extends Model
      * Fallback prices per megapixel (used if API is unreachable).
      */
     private const FALLBACK_PRICES = [
-        'fal-ai/flux/schnell' => ['price' => 0.003, 'unit' => 'megapixels'],
-        'fal-ai/flux-pro/v1.1' => ['price' => 0.04, 'unit' => 'megapixels'],
-        'fal-ai/birefnet' => ['price' => 0.00111, 'unit' => 'compute seconds'],
+        'fal-ai/flux/schnell'  => ['price' => 0.003, 'unit' => 'megapixels'],
+        'fal-ai/flux-2-flex'   => ['price' => 0.05,  'unit' => 'megapixels'],  // FLUX.2 [flex] — upgraded from flux-pro/v1.1 ($0.04)
+        'fal-ai/birefnet'      => ['price' => 0.00111, 'unit' => 'compute seconds'],
         'fal-ai/recraft/vectorize' => ['price' => 0.01, 'unit' => 'images'],
     ];
 
@@ -103,7 +103,7 @@ class AiLogoPrice extends Model
      * Estimate logo generation cost from real fal.ai pricing with 50% markup.
      *
      * @param int    $imageCount  Number of images
-     * @param bool   $isPro       Whether using flux-pro/v1.1
+     * @param bool   $isPro       Whether using flux-2-flex (PRO) or flux/schnell (standard)
      * @param int    $proSize     PRO resolution (512, 1024, 1536) — ignored for Schnell (always 512)
      * @param string $style       Style name ('vector' adds vectorize cost)
      * @param string $bgColor     Background color ('transparent' or hex adds birefnet cost)
@@ -118,7 +118,7 @@ class AiLogoPrice extends Model
         string $outputFormat = 'raster',
     ): array {
         $resolution = $isPro ? $proSize : 512;
-        $modelName = $isPro ? 'flux-pro' : 'flux-schnell';
+        $modelName = $isPro ? 'flux-2-flex' : 'flux-schnell';
         $resolutionStr = "{$resolution}x{$resolution}";
         
         // Try to get pricing from ai_rates table
@@ -131,7 +131,7 @@ class AiLogoPrice extends Model
         $pricing = self::fetchUnitPrices();
         $source = $pricing['source'];
         $prices = $pricing['prices'];
-        $modelId = $isPro ? 'fal-ai/flux-pro/v1.1' : 'fal-ai/flux/schnell';
+        $modelId = $isPro ? 'fal-ai/flux-2-flex' : 'fal-ai/flux/schnell';
         $megapixels = ($resolution * $resolution) / 1_000_000;
         
         // Calculate base generation cost
@@ -205,40 +205,66 @@ class AiLogoPrice extends Model
     }
 
     /**
-     * Estimate cost for DALL-E 3 image generation with 50% markup from ai_rates table.
+     * Estimate cost for GPT Image 1.5 generation with 50% markup from ai_rates table.
+     *
+     * Accepts legacy DALL-E 3 quality names ('standard', 'hd') which are mapped internally
+     * to GPT Image 1.5 tiers ('medium', 'high'). Native tier names ('low', 'medium', 'high')
+     * are also accepted directly.
      */
     public static function estimateDalleCost(
         int $imageCount = 4,
         string $resolution = '1024x1024',
         string $quality = 'standard',
     ): array {
-        // Try to get pricing from ai_rates table
-        $dbRate = \App\Models\AiRate::where('model_name', 'dall-e-3')
-            ->where('model_variant', $quality)
+        // Map legacy DALL-E 3 quality names → GPT Image 1.5 quality tiers
+        $gptQuality = match($quality) {
+            'hd'       => 'high',
+            'standard' => 'medium',
+            default    => $quality, // pass-through for 'low', 'medium', 'high'
+        };
+
+        // Try to get pricing from ai_rates table (gpt-image-1.5 first, fall back to dall-e-3)
+        $dbRate = \App\Models\AiRate::where('model_name', 'gpt-image-1.5')
+            ->where('model_variant', $gptQuality)
             ->where('resolution', $resolution)
             ->where('is_active', true)
             ->first();
-        
-        // Fallback to static pricing with 50% markup if not in database
+
+        if (!$dbRate) {
+            // Backward-compatible fallback: check old dall-e-3 db rates
+            $dbRate = \App\Models\AiRate::where('model_name', 'dall-e-3')
+                ->where('model_variant', $quality)
+                ->where('resolution', $resolution)
+                ->where('is_active', true)
+                ->first();
+        }
+
+        // GPT Image 1.5 base prices (OpenAI standard pricing, per 1 image)
+        // Previous DALL-E 3 prices were: standard 1024x1024=$0.06, hd=$0.12
         if ($dbRate) {
             $baseCost = (float) $dbRate->base_cost_usd;
             $costPerImage = (float) $dbRate->user_cost_usd;
             $markupPercentage = (float) $dbRate->markup_percentage;
         } else {
             $basePrices = [
-                'standard' => [
-                    '1024x1024' => 0.06,
-                    '1024x1792' => 0.12,
-                    '1792x1024' => 0.12,
+                'medium' => [    // was DALL-E 3 'standard' — $0.06 → $0.042
+                    '1024x1024' => 0.042,
+                    '1024x1792' => 0.084,
+                    '1792x1024' => 0.084,
                 ],
-                'hd' => [
-                    '1024x1024' => 0.12,
-                    '1024x1792' => 0.18,
-                    '1792x1024' => 0.18,
+                'high' => [      // was DALL-E 3 'hd' — $0.12 → $0.167
+                    '1024x1024' => 0.167,
+                    '1024x1792' => 0.334,
+                    '1792x1024' => 0.334,
+                ],
+                'low' => [
+                    '1024x1024' => 0.011,
+                    '1024x1792' => 0.022,
+                    '1792x1024' => 0.022,
                 ],
             ];
-            
-            $baseCost = $basePrices[$quality][$resolution] ?? 0.06;
+
+            $baseCost = $basePrices[$gptQuality][$resolution] ?? 0.042;
             $markupPercentage = 50.00;
             $costPerImage = round($baseCost * 1.5, 6); // 50% markup
         }
@@ -249,9 +275,9 @@ class AiLogoPrice extends Model
 
         return [
             'image_count' => $imageCount,
-            'model' => 'dall-e-3',
+            'model' => 'gpt-image-1.5',
             'resolution' => $resolution,
-            'quality' => $quality,
+            'quality' => $gptQuality,
             'cost_per_image' => $costPerImage,
             'estimated_cost_usd' => $totalCost,
             'base_cost_per_image' => $baseCost,

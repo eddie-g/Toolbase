@@ -10,12 +10,13 @@ class RecraftPricing
      * Estimate the cost for a Recraft API call.
      *
      * @param string $type  'raster' or 'vector'
-     * @param string $version 'v3', 'v2', or 'tools'
+     * @param string $version 'v4', 'v3', 'v2', or 'tools'
      * @return array{units: int, usd: float}
      */
-    public static function estimate(string $type = 'raster', string $version = 'v3'): array
+    public static function estimate(string $type = 'raster', string $version = 'v4'): array
     {
         $map = [
+            'v4' => ['raster' => 40, 'vector' => 80],
             'v3' => ['raster' => 40, 'vector' => 80],
             'v2' => ['raster' => 22, 'vector' => 44],
             'tools' => ['vectorize' => 10, 'remove_bg' => 10],
@@ -40,8 +41,8 @@ class RecraftPricing
      */
     public static function estimateLogoCost(int $imageCount = 1, string $size = '1024x1024', bool $isPro = false, string $type = 'vector'): array
     {
-        $version = $isPro ? 'v3' : 'v2';
-        $modelName = $isPro ? 'recraft-v3' : 'recraft-v2';
+        $version = $isPro ? 'v4' : 'v2';
+        $modelName = $isPro ? 'recraft-v4' : 'recraft-v2';
         $modelLabel = "{$modelName}-{$type}";
         
         // Try to get pricing from ai_rates table

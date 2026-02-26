@@ -11,3 +11,7 @@ openpyxl==3.1.5
 transformers==4.45.2
 torch==2.4.1
 requests==2.31.0
+tqdm==4.67.1
+numpy==1.26.4
+gensim==4.3.3
+wordfreq==3.1.1

@@ -20,7 +20,7 @@ class OverlayEditorTestResource extends Resource
 
     protected static ?string $navigationLabel = 'Test Results';
 
-    protected static ?string $navigationGroup = 'Overlay Editor';
+    protected static ?string $navigationGroup = 'Admin';
 
     protected static ?string $modelLabel = 'Overlay Editor Test';
 

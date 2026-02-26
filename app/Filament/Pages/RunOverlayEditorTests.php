@@ -8,9 +8,9 @@ class RunOverlayEditorTests extends Page
 {
     protected static ?string $navigationIcon = 'heroicon-o-beaker';
 
-    protected static ?string $navigationLabel = 'Run Tests';
+    protected static ?string $navigationLabel = 'Run Overlay Tests';
 
-    protected static ?string $navigationGroup = 'Overlay Editor';
+    protected static ?string $navigationGroup = 'Admin';
 
     protected static ?string $title = 'Overlay Editor Tests';
 

@@ -10,7 +10,7 @@ class RunComplianceTests extends Page
 
     protected static ?string $navigationLabel = 'Run Tests';
 
-    protected static ?string $navigationGroup = 'Compliance';
+    protected static ?string $navigationGroup = 'Admin';
 
     protected static ?string $title = 'Run Compliance Tests';
 

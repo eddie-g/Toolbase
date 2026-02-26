@@ -19,7 +19,7 @@ class ComplianceReportResource extends Resource
 
     protected static ?string $navigationLabel = 'Compliance Report';
 
-    protected static ?string $navigationGroup = 'Compliance';
+    protected static ?string $navigationGroup = 'Admin';
 
     protected static ?string $modelLabel = 'Compliance Test';
 

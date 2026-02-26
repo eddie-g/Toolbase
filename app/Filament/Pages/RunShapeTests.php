@@ -10,7 +10,7 @@ class RunShapeTests extends Page
 
     protected static ?string $navigationLabel = 'Run Shape Tests';
 
-    protected static ?string $navigationGroup = 'Overlay Editor';
+    protected static ?string $navigationGroup = 'Admin';
 
     protected static ?string $title = 'Shape Tool Tests';
 

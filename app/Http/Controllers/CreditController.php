@@ -92,6 +92,13 @@ class CreditController extends Controller
                 return response('OK', 200);
             }
 
+            // Handle admin top-up via Stripe
+            $type = $session->metadata->type ?? null;
+            if ($type === 'admin_topup') {
+                $this->handleAdminTopupCheckoutCompleted($session);
+                return response('OK', 200);
+            }
+
             $userId = $session->metadata->user_id ?? $session->client_reference_id ?? null;
             $creditAmount = $session->metadata->credit_amount ?? null;
 
@@ -155,6 +162,34 @@ class CreditController extends Controller
         }
 
         return response('OK', 200);
+    }
+
+    /**
+     * Handle a completed Stripe checkout for an admin top-up.
+     */
+    private function handleAdminTopupCheckoutCompleted($session): void
+    {
+        $adminId = $session->metadata->admin_id ?? null;
+        $creditAmount = $session->metadata->credit_amount ?? null;
+
+        if (!$adminId || !$creditAmount) {
+            \Log::warning('Stripe webhook: admin_topup missing metadata', ['session_id' => $session->id]);
+            return;
+        }
+
+        $admin = \App\Models\Admin::find($adminId);
+        if (!$admin) {
+            \Log::warning('Stripe webhook: admin not found', ['admin_id' => $adminId]);
+            return;
+        }
+
+        $admin->topupBalance((float) $creditAmount);
+
+        \Log::info('Stripe webhook: admin credits added', [
+            'admin_id'   => $adminId,
+            'amount'     => $creditAmount,
+            'session_id' => $session->id,
+        ]);
     }
 
     /**
