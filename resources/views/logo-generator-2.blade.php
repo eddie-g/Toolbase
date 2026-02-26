@@ -356,16 +356,19 @@
                     </div>
 
                     <!-- Detail Level -->
-                    <div x-show="selectedModel === 'recraft'">
+                    <div x-show="selectedModel === 'recraft' || selectedModel === 'dalle'">
                         <label class="block text-sm font-semibold text-gray-900 mb-2">Detail Level</label>
-                        <select 
-                            x-model="detailLevel"
-                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500"
-                        >
-                            <option value="low">Low</option>
-                            <option value="medium">Medium</option>
-                            <option value="high">High</option>
-                        </select>
+                        <div class="grid grid-cols-3 gap-2">
+                            <template x-for="level in [{id:'min',label:'Minimal'},{id:'medium',label:'Medium'},{id:'max',label:'Maximum'}]" :key="level.id">
+                                <button 
+                                    type="button"
+                                    @click="detailLevel = level.id; fetchLogoPrice()"
+                                    :class="detailLevel === level.id ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'"
+                                    class="px-3 py-2.5 border rounded-lg font-medium text-sm transition-colors"
+                                    x-text="level.label"
+                                ></button>
+                            </template>
+                        </div>
                     </div>
 
                     <!-- Number of Logos -->
