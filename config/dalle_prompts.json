@@ -60,7 +60,7 @@
   "with_brand": {
     "chrome": "A high-resolution 3D render of a chrome logo featuring {subject} and the exact word \"{brand}\". The word \"{brand}\" is a real extruded chrome object with clear legibility and proper spacing. {shape_block} Background: {chrome_bg}. Front-facing, soft studio lighting, premium presentation. {no_text}",
     "professional": "Design one professional modern logo for brand \"{brand}\". Concept cue: {subject}. Layout: clean icon + readable sans-serif wordmark. Colors: {colors}. Background: {bg}. {shape_block} Flat vector-like style, no collage, no mockup. {no_text}",
-    "fantasy": "Create one fantasy-style logo for brand \"{brand}\". Concept cue: {subject}. Include a stylized emblem and a readable decorative wordmark. Colors: {colors}. Background: {bg}. {shape_block} No collage, no scene background. {no_text}",
+    "fantasy": "Create one fantasy-style logo for brand \"{brand}\". Concept cue: {subject}.  Colors: {colors}. Background: {bg}. {shape_block} No collage, no scene background. {no_text}",
     "future": "Design one futuristic tech logo for brand \"{brand}\". Concept cue: {subject}. Include a modern symbol and sleek sans-serif wordmark. Colors: {colors}. Background: {bg}. {shape_block} Clean, high-contrast logo output only. {no_text}",
     "retro": "Create one retro vector logo for brand \"{brand}\" with a bold vintage wordmark and strong simple icon forms. Colors: {colors}. Background: {bg}. {shape_block} Minimalist retro style. {no_text}",
     "8bit": "Design one 8-bit pixel-art logo for brand \"{brand}\" with readable pixel typography and a companion icon. Colors: {colors}. Background: {bg}. {shape_block} Crisp square pixels, no blur, no anti-aliasing. {no_text}",

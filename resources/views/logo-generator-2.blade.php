@@ -170,7 +170,7 @@
                     </div>
 
                     <!-- Shape Container -->
-                    <div x-show="selectedModel === 'recraft'">
+                    <div x-show="selectedModel === 'recraft' || selectedModel === 'dalle'">
                         <label class="block text-sm font-semibold text-gray-900 dark:text-white mb-3">Shape</label>
                         <div class="flex gap-2">
                             <template x-for="shape in [{id:'',label:'None'},{id:'circle',label:'Circle'},{id:'square',label:'Square'}]" :key="shape.id">
@@ -183,7 +183,7 @@
                                 ></button>
                             </template>
                         </div>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Only available for Ray model</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Only available for Ray and Cosmo models</p>
                     </div>
                 </div>
             </div>
