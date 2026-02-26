@@ -95,12 +95,12 @@
                 x-show="showGenerationSettings"
                 @click.away="showGenerationSettings = false"
                 x-transition:enter="transition-transform ease-out duration-300"
-                x-transition:enter-start="-translate-x-full"
+                x-transition:enter-start="translate-x-full"
                 x-transition:enter-end="translate-x-0"
                 x-transition:leave="transition-transform ease-in duration-200"
                 x-transition:leave-start="translate-x-0"
-                x-transition:leave-end="-translate-x-full"
-                class="fixed top-[70px] left-0 h-[calc(100vh-70px)] w-80 bg-white dark:bg-gray-800 shadow-2xl z-40 overflow-y-auto border-r border-gray-200 dark:border-gray-700"
+                x-transition:leave-end="translate-x-full"
+                class="fixed top-[70px] right-0 h-[calc(100vh-70px)] w-80 bg-white dark:bg-gray-800 shadow-2xl z-40 overflow-y-auto border-l border-gray-200 dark:border-gray-700"
                 x-cloak
             >
                 <div class="p-6 space-y-6">
