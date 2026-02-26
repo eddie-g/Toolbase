@@ -54,8 +54,17 @@
                     </button>
                 </div>
                 
-                <!-- Cost Display & Generate Button -->
+                <!-- Generation Settings Toggle & Generate Button -->
                 <div class="flex items-center gap-2 md:gap-4">
+                    <button 
+                        @click="showGenerationSettings = !showGenerationSettings"
+                        class="hidden lg:flex px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/>
+                        </svg>
+                        <span x-text="showGenerationSettings ? 'Hide' : 'Settings'"></span>
+                    </button>
                     <div class="hidden md:block text-right">
                         <div class="text-sm text-gray-500 dark:text-gray-400">Estimated Cost</div>
                         <div class="text-lg font-bold text-gray-900 dark:text-white" x-text="'$' + logoPrice.toFixed(2)"></div>
@@ -75,6 +84,44 @@
                             <span class="hidden md:inline">Generating...</span>
                         </span>
                     </button>
+                </div>
+            </div>
+
+            <!-- Expandable Generation Settings Panel -->
+            <div x-show="showGenerationSettings" x-cloak x-transition class="border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 px-3 md:px-6 py-6">
+                <div class="max-w-5xl mx-auto">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <!-- Number of Logos -->
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-900 dark:text-white mb-3">Number of Logos</label>
+                            <div class="flex gap-2">
+                                <template x-for="num in [1,2,3,4]">
+                                    <button 
+                                        @click="logoCount = num; fetchLogoPrice()"
+                                        :class="logoCount === num ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700'"
+                                        class="flex-1 px-4 py-3 border rounded-lg font-medium transition-colors"
+                                        x-text="num"
+                                    ></button>
+                                </template>
+                            </div>
+                        </div>
+
+                        <!-- Detail Level -->
+                        <div x-show="selectedModel === 'recraft' || selectedModel === 'dalle'">
+                            <label class="block text-sm font-semibold text-gray-900 dark:text-white mb-3">Detail Level</label>
+                            <div class="grid grid-cols-3 gap-2">
+                                <template x-for="level in [{id:'min',label:'Minimal'},{id:'medium',label:'Medium'},{id:'max',label:'Maximum'}]" :key="level.id">
+                                    <button 
+                                        type="button"
+                                        @click="detailLevel = level.id; fetchLogoPrice()"
+                                        :class="detailLevel === level.id ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700'"
+                                        class="px-3 py-2.5 border rounded-lg font-medium text-sm transition-colors"
+                                        x-text="level.label"
+                                    ></button>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -342,36 +389,7 @@
                         </select>
                     </div>
 
-                    <!-- Detail Level -->
-                    <div x-show="selectedModel === 'recraft' || selectedModel === 'dalle'">
-                        <label class="block text-sm font-semibold text-gray-900 mb-2">Detail Level</label>
-                        <div class="grid grid-cols-3 gap-2">
-                            <template x-for="level in [{id:'min',label:'Minimal'},{id:'medium',label:'Medium'},{id:'max',label:'Maximum'}]" :key="level.id">
-                                <button 
-                                    type="button"
-                                    @click="detailLevel = level.id; fetchLogoPrice()"
-                                    :class="detailLevel === level.id ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'"
-                                    class="px-3 py-2.5 border rounded-lg font-medium text-sm transition-colors"
-                                    x-text="level.label"
-                                ></button>
-                            </template>
-                        </div>
-                    </div>
 
-                    <!-- Number of Logos -->
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-900 mb-2">Number of Logos</label>
-                        <div class="flex gap-2">
-                            <template x-for="num in [1,2,3,4]">
-                                <button 
-                                    @click="logoCount = num; fetchLogoPrice()"
-                                    :class="logoCount === num ? 'bg-violet-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'"
-                                    class="flex-1 px-4 py-3 border border-gray-300 rounded-lg font-medium transition-colors"
-                                    x-text="num"
-                                ></button>
-                            </template>
-                        </div>
-                    </div>
                 </div>
             </div>
 
@@ -716,6 +734,7 @@
                 logoStyle: 'professional',
                 logoColorPalette: 'none',
                 showTextPromptPanel: false,
+                showGenerationSettings: false,
                 showLeftPanel: true,
                 useLogoText: true,
                 logoCustomColors: ['#1e3a5f', '#d4af37', '#333333'],
