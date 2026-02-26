@@ -467,18 +467,28 @@
                     </div>
 
                     <!-- Results Grid -->
-                    <div x-show="logoImages.length > 0" class="space-y-6">
+                    <div x-show="logoBatches.length > 0" class="space-y-8">
                         <h2 class="text-2xl font-bold text-gray-900 dark:text-white">Generated Logos</h2>
                         
-                        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
-                            <template x-for="(image, index) in logoImages" :key="index">
-                                <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden hover:shadow-lg transition-shadow">
-                                    <!-- Image -->
-                                    <div class="aspect-square bg-white dark:bg-gray-100 relative group cursor-pointer" @click="zoomImage(image.url)">
-                                        <img :src="image.url" :alt="'Logo ' + (index + 1)" class="w-full h-full object-contain p-4">
-                                    </div>
+                        <template x-for="(batch, batchIndex) in logoBatches" :key="batch.id">
+                            <div class="space-y-4">
+                                <!-- Batch Divider (not shown for first batch) -->
+                                <div x-show="batchIndex > 0" class="flex items-center gap-4 py-4">
+                                    <div class="flex-1 h-px bg-gradient-to-r from-transparent via-gray-300 dark:via-gray-700 to-transparent"></div>
+                                    <div class="text-sm font-medium text-gray-500 dark:text-gray-400" x-text="'Previous generation · ' + new Date(batch.timestamp).toLocaleString()"></div>
+                                    <div class="flex-1 h-px bg-gradient-to-r from-transparent via-gray-300 dark:via-gray-700 to-transparent"></div>
+                                </div>
 
-                                    <!-- Actions -->
+                                <!-- Images Grid -->
+                                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
+                                    <template x-for="(image, imageIndex) in batch.images" :key="image.url">
+                                        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden hover:shadow-lg transition-shadow">
+                                            <!-- Image -->
+                                            <div class="aspect-square bg-white dark:bg-gray-100 relative group cursor-pointer" @click="zoomImage(image.url)">
+                                                <img :src="image.url" :alt="'Logo ' + (imageIndex + 1)" class="w-full h-full object-contain p-4">
+                                            </div>
+
+                                            <!-- Actions -->
                                     <div class="p-4 space-y-2">
                                         <div class="grid grid-cols-2 gap-2">
                                             <button 
@@ -522,9 +532,11 @@
                                             Use as Prompt
                                         </button>
                                     </div>
+                                        </div>
+                                    </template>
                                 </div>
-                            </template>
-                        </div>
+                            </div>
+                        </template>
                     </div>
 
                     <!-- Similar Ideas Section -->
@@ -552,7 +564,7 @@
                     </div>
 
                     <!-- Empty State -->
-                    <div x-show="logoImages.length === 0 && !generating" class="flex flex-col items-center justify-center py-24 text-center">
+                    <div x-show="logoBatches.length === 0 && !generating" class="flex flex-col items-center justify-center py-24 text-center">
                         <div class="p-6 bg-violet-100 rounded-full mb-6">
                             <svg class="w-16 h-16 text-violet-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 008 10.172V5L7 4z"/>
@@ -794,7 +806,8 @@
 
                 // State
                 generating: false,
-                logoImages: [],
+                logoBatches: [],
+                currentBatchId: null,
                 logoPrice: 0,
                 creditBalance: @js((float) ($logoUser->credit_balance ?? 0)),
                 error: null,
@@ -1010,7 +1023,15 @@
 
                     this.generating = true;
                     this.error = null;
-                    this.logoImages = [];
+                    
+                    // Create a new batch at the beginning
+                    const newBatchId = Date.now();
+                    this.currentBatchId = newBatchId;
+                    this.logoBatches.unshift({
+                        id: newBatchId,
+                        timestamp: new Date().toISOString(),
+                        images: []
+                    });
 
                     try {
                         // Step 1: Queue all logo generation jobs
@@ -1110,7 +1131,12 @@
                                             url: img.url,
                                             seed: statusData.seed || null
                                         }));
-                                        this.logoImages = [...this.logoImages, ...newImages];
+                                        
+                                        // Add to current batch
+                                        const currentBatch = this.logoBatches.find(b => b.id === this.currentBatchId);
+                                        if (currentBatch) {
+                                            currentBatch.images.push(...newImages);
+                                        }
 
                                         if (statusData.credit_balance !== undefined) {
                                             this.creditBalance = parseFloat(statusData.credit_balance);
@@ -1129,7 +1155,9 @@
                             }
                         }
 
-                        if (this.logoImages.length > 0) {
+                        // Check if current batch has images
+                        const currentBatch = this.logoBatches.find(b => b.id === this.currentBatchId);
+                        if (currentBatch && currentBatch.images.length > 0) {
                             this.queueSimilarIdeasLookup();
                         }
                     } catch (err) {
@@ -1196,8 +1224,16 @@
 
                         const data = await response.json();
                         if (data.url) {
-                            // Add the new image to the grid
-                            this.logoImages.push({ url: data.url });
+                            // Add the new image to the most recent batch (or create a new one)
+                            if (this.logoBatches.length > 0) {
+                                this.logoBatches[0].images.push({ url: data.url });
+                            } else {
+                                this.logoBatches.unshift({
+                                    id: Date.now(),
+                                    timestamp: new Date().toISOString(),
+                                    images: [{ url: data.url }]
+                                });
+                            }
                         }
                     } catch (err) {
                         console.error('Background removal error:', err);
