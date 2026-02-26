@@ -1,28 +1,29 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <script>if(localStorage.getItem('darkMode')==='true')document.documentElement.classList.add('dark');</script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>AI Logo Lab - Toolbase</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    @vite(['resources/css/app.css', 'resources/js/app.js'])
     <style>
-        body { font-family: 'Inter', sans-serif; }
         [x-cloak] { display: none !important; }
     </style>
 </head>
-<body class="bg-gray-50">
+<body class="bg-gray-50 dark:bg-gray-950">
+    <x-site-header :compact="true" />
+    
     @if ($logoUser ?? false)
-    <div x-data="logoGenerator()" x-init="init()" class="h-screen flex flex-col">
+    <div x-data="logoGenerator()" x-init="init()" class="min-h-screen pt-16 flex flex-col">
         <!-- Top Bar -->
-        <div class="bg-white border-b border-gray-200">
+        <div class="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800">
             <div class="px-3 md:px-6 py-3 md:py-4 flex items-center justify-between gap-2">
                 <div class="flex items-center gap-2 md:gap-3 min-w-0">
                     <!-- Hamburger Menu Toggle -->
                     <button 
                         @click="showLeftPanel = !showLeftPanel"
-                        class="flex-shrink-0 p-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-gray-700"
+                        class="flex-shrink-0 p-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors text-gray-700 dark:text-gray-300"
                         :aria-label="showLeftPanel ? 'Hide sidebar' : 'Show sidebar'"
                     >
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -30,21 +31,21 @@
                         </svg>
                     </button>
                     
-                    <div class="flex-shrink-0 p-2 bg-violet-100 rounded-lg">
-                        <svg class="w-5 h-5 md:w-6 md:h-6 text-violet-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <div class="flex-shrink-0 p-2 bg-violet-100 dark:bg-violet-900/30 rounded-lg">
+                        <svg class="w-5 h-5 md:w-6 md:h-6 text-violet-600 dark:text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 008 10.172V5L7 4z"/>
                         </svg>
                     </div>
                     <div class="min-w-0">
                         <div class="flex items-center gap-2">
-                            <h1 class="text-base md:text-xl font-bold text-gray-900 truncate">AI Logo Lab</h1>
-                            <span class="hidden sm:inline-block px-2 py-1 bg-violet-100 text-violet-700 text-xs font-semibold rounded flex-shrink-0">EXPERIMENTAL</span>
+                            <h1 class="text-base md:text-xl font-bold text-gray-900 dark:text-white truncate">AI Logo Lab</h1>
+                            <span class="hidden sm:inline-block px-2 py-1 bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400 text-xs font-semibold rounded flex-shrink-0">EXPERIMENTAL</span>
                         </div>
-                        <p class="hidden md:block text-sm text-gray-500">Full-screen studio workspace</p>
+                        <p class="hidden md:block text-sm text-gray-500 dark:text-gray-400">Full-screen studio workspace</p>
                     </div>
                     <button 
                         @click="showTextPromptPanel = !showTextPromptPanel"
-                        class="hidden lg:flex ml-4 px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors items-center gap-2 text-sm font-medium text-gray-700"
+                        class="hidden lg:flex ml-4 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300"
                     >
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
@@ -56,8 +57,8 @@
                 <!-- Cost Display & Generate Button -->
                 <div class="flex items-center gap-2 md:gap-4">
                     <div class="hidden md:block text-right">
-                        <div class="text-sm text-gray-500">Estimated Cost</div>
-                        <div class="text-lg font-bold text-gray-900" x-text="'$' + logoPrice.toFixed(2)"></div>
+                        <div class="text-sm text-gray-500 dark:text-gray-400">Estimated Cost</div>
+                        <div class="text-lg font-bold text-gray-900 dark:text-white" x-text="'$' + logoPrice.toFixed(2)"></div>
                     </div>
                     <button 
                         @click="generateLogo()"
@@ -78,20 +79,20 @@
             </div>
 
             <!-- Expandable Text & Prompt Panel -->
-            <div x-show="showTextPromptPanel" x-cloak x-transition class="border-t border-gray-200 bg-gray-50 px-3 md:px-6 py-6">
+            <div x-show="showTextPromptPanel" x-cloak x-transition class="border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 px-3 md:px-6 py-6">
                 <div class="max-w-5xl mx-auto space-y-5">
                     <!-- Logo Text Input with Toggle -->
                     <div class="space-y-3">
                         <div class="flex items-center justify-between">
-                            <label class="block text-sm font-semibold text-gray-900">Logo Text</label>
+                            <label class="block text-sm font-semibold text-gray-900 dark:text-white">Logo Text</label>
                             <label class="flex items-center gap-2 cursor-pointer">
                                 <input 
                                     type="checkbox" 
                                     x-model="useLogoText"
                                     @change="if (!useLogoText) logoDomain = ''; fetchLogoPrice();"
-                                    class="w-4 h-4 text-violet-600 bg-white border-gray-300 rounded focus:ring-violet-500"
+                                    class="w-4 h-4 text-violet-600 bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 rounded focus:ring-violet-500"
                                 >
-                                <span class="text-xs font-medium text-gray-600">Enable text in logo</span>
+                                <span class="text-xs font-medium text-gray-600 dark:text-gray-400">Enable text in logo</span>
                             </label>
                         </div>
                         <input 
@@ -100,21 +101,21 @@
                             @input="fetchLogoPrice()"
                             :disabled="!useLogoText"
                             placeholder="e.g., TechStart, CloudSync, DataFlow, etc."
-                            class="w-full px-4 py-3.5 text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent bg-white disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+                            class="w-full px-4 py-3.5 text-base border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent bg-white dark:bg-gray-800 dark:text-white disabled:bg-gray-100 dark:disabled:bg-gray-700 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
                         >
                     </div>
 
                     <!-- Custom Prompt -->
                     <div class="space-y-3">
-                        <label class="block text-sm font-semibold text-gray-900">Custom Prompt (Optional)</label>
+                        <label class="block text-sm font-semibold text-gray-900 dark:text-white">Custom Prompt (Optional)</label>
                         <textarea 
                             x-model="logoPrompt"
                             @input="fetchLogoPrice()"
                             rows="4"
                             placeholder="Describe your logo in detail: style (modern, vintage, minimalist), mood (professional, playful, elegant), imagery (abstract shapes, tech elements, nature), colors, and any specific elements you want..."
-                            class="w-full px-4 py-3.5 text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent resize-y bg-white leading-relaxed"
+                            class="w-full px-4 py-3.5 text-base border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent resize-y bg-white dark:bg-gray-800 dark:text-white leading-relaxed"
                         ></textarea>
-                        <p class="text-xs text-gray-500">💡 Tip: Be specific about style, colors, and elements you want in your logo for best results</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">💡 Tip: Be specific about style, colors, and elements you want in your logo for best results</p>
                     </div>
                 </div>
             </div>
@@ -145,7 +146,7 @@
                 x-transition:leave="transition-transform ease-in duration-150"
                 x-transition:leave-start="translate-x-0"
                 x-transition:leave-end="-translate-x-full"
-                class="w-80 lg:w-96 bg-white border-r border-gray-200 overflow-y-auto fixed lg:relative inset-y-0 left-0 z-20 lg:z-0"
+                class="w-80 lg:w-96 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 overflow-y-auto fixed lg:relative inset-y-0 left-0 z-20 lg:z-0"
                 x-cloak
             >
                 <div class="p-6 space-y-6">
