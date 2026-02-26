@@ -376,7 +376,7 @@
             </div>
 
             <!-- Main Canvas Area -->
-            <div class="flex-1 overflow-y-auto bg-gray-50">
+            <div class="flex-1 overflow-y-auto bg-gray-50 dark:bg-gray-900">
                 <div class="p-8">
                     <!-- Error Display -->
                     <div x-show="error" x-cloak class="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
@@ -398,13 +398,13 @@
 
                     <!-- Results Grid -->
                     <div x-show="logoImages.length > 0" class="space-y-6">
-                        <h2 class="text-2xl font-bold text-gray-900">Generated Logos</h2>
+                        <h2 class="text-2xl font-bold text-gray-900 dark:text-white">Generated Logos</h2>
                         
                         <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
                             <template x-for="(image, index) in logoImages" :key="index">
-                                <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-lg transition-shadow">
+                                <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden hover:shadow-lg transition-shadow">
                                     <!-- Image -->
-                                    <div class="aspect-square bg-gray-100 relative group cursor-pointer" @click="zoomImage(image.url)">
+                                    <div class="aspect-square bg-white dark:bg-gray-100 relative group cursor-pointer" @click="zoomImage(image.url)">
                                         <img :src="image.url" :alt="'Logo ' + (index + 1)" class="w-full h-full object-contain p-4">
                                         <div class="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-opacity flex items-center justify-center">
                                             <svg class="w-12 h-12 text-white opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -464,7 +464,7 @@
 
                     <!-- Similar Ideas Section -->
                     <div x-show="similarIdeas.length > 0" class="mt-12 space-y-6">
-                        <h2 class="text-2xl font-bold text-gray-900">Similar Ideas</h2>
+                        <h2 class="text-2xl font-bold text-gray-900 dark:text-white">Similar Ideas</h2>
                         
                         <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
                             <template x-for="idea in similarIdeas" :key="idea.id">
