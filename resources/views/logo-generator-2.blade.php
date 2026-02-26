@@ -114,6 +114,29 @@
                         </button>
                     </div>
 
+                    <!-- PRO Mode Toggle -->
+                    <div>
+                        <div class="flex items-center justify-between p-3.5 rounded-xl border-2 transition-all cursor-pointer" :class="proMode ? 'border-amber-400 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-900/20 dark:to-orange-900/20' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'" @click="proMode = !proMode; fetchLogoPrice()">
+                            <div class="flex items-center gap-3">
+                                <div class="text-sm font-semibold text-gray-900 dark:text-white" x-text="selectedModel === 'dalle' ? 'HD Quality' : 'PRO Mode'"></div>
+                                <span class="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider" :class="proMode ? 'bg-amber-500 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400'" x-text="proMode ? 'ON' : 'OFF'"></span>
+                            </div>
+                            <div class="relative">
+                                <div class="w-11 h-6 rounded-full transition-colors" :class="proMode ? 'bg-amber-500' : 'bg-gray-300 dark:bg-gray-600'">
+                                    <div class="absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200" :class="proMode ? 'translate-x-[22px]' : 'translate-x-0.5'"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div x-show="proMode && selectedModel === 'flux'" x-transition class="mt-3">
+                            <label class="block text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">PRO Resolution</label>
+                            <div class="flex gap-2">
+                                <button type="button" @click="proSize = '512'; fetchLogoPrice()" class="flex-1 py-2 rounded-lg border text-xs font-semibold transition" :class="proSize === '512' ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300' : 'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-600'">512</button>
+                                <button type="button" @click="proSize = '1024'; fetchLogoPrice()" class="flex-1 py-2 rounded-lg border text-xs font-semibold transition" :class="proSize === '1024' ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300' : 'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-600'">1024</button>
+                                <button type="button" @click="proSize = '1536'; fetchLogoPrice()" class="flex-1 py-2 rounded-lg border text-xs font-semibold transition" :class="proSize === '1536' ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300' : 'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-600'">1536</button>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Number of Logos -->
                     <div>
                         <label class="block text-sm font-semibold text-gray-900 dark:text-white mb-3">Number of Logos</label>
@@ -765,6 +788,8 @@
                 backgroundColor: 'white',
                 shapeContainer: '',
                 detailLevel: 'medium',
+                proMode: false,
+                proSize: '1024',
                 seed: null,
 
                 // State
@@ -957,8 +982,8 @@
                             },
                             body: JSON.stringify({
                                 count: this.logoCount,
-                                pro: false,
-                                pro_size: 1024,
+                                pro: this.proMode,
+                                pro_size: this.proMode ? parseInt(this.proSize) : 1024,
                                 style: this.logoStyle,
                                 bg_color: this.backgroundColor,
                                 image_model: this.selectedModel,
@@ -1000,8 +1025,8 @@
                                 count: 1,
                                 total_count: totalCount,
                                 batch_index: i,
-                                pro: false,
-                                pro_size: 1024,
+                                pro: this.proMode,
+                                pro_size: this.proMode ? parseInt(this.proSize) : 1024,
                                 icon_only: !this.useLogoText,
                                 bg_color: this.backgroundColor,
                                 image_model: this.selectedModel,
