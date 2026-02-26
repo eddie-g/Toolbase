@@ -17,8 +17,8 @@
     @if ($logoUser ?? false)
     <div x-data="logoGenerator()" x-init="init()" class="min-h-screen flex flex-col">
         <!-- Top Bar -->
-        <div class="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800">
-            <div class="px-3 md:px-6 py-3 md:py-4 flex items-center justify-between gap-2">
+        <div class="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 mt-[70px]">
+            <div id="subpanel-bar" class="px-3 md:px-6 py-3 md:py-4 flex items-center justify-between gap-2">
                 <div class="flex items-center gap-2 md:gap-3 min-w-0">
                     <!-- Hamburger Menu Toggle -->
                     <button 
