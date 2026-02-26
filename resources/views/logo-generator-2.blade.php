@@ -15,7 +15,7 @@
     <x-site-header :compact="true" />
     
     @if ($logoUser ?? false)
-    <div x-data="logoGenerator()" x-init="init()" class="min-h-screen pt-16 flex flex-col">
+    <div x-data="logoGenerator()" x-init="init()" class="min-h-screen flex flex-col">
         <!-- Top Bar -->
         <div class="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800">
             <div class="px-3 md:px-6 py-3 md:py-4 flex items-center justify-between gap-2">
@@ -123,20 +123,6 @@
 
         <!-- Main Content -->
         <div class="flex flex-1 overflow-hidden relative">
-            <!-- Mobile Backdrop -->
-            <div 
-                x-show="showLeftPanel" 
-                @click="showLeftPanel = false"
-                x-transition:enter="transition-opacity ease-out duration-200"
-                x-transition:enter-start="opacity-0"
-                x-transition:enter-end="opacity-100"
-                x-transition:leave="transition-opacity ease-in duration-150"
-                x-transition:leave-start="opacity-100"
-                x-transition:leave-end="opacity-0"
-                class="lg:hidden fixed inset-0 top-36 bg-black bg-opacity-50 z-10"
-                x-cloak
-            ></div>
-            
             <!-- Left Sidebar -->
             <div 
                 x-show="showLeftPanel"
@@ -146,7 +132,7 @@
                 x-transition:leave="transition-transform ease-in duration-150"
                 x-transition:leave-start="translate-x-0"
                 x-transition:leave-end="-translate-x-full"
-                class="w-80 lg:w-96 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 overflow-y-auto fixed lg:relative top-36 lg:top-0 bottom-0 left-0 z-20 lg:z-0"
+                class="w-80 lg:w-96 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 overflow-y-auto"
                 x-cloak
             >
                 <div class="p-6 space-y-6">
@@ -730,7 +716,7 @@
                 logoStyle: 'professional',
                 logoColorPalette: 'none',
                 showTextPromptPanel: false,
-                showLeftPanel: window.innerWidth >= 1024,
+                showLeftPanel: true,
                 useLogoText: true,
                 logoCustomColors: ['#1e3a5f', '#d4af37', '#333333'],
                 backgroundColor: 'white',
