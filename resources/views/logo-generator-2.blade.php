@@ -12,8 +12,6 @@
     </style>
 </head>
 <body class="bg-gray-50">
-    @include('header')
-    
     <div x-data="logoGenerator()" x-init="init()" class="h-screen flex flex-col">
         <!-- Top Bar -->
         <div class="bg-white border-b border-gray-200 px-6 py-4">
