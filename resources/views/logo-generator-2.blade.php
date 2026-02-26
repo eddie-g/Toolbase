@@ -168,16 +168,87 @@
 
                     <!-- Color Palette -->
                     <div>
-                        <label class="block text-sm font-semibold text-gray-900 mb-2">Color Palette</label>
-                        <div class="grid grid-cols-6 gap-2">
-                            <template x-for="color in availableColors" :key="color">
-                                <button 
-                                    @click="toggleColor(color)"
-                                    :style="'background-color: ' + color"
-                                    :class="selectedColors.includes(color) ? 'ring-2 ring-offset-2 ring-violet-500' : ''"
-                                    class="w-10 h-10 rounded-lg hover:scale-110 transition-transform"
-                                ></button>
+                        <label class="block text-sm font-semibold text-gray-900 mb-3">Color Palette</label>
+                        <button type="button" @click="logoColorPalette = 'none'"
+                            class="w-full mb-2 rounded-xl border-2 p-2 transition-all flex items-center gap-2"
+                            :class="logoColorPalette === 'none' ? 'border-violet-500 ring-2 ring-violet-200 bg-violet-50' : 'border-gray-200 hover:border-gray-300'">
+                            <div class="flex-1 h-6 rounded-md bg-gray-100 flex items-center justify-center">
+                                <span class="text-xs font-medium text-gray-400">AI Picks</span>
+                            </div>
+                            <div class="text-xs font-medium" :class="logoColorPalette === 'none' ? 'text-violet-700' : 'text-gray-500'">None</div>
+                        </button>
+                        <div class="grid grid-cols-2 gap-2">
+                            <template x-for="p in colorPalettes" :key="p.id">
+                                <button type="button" @click="logoColorPalette = p.id"
+                                    class="rounded-xl border-2 p-2 transition-all"
+                                    :class="logoColorPalette === p.id ? 'border-violet-500 ring-2 ring-violet-200' : 'border-gray-200 hover:border-gray-300'">
+                                    <div class="flex h-6 rounded-md overflow-hidden">
+                                        <template x-for="(c, ci) in p.colors" :key="ci">
+                                            <div class="flex-1" :style="'background-color: ' + c"></div>
+                                        </template>
+                                    </div>
+                                    <div class="mt-1.5 text-xs font-medium text-center truncate" :class="logoColorPalette === p.id ? 'text-violet-700' : 'text-gray-500'" x-text="p.name"></div>
+                                </button>
                             </template>
+                        </div>
+                        <button type="button" @click="logoColorPalette = 'custom'"
+                            class="mt-2 w-full py-2.5 rounded-xl border-2 text-xs font-semibold transition-all flex items-center justify-center gap-2"
+                            :class="logoColorPalette === 'custom' ? 'border-violet-500 bg-violet-50 text-violet-700' : 'border-gray-200 text-gray-600 hover:border-gray-300'">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/></svg>
+                            Choose Custom
+                        </button>
+                        <div x-show="logoColorPalette === 'custom'" x-transition class="mt-3 p-3 bg-gray-50 rounded-xl">
+                            <label class="block text-xs font-medium text-gray-600 mb-2">Custom Colors</label>
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <template x-for="(c, ci) in logoCustomColors" :key="ci">
+                                    <div class="relative">
+                                        <div class="w-10 h-10 rounded-lg border-2 border-gray-300 cursor-pointer shadow-sm" :style="'background-color: ' + c"></div>
+                                        <input type="color" :value="normalizeHexColor(c)" @input="logoCustomColors[ci] = normalizeHexColor($event.target.value)" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                                    </div>
+                                </template>
+                                <button type="button" @click="logoCustomColors.length < 5 && logoCustomColors.push('#888888')" x-show="logoCustomColors.length < 5"
+                                    class="w-10 h-10 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 hover:border-gray-400 hover:text-gray-500 transition">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                                </button>
+                                <button type="button" @click="logoCustomColors.length > 2 && logoCustomColors.pop()" x-show="logoCustomColors.length > 2"
+                                    class="w-10 h-10 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 hover:border-gray-400 hover:text-gray-500 transition">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"></path></svg>
+                                </button>
+                            </div>
+                            <div x-show="canManagePalettes" class="mt-3 pt-3 border-t border-gray-200">
+                                <label class="block text-xs font-medium text-gray-600 mb-2">Save Palette</label>
+                                <div class="flex items-center gap-2">
+                                    <input type="text" x-model="savedPaletteName" maxlength="60" placeholder="Palette name"
+                                        class="flex-1 px-3 py-2 rounded-lg border border-gray-300 bg-white text-xs text-gray-700 placeholder-gray-400 focus:ring-2 focus:ring-violet-500 focus:border-transparent transition" />
+                                    <button type="button" @click="saveCurrentPalette()"
+                                        class="px-3 py-2 rounded-lg text-xs font-semibold transition"
+                                        :class="paletteSaving ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-violet-600 hover:bg-violet-700 text-white'"
+                                        :disabled="paletteSaving"
+                                        x-text="paletteSaving ? 'Saving...' : 'Save'"></button>
+                                </div>
+                                <p class="mt-1 text-xs text-red-500" x-show="paletteError" x-text="paletteError"></p>
+                                <p class="mt-1 text-xs text-violet-600" x-show="paletteSuccess" x-text="paletteSuccess"></p>
+
+                                <div class="mt-2 space-y-1">
+                                    <template x-for="palette in savedPalettes" :key="palette.id">
+                                        <div class="flex items-center gap-1 rounded-lg border border-gray-200 bg-white p-1.5">
+                                            <button type="button" @click="applySavedPalette(palette)" class="flex-1 min-w-0 flex items-center gap-2 text-left">
+                                                <div class="flex h-4 w-14 rounded overflow-hidden border border-gray-200">
+                                                    <template x-for="(c, ci) in palette.colors" :key="ci">
+                                                        <div class="flex-1" :style="'background-color: ' + c"></div>
+                                                    </template>
+                                                </div>
+                                                <span class="text-xs text-gray-700 truncate" x-text="palette.name"></span>
+                                            </button>
+                                            <button type="button" @click.stop="deleteSavedPalette(palette.id)"
+                                                class="p-1 rounded text-gray-400 hover:text-red-500 hover:bg-red-50 transition"
+                                                title="Delete palette">
+                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7h6m-7 0V5a1 1 0 011-1h4a1 1 0 011 1v2"></path></svg>
+                                            </button>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -471,7 +542,8 @@
                 logoDomain: '',
                 logoPrompt: '',
                 logoStyle: null,
-                selectedColors: [],
+                logoColorPalette: 'none',
+                logoCustomColors: ['#1e3a5f', '#d4af37', '#333333'],
                 backgroundColor: 'white',
                 shapeContainer: '',
                 detailLevel: 'medium',
@@ -487,11 +559,21 @@
                 zoomImageUrl: null,
                 similarIdeas: [],
 
+                // Palette management
+                canManagePalettes: @js((bool) $logoUser),
+                savedPalettes: [],
+                savedPaletteName: '',
+                paletteSaving: false,
+                paletteLoading: false,
+                paletteError: null,
+                paletteSuccess: null,
+
                 // Available options
-                availableColors: [
-                    '#FF0000', '#FF7F00', '#FFFF00', '#00FF00', '#0000FF', '#4B0082',
-                    '#9400D3', '#FF1493', '#00CED1', '#FFD700', '#FF4500', '#8B4513',
-                    '#2F4F4F', '#000000', '#FFFFFF', '#808080', '#FF69B4', '#7FFF00'
+                colorPalettes: [
+                    { id: 'fire',   name: 'Fire',   colors: ['#D00000', '#E85D04', '#FFBA08'] },
+                    { id: 'pastel', name: 'Pastel', colors: ['#FFB5A7', '#FCD5CE', '#A2D2FF'] },
+                    { id: 'royal',  name: 'Royal',  colors: ['#7B2CBF', '#C77DFF', '#E0AAFF'] },
+                    { id: 'ice',    name: 'Ice',    colors: ['#0077B6', '#00B4D8', '#90E0EF'] },
                 ],
                 dalleStyles: [
                     'minimalist', 'geometric', 'gradient', 'abstract', 'modern', 'vintage',
@@ -504,8 +586,23 @@
                     'flat design', 'isometric', '3D', 'neon', 'retro'
                 ],
 
+                normalizeHexColor(value, fallback = '#ffffff') {
+                    const v = String(value || '').trim();
+                    return /^#[0-9a-fA-F]{6}$/.test(v) ? v : fallback;
+                },
+
+                normalizePaletteColors(colors) {
+                    if (!Array.isArray(colors)) return [];
+                    return colors
+                        .map((color) => this.normalizeHexColor(color, ''))
+                        .filter((color) => /^#[0-9a-fA-F]{6}$/.test(color))
+                        .map((color) => color.toUpperCase())
+                        .slice(0, 5);
+                },
+
                 init() {
                     this.fetchLogoPrice();
+                    this.fetchSavedPalettes();
                 },
 
                 selectModel(model) {
@@ -513,14 +610,122 @@
                     this.fetchLogoPrice();
                 },
 
-                toggleColor(color) {
-                    const index = this.selectedColors.indexOf(color);
-                    if (index > -1) {
-                        this.selectedColors.splice(index, 1);
-                    } else {
-                        this.selectedColors.push(color);
+                getSelectedPaletteColors() {
+                    if (this.logoColorPalette === 'none') return null;
+                    if (this.logoColorPalette === 'custom') return this.logoCustomColors;
+                    const p = this.colorPalettes.find(p => p.id === this.logoColorPalette);
+                    return p ? p.colors : null;
+                },
+
+                async fetchSavedPalettes() {
+                    if (!this.canManagePalettes) return;
+                    this.paletteLoading = true;
+                    this.paletteError = null;
+                    try {
+                        const response = await fetch('/domain-search/logo-palettes', {
+                            method: 'GET',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
+                                'Accept': 'application/json',
+                            },
+                        });
+                        const data = await response.json().catch(() => ({}));
+                        if (!response.ok) {
+                            this.paletteError = data.error || 'Failed to load saved palettes.';
+                            return;
+                        }
+                        const incoming = Array.isArray(data.palettes) ? data.palettes : [];
+                        this.savedPalettes = incoming
+                            .map((p) => ({
+                                id: p.id,
+                                name: String(p.name || '').trim(),
+                                colors: this.normalizePaletteColors(p.colors),
+                            }))
+                            .filter((p) => p.id && p.name && p.colors.length >= 2);
+                    } catch (e) {
+                        this.paletteError = 'Network error loading saved palettes.';
+                    } finally {
+                        this.paletteLoading = false;
                     }
-                    this.fetchLogoPrice();
+                },
+
+                async saveCurrentPalette() {
+                    if (!this.canManagePalettes || this.paletteSaving) return;
+                    const name = String(this.savedPaletteName || '').trim();
+                    if (!name) {
+                        this.paletteError = 'Enter a palette name.';
+                        this.paletteSuccess = null;
+                        return;
+                    }
+                    const colors = this.normalizePaletteColors(this.logoCustomColors);
+                    if (colors.length < 2) {
+                        this.paletteError = 'Palette needs at least 2 colors.';
+                        this.paletteSuccess = null;
+                        return;
+                    }
+
+                    this.paletteSaving = true;
+                    this.paletteError = null;
+                    this.paletteSuccess = null;
+
+                    try {
+                        const response = await fetch('/domain-search/logo-palettes', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
+                                'Accept': 'application/json',
+                            },
+                            body: JSON.stringify({ name, colors }),
+                        });
+                        const data = await response.json().catch(() => ({}));
+                        if (!response.ok) {
+                            this.paletteError = data.error || 'Failed to save palette.';
+                            return;
+                        }
+                        await this.fetchSavedPalettes();
+                        this.paletteSuccess = 'Palette saved.';
+                    } catch (e) {
+                        this.paletteError = 'Network error saving palette.';
+                    } finally {
+                        this.paletteSaving = false;
+                    }
+                },
+
+                applySavedPalette(palette) {
+                    const colors = this.normalizePaletteColors(palette?.colors || []);
+                    if (colors.length < 2) return;
+                    this.logoCustomColors = colors;
+                    this.logoColorPalette = 'custom';
+                    this.savedPaletteName = String(palette?.name || '').trim();
+                    this.paletteError = null;
+                    this.paletteSuccess = `Loaded "${this.savedPaletteName}".`;
+                },
+
+                async deleteSavedPalette(paletteId) {
+                    if (!this.canManagePalettes || !paletteId) return;
+                    this.paletteError = null;
+                    this.paletteSuccess = null;
+                    try {
+                        const response = await fetch('/domain-search/logo-palettes/' + encodeURIComponent(paletteId), {
+                            method: 'DELETE',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
+                                'Accept': 'application/json',
+                            },
+                        });
+                        const data = await response.json().catch(() => ({}));
+                        if (!response.ok) {
+                            this.paletteError = data.error || 'Failed to delete palette.';
+                            return;
+                        }
+                        this.savedPalettes = this.savedPalettes.filter((p) => Number(p.id) !== Number(paletteId));
+                        this.paletteSuccess = 'Palette deleted.';
+                    } catch (e) {
+                        this.paletteError = 'Network error deleting palette.';
+                    }
                 },
 
                 selectStyle(style) {
@@ -574,7 +779,7 @@
                             prompt: this.logoPrompt,
                             style: this.logoStyle,
                             count: this.logoCount,
-                            colors: this.selectedColors,
+                            color_palette: this.logoColorPalette !== 'none' ? this.getSelectedPaletteColors() : null,
                             background: this.backgroundColor,
                             shape_container: this.shapeContainer,
                             detail_level: this.detailLevel,
