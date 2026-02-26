@@ -16,8 +16,8 @@
     @if ($logoUser ?? false)
     <div x-data="logoGenerator()" x-init="init()" class="h-screen flex flex-col">
         <!-- Top Bar -->
-        <div class="bg-white border-b border-gray-200 px-6 py-4">
-            <div class="flex items-center justify-between">
+        <div class="bg-white border-b border-gray-200">
+            <div class="px-6 py-4 flex items-center justify-between">
                 <div class="flex items-center gap-3">
                     <div class="p-2 bg-violet-100 rounded-lg">
                         <svg class="w-6 h-6 text-violet-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -31,6 +31,15 @@
                         </div>
                         <p class="text-sm text-gray-500">Full-screen studio workspace</p>
                     </div>
+                    <button 
+                        @click="showTextPromptPanel = !showTextPromptPanel"
+                        class="ml-4 px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-2 text-sm font-medium text-gray-700"
+                    >
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                        </svg>
+                        <span x-text="showTextPromptPanel ? 'Hide' : 'Edit Text & Prompt'"></span>
+                    </button>
                 </div>
                 
                 <!-- Cost Display -->
@@ -55,6 +64,35 @@
                     </button>
                 </div>
             </div>
+
+            <!-- Expandable Text & Prompt Panel -->
+            <div x-show="showTextPromptPanel" x-cloak x-transition class="border-t border-gray-200 bg-gray-50 px-6 py-4">
+                <div class="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- Logo Text Input -->
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-900 mb-2">Logo Text</label>
+                        <input 
+                            type="text" 
+                            x-model="logoDomain"
+                            @input="fetchLogoPrice()"
+                            placeholder="e.g., TechStart, CloudSync, etc."
+                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent bg-white"
+                        >
+                    </div>
+
+                    <!-- Prompt -->
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-900 mb-2">Custom Prompt (Optional)</label>
+                        <textarea 
+                            x-model="logoPrompt"
+                            @input="fetchLogoPrice()"
+                            rows="3"
+                            placeholder="Describe your logo style, colors, mood..."
+                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent resize-none bg-white"
+                        ></textarea>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Main Content -->
@@ -72,7 +110,7 @@
                     <div>
                         <h3 class="text-sm font-semibold text-gray-900 mb-3">AI Model</h3>
                         <div class="space-y-2">
-                            <!-- Fast: Flux Schnell -->
+                            <!-- Fast: Luna -->
                             <button 
                                 @click="selectModel('flux')"
                                 :class="selectedModel === 'flux' ? 'ring-2 ring-blue-500 bg-blue-50' : 'hover:bg-gray-50'"
@@ -81,8 +119,8 @@
                                 <div class="flex items-start justify-between">
                                     <div class="flex-1">
                                         <div class="flex items-center gap-2">
-                                            <span class="font-semibold text-gray-900">Fast</span>
-                                            <span class="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs font-medium rounded">Flux Schnell</span>
+                                            <span class="font-semibold text-gray-900">Luna</span>
+                                            <span class="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs font-medium rounded">Fast</span>
                                         </div>
                                         <p class="text-sm text-gray-600 mt-1">Quick iterations, good quality</p>
                                         <p class="text-xs text-gray-500 mt-1">$0.003/image</p>
@@ -90,7 +128,7 @@
                                 </div>
                             </button>
 
-                            <!-- Balanced: Recraft v3 -->
+                            <!-- Balanced: Ray -->
                             <button 
                                 @click="selectModel('recraft')"
                                 :class="selectedModel === 'recraft' ? 'ring-2 ring-violet-500 bg-violet-50' : 'hover:bg-gray-50'"
@@ -99,8 +137,8 @@
                                 <div class="flex items-start justify-between">
                                     <div class="flex-1">
                                         <div class="flex items-center gap-2">
-                                            <span class="font-semibold text-gray-900">Balanced</span>
-                                            <span class="px-2 py-0.5 bg-violet-100 text-violet-700 text-xs font-medium rounded">Recraft v3</span>
+                                            <span class="font-semibold text-gray-900">Ray</span>
+                                            <span class="px-2 py-0.5 bg-violet-100 text-violet-700 text-xs font-medium rounded">Balanced</span>
                                         </div>
                                         <p class="text-sm text-gray-600 mt-1">Best quality-to-speed ratio</p>
                                         <p class="text-xs text-gray-500 mt-1">$0.005/image</p>
@@ -108,7 +146,7 @@
                                 </div>
                             </button>
 
-                            <!-- Pro: DALL-E 3 -->
+                            <!-- Pro: Cosmo -->
                             <button 
                                 @click="selectModel('dalle')"
                                 :class="selectedModel === 'dalle' ? 'ring-2 ring-amber-500 bg-amber-50' : 'hover:bg-gray-50'"
@@ -117,8 +155,8 @@
                                 <div class="flex items-start justify-between">
                                     <div class="flex-1">
                                         <div class="flex items-center gap-2">
-                                            <span class="font-semibold text-gray-900">Pro</span>
-                                            <span class="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs font-medium rounded">DALL-E 3</span>
+                                            <span class="font-semibold text-gray-900">Cosmo</span>
+                                            <span class="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs font-medium rounded">Pro</span>
                                         </div>
                                         <p class="text-sm text-gray-600 mt-1">Highest quality, complex prompts</p>
                                         <p class="text-xs text-gray-500 mt-1">$0.040/image</p>
@@ -126,30 +164,6 @@
                                 </div>
                             </button>
                         </div>
-                    </div>
-
-                    <!-- Logo Text Input -->
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-900 mb-2">Logo Text</label>
-                        <input 
-                            type="text" 
-                            x-model="logoDomain"
-                            @input="fetchLogoPrice()"
-                            placeholder="e.g., TechStart, CloudSync, etc."
-                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-                        >
-                    </div>
-
-                    <!-- Prompt -->
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-900 mb-2">Custom Prompt (Optional)</label>
-                        <textarea 
-                            x-model="logoPrompt"
-                            @input="fetchLogoPrice()"
-                            rows="3"
-                            placeholder="Describe your logo style, colors, mood..."
-                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent resize-none"
-                        ></textarea>
                     </div>
 
                     <!-- Style -->
@@ -662,6 +676,7 @@
                 logoPrompt: '',
                 logoStyle: 'professional',
                 logoColorPalette: 'none',
+                showTextPromptPanel: false,
                 logoCustomColors: ['#1e3a5f', '#d4af37', '#333333'],
                 backgroundColor: 'white',
                 shapeContainer: '',
