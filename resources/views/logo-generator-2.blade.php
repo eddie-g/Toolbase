@@ -90,41 +90,77 @@
                 </div>
             </div>
 
-            <!-- Expandable Generation Settings Panel -->
-            <div x-show="showGenerationSettings" x-cloak x-transition class="border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 px-3 md:px-6 py-6">
-                <div class="max-w-5xl mx-auto">
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <!-- Number of Logos -->
-                        <div>
-                            <label class="block text-sm font-semibold text-gray-900 dark:text-white mb-3">Number of Logos</label>
-                            <div class="flex gap-2">
-                                <template x-for="num in [1,2,3,4]">
-                                    <button 
-                                        @click="logoCount = num; fetchLogoPrice()"
-                                        :class="logoCount === num ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700'"
-                                        class="flex-1 px-4 py-3 border rounded-lg font-medium transition-colors"
-                                        x-text="num"
-                                    ></button>
-                                </template>
-                            </div>
-                        </div>
+            <!-- Generation Settings Slide-out Panel -->
+            <div 
+                x-show="showGenerationSettings"
+                @click.away="showGenerationSettings = false"
+                x-transition:enter="transition-transform ease-out duration-300"
+                x-transition:enter-start="-translate-x-full"
+                x-transition:enter-end="translate-x-0"
+                x-transition:leave="transition-transform ease-in duration-200"
+                x-transition:leave-start="translate-x-0"
+                x-transition:leave-end="-translate-x-full"
+                class="fixed top-[70px] left-0 h-[calc(100vh-70px)] w-80 bg-white dark:bg-gray-800 shadow-2xl z-40 overflow-y-auto border-r border-gray-200 dark:border-gray-700"
+                x-cloak
+            >
+                <div class="p-6 space-y-6">
+                    <!-- Panel Header -->
+                    <div class="flex items-center justify-between pb-4 border-b border-gray-200 dark:border-gray-700">
+                        <h3 class="text-lg font-bold text-gray-900 dark:text-white">Generation Settings</h3>
+                        <button @click="showGenerationSettings = false" class="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                            </svg>
+                        </button>
+                    </div>
 
-                        <!-- Detail Level -->
-                        <div>
-                            <label class="block text-sm font-semibold text-gray-900 dark:text-white mb-3">Detail Level</label>
-                            <div class="grid grid-cols-3 gap-2">
-                                <template x-for="level in [{id:'min',label:'Minimal'},{id:'medium',label:'Medium'},{id:'max',label:'Maximum'}]" :key="level.id">
-                                    <button 
-                                        type="button"
-                                        @click="detailLevel = level.id; fetchLogoPrice()"
-                                        :class="detailLevel === level.id ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700'"
-                                        class="px-3 py-2.5 border rounded-lg font-medium text-sm transition-colors"
-                                        x-text="level.label"
-                                    ></button>
-                                </template>
-                            </div>
-                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-2" x-show="selectedModel === 'flux'">Only available for Ray and Cosmo models</p>
+                    <!-- Number of Logos -->
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-900 dark:text-white mb-3">Number of Logos</label>
+                        <div class="flex gap-2">
+                            <template x-for="num in [1,2,3,4]">
+                                <button 
+                                    @click="logoCount = num; fetchLogoPrice()"
+                                    :class="logoCount === num ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600'"
+                                    class="flex-1 px-4 py-3 border rounded-lg font-medium transition-colors"
+                                    x-text="num"
+                                ></button>
+                            </template>
                         </div>
+                    </div>
+
+                    <!-- Detail Level -->
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-900 dark:text-white mb-3">Detail Level</label>
+                        <div class="flex gap-2">
+                            <template x-for="level in [{id:'min',label:'Minimal'},{id:'medium',label:'Medium'},{id:'max',label:'Maximum'}]" :key="level.id">
+                                <button 
+                                    type="button"
+                                    @click="detailLevel = level.id; fetchLogoPrice()"
+                                    :class="detailLevel === level.id ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600'"
+                                    class="flex-1 px-3 py-2.5 border rounded-lg font-medium text-sm transition-colors"
+                                    x-text="level.label"
+                                ></button>
+                            </template>
+                        </div>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-2" x-show="selectedModel === 'flux'">Only available for Ray and Cosmo models</p>
+                    </div>
+
+                    <!-- Shape Container -->
+                    <div x-show="selectedModel === 'recraft'">
+                        <label class="block text-sm font-semibold text-gray-900 dark:text-white mb-3">Shape</label>
+                        <div class="flex gap-2">
+                            <template x-for="shape in [{id:'',label:'None'},{id:'circle',label:'Circle'},{id:'square',label:'Square'}]" :key="shape.id">
+                                <button 
+                                    type="button"
+                                    @click="shapeContainer = shape.id; fetchLogoPrice()"
+                                    :class="shapeContainer === shape.id ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600'"
+                                    class="flex-1 px-3 py-2.5 border rounded-lg font-medium text-sm transition-colors"
+                                    x-text="shape.label"
+                                ></button>
+                            </template>
+                        </div>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Only available for Ray model</p>
                     </div>
                 </div>
             </div>
@@ -380,18 +416,7 @@
                         </div>
                     </div>
 
-                    <!-- Shape Container -->
-                    <div x-show="selectedModel === 'recraft'">
-                        <label class="block text-sm font-semibold text-gray-900 mb-2">Shape</label>
-                        <select 
-                            x-model="shapeContainer"
-                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500"
-                        >
-                            <option value="">None</option>
-                            <option value="circle">Circle</option>
-                            <option value="square">Square</option>
-                        </select>
-                    </div>
+
 
 
                 </div>
