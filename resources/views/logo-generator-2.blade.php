@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>AI Logo Lab - Toolbase</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -11,7 +12,9 @@
         [x-cloak] { display: none !important; }
     </style>
 </head>
+@php($logoUser = auth()->user() ?? auth('admin')->user())
 <body class="bg-gray-50">
+    @if ($logoUser)
     <div x-data="logoGenerator()" x-init="init()" class="h-screen flex flex-col">
         <!-- Top Bar -->
         <div class="bg-white border-b border-gray-200 px-6 py-4">
@@ -60,6 +63,12 @@
             <!-- Left Sidebar -->
             <div class="w-96 bg-white border-r border-gray-200 overflow-y-auto">
                 <div class="p-6 space-y-6">
+                    <!-- Balance Display -->
+                    <div class="bg-gradient-to-r from-violet-50 to-purple-50 border border-violet-200 rounded-lg px-4 py-3 flex items-center justify-between">
+                        <span class="text-xs font-medium text-violet-700 uppercase tracking-wider">Balance</span>
+                        <span class="text-lg font-bold" :class="creditBalance < 0.01 ? 'text-red-600' : 'text-violet-600'" x-text="'$' + creditBalance.toFixed(4)"></span>
+                    </div>
+
                     <!-- AI Model Selector -->
                     <div>
                         <h3 class="text-sm font-semibold text-gray-900 mb-3">AI Model</h3>
@@ -487,6 +496,7 @@
                 generating: false,
                 logoImages: [],
                 logoPrice: 0,
+                creditBalance: @js((float) ($logoUser->credit_balance ?? 0)),
                 error: null,
                 showStyleModal: false,
                 zoomImageUrl: null,
@@ -557,6 +567,9 @@
 
                         const data = await response.json();
                         this.logoPrice = data.price || 0;
+                        if (data.credit_balance !== undefined) {
+                            this.creditBalance = parseFloat(data.credit_balance);
+                        }
                     } catch (err) {
                         console.error('Price estimate error:', err);
                     }
@@ -598,6 +611,10 @@
 
                         const data = await response.json();
                         
+                        if (data.credit_balance !== undefined) {
+                            this.creditBalance = parseFloat(data.credit_balance);
+                        }
+
                         if (data.error) {
                             this.error = data.error;
                         } else {
@@ -752,5 +769,17 @@
             };
         }
     </script>
+    @else
+    <div class="h-screen flex items-center justify-center">
+        <div class="text-center">
+            <svg class="mx-auto h-16 w-16 text-violet-500 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+            </svg>
+            <h3 class="text-lg font-semibold text-gray-900 mb-2">Login Required</h3>
+            <p class="text-sm text-gray-500 mb-6">Please log in to use the AI Logo Lab</p>
+            <a href="/admin/login" class="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-semibold transition">Log In</a>
+        </div>
+    </div>
+    @endif
 </body>
 </html>
