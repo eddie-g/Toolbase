@@ -687,7 +687,7 @@ class GenerateLogoJob implements ShouldQueue
                 }
             } else {
                 $proBody = $proResponse->body();
-                if (str_contains($proBody, 'not_enough_credits')) {
+                if ($this->friendlyErrorMessage($proBody) === 'Model currently unavailable, please try a different model.') {
                     return ['error' => 'Model currently unavailable, please try a different model.', 'status_code' => 400];
                 }
                 Log::warning('PRO image ' . ($i + 1) . ' failed', [
@@ -755,7 +755,12 @@ class GenerateLogoJob implements ShouldQueue
      */
     private function friendlyErrorMessage(string $raw): string
     {
-        if (str_contains($raw, 'not_enough_credits')) {
+        $normalized = strtolower($raw);
+        if (
+            str_contains($normalized, 'not_enough_credits') ||
+            str_contains($normalized, 'user is locked') ||
+            str_contains($normalized, 'exhausted balance')
+        ) {
             return 'Model currently unavailable, please try a different model.';
         }
         return $raw;

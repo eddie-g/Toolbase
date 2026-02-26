@@ -19,6 +19,17 @@
         <div class="bg-white border-b border-gray-200">
             <div class="px-6 py-4 flex items-center justify-between">
                 <div class="flex items-center gap-3">
+                    <!-- Hamburger Menu Toggle -->
+                    <button 
+                        @click="showLeftPanel = !showLeftPanel"
+                        class="p-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-gray-700"
+                        :aria-label="showLeftPanel ? 'Hide sidebar' : 'Show sidebar'"
+                    >
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+                        </svg>
+                    </button>
+                    
                     <div class="p-2 bg-violet-100 rounded-lg">
                         <svg class="w-6 h-6 text-violet-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 008 10.172V5L7 4z"/>
@@ -96,9 +107,33 @@
         </div>
 
         <!-- Main Content -->
-        <div class="flex flex-1 overflow-hidden">
+        <div class="flex flex-1 overflow-hidden relative">
+            <!-- Mobile Backdrop -->
+            <div 
+                x-show="showLeftPanel" 
+                @click="showLeftPanel = false"
+                x-transition:enter="transition-opacity ease-out duration-200"
+                x-transition:enter-start="opacity-0"
+                x-transition:enter-end="opacity-100"
+                x-transition:leave="transition-opacity ease-in duration-150"
+                x-transition:leave-start="opacity-100"
+                x-transition:leave-end="opacity-0"
+                class="lg:hidden fixed inset-0 bg-black bg-opacity-50 z-10"
+                x-cloak
+            ></div>
+            
             <!-- Left Sidebar -->
-            <div class="w-96 bg-white border-r border-gray-200 overflow-y-auto">
+            <div 
+                x-show="showLeftPanel"
+                x-transition:enter="transition-transform ease-out duration-200"
+                x-transition:enter-start="-translate-x-full"
+                x-transition:enter-end="translate-x-0"
+                x-transition:leave="transition-transform ease-in duration-150"
+                x-transition:leave-start="translate-x-0"
+                x-transition:leave-end="-translate-x-full"
+                class="w-96 bg-white border-r border-gray-200 overflow-y-auto fixed lg:relative inset-y-0 left-0 z-20 lg:z-0"
+                x-cloak
+            >
                 <div class="p-6 space-y-6">
                     <!-- Balance Display -->
                     <div class="bg-gradient-to-r from-violet-50 to-purple-50 border border-violet-200 rounded-lg px-4 py-3 flex items-center justify-between">
@@ -677,6 +712,7 @@
                 logoStyle: 'professional',
                 logoColorPalette: 'none',
                 showTextPromptPanel: false,
+                showLeftPanel: window.innerWidth >= 1024,
                 logoCustomColors: ['#1e3a5f', '#d4af37', '#333333'],
                 backgroundColor: 'white',
                 shapeContainer: '',

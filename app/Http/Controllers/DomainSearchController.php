@@ -1598,9 +1598,11 @@ class DomainSearchController extends Controller
         }
 
         // failed or error
+        $rawError = $logoRequest->error_message ?? 'Logo generation failed.';
+
         return response()->json([
             'status' => $status,
-            'error' => $logoRequest->error_message ?? 'Logo generation failed.',
+            'error' => $this->friendlyErrorMessage($rawError),
             'credit_balance' => (float) $currentUser->credit_balance,
         ]);
     }
@@ -1635,6 +1637,16 @@ class DomainSearchController extends Controller
      */
     private function friendlyErrorMessage(string $raw): string
     {
+        $normalized = strtolower($raw);
+
+        if (
+            str_contains($normalized, 'not_enough_credits') ||
+            str_contains($normalized, 'user is locked') ||
+            str_contains($normalized, 'exhausted balance')
+        ) {
+            return 'Model currently unavailable, please try a different model.';
+        }
+
         if (str_contains($raw, 'content filters') || str_contains($raw, 'content_policy') || str_contains($raw, 'safety system')) {
             return 'Your prompt was flagged by the AI safety filter. Please rephrase your description and try again — avoid violent, sexual, or trademarked content.';
         }
@@ -2139,7 +2151,8 @@ class DomainSearchController extends Controller
             $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
 
             if (!$response->successful()) {
-                $falError = $response->json('detail') ?? $response->json('message') ?? 'Unknown error';
+                $falErrorRaw = $response->json('detail') ?? $response->json('message') ?? $response->body() ?? 'Unknown error';
+                $falError = $this->friendlyErrorMessage($falErrorRaw);
                 \Log::error('Fal.ai PRO logo generation failed', [
                     'status' => $response->status(),
                     'body' => $response->body(),
@@ -2213,10 +2226,11 @@ class DomainSearchController extends Controller
             ]);
         } catch (\Exception $e) {
             $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
+            $friendlyError = $this->friendlyErrorMessage($e->getMessage());
 
             $logoRequest->update([
                 'status' => 'error',
-                'error_message' => $e->getMessage(),
+                'error_message' => $friendlyError,
                 'response_time_ms' => $elapsedMs,
             ]);
 
@@ -2226,7 +2240,7 @@ class DomainSearchController extends Controller
             ]);
 
             return response()->json([
-                'error' => 'PRO generation failed: ' . $e->getMessage(),
+                'error' => 'PRO generation failed: ' . $friendlyError,
             ], 500);
         }
     }
