@@ -24,7 +24,7 @@
   "icon_only": {
     "chrome": "A high-resolution 3D render of {subject} made of polished sterling silver chrome with realistic reflections and depth. {shape_block} Background: {chrome_bg}. Front-facing, soft studio lighting, ultra-clean composition, logo-only output. {no_text}",
     "professional": "Design one professional minimalist logo icon for {subject}. Flat vector-like style, clean geometry, strong silhouette, highly legible at small sizes. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
-    "fantasy": "Create one fantasy-style emblem icon for {subject}. Ornamental curves, magical motifs, high-contrast silhouette. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "fantasy": "Create one simple fantasy-style icon for {subject}. Simple details, focus on silhouette. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
     "future": "Design one futuristic tech logo icon for {subject}. Sharp geometry, dynamic forward motion, clean negative space. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
     "retro": "A vibrant retro icon for {subject} with strong vintage forms and bold contrast. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
     "8bit": "Design a retro 8-bit pixel-art icon for {subject}. Chunky square pixels, classic arcade style, clean silhouette. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
@@ -36,8 +36,8 @@
   "icon_only_medium": {
     "chrome": "A detailed 3D render of {subject} cast in polished sterling silver chrome. Richer surface micro-detail and more dramatic specular highlights than a flat icon, but still clean and logo-appropriate. Background: {chrome_bg}. {shape_block} {no_text}",
     "professional": "A polished professional logo icon for {subject} with refined linework, subtle gradient depth, and precise geometric construction — more detailed than a flat icon but still clean and scalable. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
-    "fantasy": "A richly detailed fantasy emblem icon for {subject} in Warcraft universe style — subtle magical glow accents. Still an icon/emblem, but with painterly richness. No decorative borders, no skulls, no moons, no stars, no ornamental frames around the edges. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
-    "future": "A refined futuristic tech icon for {subject} glowing neon edge-lighting, and complex geometric depth — more intricate than a flat icon but still a clean logo form. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "fantasy": "A richly detailed fantasy emblem icon for {subject} in RESEMBLES League of Legends universe style — subtle magical glow accents. Still an icon/emblem, but with painterly richness. No decorative borders, no skulls, no moons, no stars, no ornamental frames around the edges. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "future": "A refined futuristic tech icon for {subject} that RESEMBLES starcraft universe style glowing neon edge-lighting — more intricate than a flat icon but still a clean logo form. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
     "retro": "A detailed vintage icon for {subject} with fine crosshatching, engraving linework, aged paper texture, and classic badge-style depth — richer than a flat icon but still a contained emblem. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
     "8bit": "A detailed 16-bit SNES-era pixel-art icon for {subject} with dithered shading, richer color depth, and fine sprite detail — more refined than chunky 8-bit but still a pixel icon. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
     "dotmatrix": "A dense stipple icon of {subject} with rich tonal gradients built from fine dot-work — more elaborate than a simple silhouette but still a contained icon. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
@@ -48,7 +48,7 @@
   "icon_only_max": {
     "chrome": "A breathtaking 8K photorealistic render of {subject} sculpted in polished sterling silver chrome. Cinematic studio lighting with dramatic specular highlights, deep reflections, complex surface detail, and flawless casting quality. Front-facing, centered on {bg} background. {shape_block} {no_text}",
     "professional": "A highly detailed professional logo artwork for {subject}. Rich vector illustration with micro detail, subtle gradients, fine linework, and precise geometric construction. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
-    "fantasy": "An epic high-fantasy full-color illustration in the style of Lord of the Rings concept art — {subject}. Photorealistic painterly render with dramatic volumetric lighting, rich atmospheric depth. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "fantasy": "An epic high-fantasy full-color illustration that RESEMBLES of Lord of the Rings concept art — {subject}. Photorealistic painterly render with dramatic volumetric lighting, rich atmospheric depth. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
     "future": "A hyper-detailed cinematic sci-fi render of {subject}. deep space atmosphere. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
     "retro": "A lush, highly detailed vintage illustration of {subject} — rich crosshatching, fine engraving lines, aged paper texture, classic poster typography influences. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
     "8bit": "An exquisitely detailed 16-bit SNES-era pixel art masterpiece of {subject}. Dense pixel detail, dithered shading, rich color depth, and perfect sprite-art composition. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",

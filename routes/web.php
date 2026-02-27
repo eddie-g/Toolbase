@@ -125,8 +125,8 @@ Route::get('/ai/add-to-pdf', function() {
 
 // Domain Search
 Route::get('/domain-search', [DomainSearchController::class, 'index'])->name('domainSearch.index');
-Route::get('/logo-generator', [DomainSearchController::class, 'logoGenerator'])->name('domainSearch.logoGenerator');
-Route::get('/logo-generator-2', [DomainSearchController::class, 'logoGenerator2'])->name('domainSearch.logoGenerator2');
+Route::get('/logo-generator', [DomainSearchController::class, 'logoGenerator2'])->name('domainSearch.logoGenerator');
+Route::get('/logo-generator-classic', [DomainSearchController::class, 'logoGenerator'])->name('domainSearch.logoGeneratorClassic');
 Route::get('/domain-search/faq', function () {
     return view('domain-search-faq');
 })->name('domainSearch.faq');
