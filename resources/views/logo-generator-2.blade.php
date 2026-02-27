@@ -540,19 +540,14 @@
                                                 Save
                                             </button>
                                             <button 
+                                                x-show="!image.isVector"
                                                 @click="convertToSvg(image.url)"
                                                 class="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
                                             >
                                                 SVG
                                             </button>
                                         </div>
-                                        <div class="grid grid-cols-2 gap-2">
-                                            <button 
-                                                @click="openInEditor(image.url)"
-                                                class="px-3 py-2 bg-gray-700 hover:bg-gray-800 text-white text-sm font-medium rounded-lg transition-colors"
-                                            >
-                                                Editor
-                                            </button>
+                                        <div class="grid grid-cols-1 gap-2">
                                             <button 
                                                 @click="removeBackground(image.url)"
                                                 class="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg transition-colors"
@@ -1177,7 +1172,8 @@
 
                                         const newImages = (statusData.images || []).map(img => ({
                                             url: img.url,
-                                            seed: statusData.seed || null
+                                            seed: statusData.seed || null,
+                                            isVector: this.outputFormat === 'vector'
                                         }));
                                         
                                         // Add to current batch
@@ -1274,12 +1270,12 @@
                         if (data.url) {
                             // Add the new image to the most recent batch (or create a new one)
                             if (this.logoBatches.length > 0) {
-                                this.logoBatches[0].images.push({ url: data.url });
+                                this.logoBatches[0].images.push({ url: data.url, isVector: false });
                             } else {
                                 this.logoBatches.unshift({
                                     id: Date.now(),
                                     timestamp: new Date().toISOString(),
-                                    images: [{ url: data.url }]
+                                    images: [{ url: data.url, isVector: false }]
                                 });
                             }
                         }
