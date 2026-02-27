@@ -269,7 +269,6 @@
                                             <span class="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs font-medium rounded">Fast</span>
                                         </div>
                                         <p class="text-sm text-gray-600 mt-1">Quick iterations, good quality</p>
-                                        <p class="text-xs text-gray-500 mt-1">$0.003/image</p>
                                     </div>
                                 </div>
                             </button>
@@ -287,7 +286,6 @@
                                             <span class="px-2 py-0.5 bg-violet-100 text-violet-700 text-xs font-medium rounded">Balanced</span>
                                         </div>
                                         <p class="text-sm text-gray-600 mt-1">Best quality-to-speed ratio</p>
-                                        <p class="text-xs text-gray-500 mt-1">$0.005/image</p>
                                     </div>
                                 </div>
                             </button>
@@ -305,7 +303,6 @@
                                             <span class="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs font-medium rounded">Pro</span>
                                         </div>
                                         <p class="text-sm text-gray-600 mt-1">Highest quality, complex prompts</p>
-                                        <p class="text-xs text-gray-500 mt-1">$0.040/image</p>
                                     </div>
                                 </div>
                             </button>
@@ -435,6 +432,51 @@
                                 class="flex-1 px-4 py-3 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
                             >
                                 Transparent
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Type: Image or Vector -->
+                    <div class="border-t border-gray-200 pt-4">
+                        <label class="block text-sm font-semibold text-gray-900 mb-2">Type</label>
+                        
+                        <!-- Luna/Ray: Vector vs Raster -->
+                        <div x-show="selectedModel !== 'dalle'" class="space-y-2">
+                            <div class="flex gap-2">
+                                <button
+                                    @click="outputFormat = 'raster'; fetchLogoPrice()"
+                                    :class="outputFormat === 'raster' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'"
+                                    class="flex-1 px-4 py-3 border rounded-lg font-medium transition-colors"
+                                >
+                                    Image
+                                </button>
+                                <button
+                                    @click="outputFormat = 'vector'; fetchLogoPrice()"
+                                    :class="outputFormat === 'vector' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'"
+                                    class="flex-1 px-4 py-3 border rounded-lg font-medium transition-colors"
+                                >
+                                    Vector (SVG)
+                                </button>
+                            </div>
+                            <p x-show="selectedModel === 'recraft' && outputFormat === 'vector'" x-transition class="text-xs text-indigo-500">Ray generates native SVG vector logos directly</p>
+                            <p x-show="selectedModel === 'flux' && outputFormat === 'vector'" x-transition class="text-xs text-indigo-500">Luna raster output will be vectorized to SVG</p>
+                        </div>
+                        
+                        <!-- Cosmo: Image format only -->
+                        <div x-show="selectedModel === 'dalle'" class="flex gap-2">
+                            <button
+                                @click="imageFormat = 'png'; fetchLogoPrice()"
+                                :class="imageFormat === 'png' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'"
+                                class="flex-1 px-4 py-3 border rounded-lg font-medium transition-colors"
+                            >
+                                PNG
+                            </button>
+                            <button
+                                @click="imageFormat = 'bmp'; fetchLogoPrice()"
+                                :class="imageFormat === 'bmp' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'"
+                                class="flex-1 px-4 py-3 border rounded-lg font-medium transition-colors"
+                            >
+                                BMP
                             </button>
                         </div>
                     </div>
@@ -802,6 +844,8 @@
                 detailLevel: 'medium',
                 proMode: false,
                 proSize: '1024',
+                outputFormat: 'raster',
+                imageFormat: 'png',
                 seed: null,
 
                 // State
@@ -853,6 +897,10 @@
 
                 selectModel(model) {
                     this.selectedModel = model;
+                    // Reset output format to raster when switching to DALL-E
+                    if (model === 'dalle') {
+                        this.outputFormat = 'raster';
+                    }
                     this.fetchLogoPrice();
                 },
 
@@ -1000,8 +1048,8 @@
                                 style: this.logoStyle,
                                 bg_color: this.backgroundColor,
                                 image_model: this.selectedModel,
-                                output_format: 'raster',
-                                image_format: null,
+                                output_format: this.selectedModel === 'dalle' ? 'raster' : this.outputFormat,
+                                image_format: this.selectedModel === 'dalle' ? this.imageFormat : null,
                                 recraft_substyle: null
                             })
                         });
@@ -1051,8 +1099,8 @@
                                 icon_only: !this.useLogoText,
                                 bg_color: this.backgroundColor,
                                 image_model: this.selectedModel,
-                                output_format: 'raster',
-                                image_format: null,
+                                output_format: this.selectedModel === 'dalle' ? 'raster' : this.outputFormat,
+                                image_format: this.selectedModel === 'dalle' ? this.imageFormat : null,
                                 color_palette: this.logoColorPalette !== 'none' ? this.getSelectedPaletteColors() : null,
                                 logo_shape: this.shapeContainer || 'none',
                                 logo_detail: this.detailLevel || 'medium'
