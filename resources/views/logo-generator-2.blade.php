@@ -567,6 +567,13 @@
                                                 Save
                                             </button>
                                             <button 
+                                                x-show="image.isVector"
+                                                @click="openEditor(image.url)"
+                                                class="px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium rounded-lg transition-colors"
+                                            >
+                                                Edit
+                                            </button>
+                                            <button 
                                                 x-show="!image.isVector"
                                                 @click="convertToSvg(image.url)"
                                                 class="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
@@ -842,6 +849,139 @@
             </div>
         </div>
 
+        <!-- SVG Editor Modal -->
+        <div x-show="showEditor" x-cloak class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" @click="showEditor = false">
+            <div class="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-7xl max-h-[90vh] overflow-hidden" @click.stop>
+                <!-- Header -->
+                <div class="bg-gradient-to-r from-amber-500 to-orange-500 px-6 py-4 flex items-center justify-between">
+                    <h2 class="text-2xl font-bold text-white">SVG Editor</h2>
+                    <button @click="showEditor = false" class="text-white hover:text-gray-200 transition-colors">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- Content -->
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 p-6 max-h-[calc(90vh-80px)] overflow-y-auto">
+                    <!-- Left: Editor Tools -->
+                    <div class="lg:col-span-1 space-y-6">
+                        <!-- Color Editor -->
+                        <div class="bg-gray-50 dark:bg-gray-800 rounded-xl p-4 space-y-4">
+                            <h3 class="font-semibold text-gray-900 dark:text-white">Colors</h3>
+                            <template x-for="(color, index) in editorColors" :key="index">
+                                <div class="flex items-center gap-3">
+                                    <input 
+                                        type="color" 
+                                        x-model="editorColors[index]"
+                                        @input="updateSvgColor(index, $event.target.value)"
+                                        class="w-12 h-10 rounded border border-gray-300 dark:border-gray-600 cursor-pointer"
+                                    >
+                                    <div class="flex-1">
+                                        <input 
+                                            type="text" 
+                                            x-model="editorColors[index]"
+                                            @input="updateSvgColor(index, $event.target.value)"
+                                            class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                                            placeholder="#000000"
+                                        >
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+
+                        <!-- Text Editor -->
+                        <div class="bg-gray-50 dark:bg-gray-800 rounded-xl p-4 space-y-4">
+                            <h3 class="font-semibold text-gray-900 dark:text-white">Add Text</h3>
+                            
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Text</label>
+                                <input 
+                                    type="text" 
+                                    x-model="editorText"
+                                    placeholder="Enter text..."
+                                    class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                                >
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Font Family</label>
+                                <select 
+                                    x-model="editorFontFamily"
+                                    class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                                >
+                                    <option value="Arial">Arial</option>
+                                    <option value="Helvetica">Helvetica</option>
+                                    <option value="Times New Roman">Times New Roman</option>
+                                    <option value="Georgia">Georgia</option>
+                                    <option value="Verdana">Verdana</option>
+                                    <option value="Impact">Impact</option>
+                                    <option value="Comic Sans MS">Comic Sans MS</option>
+                                    <option value="Courier New">Courier New</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Font Size</label>
+                                <input 
+                                    type="number" 
+                                    x-model="editorFontSize"
+                                    min="12"
+                                    max="200"
+                                    class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                                >
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Text Color</label>
+                                <div class="flex items-center gap-3">
+                                    <input 
+                                        type="color" 
+                                        x-model="editorTextColor"
+                                        class="w-12 h-10 rounded border border-gray-300 dark:border-gray-600 cursor-pointer"
+                                    >
+                                    <input 
+                                        type="text" 
+                                        x-model="editorTextColor"
+                                        class="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                                        placeholder="#000000"
+                                    >
+                                </div>
+                            </div>
+
+                            <button 
+                                @click="addTextToSvg()"
+                                class="w-full px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-medium rounded-lg transition-colors"
+                            >
+                                Add Text
+                            </button>
+                        </div>
+
+                        <!-- Actions -->
+                        <div class="space-y-2">
+                            <button 
+                                @click="downloadEditedSvg()"
+                                class="w-full px-4 py-3 bg-violet-600 hover:bg-violet-700 text-white font-semibold rounded-lg transition-colors"
+                            >
+                                Download SVG
+                            </button>
+                            <button 
+                                @click="resetEditor()"
+                                class="w-full px-4 py-3 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 font-medium rounded-lg transition-colors"
+                            >
+                                Reset
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Right: Preview -->
+                    <div class="lg:col-span-2 bg-gray-100 dark:bg-gray-800 rounded-xl p-8 flex items-center justify-center">
+                        <div x-html="editorSvgContent" class="max-w-full max-h-full"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Login Gate -->
     </div>
 
@@ -889,6 +1029,16 @@
                 paletteLoading: false,
                 paletteError: null,
                 paletteSuccess: null,
+
+                // SVG Editor
+                showEditor: false,
+                editorSvgUrl: null,
+                editorSvgContent: null,
+                editorColors: [],
+                editorText: '',
+                editorFontSize: 48,
+                editorFontFamily: 'Arial',
+                editorTextColor: '#000000',
 
                 // Available options
                 colorPalettes: [
@@ -1378,6 +1528,131 @@
 
                 zoomImage(url) {
                     this.zoomImageUrl = url;
+                },
+
+                async openEditor(url) {
+                    this.editorSvgUrl = url;
+                    this.showEditor = true;
+                    
+                    try {
+                        // Fetch SVG content
+                        const response = await fetch(url);
+                        const svgText = await response.text();
+                        this.editorSvgContent = svgText;
+                        
+                        // Extract colors from SVG
+                        this.extractColors(svgText);
+                    } catch (error) {
+                        console.error('Failed to load SVG:', error);
+                    }
+                },
+
+                extractColors(svgText) {
+                    // Extract fill and stroke colors from SVG
+                    const colors = new Set();
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(svgText, 'image/svg+xml');
+                    
+                    // Find all elements with fill or stroke attributes
+                    const elements = doc.querySelectorAll('[fill], [stroke]');
+                    elements.forEach(el => {
+                        const fill = el.getAttribute('fill');
+                        const stroke = el.getAttribute('stroke');
+                        
+                        if (fill && fill !== 'none' && fill.startsWith('#')) {
+                            colors.add(fill.toUpperCase());
+                        }
+                        if (stroke && stroke !== 'none' && stroke.startsWith('#')) {
+                            colors.add(stroke.toUpperCase());
+                        }
+                    });
+                    
+                    this.editorColors = Array.from(colors);
+                },
+
+                updateSvgColor(colorIndex, newColor) {
+                    if (!this.editorSvgContent) return;
+                    
+                    const oldColor = this.editorColors[colorIndex];
+                    if (!oldColor) return;
+                    
+                    // Update the SVG content
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(this.editorSvgContent, 'image/svg+xml');
+                    
+                    // Find and update all elements with this color
+                    const elements = doc.querySelectorAll('[fill], [stroke]');
+                    elements.forEach(el => {
+                        const fill = el.getAttribute('fill');
+                        const stroke = el.getAttribute('stroke');
+                        
+                        if (fill && fill.toUpperCase() === oldColor.toUpperCase()) {
+                            el.setAttribute('fill', newColor);
+                        }
+                        if (stroke && stroke.toUpperCase() === oldColor.toUpperCase()) {
+                            el.setAttribute('stroke', newColor);
+                        }
+                    });
+                    
+                    // Update the content
+                    const serializer = new XMLSerializer();
+                    this.editorSvgContent = serializer.serializeToString(doc);
+                    this.editorColors[colorIndex] = newColor.toUpperCase();
+                },
+
+                addTextToSvg() {
+                    if (!this.editorText || !this.editorSvgContent) return;
+                    
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(this.editorSvgContent, 'image/svg+xml');
+                    const svg = doc.querySelector('svg');
+                    
+                    if (!svg) return;
+                    
+                    // Get SVG dimensions
+                    const width = parseFloat(svg.getAttribute('width') || svg.getAttribute('viewBox')?.split(' ')[2] || 512);
+                    const height = parseFloat(svg.getAttribute('height') || svg.getAttribute('viewBox')?.split(' ')[3] || 512);
+                    
+                    // Create text element
+                    const text = doc.createElementNS('http://www.w3.org/2000/svg', 'text');
+                    text.setAttribute('x', width / 2);
+                    text.setAttribute('y', height - 50);
+                    text.setAttribute('text-anchor', 'middle');
+                    text.setAttribute('font-family', this.editorFontFamily);
+                    text.setAttribute('font-size', this.editorFontSize);
+                    text.setAttribute('fill', this.editorTextColor);
+                    text.setAttribute('font-weight', 'bold');
+                    text.textContent = this.editorText;
+                    
+                    // Add text to SVG
+                    svg.appendChild(text);
+                    
+                    // Update content
+                    const serializer = new XMLSerializer();
+                    this.editorSvgContent = serializer.serializeToString(doc);
+                    
+                    // Clear text input
+                    this.editorText = '';
+                },
+
+                downloadEditedSvg() {
+                    if (!this.editorSvgContent) return;
+                    
+                    // Create blob and download
+                    const blob = new Blob([this.editorSvgContent], { type: 'image/svg+xml' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'edited-logo-' + Date.now() + '.svg';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                },
+
+                resetEditor() {
+                    if (!this.editorSvgUrl) return;
+                    this.openEditor(this.editorSvgUrl);
                 },
 
                 async queueSimilarIdeasLookup() {
