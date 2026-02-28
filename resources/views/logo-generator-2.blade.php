@@ -159,31 +159,36 @@
                             <template x-for="level in [{id:'min',label:'Minimal'},{id:'medium',label:'Medium'},{id:'max',label:'Maximum'}]" :key="level.id">
                                 <button 
                                     type="button"
-                                    @click="detailLevel = level.id; fetchLogoPrice()"
-                                    :class="detailLevel === level.id ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600'"
+                                    @click="if (!isRayVectorLockedDetail()) { detailLevel = level.id; fetchLogoPrice(); }"
+                                    :disabled="isRayVectorLockedDetail()"
+                                    :class="[
+                                        detailLevel === level.id ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600',
+                                        isRayVectorLockedDetail() ? 'opacity-50 cursor-not-allowed' : ''
+                                    ]"
                                     class="flex-1 px-3 py-2.5 border rounded-lg font-medium text-sm transition-colors"
                                     x-text="level.label"
                                 ></button>
                             </template>
                         </div>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-2" x-show="selectedModel === 'flux'">Only available for Ray and Cosmo models</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-2" x-show="selectedModel === 'flux'">Detail level available for Luna</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-2" x-show="isRayVectorLockedDetail()">Ray vector uses a fixed medium detail level.</p>
                     </div>
 
                     <!-- Shape Container -->
-                    <div x-show="selectedModel === 'recraft' || selectedModel === 'dalle'">
+                    <div>
                         <label class="block text-sm font-semibold text-gray-900 dark:text-white mb-3">Shape</label>
-                        <div class="flex gap-2">
-                            <template x-for="shape in [{id:'',label:'None'},{id:'circle',label:'Circle'},{id:'square',label:'Square'}]" :key="shape.id">
+                        <div class="grid grid-cols-3 gap-2">
+                            <template x-for="shape in [{id:'',label:'None'},{id:'circle',label:'Circle'},{id:'square',label:'Square'},{id:'hexagon',label:'Hexagon'},{id:'triangle',label:'Triangle'},{id:'pentagon',label:'Pentagon'}]" :key="shape.id">
                                 <button 
                                     type="button"
                                     @click="shapeContainer = shape.id; fetchLogoPrice()"
                                     :class="shapeContainer === shape.id ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600'"
-                                    class="flex-1 px-3 py-2.5 border rounded-lg font-medium text-sm transition-colors"
+                                    class="px-3 py-2.5 border rounded-lg font-medium text-sm transition-colors"
                                     x-text="shape.label"
                                 ></button>
                             </template>
                         </div>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Only available for Ray and Cosmo models</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Logo will be constrained inside the selected shape</p>
                     </div>
                 </div>
             </div>
@@ -191,32 +196,54 @@
             <!-- Expandable Text & Prompt Panel -->
             <div x-show="showTextPromptPanel" x-cloak x-transition class="border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 px-3 md:px-6 py-6">
                 <div class="max-w-5xl mx-auto space-y-5">
-                    <!-- Logo Text Input with Toggle -->
+                    <!-- Logo Text Input with Mode Selection -->
                     <div class="space-y-3">
-                        <div class="flex items-center justify-between">
-                            <label class="block text-sm font-semibold text-gray-900 dark:text-white">Logo Text</label>
-                            <label class="flex items-center gap-2 cursor-pointer">
-                                <input 
-                                    type="checkbox" 
-                                    x-model="useLogoText"
-                                    @change="if (!useLogoText) logoDomain = ''; fetchLogoPrice();"
-                                    class="w-4 h-4 text-violet-600 bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 rounded focus:ring-violet-500"
-                                >
-                                <span class="text-xs font-medium text-gray-600 dark:text-gray-400">Enable text in logo</span>
-                            </label>
+                        <label class="block text-sm font-semibold text-gray-900 dark:text-white">Logo Mode</label>
+                        <div class="grid grid-cols-3 gap-2">
+                            <button 
+                                type="button"
+                                @click="logoMode = 'icon_only'; logoDomain = ''; fetchLogoPrice()"
+                                :class="logoMode === 'icon_only' ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600'"
+                                class="px-3 py-2.5 border rounded-lg font-medium text-sm transition-colors"
+                            >
+                                Icon Only
+                            </button>
+                            <button 
+                                type="button"
+                                @click="if (outputFormat !== 'vector') { logoMode = 'icon_text'; fetchLogoPrice(); }"
+                                :disabled="outputFormat === 'vector'"
+                                :class="[
+                                    logoMode === 'icon_text' ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600',
+                                    outputFormat === 'vector' ? 'opacity-50 cursor-not-allowed' : ''
+                                ]"
+                                class="px-3 py-2.5 border rounded-lg font-medium text-sm transition-colors"
+                            >
+                                Icon + Text
+                            </button>
+                            <button 
+                                type="button"
+                                @click="logoMode = 'text_only'; fetchLogoPrice()"
+                                :class="logoMode === 'text_only' ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600'"
+                                class="px-3 py-2.5 border rounded-lg font-medium text-sm transition-colors"
+                            >
+                                Text Only
+                            </button>
                         </div>
+                        <p x-show="outputFormat === 'vector'" x-transition class="text-xs text-amber-600 dark:text-amber-400">
+                            ⚠️ For vector generation, logo and text should be generated separately to ensure professional quality and positioning control.
+                        </p>
                         <input 
                             type="text" 
                             x-model="logoDomain"
                             @input="fetchLogoPrice()"
-                            :disabled="!useLogoText"
+                            x-show="logoMode !== 'icon_only'"
                             placeholder="e.g., TechStart, CloudSync, DataFlow, etc."
-                            class="w-full px-4 py-3.5 text-base border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent bg-white dark:bg-gray-800 dark:text-white disabled:bg-gray-100 dark:disabled:bg-gray-700 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+                            class="w-full px-4 py-3.5 text-base border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent bg-white dark:bg-gray-800 dark:text-white transition-colors"
                         >
                     </div>
 
                     <!-- Custom Prompt -->
-                    <div class="space-y-3">
+                    <div x-show="logoMode !== 'text_only'" x-transition class="space-y-3">
                         <label class="block text-sm font-semibold text-gray-900 dark:text-white">Custom Prompt (Optional)</label>
                         <textarea 
                             x-model="logoPrompt"
@@ -451,7 +478,7 @@
                                     Image
                                 </button>
                                 <button
-                                    @click="outputFormat = 'vector'; fetchLogoPrice()"
+                                    @click="outputFormat = 'vector'; if (logoMode === 'icon_text') logoMode = 'icon_only'; if (selectedModel === 'recraft') detailLevel = 'medium'; fetchLogoPrice()"
                                     :class="outputFormat === 'vector' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'"
                                     class="flex-1 px-4 py-3 border rounded-lg font-medium transition-colors"
                                 >
@@ -832,13 +859,13 @@
                 showTextPromptPanel: false,
                 showGenerationSettings: false,
                 showLeftPanel: true,
-                useLogoText: true,
+                logoMode: 'icon_only',
                 logoCustomColors: ['#1e3a5f', '#d4af37', '#333333'],
                 backgroundColor: 'white',
                 shapeContainer: '',
                 detailLevel: 'medium',
-                proMode: false,
-                proSize: '1024',
+                proMode: true,
+                proSize: '512',
                 outputFormat: 'raster',
                 imageFormat: 'png',
                 seed: null,
@@ -890,11 +917,18 @@
                     this.fetchSavedPalettes();
                 },
 
+                isRayVectorLockedDetail() {
+                    return this.selectedModel === 'recraft' && this.outputFormat === 'vector';
+                },
+
                 selectModel(model) {
                     this.selectedModel = model;
                     // Reset output format to raster when switching to DALL-E
                     if (model === 'dalle') {
                         this.outputFormat = 'raster';
+                    }
+                    if (this.isRayVectorLockedDetail()) {
+                        this.detailLevel = 'medium';
                     }
                     this.fetchLogoPrice();
                 },
@@ -1062,7 +1096,28 @@
                 },
 
                 async generateLogo() {
-                    if ((!this.logoDomain && !this.logoPrompt) || this.generating) return;
+                    // Validate based on mode
+                    const needsText = this.logoMode === 'icon_text' || this.logoMode === 'text_only';
+                    const needsPrompt = this.logoMode === 'icon_only' || this.logoMode === 'icon_text';
+
+                    if (this.outputFormat === 'vector' && this.logoMode === 'icon_text') {
+                        this.error = 'Vector generation supports either logo or text, not both.';
+                        return;
+                    }
+                    
+                    if (needsText && !this.logoDomain) {
+                        this.error = 'Please enter logo text';
+                        return;
+                    }
+                    if (needsPrompt && !this.logoPrompt) {
+                        // Prompt is optional, but at least something is needed
+                        if (!this.logoDomain) {
+                            this.error = 'Please enter logo text or a custom prompt';
+                            return;
+                        }
+                    }
+                    
+                    if (this.generating) return;
 
                     this.generating = true;
                     this.error = null;
@@ -1083,7 +1138,7 @@
 
                         for (let i = 0; i < totalCount; i++) {
                             const payload = {
-                                domain: this.useLogoText ? this.logoDomain : null,
+                                domain: (this.logoMode === 'icon_text' || this.logoMode === 'text_only') ? this.logoDomain : null,
                                 custom_prompt: this.logoPrompt || '',
                                 style: this.logoStyle,
                                 count: 1,
@@ -1091,14 +1146,15 @@
                                 batch_index: i,
                                 pro: this.proMode,
                                 pro_size: this.proMode ? parseInt(this.proSize) : 1024,
-                                icon_only: !this.useLogoText,
+                                icon_only: this.logoMode === 'icon_only',
+                                text_only: this.logoMode === 'text_only',
                                 bg_color: this.backgroundColor,
                                 image_model: this.selectedModel,
                                 output_format: this.selectedModel === 'dalle' ? 'raster' : this.outputFormat,
                                 image_format: this.selectedModel === 'dalle' ? this.imageFormat : null,
                                 color_palette: this.logoColorPalette !== 'none' ? this.getSelectedPaletteColors() : null,
                                 logo_shape: this.shapeContainer || 'none',
-                                logo_detail: this.detailLevel || 'medium'
+                                logo_detail: this.isRayVectorLockedDetail() ? 'medium' : (this.detailLevel || 'medium')
                             };
 
                             const response = await fetch('/domain-search/generate-logo', {
@@ -1111,7 +1167,7 @@
                             });
 
                             if (!response.ok) {
-                                const data = await response.json();
+                                const data = await response.json().catch(() => ({ error: 'Server error' }));
                                 this.error = data.error || 'Failed to queue logo generation';
                                 if (data.credit_balance !== undefined) {
                                     this.creditBalance = parseFloat(data.credit_balance);
@@ -1120,7 +1176,15 @@
                                 continue;
                             }
 
-                            const data = await response.json();
+                            const data = await response.json().catch(() => {
+                                console.error('Failed to parse generation response as JSON');
+                                return null;
+                            });
+                            
+                            if (!data) {
+                                this.error = 'Server returned invalid response';
+                                continue;
+                            }
 
                             if (data.logo_request_id) {
                                 pendingJobs.push(data.logo_request_id);
@@ -1165,13 +1229,16 @@
                                         }
                                     });
 
-                                    const statusData = await statusRes.json();
+                                    const statusData = await statusRes.json().catch(err => {
+                                        console.error('Failed to parse status response as JSON for job', jobId, err);
+                                        return { status: 'failed', error: 'Invalid server response' };
+                                    });
 
                                     if (statusData.status === 'completed') {
                                         completedJobs.add(jobId);
 
                                         const newImages = (statusData.images || []).map(img => ({
-                                            url: img.url,
+                                            url: img.svg_url || img.stored_url || img.url,
                                             seed: statusData.seed || null,
                                             isVector: this.outputFormat === 'vector'
                                         }));

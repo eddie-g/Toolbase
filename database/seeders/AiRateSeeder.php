@@ -179,11 +179,11 @@ class AiRateSeeder extends Seeder
                 'model_name' => 'recraft-v4',
                 'model_variant' => 'vector',
                 'resolution' => '1024x1024',
-                'base_cost_usd' => 0.080,
+                'base_cost_usd' => 0.040,
                 'markup_percentage' => 50.00,
-                'user_cost_usd' => 0.120,
+                'user_cost_usd' => 0.060,
                 'is_active' => true,
-                'notes' => 'Recraft V4 Vector (80 units @ $0.001/unit)',
+                'notes' => 'Recraft V4 Vector (40 units @ $0.001/unit)',
             ],
         ];
 

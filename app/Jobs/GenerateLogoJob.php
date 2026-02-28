@@ -367,7 +367,7 @@ class GenerateLogoJob implements ShouldQueue
      * Generate images via Recraft (v4 Pro or v2 regular, raster or vector).
      *
      * V4 (Pro): unified endpoint /v1/images/generations, model=recraftv4 or recraftv4_vector.
-     *           `style` and `substyle` are NOT supported by V4.
+     *           Both raster and vector supported. `style` and `substyle` are NOT supported by V4.
      * V2 (Regular): endpoint per type (/raster or /vector), model=recraftv2.
      *               Supports `style`, `substyle`.
      */
@@ -377,9 +377,11 @@ class GenerateLogoJob implements ShouldQueue
         $recraftKey = config('services.recraft.key');
         $isVector = $outputFormat === 'vector';
 
+        // Use V4 for PRO mode (both raster and vector)
+        // Use V2 for non-PRO mode
         if ($isPro) {
             // ── Recraft V4 ────────────────────────────────────────────────
-            // Single unified endpoint; vector vs raster encoded in model name.
+            // Single unified endpoint; supports both raster and vector.
             // No `style` or `substyle` parameters supported.
             $recraftEndpoint = '/v1/images/generations';
             $recraftModel    = $isVector ? 'recraftv4_vector' : 'recraftv4';
@@ -446,6 +448,14 @@ class GenerateLogoJob implements ShouldQueue
         }
 
         $recraftUrl = $recraftBaseUrl . $recraftEndpoint;
+        
+        Log::info('Recraft API request', [
+            'url' => $recraftUrl,
+            'body' => $recraftBody,
+            'is_vector' => $isVector,
+            'is_pro' => $isPro,
+        ]);
+        
         $recraftResponse = $this->httpWithResolvedDns($recraftUrl, [
             'Authorization' => 'Bearer ' . $recraftKey,
             'Content-Type' => 'application/json',
@@ -476,7 +486,27 @@ class GenerateLogoJob implements ShouldQueue
             return ['error' => $recraftError, 'status_code' => $recraftResponse->status()];
         }
 
-        $recraftData = $recraftResponse->json();
+        // Check if response is JSON before parsing
+        $responseBody = $recraftResponse->body();
+        if (str_starts_with(trim($responseBody), '<') || str_starts_with(trim($responseBody), '<!DOCTYPE')) {
+            Log::error('Recraft returned HTML instead of JSON', [
+                'status' => $recraftResponse->status(),
+                'body' => substr($responseBody, 0, 500),
+                'url' => $recraftUrl,
+            ]);
+            return ['error' => 'API returned invalid response format', 'status_code' => $recraftResponse->status()];
+        }
+
+        try {
+            $recraftData = $recraftResponse->json();
+        } catch (\Exception $e) {
+            Log::error('Failed to parse Recraft JSON response', [
+                'error' => $e->getMessage(),
+                'body' => substr($responseBody, 0, 500),
+            ]);
+            return ['error' => 'API returned invalid JSON', 'status_code' => 500];
+        }
+
         $allImages = [];
 
         foreach ($recraftData['data'] ?? [] as $recraftImg) {
@@ -489,7 +519,8 @@ class GenerateLogoJob implements ShouldQueue
                 // Vector endpoint returns SVG — strip BG programmatically
                 if ($isVector) {
                     try {
-                        $svgContent = Http::timeout(15)->get($imgUrl)->body();
+                        $svgResponse = $this->httpWithResolvedDns($imgUrl, [])->timeout(15)->get($imgUrl);
+                        $svgContent = $svgResponse->body();
                         if ($svgContent && str_contains($svgContent, '<svg')) {
                             $cleanedSvg = $this->removeSvgBackground($svgContent);
                             if ($cleanedSvg) {
@@ -551,7 +582,25 @@ class GenerateLogoJob implements ShouldQueue
             ]);
 
             if ($response->successful()) {
-                $data = $response->json();
+                // Check if response is JSON before parsing
+                $responseBody = $response->body();
+                if (str_starts_with(trim($responseBody), '<') || str_starts_with(trim($responseBody), '<!DOCTYPE')) {
+                    Log::error('GPT Image 1.5 returned HTML instead of JSON', [
+                        'body' => substr($responseBody, 0, 500),
+                    ]);
+                    return ['error' => 'API returned invalid response format', 'status_code' => 500];
+                }
+                
+                try {
+                    $data = $response->json();
+                } catch (\Exception $jsonEx) {
+                    Log::error('Failed to parse GPT Image 1.5 JSON response', [
+                        'error' => $jsonEx->getMessage(),
+                        'body' => substr($responseBody, 0, 500),
+                    ]);
+                    return ['error' => 'API returned invalid JSON', 'status_code' => 500];
+                }
+                
                 foreach ($data['data'] ?? [] as $img) {
                     if (!empty($img['url'])) {
                         $allImages[] = [
@@ -572,7 +621,18 @@ class GenerateLogoJob implements ShouldQueue
                     }
                 }
             } else {
-                $errJson = $response->json();
+                $responseBody = $response->body();
+                $errJson = null;
+                
+                // Try to parse error response as JSON
+                if (!str_starts_with(trim($responseBody), '<')) {
+                    try {
+                        $errJson = $response->json();
+                    } catch (\Exception $e) {
+                        // Not valid JSON, continue with null
+                    }
+                }
+                
                 $errMsg  = $errJson['error']['message'] ?? '';
                 $errType = $errJson['error']['type'] ?? '';
 
@@ -682,8 +742,26 @@ class GenerateLogoJob implements ShouldQueue
             ]);
 
             if ($proResponse->successful()) {
-                foreach ($proResponse->json()['images'] ?? [] as $pImg) {
-                    $allImages[] = $pImg;
+                // Check if response is JSON before parsing
+                $responseBody = $proResponse->body();
+                if (str_starts_with(trim($responseBody), '<') || str_starts_with(trim($responseBody), '<!DOCTYPE')) {
+                    Log::error('Flux Pro returned HTML instead of JSON', [
+                        'body' => substr($responseBody, 0, 500),
+                    ]);
+                    return ['error' => 'API returned invalid response format', 'status_code' => 500];
+                }
+                
+                try {
+                    $proData = $proResponse->json();
+                    foreach ($proData['images'] ?? [] as $pImg) {
+                        $allImages[] = $pImg;
+                    }
+                } catch (\Exception $jsonEx) {
+                    Log::error('Failed to parse Flux Pro JSON response', [
+                        'error' => $jsonEx->getMessage(),
+                        'body' => substr($responseBody, 0, 500),
+                    ]);
+                    return ['error' => 'API returned invalid JSON', 'status_code' => 500];
                 }
             } else {
                 $proBody = $proResponse->body();
@@ -726,20 +804,47 @@ class GenerateLogoJob implements ShouldQueue
 
         if (!$response->successful()) {
             $falBody = $response->body();
-            $falError = $this->friendlyErrorMessage(
-                str_contains($falBody, 'not_enough_credits')
-                    ? 'not_enough_credits'
-                    : ($response->json('detail') ?? $response->json('message') ?? 'Unknown error')
-            );
+            
+            // Try to extract error message, handling both JSON and non-JSON responses
+            $falError = 'Unknown error';
+            if (str_contains($falBody, 'not_enough_credits')) {
+                $falError = 'not_enough_credits';
+            } elseif (!str_starts_with(trim($falBody), '<')) {
+                try {
+                    $jsonData = $response->json();
+                    $falError = $jsonData['detail'] ?? $jsonData['message'] ?? 'Unknown error';
+                } catch (\Exception $e) {
+                    $falError = 'Unknown error';
+                }
+            }
+            
+            $falError = $this->friendlyErrorMessage($falError);
             Log::error('Fal.ai logo generation failed', [
                 'status' => $response->status(),
-                'body' => $falBody,
+                'body' => substr($falBody, 0, 500),
             ]);
             return ['error' => $falError, 'status_code' => $response->status()];
         }
 
-        $data = $response->json();
-        return ['images' => $data['images'] ?? [], 'seed' => $data['seed'] ?? null];
+        // Check if response is JSON before parsing
+        $responseBody = $response->body();
+        if (str_starts_with(trim($responseBody), '<') || str_starts_with(trim($responseBody), '<!DOCTYPE')) {
+            Log::error('Flux Schnell returned HTML instead of JSON', [
+                'body' => substr($responseBody, 0, 500),
+            ]);
+            return ['error' => 'API returned invalid response format', 'status_code' => 500];
+        }
+        
+        try {
+            $data = $response->json();
+            return ['images' => $data['images'] ?? [], 'seed' => $data['seed'] ?? null];
+        } catch (\Exception $jsonEx) {
+            Log::error('Failed to parse Flux Schnell JSON response', [
+                'error' => $jsonEx->getMessage(),
+                'body' => substr($responseBody, 0, 500),
+            ]);
+            return ['error' => 'API returned invalid JSON', 'status_code' => 500];
+        }
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -830,9 +935,25 @@ class GenerateLogoJob implements ShouldQueue
                     ]);
 
                     if ($svgResponse->successful()) {
-                        $svgUrl = $svgResponse->json()['image']['url'] ?? ($svgResponse->json()['images'][0]['url'] ?? null);
-                        if ($svgUrl) {
-                            $img['svg_url'] = $svgUrl;
+                        // Check if response is JSON before parsing
+                        $responseBody = $svgResponse->body();
+                        if (str_starts_with(trim($responseBody), '<') || str_starts_with(trim($responseBody), '<!DOCTYPE')) {
+                            Log::warning('Vectorization API returned HTML instead of JSON for image ' . $i, [
+                                'body' => substr($responseBody, 0, 500),
+                            ]);
+                        } else {
+                            try {
+                                $svgData = $svgResponse->json();
+                                $svgUrl = $svgData['image']['url'] ?? ($svgData['images'][0]['url'] ?? null);
+                                if ($svgUrl) {
+                                    $img['svg_url'] = $svgUrl;
+                                }
+                            } catch (\Exception $jsonEx) {
+                                Log::warning('Failed to parse vectorization JSON for image ' . $i, [
+                                    'error' => $jsonEx->getMessage(),
+                                    'body' => substr($responseBody, 0, 500),
+                                ]);
+                            }
                         }
                     } else {
                         Log::warning('SVG vectorization failed for image ' . $i, [
@@ -891,7 +1012,7 @@ class GenerateLogoJob implements ShouldQueue
     private function storeRemoteLogoImage(int $requestId, int $userId, ?string $domain, string $imageUrl, int $index): ?array
     {
         try {
-            $response = Http::timeout(45)->get($imageUrl);
+            $response = $this->httpWithResolvedDns($imageUrl, [])->timeout(45)->get($imageUrl);
             if (!$response->successful()) {
                 Log::warning('Failed to download generated logo image', [
                     'request_id' => $requestId,

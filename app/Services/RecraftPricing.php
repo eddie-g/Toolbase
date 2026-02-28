@@ -16,7 +16,7 @@ class RecraftPricing
     public static function estimate(string $type = 'raster', string $version = 'v4'): array
     {
         $map = [
-            'v4' => ['raster' => 40, 'vector' => 80],
+            'v4' => ['raster' => 40, 'vector' => 40],
             'v3' => ['raster' => 40, 'vector' => 80],
             'v2' => ['raster' => 22, 'vector' => 44],
             'tools' => ['vectorize' => 10, 'remove_bg' => 10],

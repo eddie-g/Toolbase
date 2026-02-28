@@ -11,6 +11,7 @@ class AiLogoRequest extends Model
         'domain',
         'style',
         'model',
+        'output_format',
         'seed_number',
         'prompt',
         'original_prompt',

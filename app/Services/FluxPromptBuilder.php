@@ -8,11 +8,12 @@ namespace App\Services;
  * Edit  config/flux_prompts.json  to change wording without touching PHP.
  *
  * Available template variables:
- *   {brand}    – brand name (uppercase)
- *   {concept}  – visual concept element (pre-formatted with leading space, or empty)
- *   {colors}   – full color instruction string
- *   {bg}       – background instruction string
- *   {no_text}  – text constraint (pre-formatted with leading space)
+ *   {brand}       – brand name (uppercase)
+ *   {concept}     – visual concept element (pre-formatted with leading space, or empty)
+ *   {colors}      – full color instruction string
+ *   {bg}          – background instruction string
+ *   {shape_block} – shape constraint sentence, or empty string
+ *   {no_text}     – text constraint (pre-formatted with leading space)
  */
 class FluxPromptBuilder
 {
@@ -61,19 +62,58 @@ class FluxPromptBuilder
      * @param string      $bgInstruction    Background instruction string (e.g. "isolated on a solid white background")
      * @param string      $brandUpper       Brand name, already uppercased
      * @param string      $outputFormat     'raster'|'vector'
+     * @param string|null $logoShape        'circle'|'hexagon'|'triangle'|'square'|'pentagon'|'none'|null
      */
     public static function build(
         string  $style,
         bool    $iconOnly,
+        bool    $textOnly,
         string  $concept,
         ?string $colorInstruction,
         string  $bgInstruction,
         string  $brandUpper,
         string  $outputFormat = 'raster',
         ?string $detail = 'max',
+        ?string $logoShape = null,
     ): string {
         $detail ??= 'max';
         $tpl    = self::templates();
+        
+        // Handle text-only mode: generate wordmark/text only, no icon
+        if ($textOnly) {
+            $textOnlyPrompt = "A clean professional wordmark logo design. The text \"{$brandUpper}\" is rendered in a custom typography with elegant letterforms. ";
+            
+            // Add color instruction
+            if ($colorInstruction) {
+                $textOnlyPrompt .= " {$colorInstruction} ";
+            } else {
+                $textOnlyPrompt .= " " . self::defaultColors($style) . " ";
+            }
+            
+            // Add background
+            $textOnlyPrompt .= " The design is {$bgInstruction}.";
+            
+            // Add shape constraint for text-only if specified
+            if (!empty($logoShape) && $logoShape !== 'none') {
+                $shapeTemplate = $tpl['shape_block'] ?? '';
+                $shapeBlock = str_replace(
+                    ['{shape}', '{Shape}', '{SHAPE}'],
+                    [strtolower($logoShape), ucfirst(strtolower($logoShape)), strtoupper($logoShape)],
+                    $shapeTemplate
+                );
+                $textOnlyPrompt .= " {$shapeBlock}";
+            }
+            
+            // Add quality suffix
+            $qualityKey = $outputFormat === 'vector' ? 'quality_vector' : 'quality';
+            $qualitySuffix = $tpl[$qualityKey][$detail] ?? $tpl[$qualityKey]['max'] ?? '';
+            if ($qualitySuffix !== '') {
+                $textOnlyPrompt = rtrim($textOnlyPrompt, '. ') . '.' . $qualitySuffix;
+            }
+            
+            return $textOnlyPrompt;
+        }
+        
         $mode   = $iconOnly ? 'icon_only' : 'with_brand';
         $format = $outputFormat === 'vector' ? 'vector' : 'raster';
 
@@ -89,6 +129,17 @@ class FluxPromptBuilder
         $noTextTemplate = $tpl['no_text'][$mode] ?? '';
         $noTextValue    = str_replace('{brand}', $brandUpper, $noTextTemplate);
 
+        // Build shape constraint text if a shape is specified
+        $shapeBlock = '';
+        if (!empty($logoShape) && $logoShape !== 'none') {
+            $shapeTemplate = $tpl['shape_block'] ?? '';
+            $shapeBlock = str_replace(
+                ['{shape}', '{Shape}', '{SHAPE}'],
+                [strtolower($logoShape), ucfirst(strtolower($logoShape)), strtoupper($logoShape)],
+                $shapeTemplate
+            );
+        }
+
         // Pick the prompt template by output format, then fall back to legacy flat keys.
         $promptTemplate = $tpl[$format][$mode][$style]
             ?? $tpl[$format][$mode]['professional']
@@ -97,11 +148,12 @@ class FluxPromptBuilder
             ?? '';
 
         $body = self::sub($promptTemplate, [
-            'brand'   => $brandUpper,
-            'concept' => $conceptValue,
-            'colors'  => $colorsValue,
-            'bg'      => $bgInstruction,
-            'no_text' => $noTextValue,
+            'brand'       => $brandUpper,
+            'concept'     => $conceptValue,
+            'colors'      => $colorsValue,
+            'bg'          => $bgInstruction,
+            'shape_block' => $shapeBlock,
+            'no_text'     => $noTextValue,
         ]);
 
         // For raster only, prepend custom colors to front-load palette guidance.
