@@ -125,8 +125,8 @@ Route::get('/ai/add-to-pdf', function() {
 
 // Domain Search
 Route::get('/domain-search', [DomainSearchController::class, 'index'])->name('domainSearch.index');
-Route::get('/logo-generator', [DomainSearchController::class, 'logoGenerator'])->name('domainSearch.logoGenerator');
-Route::get('/logo-generator-2', [DomainSearchController::class, 'logoGenerator2'])->name('domainSearch.logoGenerator2');
+Route::get('/logo-generator', [DomainSearchController::class, 'logoGenerator2'])->name('domainSearch.logoGenerator');
+Route::get('/logo-generator-classic', [DomainSearchController::class, 'logoGenerator'])->name('domainSearch.logoGeneratorClassic');
 Route::get('/domain-search/faq', function () {
     return view('domain-search-faq');
 })->name('domainSearch.faq');
@@ -140,12 +140,12 @@ Route::post('/domain-search/generate-and-check', [DomainSearchController::class,
 Route::post('/domain-search/ai-generate', [DomainSearchController::class, 'aiGenerate'])->name('domainSearch.aiGenerate');
 Route::get('/domain-search/ai-status/{jobId}', [DomainSearchController::class, 'aiStatus'])->name('domainSearch.aiStatus');
 Route::post('/domain-search/record-file-upload', [DomainSearchController::class, 'recordFileUpload'])->middleware(['throttle:20,1'])->name('domainSearch.recordFileUpload');
-Route::post('/domain-search/generate-logo', [DomainSearchController::class, 'generateLogo'])->name('domainSearch.generateLogo');
+Route::post('/domain-search/generate-logo', [DomainSearchController::class, 'generateLogo'])->middleware('json.response')->name('domainSearch.generateLogo');
 Route::get('/domain-search/generate-logo', fn () => response()->json(['error' => 'POST method required.'], 405));
-Route::get('/domain-search/logo-status/{logoRequest}', [DomainSearchController::class, 'logoStatus'])->name('domainSearch.logoStatus');
+Route::get('/domain-search/logo-status/{logoRequest}', [DomainSearchController::class, 'logoStatus'])->middleware('json.response')->name('domainSearch.logoStatus');
 Route::post('/domain-search/logo-similar-ideas', [DomainSearchController::class, 'logoSimilarIdeas'])->name('domainSearch.logoSimilarIdeas');
 Route::post('/domain-search/generate-pro-logo', [DomainSearchController::class, 'generateProLogo'])->name('domainSearch.generateProLogo');
-Route::post('/domain-search/estimate-logo-price', [DomainSearchController::class, 'estimateLogoPrice'])->name('domainSearch.estimateLogoPrice');
+Route::post('/domain-search/estimate-logo-price', [DomainSearchController::class, 'estimateLogoPrice'])->middleware('json.response')->name('domainSearch.estimateLogoPrice');
 Route::post('/domain-search/describe-logo', [DomainSearchController::class, 'describeLogo'])->name('domainSearch.describeLogo');
 Route::post('/domain-search/upscale-logo', [DomainSearchController::class, 'upscaleLogo'])->name('domainSearch.upscaleLogo');
 Route::get('/domain-search/upscale-logo', fn () => response()->json(['error' => 'POST method required.'], 405));

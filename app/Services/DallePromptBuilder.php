@@ -36,6 +36,7 @@ class DallePromptBuilder
     public static function build(
         string $style,
         bool $iconOnly,
+        bool $textOnly,
         string $subject,
         string $brandUpper,
         string $colorList,
@@ -45,6 +46,27 @@ class DallePromptBuilder
         string $detail = 'min',
     ): string {
         $tpl = self::templates();
+        
+        // Handle text-only mode: generate wordmark/text only, no icon
+        if ($textOnly) {
+            $textOnlyPrompt = "A professional wordmark logo design featuring the text \"{$brandUpper}\" in custom typography. ";
+            $textOnlyPrompt .= "Colors: {$colorList}. ";
+            $textOnlyPrompt .= "Background: {$bgInstruction}. ";
+            
+            // Add shape constraint if specified
+            if (!empty($logoShape) && $logoShape !== 'none') {
+                $shapeBlock = self::sub($tpl['shape_block'] ?? '', [
+                    'shape' => strtolower($logoShape),
+                    'Shape' => ucfirst(strtolower($logoShape)),
+                    'SHAPE' => strtoupper($logoShape),
+                ]);
+                $textOnlyPrompt .= " {$shapeBlock}";
+            }
+            
+            $textOnlyPrompt .= " Clean, professional, and suitable for vector conversion. No icons or symbols, text only.";
+            return $textOnlyPrompt;
+        }
+        
         $mode = $iconOnly ? 'icon_only' : 'with_brand';
 
         $subjectValue = trim($subject) !== ''

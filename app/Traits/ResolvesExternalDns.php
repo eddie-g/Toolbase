@@ -4,6 +4,7 @@ namespace App\Traits;
 
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Process;
 
 /**
  * Provides HTTP client with pre-resolved DNS to bypass Docker Desktop's
@@ -11,6 +12,32 @@ use Illuminate\Support\Facades\Http;
  */
 trait ResolvesExternalDns
 {
+    /**
+     * Resolve host to IPv4 with a hard timeout.
+     *
+     * Uses `getent ahostsv4` to avoid blocking indefinitely inside libc resolver
+     * calls (which can happen in containerized DNS edge cases).
+     */
+    protected function resolveHostIp(string $host): ?string
+    {
+        try {
+            $result = Process::timeout(2)->run(['getent', 'ahostsv4', $host]);
+            if (!$result->successful()) {
+                return null;
+            }
+
+            foreach (preg_split('/\r\n|\r|\n/', trim($result->output())) as $line) {
+                if (preg_match('/^(\d{1,3}(?:\.\d{1,3}){3})\s+/', $line, $m)) {
+                    return $m[1];
+                }
+            }
+        } catch (\Throwable $e) {
+            // Fall through to null so requests still proceed via normal DNS.
+        }
+
+        return null;
+    }
+
     /**
      * Build an Http pending request that pre-resolves the hostname via
      * gethostbyname() and passes the IP to cURL via CURLOPT_RESOLVE.
@@ -27,15 +54,14 @@ trait ResolvesExternalDns
         $curlOptions = [
             CURLOPT_FRESH_CONNECT => true,
             CURLOPT_FORBID_REUSE  => true,
+            CURLOPT_CONNECTTIMEOUT => 15,
         ];
 
         // Pre-resolve hostname and pass to curl to bypass Docker's DNS
         if ($host) {
             $cacheKey = 'dns_resolve_' . $host;
             $ip = Cache::remember($cacheKey, 300, function () use ($host) {
-                $resolved = gethostbyname($host);
-                // gethostbyname returns the hostname unchanged if resolution fails
-                return ($resolved !== $host) ? $resolved : null;
+                return $this->resolveHostIp($host);
             });
 
             if ($ip) {

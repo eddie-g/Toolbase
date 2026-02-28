@@ -22,6 +22,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use App\Traits\ResolvesExternalDns;
@@ -125,9 +126,10 @@ class DomainSearchController extends Controller
         return view('logo-generator');
     }
 
-    public function logoGenerator2()
+    public function logoGenerator2(Request $request)
     {
-        return view('logo-generator-2');
+        $user = $request->user();
+        return view('logo-generator-2', ['logoUser' => $user]);
     }
 
     public function check(Request $request)
@@ -1169,20 +1171,24 @@ class DomainSearchController extends Controller
      */
     public function estimateLogoPrice(Request $request)
     {
-        $request->validate([
-            'count' => 'nullable|integer|min:1|max:4',
-            'pro' => 'nullable|boolean',
-            'pro_size' => 'nullable|integer|in:512,1024,1536',
-            'style' => 'nullable|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,greetingcard',
-            'bg_color' => 'nullable|string|max:20',
-            'image_model' => 'nullable|string|in:flux,dalle,recraft',
-            'output_format' => 'nullable|string|in:raster,vector',
-            'image_format' => 'nullable|string|in:png,bmp',
-            'recraft_substyle' => 'nullable|string|max:60',
-        ]);
+        // Force JSON responses for this endpoint
+        $request->headers->set('Accept', 'application/json');
+        
+        try {
+            $request->validate([
+                'count' => 'nullable|integer|min:1|max:4',
+                'pro' => 'nullable|boolean',
+                'pro_size' => 'nullable|integer|in:512,1024,1536',
+                'style' => 'nullable|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,greetingcard',
+                'bg_color' => 'nullable|string|max:20',
+                'image_model' => 'nullable|string|in:flux,dalle,recraft',
+                'output_format' => 'nullable|string|in:raster,vector',
+                'image_format' => 'nullable|string|in:png,bmp',
+                'recraft_substyle' => 'nullable|string|max:60',
+            ]);
 
-        $imageModel = $request->input('image_model', 'flux');
-        $outputFormat = $request->input('output_format', 'raster');
+            $imageModel = $request->input('image_model', 'flux');
+            $outputFormat = $request->input('output_format', 'raster');
 
         if ($imageModel === 'recraft') {
             $estimate = \App\Services\RecraftPricing::estimateLogoCost(
@@ -1214,344 +1220,415 @@ class DomainSearchController extends Controller
         unset($estimate['base_cost_total'], $estimate['markup_amount']);
 
         return response()->json($estimate);
+        
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'error' => 'Validation failed',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('Logo price estimation failed', [
+                'error' => $e->getMessage(),
+            ]);
+            return response()->json([
+                'error' => 'An unexpected error occurred.',
+            ], 500);
+        }
     }
 
     public function generateLogo(Request $request)
     {
-        if (!$request->user()) {
-            return response()->json([
-                'error' => 'You must be logged in to generate logos.',
-            ], 401);
-        }
-
-        $request->validate([
-            'domain' => 'nullable|string|max:100',
-            'style' => 'required|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,minimalist,greetingcard' . (config('services.logo_custom_prompt_enabled') ? ',custom' : ''),
-            'count' => 'nullable|integer|min:1|max:4',
-            'total_count' => 'nullable|integer|min:1|max:4',
-            'batch_index' => 'nullable|integer|min:0|max:3',
-            'custom_prompt' => 'required|string|min:2|max:2000',
-            'pro' => 'nullable|boolean',
-            'pro_size' => 'nullable|integer|in:512,1024,1536',
-            'icon_only' => 'nullable|boolean',
-            'bg_color' => 'nullable|string|max:20',
-            'image_model' => 'nullable|string|in:flux,dalle,recraft',
-            'output_format' => 'nullable|string|in:raster,vector',
-            'image_format' => 'nullable|string|in:png,bmp',
-            'recraft_substyle' => 'nullable|string|max:60',
-            'logo_shape' => 'nullable|string|in:none,circle,hexagon,triangle,square,pentagon,heart',
-            'logo_detail' => 'nullable|string|in:min,medium,max',
-            'color_palette' => 'nullable|array|max:5',
-            'color_palette.*' => 'string|max:20',
-        ]);
-
-        $iconOnly = (bool) $request->input('icon_only', false);
-        $domain = $request->input('domain') ? trim($request->input('domain')) : null;
-
-        // Domain is required unless icon-only mode or custom style
-        if (!$iconOnly && !$domain && $style !== 'custom') {
-            return response()->json([
-                'error' => 'Domain name is required when Text in Logo is enabled.',
-            ], 422);
-        }
-
-        $style = $request->input('style');
-        $imageCount = $request->input('count', 1);
-        $totalCount = $request->input('total_count', $imageCount);
-        $batchIndex = $request->input('batch_index', 0);
-        $customPrompt = $request->input('custom_prompt');
-
-        // ── Trademark / copyright guard ──────────────────────────────────────
-        if ($customPrompt) {
-            $trademarkCheck = \App\Services\TrademarkFilter::check($customPrompt);
-            if (!$trademarkCheck['safe']) {
-                return response()->json(['error' => $trademarkCheck['message']], 422);
-            }
-        }
-
-        $isPro = (bool) $request->input('pro', false);
-        $proSize = (int) $request->input('pro_size', 1024);
-        $bgColor = $request->input('bg_color', 'white');
-        $imageModel = $request->input('image_model', 'flux');
-        $outputFormat = $request->input('output_format', 'raster');
-        $imageFormat = $request->input('image_format', 'png');
-        $colorPalette = $request->input('color_palette');
-        $recraftSubstyle = $request->input('recraft_substyle');
-        $logoShape = $request->input('logo_shape', 'none');
-        $logoDetail = $request->input('logo_detail', 'max');
-
-        // DALL-E always produces raster
-        if ($imageModel === 'dalle') {
-            $outputFormat = 'raster';
-        }
-
-        // ── Balance check: reject if user can't afford the estimated cost ──
-        $user = $request->user();
-        $userBalance = (float) $user->credit_balance;
-
-        // Quick pre-check with a generous minimum threshold
-        if ($userBalance <= 0) {
-            return response()->json([
-                'error' => 'Insufficient balance. Please add credits before generating logos.',
-                'credit_balance' => $userBalance,
-            ], 402);
-        }
-
-        // Calculate cost estimate using total count for proper pricing
-        if ($imageModel === 'recraft') {
-            $costEstimate = \App\Services\RecraftPricing::estimateLogoCost(
-                imageCount: $totalCount,
-                size: '1024x1024',
-                isPro: $isPro,
-                type: $outputFormat,
-            );
-        } elseif ($imageModel === 'dalle') {
-            $costEstimate = AiLogoPrice::estimateDalleCost(
-                imageCount: $totalCount,
-                resolution: '1024x1024',
-                quality: $isPro ? 'hd' : 'standard',
-            );
-        } else {
-            $costEstimate = AiLogoPrice::estimateCost(
-                imageCount: $totalCount,
-                isPro: $isPro,
-                proSize: $proSize,
-                style: $style,
-                bgColor: $bgColor,
-                outputFormat: $outputFormat,
-            );
-        }
+        // Force JSON responses for this endpoint
+        $request->headers->set('Accept', 'application/json');
         
-        // Calculate per-image cost for this single request
-        $costPerImage = $costEstimate['cost_per_image'];
-        $estimatedCostForThisImage = $costPerImage;
-
-        // ── Precise balance check against estimated cost (for this single image) ──
-        if ($estimatedCostForThisImage > 0 && $userBalance < $estimatedCostForThisImage) {
-            return response()->json([
-                'error' => 'Insufficient balance. This generation costs ~$' . number_format($estimatedCostForThisImage, 4) . ' but your balance is $' . number_format($userBalance, 4) . '. Please add credits.',
-                'credit_balance' => $userBalance,
-                'estimated_cost' => $estimatedCostForThisImage,
-            ], 402);
-        }
-
-        // Extract the core brand concept from the domain name (strip TLD if present)
-        $brandName = preg_replace('/\.(com|net|org|io|co|ai|app|dev|xyz|tech|me)$/i', '', $domain);
-        $brandUpper = strtoupper($brandName);
-        // Try to infer what the brand is about from its name
-        $brandConcept = str_replace(['-', '_', '.'], ' ', $brandName);
-
-        // If user provided a custom description, extract visual concept only
-        // Strip any ALL-CAPS phrases and size/style directives to prevent them rendering as text
-        $customElement = '';
-        if ($customPrompt) {
-            // Remove ALL-CAPS words (3+ chars) that Flux might render as text
-            $cleaned = preg_replace('/\b[A-Z]{3,}\b/', '', $customPrompt);
-            // Remove common directive phrases
-            $cleaned = preg_replace('/\b(make|put|add|write|show|display|include|type|spell)\s+(it|the|a|an)?\s*/i', '', $cleaned);
-            // Remove size directives
-            $cleaned = preg_replace('/\b(large|big|huge|small|tiny|giant|massive|enormous)\b/i', '', $cleaned);
-            // Collapse whitespace
-            $cleaned = trim(preg_replace('/\s+/', ' ', $cleaned));
-            if ($cleaned) {
-                $customElement = " A visual icon element of {$cleaned} is integrated into the logo design. Do not render any words or letters from this description.";
+        try {
+            if (!$request->user()) {
+                return response()->json([
+                    'error' => 'You must be logged in to generate logos.',
+                ], 401);
             }
-        }
 
-        // Typography-first prompts with style hooks and avoidance language
-        // Build color palette instruction
-        if (!empty($colorPalette) && is_array($colorPalette)) {
-            $colorNames = implode(', ', $colorPalette);
-            $colorInstruction = "MANDATORY COLOR PALETTE — use ONLY these exact colors for ALL logo artwork: {$colorNames}. Apply these colors strictly. Do not introduce any other colors. The background color is separate and defined below.";
-        } else {
-            $colorInstruction = null; // Let style defaults apply
-        }
+            $request->validate([
+                'domain' => 'nullable|string|max:100',
+                'style' => 'required|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,minimalist,greetingcard' . (config('services.logo_custom_prompt_enabled') ? ',custom' : ''),
+                'count' => 'nullable|integer|min:1|max:4',
+                'total_count' => 'nullable|integer|min:1|max:4',
+                'batch_index' => 'nullable|integer|min:0|max:3',
+                'custom_prompt' => 'nullable|string|min:2|max:2000',
+                'pro' => 'nullable|boolean',
+                'pro_size' => 'nullable|integer|in:512,1024,1536',
+                'icon_only' => 'nullable|boolean',
+                'text_only' => 'nullable|boolean',
+                'bg_color' => 'nullable|string|max:20',
+                'image_model' => 'nullable|string|in:flux,dalle,recraft',
+                'output_format' => 'nullable|string|in:raster,vector',
+                'image_format' => 'nullable|string|in:png,bmp',
+                'recraft_substyle' => 'nullable|string|max:60',
+                'logo_shape' => 'nullable|string|in:none,circle,hexagon,triangle,square,pentagon,heart',
+                'logo_detail' => 'nullable|string|in:min,medium,max',
+                'color_palette' => 'nullable|array|max:5',
+                'color_palette.*' => 'string|max:20',
+            ]);
 
-        // Determine background color instruction
-        $bgInstruction = match($bgColor) {
-            'black' => 'isolated on a solid black background',
-            'transparent' => 'isolated on a plain transparent background with no background elements',
-            default => str_starts_with($bgColor, '#')
-                ? "isolated on a solid {$bgColor} colored background"
-                : 'isolated on a solid white background',
-        };
+            $iconOnly = (bool) $request->input('icon_only', false);
+            $textOnly = (bool) $request->input('text_only', false);
+            $domain = $request->input('domain') ? trim($request->input('domain')) : null;
+            $style = $request->input('style');
 
-        // Build Flux prompt from JSON template (edit config/flux_prompts.json to change wording)
-        $prompt = \App\Services\FluxPromptBuilder::build(
-            style:            $style,
-            iconOnly:         $iconOnly,
-            concept:          $customElement,
-            colorInstruction: $colorInstruction,
-            bgInstruction:    $bgInstruction,
-            brandUpper:       $brandUpper,
-            detail:           $logoDetail ?? 'max',
-        );
+            // Domain is required for text-only mode and when text is included in logo
+            if (!$iconOnly && !$domain && $style !== 'custom') {
+                return response()->json([
+                    'error' => 'Domain name is required when generating logos with text.',
+                ], 422);
+            }
 
-        // ── Build a DALL-E-specific prompt from JSON templates ──
-        if ($imageModel === 'dalle') {
-            $dalleDesc = trim($customPrompt ?? '');
+            $imageCount = $request->input('count', 1);
+            $totalCount = $request->input('total_count', $imageCount);
+            $batchIndex = $request->input('batch_index', 0);
+            $customPrompt = $request->input('custom_prompt');
 
-            if (!empty($colorPalette) && is_array($colorPalette)) {
-                $namedColors = [];
-                foreach ($colorPalette as $hex) {
-                    $namedColors[] = $hex . ' (' . self::hexToColorName($hex) . ')';
+            // ── Trademark / copyright guard ──────────────────────────────────────
+            if ($customPrompt) {
+                $trademarkCheck = \App\Services\TrademarkFilter::check($customPrompt);
+                if (!$trademarkCheck['safe']) {
+                    return response()->json(['error' => $trademarkCheck['message']], 422);
                 }
-                $dalleColorList = implode(', ', $namedColors);
+            }
+
+            $isPro = (bool) $request->input('pro', false);
+            $proSize = (int) $request->input('pro_size', 1024);
+            $bgColor = $request->input('bg_color', 'white');
+            $imageModel = $request->input('image_model', 'flux');
+            $outputFormat = $request->input('output_format', 'raster');
+            $imageFormat = $request->input('image_format', 'png');
+            $colorPalette = $request->input('color_palette');
+            $recraftSubstyle = $request->input('recraft_substyle');
+            $logoShape = $request->input('logo_shape', 'none');
+            $logoDetail = $request->input('logo_detail', 'max');
+
+            // DALL-E always produces raster
+            if ($imageModel === 'dalle') {
+                $outputFormat = 'raster';
+            }
+
+            // Vector outputs must be generated as exactly one mode: icon-only OR text-only.
+            if ($outputFormat === 'vector') {
+                if ($iconOnly === $textOnly) {
+                    return response()->json([
+                        'error' => 'Vector generation supports either logo or text, not both.',
+                    ], 422);
+                }
+            }
+
+            // Ray vector uses a single fixed detail level.
+            if ($imageModel === 'recraft' && $outputFormat === 'vector') {
+                $logoDetail = 'medium';
+            }
+
+            // ── Balance check: reject if user can't afford the estimated cost ──
+            $user = $request->user();
+            $userBalance = (float) $user->credit_balance;
+
+            // Quick pre-check with a generous minimum threshold
+            if ($userBalance <= 0) {
+                return response()->json([
+                    'error' => 'Insufficient balance. Please add credits before generating logos.',
+                    'credit_balance' => $userBalance,
+                ], 402);
+            }
+
+            // Calculate cost estimate using total count for proper pricing
+            if ($imageModel === 'recraft') {
+                $costEstimate = \App\Services\RecraftPricing::estimateLogoCost(
+                    imageCount: $totalCount,
+                    size: '1024x1024',
+                    isPro: $isPro,
+                    type: $outputFormat,
+                );
+            } elseif ($imageModel === 'dalle') {
+                $costEstimate = AiLogoPrice::estimateDalleCost(
+                    imageCount: $totalCount,
+                    resolution: '1024x1024',
+                    quality: $isPro ? 'hd' : 'standard',
+                );
             } else {
-                $dalleColorList = \App\Services\DallePromptBuilder::defaultColors($style);
+                $costEstimate = AiLogoPrice::estimateCost(
+                    imageCount: $totalCount,
+                    isPro: $isPro,
+                    proSize: $proSize,
+                    style: $style,
+                    bgColor: $bgColor,
+                    outputFormat: $outputFormat,
+                );
+            }
+            
+            // Calculate per-image cost for this single request
+            $costPerImage = $costEstimate['cost_per_image'];
+            $estimatedCostForThisImage = $costPerImage;
+
+            // ── Precise balance check against estimated cost (for this single image) ──
+            if ($estimatedCostForThisImage > 0 && $userBalance < $estimatedCostForThisImage) {
+                return response()->json([
+                    'error' => 'Insufficient balance. This generation costs ~$' . number_format($estimatedCostForThisImage, 4) . ' but your balance is $' . number_format($userBalance, 4) . '. Please add credits.',
+                    'credit_balance' => $userBalance,
+                    'estimated_cost' => $estimatedCostForThisImage,
+                ], 402);
             }
 
-            $dalleBg = match($bgColor) {
-                'black' => 'solid black',
-                'white' => 'solid white',
-                'transparent' => 'transparent',
-                default => str_starts_with($bgColor, '#') ? "solid {$bgColor}" : 'solid white',
-            };
+            // Extract the core brand concept from the domain name (strip TLD if present)
+            $brandName = $domain ? preg_replace('/\.(com|net|org|io|co|ai|app|dev|xyz|tech|me)$/i', '', $domain) : '';
+            $brandUpper = $brandName ? strtoupper($brandName) : '';
+            // Try to infer what the brand is about from its name
+            $brandConcept = $brandName ? str_replace(['-', '_', '.'], ' ', $brandName) : '';
 
-            $chromeBg = match($bgColor) {
-                'black' => 'dark black background',
-                'white' => 'pure white background',
+            // If user provided a custom description, extract visual concept only
+            // Strip any ALL-CAPS phrases and size/style directives to prevent them rendering as text
+            $customElement = '';
+            if ($customPrompt) {
+                // Remove ALL-CAPS words (3+ chars) that Flux might render as text
+                $cleaned = preg_replace('/\b[A-Z]{3,}\b/', '', $customPrompt);
+                // Remove common directive phrases
+                $cleaned = preg_replace('/\b(make|put|add|write|show|display|include|type|spell)\s+(it|the|a|an)?\s*/i', '', $cleaned);
+                // Remove size directives
+                $cleaned = preg_replace('/\b(large|big|huge|small|tiny|giant|massive|enormous)\b/i', '', $cleaned);
+                // Collapse whitespace
+                $cleaned = trim(preg_replace('/\s+/', ' ', $cleaned));
+                if ($cleaned) {
+                    $customElement = " A visual icon element of {$cleaned} is integrated into the logo design. Do not render any words or letters from this description.";
+                }
+            }
+
+            // Typography-first prompts with style hooks and avoidance language
+            // Build color palette instruction
+            if (!empty($colorPalette) && is_array($colorPalette)) {
+                $colorNames = implode(', ', $colorPalette);
+                $colorInstruction = "MANDATORY COLOR PALETTE — use ONLY these exact colors for ALL logo artwork: {$colorNames}. Apply these colors strictly. Do not introduce any other colors. The background color is separate and defined below.";
+            } else {
+                $colorInstruction = null; // Let style defaults apply
+            }
+
+            // Determine background color instruction
+            $bgInstruction = match($bgColor) {
+                'black' => 'isolated on a solid black background',
+                'transparent' => 'isolated on a plain transparent background with no background elements',
                 default => str_starts_with($bgColor, '#')
-                    ? "{$bgColor} background"
-                    : 'soft light gray background',
+                    ? "isolated on a solid {$bgColor} colored background"
+                    : 'isolated on a solid white background',
             };
 
-            $prompt = \App\Services\DallePromptBuilder::build(
-                style: $style,
-                iconOnly: $iconOnly,
-                subject: $dalleDesc,
-                brandUpper: $brandUpper,
-                colorList: $dalleColorList,
-                bgInstruction: $dalleBg,
-                chromeBg: $chromeBg,
-                logoShape: $logoShape,
-                detail: $logoDetail,
+            // Build Flux prompt from JSON template (edit config/flux_prompts.json to change wording)
+            $prompt = \App\Services\FluxPromptBuilder::build(
+                style:            $style,
+                iconOnly:         $iconOnly,
+                textOnly:         $textOnly,
+                concept:          $customElement,
+                colorInstruction: $colorInstruction,
+                bgInstruction:    $bgInstruction,
+                brandUpper:       $brandUpper,
+                outputFormat:     $outputFormat,
+                detail:           $logoDetail ?? 'max',
+                logoShape:        $logoShape,
             );
-        }
 
-        // ── Build a Recraft-specific structured logo prompt (max 1000 chars) ──
-        if ($imageModel === 'recraft') {
-            $subjectDesc = trim($customPrompt ?? '');
-            $subject     = $subjectDesc ?: ($iconOnly ? 'Abstract geometric symbol' : 'Emblem mark');
+            // ── Build a DALL-E-specific prompt from JSON templates ──
+            if ($imageModel === 'dalle') {
+                $dalleDesc = trim($customPrompt ?? '');
 
-            $colorDesc = (!empty($colorPalette) && is_array($colorPalette))
-                ? implode(', ', $colorPalette)
-                : \App\Services\RecraftPromptBuilder::defaultColors($style);
+                if (!empty($colorPalette) && is_array($colorPalette)) {
+                    $namedColors = [];
+                    foreach ($colorPalette as $hex) {
+                        $namedColors[] = $hex . ' (' . self::hexToColorName($hex) . ')';
+                    }
+                    $dalleColorList = implode(', ', $namedColors);
+                } else {
+                    $dalleColorList = \App\Services\DallePromptBuilder::defaultColors($style);
+                }
 
-            $bgDesc = match($bgColor) {
-                'black'       => '#000000',
-                'transparent' => 'transparent',
-                default       => str_starts_with($bgColor, '#') ? $bgColor : '#FFFFFF',
-            };
+                $dalleBg = match($bgColor) {
+                    'black' => 'solid black',
+                    'white' => 'solid white',
+                    'transparent' => 'transparent',
+                    default => str_starts_with($bgColor, '#') ? "solid {$bgColor}" : 'solid white',
+                };
 
-            $prompt = \App\Services\RecraftPromptBuilder::build(
-                style:      $style,
-                logoDetail: $logoDetail,
-                logoShape:  $logoShape,
-                iconOnly:   $iconOnly,
-                subject:    $subject,
-                brandUpper: $brandUpper,
-                colorDesc:  $colorDesc,
-                bgDesc:     $bgDesc,
-            );
-        }
+                $chromeBg = match($bgColor) {
+                    'black' => 'dark black background',
+                    'white' => 'pure white background',
+                    default => str_starts_with($bgColor, '#')
+                        ? "{$bgColor} background"
+                        : 'soft light gray background',
+                };
 
-        // ── Custom style: bypass all prompt builders, use raw user prompt + palette/bg ──
-        if ($style === 'custom') {
-            $rawCustom = trim($customPrompt ?? '');
-            if ($colorInstruction) {
-                $rawCustom .= "\n" . $colorInstruction;
+                $prompt = \App\Services\DallePromptBuilder::build(
+                    style: $style,
+                    iconOnly: $iconOnly,
+                    textOnly: $textOnly,
+                    subject: $dalleDesc,
+                    brandUpper: $brandUpper,
+                    colorList: $dalleColorList,
+                    bgInstruction: $dalleBg,
+                    chromeBg: $chromeBg,
+                    logoShape: $logoShape,
+                    detail: $logoDetail,
+                );
             }
-            $bgHint = match($bgColor) {
-                'black'       => 'solid black',
-                'transparent' => 'transparent',
-                default       => str_starts_with($bgColor, '#') ? "solid {$bgColor}" : 'solid white',
-            };
-            $rawCustom .= "\nBackground: {$bgHint}.";
-            $prompt = $rawCustom;
-        }
 
-        // Determine model name for logging
-        if ($imageModel === 'recraft') {
-            $formatTag = $outputFormat === 'vector' ? 'vector' : 'raster';
-            $modelName = $isPro ? "recraft-v4-{$formatTag}" : "recraft-v2-{$formatTag}";
-            $imageSize = '1024x1024';
-            $requestType = $isPro
-                ? ($outputFormat === 'vector' ? 'logo_recraft_v4' : 'logo_recraft_v4_raster')
-                : ($outputFormat === 'vector' ? 'logo_recraft_vector' : 'logo_recraft_raster');
-        } elseif ($imageModel === 'dalle') {
-            $modelName = 'gpt-image-1.5';
-            $imageSize = '1024x1024';
-            $requestType = $isPro ? 'logo_dalle_hd' : 'logo_dalle';
-        } else {
-            $modelName = $isPro ? 'fal-ai/flux-2-flex' : 'fal-ai/flux/schnell';
-            $imageSize = $isPro ? $proSize . 'x' . $proSize : '512x512';
-            $requestType = $isPro ? 'logo_pro' : 'logo_generation';
-        }
+            // ── Build a Recraft-specific structured logo prompt (max 1000 chars) ──
+            if ($imageModel === 'recraft') {
+                $subjectDesc = trim($customPrompt ?? '');
+                $subject     = $subjectDesc ?: ($iconOnly ? 'Abstract geometric symbol' : 'Emblem mark');
 
-        $logoRequest = AiLogoRequest::create([
-            'user_id' => $this->isAdmin($user) ? null : $user->id,
-            'domain' => $domain,
-            'style' => $style . ($isPro ? '_pro' : ''),
-            'model' => $modelName,
-            'seed_number' => null,
-            'prompt' => $prompt,
-            'original_prompt' => $customPrompt ? trim((string) $customPrompt) : null,
-            'status' => 'pending',
-        ]);
+                $colorDesc = (!empty($colorPalette) && is_array($colorPalette))
+                    ? implode(', ', $colorPalette)
+                    : \App\Services\RecraftPromptBuilder::defaultColors($style);
 
-        // Create price log entry (pending) - log actual count for this request, note batch in preview
-        $priceLog = AiLogoPrice::create([
-            'user_id' => $this->isAdmin($user) ? null : $user->id,
-            'ai_logo_request_id' => $logoRequest->id,
-            'session' => session()->getId(),
-            'user_email' => $user->email,
-            'request_type' => $requestType,
-            'model_name' => $modelName,
-            'image_count' => $imageCount,
-            'image_size' => $imageSize,
-            'num_inference_steps' => $imageModel === 'recraft' ? 0 : ($imageModel === 'dalle' ? 0 : ($isPro ? 28 : 8)),
-            'guidance_scale' => ($imageModel === 'recraft' || $imageModel === 'dalle') ? 0 : 3.50,
-            'cost_per_image' => $costPerImage,
-            'estimated_cost_usd' => $estimatedCostForThisImage,
-            'status' => 'pending',
-            'prompt_preview' => substr($prompt, 0, 240) . ($totalCount > 1 ? " [img " . ($batchIndex + 1) . "/{$totalCount}]" : ''),
-        ]);
+                $bgDesc = match($bgColor) {
+                    'black'       => '#000000',
+                    'transparent' => 'transparent',
+                    default       => str_starts_with($bgColor, '#') ? $bgColor : '#FFFFFF',
+                };
 
-        // ── Dispatch the generation job to the queue ──
-        \App\Jobs\GenerateLogoJob::dispatch(
-            userId: $this->isAdmin($user) ? 0 : $user->id,
-            adminId: $this->isAdmin($user) ? $user->id : null,
-            logoRequestId: $logoRequest->id,
-            priceLogId: $priceLog->id,
-            params: [
-                'image_model' => $imageModel,
-                'output_format' => $outputFormat,
-                'is_pro' => $isPro,
-                'pro_size' => $proSize,
-                'image_count' => $imageCount,
-                'prompt' => $prompt,
-                'bg_color' => $bgColor,
+                $prompt = \App\Services\RecraftPromptBuilder::build(
+                    style:      $style,
+                    logoDetail: $logoDetail,
+                    logoShape:  $logoShape,
+                    iconOnly:   $iconOnly,
+                    textOnly:   $textOnly,
+                    subject:    $subject,
+                    brandUpper: $brandUpper,
+                    colorDesc:  $colorDesc,
+                    bgDesc:     $bgDesc,
+                    outputFormat: $outputFormat,
+                );
+            }
+
+            // ── Custom style: bypass all prompt builders, use raw user prompt + palette/bg ──
+            if ($style === 'custom') {
+                $rawCustom = trim($customPrompt ?? '');
+                if ($colorInstruction) {
+                    $rawCustom .= "\n" . $colorInstruction;
+                }
+                $bgHint = match($bgColor) {
+                    'black'       => 'solid black',
+                    'transparent' => 'transparent',
+                    default       => str_starts_with($bgColor, '#') ? "solid {$bgColor}" : 'solid white',
+                };
+                $rawCustom .= "\nBackground: {$bgHint}.";
+                $prompt = $rawCustom;
+            }
+
+            // Determine model name for logging
+            if ($imageModel === 'recraft') {
+                $formatTag = $outputFormat === 'vector' ? 'vector' : 'raster';
+                $modelName = $isPro ? "recraft-v4-{$formatTag}" : "recraft-v2-{$formatTag}";
+                $imageSize = '1024x1024';
+                $requestType = $isPro
+                    ? ($outputFormat === 'vector' ? 'logo_recraft_v4' : 'logo_recraft_v4_raster')
+                    : ($outputFormat === 'vector' ? 'logo_recraft_vector' : 'logo_recraft_raster');
+            } elseif ($imageModel === 'dalle') {
+                $modelName = 'gpt-image-1.5';
+                $imageSize = '1024x1024';
+                $requestType = $isPro ? 'logo_dalle_hd' : 'logo_dalle';
+            } else {
+                $modelName = $isPro ? 'fal-ai/flux-2-flex' : 'fal-ai/flux/schnell';
+                $imageSize = $isPro ? $proSize . 'x' . $proSize : '512x512';
+                $requestType = $isPro ? 'logo_pro' : 'logo_generation';
+            }
+
+            $logoRequest = AiLogoRequest::create([
+                'user_id' => $this->isAdmin($user) ? null : $user->id,
                 'domain' => $domain,
-                'style' => $style,
-                'icon_only' => $iconOnly,
-                'color_palette' => $colorPalette,
-                'recraft_substyle' => $recraftSubstyle,
-                'total_count' => $totalCount,
-                'cost_per_image' => $costPerImage,
-                'model_name' => $modelName,
-                'logo_shape' => $logoShape,
-                'logo_detail' => $logoDetail,
-            ],
-        );
+                'style' => $style . ($isPro ? '_pro' : ''),
+                'model' => $modelName,
+                'output_format' => $outputFormat,
+                'seed_number' => null,
+                'prompt' => $prompt,
+                'original_prompt' => $customPrompt ? trim((string) $customPrompt) : null,
+                'status' => 'pending',
+            ]);
 
-        return response()->json([
-            'logo_request_id' => (int) $logoRequest->id,
-            'status' => 'queued',
-            'message' => 'Logo generation has been queued. Poll /domain-search/logo-status/' . $logoRequest->id . ' for results.',
-            'credit_balance' => (float) $user->credit_balance,
-            'estimated_cost' => $estimatedCostForThisImage,
-        ]);
+            // Create price log entry (pending) - log actual count for this request, note batch in preview
+            $priceLog = AiLogoPrice::create([
+                'user_id' => $this->isAdmin($user) ? null : $user->id,
+                'ai_logo_request_id' => $logoRequest->id,
+                'session' => session()->getId(),
+                'user_email' => $user->email,
+                'request_type' => $requestType,
+                'model_name' => $modelName,
+                'image_count' => $imageCount,
+                'image_size' => $imageSize,
+                'num_inference_steps' => $imageModel === 'recraft' ? 0 : ($imageModel === 'dalle' ? 0 : ($isPro ? 28 : 8)),
+                'guidance_scale' => ($imageModel === 'recraft' || $imageModel === 'dalle') ? 0 : 3.50,
+                'cost_per_image' => $costPerImage,
+                'estimated_cost_usd' => $estimatedCostForThisImage,
+                'status' => 'pending',
+                'prompt_preview' => substr($prompt, 0, 240) . ($totalCount > 1 ? " [img " . ($batchIndex + 1) . "/{$totalCount}]" : ''),
+            ]);
+
+            // ── Dispatch the generation job to the queue ──
+            \App\Jobs\GenerateLogoJob::dispatch(
+                userId: $this->isAdmin($user) ? 0 : $user->id,
+                adminId: $this->isAdmin($user) ? $user->id : null,
+                logoRequestId: $logoRequest->id,
+                priceLogId: $priceLog->id,
+                params: [
+                    'image_model' => $imageModel,
+                    'output_format' => $outputFormat,
+                    'is_pro' => $isPro,
+                    'pro_size' => $proSize,
+                    'image_count' => $imageCount,
+                    'prompt' => $prompt,
+                    'bg_color' => $bgColor,
+                    'domain' => $domain,
+                    'style' => $style,
+                    'icon_only' => $iconOnly,
+                    'color_palette' => $colorPalette,
+                    'recraft_substyle' => $recraftSubstyle,
+                    'total_count' => $totalCount,
+                    'cost_per_image' => $costPerImage,
+                    'model_name' => $modelName,
+                    'logo_shape' => $logoShape,
+                    'logo_detail' => $logoDetail,
+                ],
+            );
+
+            return response()->json([
+                'logo_request_id' => (int) $logoRequest->id,
+                'status' => 'queued',
+                'message' => 'Logo generation has been queued. Poll /domain-search/logo-status/' . $logoRequest->id . ' for results.',
+                'credit_balance' => (float) $user->credit_balance,
+                'estimated_cost' => $estimatedCostForThisImage,
+            ]);
+        
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            // Return validation errors as JSON
+            return response()->json([
+                'error' => 'Validation failed',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Exception $e) {
+            // Catch any other exceptions and return JSON with detailed error
+            Log::error('Logo generation request failed', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
+                'request_data' => $request->all(),
+            ]);
+            
+            // In debug mode, return the actual error for troubleshooting
+            if (config('app.debug')) {
+                return response()->json([
+                    'error' => 'Error: ' . $e->getMessage(),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine(),
+                ], 500);
+            }
+            
+            return response()->json([
+                'error' => 'An unexpected error occurred. Please try again.',
+            ], 500);
+        }
     }
 
     /**
@@ -1564,17 +1641,21 @@ class DomainSearchController extends Controller
      */
     public function logoStatus(Request $request, AiLogoRequest $logoRequest)
     {
-        $currentUser = $request->user();
+        // Force JSON responses for this endpoint
+        $request->headers->set('Accept', 'application/json');
+        
+        try {
+            $currentUser = $request->user();
 
-        // Admins can view any logo request; regular users only see their own
-        if (!$currentUser) {
-            return response()->json(['error' => 'Unauthorized'], 403);
-        }
-        if (!$this->isAdmin($currentUser) && $logoRequest->user_id !== $currentUser->id) {
-            return response()->json(['error' => 'Unauthorized'], 403);
-        }
+            // Admins can view any logo request; regular users only see their own
+            if (!$currentUser) {
+                return response()->json(['error' => 'Unauthorized'], 403);
+            }
+            if (!$this->isAdmin($currentUser) && $logoRequest->user_id !== $currentUser->id) {
+                return response()->json(['error' => 'Unauthorized'], 403);
+            }
 
-        $status = $logoRequest->status;
+            $status = $logoRequest->status;
 
         if (in_array($status, ['pending', 'processing'])) {
             return response()->json(['status' => $status]);
@@ -1596,11 +1677,24 @@ class DomainSearchController extends Controller
         }
 
         // failed or error
+        $rawError = $logoRequest->error_message ?? 'Logo generation failed.';
+
         return response()->json([
             'status' => $status,
-            'error' => $logoRequest->error_message ?? 'Logo generation failed.',
+            'error' => $this->friendlyErrorMessage($rawError),
             'credit_balance' => (float) $currentUser->credit_balance,
         ]);
+        
+        } catch (\Exception $e) {
+            Log::error('Logo status check failed', [
+                'error' => $e->getMessage(),
+                'logo_request_id' => $logoRequest->id ?? null,
+            ]);
+            return response()->json([
+                'error' => 'An unexpected error occurred.',
+                'status' => 'error',
+            ], 500);
+        }
     }
 
     private function isAdmin(?object $user): bool
@@ -1633,6 +1727,16 @@ class DomainSearchController extends Controller
      */
     private function friendlyErrorMessage(string $raw): string
     {
+        $normalized = strtolower($raw);
+
+        if (
+            str_contains($normalized, 'not_enough_credits') ||
+            str_contains($normalized, 'user is locked') ||
+            str_contains($normalized, 'exhausted balance')
+        ) {
+            return 'Model currently unavailable, please try a different model.';
+        }
+
         if (str_contains($raw, 'content filters') || str_contains($raw, 'content_policy') || str_contains($raw, 'safety system')) {
             return 'Your prompt was flagged by the AI safety filter. Please rephrase your description and try again — avoid violent, sexual, or trademarked content.';
         }
@@ -2091,6 +2195,7 @@ class DomainSearchController extends Controller
             'domain' => $domain,
             'style' => $style . '_pro',
             'model' => 'fal-ai/flux-pro/v1.1-ultra',
+            'output_format' => 'raster',
             'seed_number' => is_numeric($seed) ? (int) $seed : null,
             'prompt' => $prompt,
             'status' => 'pending',
@@ -2137,7 +2242,8 @@ class DomainSearchController extends Controller
             $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
 
             if (!$response->successful()) {
-                $falError = $response->json('detail') ?? $response->json('message') ?? 'Unknown error';
+                $falErrorRaw = $response->json('detail') ?? $response->json('message') ?? $response->body() ?? 'Unknown error';
+                $falError = $this->friendlyErrorMessage($falErrorRaw);
                 \Log::error('Fal.ai PRO logo generation failed', [
                     'status' => $response->status(),
                     'body' => $response->body(),
@@ -2211,10 +2317,11 @@ class DomainSearchController extends Controller
             ]);
         } catch (\Exception $e) {
             $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
+            $friendlyError = $this->friendlyErrorMessage($e->getMessage());
 
             $logoRequest->update([
                 'status' => 'error',
-                'error_message' => $e->getMessage(),
+                'error_message' => $friendlyError,
                 'response_time_ms' => $elapsedMs,
             ]);
 
@@ -2224,7 +2331,7 @@ class DomainSearchController extends Controller
             ]);
 
             return response()->json([
-                'error' => 'PRO generation failed: ' . $e->getMessage(),
+                'error' => 'PRO generation failed: ' . $friendlyError,
             ], 500);
         }
     }

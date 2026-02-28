@@ -3,7 +3,7 @@
 namespace App\Services;
 
 /**
- * Builds Recraft logo prompts from a flat JSON template config.
+ * Builds Recraft logo prompts from a JSON template config.
  *
  * Edit  config/recraft_prompts.json  to change wording without touching PHP.
  *
@@ -62,13 +62,27 @@ class RecraftPromptBuilder
         string  $logoDetail,
         ?string $logoShape,
         bool    $iconOnly,
+        bool    $textOnly,
         string  $subject,
         string  $brandUpper,
         string  $colorDesc,
         string  $bgDesc,
+        string  $outputFormat = 'raster',
     ): string {
         $tpl  = self::templates();
+
+        $format = $outputFormat === 'vector' ? 'vector' : 'raster';
+        $formatTpl = $tpl[$format] ?? [];
+
+        // Recraft vector path supports either logo OR text, never both in one generation.
+        if ($format === 'vector' && !$iconOnly && !$textOnly) {
+            throw new \InvalidArgumentException('Vector generation requires icon-only or text-only mode.');
+        }
+
         $mode = $iconOnly ? 'icon_only' : 'with_brand';
+        if ($textOnly) {
+            $mode = 'text_only';
+        }
 
         $subjectValue = trim($subject) !== ''
             ? trim($subject)
@@ -92,10 +106,10 @@ class RecraftPromptBuilder
             default  => $mode,
         };
 
-        $template = $tpl[$modeKey][$style]
-            ?? $tpl[$modeKey]['minimalist']
-            ?? $tpl[$mode][$style]
-            ?? $tpl[$mode]['minimalist']
+        $template = $formatTpl[$modeKey][$style]
+            ?? $formatTpl[$modeKey]['minimalist']
+            ?? $formatTpl[$mode][$style]
+            ?? $formatTpl[$mode]['minimalist']
             ?? '';
 
         $prompt = self::sub($template, [
