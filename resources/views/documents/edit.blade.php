@@ -17778,6 +17778,110 @@
                         });
                         });
 
+                        // ── Drawn-underline trailing-word split ───────────────────────────
+                        // When a form-blank line has filler words (has_drawn_underline /
+                        // suppress_drawn_underline) followed by template context words that
+                        // have no drawn underline (e.g. "and"), split those trailing context
+                        // words into their own synthetic block.  This prevents "and" from
+                        // appearing inside the editable blank field so the user only edits
+                        // the fill-in value, not the surrounding boilerplate.
+                        const afterUnderlineSplit = [];
+                        expandedBlocks.forEach((block) => {
+                            const bWords = (pageData.words || []).filter(
+                                (w) => w.block_num === block.block_num
+                            );
+                            if (bWords.length < 2) {
+                                afterUnderlineSplit.push(block);
+                                return;
+                            }
+                            // Group words by line_num into visual rows.
+                            const lnMap = new Map();
+                            bWords.forEach((w) => {
+                                const ln = w.line_num ?? 0;
+                                if (!lnMap.has(ln)) lnMap.set(ln, []);
+                                lnMap.get(ln).push(w);
+                            });
+
+                            // Collect trailing non-underline words (per-line, after last underline word).
+                            const trailingSet = new Set();
+                            lnMap.forEach((lineWords) => {
+                                const sorted = lineWords.slice().sort(
+                                    (a, b) => (Number(a.left) || 0) - (Number(b.left) || 0)
+                                );
+                                let lastUlIdx = -1;
+                                sorted.forEach((w, i) => {
+                                    if (w.has_drawn_underline || w.suppress_drawn_underline) lastUlIdx = i;
+                                });
+                                // No underline words on this line, or underline is the last word → nothing to split.
+                                if (lastUlIdx < 0 || lastUlIdx === sorted.length - 1) return;
+                                const trailing = sorted.slice(lastUlIdx + 1);
+                                // Only split if the trailing words carry real text (not punctuation-only slivers).
+                                const meaningful = trailing.filter((w) => {
+                                    const t = sanitizeOverlayText(w.text || '').trim();
+                                    return t.length > 0 && /[A-Za-z0-9]/.test(t);
+                                });
+                                if (meaningful.length === 0) return;
+                                trailing.forEach((w) => trailingSet.add(w));
+                            });
+
+                            if (trailingSet.size === 0) {
+                                afterUnderlineSplit.push(block);
+                                return;
+                            }
+
+                            // Re-tag trailing words to a new synthetic block number.
+                            const trailNum = nextSyntheticBlockNum++;
+                            const trailingWords = Array.from(trailingSet);
+                            trailingWords.forEach((w) => { w.block_num = trailNum; });
+
+                            // Shrink main block bbox to the words that remain.
+                            const remainWords = bWords.filter((w) => !trailingSet.has(w));
+                            let mL = Infinity, mT = Infinity, mR = -Infinity, mB = -Infinity;
+                            remainWords.forEach((w) => {
+                                mL = Math.min(mL, Number(w.left) || 0);
+                                mT = Math.min(mT, Number(w.top) || 0);
+                                mR = Math.max(mR, (Number(w.left) || 0) + (Number(w.width) || 0));
+                                mB = Math.max(mB, (Number(w.top) || 0) + (Number(w.height) || 0));
+                            });
+                            if (!Number.isFinite(mL)) {
+                                mL = block.left; mT = block.top;
+                                mR = block.left + block.width; mB = block.top + block.height;
+                            }
+                            afterUnderlineSplit.push({
+                                ...block,
+                                _client_split: true,
+                                left: mL, top: mT,
+                                width: Math.max(1, mR - mL),
+                                height: Math.max(1, mB - mT),
+                            });
+
+                            // Create synthetic block for the trailing context words.
+                            let tL = Infinity, tT = Infinity, tR = -Infinity, tB = -Infinity;
+                            trailingWords.forEach((w) => {
+                                tL = Math.min(tL, Number(w.left) || 0);
+                                tT = Math.min(tT, Number(w.top) || 0);
+                                tR = Math.max(tR, (Number(w.left) || 0) + (Number(w.width) || 0));
+                                tB = Math.max(tB, (Number(w.top) || 0) + (Number(w.height) || 0));
+                            });
+                            const trailText = trailingWords
+                                .slice().sort((a, b) => (Number(a.left) || 0) - (Number(b.left) || 0))
+                                .map((w) => sanitizeOverlayText(w.text || ''))
+                                .filter((t) => t.length > 0)
+                                .join(' ');
+                            afterUnderlineSplit.push({
+                                ...block,
+                                _client_split: true,
+                                _client_underline_trail: true,
+                                block_num: trailNum,
+                                left: tL, top: tT,
+                                width: Math.max(1, tR - tL),
+                                height: Math.max(1, tB - tT),
+                                text: trailText,
+                                text_lines: [trailText],
+                            });
+                        });
+                        expandedBlocks = afterUnderlineSplit;
+
                         // Persist the expanded blocks back into pageData so subsequent
                         // re-renders (toggle off/on, zoom, etc.) see the already-split
                         // blocks with matching word block_num values.
@@ -18059,7 +18163,7 @@
                         let bL = blk.left, bT = blk.top, bW = blk.width, bH = blk.height;
                         if (!blkEdit && blkWords.length > 0) {
                             const bounds = getWordBounds(blkWords);
-                            if (bounds) { bL = bounds.left; bT = bounds.top; bW = bounds.width; bH = bounds.height; }
+                            if (bounds) { bL = bounds.left; bT = bounds.top; bW = bounds.width; bH = Math.max(bH, bounds.height); }
                         }
 
                         const baseL = blkEdit ? blkEdit.bbox[0] : bL;
@@ -18308,7 +18412,7 @@
                                 blockLeft = bounds.left;
                                 blockTop = bounds.top;
                                 blockWidth = bounds.width;
-                                blockHeight = bounds.height;
+                                blockHeight = Math.max(blockHeight, bounds.height);
                             }
                         }
 
