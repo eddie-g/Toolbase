@@ -44,14 +44,26 @@ class DallePromptBuilder
         string $chromeBg,
         ?string $logoShape = null,
         string $detail = 'min',
+        ?string $fontStyle = null,
     ): string {
         $tpl = self::templates();
         
         // Handle text-only mode: generate wordmark/text only, no icon
         if ($textOnly) {
+            $styleInstruction = match ($fontStyle) {
+                'bold_geometric' => 'Use a bold geometric sans-serif typeface.',
+                'elegant_serif' => 'Use an elegant serif typeface.',
+                'script_signature' => 'Use a flowing script signature typeface.',
+                'tech_mono' => 'Use a technical monospaced typeface.',
+                'minimal_light' => 'Use a minimal light-weight sans-serif typeface.',
+                default => 'Use a modern sans-serif typeface.',
+            };
             $textOnlyPrompt = "A professional wordmark logo design featuring the text \"{$brandUpper}\" in custom typography. ";
+            $textOnlyPrompt .= "{$styleInstruction} ";
             $textOnlyPrompt .= "Colors: {$colorList}. ";
-            $textOnlyPrompt .= "Background: {$bgInstruction}. ";
+            if ($bgInstruction !== '') {
+                $textOnlyPrompt .= "Background: {$bgInstruction}. ";
+            }
             
             // Add shape constraint if specified
             if (!empty($logoShape) && $logoShape !== 'none') {
@@ -97,7 +109,7 @@ class DallePromptBuilder
             ?? $tpl[$mode]['professional']
             ?? '';
 
-        return self::sub($template, [
+        $result = self::sub($template, [
             'brand' => $brandUpper,
             'subject' => $subjectValue,
             'colors' => $colorList,
@@ -106,5 +118,10 @@ class DallePromptBuilder
             'shape_block' => $shapeBlock,
             'no_text' => $noText,
         ]);
+
+        // Clean up empty background directives
+        $result = preg_replace('/Background:\s*\./', '', $result);
+        $result = preg_replace('/\s+/', ' ', $result); // Normalize whitespace
+        return trim($result);
     }
 }

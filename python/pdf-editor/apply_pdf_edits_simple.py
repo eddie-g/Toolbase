@@ -34,40 +34,67 @@ import tempfile
 # Font file mapping - prefer full font files for TextWriter
 # If no local file is available, embedded fonts from the PDF are used as fallback
 FONT_FILES = {
-    # Arimo variants
+    'Arial': 'fonts/Arimo-Regular.ttf',
+    'Arial-Bold': 'fonts/Arimo-Bold.ttf',
+    'Arial-Regular': 'fonts/Arimo-Regular.ttf',
+    'Arial_700wght': 'fonts/Arimo-Bold.ttf',
     'Arimo': 'fonts/Arimo-Regular.ttf',
     'Arimo-Bold': 'fonts/Arimo-Bold.ttf',
     'Arimo-Regular': 'fonts/Arimo-Regular.ttf',
-    'Arimo_700wght': 'fonts/Arimo-Bold.ttf',  # 700 weight = Bold
-    
-    # Gelasio variants
+    'Arimo_700wght': 'fonts/Arimo-Bold.ttf',
+    'Charmonman': 'fonts/Charmonman-Regular.ttf',
+    'Charmonman-Bold': 'fonts/Charmonman-Bold.ttf',
+    'Charmonman-Regular': 'fonts/Charmonman-Regular.ttf',
+    'Charmonman_700wght': 'fonts/Charmonman-Bold.ttf',
     'Gelasio': 'fonts/Gelasio-Regular.ttf',
     'Gelasio-Bold': 'fonts/Gelasio-Bold.ttf',
     'Gelasio-Regular': 'fonts/Gelasio-Regular.ttf',
-    'Gelasio_700wght': 'fonts/Gelasio-Bold.ttf',  # 700 weight = Bold
-    
-    # Tinos variants (substitute for Times New Roman)
+    'Gelasio_700wght': 'fonts/Gelasio-Bold.ttf',
+    'Helvetica': 'fonts/Arimo-Regular.ttf',
+    'Helvetica-Bold': 'fonts/Arimo-Bold.ttf',
+    'Helvetica-Regular': 'fonts/Arimo-Regular.ttf',
+    'HelveticaWorld': 'fonts/Arimo-Regular.ttf',
+    'HelveticaWorld-Bold': 'fonts/Arimo-Bold.ttf',
+    'HelveticaWorld-Regular': 'fonts/Arimo-Regular.ttf',
+    'HelveticaWorld_700wght': 'fonts/Arimo-Bold.ttf',
+    'Helvetica_700wght': 'fonts/Arimo-Bold.ttf',
+    'Lato': 'fonts/Lato-Regular.ttf',
+    'Lato-Bold': 'fonts/Lato-Bold.ttf',
+    'Lato-Regular': 'fonts/Lato-Regular.ttf',
+    'Lato_700wght': 'fonts/Lato-Bold.ttf',
+    'Montserrat': 'fonts/Montserrat-Regular.ttf',
+    'Montserrat-Bold': 'fonts/Montserrat-Bold.ttf',
+    'Montserrat-Regular': 'fonts/Montserrat-Regular.ttf',
+    'Montserrat-Thin': 'fonts/Montserrat-Thin.ttf',
+    'MontserratThin': 'fonts/Montserrat-Thin.ttf',
+    'MontserratThin_700wght': 'fonts/Montserrat-Bold.ttf',
+    'Montserrat_100wght': 'fonts/Montserrat-Thin.ttf',
+    'Montserrat_700wght': 'fonts/Montserrat-Bold.ttf',
+    'OpenSans': 'fonts/OpenSans-Regular.ttf',
+    'OpenSans-Bold': 'fonts/OpenSans-Bold.ttf',
+    'OpenSans-Regular': 'fonts/OpenSans-Regular.ttf',
+    'OpenSans_700wght': 'fonts/OpenSans-Bold.ttf',
+    'Poppins': 'fonts/Poppins-Regular.ttf',
+    'Poppins-Bold': 'fonts/Poppins-Bold.ttf',
+    'Poppins-Regular': 'fonts/Poppins-Regular.ttf',
+    'Poppins_700wght': 'fonts/Poppins-Bold.ttf',
+    'Roboto': 'fonts/Roboto-Regular.ttf',
+    'Roboto-Bold': 'fonts/Roboto-Bold.ttf',
+    'Roboto-Regular': 'fonts/Roboto-Regular.ttf',
+    'Roboto_700wght': 'fonts/Roboto-Bold.ttf',
+    'TimesNewRomanPSMT': 'fonts/Tinos-Regular.ttf',
+    'TimesNewRomanPSMT-Bold': 'fonts/Tinos-Bold.ttf',
+    'TimesNewRomanPSMT-Regular': 'fonts/Tinos-Regular.ttf',
+    'TimesNewRomanPSMT_700wght': 'fonts/Tinos-Bold.ttf',
+    'TimesNewRomanUnicode': 'fonts/Tinos-Regular.ttf',
+    'TimesNewRomanUnicode-Bold': 'fonts/Tinos-Bold.ttf',
     'Tinos': 'fonts/Tinos-Regular.ttf',
     'Tinos-Bold': 'fonts/Tinos-Bold.ttf',
     'Tinos-Regular': 'fonts/Tinos-Regular.ttf',
-    'TimesNewRomanUnicode': 'fonts/Tinos-Regular.ttf',
-    'TimesNewRomanUnicode-Bold': 'fonts/Tinos-Bold.ttf',
-    
-    # Montserrat variants
-    'Montserrat': 'fonts/Montserrat-Thin.ttf',
-    'Montserrat-Bold': 'fonts/Montserrat-Bold.ttf',
-    'Montserrat-Thin': 'fonts/Montserrat-Thin.ttf',
-    'Montserrat_700wght': 'fonts/Montserrat-Bold.ttf',  # 700 weight = Bold
-    'Montserrat_100wght': 'fonts/Montserrat-Thin.ttf',  # 100 weight = Thin
-    'MontserratThin': 'fonts/Montserrat-Thin.ttf',
-    'MontserratThin_700wght': 'fonts/Montserrat-Bold.ttf',  # Montserrat Thin family with 700 weight = Bold
-    
-    # Lato variants
-    'Lato': 'fonts/Lato-Regular.ttf',
-    'Lato-Regular': 'fonts/Lato-Regular.ttf',
-    'Lato-Bold': 'fonts/Lato-Bold.ttf',
-    'Lato_700wght': 'fonts/Lato-Bold.ttf',
-
+    'Verdana': 'fonts/Arimo-Regular.ttf',
+    'Verdana-Bold': 'fonts/Arimo-Bold.ttf',
+    'Verdana-Regular': 'fonts/Arimo-Regular.ttf',
+    'Verdana_700wght': 'fonts/Arimo-Bold.ttf',
 }
 
 def get_font_file(font_name, script_dir, font_weight=None):

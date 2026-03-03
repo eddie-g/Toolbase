@@ -586,6 +586,16 @@
                                                 :class="logoStyle === 'retro' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Retro</div>
                                             <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Vintage & classic</div>
                                         </button>
+                                        <button type="button" @click="selectStyle('minimalist')"
+                                            class="group rounded-xl border-2 p-3 transition-all text-center"
+                                            :class="logoStyle === 'minimalist' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                                            <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                                                <svg class="w-6 h-6" :class="logoStyle === 'minimalist' ? 'text-emerald-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                            </div>
+                                            <div class="text-xs font-semibold"
+                                                :class="logoStyle === 'minimalist' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Minimalist</div>
+                                            <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Simple & clean</div>
+                                        </button>
                                         <button type="button" @click="selectStyle('greetingcard')"
                                             class="group rounded-xl border-2 p-3 transition-all text-center"
                                             :class="logoStyle === 'greetingcard' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
@@ -595,6 +605,16 @@
                                             <div class="text-xs font-semibold"
                                                 :class="logoStyle === 'greetingcard' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Greeting Card</div>
                                             <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Watercolor & gouache</div>
+                                        </button>
+                                        <button type="button" @click="selectStyle('photorealistic')"
+                                            class="group rounded-xl border-2 p-3 transition-all text-center"
+                                            :class="logoStyle === 'photorealistic' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                                            <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                                                <svg class="w-6 h-6" :class="logoStyle === 'photorealistic' ? 'text-emerald-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0zM18.75 10.5h.008v.008h-.008V10.5z"></path></svg>
+                                            </div>
+                                            <div class="text-xs font-semibold"
+                                                :class="logoStyle === 'photorealistic' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Photorealistic</div>
+                                            <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Lifelike & detailed</div>
                                         </button>
                                         @if(config('services.logo_custom_prompt_enabled'))
                                         <button type="button" @click="selectStyle('custom')"
@@ -615,7 +635,7 @@
                                         </div>
                                     </div>
                                     <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                                        <button type="button" @click="selectStyle('chrome')"
+                                        <button type="button" @click="selectStyle('chrome')" x-show="!logoIconOnly"
                                             class="group rounded-xl border-2 p-2 transition-all text-center"
                                             :class="logoStyle === 'chrome' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
                                             <div class="aspect-square rounded-lg overflow-hidden bg-gray-100 dark:bg-gray-800 mb-2">
@@ -626,7 +646,7 @@
                                             <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">3D metallic render</div>
                                             <span class="inline-block mt-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">Icon Only</span>
                                         </button>
-                                        <button type="button" @click="selectStyle('dotmatrix')"
+                                        <button type="button" @click="selectStyle('dotmatrix')" x-show="!logoIconOnly"
                                             class="group rounded-xl border-2 p-3 transition-all text-center"
                                             :class="logoStyle === 'dotmatrix' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
                                             <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
@@ -637,7 +657,7 @@
                                             <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Stipple art</div>
                                             <span class="inline-block mt-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">Icon Only</span>
                                         </button>
-                                        <button type="button" @click="selectStyle('8bit')"
+                                        <button type="button" @click="selectStyle('8bit')" x-show="!logoIconOnly"
                                             class="group rounded-xl border-2 p-3 transition-all text-center"
                                             :class="logoStyle === '8bit' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
                                             <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
@@ -692,7 +712,37 @@
                                             :class="logoStyle === 'retro' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Retro</div>
                                         <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Vintage & classic</div>
                                     </button>
+                                    <button type="button" @click="selectStyle('minimalist')"
+                                        class="group rounded-xl border-2 p-3 transition-all text-center"
+                                        :class="logoStyle === 'minimalist' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                                        <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                                            <svg class="w-6 h-6" :class="logoStyle === 'minimalist' ? 'text-emerald-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                        </div>
+                                        <div class="text-xs font-semibold"
+                                            :class="logoStyle === 'minimalist' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Minimalist</div>
+                                        <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Simple & clean</div>
+                                    </button>
                                     <button type="button" @click="selectStyle('greetingcard')"
+                                        class="group rounded-xl border-2 p-3 transition-all text-center"
+                                        :class="logoStyle === 'greetingcard' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                                        <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                                            <svg class="w-6 h-6" :class="logoStyle === 'greetingcard' ? 'text-emerald-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"></path></svg>
+                                        </div>
+                                        <div class="text-xs font-semibold"
+                                            :class="logoStyle === 'greetingcard' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Greeting Card</div>
+                                        <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Watercolor & gouache</div>
+                                    </button>
+                                    <button type="button" @click="selectStyle('photorealistic')"
+                                        class="group rounded-xl border-2 p-3 transition-all text-center"
+                                        :class="logoStyle === 'photorealistic' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                                        <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                                            <svg class="w-6 h-6" :class="logoStyle === 'photorealistic' ? 'text-emerald-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0zM18.75 10.5h.008v.008h-.008V10.5z"></path></svg>
+                                        </div>
+                                        <div class="text-xs font-semibold"
+                                            :class="logoStyle === 'photorealistic' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-400'">Photorealistic</div>
+                                        <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">Lifelike & detailed</div>
+                                    </button>
+                                    @if(config('services.logo_custom_prompt_enabled'))
                                         class="group rounded-xl border-2 p-3 transition-all text-center"
                                         :class="logoStyle === 'greetingcard' ? 'border-emerald-500 ring-2 ring-emerald-200 dark:ring-emerald-800 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
                                         <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">

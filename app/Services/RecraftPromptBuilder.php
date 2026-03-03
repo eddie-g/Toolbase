@@ -3,9 +3,9 @@
 namespace App\Services;
 
 /**
- * Builds Recraft logo prompts from a JSON template config.
+ * Builds Recraft logo prompts from JSON template configs.
  *
- * Edit  config/recraft_prompts.json  to change wording without touching PHP.
+ * Edit  config/recraft_raster_prompts.json  or  config/recraft_vector_prompts.json  to change wording without touching PHP.
  *
  * Available template variables:
  *   {subject}     – user's image description
@@ -18,15 +18,26 @@ namespace App\Services;
 class RecraftPromptBuilder
 {
     /** @var array<string, mixed>|null */
-    private static ?array $templates = null;
+    private static ?array $rasterTemplates = null;
+    
+    /** @var array<string, mixed>|null */
+    private static ?array $vectorTemplates = null;
 
-    private static function templates(): array
+    private static function templates(string $format = 'raster'): array
     {
-        if (self::$templates === null) {
-            $path = config_path('recraft_prompts.json');
-            self::$templates = json_decode(file_get_contents($path), true);
+        if ($format === 'vector') {
+            if (self::$vectorTemplates === null) {
+                $path = config_path('recraft_vector_prompts.json');
+                self::$vectorTemplates = json_decode(file_get_contents($path), true);
+            }
+            return self::$vectorTemplates;
+        } else {
+            if (self::$rasterTemplates === null) {
+                $path = config_path('recraft_raster_prompts.json');
+                self::$rasterTemplates = json_decode(file_get_contents($path), true);
+            }
+            return self::$rasterTemplates;
         }
-        return self::$templates;
     }
 
     /**
@@ -41,7 +52,7 @@ class RecraftPromptBuilder
 
     public static function defaultColors(string $style): string
     {
-        $tpl = self::templates();
+        $tpl = self::templates('raster'); // Both configs have same default_colors
         return $tpl['default_colors'][$style] ?? $tpl['default_colors']['minimalist'] ?? 'navy blue, gold';
     }
 
@@ -68,11 +79,10 @@ class RecraftPromptBuilder
         string  $colorDesc,
         string  $bgDesc,
         string  $outputFormat = 'raster',
+        ?string $fontStyle = null,
     ): string {
-        $tpl  = self::templates();
-
         $format = $outputFormat === 'vector' ? 'vector' : 'raster';
-        $formatTpl = $tpl[$format] ?? [];
+        $tpl = self::templates($format);
 
         // Recraft vector path supports either logo OR text, never both in one generation.
         if ($format === 'vector' && !$iconOnly && !$textOnly) {
@@ -100,16 +110,26 @@ class RecraftPromptBuilder
         $noTextTemplate = $tpl['no_text'][$mode] ?? '';
         $noText = self::sub($noTextTemplate, ['brand' => $brandUpper]);
 
-        $modeKey = match($logoDetail) {
-            'max'    => $mode . '_max',
-            'medium' => $mode . '_medium',
-            default  => $mode,
-        };
+        // Handle "AI Picks" color option
+        if (stripos($colorDesc, 'AI Picks') !== false) {
+            $colorDesc = 'AI picks best matching colors';
+        }
 
-        $template = $formatTpl[$modeKey][$style]
-            ?? $formatTpl[$modeKey]['minimalist']
-            ?? $formatTpl[$mode][$style]
-            ?? $formatTpl[$mode]['minimalist']
+        // Vector format doesn't use detail levels
+        if ($format === 'vector') {
+            $modeKey = $mode;
+        } else {
+            $modeKey = match($logoDetail) {
+                'max'    => $mode . '_max',
+                'medium' => $mode . '_medium',
+                default  => $mode,
+            };
+        }
+
+        $template = $tpl[$modeKey][$style]
+            ?? $tpl[$modeKey]['minimalist']
+            ?? $tpl[$mode][$style]
+            ?? $tpl[$mode]['minimalist']
             ?? '';
 
         $prompt = self::sub($template, [
@@ -120,6 +140,23 @@ class RecraftPromptBuilder
             'shape_block' => $shapeBlock,
             'no_text'     => $noText,
         ]);
+
+        // Clean up empty background directives
+        $prompt = preg_replace('/Background:\s*\./', '', $prompt);
+        $prompt = preg_replace('/\s+/', ' ', $prompt); // Normalize whitespace
+        $prompt = trim($prompt);
+
+        if ($textOnly) {
+            $styleInstruction = match ($fontStyle) {
+                'bold_geometric' => ' Typography: bold geometric sans-serif.',
+                'elegant_serif' => ' Typography: elegant serif.',
+                'script_signature' => ' Typography: script signature lettering.',
+                'tech_mono' => ' Typography: technical monospaced.',
+                'minimal_light' => ' Typography: minimal light-weight sans-serif.',
+                default => ' Typography: modern sans-serif.',
+            };
+            $prompt .= $styleInstruction;
+        }
 
         // Recraft API hard limit: 1000 characters
         return mb_strlen($prompt) > 1000 ? mb_substr($prompt, 0, 1000) : $prompt;

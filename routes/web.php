@@ -157,6 +157,13 @@ Route::get('/domain-search/remove-logo-bg', fn () => response()->json(['error' =
 Route::get('/domain-search/logo-palettes', [DomainSearchController::class, 'listLogoPalettes'])->middleware('auth:web,admin')->name('domainSearch.logoPalettes.list');
 Route::post('/domain-search/logo-palettes', [DomainSearchController::class, 'saveLogoPalette'])->middleware('auth:web,admin')->name('domainSearch.logoPalettes.save');
 Route::delete('/domain-search/logo-palettes/{palette}', [DomainSearchController::class, 'deleteLogoPalette'])->middleware('auth:web,admin')->name('domainSearch.logoPalettes.delete');
+Route::get('/domain-search/user-logos', [DomainSearchController::class, 'userLogos'])->middleware('auth:web,admin')->name('domainSearch.userLogos');
+Route::post('/domain-search/save-processed-svg', [DomainSearchController::class, 'saveProcessedSvg'])->middleware('auth:web,admin')->name('domainSearch.saveProcessedSvg');
+Route::post('/domain-search/editor-state', [DomainSearchController::class, 'saveEditorState'])->middleware('auth:web,admin')->name('domainSearch.editorState.save');
+Route::get('/domain-search/editor-states', [DomainSearchController::class, 'getEditorStates'])->middleware('auth:web,admin')->name('domainSearch.editorState.list');
+Route::get('/domain-search/editor-state/{id}', [DomainSearchController::class, 'loadEditorState'])->middleware('auth:web,admin')->name('domainSearch.editorState.load');
+Route::put('/domain-search/editor-state/{id}', [DomainSearchController::class, 'updateEditorState'])->middleware('auth:web,admin')->name('domainSearch.editorState.update');
+Route::delete('/domain-search/editor-state/{id}', [DomainSearchController::class, 'deleteEditorState'])->middleware('auth:web,admin')->name('domainSearch.editorState.delete');
 Route::get('/logos/{logoRequest}/edit', [DomainSearchController::class, 'editLogo'])->name('logos.edit');
 Route::post('/logos/{logoRequest}/save-edited', [DomainSearchController::class, 'saveEditedLogo'])->name('logos.saveEdited');
 

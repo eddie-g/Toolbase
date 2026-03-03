@@ -113,7 +113,10 @@ class GenerateLogoJob implements ShouldQueue
             if ($imageModel === 'recraft') {
                 $result = $this->generateRecraft($prompt, $imageCount, $outputFormat, $isPro, $bgColor, $iconOnly, $colorPalette, $recraftSubstyle);
             } elseif ($imageModel === 'dalle') {
-                $result = $this->generateDalle($prompt, $imageCount, $isPro);
+                $result = $this->generateDalle($prompt, $imageCount, $isPro, $outputFormat);
+            } elseif ($imageModel === 'flux' && $outputFormat === 'raster') {
+                // For raster flux images, use nano-banana-2
+                $result = $this->generateNanoBanana2($prompt, $imageCount);
             } elseif ($isPro) {
                 $result = $this->generateFluxPro($prompt, $imageCount, $proSize);
             } else {
@@ -215,6 +218,7 @@ class GenerateLogoJob implements ShouldQueue
                     imageCount: $actualImageCount,
                     resolution: '1024x1024',
                     quality: $isPro ? 'hd' : 'standard',
+                    outputFormat: $outputFormat,
                 );
             } else {
                 $actualCost = AiLogoPrice::estimateCost(
@@ -224,6 +228,7 @@ class GenerateLogoJob implements ShouldQueue
                     style: $style,
                     bgColor: $bgColor,
                     outputFormat: $outputFormat,
+                    imageModel: $imageModel,
                 );
             }
 
@@ -549,9 +554,9 @@ class GenerateLogoJob implements ShouldQueue
      * Generate images via GPT Image 1.5.
      * Routes to the new gpt-image-1.5 model. DALL-E 3 is preserved as generateDalle3() below.
      */
-    private function generateDalle(string $prompt, int $imageCount, bool $isPro): array
+    private function generateDalle(string $prompt, int $imageCount, bool $isPro, string $outputFormat = 'raster'): array
     {
-        return $this->generateGptImage15($prompt, $imageCount, $isPro);
+        return $this->generateGptImage15($prompt, $imageCount, $isPro, $outputFormat);
     }
 
     /**
@@ -559,8 +564,10 @@ class GenerateLogoJob implements ShouldQueue
      *
      * Quality mapping: standard → medium ($0.042 / img), hd → high ($0.167 / img)
      * Response may contain 'url' or 'b64_json'; both are handled.
+     * 
+     * If outputFormat is 'vector', will vectorize PNG to SVG after generation.
      */
-    private function generateGptImage15(string $prompt, int $imageCount, bool $isPro): array
+    private function generateGptImage15(string $prompt, int $imageCount, bool $isPro, string $outputFormat = 'raster'): array
     {
         $quality = $isPro ? 'high' : 'medium';
         $allImages = [];
@@ -648,6 +655,97 @@ class GenerateLogoJob implements ShouldQueue
                     'status' => $response->status(),
                     'body'   => substr($response->body(), 0, 500),
                 ]);
+            }
+        }
+
+        // Vectorize if requested (for DALL-E/Cosmo vector mode)
+        if ($outputFormat === 'vector' && !empty($allImages)) {
+            foreach ($allImages as $i => &$img) {
+                $rasterUrl = $img['url'] ?? null;
+                if (!$rasterUrl) continue;
+
+                try {
+                    $imageData = null;
+                    
+                    // If URL is a local storage path, read the file and send as base64
+                    if (str_starts_with($rasterUrl, '/storage/')) {
+                        $relativePath = str_replace('/storage/', '', $rasterUrl);
+                        if (Storage::disk('public')->exists($relativePath)) {
+                            $imageData = Storage::disk('public')->get($relativePath);
+                            Log::info('Read local file for vectorization', [
+                                'path' => $relativePath,
+                                'size' => strlen($imageData),
+                            ]);
+                        } else {
+                            Log::warning('Local file not found for vectorization', [
+                                'path' => $relativePath,
+                            ]);
+                            continue;
+                        }
+                    } else {
+                        // Download remote URL
+                        try {
+                            $response = $this->httpWithResolvedDns($rasterUrl, [])->timeout(45)->get($rasterUrl);
+                            if ($response->successful()) {
+                                $imageData = $response->body();
+                            } else {
+                                Log::warning('Failed to download raster image for vectorization', [
+                                    'url' => $rasterUrl,
+                                    'status' => $response->status(),
+                                ]);
+                                continue;
+                            }
+                        } catch (\Exception $e) {
+                            Log::warning('Exception downloading raster image: ' . $e->getMessage());
+                            continue;
+                        }
+                    }
+
+                    if (!$imageData) continue;
+
+                    // Convert to base64 and send to vectorization API
+                    $base64Image = base64_encode($imageData);
+                    $vectorizeUrl = 'https://fal.run/fal-ai/recraft/vectorize';
+                    $svgResponse = $this->httpWithResolvedDns($vectorizeUrl, [
+                        'Authorization' => 'Key ' . config('services.fal.key'),
+                        'Content-Type' => 'application/json',
+                    ])->retry(3, 2000, function (\Exception $e) {
+                        return $e instanceof \Illuminate\Http\Client\ConnectionException
+                            || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
+                    })->timeout(120)->post($vectorizeUrl, [
+                        'image' => 'data:image/png;base64,' . $base64Image,
+                    ]);
+
+                    if ($svgResponse->successful()) {
+                        $responseBody = $svgResponse->body();
+                        if (!str_starts_with(trim($responseBody), '<') && !str_starts_with(trim($responseBody), '<!DOCTYPE')) {
+                            try {
+                                $svgData = $svgResponse->json();
+                                $svgUrl = $svgData['image']['url'] ?? ($svgData['images'][0]['url'] ?? null);
+                                if ($svgUrl) {
+                                    $img['svg_url'] = $svgUrl;
+                                    // Also update the main URL to point to SVG for vector output
+                                    $img['url'] = $svgUrl;
+                                    Log::info('Successfully vectorized DALL-E/Cosmo image ' . $i, [
+                                        'svg_url' => $svgUrl,
+                                    ]);
+                                }
+                            } catch (\Exception $jsonEx) {
+                                Log::warning('Failed to parse vectorization JSON for DALL-E image ' . $i, [
+                                    'error' => $jsonEx->getMessage(),
+                                    'body' => substr($responseBody, 0, 500),
+                                ]);
+                            }
+                        }
+                    } else {
+                        Log::warning('SVG vectorization failed for DALL-E image ' . $i, [
+                            'status' => $svgResponse->status(),
+                            'body' => substr($svgResponse->body(), 0, 500),
+                        ]);
+                    }
+                } catch (\Exception $e) {
+                    Log::warning('Exception during DALL-E vectorization for image ' . $i . ': ' . $e->getMessage());
+                }
             }
         }
 
@@ -840,6 +938,72 @@ class GenerateLogoJob implements ShouldQueue
             return ['images' => $data['images'] ?? [], 'seed' => $data['seed'] ?? null];
         } catch (\Exception $jsonEx) {
             Log::error('Failed to parse Flux Schnell JSON response', [
+                'error' => $jsonEx->getMessage(),
+                'body' => substr($responseBody, 0, 500),
+            ]);
+            return ['error' => 'API returned invalid JSON', 'status_code' => 500];
+        }
+    }
+
+    /**
+     * Generate images via Nano Banana 2.
+     */
+    private function generateNanoBanana2(string $prompt, int $imageCount): array
+    {
+        $endpoint = 'https://fal.run/fal-ai/nano-banana-2';
+        $response = $this->httpWithResolvedDns($endpoint, [
+            'Authorization' => 'Key ' . config('services.fal.key'),
+            'Content-Type' => 'application/json',
+        ])->retry(3, 3000, function (\Exception $e) {
+            return $e instanceof \Illuminate\Http\Client\ConnectionException
+                || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
+        })->timeout(120)->post($endpoint, [
+            'prompt' => $prompt,
+            'num_images' => $imageCount,
+            'resolution' => '1K',
+            'aspect_ratio' => '1:1',
+            'output_format' => 'png',
+            'sync_mode' => true,
+        ]);
+
+        if (!$response->successful()) {
+            $falBody = $response->body();
+            
+            // Try to extract error message, handling both JSON and non-JSON responses
+            $falError = 'Unknown error';
+            if (str_contains($falBody, 'not_enough_credits')) {
+                $falError = 'not_enough_credits';
+            } elseif (!str_starts_with(trim($falBody), '<')) {
+                try {
+                    $jsonData = $response->json();
+                    $falError = $jsonData['detail'] ?? $jsonData['message'] ?? 'Unknown error';
+                } catch (\Exception $e) {
+                    $falError = 'Unknown error';
+                }
+            }
+            
+            $falError = $this->friendlyErrorMessage($falError);
+            Log::error('Fal.ai nano-banana-2 generation failed', [
+                'status' => $response->status(),
+                'body' => substr($falBody, 0, 500),
+            ]);
+            return ['error' => $falError, 'status_code' => $response->status()];
+        }
+
+        // Check if response is JSON before parsing
+        $responseBody = $response->body();
+        if (str_starts_with(trim($responseBody), '<') || str_starts_with(trim($responseBody), '<!DOCTYPE')) {
+            Log::error('Nano Banana 2 returned HTML instead of JSON', [
+                'body' => substr($responseBody, 0, 500),
+            ]);
+            return ['error' => 'API returned invalid response format', 'status_code' => 500];
+        }
+        
+        try {
+            $data = $response->json();
+            return ['images' => $data['images'] ?? [], 'seed' => $data['seed'] ?? null];
+        } catch (\Exception $jsonEx) {
+            Log::error('Failed to parse Nano Banana 2 JSON response', [
                 'error' => $jsonEx->getMessage(),
                 'body' => substr($responseBody, 0, 500),
             ]);

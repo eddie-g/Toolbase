@@ -1,0 +1,38 @@
+{
+    "_comment": "Flux vector logo prompt templates. Edit strings here; variable substitution happens at runtime. Available variables: {brand} (uppercase brand name), {concept} (visual concept element — pre-formatted string with leading space, or empty), {colors} (full color instruction string), {bg} (background instruction string), {shape_block} (shape constraint sentence, or empty string), {no_text} (text constraint — pre-formatted string with leading space).",
+    "shape_block": "Hard shape constraint: the entire logo is fully enclosed inside a perfect {SHAPE} container. Nothing extends outside the {Shape}.",
+    "default_colors": {
+        "minimal_geometric": "navy blue and gold color palette.",
+        "abstract": "navy blue and gold color palette.",
+        "monoline": "navy blue and gold color palette.",
+        "negative_space": "navy blue and gold color palette.",
+        "tech_gradient": "vibrant gradient colors from cyan to purple."
+    },
+    "no_text": {
+        "icon_only": " There is absolutely NO text, NO letters, NO words, NO numbers, NO typography anywhere in the image. Zero text of any kind. Pure graphic symbol only.",
+        "with_brand": " The ONLY text in the entire image is \"{brand}\". Do not add any other words, letters, taglines, slogans, or captions anywhere in the image."
+    },
+    "default_concept": {
+        "icon_only": " A unique abstract symbol.",
+        "with_brand": ""
+    },
+    "quality_vector": {
+        "min": "",
+        "medium": " Smooth lines and clean vector geometry.",
+        "max": " Smooth lines, clean curves, and balanced vector geometry."
+    },
+    "icon_only": {
+        "minimal_geometric": "Minimal geometric vector logo.{concept} Abstract symbol, clean shapes, modern branding, flat design, solid colors, simple icon mark, scalable SVG style. {colors} Clean flat artwork, centered 1:1 square composition, {bg}. {shape_block} No shadows, no 3D effects, no textures, no cluttered details. Minimal geometric design.{no_text} Use clean vector-style shapes with crisp edges and smooth Bézier curves suitable for SVG output.",
+        "abstract": "Abstract vector logo symbol.{concept} Dynamic shapes, modern branding, simple icon mark, minimal flat design, professional brand logo. {colors} Clean flat artwork, centered 1:1 square composition, {bg}. {shape_block} No shadows, no 3D effects, no textures. Abstract design.{no_text} Use clean vector-style shapes with crisp edges and smooth Bézier curves suitable for SVG output.",
+        "monoline": "Monoline vector logo.{concept} Elegant continuous line design, minimal outline icon, thin strokes, modern branding, simple scalable logo. {colors} Clean flat artwork, centered 1:1 square composition, {bg}. {shape_block} No shadows, no 3D effects, no filled shapes. Line art design.{no_text} Use clean vector-style shapes with crisp edges and smooth Bézier curves suitable for SVG output.",
+        "negative_space": "Clever negative space vector logo.{concept} Hidden symbol inside shape, minimal geometric design, modern branding, simple flat colors. {colors} Clean flat artwork, centered 1:1 square composition, {bg}. {shape_block} No shadows, no 3D effects, no textures. Negative space design.{no_text} Use clean vector-style shapes with crisp edges and smooth Bézier curves suitable for SVG output.",
+        "tech_gradient": "Modern gradient vector logo.{concept} Abstract tech symbol, vibrant gradient colors, futuristic branding, smooth geometric shapes. {colors} Clean artwork, centered 1:1 square composition, {bg}. {shape_block} No shadows, no 3D effects. Tech gradient design.{no_text} Use clean vector-style shapes with crisp edges and smooth Bézier curves suitable for SVG output."
+    },
+    "with_brand": {
+        "minimal_geometric": "Minimal geometric vector logo for \"{brand}\".{concept} Abstract symbol, clean shapes, modern branding, flat design, solid colors, simple icon mark, scalable SVG style. {colors} Clean flat artwork, centered 1:1 square composition, {bg}. {shape_block} No shadows, no 3D effects, no textures, no cluttered details. Minimal geometric design.{no_text} Use clean vector-style shapes with crisp edges and smooth Bézier curves suitable for SVG output.",
+        "abstract": "Abstract vector logo for \"{brand}\".{concept} Dynamic shapes, modern branding, simple icon mark, minimal flat design, professional brand logo. {colors} Clean flat artwork, centered 1:1 square composition, {bg}. {shape_block} No shadows, no 3D effects, no textures. Abstract design.{no_text} Use clean vector-style shapes with crisp edges and smooth Bézier curves suitable for SVG output.",
+        "monoline": "Monoline vector logo for \"{brand}\".{concept} Elegant continuous line design, minimal outline icon, thin strokes, modern branding, simple scalable logo. {colors} Clean flat artwork, centered 1:1 square composition, {bg}. {shape_block} No shadows, no 3D effects, no filled shapes. Line art design.{no_text} Use clean vector-style shapes with crisp edges and smooth Bézier curves suitable for SVG output.",
+        "negative_space": "Clever negative space vector logo for \"{brand}\".{concept} Hidden symbol inside shape, minimal geometric design, modern branding, simple flat colors. {colors} Clean flat artwork, centered 1:1 square composition, {bg}. {shape_block} No shadows, no 3D effects, no textures. Negative space design.{no_text} Use clean vector-style shapes with crisp edges and smooth Bézier curves suitable for SVG output.",
+        "tech_gradient": "Modern gradient vector logo for \"{brand}\".{concept} Abstract tech symbol, vibrant gradient colors, futuristic branding, smooth geometric shapes. {colors} Clean artwork, centered 1:1 square composition, {bg}. {shape_block} No shadows, no 3D effects. Tech gradient design.{no_text} Use clean vector-style shapes with crisp edges and smooth Bézier curves suitable for SVG output."
+    }
+}
