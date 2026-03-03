@@ -582,10 +582,16 @@ def rebuild(clean_pdf_path: str, extraction_data: List[Dict[str, Any]], edits: L
 
         edited_blocks = set()
         unresolved_rects: List[fitz.Rect] = []
+        # Spatial bboxes for resolved edits — used to skip unchanged words
+        # (e.g. dotloop fill-in overlay values) that fall inside an edited area.
+        edited_block_rects: List[fitz.Rect] = []
         for edit in page_edits:
             bnum = edit.get("block_num")
             if bnum is not None:
                 edited_blocks.add(bnum)
+                bb = edit.get("bbox") or edit.get("original_bbox")
+                if isinstance(bb, list) and len(bb) >= 4:
+                    edited_block_rects.append(fitz.Rect(bb[0], bb[1], bb[2], bb[3]))
                 continue
             ob = edit.get("original_bbox")
             if isinstance(ob, list) and len(ob) >= 4:
@@ -605,6 +611,11 @@ def rebuild(clean_pdf_path: str, extraction_data: List[Dict[str, Any]], edits: L
                 float(word.get("top", 0)) + float(word.get("height", 0)),
             )
             if unresolved_rects and is_center_inside_any(w_rect, unresolved_rects):
+                continue
+            # Skip unchanged words whose center falls inside an edited block's
+            # bbox — these are overlay values (e.g. dotloop fill-ins) sitting
+            # on top of the template blank that the edit will redraw correctly.
+            if edited_block_rects and is_center_inside_any(w_rect, edited_block_rects):
                 continue
 
             text = sanitize_text(word.get("text", ""))
