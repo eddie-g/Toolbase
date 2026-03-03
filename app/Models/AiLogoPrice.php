@@ -54,6 +54,7 @@ class AiLogoPrice extends Model
     private const FALLBACK_PRICES = [
         'fal-ai/flux/schnell'  => ['price' => 0.003, 'unit' => 'megapixels'],
         'fal-ai/flux-2-flex'   => ['price' => 0.05,  'unit' => 'megapixels'],  // FLUX.2 [flex] — upgraded from flux-pro/v1.1 ($0.04)
+        'fal-ai/nano-banana-2' => ['price' => 0.0398, 'unit' => 'images'],
         'fal-ai/birefnet'      => ['price' => 0.00111, 'unit' => 'compute seconds'],
         'fal-ai/recraft/vectorize' => ['price' => 0.01, 'unit' => 'images'],
     ];
@@ -107,6 +108,8 @@ class AiLogoPrice extends Model
      * @param int    $proSize     PRO resolution (512, 1024, 1536) — ignored for Schnell (always 512)
      * @param string $style       Style name ('vector' adds vectorize cost)
      * @param string $bgColor     Background color ('transparent' or hex adds birefnet cost)
+     * @param string $outputFormat Output format ('raster' or 'vector')
+     * @param string $imageModel  Image model ('flux', 'dalle', 'recraft')
      * @return array Cost breakdown
      */
     public static function estimateCost(
@@ -116,9 +119,19 @@ class AiLogoPrice extends Model
         string $style = 'professional',
         string $bgColor = 'white',
         string $outputFormat = 'raster',
+        string $imageModel = 'flux',
     ): array {
         $resolution = $isPro ? $proSize : 512;
-        $modelName = $isPro ? 'flux-2-flex' : 'flux-schnell';
+        
+        // Determine model ID based on imageModel and outputFormat
+        if ($imageModel === 'flux' && $outputFormat === 'raster' && !$isPro) {
+            $modelId = 'fal-ai/nano-banana-2';
+            $modelName = 'nano-banana-2';
+        } else {
+            $modelName = $isPro ? 'flux-2-flex' : 'flux-schnell';
+            $modelId = $isPro ? 'fal-ai/flux-2-flex' : 'fal-ai/flux/schnell';
+        }
+        
         $resolutionStr = "{$resolution}x{$resolution}";
         
         // Try to get pricing from ai_rates table
@@ -131,12 +144,24 @@ class AiLogoPrice extends Model
         $pricing = self::fetchUnitPrices();
         $source = $pricing['source'];
         $prices = $pricing['prices'];
-        $modelId = $isPro ? 'fal-ai/flux-2-flex' : 'fal-ai/flux/schnell';
+        
+        // Calculate megapixels (used for display and some models)
         $megapixels = ($resolution * $resolution) / 1_000_000;
         
         // Calculate base generation cost
-        $genPricePerMp = $prices[$modelId]['price'] ?? self::FALLBACK_PRICES[$modelId]['price'];
-        $baseGenCostPerImage = round($genPricePerMp * $megapixels, 6);
+        $fallbackData = self::FALLBACK_PRICES[$modelId] ?? ['price' => 0.05, 'unit' => 'megapixels'];
+        $priceData = $prices[$modelId] ?? $fallbackData;
+        $unitPrice = $priceData['price'];
+        $unit = $priceData['unit'] ?? $fallbackData['unit'];
+        
+        // Calculate cost based on unit type
+        if ($unit === 'images') {
+            // Flat price per image (e.g., nano-banana-2)
+            $baseGenCostPerImage = round($unitPrice, 6);
+        } else {
+            // Price per megapixel (e.g., flux models)
+            $baseGenCostPerImage = round($unitPrice * $megapixels, 6);
+        }
         
         // Apply markup to generation cost
         if ($dbRate) {
@@ -197,7 +222,7 @@ class AiLogoPrice extends Model
             ],
             'source' => $dbRate ? 'database' : 'static_with_markup',
             'prices' => [
-                'gen_per_mp' => $genPricePerMp,
+                'gen_per_mp' => $unitPrice,
                 'birefnet_per_sec' => $needsBgRemove ? $birefnetPrice : null,
                 'vectorize_per_img' => $needsVectorize ? $vectorPrice : null,
             ],
@@ -215,6 +240,7 @@ class AiLogoPrice extends Model
         int $imageCount = 4,
         string $resolution = '1024x1024',
         string $quality = 'standard',
+        string $outputFormat = 'raster',
     ): array {
         // Map legacy DALL-E 3 quality names → GPT Image 1.5 quality tiers
         $gptQuality = match($quality) {
@@ -273,11 +299,20 @@ class AiLogoPrice extends Model
         $totalCost = round($costPerImage * $imageCount, 6);
         $markupAmount = round($totalCost - $baseCostTotal, 6);
 
+        // Add vectorization cost if output format is vector
+        $vectorizeCostPerImage = 0;
+        if ($outputFormat === 'vector') {
+            $vectorizeCostPerImage = 0.01; // $0.01 per image for PNG to SVG vectorization
+        }
+        $vectorizeCostTotal = round($vectorizeCostPerImage * $imageCount, 6);
+        $totalCost = round($totalCost + $vectorizeCostTotal, 6);
+
         return [
             'image_count' => $imageCount,
             'model' => 'gpt-image-1.5',
             'resolution' => $resolution,
             'quality' => $gptQuality,
+            'output_format' => $outputFormat,
             'cost_per_image' => $costPerImage,
             'estimated_cost_usd' => $totalCost,
             'base_cost_per_image' => $baseCost,
@@ -285,9 +320,9 @@ class AiLogoPrice extends Model
             'markup_percentage' => $markupPercentage,
             'markup_amount' => $markupAmount,
             'breakdown' => [
-                'generation' => $totalCost,
+                'generation' => round($costPerImage * $imageCount, 6),
                 'bg_removal' => 0,
-                'vectorize' => 0,
+                'vectorize' => $vectorizeCostTotal,
             ],
             'source' => $dbRate ? 'database' : 'static_with_markup',
         ];

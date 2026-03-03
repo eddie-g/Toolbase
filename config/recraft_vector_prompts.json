@@ -1,0 +1,34 @@
+{
+    "_comment": "Recraft vector logo prompt templates. Variables: {brand}, {subject}, {colors}, {bg}, {shape_block}, {no_text}.",
+    "default_colors": {
+        "minimal_geometric": "navy blue and gold",
+        "abstract": "navy blue and gold",
+        "monoline": "navy blue and gold",
+        "negative_space": "navy blue and gold",
+        "tech_gradient": "vibrant cyan to purple gradient"
+    },
+    "default_subject": {
+        "icon_only": "logo symbol",
+        "with_brand": "clean brand mark",
+        "text_only": "wordmark logo"
+    },
+    "shape_block": "Hard shape constraint: the entire logo is fully enclosed inside a perfect {SHAPE} container. Nothing extends outside the {Shape}.",
+    "no_text": {
+        "icon_only": "No text, no letters, no words, no numbers anywhere in the image.",
+        "with_brand": "The ONLY text allowed is exactly \"{brand}\" with correct spelling."
+    },
+    "icon_only": {
+        "minimal_geometric": "Minimal geometric vector logo icon for {subject}. Abstract symbol, clean geometric shapes, modern branding, flat design, solid colors, simple icon mark, scalable SVG style. Colors: {colors}. Background: {bg}. {shape_block} No shadows, no 3D effects, no textures, no cluttered details. Crisp SVG-friendly paths and clean Bezier curves. {no_text}",
+        "abstract": "Abstract vector logo symbol for {subject}. Dynamic shapes, modern branding, simple icon mark, minimal flat design, professional brand logo. Colors: {colors}. Background: {bg}. {shape_block} No shadows, no 3D effects, no textures. Crisp SVG-friendly paths and clean Bezier curves. {no_text}",
+        "monoline": "Monoline vector logo for {subject}. Elegant continuous line design, minimal outline icon, thin strokes, modern branding, simple scalable logo. Colors: {colors}. Background: {bg}. {shape_block} No shadows, no 3D effects, no filled shapes. Line art design with crisp SVG-friendly paths and clean Bezier curves. {no_text}",
+        "negative_space": "Clever negative space vector logo for {subject}. Hidden symbol inside shape, minimal geometric design, modern branding, simple flat colors. Colors: {colors}. Background: {bg}. {shape_block} No shadows, no 3D effects, no textures. Crisp SVG-friendly paths and clean Bezier curves. {no_text}",
+        "tech_gradient": "Modern gradient vector logo for {subject}. Abstract tech symbol, vibrant gradient colors, futuristic branding, smooth geometric shapes. Colors: {colors}. Background: {bg}. {shape_block} No shadows, no 3D effects. Crisp SVG-friendly paths and clean Bezier curves with gradient fills. {no_text}"
+    },
+    "text_only": {
+        "minimal_geometric": "Minimal geometric wordmark logo for \"{brand}\" in a clean modern typeface with geometric letterforms. Colors: {colors}. Background: {bg}. {shape_block} Text only. No icons or symbols. Crisp SVG-friendly paths and clean Bezier curves.",
+        "abstract": "Abstract wordmark logo for \"{brand}\" in a dynamic modern typeface with abstract letterforms. Colors: {colors}. Background: {bg}. {shape_block} Text only. No icons or symbols. Crisp SVG-friendly paths and clean Bezier curves.",
+        "monoline": "Monoline wordmark logo for \"{brand}\" in elegant continuous line typography with thin strokes. Colors: {colors}. Background: {bg}. {shape_block} Text only. No icons or symbols. Crisp SVG-friendly paths and clean Bezier curves.",
+        "negative_space": "Negative space wordmark logo for \"{brand}\" with clever hidden elements in the letterforms. Colors: {colors}. Background: {bg}. {shape_block} Text only. No icons or symbols. Crisp SVG-friendly paths and clean Bezier curves.",
+        "tech_gradient": "Tech gradient wordmark logo for \"{brand}\" in a modern typeface with vibrant gradient colors. Colors: {colors}. Background: {bg}. {shape_block} Text only. No icons or symbols. Crisp SVG-friendly paths and clean Bezier curves with gradient fills."
+    }
+}

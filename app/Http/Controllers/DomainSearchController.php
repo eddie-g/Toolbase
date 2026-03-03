@@ -8,6 +8,7 @@ use App\Models\AiLogoRequest;
 use App\Models\Admin;
 use App\Models\SavedDomain;
 use App\Models\SavedLogoPalette;
+use App\Models\VectorEditorState;
 use App\Models\AiLogoPrice;
 use App\Models\AiPriceLog;
 use App\Models\CreditTransaction;
@@ -397,6 +398,227 @@ class DomainSearchController extends Controller
 
         return response()->json([
             'deleted' => true,
+        ]);
+    }
+
+    public function userLogos(Request $request)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+
+        // Fetch ALL user's logo requests (no limit) ordered by most recent
+        $logos = AiLogoRequest::where('user_id', $user->id)
+            ->where('status', 'completed')
+            ->whereNotNull('image_urls')
+            ->orderByDesc('created_at')
+            ->get();
+
+        $result = [];
+        foreach ($logos as $logo) {
+            $urls = is_array($logo->image_urls) ? $logo->image_urls : [];
+            foreach ($urls as $url) {
+                if (!is_string($url) || $url === '' || $url === '[base64-omitted]') {
+                    continue;
+                }
+
+                // Parse URL to get just the path
+                $parsed = parse_url($url);
+                if (isset($parsed['host'], $parsed['path'])) {
+                    $url = $parsed['path'];
+                }
+
+                $isVector = str_ends_with(strtolower($url), '.svg') || 
+                           $logo->output_format === 'vector' || 
+                           $logo->mime_type === 'image/svg+xml';
+
+                // Only include vector/SVG logos
+                if (!$isVector) {
+                    continue;
+                }
+
+                $result[] = [
+                    'id' => $logo->id,
+                    'url' => $url,
+                    'domain' => $logo->domain,
+                    'isVector' => $isVector,
+                    'created' => $logo->created_at?->diffForHumans(),
+                    'created_at' => $logo->created_at?->timestamp ?? 0,
+                ];
+            }
+        }
+
+        // Sort results by created_at timestamp (most recent first)
+        usort($result, function($a, $b) {
+            return $b['created_at'] <=> $a['created_at'];
+        });
+
+        return response()->json([
+            'success' => true,
+            'logos' => $result,
+        ]);
+    }
+
+    public function saveEditorState(Request $request)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+
+        $validated = $request->validate([
+            'name' => 'required|string|max:100',
+            'svg_content' => 'required|string',
+            'layers_data' => 'nullable|array',
+            'canvas_size' => 'nullable|string|max:50',
+        ]);
+
+        // Check how many states the user already has
+        $existingCount = VectorEditorState::where('user_id', $user->id)->count();
+
+        if ($existingCount >= 3) {
+            // Delete the oldest state
+            $oldestState = VectorEditorState::where('user_id', $user->id)
+                ->orderBy('created_at', 'asc')
+                ->first();
+            
+            if ($oldestState) {
+                $oldestState->delete();
+            }
+        }
+
+        // Create new state
+        $state = VectorEditorState::create([
+            'user_id' => $user->id,
+            'name' => $validated['name'],
+            'svg_content' => $validated['svg_content'],
+            'layers_data' => $validated['layers_data'] ?? null,
+            'canvas_size' => $validated['canvas_size'] ?? 'default',
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'state' => [
+                'id' => $state->id,
+                'name' => $state->name,
+                'created_at' => $state->created_at->diffForHumans(),
+            ],
+        ]);
+    }
+
+    public function getEditorStates(Request $request)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+
+        $states = VectorEditorState::where('user_id', $user->id)
+            ->orderByDesc('created_at')
+            ->get()
+            ->map(function ($state) {
+                return [
+                    'id' => $state->id,
+                    'name' => $state->name,
+                    'created_at' => $state->created_at->diffForHumans(),
+                    'timestamp' => $state->created_at->timestamp,
+                ];
+            });
+
+        return response()->json([
+            'success' => true,
+            'states' => $states,
+        ]);
+    }
+
+    public function loadEditorState(Request $request, $id)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+
+        $state = VectorEditorState::where('user_id', $user->id)
+            ->where('id', $id)
+            ->first();
+
+        if (!$state) {
+            return response()->json(['error' => 'State not found'], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'state' => [
+                'id' => $state->id,
+                'name' => $state->name,
+                'svg_content' => $state->svg_content,
+                'layers_data' => $state->layers_data,
+                'canvas_size' => $state->canvas_size,
+                'created_at' => $state->created_at->diffForHumans(),
+            ],
+        ]);
+    }
+
+    public function updateEditorState(Request $request, $id)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+
+        $state = VectorEditorState::where('user_id', $user->id)
+            ->where('id', $id)
+            ->first();
+
+        if (!$state) {
+            return response()->json(['error' => 'State not found'], 404);
+        }
+
+        $validated = $request->validate([
+            'name' => 'required|string|max:100',
+            'svg_content' => 'required|string',
+            'layers_data' => 'nullable|array',
+            'canvas_size' => 'nullable|string|max:50',
+        ]);
+
+        $state->update([
+            'name' => $validated['name'],
+            'svg_content' => $validated['svg_content'],
+            'layers_data' => $validated['layers_data'] ?? null,
+            'canvas_size' => $validated['canvas_size'] ?? 'default',
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'state' => [
+                'id' => $state->id,
+                'name' => $state->name,
+                'created_at' => $state->created_at->diffForHumans(),
+            ],
+        ]);
+    }
+
+    public function deleteEditorState(Request $request, $id)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+
+        $state = VectorEditorState::where('user_id', $user->id)
+            ->where('id', $id)
+            ->first();
+
+        if (!$state) {
+            return response()->json(['error' => 'State not found'], 404);
+        }
+
+        $state->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'State deleted successfully',
         ]);
     }
 
@@ -1179,7 +1401,7 @@ class DomainSearchController extends Controller
                 'count' => 'nullable|integer|min:1|max:4',
                 'pro' => 'nullable|boolean',
                 'pro_size' => 'nullable|integer|in:512,1024,1536',
-                'style' => 'nullable|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,greetingcard',
+                'style' => 'nullable|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,greetingcard,photorealistic,minimalist,minimal_geometric,abstract,monoline,negative_space,tech_gradient',
                 'bg_color' => 'nullable|string|max:20',
                 'image_model' => 'nullable|string|in:flux,dalle,recraft',
                 'output_format' => 'nullable|string|in:raster,vector',
@@ -1202,6 +1424,7 @@ class DomainSearchController extends Controller
                 imageCount: (int) $request->input('count', 4),
                 resolution: '1024x1024',
                 quality: (bool) $request->input('pro', false) ? 'hd' : 'standard',
+                outputFormat: $outputFormat,
             );
         } else {
             $estimate = AiLogoPrice::estimateCost(
@@ -1211,6 +1434,7 @@ class DomainSearchController extends Controller
                 style: $request->input('style', 'professional'),
                 bgColor: $request->input('bg_color', 'white'),
                 outputFormat: $outputFormat,
+                imageModel: $imageModel,
             );
         }
 
@@ -1250,7 +1474,7 @@ class DomainSearchController extends Controller
 
             $request->validate([
                 'domain' => 'nullable|string|max:100',
-                'style' => 'required|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,minimalist,greetingcard' . (config('services.logo_custom_prompt_enabled') ? ',custom' : ''),
+                'style' => 'required|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,minimalist,greetingcard,photorealistic,minimal_geometric,abstract,monoline,negative_space,tech_gradient' . (config('services.logo_custom_prompt_enabled') ? ',custom' : ''),
                 'count' => 'nullable|integer|min:1|max:4',
                 'total_count' => 'nullable|integer|min:1|max:4',
                 'batch_index' => 'nullable|integer|min:0|max:3',
@@ -1266,6 +1490,7 @@ class DomainSearchController extends Controller
                 'recraft_substyle' => 'nullable|string|max:60',
                 'logo_shape' => 'nullable|string|in:none,circle,hexagon,triangle,square,pentagon,heart',
                 'logo_detail' => 'nullable|string|in:min,medium,max',
+                'font_style' => 'nullable|string|in:modern_sans,bold_geometric,elegant_serif,script_signature,tech_mono,minimal_light',
                 'color_palette' => 'nullable|array|max:5',
                 'color_palette.*' => 'string|max:20',
             ]);
@@ -1305,6 +1530,7 @@ class DomainSearchController extends Controller
             $recraftSubstyle = $request->input('recraft_substyle');
             $logoShape = $request->input('logo_shape', 'none');
             $logoDetail = $request->input('logo_detail', 'max');
+            $fontStyle = $request->input('font_style', 'modern_sans');
 
             // DALL-E always produces raster
             if ($imageModel === 'dalle') {
@@ -1318,11 +1544,6 @@ class DomainSearchController extends Controller
                         'error' => 'Vector generation supports either logo or text, not both.',
                     ], 422);
                 }
-            }
-
-            // Ray vector uses a single fixed detail level.
-            if ($imageModel === 'recraft' && $outputFormat === 'vector') {
-                $logoDetail = 'medium';
             }
 
             // ── Balance check: reject if user can't afford the estimated cost ──
@@ -1350,6 +1571,7 @@ class DomainSearchController extends Controller
                     imageCount: $totalCount,
                     resolution: '1024x1024',
                     quality: $isPro ? 'hd' : 'standard',
+                    outputFormat: $outputFormat,
                 );
             } else {
                 $costEstimate = AiLogoPrice::estimateCost(
@@ -1359,6 +1581,7 @@ class DomainSearchController extends Controller
                     style: $style,
                     bgColor: $bgColor,
                     outputFormat: $outputFormat,
+                    imageModel: $imageModel,
                 );
             }
             
@@ -1394,7 +1617,12 @@ class DomainSearchController extends Controller
                 // Collapse whitespace
                 $cleaned = trim(preg_replace('/\s+/', ' ', $cleaned));
                 if ($cleaned) {
-                    $customElement = " A visual icon element of {$cleaned} is integrated into the logo design. Do not render any words or letters from this description.";
+                    // For photorealistic style, use photography language instead of logo/icon language
+                    if ($style === 'photorealistic') {
+                        $customElement = " The image features {$cleaned}. Do not render any words or letters from this description.";
+                    } else {
+                        $customElement = " A visual icon element of {$cleaned} is integrated into the logo design. Do not render any words or letters from this description.";
+                    }
                 }
             }
 
@@ -1409,6 +1637,7 @@ class DomainSearchController extends Controller
 
             // Determine background color instruction
             $bgInstruction = match($bgColor) {
+                'none' => '',
                 'black' => 'isolated on a solid black background',
                 'transparent' => 'isolated on a plain transparent background with no background elements',
                 default => str_starts_with($bgColor, '#')
@@ -1416,7 +1645,7 @@ class DomainSearchController extends Controller
                     : 'isolated on a solid white background',
             };
 
-            // Build Flux prompt from JSON template (edit config/flux_prompts.json to change wording)
+            // Build Flux prompt from JSON template (edit config/flux_raster_prompts.json or config/flux_vector_prompts.json to change wording)
             $prompt = \App\Services\FluxPromptBuilder::build(
                 style:            $style,
                 iconOnly:         $iconOnly,
@@ -1428,6 +1657,7 @@ class DomainSearchController extends Controller
                 outputFormat:     $outputFormat,
                 detail:           $logoDetail ?? 'max',
                 logoShape:        $logoShape,
+                fontStyle:        $fontStyle,
             );
 
             // ── Build a DALL-E-specific prompt from JSON templates ──
@@ -1445,6 +1675,7 @@ class DomainSearchController extends Controller
                 }
 
                 $dalleBg = match($bgColor) {
+                    'none' => '',
                     'black' => 'solid black',
                     'white' => 'solid white',
                     'transparent' => 'transparent',
@@ -1452,6 +1683,7 @@ class DomainSearchController extends Controller
                 };
 
                 $chromeBg = match($bgColor) {
+                    'none' => '',
                     'black' => 'dark black background',
                     'white' => 'pure white background',
                     default => str_starts_with($bgColor, '#')
@@ -1470,6 +1702,7 @@ class DomainSearchController extends Controller
                     chromeBg: $chromeBg,
                     logoShape: $logoShape,
                     detail: $logoDetail,
+                    fontStyle: $fontStyle,
                 );
             }
 
@@ -1480,9 +1713,10 @@ class DomainSearchController extends Controller
 
                 $colorDesc = (!empty($colorPalette) && is_array($colorPalette))
                     ? implode(', ', $colorPalette)
-                    : \App\Services\RecraftPromptBuilder::defaultColors($style);
+                    : 'AI Picks';
 
                 $bgDesc = match($bgColor) {
+                    'none'        => '',
                     'black'       => '#000000',
                     'transparent' => 'transparent',
                     default       => str_starts_with($bgColor, '#') ? $bgColor : '#FFFFFF',
@@ -1499,6 +1733,7 @@ class DomainSearchController extends Controller
                     colorDesc:  $colorDesc,
                     bgDesc:     $bgDesc,
                     outputFormat: $outputFormat,
+                    fontStyle: $fontStyle,
                 );
             }
 
@@ -1509,11 +1744,14 @@ class DomainSearchController extends Controller
                     $rawCustom .= "\n" . $colorInstruction;
                 }
                 $bgHint = match($bgColor) {
+                    'none'        => '',
                     'black'       => 'solid black',
                     'transparent' => 'transparent',
                     default       => str_starts_with($bgColor, '#') ? "solid {$bgColor}" : 'solid white',
                 };
-                $rawCustom .= "\nBackground: {$bgHint}.";
+                if ($bgHint !== '') {
+                    $rawCustom .= "\nBackground: {$bgHint}.";
+                }
                 $prompt = $rawCustom;
             }
 
@@ -1530,13 +1768,20 @@ class DomainSearchController extends Controller
                 $imageSize = '1024x1024';
                 $requestType = $isPro ? 'logo_dalle_hd' : 'logo_dalle';
             } else {
-                $modelName = $isPro ? 'fal-ai/flux-2-flex' : 'fal-ai/flux/schnell';
+                // Flux models
+                if ($outputFormat === 'raster' && !$isPro) {
+                    // Use nano-banana-2 for raster non-pro flux images
+                    $modelName = 'fal-ai/nano-banana-2';
+                } else {
+                    // Use flux models for pro or vector outputs
+                    $modelName = $isPro ? 'fal-ai/flux-2-flex' : 'fal-ai/flux/schnell';
+                }
                 $imageSize = $isPro ? $proSize . 'x' . $proSize : '512x512';
                 $requestType = $isPro ? 'logo_pro' : 'logo_generation';
             }
 
             $logoRequest = AiLogoRequest::create([
-                'user_id' => $this->isAdmin($user) ? null : $user->id,
+                'user_id' => $user->id,
                 'domain' => $domain,
                 'style' => $style . ($isPro ? '_pro' : ''),
                 'model' => $modelName,
@@ -1549,7 +1794,7 @@ class DomainSearchController extends Controller
 
             // Create price log entry (pending) - log actual count for this request, note batch in preview
             $priceLog = AiLogoPrice::create([
-                'user_id' => $this->isAdmin($user) ? null : $user->id,
+                'user_id' => $user->id,
                 'ai_logo_request_id' => $logoRequest->id,
                 'session' => session()->getId(),
                 'user_email' => $user->email,
@@ -2755,6 +3000,38 @@ class DomainSearchController extends Controller
         } catch (\Exception $e) {
             \Log::warning('SVG background removal parse error', ['error' => $e->getMessage()]);
             return null;
+        }
+    }
+
+    public function saveProcessedSvg(Request $request)
+    {
+        $request->validate([
+            'svg' => 'required|string',
+        ]);
+
+        try {
+            $svgContent = $request->input('svg');
+            
+            // Generate a unique filename
+            $filename = 'processed-' . uniqid() . '.svg';
+            $path = 'logos/' . $filename;
+            
+            // Store in public disk
+            \Storage::disk('public')->put($path, $svgContent);
+            
+            // Return the public URL
+            $url = \Storage::disk('public')->url($path);
+            
+            return response()->json([
+                'success' => true,
+                'url' => $url,
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Error saving processed SVG', ['error' => $e->getMessage()]);
+            return response()->json([
+                'success' => false,
+                'error' => 'Failed to save processed SVG',
+            ], 500);
         }
     }
 }

@@ -16808,6 +16808,30 @@
                     const hasLabelLine = textLines.some((l) => l.includes(':'));
                     const hasUnderlineLine = textLines.some((l) => /_{3,}/.test(l));
                     if (!hasLabelLine || !hasUnderlineLine) return false;
+                    const underlineIdx = normalizedLines.findIndex((l) => /_{3,}/.test(l));
+                    const valueIdx = underlineIdx === 0 ? 1 : (underlineIdx === 1 ? 0 : -1);
+                    if (underlineIdx < 0 || valueIdx < 0) return false;
+                    const underlineLine = normalizedLines[underlineIdx];
+                    const valueLine = normalizedLines[valueIdx];
+                    const labelOnly = underlineLine
+                        .replace(/_{3,}/g, ' ')
+                        .replace(/\s+/g, ' ')
+                        .trim();
+                    const labelWordCount = labelOnly.split(/\s+/).filter(Boolean).length;
+                    const valueWordCount = valueLine.split(/\s+/).filter(Boolean).length;
+                    const hasSentencePunctuation = /[,.!?;]/.test(labelOnly) || /[,.!?;]/.test(valueLine);
+                    // Conservative guard: only treat compact "Label: ____" + "Value"
+                    // rows as underline-value fields. Avoid long sentence clauses like
+                    // "... may terminate the contract within ____ days ... if:".
+                    if (
+                        labelOnly.length > 90 ||
+                        labelWordCount > 10 ||
+                        valueLine.length > 60 ||
+                        valueWordCount > 6 ||
+                        hasSentencePunctuation
+                    ) {
+                        return false;
+                    }
                     const hasValueWord = Array.isArray(words) && words.some((w) => {
                         const t = sanitizeOverlayText((w.render_text !== undefined && w.render_text !== null) ? w.render_text : w.text);
                         const src = sanitizeOverlayText(w.text || '');
@@ -16956,6 +16980,20 @@
                     const hasUnderscore = text.includes('_') ||
                         (Array.isArray(words) && words.some((w) => sanitizeOverlayText(w.text || '').includes('_')));
                     if (!hasUnderscore) return false;
+                    const lineCount = Array.isArray(block?.text_lines) && block.text_lines.length > 0
+                        ? block.text_lines.length
+                        : (Number(block?.line_count) || 1);
+                    const compactWords = text.replace(/_{3,}/g, ' ')
+                        .split(/\s+/)
+                        .filter(Boolean);
+                    const looksLikeProseClause = lineCount >= 2 &&
+                        compactWords.length >= 12 &&
+                        /[,:;]/.test(text);
+                    if (looksLikeProseClause) {
+                        // Multiline sentence clauses with blanks are unstable in
+                        // absolute-span mode; render as deterministic flow text.
+                        return true;
+                    }
                     // Form-like lines with long underscore runs are unstable when rendered
                     // as absolutely-positioned spans (huge reconstructed gaps on edit).
                     return /_{6,}/.test(text) || !!(block && (block._client_form_merge || block._client_539_row_merge));
@@ -18072,9 +18110,9 @@
                     const renderedBlockKeys = new Set();
                     const renderedFieldFingerprints = [];
 
-                    // Pre-process blocks to detect horizontally overlapping elements
-                    // (e.g., form fills overlaying template text) and align them to
-                    // the same baseline Y position to prevent visual line breaks.
+                    // Pre-process blocks to detect duplicated text layers that should
+                    // share the same Y anchor. Keep this conservative: never collapse
+                    // distinct wrapped lines into one row.
                     const Y_ALIGNMENT_THRESHOLD = 15; // max Y difference in PDF units for alignment
                     const blockYAdjustments = new Map(); // block_num -> adjusted Y position
 
@@ -18093,10 +18131,19 @@
                             const bLeft = blockB.left || 0;
                             const bRight = bLeft + (blockB.width || 0);
                             const bTop = blockB.top || 0;
+                            const aBottom = aTop + (blockA.height || 0);
+                            const bBottom = bTop + (blockB.height || 0);
                             
                             // Check Y proximity
                             const yDiff = Math.abs(aTop - bTop);
                             if (yDiff > Y_ALIGNMENT_THRESHOLD) return;
+
+                            // CRITICAL: require real vertical overlap. Nearby wrapped lines
+                            // can have small yDiff but should remain separate rows.
+                            const verticalIntersection = Math.max(0, Math.min(aBottom, bBottom) - Math.max(aTop, bTop));
+                            const minHeight = Math.max(1, Math.min((blockA.height || 0), (blockB.height || 0)));
+                            const verticalOverlapRatio = verticalIntersection / minHeight;
+                            if (verticalOverlapRatio < 0.35) return;
                             
                             // Check horizontal overlap: does one contain the other?
                             const aContainsB = (bLeft >= aLeft && bRight <= aRight);
@@ -18373,7 +18420,12 @@
                         // The buffer must also cover residual overflow from letter-spacing
                         // clamping when web fonts are wider than PDF-embedded fonts.
                         const fontSizeScaled = block.font_size * scaleY;
-                        const widthBuffer = 4 + Math.max(4, fontSizeScaled * 0.3);
+                        const baseWidthBuffer = 4 + Math.max(4, fontSizeScaled * 0.3);
+                        // Add a small right-edge glyph safety margin. Some fallback font
+                        // combinations render final glyph stems slightly outside measured
+                        // advances, which can clip characters at the box edge.
+                        const glyphEdgeSafetyPx = Math.max(2, Math.min(8, fontSizeScaled * 0.2));
+                        const widthBuffer = baseWidthBuffer + glyphEdgeSafetyPx;
                         // Height buffer: 4px for border (2 top + 2 bottom) plus a small
                         // descender‐safety margin so glyphs like g/p/y are not clipped.
                         const heightBuffer = 4 + Math.max(2, fontSizeScaled * 0.1);
@@ -18441,9 +18493,9 @@
                                 if (measuredFieldWidth > expectedWidth) {
                                     // Guard against runaway expansion on long underline/blank
                                     // form fields where fallback metrics can be much wider.
-                                    // Keep a small safety margin for font mismatch, but do not
-                                    // let metric drift stretch the box across the page.
-                                    const maxExpansionPx = Math.max(12, Math.min(expectedWidth * 0.08, 48));
+                                    // Keep a bounded safety margin for font mismatch while
+                                    // allowing enough headroom to avoid clipping rightmost glyphs.
+                                    const maxExpansionPx = Math.max(24, Math.min(expectedWidth * 0.35, 140));
                                     expectedWidth = Math.min(measuredFieldWidth, expectedWidth + maxExpansionPx);
                                 }
 

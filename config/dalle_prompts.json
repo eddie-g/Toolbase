@@ -10,7 +10,8 @@
     "dotmatrix": "black and white",
     "lego": "vibrant toy colors",
     "minimalist": "navy blue and gray",
-    "greetingcard": "soft rose, sage green, lavender, ivory"
+    "greetingcard": "soft rose, sage green, lavender, ivory",
+    "photorealistic": "natural tones"
   },
   "default_subject": {
     "icon_only": "logo symbol",
@@ -31,7 +32,8 @@
     "dotmatrix": "Create a detailed dot-matrix stipple icon of {subject}. Pure dot work, no line-art, high-contrast monochrome style. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
     "lego": "Create a sticker-style toy-plastic icon for {subject}, thick outlines and glossy material. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
     "minimalist": "Create one ultra-minimalist icon for {subject} using 1-2 simple geometric primitives, generous whitespace, flat design. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
-    "greetingcard": "Hand-painted watercolor icon illustration of {subject}. Soft washes, visible paper grain, gentle painterly edges. Colors: {colors}. Background: {bg}. {shape_block} {no_text}"
+    "greetingcard": "Hand-painted watercolor icon illustration of {subject}. Soft washes, visible paper grain, gentle painterly edges. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "photorealistic": "A photorealistic high-resolution photograph of {subject}. Professional studio lighting, sharp focus, crisp detail, natural colors and textures. Clean commercial photography style. Background: {bg}. {shape_block} {no_text}"
   },
   "icon_only_medium": {
     "chrome": "A detailed 3D render of {subject} cast in polished sterling silver chrome. Richer surface micro-detail and more dramatic specular highlights than a flat icon, but still clean and logo-appropriate. Background: {chrome_bg}. {shape_block} {no_text}",
@@ -43,7 +45,8 @@
     "dotmatrix": "A dense stipple icon of {subject} with rich tonal gradients built from fine dot-work — more elaborate than a simple silhouette but still a contained icon. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
     "lego": "A detailed sticker-style toy icon for {subject} with visible brick texture, glossy plastic sheen, and layered depth — richer than a flat outline but still a clean logo. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
     "minimalist": "A refined minimalist icon for {subject} with exquisitely calibrated negative space and a single bold geometric form — more deliberate and premium than a basic shape. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
-    "greetingcard": "A detailed watercolor icon of {subject} with wet-on-wet washes, visible dry-brush grain, and layered glazing — more painterly depth than a simple wash, still a contained icon. Colors: {colors}. Background: {bg}. {shape_block} {no_text}"
+    "greetingcard": "A detailed watercolor icon of {subject} with wet-on-wet washes, visible dry-brush grain, and layered glazing — more painterly depth than a simple wash, still a contained icon. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "photorealistic": "A detailed photorealistic photograph of {subject}. Professional studio lighting with soft shadows, rich texture detail, natural color grading, shallow depth of field. Commercial product photography aesthetic. Background: {bg}. {shape_block} {no_text}"
   },
   "icon_only_max": {
     "chrome": "A breathtaking 8K photorealistic render of {subject} sculpted in polished sterling silver chrome. Cinematic studio lighting with dramatic specular highlights, deep reflections, complex surface detail, and flawless casting quality. Front-facing, centered on {bg} background. {shape_block} {no_text}",
@@ -55,7 +58,8 @@
     "dotmatrix": "An incredibly dense and detailed stipple engraving of {subject}. Thousands of precision dots creating cinematic tonal range, fine crosshatch detail, and photorealistic depth from pure dot-work. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
     "lego": "A stunningly detailed photorealistic render of {subject} built from LEGO bricks, with ABS plastic sheen, visible stud detail, dramatic studio lighting and crisp depth of field. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
     "minimalist": "A refined ultra-minimalist composition for {subject} — exquisitely balanced negative space, single bold geometric form, premium Swiss design aesthetic. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
-    "greetingcard": "A museum-quality watercolor painting of {subject} — rich wet-on-wet washes, visible dry-brush texture, luminous glazing layers, botanical illustration precision. Colors: {colors}. Background: {bg}. {shape_block} {no_text}"
+    "greetingcard": "A museum-quality watercolor painting of {subject} — rich wet-on-wet washes, visible dry-brush texture, luminous glazing layers, botanical illustration precision. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "photorealistic": "An ultra-realistic 8K photograph of {subject}. Cinematic studio lighting with dramatic rim lighting, hyperdetailed textures, perfect focus, professional color grading. Shot on medium format camera with prime lens. Museum-quality commercial photography. Background: {bg}. {shape_block} {no_text}"
   },
   "with_brand": {
     "chrome": "A high-resolution 3D render of a chrome logo featuring {subject} and the exact word \"{brand}\". The word \"{brand}\" is a real extruded chrome object with clear legibility and proper spacing. {shape_block} Background: {chrome_bg}. Front-facing, soft studio lighting, premium presentation. {no_text}",
@@ -67,7 +71,8 @@
     "dotmatrix": "Create one dot-matrix/stipple logo for brand \"{brand}\" with a central symbol and legible wordmark treatment. Colors: {colors}. Background: {bg}. {shape_block} Pure dot-work aesthetic. {no_text}",
     "lego": "Create one glossy toy-sticker style logo for brand \"{brand}\" with a playful icon and readable rounded wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
     "minimalist": "Design one ultra-minimalist logo for brand \"{brand}\" with a simple geometric icon and clean wordmark. Colors: {colors}. Background: {bg}. {shape_block} Flat design only, no gradients or shadows. {no_text}",
-    "greetingcard": "Hand-painted watercolor logo for brand \"{brand}\" featuring {subject}. Soft washes, paper grain texture, elegant lettering. Colors: {colors}. Background: {bg}. {shape_block} {no_text}"
+    "greetingcard": "Hand-painted watercolor logo for brand \"{brand}\" featuring {subject}. Soft washes, paper grain texture, elegant lettering. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "photorealistic": "A photorealistic logo for brand \"{brand}\" featuring {subject}. Professional studio photography with crisp lighting, sharp detail, and clean modern typography. Commercial product branding aesthetic. Colors: {colors}. Background: {bg}. {shape_block} {no_text}"
   },
   "with_brand_medium": {
     "chrome": "A detailed 3D chrome logo for brand \"{brand}\" featuring {subject}. Richer surface detail and more dramatic reflections than a flat render, extruded chrome wordmark with clear legibility. Background: {chrome_bg}. {shape_block} {no_text}",
@@ -79,7 +84,8 @@
     "dotmatrix": "A dense stipple logo for brand \"{brand}\" — {subject}. Rich tonal dot-work with a fine crosshatch wordmark treatment. More elaborate than a simple icon. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
     "lego": "A detailed toy-brick logo for brand \"{brand}\" — {subject}. Visible stud detail, glossy plastic sheen, layered depth, and a chunky rounded wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
     "minimalist": "A refined minimalist logo for brand \"{brand}\" — {subject}. Exquisitely balanced negative space, one precise geometric element, and an elegant clean wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
-    "greetingcard": "A detailed watercolor logo for brand \"{brand}\" — {subject}. Layered wet washes, dry-brush grain, and an elegant hand-lettered wordmark. More painterly than a simple wash. Colors: {colors}. Background: {bg}. {shape_block} {no_text}"
+    "greetingcard": "A detailed watercolor logo for brand \"{brand}\" — {subject}. Layered wet washes, dry-brush grain, and an elegant hand-lettered wordmark. More painterly than a simple wash. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "photorealistic": "A detailed photorealistic logo for brand \"{brand}\" — {subject}. Professional studio photography with rich textures, natural lighting, shallow depth of field, and clean sans-serif typography. Premium commercial branding style. Colors: {colors}. Background: {bg}. {shape_block} {no_text}"
   },
   "with_brand_max": {
     "chrome": "A breathtaking 8K photorealistic chrome logo for brand \"{brand}\" featuring {subject}. Extruded chrome wordmark with deep reflections, dramatic caustic lighting, and cinematic depth. {shape_block} Background: {chrome_bg}. {no_text}",
@@ -91,6 +97,7 @@
     "dotmatrix": "An intricately detailed stipple engraving logo for brand \"{brand}\" featuring {subject}. Thousands of precision dots, cinematic tonal range, and a fine crosshatch wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
     "lego": "A photorealistic LEGO logo for brand \"{brand}\" featuring {subject} — visible ABS studs, brick assembly detail, dramatic studio lighting, and a bold blocky wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
     "minimalist": "An exquisitely refined minimalist logo for brand \"{brand}\" — {subject}. Masterful use of negative space, single precise geometric element, premium Swiss grid composition, and an elegant wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
-    "greetingcard": "A museum-quality watercolor logo for brand \"{brand}\" featuring {subject}. Rich wet-on-wet washes, luminous glazing, botanical precision, and elegant hand-lettered wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}"
+    "greetingcard": "A museum-quality watercolor logo for brand \"{brand}\" featuring {subject}. Rich wet-on-wet washes, luminous glazing, botanical precision, and elegant hand-lettered wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+    "photorealistic": "An ultra-realistic 8K logo for brand \"{brand}\" featuring {subject}. Cinematic studio lighting with dramatic rim lights, hyperdetailed textures, perfect focus, professional color grading. Shot on medium format with prime lens. Premium commercial photography with clean modern typography. Colors: {colors}. Background: {bg}. {shape_block} {no_text}"
   }
 }

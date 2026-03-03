@@ -3,9 +3,9 @@
 namespace App\Services;
 
 /**
- * Builds Flux logo prompts from a JSON template config.
+ * Builds Flux logo prompts from JSON template configs.
  *
- * Edit  config/flux_prompts.json  to change wording without touching PHP.
+ * Edit  config/flux_raster_prompts.json  or  config/flux_vector_prompts.json  to change wording without touching PHP.
  *
  * Available template variables:
  *   {brand}       – brand name (uppercase)
@@ -18,16 +18,27 @@ namespace App\Services;
 class FluxPromptBuilder
 {
     /** @var array<string, mixed>|null */
-    private static ?array $templates = null;
+    private static ?array $rasterTemplates = null;
+    
+    /** @var array<string, mixed>|null */
+    private static ?array $vectorTemplates = null;
 
-    /** Load (and cache) the JSON template file. */
-    private static function templates(): array
+    /** Load (and cache) the JSON template files. */
+    private static function templates(string $format = 'raster'): array
     {
-        if (self::$templates === null) {
-            $path = config_path('flux_prompts.json');
-            self::$templates = json_decode(file_get_contents($path), true);
+        if ($format === 'vector') {
+            if (self::$vectorTemplates === null) {
+                $path = config_path('flux_vector_prompts.json');
+                self::$vectorTemplates = json_decode(file_get_contents($path), true);
+            }
+            return self::$vectorTemplates;
+        } else {
+            if (self::$rasterTemplates === null) {
+                $path = config_path('flux_raster_prompts.json');
+                self::$rasterTemplates = json_decode(file_get_contents($path), true);
+            }
+            return self::$rasterTemplates;
         }
-        return self::$templates;
     }
 
     /**
@@ -44,11 +55,12 @@ class FluxPromptBuilder
     }
 
     /**
-     * Return the default colour string for a style (from config/flux_prompts.json).
+     * Return the default colour string for a style (from config/flux_*_prompts.json).
+     * Note: Default colors are identical across raster and vector configs.
      */
     public static function defaultColors(string $style): string
     {
-        $tpl = self::templates();
+        $tpl = self::templates('raster'); // Both configs have same default_colors
         return $tpl['default_colors'][$style] ?? $tpl['default_colors']['professional'] ?? 'navy blue and gold color palette.';
     }
 
@@ -75,13 +87,24 @@ class FluxPromptBuilder
         string  $outputFormat = 'raster',
         ?string $detail = 'max',
         ?string $logoShape = null,
+        ?string $fontStyle = null,
     ): string {
         $detail ??= 'max';
-        $tpl    = self::templates();
+        $format = $outputFormat === 'vector' ? 'vector' : 'raster';
+        $tpl    = self::templates($format);
         
         // Handle text-only mode: generate wordmark/text only, no icon
         if ($textOnly) {
             $textOnlyPrompt = "A clean professional wordmark logo design. The text \"{$brandUpper}\" is rendered in a custom typography with elegant letterforms. ";
+            $styleInstruction = match ($fontStyle) {
+                'bold_geometric' => 'Use a bold geometric sans-serif font style with strong structure.',
+                'elegant_serif' => 'Use an elegant serif font style with refined strokes.',
+                'script_signature' => 'Use a script signature font style with flowing calligraphic curves.',
+                'tech_mono' => 'Use a technical monospaced font style with precise spacing.',
+                'minimal_light' => 'Use a minimal light-weight font style with clean thin letterforms.',
+                default => 'Use a modern sans-serif font style.',
+            };
+            $textOnlyPrompt .= " {$styleInstruction} ";
             
             // Add color instruction
             if ($colorInstruction) {
@@ -91,7 +114,9 @@ class FluxPromptBuilder
             }
             
             // Add background
-            $textOnlyPrompt .= " The design is {$bgInstruction}.";
+            if ($bgInstruction !== '') {
+                $textOnlyPrompt .= " The design is {$bgInstruction}.";
+            }
             
             // Add shape constraint for text-only if specified
             if (!empty($logoShape) && $logoShape !== 'none') {
@@ -114,8 +139,7 @@ class FluxPromptBuilder
             return $textOnlyPrompt;
         }
         
-        $mode   = $iconOnly ? 'icon_only' : 'with_brand';
-        $format = $outputFormat === 'vector' ? 'vector' : 'raster';
+        $mode = $iconOnly ? 'icon_only' : 'with_brand';
 
         // Resolve concept: use provided value or fall back to the JSON default
         $conceptValue = $concept !== ''
@@ -140,10 +164,8 @@ class FluxPromptBuilder
             );
         }
 
-        // Pick the prompt template by output format, then fall back to legacy flat keys.
-        $promptTemplate = $tpl[$format][$mode][$style]
-            ?? $tpl[$format][$mode]['professional']
-            ?? $tpl[$mode][$style]
+        // Pick the prompt template for the mode and style
+        $promptTemplate = $tpl[$mode][$style]
             ?? $tpl[$mode]['professional']
             ?? '';
 
