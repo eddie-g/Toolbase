@@ -9850,7 +9850,7 @@
                             overlayEditorActive = false;
                             const overlayToggleEl = document.getElementById('mode-overlay-toggle');
                             if (overlayToggleEl) overlayToggleEl.checked = false;
-                            updateOverlayToolbarVisibility();
+                            updateOverlayUiState();
                         }
                         await rerenderPdf();
                         setSaveSpinner(false);
@@ -10993,7 +10993,7 @@
                         overlayRendered = false;
                         if (modeOverlay) modeOverlay.checked = false;
                         if (modeOverlayToggle) modeOverlayToggle.checked = false;
-                        updateOverlayToolbarVisibility && updateOverlayToolbarVisibility();
+                        updateOverlayUiState();
                         basePdfUrl = pdfUrl; // Reset to original PDF so savePdf() fetches the right file
                         viewer.classList.remove('overlay-view-mode');
                         viewer.classList.remove('overlay-hidden');
