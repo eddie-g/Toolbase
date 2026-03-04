@@ -10991,6 +10991,9 @@
                         // Clean up overlay state after save
                         overlayEditorActive = false;
                         overlayRendered = false;
+                        if (modeOverlay) modeOverlay.checked = false;
+                        if (modeOverlayToggle) modeOverlayToggle.checked = false;
+                        updateOverlayToolbarVisibility && updateOverlayToolbarVisibility();
                         basePdfUrl = pdfUrl; // Reset to original PDF so savePdf() fetches the right file
                         viewer.classList.remove('overlay-view-mode');
                         viewer.classList.remove('overlay-hidden');
@@ -11023,7 +11026,11 @@
                         setSaveSpinner(true, 'Saving annotations...');
                         console.log('=== UNIFIED SAVE: Step 2 - Annotations/shapes ===');
                         await savePdf();
-                        // savePdf handles its own reload/status
+                        // After a combined overlay+annotation save always do a full reload
+                        // to prevent stale overlay toggle / extraction state on next edit.
+                        setSaveSpinner(true, 'Saved! Reloading...');
+                        setStatus('Saved! Reloading document...', 'ok');
+                        setTimeout(() => { window.location.reload(); }, 500);
                         return;
                     }
 
