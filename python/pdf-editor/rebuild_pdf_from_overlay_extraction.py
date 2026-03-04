@@ -432,7 +432,19 @@ def render_edited_block(
                 continue
             old_tokens.extend(t for t in wt.split() if t)
         new_tokens = [t for t in text.split() if t]
-        if old_tokens and len(old_tokens) == len(new_tokens):
+
+        # Pure extension: new text starts with all old tokens and only appends
+        # new ones at the end (e.g. user typed " test" after "January.").
+        # In this case we still honour word_styles positions for the original
+        # portion, then append the extra tokens after the last drawn glyph.
+        # This avoids calling wrap_text_to_width which uses font metrics that
+        # may differ from the original embedded font, producing wrong line breaks.
+        is_pure_extension = (
+            len(new_tokens) > len(old_tokens)
+            and new_tokens[: len(old_tokens)] == old_tokens
+        )
+
+        if old_tokens and (len(old_tokens) == len(new_tokens) or is_pure_extension):
             token_idx = 0
             # Track cumulative x-drift caused by token-text width changes.
             # When "documentation" becomes "blah", every subsequent word shifts
@@ -442,6 +454,12 @@ def render_edited_block(
             # absolute origin_x values (left margin), not relative to prior words.
             width_drift = 0.0
             prev_wy = None
+            # Track end-of-last-span for appending extra tokens.
+            last_end_x: Optional[float] = None
+            last_wy: Optional[float] = None
+            last_w_font: Optional[fitz.Font] = None
+            last_w_size: float = font_size
+            last_w_color = color
             for w in ws:
                 wt = sanitize_text(w.get("text", ""))
                 if not wt:
@@ -492,6 +510,17 @@ def render_edited_block(
 
                 draw_text_absolute(page, draw_text, wx, wy, w_font, w_size, w_color)
 
+                # Track the x-position after the last drawn glyph so extra
+                # tokens can continue from there.
+                try:
+                    last_end_x = wx + w_font.text_length(draw_text.rstrip(), w_size)
+                except Exception:
+                    last_end_x = wx
+                last_wy = wy
+                last_w_font = w_font
+                last_w_size = w_size
+                last_w_color = w_color
+
                 # Accumulate width delta so all subsequent words shift accordingly.
                 if draw_text != old_draw_text:
                     try:
@@ -500,6 +529,44 @@ def render_edited_block(
                         width_drift += new_w - old_w
                     except Exception:
                         pass
+
+            # Append extra tokens (pure-extension case).
+            if is_pure_extension and token_idx < len(new_tokens) and last_wy is not None:
+                extra_tokens = new_tokens[token_idx:]
+                eff_font = last_w_font or font_obj
+                eff_size = last_w_size
+                eff_color = last_w_color
+
+                # Determine available width for line-wrap of extras.
+                base_x2, _, wrap_width2 = inferred_layout_from_edit(
+                    edit, ws, font_size, origin_x, origin_y
+                )
+                left_margin_x = base_x2 + dx
+                right_edge: Optional[float] = (left_margin_x + wrap_width2) if wrap_width2 else None
+
+                cur_x = last_end_x if last_end_x is not None else left_margin_x
+                cur_y = last_wy
+
+                for token in extra_tokens:
+                    # Always prepend a space separator (will be stripped if
+                    # we're starting a fresh line at the left margin).
+                    candidate = " " + token
+                    try:
+                        t_w = eff_font.text_length(candidate, eff_size)
+                    except Exception:
+                        t_w = eff_size * len(candidate) * 0.6
+                    if right_edge is not None and cur_x + t_w > right_edge:
+                        # Wrap to next line.
+                        cur_y += line_height
+                        cur_x = left_margin_x
+                        candidate = token  # no leading space at line start
+                        try:
+                            t_w = eff_font.text_length(candidate, eff_size)
+                        except Exception:
+                            t_w = eff_size * len(candidate) * 0.6
+                    draw_text_absolute(page, candidate, cur_x, cur_y, eff_font, eff_size, eff_color)
+                    cur_x += t_w
+
             return 1
 
     base_x, base_y, wrap_width = inferred_layout_from_edit(edit, ws if isinstance(ws, list) else None, font_size, origin_x, origin_y)
@@ -635,12 +702,23 @@ def rebuild(clean_pdf_path: str, extraction_data: List[Dict[str, Any]], edits: L
 
             words_by_block.setdefault(block_num if block_num is not None else -1, []).append(word)
 
-        # ── Draw all non-edited words with one TextWriter per unique color ──
-        # Using a single TextWriter per color (rather than one per block×color)
-        # produces far fewer BT…ET operator groups in the output stream.  Fewer
-        # groups means PyMuPDF re-extracts the rebuilt PDF as fewer, larger
-        # blocks — preventing progressive fragmentation across multiple saves.
-        color_writers: Dict[Tuple[float, float, float], fitz.TextWriter] = {}
+        # ── Draw all non-edited words, one TextWriter per (color, block_num) ──
+        # IMPORTANT: Do NOT share a single TextWriter across all words of the
+        # same color.  When same-color words from different x-positions (e.g.
+        # left column vs right column) are batched into one TextWriter, PyMuPDF
+        # writes them as a single BT…ET block.  On re-extraction, MuPDF reports
+        # the entire block as one span whose text is the concatenation of all
+        # words and whose bbox covers the full horizontal extent.  The next save
+        # then redraws that concatenated text starting from the leftmost x,
+        # pushing right-column content into the left-column space and creating
+        # visible section overlap.
+        #
+        # Fix: group by (color, block_num) so words from different layout blocks
+        # stay in separate BT…ET groups.  Within the same block the words share
+        # a TextWriter (keeping them in one group, which is fine), but words
+        # from the right column's block and the left column's block are never
+        # mixed into the same TextWriter.
+        block_color_writers: Dict[Tuple, fitz.TextWriter] = {}
         all_words_flat: List[Dict[str, Any]] = [
             w for block_words in words_by_block.values() for w in block_words
         ]
@@ -665,14 +743,19 @@ def rebuild(clean_pdf_path: str, extraction_data: List[Dict[str, Any]], edits: L
                 w.get("font_xref"),
                 font_cache,
             )
-            tw = color_writers.setdefault(color, fitz.TextWriter(page.rect))
+            # Key: (color, block_num) — words in the same block share a writer,
+            # but words from different blocks are never merged together.
+            bnum = w.get("block_num")
+            tw_key = (color, bnum)
+            tw = block_color_writers.setdefault(tw_key, fitz.TextWriter(page.rect))
             try:
                 tw.append((ox, oy), text, font=font_obj, fontsize=fs)
             except Exception:
                 draw_text_absolute(page, text, ox, oy, font_obj, fs, color)
             total_words_drawn += 1
 
-        for color, tw in color_writers.items():
+        for tw_key, tw in block_color_writers.items():
+            color = tw_key[0]
             tw.write_text(page, color=color, overlay=True)
 
         for edit in page_edits:

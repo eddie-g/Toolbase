@@ -1548,6 +1548,14 @@ class DocumentController extends Controller
 
         $fullPath = Storage::path($document->path);
         $saveMode = strtolower((string) config('pdf_editor.save_mode', 'full_page_save'));
+        $enforceOverlayGeometry = (bool) config('pdf_editor.enforce_overlay_geometry', true);
+        if ($enforceOverlayGeometry && $saveMode !== 'surgical_save') {
+            \Log::info('Forcing surgical_save to preserve overlay bbox geometry', [
+                'document_id' => $document->id,
+                'configured_mode' => $saveMode,
+            ]);
+            $saveMode = 'surgical_save';
+        }
         $isSurgicalSave = $saveMode === 'surgical_save';
 
         // OPTIMIZATION: If no edits made, skip save pipeline entirely.

@@ -126,10 +126,11 @@ class RecraftPromptBuilder
             };
         }
 
+        $fallbackStyle = $mode === 'text_only' ? 'modern_sans' : 'minimal_geometric';
         $template = $tpl[$modeKey][$style]
-            ?? $tpl[$modeKey]['minimalist']
+            ?? $tpl[$modeKey][$fallbackStyle]
             ?? $tpl[$mode][$style]
-            ?? $tpl[$mode]['minimalist']
+            ?? $tpl[$mode][$fallbackStyle]
             ?? '';
 
         $prompt = self::sub($template, [
@@ -145,18 +146,6 @@ class RecraftPromptBuilder
         $prompt = preg_replace('/Background:\s*\./', '', $prompt);
         $prompt = preg_replace('/\s+/', ' ', $prompt); // Normalize whitespace
         $prompt = trim($prompt);
-
-        if ($textOnly) {
-            $styleInstruction = match ($fontStyle) {
-                'bold_geometric' => ' Typography: bold geometric sans-serif.',
-                'elegant_serif' => ' Typography: elegant serif.',
-                'script_signature' => ' Typography: script signature lettering.',
-                'tech_mono' => ' Typography: technical monospaced.',
-                'minimal_light' => ' Typography: minimal light-weight sans-serif.',
-                default => ' Typography: modern sans-serif.',
-            };
-            $prompt .= $styleInstruction;
-        }
 
         // Recraft API hard limit: 1000 characters
         return mb_strlen($prompt) > 1000 ? mb_substr($prompt, 0, 1000) : $prompt;

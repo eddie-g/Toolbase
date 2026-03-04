@@ -6,10 +6,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>AI Logo Lab - Toolbase</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Anton&family=Arvo:wght@400;700&family=Bebas+Neue&family=Bitter:wght@400;700&family=Bungee&family=Cabin:wght@400;700&family=Cinzel:wght@400;700&family=Comfortaa:wght@400;700&family=Cormorant+Garamond:wght@400;700&family=Dancing+Script:wght@400;700&family=DM+Sans:wght@400;700&family=Exo+2:wght@400;700&family=Fira+Sans:wght@400;700&family=IBM+Plex+Sans:wght@400;700&family=Inter:wght@400;700&family=Josefin+Sans:wght@400;700&family=Lato:wght@400;700&family=Libre+Baskerville:wght@400;700&family=Lobster&family=Macondo&family=Merriweather:wght@400;700&family=Montserrat:wght@400;700&family=Nunito:wght@400;700&family=Open+Sans:wght@400;700&family=Oswald:wght@400;700&family=Playfair+Display:wght@400;700&family=Poppins:wght@400;700&family=Raleway:wght@400;700&family=Roboto:wght@400;700&family=Rubik:wght@400;700&family=Source+Sans+3:wght@400;700&family=Space+Grotesk:wght@400;700&family=Work+Sans:wght@400;700&display=swap" rel="stylesheet">
     @vite(['resources/css/app.css', 'resources/js/app.js'])
     <style>
         [x-cloak] { display: none !important; }
         .selection-box { vector-effect: non-scaling-stroke; }
+        .style-sample-image { transition: transform 0.25s ease, filter 0.25s ease; }
+        .group:hover .style-sample-image { transform: scale(1.06); filter: saturate(1.08); }
     </style>
 </head>
 <body class="bg-gray-50 dark:bg-gray-950">
@@ -44,7 +49,7 @@
                     <!-- Image/Logo Mode Toggle -->
                     <div class="flex items-center gap-2 bg-blue-50 dark:bg-blue-900/20 border-2 border-blue-200 dark:border-blue-800 rounded-lg p-1">
                         <button
-                            @click="workMode = 'image'; outputFormat = 'raster'; if (selectedModel === 'dalle' && imageFormat !== 'png') imageFormat = 'png'; if (activeTab === 'editor') activeTab = 'generator'; fetchLogoPrice()"
+                            @click="switchToImageMode()"
                             :class="workMode === 'image' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-600 dark:text-gray-400'"
                             class="px-3 md:px-4 py-2 rounded-md text-sm font-semibold transition-all"
                         >
@@ -56,7 +61,7 @@
                             </div>
                         </button>
                         <button
-                            @click="workMode = 'logo'; outputFormat = 'vector'; if (logoMode === 'icon_text') logoMode = 'icon_only'; if (selectedModel === 'dalle') selectedModel = 'recraft'; fetchLogoPrice()"
+                            @click="switchToLogoMode()"
                             :class="workMode === 'logo' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-600 dark:text-gray-400'"
                             class="px-3 md:px-4 py-2 rounded-md text-sm font-semibold transition-all"
                         >
@@ -142,7 +147,7 @@
                     </div>
 
                     <!-- PRO Mode Toggle -->
-                    <div>
+                    <div x-show="!isLunaVectorMode()">
                         <div class="flex items-center justify-between p-3.5 rounded-xl border-2 transition-all cursor-pointer" :class="proMode ? 'border-amber-400 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-900/20 dark:to-orange-900/20' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'" @click="proMode = !proMode; fetchLogoPrice()">
                             <div class="flex items-center gap-3">
                                 <div class="text-sm font-semibold text-gray-900 dark:text-white" x-text="selectedModel === 'dalle' ? 'HD Quality' : 'PRO Mode'"></div>
@@ -224,7 +229,7 @@
                         <div class="grid grid-cols-3 gap-2">
                             <button 
                                 type="button"
-                                @click="logoMode = 'icon_only'; logoDomain = ''; fetchLogoPrice()"
+                                @click="logoMode = 'icon_only'; logoDomain = ''; if (outputFormat === 'vector' && isTextStyle(logoStyle)) logoStyle = 'minimal_geometric'; fetchLogoPrice()"
                                 :class="logoMode === 'icon_only' ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600'"
                                 class="px-3 py-2.5 border rounded-lg font-medium text-sm transition-colors"
                             >
@@ -244,7 +249,7 @@
                             </button>
                             <button 
                                 type="button"
-                                @click="logoMode = 'text_only'; fetchLogoPrice()"
+                                @click="logoMode = 'text_only'; if (!isTextStyle(logoStyle)) logoStyle = 'modern_sans'; fetchLogoPrice()"
                                 :class="logoMode === 'text_only' ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600'"
                                 class="px-3 py-2.5 border rounded-lg font-medium text-sm transition-colors"
                             >
@@ -262,21 +267,6 @@
                             placeholder="e.g., TechStart, CloudSync, DataFlow, etc."
                             class="w-full px-4 py-3.5 text-base border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent bg-white dark:bg-gray-800 dark:text-white transition-colors"
                         >
-                        <div x-show="logoMode === 'text_only'" x-transition class="space-y-2">
-                            <label class="block text-sm font-semibold text-gray-900 dark:text-white">Text Font Style</label>
-                            <select
-                                x-model="textFontStyle"
-                                @change="fetchLogoPrice()"
-                                class="w-full px-4 py-3.5 text-base border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent bg-white dark:bg-gray-800 dark:text-white transition-colors"
-                            >
-                                <option value="modern_sans">Modern Sans</option>
-                                <option value="bold_geometric">Bold Geometric</option>
-                                <option value="elegant_serif">Elegant Serif</option>
-                                <option value="script_signature">Script Signature</option>
-                                <option value="tech_mono">Tech Mono</option>
-                                <option value="minimal_light">Minimal Light</option>
-                            </select>
-                        </div>
                     </div>
 
                     <!-- Custom Prompt -->
@@ -485,26 +475,37 @@
                         <label class="block text-sm font-semibold text-gray-900 mb-2">Background</label>
                         <div class="flex gap-2">
                             <button 
-                                @click="backgroundColor = 'white'"
+                                @click="backgroundColor = 'white'; fetchLogoPrice()"
                                 :class="backgroundColor === 'white' ? 'ring-2 ring-blue-500' : ''"
                                 class="flex-1 px-4 py-3 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
                             >
-                                White
+                                WHITE
                             </button>
                             <button 
-                                @click="backgroundColor = 'transparent'"
-                                :class="backgroundColor === 'transparent' ? 'ring-2 ring-blue-500' : ''"
-                                class="flex-1 px-4 py-3 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
-                            >
-                                Transparent
-                            </button>
-                            <button 
-                                @click="backgroundColor = 'none'"
+                                @click="backgroundColor = 'none'; fetchLogoPrice()"
                                 :class="backgroundColor === 'none' ? 'ring-2 ring-blue-500' : ''"
                                 class="flex-1 px-4 py-3 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
                             >
-                                None
+                                NONE
                             </button>
+                            <div class="flex-1 relative">
+                                <button
+                                    type="button"
+                                    @click="selectCustomBackground()"
+                                    :class="isCustomBackgroundColor() ? 'ring-2 ring-blue-500' : ''"
+                                    class="w-full px-4 py-3 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center justify-center gap-2"
+                                >
+                                    <span class="inline-block w-4 h-4 rounded border border-gray-300" :style="'background-color: ' + backgroundCustomColor"></span>
+                                    <span>COLOR</span>
+                                </button>
+                                <input
+                                    type="color"
+                                    :value="normalizeHexColor(backgroundCustomColor, '#4F46E5')"
+                                    @input="applyCustomBackgroundColor($event.target.value)"
+                                    class="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                    aria-label="Pick background color"
+                                />
+                            </div>
                         </div>
                     </div>
 
@@ -584,7 +585,7 @@
                             <div class="space-y-2">
                                 <!-- Text -->
                                 <button
-                                    @click="showTextModal = true"
+                                    @click="openAddTextModal()"
                                     class="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-gradient-to-r from-orange-50 to-amber-50 dark:from-orange-900/20 dark:to-amber-900/20 border border-orange-100 dark:border-orange-800/40 hover:border-orange-300 dark:hover:border-orange-700 transition-all group"
                                 >
                                     <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center shadow-sm shadow-orange-500/30 group-hover:scale-105 transition-transform">
@@ -635,6 +636,25 @@
                                         <div class="text-[11px] text-gray-500 dark:text-gray-400">Manage element order</div>
                                     </div>
                                     <svg class="w-4 h-4 ml-auto text-indigo-300 group-hover:text-indigo-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+                                    </svg>
+                                </button>
+
+                                <!-- Shapes -->
+                                <button
+                                    @click="showShapeModal = true"
+                                    class="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-gradient-to-r from-sky-50 to-cyan-50 dark:from-sky-900/20 dark:to-cyan-900/20 border border-sky-100 dark:border-sky-800/40 hover:border-sky-300 dark:hover:border-sky-700 transition-all group"
+                                >
+                                    <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-sky-500 to-cyan-500 flex items-center justify-center shadow-sm shadow-sky-500/30 group-hover:scale-105 transition-transform">
+                                        <svg style="width:18px;height:18px" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M7 7h10v10H7zM4 12h3m10 0h3M12 4v3m0 10v3"/>
+                                        </svg>
+                                    </div>
+                                    <div class="text-left">
+                                        <div class="text-sm font-semibold text-gray-800 dark:text-gray-100">Add Shape</div>
+                                        <div class="text-[11px] text-gray-500 dark:text-gray-400">Line, square, circle, star</div>
+                                    </div>
+                                    <svg class="w-4 h-4 ml-auto text-sky-300 group-hover:text-sky-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                                         <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
                                     </svg>
                                 </button>
@@ -1116,6 +1136,61 @@
                                     Download
                                 </button>
                             </div>
+
+                            <div x-show="editMode && hasSelectedTextElement()" class="w-full mt-3">
+                                <div class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
+                                    <div class="flex items-center justify-between mb-2">
+                                        <p class="text-xs font-bold uppercase tracking-wide text-amber-800">Text Editor</p>
+                                        <p class="text-xs text-amber-700">Click any text layer to edit anytime</p>
+                                    </div>
+                                    <div class="grid grid-cols-1 md:grid-cols-12 gap-2">
+                                        <input
+                                            type="text"
+                                            x-model="selectedTextContent"
+                                            @input="applySelectedTextChanges()"
+                                            placeholder="Edit text"
+                                            class="md:col-span-5 px-3 py-2 rounded-lg border border-amber-300 bg-white text-sm text-gray-900 focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                        >
+                                        <select
+                                            x-model="selectedTextFontFamily"
+                                            @change="applySelectedTextChanges()"
+                                            class="md:col-span-3 px-3 py-2 rounded-lg border border-amber-300 bg-white text-sm text-gray-900 focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                        >
+                                            <template x-for="font in textFontOptions" :key="font">
+                                                <option :value="font" x-text="font"></option>
+                                            </template>
+                                        </select>
+                                        <input
+                                            type="number"
+                                            min="8"
+                                            max="300"
+                                            x-model.number="selectedTextFontSize"
+                                            @input="applySelectedTextChanges()"
+                                            class="md:col-span-2 px-3 py-2 rounded-lg border border-amber-300 bg-white text-sm text-gray-900 focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                        >
+                                        <div class="md:col-span-2 flex items-center gap-2">
+                                            <button
+                                                type="button"
+                                                @click="toggleSelectedTextBold()"
+                                                class="flex-1 px-3 py-2 rounded-lg border text-sm font-bold transition-colors"
+                                                :class="selectedTextBold ? 'border-amber-500 bg-amber-100 text-amber-800' : 'border-amber-300 bg-white text-gray-700'"
+                                                title="Bold"
+                                            >
+                                                B
+                                            </button>
+                                            <button
+                                                type="button"
+                                                @click="toggleSelectedTextItalic()"
+                                                class="flex-1 px-3 py-2 rounded-lg border text-sm italic transition-colors"
+                                                :class="selectedTextItalic ? 'border-amber-500 bg-amber-100 text-amber-800' : 'border-amber-300 bg-white text-gray-700'"
+                                                title="Italic"
+                                            >
+                                                I
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
 
                         <!-- Canvas Area (Full Screen) -->
@@ -1132,55 +1207,55 @@
                                 :style="`left:${hoverMenu.x}px; top:${hoverMenu.y}px; transform: translate(-50%, -110%);`"
                             >
                                 <div class="flex items-center gap-1 px-2 py-1.5 rounded-xl border border-gray-200 bg-white/95 shadow-lg backdrop-blur">
-                                    <!-- Color Button -->
-                                    <button @click.stop="showColorModal = true" class="p-1.5 text-gray-700 hover:bg-gray-100 rounded-md" title="Change Color">
-                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/>
-                                        </svg>
-                                    </button>
-                                    
-                                    <!-- Color Swatch - Only shown in editGroupMode, clickable to open color picker -->
-                                    <button x-show="editGroupMode" @click.stop="showColorModal = true" class="inline-block h-6 w-6 rounded-md border border-gray-300 hover:border-gray-400 cursor-pointer transition-colors" :style="`background:${selectedElementColor || '#d1d5db'}`" title="Change Color"></button>
-                                    
-                                    <!-- Replace/Edit Button -->
-                                    <button @click.stop="selectedElements.length === 1 && selectedElements[0].tagName === 'g' && selectedElements[0].children.length > 1 ? enterEditGroupMode() : openReplaceMenu()" 
-                                        class="px-2 py-1 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-md"
-                                        x-text="selectedElements.length === 1 && selectedElements[0].tagName === 'g' && selectedElements[0].children.length > 1 ? 'Edit' : 'Replace'">
-                                    </button>
-                                    
-                                    <!-- Group/Done Button -->
-                                    <button @click.stop="editGroupMode ? exitEditGroupMode() : groupSelectedLogos()" 
-                                        class="px-2 py-1 text-sm font-medium rounded-md"
-                                        :class="editGroupMode ? 'text-gray-700 hover:bg-gray-100' : (selectedElements.length > 1 ? 'text-gray-700 hover:bg-gray-100' : 'text-gray-400 cursor-not-allowed')"
-                                        :disabled="!editGroupMode && selectedElements.length <= 1"
-                                        x-text="editGroupMode ? 'Done' : 'Group'">
-                                    </button>
-                                    <button @click.stop="makeHolesTransparent()" class="p-1.5 text-gray-700 hover:bg-gray-100 rounded-md" title="Make Letter Holes Transparent">
-                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
-                                        </svg>
-                                    </button>
-                                    <button @click.stop="moveElementBackward()" class="p-1.5 text-gray-700 hover:bg-gray-100 rounded-md" title="Send Back 1 Layer">
-                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13l-3 3m0 0l-3-3m3 3V8m0 13a9 9 0 110-18 9 9 0 010 18z"/>
-                                        </svg>
-                                    </button>
-                                    <button @click.stop="moveElementForward()" class="p-1.5 text-gray-700 hover:bg-gray-100 rounded-md" title="Bring Forward 1 Layer">
-                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 11l3-3m0 0l3 3m-3-3v8m0-13a9 9 0 110 18 9 9 0 010-18z"/>
-                                        </svg>
-                                    </button>
-                                    <button @click.stop="duplicateSelectedLogos()" class="p-1.5 text-gray-700 hover:bg-gray-100 rounded-md" title="Duplicate">
-                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h8a2 2 0 012 2v8m-2 0H8a2 2 0 01-2-2V9a2 2 0 012-2zm-3 4V5a2 2 0 012-2h8"/>
-                                        </svg>
-                                    </button>
-                                    <button @click.stop="deleteSelectedElement()" class="p-1.5 text-red-600 hover:bg-red-50 rounded-md" title="Delete">
-                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7h6"/>
-                                        </svg>
-                                    </button>
+                                    <template x-if="!editMode && !editGroupMode">
+                                        <div class="flex items-center gap-1">
+                                            <button @click.stop="moveElementBackward()" class="p-1.5 text-gray-700 hover:bg-gray-100 rounded-md" title="Send Back 1 Layer">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13l-3 3m0 0l-3-3m3 3V8m0 13a9 9 0 110-18 9 9 0 010 18z"/>
+                                                </svg>
+                                            </button>
+                                            <button @click.stop="moveElementForward()" class="p-1.5 text-gray-700 hover:bg-gray-100 rounded-md" title="Bring Forward 1 Layer">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 11l3-3m0 0l3 3m-3-3v8m0-13a9 9 0 110 18 9 9 0 010-18z"/>
+                                                </svg>
+                                            </button>
+                                            <button @click.stop="duplicateSelectedLogos()" class="p-1.5 text-gray-700 hover:bg-gray-100 rounded-md" title="Duplicate">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h8a2 2 0 012 2v8m-2 0H8a2 2 0 01-2-2V9a2 2 0 012-2zm-3 4V5a2 2 0 012-2h8"/>
+                                                </svg>
+                                            </button>
+                                            <button @click.stop="deleteSelectedElement()" class="p-1.5 text-red-600 hover:bg-red-50 rounded-md" title="Delete">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7h6"/>
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    </template>
+                                    <template x-if="editMode || editGroupMode">
+                                        <div class="flex items-center gap-1">
+                                            <button x-show="hasSelectedTextElement()" @click.stop="openTextEditorForSelected()" class="p-1.5 text-gray-700 hover:bg-gray-100 rounded-md" title="Edit Text">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5h10M11 9h7M11 13h10M11 17h7M5 5v14M5 5l2.5 2.5M5 5L2.5 7.5"/>
+                                                </svg>
+                                            </button>
+                                            <button @click.stop="makeHolesTransparent()" class="p-1.5 text-gray-700 hover:bg-gray-100 rounded-md" title="Make Letter Holes Transparent">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                                                </svg>
+                                            </button>
+                                            <button @click.stop="showColorModal = true" class="p-1.5 text-gray-700 hover:bg-gray-100 rounded-md" title="Change Color">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/>
+                                                </svg>
+                                            </button>
+                                            <button @click.stop="deleteSelectedElement()" class="p-1.5 text-red-600 hover:bg-red-50 rounded-md" title="Delete">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7h6"/>
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    </template>
                                 </div>
                             </div>
                             <div x-show="editorSvgUrl || editorSvgElement" id="svg-editor-canvas" class="transition-transform duration-200" :style="'transform: scale(' + editorZoom + '); transform-origin: center center;'"></div>
@@ -1252,7 +1327,7 @@
                                     :class="logoStyle === 'future' ? 'text-blue-700' : 'text-gray-600'">Future</div>
                                 <div class="text-[10px] text-gray-400 mt-0.5">Techy & sci-fi</div>
                             </button>
-                            <button type="button" @click="selectStyle('retro')" x-show="!logoIconOnly"
+                            <button type="button" @click="selectStyle('retro')" x-show="logoMode !== 'icon_only'"
                                 class="group rounded-xl border-2 p-3 transition-all text-center"
                                 :class="logoStyle === 'retro' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
                                 <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
@@ -1269,7 +1344,7 @@
                                     <svg class="w-6 h-6" :class="logoStyle === 'greetingcard' ? 'text-blue-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"></path></svg>
                                 </div>
                                 <div class="text-xs font-semibold"
-                                    :class="logoStyle === 'greetingcard' ? 'text-blue-700' : 'text-gray-600'">Greeting Card</div>
+                                    :class="logoStyle === 'greetingcard' ? 'text-blue-700' : 'text-gray-600'">Watercolor</div>
                                 <div class="text-[10px] text-gray-400 mt-0.5">Watercolor & gouache</div>
                             </button>
                             <button type="button" @click="selectStyle('photorealistic')"
@@ -1282,7 +1357,7 @@
                                     :class="logoStyle === 'photorealistic' ? 'text-blue-700' : 'text-gray-600'">Photorealistic</div>
                                 <div class="text-[10px] text-gray-400 mt-0.5">Lifelike & detailed</div>
                             </button>
-                            <button type="button" @click="selectStyle('custom')"
+                            <button type="button" @click="selectStyle('custom')" x-show="customPromptStyleEnabled"
                                 class="col-span-2 sm:col-span-3 group rounded-xl border-2 p-3 transition-all text-center"
                                 :class="logoStyle === 'custom' ? 'border-purple-500 ring-2 ring-purple-200 bg-purple-50' : 'border-gray-200 hover:border-gray-300'">
                                 <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
@@ -1299,7 +1374,7 @@
                             </div>
                         </div>
                         <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                            <button type="button" @click="selectStyle('chrome')" x-show="!logoIconOnly"
+                            <button type="button" @click="selectStyle('chrome')" x-show="logoMode !== 'icon_only'"
                                 class="group rounded-xl border-2 p-2 transition-all text-center"
                                 :class="logoStyle === 'chrome' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
                                 <div class="aspect-square rounded-lg overflow-hidden bg-gray-100 mb-2">
@@ -1310,7 +1385,7 @@
                                 <div class="text-[10px] text-gray-400 mt-0.5">3D metallic render</div>
                                 <span class="inline-block mt-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-100 text-amber-700">Icon Only</span>
                             </button>
-                            <button type="button" @click="selectStyle('dotmatrix')" x-show="!logoIconOnly"
+                            <button type="button" @click="selectStyle('dotmatrix')" x-show="logoMode !== 'icon_only'"
                                 class="group rounded-xl border-2 p-3 transition-all text-center"
                                 :class="logoStyle === 'dotmatrix' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
                                 <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
@@ -1321,7 +1396,7 @@
                                 <div class="text-[10px] text-gray-400 mt-0.5">Stipple art</div>
                                 <span class="inline-block mt-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-100 text-amber-700">Icon Only</span>
                             </button>
-                            <button type="button" @click="selectStyle('8bit')" x-show="!logoIconOnly"
+                            <button type="button" @click="selectStyle('8bit')" x-show="logoMode !== 'icon_only'"
                                 class="group rounded-xl border-2 p-3 transition-all text-center"
                                 :class="logoStyle === '8bit' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
                                 <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
@@ -1377,16 +1452,6 @@
                                 :class="logoStyle === 'retro' ? 'text-blue-700' : 'text-gray-600'">Retro</div>
                             <div class="text-[10px] text-gray-400 mt-0.5">Vintage & classic</div>
                         </button>
-                        <button type="button" @click="selectStyle('minimalist')" x-show="outputFormat !== 'vector'"
-                            class="group rounded-xl border-2 p-3 transition-all text-center"
-                            :class="logoStyle === 'minimalist' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
-                            <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
-                                <svg class="w-6 h-6" :class="logoStyle === 'minimalist' ? 'text-blue-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                            </div>
-                            <div class="text-xs font-semibold"
-                                :class="logoStyle === 'minimalist' ? 'text-blue-700' : 'text-gray-600'">Minimalist</div>
-                            <div class="text-[10px] text-gray-400 mt-0.5">Simple & clean</div>
-                        </button>
                         <button type="button" @click="selectStyle('greetingcard')" x-show="outputFormat !== 'vector'"
                             class="group rounded-xl border-2 p-3 transition-all text-center"
                             :class="logoStyle === 'greetingcard' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
@@ -1394,7 +1459,7 @@
                                 <svg class="w-6 h-6" :class="logoStyle === 'greetingcard' ? 'text-blue-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"></path></svg>
                             </div>
                             <div class="text-xs font-semibold"
-                                :class="logoStyle === 'greetingcard' ? 'text-blue-700' : 'text-gray-600'">Greeting Card</div>
+                                :class="logoStyle === 'greetingcard' ? 'text-blue-700' : 'text-gray-600'">Watercolor</div>
                             <div class="text-[10px] text-gray-400 mt-0.5">Watercolor & gouache</div>
                         </button>
                         <button type="button" @click="selectStyle('photorealistic')" x-show="outputFormat !== 'vector'"
@@ -1408,57 +1473,146 @@
                             <div class="text-[10px] text-gray-400 mt-0.5">Lifelike & detailed</div>
                         </button>
                         <!-- Vector styles: shown in vector/logo mode -->
-                        <button type="button" @click="selectStyle('minimal_geometric')" x-show="outputFormat === 'vector'"
+                        <button type="button" @click="selectStyle('minimal_geometric')" x-show="outputFormat === 'vector' && logoMode !== 'text_only'"
                             class="group rounded-xl border-2 p-3 transition-all text-center"
                             :class="logoStyle === 'minimal_geometric' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
-                            <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
-                                <svg class="w-6 h-6" :class="logoStyle === 'minimal_geometric' ? 'text-blue-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z"></path></svg>
+                            <div class="w-full h-24 mx-auto mb-2 rounded-lg bg-gray-100 overflow-hidden">
+                                <template x-if="isSampledVectorMode()">
+                                    <img :src="getVectorSampleUrl('minimal_geometric')" alt="Minimal Geometric sample" class="style-sample-image w-full h-full object-cover" loading="lazy" />
+                                </template>
+                                <template x-if="!isSampledVectorMode()">
+                                    <div class="w-full h-full flex items-center justify-center">
+                                        <svg class="w-6 h-6" :class="logoStyle === 'minimal_geometric' ? 'text-blue-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z"></path></svg>
+                                    </div>
+                                </template>
                             </div>
                             <div class="text-xs font-semibold"
                                 :class="logoStyle === 'minimal_geometric' ? 'text-blue-700' : 'text-gray-600'">Minimal Geometric</div>
                             <div class="text-[10px] text-gray-400 mt-0.5">Clean shapes</div>
                         </button>
-                        <button type="button" @click="selectStyle('abstract')" x-show="outputFormat === 'vector'"
+                        <button type="button" @click="selectStyle('abstract')" x-show="outputFormat === 'vector' && logoMode !== 'text_only'"
                             class="group rounded-xl border-2 p-3 transition-all text-center"
                             :class="logoStyle === 'abstract' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
-                            <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
-                                <svg class="w-6 h-6" :class="logoStyle === 'abstract' ? 'text-blue-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z"></path></svg>
+                            <div class="w-full h-24 mx-auto mb-2 rounded-lg bg-gray-100 overflow-hidden">
+                                <template x-if="isSampledVectorMode()">
+                                    <img :src="getVectorSampleUrl('abstract')" alt="Abstract sample" class="style-sample-image w-full h-full object-cover" loading="lazy" />
+                                </template>
+                                <template x-if="!isSampledVectorMode()">
+                                    <div class="w-full h-full flex items-center justify-center">
+                                        <svg class="w-6 h-6" :class="logoStyle === 'abstract' ? 'text-blue-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z"></path></svg>
+                                    </div>
+                                </template>
                             </div>
                             <div class="text-xs font-semibold"
                                 :class="logoStyle === 'abstract' ? 'text-blue-700' : 'text-gray-600'">Abstract</div>
                             <div class="text-[10px] text-gray-400 mt-0.5">Dynamic shapes</div>
                         </button>
-                        <button type="button" @click="selectStyle('monoline')" x-show="outputFormat === 'vector'"
+                        <button type="button" @click="selectStyle('monoline')" x-show="outputFormat === 'vector' && logoMode !== 'text_only'"
                             class="group rounded-xl border-2 p-3 transition-all text-center"
                             :class="logoStyle === 'monoline' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
-                            <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
-                                <svg class="w-6 h-6" :class="logoStyle === 'monoline' ? 'text-blue-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12.75L11.25 15 15 9.75M21 12a9 12 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                            <div class="w-full h-24 mx-auto mb-2 rounded-lg bg-gray-100 overflow-hidden">
+                                <template x-if="isSampledVectorMode()">
+                                    <img :src="getVectorSampleUrl('monoline')" alt="Monoline sample" class="style-sample-image w-full h-full object-cover" loading="lazy" />
+                                </template>
+                                <template x-if="!isSampledVectorMode()">
+                                    <div class="w-full h-full flex items-center justify-center">
+                                        <svg class="w-6 h-6" :class="logoStyle === 'monoline' ? 'text-blue-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12.75L11.25 15 15 9.75M21 12a9 12 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                    </div>
+                                </template>
                             </div>
                             <div class="text-xs font-semibold"
                                 :class="logoStyle === 'monoline' ? 'text-blue-700' : 'text-gray-600'">Monoline</div>
                             <div class="text-[10px] text-gray-400 mt-0.5">Continuous line</div>
                         </button>
-                        <button type="button" @click="selectStyle('negative_space')" x-show="outputFormat === 'vector'"
+                        <button type="button" @click="selectStyle('negative_space')" x-show="outputFormat === 'vector' && logoMode !== 'text_only'"
                             class="group rounded-xl border-2 p-3 transition-all text-center"
                             :class="logoStyle === 'negative_space' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
-                            <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
-                                <svg class="w-6 h-6" :class="logoStyle === 'negative_space' ? 'text-blue-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15.75 10.5V6a3.75 3.75 0 10-7.5 0v4.5m11.356-1.993l1.263 12c.07.665-.45 1.243-1.119 1.243H4.25a1.125 1.125 0 01-1.12-1.243l1.264-12A1.125 1.125 0 015.513 7.5h12.974c.576 0 1.059.435 1.119 1.007zM8.625 10.5a.375.375 0 11-.75 0 .375.375 0 01.75 0zm7.5 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z"></path></svg>
+                            <div class="w-full h-24 mx-auto mb-2 rounded-lg bg-gray-100 overflow-hidden">
+                                <template x-if="isSampledVectorMode()">
+                                    <img :src="getVectorSampleUrl('negative_space')" alt="Negative Space sample" class="style-sample-image w-full h-full object-cover" loading="lazy" />
+                                </template>
+                                <template x-if="!isSampledVectorMode()">
+                                    <div class="w-full h-full flex items-center justify-center">
+                                        <svg class="w-6 h-6" :class="logoStyle === 'negative_space' ? 'text-blue-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15.75 10.5V6a3.75 3.75 0 10-7.5 0v4.5m11.356-1.993l1.263 12c.07.665-.45 1.243-1.119 1.243H4.25a1.125 1.125 0 01-1.12-1.243l1.264-12A1.125 1.125 0 015.513 7.5h12.974c.576 0 1.059.435 1.119 1.007zM8.625 10.5a.375.375 0 11-.75 0 .375.375 0 01.75 0zm7.5 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z"></path></svg>
+                                    </div>
+                                </template>
                             </div>
                             <div class="text-xs font-semibold"
                                 :class="logoStyle === 'negative_space' ? 'text-blue-700' : 'text-gray-600'">Negative Space</div>
                             <div class="text-[10px] text-gray-400 mt-0.5">Hidden symbol</div>
                         </button>
-                        <button type="button" @click="selectStyle('tech_gradient')" x-show="outputFormat === 'vector'"
+                        <button type="button" @click="selectStyle('tech_gradient')" x-show="outputFormat === 'vector' && logoMode !== 'text_only'"
                             class="group rounded-xl border-2 p-3 transition-all text-center"
                             :class="logoStyle === 'tech_gradient' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
-                            <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
-                                <svg class="w-6 h-6" :class="logoStyle === 'tech_gradient' ? 'text-blue-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z"></path></svg>
+                            <div class="w-full h-24 mx-auto mb-2 rounded-lg bg-gray-100 overflow-hidden">
+                                <template x-if="isSampledVectorMode()">
+                                    <img :src="getVectorSampleUrl('tech_gradient')" alt="Tech Gradient sample" class="style-sample-image w-full h-full object-cover" loading="lazy" />
+                                </template>
+                                <template x-if="!isSampledVectorMode()">
+                                    <div class="w-full h-full flex items-center justify-center">
+                                        <svg class="w-6 h-6" :class="logoStyle === 'tech_gradient' ? 'text-blue-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z"></path></svg>
+                                    </div>
+                                </template>
                             </div>
                             <div class="text-xs font-semibold"
                                 :class="logoStyle === 'tech_gradient' ? 'text-blue-700' : 'text-gray-600'">Tech Gradient</div>
                             <div class="text-[10px] text-gray-400 mt-0.5">Futuristic</div>
                         </button>
-                        <button type="button" @click="selectStyle('custom')"
+                        <button type="button" @click="selectStyle('modern_sans')" x-show="outputFormat === 'vector' && logoMode === 'text_only'"
+                            class="group rounded-xl border-2 p-3 transition-all text-center"
+                            :class="logoStyle === 'modern_sans' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
+                            <div class="w-full h-24 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
+                                <span class="text-lg font-semibold tracking-tight" :class="logoStyle === 'modern_sans' ? 'text-blue-700' : 'text-gray-700'">Aa</span>
+                            </div>
+                            <div class="text-xs font-semibold" :class="logoStyle === 'modern_sans' ? 'text-blue-700' : 'text-gray-600'">Modern Sans</div>
+                            <div class="text-[10px] text-gray-400 mt-0.5">Clean sans-serif</div>
+                        </button>
+                        <button type="button" @click="selectStyle('bold_geometric')" x-show="outputFormat === 'vector' && logoMode === 'text_only'"
+                            class="group rounded-xl border-2 p-3 transition-all text-center"
+                            :class="logoStyle === 'bold_geometric' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
+                            <div class="w-full h-24 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
+                                <span class="text-xl font-black tracking-tight" :class="logoStyle === 'bold_geometric' ? 'text-blue-700' : 'text-gray-700'">Aa</span>
+                            </div>
+                            <div class="text-xs font-semibold" :class="logoStyle === 'bold_geometric' ? 'text-blue-700' : 'text-gray-600'">Bold Geometric</div>
+                            <div class="text-[10px] text-gray-400 mt-0.5">Strong structure</div>
+                        </button>
+                        <button type="button" @click="selectStyle('elegant_serif')" x-show="outputFormat === 'vector' && logoMode === 'text_only'"
+                            class="group rounded-xl border-2 p-3 transition-all text-center"
+                            :class="logoStyle === 'elegant_serif' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
+                            <div class="w-full h-24 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
+                                <span class="text-xl font-serif tracking-tight" :class="logoStyle === 'elegant_serif' ? 'text-blue-700' : 'text-gray-700'">Aa</span>
+                            </div>
+                            <div class="text-xs font-semibold" :class="logoStyle === 'elegant_serif' ? 'text-blue-700' : 'text-gray-600'">Elegant Serif</div>
+                            <div class="text-[10px] text-gray-400 mt-0.5">Refined strokes</div>
+                        </button>
+                        <button type="button" @click="selectStyle('script_signature')" x-show="outputFormat === 'vector' && logoMode === 'text_only'"
+                            class="group rounded-xl border-2 p-3 transition-all text-center"
+                            :class="logoStyle === 'script_signature' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
+                            <div class="w-full h-24 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
+                                <span class="text-xl italic tracking-tight" :class="logoStyle === 'script_signature' ? 'text-blue-700' : 'text-gray-700'">Aa</span>
+                            </div>
+                            <div class="text-xs font-semibold" :class="logoStyle === 'script_signature' ? 'text-blue-700' : 'text-gray-600'">Script Signature</div>
+                            <div class="text-[10px] text-gray-400 mt-0.5">Flowing curves</div>
+                        </button>
+                        <button type="button" @click="selectStyle('tech_mono')" x-show="outputFormat === 'vector' && logoMode === 'text_only'"
+                            class="group rounded-xl border-2 p-3 transition-all text-center"
+                            :class="logoStyle === 'tech_mono' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
+                            <div class="w-full h-24 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
+                                <span class="text-lg font-mono tracking-tight" :class="logoStyle === 'tech_mono' ? 'text-blue-700' : 'text-gray-700'">Aa</span>
+                            </div>
+                            <div class="text-xs font-semibold" :class="logoStyle === 'tech_mono' ? 'text-blue-700' : 'text-gray-600'">Tech Mono</div>
+                            <div class="text-[10px] text-gray-400 mt-0.5">Precision spacing</div>
+                        </button>
+                        <button type="button" @click="selectStyle('minimal_light')" x-show="outputFormat === 'vector' && logoMode === 'text_only'"
+                            class="group rounded-xl border-2 p-3 transition-all text-center"
+                            :class="logoStyle === 'minimal_light' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
+                            <div class="w-full h-24 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
+                                <span class="text-lg font-light tracking-tight" :class="logoStyle === 'minimal_light' ? 'text-blue-700' : 'text-gray-700'">Aa</span>
+                            </div>
+                            <div class="text-xs font-semibold" :class="logoStyle === 'minimal_light' ? 'text-blue-700' : 'text-gray-600'">Minimal Light</div>
+                            <div class="text-[10px] text-gray-400 mt-0.5">Thin clean letterforms</div>
+                        </button>
+                        <button type="button" @click="selectStyle('custom')" x-show="customPromptStyleEnabled && (outputFormat !== 'vector' || logoMode !== 'text_only')"
                             class="col-span-2 sm:col-span-3 group rounded-xl border-2 p-3 transition-all text-center"
                             :class="logoStyle === 'custom' ? 'border-purple-500 ring-2 ring-purple-200 bg-purple-50' : 'border-gray-200 hover:border-gray-300'">
                             <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
@@ -1530,7 +1684,7 @@
             <div class="relative w-full max-w-md bg-white dark:bg-gray-800 rounded-2xl shadow-2xl overflow-hidden" @click.stop
                 x-transition:enter="ease-out duration-200" x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100">
                 <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-                    <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Add Text</h3>
+                    <h3 class="text-lg font-semibold text-gray-900 dark:text-white" x-text="editingTextElement ? 'Edit Text' : 'Add Text'"></h3>
                     <button @click="showTextModal = false" class="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">
                         <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
@@ -1554,13 +1708,9 @@
                             x-model="editorFontFamily"
                             class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                         >
-                            <option value="Arial">Arial</option>
-                            <option value="Helvetica">Helvetica</option>
-                            <option value="Times New Roman">Times New Roman</option>
-                            <option value="Georgia">Georgia</option>
-                            <option value="Verdana">Verdana</option>
-                            <option value="Impact">Impact</option>
-                            <option value="Trebuchet MS">Trebuchet MS</option>
+                            <template x-for="font in textFontOptions" :key="font">
+                                <option :value="font" x-text="font"></option>
+                            </template>
                         </select>
                     </div>
 
@@ -1573,6 +1723,28 @@
                             max="200"
                             class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                         >
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Style</label>
+                        <div class="flex items-center gap-2">
+                            <button
+                                type="button"
+                                @click="editorFontBold = !editorFontBold"
+                                class="flex-1 px-3 py-2 rounded-lg border text-sm font-bold transition-colors"
+                                :class="editorFontBold ? 'border-amber-500 bg-amber-50 text-amber-700' : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300'"
+                            >
+                                Bold
+                            </button>
+                            <button
+                                type="button"
+                                @click="editorFontItalic = !editorFontItalic"
+                                class="flex-1 px-3 py-2 rounded-lg border text-sm italic transition-colors"
+                                :class="editorFontItalic ? 'border-amber-500 bg-amber-50 text-amber-700' : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300'"
+                            >
+                                Italic
+                            </button>
+                        </div>
                     </div>
 
                     <div>
@@ -1592,13 +1764,31 @@
                         </div>
                     </div>
 
+                    <label class="flex items-center gap-2" x-show="!editingTextElement">
+                        <input type="checkbox" x-model="editorTextUseVector" class="rounded border-gray-300 text-amber-600 focus:ring-amber-500">
+                        <span class="text-sm text-gray-700 dark:text-gray-300">Use Vector (place as vector layer)</span>
+                    </label>
+
+                    <div class="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                        <div class="flex items-center justify-between mb-2">
+                            <p class="text-xs font-bold uppercase tracking-wide text-amber-800">Live Preview</p>
+                            <p class="text-xs text-amber-700" x-text="`${Math.max(8, parseFloat(editorFontSize) || 48)}px · ${editorFontFamily}`"></p>
+                        </div>
+                        <div class="min-h-[96px] rounded-lg border border-amber-200 bg-white px-3 py-2 flex items-center justify-center text-center overflow-hidden">
+                            <span
+                                x-text="editorText && editorText.trim() ? editorText : 'The quick brown fox'"
+                                :style="`font-family:${editorFontFamily}; font-size:${Math.max(8, parseFloat(editorFontSize) || 48)}px; font-weight:${editorFontBold ? '700' : '400'}; font-style:${editorFontItalic ? 'italic' : 'normal'}; color:${editorTextColor || '#000000'}; line-height:1.15;`"
+                            ></span>
+                        </div>
+                    </div>
+
                     <button 
-                        @click="addTextToSvg(); showTextModal = false"
+                        @click="saveTextModal()"
                         class="w-full px-4 py-3 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg transition-colors"
+                        x-text="editingTextElement ? 'Apply Text Changes' : 'Add Text to Canvas'"
                     >
-                        Add Text to Canvas
                     </button>
-                    <p class="text-xs text-gray-500 dark:text-gray-400 text-center">💡 Text will be draggable after adding</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 text-center" x-text="editingTextElement ? 'Tip: You can reopen this at any time from the text layer.' : 'Tip: Text will be draggable after adding.'"></p>
                 </div>
             </div>
         </div>
@@ -1834,6 +2024,63 @@
             </div>
         </div>
 
+        <!-- Shape Modal -->
+        <div x-show="showShapeModal" x-cloak x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" @click.self="showShapeModal = false" @keydown.escape.window="showShapeModal = false">
+            <div class="relative w-full max-w-md bg-white dark:bg-gray-800 rounded-2xl shadow-2xl overflow-hidden" @click.stop
+                x-transition:enter="ease-out duration-200" x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100">
+                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+                    <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Add Vector Shape</h3>
+                    <button @click="showShapeModal = false" class="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">
+                        <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="p-6 space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Shape</label>
+                        <select x-model="editorShapeType" class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                            <option value="line">Line</option>
+                            <option value="rectangle">Rectangle</option>
+                            <option value="circle">Circle</option>
+                            <option value="triangle">Triangle</option>
+                            <option value="star">Star</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Size</label>
+                        <input type="number" x-model.number="editorShapeSize" min="20" max="400" class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Fill</label>
+                        <div class="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+                            <input type="color" x-model="editorShapeFill" class="w-12 h-12 rounded-lg cursor-pointer border-2 border-gray-300 dark:border-gray-600 shadow-sm">
+                            <input type="text" x-model="editorShapeFill" class="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-mono uppercase" placeholder="#3B82F6">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Stroke</label>
+                        <div class="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+                            <input type="color" x-model="editorShapeStroke" class="w-12 h-12 rounded-lg cursor-pointer border-2 border-gray-300 dark:border-gray-600 shadow-sm">
+                            <input type="text" x-model="editorShapeStroke" class="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-mono uppercase" placeholder="#1F2937">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Stroke Width</label>
+                        <input type="number" x-model.number="editorShapeStrokeWidth" min="0" max="20" step="0.5" class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                    </div>
+
+                    <button @click="addShapeToSvg(); showShapeModal = false" class="w-full px-4 py-3 bg-sky-600 hover:bg-sky-700 text-white font-semibold rounded-lg transition-colors">
+                        Add Shape to Canvas
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- Save State Modal -->
         <div x-show="showSaveStateModal" x-cloak x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" 
              @click.self="showSaveStateModal = false; selectedStateToOverwrite = null; saveStateName = ''" 
@@ -1928,7 +2175,6 @@
                 logoCount: 2,
                 logoDomain: '',
                 logoPrompt: '',
-                textFontStyle: 'modern_sans',
                 logoStyle: 'minimal_geometric',
                 logoColorPalette: 'none',
                 showTextPromptPanel: false,
@@ -1946,6 +2192,22 @@
                 selectedElementColor: '#000000',
                 editorText: '',
                 editorFontSize: 48,
+                editorFontBold: true,
+                editorFontItalic: false,
+                editorTextUseVector: false,
+                selectedTextContent: '',
+                selectedTextFontFamily: 'Arial',
+                selectedTextFontSize: 48,
+                selectedTextBold: false,
+                selectedTextItalic: false,
+                textFontOptions: [
+                    'Inter', 'Poppins', 'Montserrat', 'Roboto', 'Open Sans', 'Lato', 'Nunito', 'DM Sans', 'Work Sans', 'Source Sans 3',
+                    'Playfair Display', 'Merriweather', 'Libre Baskerville', 'Cormorant Garamond', 'Cinzel', 'Bitter', 'Arvo',
+                    'Oswald', 'Anton', 'Bebas Neue', 'Bungee', 'Space Grotesk', 'Exo 2', 'Fira Sans', 'IBM Plex Sans', 'Rubik',
+                    'Raleway', 'Josefin Sans', 'Cabin', 'Comfortaa', 'Dancing Script', 'Lobster', 'Abril Fatface', 'Macondo',
+                    'Arial', 'Helvetica', 'Times New Roman', 'Georgia', 'Verdana', 'Trebuchet MS', 'Courier New', 'Impact'
+                ],
+                editingTextElement: null,
                 // Selection box for marquee selection
                 isSelecting: false,
                 selectionStartX: 0,
@@ -1966,6 +2228,7 @@
                 showImportModal: false,
                 showColorModal: false,
                 showTextModal: false,
+                showShapeModal: false,
                 showLayersModal: false,
                 importModalTab: 'session',
                 userLogos: [],
@@ -1975,8 +2238,14 @@
                 saveStateName: '',
                 selectedStateToOverwrite: null,
                 editorStates: [],
+                editorShapeType: 'rectangle',
+                editorShapeSize: 120,
+                editorShapeFill: '#38BDF8',
+                editorShapeStroke: '#0F172A',
+                editorShapeStrokeWidth: 2,
                 logoCustomColors: ['#1e3a5f', '#d4af37', '#333333'],
                 backgroundColor: 'white',
+                backgroundCustomColor: '#4F46E5',
                 shapeContainer: '',
                 detailLevel: 'medium',
                 proMode: true,
@@ -1998,6 +2267,7 @@
 
                 // Palette management
                 canManagePalettes: @js((bool) $logoUser),
+                customPromptStyleEnabled: @js((bool) config('services.logo_custom_prompt_enabled')),
                 savedPalettes: [],
                 savedPaletteName: '',
                 paletteSaving: false,
@@ -2028,6 +2298,14 @@
                 },
 
                 init() {
+                    if (!this.customPromptStyleEnabled && this.logoStyle === 'custom') {
+                        this.logoStyle = this.outputFormat === 'raster' ? 'professional' : 'minimal_geometric';
+                    }
+                    if (String(this.backgroundColor || '').startsWith('#')) {
+                        this.backgroundCustomColor = this.normalizeHexColor(this.backgroundColor, '#4F46E5');
+                    }
+                    this.enforceLunaVectorDefaults();
+
                     // Delay initial price fetch to ensure everything is loaded
                     this.$nextTick(() => {
                         this.fetchLogoPrice();
@@ -2043,7 +2321,113 @@
                     } else if (model === 'recraft') {
                         this.proMode = true;
                     }
+                    this.enforceLunaVectorDefaults();
                     this.fetchLogoPrice();
+                },
+
+                switchToImageMode() {
+                    this.workMode = 'image';
+                    this.outputFormat = 'raster';
+
+                    if (this.selectedModel === 'dalle' && this.imageFormat !== 'png') {
+                        this.imageFormat = 'png';
+                    }
+
+                    if (this.activeTab === 'editor') {
+                        this.activeTab = 'generator';
+                    }
+
+                    const vectorStyles = ['minimal_geometric', 'abstract', 'monoline', 'negative_space', 'tech_gradient', 'modern_sans', 'bold_geometric', 'elegant_serif', 'script_signature', 'tech_mono', 'minimal_light'];
+                    if (vectorStyles.includes(this.logoStyle)) {
+                        this.logoStyle = 'professional';
+                    }
+
+                    if (!this.customPromptStyleEnabled && this.logoStyle === 'custom') {
+                        this.logoStyle = 'professional';
+                    }
+
+                    this.fetchLogoPrice();
+                },
+
+                switchToLogoMode() {
+                    this.workMode = 'logo';
+                    this.outputFormat = 'vector';
+
+                    if (this.logoMode === 'icon_text') {
+                        this.logoMode = 'icon_only';
+                    }
+
+                    if (this.selectedModel === 'dalle') {
+                        this.selectedModel = 'recraft';
+                    }
+
+                    const rasterStyles = ['professional', 'fantasy', 'future', 'retro', 'minimalist', 'greetingcard', 'photorealistic'];
+                    const textStyles = ['modern_sans', 'bold_geometric', 'elegant_serif', 'script_signature', 'tech_mono', 'minimal_light'];
+                    if (this.logoMode === 'text_only') {
+                        if (!textStyles.includes(this.logoStyle)) {
+                            this.logoStyle = 'modern_sans';
+                        }
+                    } else if (rasterStyles.includes(this.logoStyle) || textStyles.includes(this.logoStyle)) {
+                        this.logoStyle = 'minimal_geometric';
+                    }
+
+                    if (!this.customPromptStyleEnabled && this.logoStyle === 'custom') {
+                        this.logoStyle = 'minimal_geometric';
+                    }
+
+                    this.enforceLunaVectorDefaults();
+                    this.fetchLogoPrice();
+                },
+
+                isLunaVectorMode() {
+                    return this.selectedModel === 'flux' && this.outputFormat === 'vector';
+                },
+
+                isSampledVectorMode() {
+                    return this.outputFormat === 'vector' && (this.selectedModel === 'flux' || this.selectedModel === 'recraft');
+                },
+
+                getVectorSampleUrl(style) {
+                    const lunaSamples = {
+                        minimal_geometric: '/images/luna_vector_samples/lion_minimal_luna.png',
+                        abstract: '/images/luna_vector_samples/lion_abstract_luna.png',
+                        monoline: '/images/luna_vector_samples/lion_monoline_luna.png',
+                        negative_space: '/images/luna_vector_samples/lion_negative_space_luna.png',
+                        tech_gradient: '/images/luna_vector_samples/tech_gradient_lion_luna.png',
+                    };
+
+                    const raySamples = {
+                        minimal_geometric: '/images/ray_vector_samples/ray_minimal_vector.png',
+                        abstract: '/images/ray_vector_samples/ray_abstract_vector.png',
+                        monoline: '/images/ray_vector_samples/ray_monoline_vector.png',
+                        negative_space: '/images/ray_vector_samples/ray_negative_space_vector.png',
+                        tech_gradient: '/images/ray_vector_samples/ray_tech_gradient_vector.png',
+                    };
+
+                    const sampleMap = this.selectedModel === 'recraft' ? raySamples : lunaSamples;
+                    return sampleMap[style] || '';
+                },
+
+                isTextStyle(style) {
+                    return ['modern_sans', 'bold_geometric', 'elegant_serif', 'script_signature', 'tech_mono', 'minimal_light'].includes(style);
+                },
+
+                enforceLunaVectorDefaults() {
+                    if (this.isLunaVectorMode()) {
+                        this.proMode = true;
+                        this.proSize = '512';
+                    }
+                },
+
+                getEffectiveProSettings() {
+                    if (this.isLunaVectorMode()) {
+                        return { pro: true, proSize: 512 };
+                    }
+
+                    return {
+                        pro: this.proMode,
+                        proSize: this.proMode ? parseInt(this.proSize) : 1024,
+                    };
                 },
 
                 getSelectedPaletteColors() {
@@ -2051,6 +2435,88 @@
                     if (this.logoColorPalette === 'custom') return this.logoCustomColors;
                     const p = this.colorPalettes.find(p => p.id === this.logoColorPalette);
                     return p ? p.colors : null;
+                },
+
+                isCustomBackgroundColor() {
+                    return String(this.backgroundColor || '').startsWith('#');
+                },
+
+                selectCustomBackground() {
+                    this.backgroundColor = this.normalizeHexColor(this.backgroundCustomColor, '#4F46E5');
+                    this.fetchLogoPrice();
+                },
+
+                openAddTextModal() {
+                    this.editingTextElement = null;
+                    this.editorText = '';
+                    this.editorFontFamily = 'Arial';
+                    this.editorFontSize = 48;
+                    this.editorFontBold = true;
+                    this.editorFontItalic = false;
+                    this.editorTextUseVector = false;
+                    this.editorTextColor = '#000000';
+                    this.showTextModal = true;
+                },
+
+                openTextEditorForSelected() {
+                    const textEl = this.getSelectedTextElement();
+                    if (!textEl) return;
+
+                    this.editingTextElement = textEl;
+                    this.editorText = textEl.textContent || '';
+                    this.editorFontFamily = textEl.getAttribute('font-family') || this.editorFontFamily || 'Arial';
+                    this.editorFontSize = parseFloat(textEl.getAttribute('font-size') || '48') || 48;
+
+                    const weightRaw = String(textEl.getAttribute('font-weight') || '').toLowerCase();
+                    const weightInt = parseInt(weightRaw, 10);
+                    this.editorFontBold = weightRaw === 'bold' || (!Number.isNaN(weightInt) && weightInt >= 600);
+
+                    const styleRaw = String(textEl.getAttribute('font-style') || '').toLowerCase();
+                    this.editorFontItalic = styleRaw === 'italic' || styleRaw === 'oblique';
+
+                    this.editorTextColor = textEl.getAttribute('fill') || this.editorTextColor || '#000000';
+                    this.showTextModal = true;
+                },
+
+                saveTextModal() {
+                    if (this.editingTextElement) {
+                        this.editorText = String(this.editorText || '').trim();
+                        if (!this.editorText) return;
+
+                        const textEl = this.editingTextElement;
+                        textEl.textContent = this.editorText;
+                        textEl.setAttribute('font-family', this.editorFontFamily || 'Arial');
+                        textEl.setAttribute('font-size', String(Math.max(8, Math.min(300, parseFloat(this.editorFontSize) || 48))));
+                        textEl.setAttribute('font-weight', this.editorFontBold ? '700' : '400');
+                        textEl.setAttribute('font-style', this.editorFontItalic ? 'italic' : 'normal');
+                        textEl.setAttribute('fill', this.editorTextColor || '#000000');
+                        textEl.setAttribute('data-layer-name', 'Text: ' + this.editorText.substring(0, 20));
+
+                        this.syncTextEditorFromSelection();
+                        this.updateLayers();
+                        this.updateHoverMenuPosition();
+                        this.showTextModal = false;
+                        this.editingTextElement = null;
+                        return;
+                    }
+
+                    this.addTextToSvg();
+                    this.showTextModal = false;
+                },
+
+                applyCustomBackgroundColor(color) {
+                    const hex = this.normalizeHexColor(color, '#4F46E5');
+                    this.backgroundCustomColor = hex;
+                    this.backgroundColor = hex;
+                    this.fetchLogoPrice();
+                },
+
+                getEditorBackgroundFill() {
+                    if (this.backgroundColor === 'white') return 'white';
+                    if (String(this.backgroundColor || '').startsWith('#')) {
+                        return this.normalizeHexColor(this.backgroundColor, 'white');
+                    }
+                    return null;
                 },
 
                 async fetchSavedPalettes() {
@@ -2165,8 +2631,10 @@
                 },
 
                 getStyleLabel() {
-                    const labels = { chrome: 'Chrome', professional: 'Professional', fantasy: 'Fantasy', future: 'Future', retro: 'Retro', '8bit': '8-Bit', dotmatrix: 'Dot Matrix', greetingcard: 'Greeting Card', photorealistic: 'Photorealistic', minimal_geometric: 'Minimal Geometric', abstract: 'Abstract', monoline: 'Monoline', negative_space: 'Negative Space', tech_gradient: 'Tech Gradient', custom: 'Custom Prompt' };
-                    return labels[this.logoStyle] || 'Minimal Geometric';
+                    const labels = { chrome: 'Chrome', professional: 'Professional', fantasy: 'Fantasy', future: 'Future', retro: 'Retro', '8bit': '8-Bit', dotmatrix: 'Dot Matrix', greetingcard: 'Watercolor', photorealistic: 'Photorealistic', minimal_geometric: 'Minimal Geometric', abstract: 'Abstract', monoline: 'Monoline', negative_space: 'Negative Space', tech_gradient: 'Tech Gradient', modern_sans: 'Modern Sans', bold_geometric: 'Bold Geometric', elegant_serif: 'Elegant Serif', script_signature: 'Script Signature', tech_mono: 'Tech Mono', minimal_light: 'Minimal Light', custom: 'Custom Prompt' };
+                    if (labels[this.logoStyle]) return labels[this.logoStyle];
+                    if (this.outputFormat === 'vector' && this.logoMode === 'text_only') return 'Modern Sans';
+                    return this.outputFormat === 'vector' ? 'Minimal Geometric' : 'Professional';
                 },
 
                 selectStyle(style) {
@@ -2177,6 +2645,8 @@
 
                 async fetchLogoPrice() {
                     try {
+                        const proSettings = this.getEffectiveProSettings();
+
                         // Ensure CSRF token is available
                         const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content;
                         if (!csrfToken) {
@@ -2192,8 +2662,8 @@
                             },
                             body: JSON.stringify({
                                 count: this.logoCount,
-                                pro: this.proMode,
-                                pro_size: this.proMode ? parseInt(this.proSize) : 1024,
+                                pro: proSettings.pro,
+                                pro_size: proSettings.proSize,
                                 style: this.logoStyle,
                                 bg_color: this.backgroundColor,
                                 image_model: this.selectedModel,
@@ -2218,6 +2688,8 @@
                 },
 
                 async generateLogo() {
+                    const proSettings = this.getEffectiveProSettings();
+
                     // Validate based on mode
                     const needsText = this.logoMode === 'icon_text' || this.logoMode === 'text_only';
                     const needsPrompt = this.logoMode === 'icon_only' || this.logoMode === 'icon_text';
@@ -2250,7 +2722,7 @@
                     const generationMetadata = {
                         model: this.selectedModel === 'flux' ? 'Luna' : (this.selectedModel === 'recraft' ? 'Ray' : 'Cosmo'),
                         modelId: this.selectedModel,
-                        resolution: this.proMode && this.selectedModel === 'flux' ? `${this.proSize}x${this.proSize}` : (this.selectedModel === 'dalle' ? '1024x1024' : '512x512'),
+                        resolution: proSettings.pro && this.selectedModel === 'flux' ? `${proSettings.proSize}x${proSettings.proSize}` : (this.selectedModel === 'dalle' ? '1024x1024' : '512x512'),
                         price: (this.logoPrice / this.logoCount).toFixed(4),
                         style: this.logoStyle
                     };
@@ -2277,8 +2749,8 @@
                                 count: 1,
                                 total_count: totalCount,
                                 batch_index: i,
-                                pro: this.proMode,
-                                pro_size: this.proMode ? parseInt(this.proSize) : 1024,
+                                pro: proSettings.pro,
+                                pro_size: proSettings.proSize,
                                 icon_only: this.logoMode === 'icon_only',
                                 text_only: this.logoMode === 'text_only',
                                 bg_color: this.backgroundColor,
@@ -2287,8 +2759,7 @@
                                 image_format: this.outputFormat === 'raster' && this.selectedModel === 'dalle' ? this.imageFormat : null,
                                 color_palette: this.logoColorPalette !== 'none' ? this.getSelectedPaletteColors() : null,
                                 logo_shape: this.shapeContainer || 'none',
-                                logo_detail: this.detailLevel || 'medium',
-                                font_style: this.logoMode === 'text_only' ? this.textFontStyle : null
+                                logo_detail: this.detailLevel || 'medium'
                             };
 
                             const response = await fetch('/domain-search/generate-logo', {
@@ -2749,15 +3220,16 @@
                             canvas.innerHTML = '';
                             canvas.appendChild(this.editorSvgElement);
                             
-                            // Add white background to show page boundaries (unless transparent background was selected)
-                            if (this.backgroundColor !== 'transparent') {
+                            // Add workspace background when WHITE or a custom color is selected.
+                            const editorBgFill = this.getEditorBackgroundFill();
+                            if (editorBgFill) {
                                 const currentViewBox = this.editorSvgElement.getAttribute('viewBox').split(' ');
                                 const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
                                 bgRect.setAttribute('x', currentViewBox[0]);
                                 bgRect.setAttribute('y', currentViewBox[1]);
                                 bgRect.setAttribute('width', currentViewBox[2]);
                                 bgRect.setAttribute('height', currentViewBox[3]);
-                                bgRect.setAttribute('fill', 'white');
+                                bgRect.setAttribute('fill', editorBgFill);
                                 bgRect.setAttribute('data-editor-bg', 'true');
                                 bgRect.style.pointerEvents = 'none';
                                 this.editorSvgElement.insertBefore(bgRect, this.editorSvgElement.firstChild);
@@ -2879,10 +3351,10 @@
                     if (!this.editorSvgElement) return;
                     this.clearInlineOutlines();
                     
-                    // Update group cursors - always show move cursor for groups
+                    // In edit mode we only want child-element editing, not whole-group dragging.
                     const groups = this.editorSvgElement.querySelectorAll('g[id^="original-svg-"], g[id^="imported-"]');
                     groups.forEach(g => {
-                        g.style.cursor = 'move';
+                        g.style.cursor = this.editMode ? 'default' : 'move';
                     });
                     
                     if (this.editMode) {
@@ -2900,6 +3372,10 @@
                     const elements = this.editorSvgElement.querySelectorAll('path, circle, rect, ellipse, polygon, polyline, line, text');
                     
                     elements.forEach(el => {
+                        if (el.tagName?.toLowerCase() === 'text' && el.closest('g[data-vectorized-text="1"]')) {
+                            return;
+                        }
+
                         // Remove existing listeners to avoid duplicates
                         const newEl = el.cloneNode(true);
                         el.parentNode.replaceChild(newEl, el);
@@ -2912,6 +3388,15 @@
                             e.stopPropagation();
                             this.selectElement(newEl);
                         });
+
+                        // Double-click text to open full text editor instantly.
+                        if (newEl.tagName?.toLowerCase() === 'text') {
+                            newEl.addEventListener('dblclick', (e) => {
+                                e.stopPropagation();
+                                this.selectElement(newEl);
+                                this.openTextEditorForSelected();
+                            });
+                        }
                         
                         // Make element draggable
                         this.makeElementDraggable(newEl);
@@ -3017,8 +3502,84 @@
                     return element.getAttribute('fill') || element.getAttribute('stroke') || element.style.fill || element.style.stroke || '#d1d5db';
                 },
 
+                getSelectedTextElement() {
+                    if (!this.selectedElements.length) return null;
+                    const el = this.selectedElements[this.selectedElements.length - 1];
+                    return el?.tagName?.toLowerCase() === 'text' ? el : null;
+                },
+
+                hasSelectedTextElement() {
+                    return this.getSelectedTextElement() !== null;
+                },
+
+                syncTextEditorFromSelection() {
+                    const el = this.getSelectedTextElement();
+                    if (!el) {
+                        this.selectedTextContent = '';
+                        return;
+                    }
+
+                    const fontFamily = el.getAttribute('font-family') || el.style.fontFamily || this.editorFontFamily;
+                    const fontSizeRaw = el.getAttribute('font-size') || el.style.fontSize || this.editorFontSize;
+                    const fontWeightRaw = String(el.getAttribute('font-weight') || el.style.fontWeight || '').toLowerCase();
+                    const fontStyleRaw = String(el.getAttribute('font-style') || el.style.fontStyle || '').toLowerCase();
+
+                    const parsedSize = parseFloat(fontSizeRaw);
+                    const parsedWeight = parseInt(fontWeightRaw, 10);
+
+                    this.selectedTextContent = el.textContent || '';
+                    this.selectedTextFontFamily = fontFamily;
+                    this.selectedTextFontSize = Number.isFinite(parsedSize) ? parsedSize : 48;
+                    this.selectedTextBold = fontWeightRaw === 'bold' || (!Number.isNaN(parsedWeight) && parsedWeight >= 600);
+                    this.selectedTextItalic = fontStyleRaw === 'italic' || fontStyleRaw === 'oblique';
+                },
+
+                applySelectedTextChanges() {
+                    const el = this.getSelectedTextElement();
+                    if (!el) return;
+
+                    const safeSize = Math.min(300, Math.max(8, parseFloat(this.selectedTextFontSize) || 48));
+                    const nextText = String(this.selectedTextContent ?? '');
+
+                    el.textContent = nextText;
+                    el.setAttribute('font-family', this.selectedTextFontFamily || 'Arial');
+                    el.setAttribute('font-size', String(safeSize));
+                    el.setAttribute('font-weight', this.selectedTextBold ? '700' : '400');
+                    el.setAttribute('font-style', this.selectedTextItalic ? 'italic' : 'normal');
+                    el.setAttribute('data-layer-name', 'Text: ' + (nextText || 'Untitled').substring(0, 20));
+
+                    this.updateLayers();
+                    this.updateHoverMenuPosition();
+                },
+
+                toggleSelectedTextBold() {
+                    this.selectedTextBold = !this.selectedTextBold;
+                    this.applySelectedTextChanges();
+                },
+
+                toggleSelectedTextItalic() {
+                    this.selectedTextItalic = !this.selectedTextItalic;
+                    this.applySelectedTextChanges();
+                },
+
                 hideHoverMenu() {
                     this.hoverMenu.visible = false;
+                },
+
+                getElementScreenBounds(element) {
+                    if (!element || typeof element.getBoundingClientRect !== 'function') return null;
+                    const rect = element.getBoundingClientRect();
+                    if (!Number.isFinite(rect.left) || !Number.isFinite(rect.top) || rect.width <= 0 || rect.height <= 0) {
+                        return null;
+                    }
+                    return {
+                        left: rect.left,
+                        top: rect.top,
+                        right: rect.right,
+                        bottom: rect.bottom,
+                        width: rect.width,
+                        height: rect.height,
+                    };
                 },
 
                 updateHoverMenuPosition() {
@@ -3033,34 +3594,49 @@
                         return;
                     }
 
-                    let minX = Number.POSITIVE_INFINITY;
-                    let minY = Number.POSITIVE_INFINITY;
-                    let maxX = Number.NEGATIVE_INFINITY;
-                    let maxY = Number.NEGATIVE_INFINITY;
-                    let found = false;
+                    // In edit mode, anchor to the exact selected element.
+                    // Outside edit mode, anchor to the union of selected elements.
+                    let anchorLeft;
+                    let anchorTop;
+                    let anchorRight;
 
-                    this.selectedElements.forEach((el) => {
-                        const b = this.getSelectionBounds(el);
-                        if (!b) return;
-                        minX = Math.min(minX, b.x);
-                        minY = Math.min(minY, b.y);
-                        maxX = Math.max(maxX, b.x + b.width);
-                        maxY = Math.max(maxY, b.y + b.height);
-                        found = true;
-                    });
+                    if (this.editMode && this.selectedElements.length > 0) {
+                        const anchorEl = this.selectedElements[this.selectedElements.length - 1];
+                        const bounds = this.getElementScreenBounds(anchorEl);
+                        if (!bounds) {
+                            this.hideHoverMenu();
+                            return;
+                        }
+                        anchorLeft = bounds.left;
+                        anchorTop = bounds.top;
+                        anchorRight = bounds.right;
+                    } else {
+                        let minLeft = Number.POSITIVE_INFINITY;
+                        let minTop = Number.POSITIVE_INFINITY;
+                        let maxRight = Number.NEGATIVE_INFINITY;
+                        let found = false;
 
-                    if (!found) {
-                        this.hideHoverMenu();
-                        return;
+                        this.selectedElements.forEach((el) => {
+                            const bounds = this.getElementScreenBounds(el);
+                            if (!bounds) return;
+                            minLeft = Math.min(minLeft, bounds.left);
+                            minTop = Math.min(minTop, bounds.top);
+                            maxRight = Math.max(maxRight, bounds.right);
+                            found = true;
+                        });
+
+                        if (!found) {
+                            this.hideHoverMenu();
+                            return;
+                        }
+
+                        anchorLeft = minLeft;
+                        anchorTop = minTop;
+                        anchorRight = maxRight;
                     }
 
-                    const pt = this.editorSvgElement.createSVGPoint();
-                    pt.x = minX + ((maxX - minX) / 2);
-                    pt.y = minY;
-                    const screenPt = pt.matrixTransform(this.editorSvgElement.getScreenCTM());
-
-                    this.hoverMenu.x = screenPt.x - surfaceRect.left;
-                    this.hoverMenu.y = screenPt.y - surfaceRect.top - 50;
+                    this.hoverMenu.x = ((anchorLeft + anchorRight) / 2) - surfaceRect.left;
+                    this.hoverMenu.y = anchorTop - surfaceRect.top - 14;
                     this.hoverMenu.visible = true;
                 },
 
@@ -3080,6 +3656,7 @@
                     this.editingGroup = null;
                     this.clearInlineOutlines();
                     this.hideHoverMenu();
+                    this.syncTextEditorFromSelection();
                 },
 
                 clearInlineOutlines() {
@@ -3104,6 +3681,7 @@
                         this.selectedElementColor = this.getSelectedElementColor(this.selectedElements[0]);
                         this.updateHoverMenuPosition();
                     }
+                    this.syncTextEditorFromSelection();
                 },
 
                 selectMoveModeGroup(group) {
@@ -3138,7 +3716,11 @@
                         const fill = firstEl.getAttribute('fill') || firstEl.style.fill;
                         const stroke = firstEl.getAttribute('stroke') || firstEl.style.stroke;
                         this.selectedElementColor = fill && fill !== 'none' ? fill : (stroke || '#000000');
+                        this.updateHoverMenuPosition();
+                    } else {
+                        this.hideHoverMenu();
                     }
+                    this.syncTextEditorFromSelection();
                 },
 
                 updateSelectedElementColor(newColor) {
@@ -3268,6 +3850,9 @@
                             if (rotateMatch) transformStr += ` ${rotateMatch[0]}`;
                             
                             element.setAttribute('transform', transformStr);
+                            if (this.selectedElements.includes(element)) {
+                                this.updateHoverMenuPosition();
+                            }
                             
                             startX = coords.x;
                             startY = coords.y;
@@ -3679,7 +4264,8 @@
                     const childElements = Array.from(group.children).filter(child => 
                         child.tagName === 'path' || child.tagName === 'circle' || 
                         child.tagName === 'rect' || child.tagName === 'ellipse' || 
-                        child.tagName === 'polygon' || child.tagName === 'g'
+                        child.tagName === 'polygon' || child.tagName === 'g' ||
+                        child.tagName === 'text'
                     );
                     
                     // Clear selection initially - user will click to select
@@ -3747,6 +4333,7 @@
                     const fill = element.getAttribute('fill') || element.style.fill;
                     const stroke = element.getAttribute('stroke') || element.style.stroke;
                     this.selectedElementColor = fill && fill !== 'none' ? fill : (stroke || '#000000');
+                    this.syncTextEditorFromSelection();
                     
                     // Show and position hover menu
                     this.hoverMenu.visible = true;
@@ -3859,6 +4446,91 @@
                     }
                 },
 
+                buildStarPoints(cx, cy, outerRadius, innerRadius, points = 5) {
+                    const pts = [];
+                    const step = Math.PI / points;
+                    let angle = -Math.PI / 2;
+
+                    for (let i = 0; i < points * 2; i++) {
+                        const r = i % 2 === 0 ? outerRadius : innerRadius;
+                        const x = cx + Math.cos(angle) * r;
+                        const y = cy + Math.sin(angle) * r;
+                        pts.push(`${x},${y}`);
+                        angle += step;
+                    }
+
+                    return pts.join(' ');
+                },
+
+                addShapeToSvg() {
+                    if (!this.editorSvgElement) return;
+
+                    const viewBox = this.editorSvgElement.getAttribute('viewBox')?.split(' ') || [0, 0, 512, 512];
+                    const width = parseFloat(viewBox[2]) || 512;
+                    const height = parseFloat(viewBox[3]) || 512;
+                    const centerX = width / 2;
+                    const centerY = height / 2;
+
+                    const size = Math.max(20, Math.min(400, parseFloat(this.editorShapeSize) || 120));
+                    const strokeWidth = Math.max(0, Math.min(20, parseFloat(this.editorShapeStrokeWidth) || 0));
+                    const fill = this.normalizeHexColor(this.editorShapeFill, '#38BDF8');
+                    const stroke = this.normalizeHexColor(this.editorShapeStroke, '#0F172A');
+
+                    const wrapper = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                    wrapper.setAttribute('id', `imported-${Date.now()}`);
+                    wrapper.setAttribute('data-layer-name', `${this.editorShapeType[0].toUpperCase()}${this.editorShapeType.slice(1)} Shape`);
+
+                    let shapeEl = null;
+                    const half = size / 2;
+
+                    if (this.editorShapeType === 'line') {
+                        shapeEl = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                        shapeEl.setAttribute('x1', centerX - half);
+                        shapeEl.setAttribute('y1', centerY);
+                        shapeEl.setAttribute('x2', centerX + half);
+                        shapeEl.setAttribute('y2', centerY);
+                        shapeEl.setAttribute('fill', 'none');
+                    } else if (this.editorShapeType === 'rectangle') {
+                        shapeEl = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                        shapeEl.setAttribute('x', centerX - half);
+                        shapeEl.setAttribute('y', centerY - half);
+                        shapeEl.setAttribute('width', size);
+                        shapeEl.setAttribute('height', size);
+                        shapeEl.setAttribute('fill', fill);
+                    } else if (this.editorShapeType === 'circle') {
+                        shapeEl = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                        shapeEl.setAttribute('cx', centerX);
+                        shapeEl.setAttribute('cy', centerY);
+                        shapeEl.setAttribute('r', half);
+                        shapeEl.setAttribute('fill', fill);
+                    } else if (this.editorShapeType === 'triangle') {
+                        shapeEl = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+                        const points = [
+                            `${centerX},${centerY - half}`,
+                            `${centerX - half},${centerY + half}`,
+                            `${centerX + half},${centerY + half}`,
+                        ].join(' ');
+                        shapeEl.setAttribute('points', points);
+                        shapeEl.setAttribute('fill', fill);
+                    } else if (this.editorShapeType === 'star') {
+                        shapeEl = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+                        shapeEl.setAttribute('points', this.buildStarPoints(centerX, centerY, half, half * 0.45, 5));
+                        shapeEl.setAttribute('fill', fill);
+                    }
+
+                    if (!shapeEl) return;
+
+                    shapeEl.setAttribute('stroke', stroke);
+                    shapeEl.setAttribute('stroke-width', String(strokeWidth));
+                    shapeEl.style.cursor = 'move';
+                    wrapper.appendChild(shapeEl);
+                    this.editorSvgElement.appendChild(wrapper);
+
+                    this.makeGroupDraggable(wrapper);
+                    this.selectMoveModeElements([wrapper]);
+                    this.updateLayers();
+                },
+
                 addTextToSvg() {
                     if (!this.editorText || !this.editorSvgElement) return;
                     
@@ -3873,16 +4545,28 @@
                     text.setAttribute('font-family', this.editorFontFamily);
                     text.setAttribute('font-size', this.editorFontSize);
                     text.setAttribute('fill', this.editorTextColor);
-                    text.setAttribute('font-weight', 'bold');
+                    text.setAttribute('font-weight', this.editorFontBold ? '700' : '400');
+                    text.setAttribute('font-style', this.editorFontItalic ? 'italic' : 'normal');
                     text.style.cursor = 'move';
                     text.textContent = this.editorText;
-                    text.setAttribute('data-layer-name', 'Text: ' + this.editorText.substring(0, 20));
-                    
-                    this.makeDraggable(text);
-                    this.editorSvgElement.appendChild(text);
+                    if (this.editorTextUseVector) {
+                        const wrapper = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                        wrapper.setAttribute('id', `imported-${Date.now()}`);
+                        wrapper.setAttribute('data-layer-name', 'Vector Text: ' + this.editorText.substring(0, 20));
+                        wrapper.setAttribute('data-vectorized-text', '1');
+                        wrapper.appendChild(text);
+                        this.editorSvgElement.appendChild(wrapper);
+                        this.makeGroupDraggable(wrapper);
+                        this.selectMoveModeElements([wrapper]);
+                    } else {
+                        text.setAttribute('data-layer-name', 'Text: ' + this.editorText.substring(0, 20));
+                        this.makeDraggable(text);
+                        this.editorSvgElement.appendChild(text);
+                    }
                     this.updateLayers();
                     
                     this.editorText = '';
+                    this.editorTextUseVector = false;
                 },
 
                 updateLayers() {
@@ -3970,6 +4654,7 @@
                         }
                         layer.element.remove();
                         this.updateLayers();
+                        this.syncTextEditorFromSelection();
                     }
                 },
 
@@ -4149,6 +4834,7 @@
                     
                     // Update layers list
                     this.updateLayers();
+                    this.syncTextEditorFromSelection();
                 },
 
                 resetEditor() {
@@ -4294,15 +4980,16 @@
                             canvas.appendChild(this.editorSvgElement);
                             console.log('SVG appended to canvas');
 
-                            // Add white background to show page boundaries (unless transparent background was selected)
-                            if (this.backgroundColor !== 'transparent') {
+                            // Add workspace background when WHITE or a custom color is selected.
+                            const editorBgFill = this.getEditorBackgroundFill();
+                            if (editorBgFill) {
                                 const viewBox = this.editorSvgElement.getAttribute('viewBox').split(' ');
                                 const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
                                 bgRect.setAttribute('x', viewBox[0]);
                                 bgRect.setAttribute('y', viewBox[1]);
                                 bgRect.setAttribute('width', viewBox[2]);
                                 bgRect.setAttribute('height', viewBox[3]);
-                                bgRect.setAttribute('fill', 'white');
+                                bgRect.setAttribute('fill', editorBgFill);
                                 bgRect.setAttribute('data-editor-bg', 'true');
                                 bgRect.style.pointerEvents = 'none';
                                 this.editorSvgElement.insertBefore(bgRect, this.editorSvgElement.firstChild);
@@ -4904,6 +5591,9 @@
                     };
                     
                     const onStart = (e) => {
+                        // Disable whole-vector dragging while in edit mode.
+                        if (this.editMode) return;
+
                         // Only start drag if clicking within the group (includes all child elements)
                         const clickedElement = e.target;
                         

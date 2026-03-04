@@ -1401,7 +1401,7 @@ class DomainSearchController extends Controller
                 'count' => 'nullable|integer|min:1|max:4',
                 'pro' => 'nullable|boolean',
                 'pro_size' => 'nullable|integer|in:512,1024,1536',
-                'style' => 'nullable|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,greetingcard,photorealistic,minimalist,minimal_geometric,abstract,monoline,negative_space,tech_gradient',
+                'style' => 'nullable|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,greetingcard,photorealistic,minimalist,minimal_geometric,abstract,monoline,negative_space,tech_gradient,modern_sans,bold_geometric,elegant_serif,script_signature,tech_mono,minimal_light',
                 'bg_color' => 'nullable|string|max:20',
                 'image_model' => 'nullable|string|in:flux,dalle,recraft',
                 'output_format' => 'nullable|string|in:raster,vector',
@@ -1474,7 +1474,7 @@ class DomainSearchController extends Controller
 
             $request->validate([
                 'domain' => 'nullable|string|max:100',
-                'style' => 'required|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,minimalist,greetingcard,photorealistic,minimal_geometric,abstract,monoline,negative_space,tech_gradient' . (config('services.logo_custom_prompt_enabled') ? ',custom' : ''),
+                'style' => 'required|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,minimalist,greetingcard,photorealistic,minimal_geometric,abstract,monoline,negative_space,tech_gradient,modern_sans,bold_geometric,elegant_serif,script_signature,tech_mono,minimal_light' . (config('services.logo_custom_prompt_enabled') ? ',custom' : ''),
                 'count' => 'nullable|integer|min:1|max:4',
                 'total_count' => 'nullable|integer|min:1|max:4',
                 'batch_index' => 'nullable|integer|min:0|max:3',
