@@ -237,6 +237,42 @@
                 color: var(--danger);
                 font-weight: 600;
             }
+            .limit-modal {
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, 0.55);
+                display: none;
+                align-items: center;
+                justify-content: center;
+                z-index: 100000;
+                padding: 20px;
+            }
+            .limit-modal-card {
+                width: min(520px, 95vw);
+                background: var(--surface-bg);
+                border: 1px solid var(--surface-border);
+                border-radius: 14px;
+                padding: 22px;
+                box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+            }
+            .limit-modal-title {
+                margin: 0 0 10px;
+                font-size: 22px;
+                line-height: 1.2;
+            }
+            .limit-modal-copy {
+                margin: 0 0 18px;
+                color: var(--muted);
+                line-height: 1.5;
+            }
+            .limit-modal-actions {
+                display: flex;
+                gap: 10px;
+                flex-wrap: wrap;
+            }
+            .limit-modal-actions a {
+                text-decoration: none;
+            }
 
             /* ── Template cards ─────────────────────────── */
 
@@ -371,6 +407,7 @@
                             'invoice'    => ['label' => 'Invoice',    'icon' => '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z"/>'],
                             'newsletter' => ['label' => 'Newsletter', 'icon' => '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"/>'],
                             'business'   => ['label' => 'Business',   'icon' => '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>'],
+                            'realestate' => ['label' => 'Real Estate', 'icon' => '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>'],
                         ];
                     @endphp
                     @foreach ($categories as $catKey => $cat)
@@ -381,7 +418,7 @@
                             style="background:none; border:none; color:{{ $loop->first ? 'var(--accent)' : 'var(--muted)' }}; font:inherit; font-size:14px; font-weight:600; padding:10px 18px; cursor:pointer; border-bottom:2px solid {{ $loop->first ? 'var(--accent)' : 'transparent' }}; display:flex; align-items:center; gap:6px; transition:all .2s;">
                             <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">{!! $cat['icon'] !!}</svg>
                             {{ $cat['label'] }}
-                            <span style="background:{{ $loop->first ? 'var(--tab-count-active-bg)' : 'var(--tab-count-inactive-bg)' }}; font-size:11px; padding:1px 7px; border-radius:10px; font-weight:700;">{{ $guidedTemplatesByType[$catKey]->count() ?? 0 }}</span>
+                            <span style="background:{{ $loop->first ? 'var(--tab-count-active-bg)' : 'var(--tab-count-inactive-bg)' }}; font-size:11px; padding:1px 7px; border-radius:10px; font-weight:700;">{{ ($guidedTemplatesByType[$catKey] ?? collect())->count() }}</span>
                         </button>
                     @endforeach
                 </div>
@@ -430,6 +467,26 @@
             </div>
 
             <script>
+                function shouldShowUploadLimitModal(message) {
+                    if (!message) return false;
+                    const text = String(message).toLowerCase();
+                    return text.includes('monthly pdf upload limit reached') || text.includes('out of pdf uploads');
+                }
+
+                function showUploadLimitModal() {
+                    const modal = document.getElementById('pdf-upload-limit-modal');
+                    if (!modal) return;
+                    modal.style.display = 'flex';
+                    modal.setAttribute('aria-hidden', 'false');
+                }
+
+                function hideUploadLimitModal() {
+                    const modal = document.getElementById('pdf-upload-limit-modal');
+                    if (!modal) return;
+                    modal.style.display = 'none';
+                    modal.setAttribute('aria-hidden', 'true');
+                }
+
                 function switchTemplateCategory(category) {
                     // Hide all grids
                     document.querySelectorAll('.tpl-category-grid').forEach(g => g.style.display = 'none');
@@ -635,6 +692,9 @@
                                 const body = JSON.parse(xhr.responseText);
                                 message = body.errors?.document?.[0] || body.message || message;
                             } catch (_) {}
+                            if (shouldShowUploadLimitModal(message)) {
+                                showUploadLimitModal();
+                            }
                             showError(message);
                         });
 
@@ -652,6 +712,24 @@
                 document.addEventListener('DOMContentLoaded', () => {
                     updateBulkState();
                     initUploadDropzone();
+
+                    const closeBtn = document.getElementById('pdf-upload-limit-close');
+                    const modal = document.getElementById('pdf-upload-limit-modal');
+                    if (closeBtn) {
+                        closeBtn.addEventListener('click', hideUploadLimitModal);
+                    }
+                    if (modal) {
+                        modal.addEventListener('click', (event) => {
+                            if (event.target === modal) {
+                                hideUploadLimitModal();
+                            }
+                        });
+                    }
+
+                    const serverError = @json($errors->first());
+                    if (shouldShowUploadLimitModal(serverError)) {
+                        showUploadLimitModal();
+                    }
                 });
             </script>
 
@@ -757,6 +835,17 @@
                 </div>
             </div>
         </main>
+
+        <div id="pdf-upload-limit-modal" class="limit-modal" aria-hidden="true">
+            <div class="limit-modal-card">
+                <h3 class="limit-modal-title">Out of PDF uploads</h3>
+                <p class="limit-modal-copy">You are out of PDF uploads for this month. Please look at the subscription plans to continue.</p>
+                <div class="limit-modal-actions">
+                    <a href="/portal/subscription"><button type="button">View Subscription Plans</button></a>
+                    <button id="pdf-upload-limit-close" type="button" class="btn-secondary">Close</button>
+                </div>
+            </div>
+        </div>
 
 
     </body>

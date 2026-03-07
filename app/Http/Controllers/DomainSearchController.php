@@ -119,6 +119,7 @@ class DomainSearchController extends Controller
             'remainingAiRequests' => $remainingAiRequests,
             'remainingFileUploads' => $remainingFileUploads,
             'savedDomains' => $savedDomains,
+            'canRefreshSavedDomains' => $currentUser && !$this->isAdmin($currentUser),
         ]);
     }
 
@@ -149,8 +150,14 @@ class DomainSearchController extends Controller
         }
 
         $tlds = $request->input('tlds', $this->getDefaultSelectedTlds());
+        $domainRequest = $this->startDomainRequestLog(
+            $request,
+            $this->buildDomainLogPrompt($names, 'check'),
+            $tlds
+        );
 
         $check = $this->checkDomainAvailability($names, $tlds);
+        $this->completeDomainRequestLog($domainRequest, $names, $tlds, $check['results'] ?? [], $check['error'] ?? null);
 
         if ($check['error']) {
             return response()->json($check, 500);
@@ -766,10 +773,16 @@ class DomainSearchController extends Controller
             }, $request->input('names'))
         )));
         $tlds = $request->input('tlds');
+        $domainRequest = $this->startDomainRequestLog(
+            $request,
+            $this->buildDomainLogPrompt($names, 'check-start'),
+            $tlds
+        );
 
         // Namecheap fast-path: single batched HTTP call, return results immediately
         if (config('services.domain_lookup') === 'namecheap') {
             $check = app(NamecheapClient::class)->checkAvailability($names, $tlds);
+            $this->completeDomainRequestLog($domainRequest, $names, $tlds, $check['results'] ?? [], $check['error'] ?? null);
 
             // Return in the same format as checkPoll so the frontend can handle both
             return response()->json([
@@ -845,6 +858,9 @@ class DomainSearchController extends Controller
             'started_at' => now()->toISOString(),
             'total' => count($names) * count($tlds),
             'user_id' => $userId,
+            'names' => $names,
+            'tlds' => $tlds,
+            'ai_domain_request_id' => $domainRequest?->id,
         ], now()->addMinutes(30));
 
         // Track this job under the user's active list
@@ -923,6 +939,10 @@ class DomainSearchController extends Controller
             }
         }
 
+        if ($done) {
+            $this->completeWhoisJobDomainRequestLog($job, $outputFile, $error);
+        }
+
         return response()->json([
             'results' => $results,
             'done' => $done,
@@ -971,6 +991,96 @@ class DomainSearchController extends Controller
         }
 
         return $results;
+    }
+
+    private function startDomainRequestLog(Request $request, string $prompt, array $tlds): ?AiDomainRequest
+    {
+        $user = $request->user();
+        if (!$user || $this->isAdmin($user)) {
+            return null;
+        }
+
+        $domainRequest = AiDomainRequest::create([
+            'user_id' => $user->id,
+            'prompt' => $prompt,
+        ]);
+
+        $domainRequest->status = 'processing';
+        $domainRequest->tlds = array_values(array_unique(array_map(
+            fn ($tld) => ltrim(strtolower(trim((string) $tld)), '.'),
+            $tlds
+        )));
+        $domainRequest->model = config('services.domain_lookup') === 'namecheap' ? 'namecheap' : 'whois';
+        $domainRequest->save();
+
+        return $domainRequest;
+    }
+
+    private function completeDomainRequestLog(?AiDomainRequest $domainRequest, array $names, array $tlds, array $results, ?string $error): void
+    {
+        if (!$domainRequest) {
+            return;
+        }
+
+        $payload = [
+            'names' => array_values($names),
+            'tlds' => array_values($tlds),
+            'results' => array_values($results),
+            'error' => $error,
+        ];
+
+        $domainRequest->status = $error ? 'failed' : 'completed';
+        $domainRequest->response = $payload;
+        $domainRequest->result_data = json_encode($payload);
+        $domainRequest->error_message = $error;
+        $domainRequest->save();
+    }
+
+    private function completeWhoisJobDomainRequestLog(array $job, string $outputFile, ?string $error): void
+    {
+        $requestId = (int) ($job['ai_domain_request_id'] ?? 0);
+        if ($requestId <= 0) {
+            return;
+        }
+
+        $domainRequest = AiDomainRequest::find($requestId);
+        if (!$domainRequest) {
+            return;
+        }
+
+        if (in_array((string) $domainRequest->status, ['completed', 'failed'], true) && $domainRequest->result_data) {
+            return;
+        }
+
+        $results = [];
+        if (file_exists($outputFile)) {
+            $lines = file($outputFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
+            foreach ($lines as $line) {
+                $parsed = json_decode(trim((string) $line), true);
+                if (is_array($parsed) && isset($parsed['domain'])) {
+                    $results[] = $parsed;
+                }
+            }
+        }
+
+        $this->completeDomainRequestLog(
+            $domainRequest,
+            is_array($job['names'] ?? null) ? $job['names'] : [],
+            is_array($job['tlds'] ?? null) ? $job['tlds'] : [],
+            $results,
+            $error
+        );
+    }
+
+    private function buildDomainLogPrompt(array $names, string $mode): string
+    {
+        $names = array_values(array_filter(array_map(fn ($name) => strtolower(trim((string) $name)), $names)));
+        $preview = implode(', ', array_slice($names, 0, 20));
+        if (count($names) > 20) {
+            $preview .= ', ...';
+        }
+
+        return '[' . $mode . '] ' . $preview;
     }
 
     /**
@@ -1041,7 +1151,18 @@ class DomainSearchController extends Controller
             'user_id' => $user?->id,
         ], now()->addMinutes(30));
 
-        GenerateAiDomainsJob::dispatch($jobId, $prompt, $tlds, $promptModifier, $excluded, $user?->id);
+        $domainRequestId = null;
+        if ($user) {
+            $domainRequest = AiDomainRequest::create([
+                'user_id' => $user->id,
+                'prompt' => $prompt,
+            ]);
+            $domainRequest->tlds = $tlds;
+            $domainRequest->save();
+            $domainRequestId = (int) $domainRequest->id;
+        }
+
+        GenerateAiDomainsJob::dispatch($jobId, $prompt, $tlds, $promptModifier, $excluded, $user?->id, $domainRequestId);
 
         return response()->json([
             'job_id' => $jobId,
@@ -1121,6 +1242,83 @@ class DomainSearchController extends Controller
         return response()->json(['allowed' => true, 'remaining' => $remaining]);
     }
 
+    public function savedDomainsRefreshStatus(Request $request)
+    {
+        $user = $request->user();
+        if (!$user || $this->isAdmin($user)) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+
+        return response()->json($this->getSavedDomainsRefreshStatus($user));
+    }
+
+    public function refreshSavedDomains(Request $request)
+    {
+        $user = $request->user();
+        if (!$user || $this->isAdmin($user)) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+
+        $status = $this->getSavedDomainsRefreshStatus($user);
+        if (!($status['allowed'] ?? false)) {
+            return response()->json([
+                'error' => 'Refresh is on cooldown.',
+                'cooldown' => $status,
+            ], 429);
+        }
+
+        $domains = SavedDomain::query()
+            ->where('user_id', $user->id)
+            ->pluck('domain')
+            ->filter()
+            ->map(fn ($d) => strtolower(trim((string) $d)))
+            ->unique()
+            ->values()
+            ->all();
+
+        if (empty($domains)) {
+            return response()->json([
+                'error' => 'No favorited domains to refresh.',
+            ], 422);
+        }
+
+        try {
+            $results = app(NamecheapClient::class)->checkFqdns($domains);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error' => 'Namecheap refresh failed: ' . $e->getMessage(),
+            ], 500);
+        }
+
+        $rows = collect($results['results'] ?? [])
+            ->keyBy(fn ($item) => strtolower((string) ($item['domain'] ?? '')));
+
+        foreach ($domains as $domain) {
+            $row = $rows->get($domain);
+            if (!$row) {
+                continue;
+            }
+
+            SavedDomain::query()
+                ->where('user_id', $user->id)
+                ->whereRaw('LOWER(domain) = ?', [$domain])
+                ->update([
+                    'is_available' => (bool) ($row['available'] ?? false),
+                    'is_premium' => (bool) ($row['premium'] ?? false),
+                    'premium_price' => isset($row['premium_price']) ? $row['premium_price'] : null,
+                    'checked_at' => now(),
+                ]);
+        }
+
+        $cooldown = $this->setSavedDomainsRefreshCooldown($user);
+
+        return response()->json([
+            'ok' => true,
+            'refreshed' => count($domains),
+            'cooldown' => $cooldown,
+        ]);
+    }
+
     private function getAvailableTlds(): array
     {
         return Cache::remember('domain-search:available-tlds', now()->addMinutes(30), function () {
@@ -1146,6 +1344,61 @@ class DomainSearchController extends Controller
                 return self::DEFAULT_TLDS;
             }
         });
+    }
+
+    private function savedDomainsRefreshCooldownKey(int $userId): string
+    {
+        return 'saved-domains:refresh:user:' . $userId;
+    }
+
+    private function getSavedDomainsRefreshStatus(object $user): array
+    {
+        $nextAllowedAt = Cache::get($this->savedDomainsRefreshCooldownKey((int) $user->id));
+        if (!$nextAllowedAt) {
+            return [
+                'allowed' => true,
+                'cooldown_seconds' => 0,
+                'next_available_at' => null,
+            ];
+        }
+
+        try {
+            $next = \Illuminate\Support\Carbon::parse((string) $nextAllowedAt);
+        } catch (\Throwable $e) {
+            Cache::forget($this->savedDomainsRefreshCooldownKey((int) $user->id));
+            return [
+                'allowed' => true,
+                'cooldown_seconds' => 0,
+                'next_available_at' => null,
+            ];
+        }
+
+        if (now()->gte($next)) {
+            Cache::forget($this->savedDomainsRefreshCooldownKey((int) $user->id));
+            return [
+                'allowed' => true,
+                'cooldown_seconds' => 0,
+                'next_available_at' => null,
+            ];
+        }
+
+        return [
+            'allowed' => false,
+            'cooldown_seconds' => now()->diffInSeconds($next),
+            'next_available_at' => $next->toISOString(),
+        ];
+    }
+
+    private function setSavedDomainsRefreshCooldown(object $user): array
+    {
+        $next = now()->addHour();
+        Cache::put($this->savedDomainsRefreshCooldownKey((int) $user->id), $next->toISOString(), $next);
+
+        return [
+            'allowed' => false,
+            'cooldown_seconds' => 3600,
+            'next_available_at' => $next->toISOString(),
+        ];
     }
 
     private function getTldOptions(): array

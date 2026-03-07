@@ -793,19 +793,40 @@ def rebuild(clean_pdf_path: str, extraction_data: List[Dict[str, Any]], edits: L
 
 
 def main():
-    # Support both old (5 args) and new (6 args) syntax
-    # Old: <clean_pdf> <extraction> <edits> <output>
-    # New: <clean_pdf> <extraction> <edits> <output> <original_pdf> <edited_pages>
-    if len(sys.argv) not in [5, 6, 7]:
-        print("Usage: rebuild_pdf_from_overlay_extraction.py <clean_pdf_path> <extraction_json_or_@file> <edits_json_or_@file> <output_pdf_path> [original_pdf_path] [edited_pages_json_or_@file]")
-        sys.exit(1)
+    argv = sys.argv[1:]
 
-    clean_pdf_path = sys.argv[1]
-    extraction_arg = sys.argv[2]
-    edits_arg = sys.argv[3]
-    output_pdf_path = sys.argv[4]
-    original_pdf_path = sys.argv[5] if len(sys.argv) >= 6 else None
-    edited_pages_arg = sys.argv[6] if len(sys.argv) >= 7 else None
+    # Consume optional mode flag (--fullpage or --surgical) passed by the
+    # Laravel controller.  Both modes use the same positional arg layout:
+    #   clean_pdf  extraction  edits  output  edited_pages  [original_pdf]
+    # The legacy (no-flag) layout swaps original_pdf and edited_pages:
+    #   clean_pdf  extraction  edits  output  [original_pdf  [edited_pages]]
+    mode_flag = None
+    if argv and argv[0] in ('--surgical', '--fullpage'):
+        mode_flag = argv[0]
+        argv = argv[1:]
+
+    if mode_flag in ('--surgical', '--fullpage'):
+        # Controller arg order: clean_pdf extraction edits output edited_pages [original_pdf]
+        if len(argv) not in [5, 6]:
+            print("Usage: rebuild_pdf_from_overlay_extraction.py [--surgical|--fullpage] <clean_pdf_path> <extraction> <edits> <output> <edited_pages> [original_pdf_path]")
+            sys.exit(1)
+        clean_pdf_path = argv[0]
+        extraction_arg = argv[1]
+        edits_arg = argv[2]
+        output_pdf_path = argv[3]
+        edited_pages_arg = argv[4]
+        original_pdf_path = argv[5] if len(argv) >= 6 else None
+    else:
+        # Legacy: clean_pdf extraction edits output [original_pdf [edited_pages]]
+        if len(argv) not in [4, 5, 6]:
+            print("Usage: rebuild_pdf_from_overlay_extraction.py <clean_pdf_path> <extraction_json_or_@file> <edits_json_or_@file> <output_pdf_path> [original_pdf_path] [edited_pages_json_or_@file]")
+            sys.exit(1)
+        clean_pdf_path = argv[0]
+        extraction_arg = argv[1]
+        edits_arg = argv[2]
+        output_pdf_path = argv[3]
+        original_pdf_path = argv[4] if len(argv) >= 5 else None
+        edited_pages_arg = argv[5] if len(argv) >= 6 else None
 
     if not os.path.exists(clean_pdf_path):
         print(f"ERROR: clean PDF not found: {clean_pdf_path}", file=sys.stderr)

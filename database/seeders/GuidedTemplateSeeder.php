@@ -10,6 +10,29 @@ class GuidedTemplateSeeder extends Seeder
     public function run(): void
     {
         GuidedTemplate::updateOrCreate(
+            ['slug' => 'security_deposit_return'],
+            [
+                'name'        => 'Security Deposit Return',
+                'description' => 'Itemized deposit refund statement with deductions table',
+                'type'        => 'realestate',
+                'sort_order'  => 1,
+                'is_active'   => true,
+                'defaults'    => [
+                    'landlord_name'    => 'Landlord Name',
+                    'landlord_address' => "1234 Landlord Ave.\nCity, ST 12345",
+                    'tenant_name'      => 'Tenant Name',
+                    'tenant_address'   => "456 Tenant St., Apt 2",
+                    'city_prov_postal' => 'City, Province  A1B 2C3',
+                    'tenancy_began'    => '',
+                    'keys_turned_in'   => '',
+                    'total_deposits'   => '0.00',
+                ],
+                'preview_html' => '<svg viewBox="0 0 300 210" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="300" height="210" fill="#f8f9fa"/><rect y="0" width="300" height="40" fill="#1e3a5f"/><text x="150" y="16" font-size="8" fill="white" font-weight="bold" font-family="sans-serif" text-anchor="middle">SECURITY DEPOSIT</text><text x="150" y="27" font-size="7" fill="rgba(255,255,255,0.8)" font-family="sans-serif" text-anchor="middle">REFUND FORM</text><rect x="24" y="50" width="80" height="5" rx="1" fill="#aaa"/><rect x="24" y="60" width="60" height="4" rx="1" fill="#ccc"/><rect x="24" y="80" width="252" height="12" rx="2" fill="#1e3a5f"/><text x="30" y="89" font-size="5" fill="white" font-family="sans-serif">TYPE</text><text x="80" y="89" font-size="5" fill="white" font-family="sans-serif">DESCRIPTION</text><text x="240" y="89" font-size="5" fill="white" font-family="sans-serif">COST</text><rect x="24" y="94" width="252" height="8" fill="#f0f4f8"/><rect x="30" y="97" width="30" height="3" rx="1" fill="#888"/><rect x="80" y="97" width="80" height="3" rx="1" fill="#888"/><rect x="238" y="97" width="30" height="3" rx="1" fill="#888"/><rect x="24" y="104" width="252" height="8" fill="#fff"/><rect x="30" y="107" width="25" height="3" rx="1" fill="#bbb"/><rect x="80" y="107" width="65" height="3" rx="1" fill="#bbb"/><rect x="238" y="107" width="30" height="3" rx="1" fill="#bbb"/><rect x="160" y="128" width="116" height="1.5" fill="#1e3a5f"/><text x="164" y="140" font-size="6" fill="#1e3a5f" font-family="sans-serif">Total Deductions</text><text x="248" y="140" font-size="7" fill="#333" font-weight="bold" font-family="sans-serif">$0.00</text><text x="24" y="160" font-size="6" fill="#555" font-family="sans-serif">Amount Enclosed: $____________</text></svg>',
+            ]
+        );
+
+
+        GuidedTemplate::updateOrCreate(
             ['slug' => 'default'],
             [
                 'name'        => 'Clean Modern',
