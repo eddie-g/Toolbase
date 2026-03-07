@@ -1,3 +1,6 @@
+@php
+    $hasOriginalBackup = filled($document->original_backup_path) && \Illuminate\Support\Facades\Storage::exists($document->original_backup_path);
+@endphp
 <!DOCTYPE html>
 <html lang="en">
     <head>
@@ -3207,6 +3210,16 @@
                                     <span class="hidden sm:inline">View Original PDF</span>
                                     <span class="sm:hidden">Original</span>
                                 </button>
+                                <button
+                                    id="revert-original-pdf"
+                                    type="button"
+                                    class="px-4 py-2 rounded-lg text-sm font-medium transition border {{ $hasOriginalBackup ? 'bg-transparent border-amber-500/60 text-amber-200 hover:bg-amber-500/10' : 'bg-transparent border-gray-700 text-gray-500 cursor-not-allowed opacity-60' }}"
+                                    {{ $hasOriginalBackup ? '' : 'disabled' }}
+                                    title="{{ $hasOriginalBackup ? 'Restore the original uploaded PDF' : 'Original backup is not available for this document' }}"
+                                >
+                                    <span class="hidden sm:inline">Revert Original</span>
+                                    <span class="sm:hidden">Revert</span>
+                                </button>
                             </div>
                             <div class="flex gap-2 items-center">
                                 <button id="clear-btn" class="px-4 py-2 bg-transparent border border-gray-600 hover:bg-gray-700/50 rounded-lg text-sm font-medium transition hidden sm:block" type="button">Clear All</button>
@@ -5194,6 +5207,7 @@
             const extractionDataUrl = "{{ route('documents.getExtractionData', $document) }}";
             const processFitzUrl = "{{ route('documents.processFitz', $document) }}";
             const fitzExtractionDataUrl = "{{ route('documents.getFitzExtractionData', $document) }}";
+            const restoreOriginalUrl = "{{ route('documents.restoreOriginal', $document) }}";
             const addBlankPageUrl = "{{ route('documents.addBlankPage', $document) }}";
             const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
             let pdfVersion = Date.now();
@@ -5405,6 +5419,7 @@
             const signatureFont = document.getElementById('signature-font');
             const signatureText = document.getElementById('signature-text');
             const viewOriginalPdfBtn = document.getElementById('view-original-pdf');
+            const revertOriginalPdfBtn = document.getElementById('revert-original-pdf');
             const saveSpinner = document.getElementById('save-spinner');
             const saveSpinnerText = document.getElementById('save-spinner-text');
             const organizePagesBtn = document.getElementById('organize-pages-btn');
@@ -15128,6 +15143,74 @@
                 });
             }
 
+            if (revertOriginalPdfBtn) {
+                revertOriginalPdfBtn.addEventListener('click', async () => {
+                    if (revertOriginalPdfBtn.disabled) {
+                        return;
+                    }
+
+                    if (!confirm('Revert this document to the original PDF? Any later edits will be lost.')) {
+                        return;
+                    }
+
+                    revertOriginalPdfBtn.disabled = true;
+
+                    try {
+                        setSaveSpinner(true, 'Restoring original PDF...');
+
+                        const response = await fetch(restoreOriginalUrl, {
+                            method: 'POST',
+                            headers: {
+                                'X-CSRF-TOKEN': csrfToken,
+                                'Accept': 'application/json',
+                            },
+                        });
+
+                        const result = await response.json().catch(() => ({}));
+
+                        if (!response.ok || !result.success) {
+                            throw new Error(result.message || `Restore failed (${response.status})`);
+                        }
+
+                        annotations.length = 0;
+                        selectedAnnotation = null;
+                        clearOverlaySelection();
+                        overlayEditedFields.clear();
+                        overlayPersistedEdits.clear();
+                        overlayUndoStack = [];
+                        overlayRedoStack = [];
+                        overlayRendered = false;
+                        overlayEditorActive = false;
+                        overlayLoadToken++;
+                        cleanupOverlayPdf();
+                        viewer.classList.remove('overlay-view-mode');
+                        viewer.classList.remove('overlay-hidden');
+                        basePdfUrl = pdfUrl;
+
+                        if (modeOverlay) modeOverlay.checked = false;
+                        if (modeOverlayToggle) modeOverlayToggle.checked = false;
+
+                        persistAnnotations();
+                        updateAnnotationsList();
+                        updateOverlayUiState();
+
+                        try {
+                            sessionStorage.removeItem(overlayEditsStorageKey);
+                        } catch (storageError) {
+                            console.warn('Failed to clear overlay session storage after restore', storageError);
+                        }
+
+                        setStatus(result.message || 'Original PDF restored.', 'ok');
+                        setTimeout(() => { window.location.reload(); }, 250);
+                    } catch (error) {
+                        console.error('Restore original error:', error);
+                        setStatus('Restore failed: ' + error.message, 'err');
+                        revertOriginalPdfBtn.disabled = false;
+                        setSaveSpinner(false);
+                    }
+                });
+            }
+
             const fontMatchBtn = document.getElementById('font-match-btn');
             if (fontMatchBtn) {
                 fontMatchBtn.addEventListener('click', async () => {
@@ -16704,11 +16787,7 @@
 
                     sortedWords.forEach((word) => {
                         const matchIndex = dedupedWords.findIndex((kept) => {
-                            const sameLine = (
-                                kept.line_num != null &&
-                                word.line_num != null &&
-                                String(kept.line_num) === String(word.line_num)
-                            ) || Math.abs((Number(kept.top) || 0) - (Number(word.top) || 0)) <= WORD_POS_EPS;
+                            const sameLine = Math.abs((Number(kept.top) || 0) - (Number(word.top) || 0)) <= WORD_POS_EPS;
                             if (!sameLine) return false;
                             if (Math.abs((Number(kept.left) || 0) - (Number(word.left) || 0)) > WORD_POS_EPS) return false;
 
@@ -16774,8 +16853,20 @@
                         .split(/\s+/)
                         .filter((tok) => /[A-Za-z]/.test(tok))
                         .length;
+                    const compactBlankToken = sourceUnderscoreRuns >= 1 &&
+                        sourceAlphaTokens <= 1 &&
+                        /^[^A-Za-z]*_{3,}[^A-Za-z]*$/.test(sourceText);
                     const isOptionStyleUnderscoreLine = sourceUnderscoreRuns >= 2 && sourceAlphaTokens >= 3;
                     const isLabelUnderlineToken = sourceUnderscoreRuns >= 1 && sourceText.includes(':') && sourceAlphaTokens >= 2;
+                    if (
+                        sourceText !== renderedText &&
+                        compactBlankToken
+                    ) {
+                        // Keep textual underscore blanks for compact amount/value fields
+                        // like "$_______" where the extractor suppresses the run because
+                        // a drawn line exists in the source PDF.
+                        return sourceText;
+                    }
                     if (isLabelUnderlineToken && !isOptionStyleUnderscoreLine) {
                         // Preserve textual underscores for fill-in label rows
                         // (e.g. "Number of children ...: _____") so the line remains visible.
@@ -16833,14 +16924,15 @@
                     if (compact.includes('_')) return true;
                     return !isIgnorableOverlayToken(compact);
                 };
-                const normalizeStableFlowText = (value) => {
+                const normalizeStableFlowText = (value, options = {}) => {
+                    const collapseRepeatedNonEmptyLines = options.collapseRepeatedNonEmptyLines === true;
                     const lines = sanitizeOverlayText(String(value || ''))
                         .split('\n')
                         .map((l) => l.replace(/[ \t]+$/g, ''));
                     const out = [];
                     lines.forEach((line) => {
                         if (!line && out.length && !out[out.length - 1]) return;
-                        if (out.length && out[out.length - 1] === line) return;
+                        if (collapseRepeatedNonEmptyLines && line && out.length && out[out.length - 1] === line) return;
                         out.push(line);
                     });
                     return out.join('\n').replace(/\n+$/g, '');
@@ -17532,6 +17624,170 @@
                     return outLines.join('\n').replace(/\n+$/g, '');
                 };
 
+                const getPrimaryCssFontFamily = (fontFamilyValue) => {
+                    const raw = String(fontFamilyValue || '').trim();
+                    if (!raw) return '';
+                    const first = raw.split(',')[0] || '';
+                    return first.replace(/^['"]|['"]$/g, '').trim();
+                };
+
+                const getFallbackCssFontFamily = (fontFamilyValue, fallbackCssFamily) => {
+                    const raw = String(fontFamilyValue || '').trim();
+                    if (!raw) return fallbackCssFamily || 'sans-serif';
+                    const parts = raw.split(',').map((part) => part.trim()).filter(Boolean);
+                    if (parts.length > 1) {
+                        return parts.slice(1).join(', ');
+                    }
+                    return fallbackCssFamily || 'sans-serif';
+                };
+
+                const isExactEditableFontAvailable = (fontFamilyValue, fontWeight, fontStyle, sampleText) => {
+                    if (!document.fonts || typeof document.fonts.check !== 'function') return true;
+                    const primaryFamily = getPrimaryCssFontFamily(fontFamilyValue);
+                    if (!primaryFamily) return true;
+                    const style = fontStyle || 'normal';
+                    const weight = fontWeight || '400';
+                    const sample = sanitizeOverlayText(sampleText || 'Hamburgefonstiv');
+                    try {
+                        return document.fonts.check(`${style} ${weight} 16px "${primaryFamily}"`, sample || 'Hamburgefonstiv');
+                    } catch (err) {
+                        return true;
+                    }
+                };
+
+                const getEditableFallbackCssFamily = (field) => {
+                    if (field?.dataset?.font) {
+                        return getCssFontFamily(field.dataset.font);
+                    }
+                    const blockWords = Array.isArray(field?._blockWords) ? field._blockWords : [];
+                    if (blockWords.length > 0) {
+                        const styleWeights = new Map();
+                        blockWords.forEach((word) => {
+                            const family = getCssFontFamily(word.font);
+                            const textWeight = Math.max(
+                                1,
+                                sanitizeOverlayText(String(word.render_text ?? word.text ?? '')).replace(/\s+/g, '').length
+                            );
+                            styleWeights.set(family, (styleWeights.get(family) || 0) + textWeight);
+                        });
+                        let bestFamily = '';
+                        let bestScore = -1;
+                        styleWeights.forEach((score, family) => {
+                            if (score > bestScore) {
+                                bestScore = score;
+                                bestFamily = family;
+                            }
+                        });
+                        if (bestFamily) return bestFamily;
+                    }
+                    return field?.style?.fontFamily || 'sans-serif';
+                };
+
+                const fieldHasMultipleExtractedStyles = (field) => {
+                    const blockWords = Array.isArray(field?._blockWords) ? field._blockWords : [];
+                    if (blockWords.length < 2) return false;
+                    const styleKeys = new Set();
+                    blockWords.forEach((word) => {
+                        styleKeys.add(JSON.stringify({
+                            font: normalizePdfFontName(word.font || ''),
+                            font_weight: String(word.font_weight || (word.bold ? 700 : 400)),
+                            font_style: word.italic ? 'italic' : 'normal',
+                            font_size: Math.round((Number(word.font_size) || 0) * 10) / 10,
+                            color: getWordColor(word, '#000000'),
+                        }));
+                    });
+                    return styleKeys.size > 1;
+                };
+
+                const convertPositionedSpansToStyledFlow = (field, textSpan) => {
+                    if (!field || !textSpan) return false;
+                    const allSpans = Array.from(textSpan.querySelectorAll('span'))
+                        .filter((span) => span.style.position === 'absolute');
+                    if (!allSpans.length) return false;
+
+                    const fallbackCssFamily = getEditableFallbackCssFamily(field);
+                    const lineTolerance = 2;
+                    const lines = [];
+
+                    allSpans.forEach((span) => {
+                        const top = parseFloat(span.style.top) || 0;
+                        const left = parseFloat(span.style.left) || 0;
+                        const rect = span.getBoundingClientRect();
+                        const height = rect.height || parseFloat(span.style.lineHeight) || parseFloat(span.style.fontSize) || 0;
+                        const fontSize = parseFloat(span.style.fontSize) || 0;
+                        const lineNumRaw = span.dataset.lineNum;
+                        const lineNum = lineNumRaw !== undefined && lineNumRaw !== null && lineNumRaw !== ''
+                            ? Number(lineNumRaw)
+                            : null;
+                        const lineMatchTolerance = Math.max(lineTolerance, fontSize * 0.9);
+                        let line = lines.find((candidate) => {
+                            const candidateLineNum = candidate.lineNum;
+                            if (Number.isFinite(lineNum) && Number.isFinite(candidateLineNum)) {
+                                return lineNum === candidateLineNum &&
+                                    Math.abs(candidate.referenceTop - top) <= lineMatchTolerance;
+                            }
+                            return Math.abs(candidate.top - top) <= lineTolerance;
+                        });
+                        if (!line) {
+                            line = { top, referenceTop: top, lineNum, items: [] };
+                            lines.push(line);
+                        }
+                        line.referenceTop = (line.referenceTop * line.items.length + top) / (line.items.length + 1);
+                        line.items.push({ span, top, left, height, width: rect.width || 0, fontSize });
+                    });
+
+                    if (!lines.length) return false;
+
+                    lines.sort((a, b) => a.top - b.top);
+                    const fragment = document.createDocumentFragment();
+
+                    lines.forEach((line, lineIndex) => {
+                        const lineEl = document.createElement('div');
+                        const sortedItems = line.items.sort((a, b) => a.left - b.left);
+                        const lineLeft = Math.min(...sortedItems.map((item) => item.left));
+                        const lineFontSize = Math.max(...sortedItems.map((item) => parseFloat(item.span.style.fontSize) || 0), 0);
+                        const nextLineTop = lines[lineIndex + 1]?.top;
+                        const lineStep = Number.isFinite(nextLineTop)
+                            ? Math.max(1, nextLineTop - line.top)
+                            : Math.max(1, lineFontSize * 1.15);
+
+                        lineEl.style.display = 'block';
+                        lineEl.style.paddingLeft = `${Math.max(0, lineLeft)}px`;
+                        lineEl.style.whiteSpace = 'pre';
+                        lineEl.style.lineHeight = `${lineStep}px`;
+
+                        sortedItems.forEach(({ span }) => {
+                            const clone = span.cloneNode(true);
+                            clone.style.position = 'static';
+                            clone.style.left = '';
+                            clone.style.top = '';
+                            clone.style.display = 'inline';
+                            clone.style.verticalAlign = 'baseline';
+                            clone.style.whiteSpace = 'pre';
+                            const fontFamilyValue = clone.style.fontFamily || window.getComputedStyle(span).fontFamily;
+                            if (!isExactEditableFontAvailable(
+                                fontFamilyValue,
+                                clone.style.fontWeight || window.getComputedStyle(span).fontWeight,
+                                clone.style.fontStyle || window.getComputedStyle(span).fontStyle,
+                                clone.textContent || ''
+                            )) {
+                                clone.style.fontFamily = getFallbackCssFontFamily(fontFamilyValue, fallbackCssFamily);
+                            }
+                            lineEl.appendChild(clone);
+                        });
+
+                        fragment.appendChild(lineEl);
+                        if (lineIndex === lines.length - 1) return;
+                    });
+
+                    textSpan.innerHTML = '';
+                    textSpan.appendChild(fragment);
+                    textSpan.style.whiteSpace = 'pre-wrap';
+                    textSpan.style.wordBreak = 'normal';
+                    textSpan.style.overflow = 'hidden';
+                    return true;
+                };
+
                 const normalizePositionedSpansForEditing = (field, textSpan) => {
                     if (!field || !textSpan) return;
                     if (field.dataset.flowNormalized === '1') return;
@@ -17561,6 +17817,13 @@
                     if (!hasPositionedSpans) {
                         field.dataset.flowNormalized = '1';
                         return;
+                    }
+                    if (fieldHasMultipleExtractedStyles(field)) {
+                        const converted = convertPositionedSpansToStyledFlow(field, textSpan);
+                        if (converted) {
+                            field.dataset.flowNormalized = '1';
+                            return;
+                        }
                     }
                     const plainText = stableFlowText.length > 0
                         ? stableFlowText
@@ -18263,6 +18526,109 @@
                             }
                             return blockWordsCache.get(blockNum);
                         };
+                        const overlapsRowBand = (block, rowTop, rowBottom, minRatio = 0.45) => {
+                            const bTop = Number(block?.top) || 0;
+                            const bBottom = bTop + (Number(block?.height) || 0);
+                            return verticalOverlapRatio(bTop, bBottom, rowTop, rowBottom) >= minRatio;
+                        };
+                        const horizontalOverlapRatio = (leftA, rightA, leftB, rightB) => {
+                            const inter = Math.max(0, Math.min(rightA, rightB) - Math.max(leftA, leftB));
+                            const minW = Math.max(1, Math.min(rightA - leftA, rightB - leftB));
+                            return inter / minW;
+                        };
+                        const isDifferentColumn = (block, colLeft, colRight) => {
+                            const bLeft = Number(block?.left) || 0;
+                            const bRight = bLeft + (Number(block?.width) || 0);
+                            const overlap = horizontalOverlapRatio(colLeft, colRight, bLeft, bRight);
+                            const colCenter = colLeft + ((colRight - colLeft) / 2);
+                            const bCenter = bLeft + ((bRight - bLeft) / 2);
+                            return overlap < 0.45 && Math.abs(bCenter - colCenter) > Math.max(18, Math.min(colRight - colLeft, bRight - bLeft) * 0.35);
+                        };
+                        const hasSharedRowStartPeers = (bottomBlock, colLeft, colRight, allBlocks) => {
+                            const blockList = Array.isArray(allBlocks) ? allBlocks : [];
+                            const bottomTop = Number(bottomBlock?.top) || 0;
+                            const distinctPeerColumns = [];
+
+                            blockList.forEach((other) => {
+                                if (!other || other === bottomBlock) return;
+                                if (!isDifferentColumn(other, colLeft, colRight)) return;
+                                const otherTop = Number(other.top) || 0;
+                                const otherLeft = Number(other.left) || 0;
+                                const otherRight = otherLeft + (Number(other.width) || 0);
+                                const otherCenter = otherLeft + ((otherRight - otherLeft) / 2);
+                                const rowStartTol = Math.max(4, Math.min(10, (Number(other.height) || 0) * 0.35));
+                                if (Math.abs(otherTop - bottomTop) > rowStartTol) return;
+
+                                const sameColumnIdx = distinctPeerColumns.findIndex((entry) =>
+                                    horizontalOverlapRatio(entry.left, entry.right, otherLeft, otherRight) >= 0.35 &&
+                                    Math.abs(entry.center - otherCenter) <= Math.max(20, Math.min(entry.right - entry.left, otherRight - otherLeft) * 0.45)
+                                );
+                                if (sameColumnIdx === -1) {
+                                    distinctPeerColumns.push({ left: otherLeft, right: otherRight, center: otherCenter });
+                                }
+                            });
+
+                            return distinctPeerColumns.length >= 2;
+                        };
+                        const hasParallelRowPeers = (topBlock, bottomBlock, allBlocks) => {
+                            const blockList = Array.isArray(allBlocks) ? allBlocks : [];
+                            if (blockList.length < 4) return false;
+
+                            const aL = Number(topBlock.left) || 0;
+                            const aT = Number(topBlock.top) || 0;
+                            const aW = Math.max(1, Number(topBlock.width) || 0);
+                            const aH = Math.max(1, Number(topBlock.height) || 0);
+                            const aR = aL + aW;
+                            const aB = aT + aH;
+                            const bL = Number(bottomBlock.left) || 0;
+                            const bT = Number(bottomBlock.top) || 0;
+                            const bW = Math.max(1, Number(bottomBlock.width) || 0);
+                            const bH = Math.max(1, Number(bottomBlock.height) || 0);
+                            const bR = bL + bW;
+                            const bB = bT + bH;
+
+                            const colLeft = Math.min(aL, bL);
+                            const colRight = Math.max(aR, bR);
+
+                            const peerTopBlocks = blockList.filter((other) => {
+                                if (!other || other === topBlock || other === bottomBlock) return false;
+                                if (!isDifferentColumn(other, colLeft, colRight)) return false;
+                                return overlapsRowBand(other, aT, aB);
+                            });
+                            if (!peerTopBlocks.length) return false;
+
+                            const peerBottomBlocks = blockList.filter((other) => {
+                                if (!other || other === topBlock || other === bottomBlock) return false;
+                                if (!isDifferentColumn(other, colLeft, colRight)) return false;
+                                return overlapsRowBand(other, bT, bB);
+                            });
+                            if (!peerBottomBlocks.length) return false;
+
+                            return peerTopBlocks.some((topPeer) => {
+                                const tpL = Number(topPeer.left) || 0;
+                                const tpR = tpL + (Number(topPeer.width) || 0);
+                                const tpCenter = tpL + ((tpR - tpL) / 2);
+                                const tpTop = Number(topPeer.top) || 0;
+                                const tpBottom = tpTop + (Number(topPeer.height) || 0);
+
+                                return peerBottomBlocks.some((bottomPeer) => {
+                                    if (bottomPeer === topPeer) return false;
+                                    const bpL = Number(bottomPeer.left) || 0;
+                                    const bpR = bpL + (Number(bottomPeer.width) || 0);
+                                    const bpCenter = bpL + ((bpR - bpL) / 2);
+                                    const samePeerColumn = horizontalOverlapRatio(tpL, tpR, bpL, bpR) >= 0.35 &&
+                                        Math.abs(tpCenter - bpCenter) <= Math.max(20, Math.min(tpR - tpL, bpR - bpL) * 0.45);
+                                    if (!samePeerColumn) return false;
+
+                                    const bpTop = Number(bottomPeer.top) || 0;
+                                    if (bpTop < tpTop) return false;
+                                    if (overlapsRowBand(topPeer, bT, bB, 0.25)) return false;
+                                    if (overlapsRowBand(bottomPeer, aT, aB, 0.25)) return false;
+
+                                    return true;
+                                });
+                            });
+                        };
                         const shouldMergeStackedBlocks = (topBlock, bottomBlock, allBlocks) => {
                             if (!topBlock || !bottomBlock) return false;
                             if (topBlock._client_form_merge || bottomBlock._client_form_merge) return false;
@@ -18282,6 +18648,9 @@
                             const bB = bT + bH;
 
                             if (bT < aT) return false;
+
+                            const colLeft = Math.min(aL, bL);
+                            const colRight = Math.max(aR, bR);
 
                             const interW = Math.max(0, Math.min(aR, bR) - Math.max(aL, bL));
                             const xOverlapRatio = interW / Math.max(1, Math.min(aW, bW));
@@ -18316,6 +18685,8 @@
                                 return (interW2 / columnW) >= 0.55 && oT > aT && oB < bB;
                             });
                             if (hasIntervening) return false;
+                            if (hasSharedRowStartPeers(bottomBlock, colLeft, colRight, allBlocks)) return false;
+                            if (hasParallelRowPeers(topBlock, bottomBlock, allBlocks)) return false;
 
                             return true;
                         };
@@ -18459,7 +18830,6 @@
                                 font_xref: dominantStyle?.font_xref ?? modelBase.font_xref,
                             };
                         };
-
                         for (let i = 0; i < sorted.length; i++) {
                             const base = sorted[i];
                             if (!base || consumed.has(base.block_num)) continue;

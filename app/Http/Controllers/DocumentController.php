@@ -59,6 +59,31 @@ class DocumentController extends Controller
         return 'python3';
     }
 
+    private function createOriginalBackup(string $storedPath): ?string
+    {
+        if (!$storedPath || !Storage::exists($storedPath)) {
+            return null;
+        }
+
+        Storage::makeDirectory('documents/originals');
+
+        $backupPath = 'documents/originals/' . pathinfo($storedPath, PATHINFO_FILENAME) . '_original.pdf';
+
+        try {
+            Storage::copy($storedPath, $backupPath);
+        } catch (\Throwable $e) {
+            Log::warning('Failed to create original PDF backup', [
+                'path' => $storedPath,
+                'backup_path' => $backupPath,
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+
+        return $backupPath;
+    }
+
     public function index()
     {
         $documents = Document::latest()->get();
@@ -90,9 +115,7 @@ class DocumentController extends Controller
             'documents',
             Str::uuid()->toString() . '.pdf'
         );
-        Storage::makeDirectory('documents/originals');
-        $backupPath = 'documents/originals/' . pathinfo($storedPath, PATHINFO_FILENAME) . '_original.pdf';
-        Storage::copy($storedPath, $backupPath);
+        $backupPath = $this->createOriginalBackup($storedPath);
 
         $document = Document::create([
             'user_id' => Auth::id(),
@@ -170,6 +193,7 @@ class DocumentController extends Controller
             'user_id' => Auth::id(),
             'original_name' => $templateNames[$templateKey],
             'path' => $storedRelative,
+            'original_backup_path' => $this->createOriginalBackup($storedRelative),
             'mime_type' => 'application/pdf',
             'size_bytes' => filesize($storedFull),
         ]);
@@ -269,6 +293,7 @@ class DocumentController extends Controller
             'user_id' => Auth::id(),
             'original_name' => 'Invoice ' . ($validated['invoice_number'] ?? $uuid) . '.pdf',
             'path' => $storedRelative,
+            'original_backup_path' => $this->createOriginalBackup($storedRelative),
             'mime_type' => 'application/pdf',
             'size_bytes' => filesize($storedFull),
             'mode' => 'guided',
@@ -374,6 +399,7 @@ class DocumentController extends Controller
             'user_id' => Auth::id(),
             'original_name' => $template->name . '.pdf',
             'path' => $storedRelative,
+            'original_backup_path' => $this->createOriginalBackup($storedRelative),
             'mime_type' => 'application/pdf',
             'size_bytes' => filesize($storedFull),
             'mode' => 'guided',
@@ -1183,6 +1209,16 @@ class DocumentController extends Controller
 
         try {
             Storage::copy($document->original_backup_path, $document->path);
+
+            $cleanPath = Storage::path('temp/clean_' . $document->id . '.pdf');
+            if (file_exists($cleanPath)) {
+                @unlink($cleanPath);
+            }
+
+            $embeddedFontsPath = storage_path("app/temp/embedded_fonts_{$document->id}.json");
+            if (file_exists($embeddedFontsPath)) {
+                @unlink($embeddedFontsPath);
+            }
 
             $fullPath = Storage::path($document->path);
             $sizeBytes = file_exists($fullPath) ? filesize($fullPath) : null;
