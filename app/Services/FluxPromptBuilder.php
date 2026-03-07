@@ -93,32 +93,12 @@ class FluxPromptBuilder
         $format = $outputFormat === 'vector' ? 'vector' : 'raster';
         $tpl    = self::templates($format);
         
-        // Handle text-only mode: generate wordmark/text only, no icon
+        // Text-only mode uses JSON-driven vector templates keyed by font style.
         if ($textOnly) {
-            $textOnlyPrompt = "A clean professional wordmark logo design. The text \"{$brandUpper}\" is rendered in a custom typography with elegant letterforms. ";
-            $styleInstruction = match ($fontStyle) {
-                'bold_geometric' => 'Use a bold geometric sans-serif font style with strong structure.',
-                'elegant_serif' => 'Use an elegant serif font style with refined strokes.',
-                'script_signature' => 'Use a script signature font style with flowing calligraphic curves.',
-                'tech_mono' => 'Use a technical monospaced font style with precise spacing.',
-                'minimal_light' => 'Use a minimal light-weight font style with clean thin letterforms.',
-                default => 'Use a modern sans-serif font style.',
-            };
-            $textOnlyPrompt .= " {$styleInstruction} ";
-            
-            // Add color instruction
-            if ($colorInstruction) {
-                $textOnlyPrompt .= " {$colorInstruction} ";
-            } else {
-                $textOnlyPrompt .= " " . self::defaultColors($style) . " ";
-            }
-            
-            // Add background
-            if ($bgInstruction !== '') {
-                $textOnlyPrompt .= " The design is {$bgInstruction}.";
-            }
-            
-            // Add shape constraint for text-only if specified
+            $mode = 'text_only';
+            $colorsValue = $colorInstruction ?? ($tpl['default_colors'][$style] ?? 'navy blue and gold color palette.');
+
+            $shapeBlock = '';
             if (!empty($logoShape) && $logoShape !== 'none') {
                 $shapeTemplate = $tpl['shape_block'] ?? '';
                 $shapeBlock = str_replace(
@@ -126,16 +106,27 @@ class FluxPromptBuilder
                     [strtolower($logoShape), ucfirst(strtolower($logoShape)), strtoupper($logoShape)],
                     $shapeTemplate
                 );
-                $textOnlyPrompt .= " {$shapeBlock}";
             }
-            
-            // Add quality suffix
-            $qualityKey = $outputFormat === 'vector' ? 'quality_vector' : 'quality';
+
+            $promptTemplate = $tpl[$mode][$style]
+                ?? $tpl[$mode]['modern_sans']
+                ?? '';
+
+            $textOnlyPrompt = self::sub($promptTemplate, [
+                'brand'       => $brandUpper,
+                'concept'     => '',
+                'colors'      => $colorsValue,
+                'bg'          => $bgInstruction,
+                'shape_block' => $shapeBlock,
+                'no_text'     => '',
+            ]);
+
+            $qualityKey = $format === 'vector' ? 'quality_vector' : 'quality';
             $qualitySuffix = $tpl[$qualityKey][$detail] ?? $tpl[$qualityKey]['max'] ?? '';
             if ($qualitySuffix !== '') {
                 $textOnlyPrompt = rtrim($textOnlyPrompt, '. ') . '.' . $qualitySuffix;
             }
-            
+
             return $textOnlyPrompt;
         }
         

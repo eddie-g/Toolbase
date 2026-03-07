@@ -5,7 +5,9 @@ namespace App\Http\Controllers;
 use App\Models\Document;
 use App\Models\GuidedTemplate;
 use App\Models\PdfState;
+use App\Models\User;
 use App\Models\UserActivity;
+use App\Models\UserPdfMonthlyUsage;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
@@ -16,6 +18,9 @@ use Illuminate\Support\Str;
 
 class DocumentController extends Controller
 {
+    private const MONTHLY_UPLOAD_LIMIT = 100;
+    private const MONTHLY_ACTION_LIMIT = 1000;
+
     private function resolvePythonBinaryForPdfEditor(?string $requiredModule = null): string
     {
         $candidates = array_values(array_unique([
@@ -76,15 +81,24 @@ class DocumentController extends Controller
             'document' => ['required', 'file', 'mimes:pdf', 'max:20480'],
         ]);
 
+        if ($response = $this->consumeMonthlyUploadQuota($request)) {
+            return $response;
+        }
+
         $file = $validated['document'];
         $storedPath = $file->storeAs(
             'documents',
             Str::uuid()->toString() . '.pdf'
         );
+        Storage::makeDirectory('documents/originals');
+        $backupPath = 'documents/originals/' . pathinfo($storedPath, PATHINFO_FILENAME) . '_original.pdf';
+        Storage::copy($storedPath, $backupPath);
 
         $document = Document::create([
+            'user_id' => Auth::id(),
             'original_name' => $file->getClientOriginalName(),
             'path' => $storedPath,
+            'original_backup_path' => $backupPath,
             'mime_type' => $file->getClientMimeType(),
             'size_bytes' => $file->getSize(),
         ]);
@@ -153,6 +167,7 @@ class DocumentController extends Controller
         }
 
         $document = Document::create([
+            'user_id' => Auth::id(),
             'original_name' => $templateNames[$templateKey],
             'path' => $storedRelative,
             'mime_type' => 'application/pdf',
@@ -251,6 +266,7 @@ class DocumentController extends Controller
         }
 
         $document = Document::create([
+            'user_id' => Auth::id(),
             'original_name' => 'Invoice ' . ($validated['invoice_number'] ?? $uuid) . '.pdf',
             'path' => $storedRelative,
             'mime_type' => 'application/pdf',
@@ -288,7 +304,7 @@ class DocumentController extends Controller
         $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
 
         $validated = $request->validate([
-            '_template_type' => ['required', 'string', 'in:newsletter,business'],
+            '_template_type' => ['required', 'string', 'in:newsletter,business,realestate'],
             '_template_slug' => ['required', 'string', 'max:100'],
         ]);
 
@@ -355,6 +371,7 @@ class DocumentController extends Controller
         }
 
         $document = Document::create([
+            'user_id' => Auth::id(),
             'original_name' => $template->name . '.pdf',
             'path' => $storedRelative,
             'mime_type' => 'application/pdf',
@@ -464,7 +481,7 @@ class DocumentController extends Controller
         $templateType = $data['template_type'] ?? '';
         $templateSlug = $data['template_slug'] ?? '';
 
-        if (!in_array($templateType, ['newsletter', 'business'])) {
+        if (!in_array($templateType, ['newsletter', 'business', 'realestate'])) {
             return response()->json(['error' => 'Invalid template type.'], 422);
         }
 
@@ -1036,6 +1053,10 @@ class DocumentController extends Controller
             'edited_pdf' => ['required', 'file', 'mimes:pdf', 'max:20480'],
         ]);
 
+        if ($response = $this->consumeMonthlyActionQuota($request)) {
+            return $response;
+        }
+
         $file = $validated['edited_pdf'];
         $tempPath = $file->getPathname();
         $incomingBytes = @file_get_contents($tempPath);
@@ -1047,6 +1068,18 @@ class DocumentController extends Controller
                 'document_id' => $document->id,
                 'incoming_size' => $incomingSize,
             ]);
+            if (Auth::check()) {
+                UserActivity::create([
+                    'user_id' => Auth::id(),
+                    'action' => 'Save PDF',
+                    'category' => 'pdf_save',
+                    'details' => ['incoming_size' => $incomingSize, 'error' => 'Edited PDF payload is invalid or truncated.'],
+                    'document_id' => $document->id,
+                    'status' => 'failed',
+                    'ip_address' => $request->ip(),
+                    'user_agent' => $request->userAgent(),
+                ]);
+            }
             return response()->json([
                 'ok' => false,
                 'message' => 'Edited PDF payload is invalid or truncated.',
@@ -1095,6 +1128,18 @@ class DocumentController extends Controller
         // IMPORTANT: save() should NEVER update pdf_extractions_fitz data
         // Extraction data should ONLY be updated by the overlay editor via saveEdits()
         // Shapes, signatures, and text annotations are visual stamps that don't affect extraction
+        if (Auth::check()) {
+            UserActivity::create([
+                'user_id' => Auth::id(),
+                'action' => 'Save PDF',
+                'category' => 'pdf_save',
+                'details' => ['size_bytes' => $normalizedSize],
+                'document_id' => $document->id,
+                'status' => 'success',
+                'ip_address' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+            ]);
+        }
 
         return response()->json([
             'ok' => true,
@@ -1110,11 +1155,78 @@ class DocumentController extends Controller
             ->delete();
         
         Storage::delete($document->path);
+        if ($document->original_backup_path) {
+            Storage::delete($document->original_backup_path);
+        }
         $document->delete();
 
         return redirect()
             ->route('documents.index')
             ->with('status', 'Document deleted.');
+    }
+
+    public function restoreOriginal(Request $request, Document $document)
+    {
+        if (!$document->original_backup_path) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No original backup exists for this document.',
+            ], 422);
+        }
+
+        if (!Storage::exists($document->original_backup_path)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Original backup file was not found.',
+            ], 404);
+        }
+
+        try {
+            Storage::copy($document->original_backup_path, $document->path);
+
+            $fullPath = Storage::path($document->path);
+            $sizeBytes = file_exists($fullPath) ? filesize($fullPath) : null;
+
+            $document->mime_type = 'application/pdf';
+            if ($sizeBytes !== null) {
+                $document->size_bytes = $sizeBytes;
+            }
+            $document->saveQuietly();
+
+            DB::table('pdf_extractions_fitz')
+                ->where('document_id', $document->id)
+                ->delete();
+
+            if (Auth::check()) {
+                UserActivity::create([
+                    'user_id' => Auth::id(),
+                    'action' => 'Restore Original PDF',
+                    'category' => 'pdf_save',
+                    'details' => [],
+                    'document_id' => $document->id,
+                    'status' => 'success',
+                    'ip_address' => $request->ip(),
+                    'user_agent' => $request->userAgent(),
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Original PDF restored.',
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Failed to restore original PDF backup', [
+                'document_id' => $document->id,
+                'backup_path' => $document->original_backup_path,
+                'path' => $document->path,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to restore original PDF.',
+            ], 500);
+        }
     }
 
     public function bulkDestroy(Request $request)
@@ -1134,6 +1246,9 @@ class DocumentController extends Controller
                 ->delete();
             
             Storage::delete($document->path);
+            if ($document->original_backup_path) {
+                Storage::delete($document->original_backup_path);
+            }
             $document->delete();
             $count++;
         }
@@ -1239,6 +1354,9 @@ class DocumentController extends Controller
             $extractionTime = strtotime($extraction->created_at);
             
             // If PDF is newer than extraction, re-extract
+            $scriptPath = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
+            $scriptModifiedTime = file_exists($scriptPath) ? filemtime($scriptPath) : 0;
+
             if ($pdfModifiedTime > $extractionTime) {
                 \Log::info('PDF modified since extraction, re-extracting', [
                     'pdf_time' => date('Y-m-d H:i:s', $pdfModifiedTime),
@@ -1253,6 +1371,26 @@ class DocumentController extends Controller
                         ->first();
                 } else {
                     \Log::error('Failed to re-extract PDF after modification', ['output' => implode("\n", $output)]);
+                }
+            } elseif ($scriptModifiedTime > $extractionTime) {
+                // Extraction code is newer than the cached extraction — re-run so fixes take effect
+                \Log::info('Extraction script updated since last extraction, re-extracting', [
+                    'script_time' => date('Y-m-d H:i:s', $scriptModifiedTime),
+                    'extraction_time' => $extraction->created_at,
+                    'document_id' => $document->id,
+                ]);
+
+                [$returnCode, $output] = $runFitzExtraction();
+                if ($returnCode === 0) {
+                    $extraction = DB::table('pdf_extractions_fitz')
+                        ->where('document_id', $document->id)
+                        ->orderBy('id', 'desc')
+                        ->first();
+                } else {
+                    \Log::error('Failed to re-extract after script update', [
+                        'document_id' => $document->id,
+                        'output' => implode("\n", $output),
+                    ]);
                 }
             }
 
@@ -1384,6 +1522,10 @@ class DocumentController extends Controller
             'edits.*.word_styles.*' => ['nullable', 'array'],
             'skip_refresh' => ['nullable', 'boolean'],
         ]);
+
+        if ($response = $this->consumeMonthlyActionQuota($request)) {
+            return $response;
+        }
 
         // GUARD MECHANISM: Check if any entire page is being nulled out
         $edits = $validated['edits'];
@@ -1548,7 +1690,7 @@ class DocumentController extends Controller
 
         $fullPath = Storage::path($document->path);
         $saveMode = strtolower((string) config('pdf_editor.save_mode', 'full_page_save'));
-        $isSurgicalSave = $saveMode === 'surgical_save';
+        $isNewSaveMode = $saveMode === 'new_save_mode';
 
         // OPTIMIZATION: If no edits made, skip save pipeline entirely.
         if (empty($editedPages)) {
@@ -1582,8 +1724,10 @@ class DocumentController extends Controller
         $output = [];
         $returnCode = 0;
 
-        if ($isSurgicalSave) {
-            // Surgical mode: redact and reinsert only changed blocks.
+        if ($isNewSaveMode) {
+            // New save mode: strict in-place surgical edits only.
+            // This path never rebuilds full pages and will abort if the
+            // script cannot confidently locate the exact old text to remove.
             $pythonScript = base_path('python/pdf-editor/apply_pdf_edits.py');
             $command = sprintf(
                 '%s %s %s %s 2>&1',
@@ -1593,71 +1737,75 @@ class DocumentController extends Controller
                 escapeshellarg($editsFile)
             );
 
-            \Log::info('Applying PDF edits (surgical_save)', [
+            \Log::info('Applying PDF edits (new_save_mode)', [
                 'document_id' => $document->id,
+                'pipeline' => 'strict_surgical',
                 'pdf_path' => $fullPath,
+                'backup_path' => $backupPath,
                 'edits_count' => count($edits),
                 'edited_pages' => $editedPages,
             ]);
 
             exec($command, $output, $returnCode);
         } else {
-            // Full-page mode: rebuild page text from clean PDF + extraction.
-            if (empty($extractionData) || !is_array($extractionData)) {
-                if (file_exists($editsFile)) {
-                    @unlink($editsFile);
-                }
+            // Full-page rebuild mode.
+            // For each edited page: clear ALL text, then redraw everything from
+            // extraction (deletions are simply not redrawn — no targeted bbox
+            // redaction, no risk of collateral text loss).
+            $pythonScript = base_path('python/pdf-editor/rebuild_pdf_from_overlay_extraction.py');
+            $extractScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
+            $cleanPath = Storage::path('temp/clean_' . $document->id . '.pdf');
+
+            if (!file_exists($cleanPath)) {
+                if (file_exists($editsFile)) @unlink($editsFile);
                 return response()->json([
                     'success' => false,
-                    'message' => 'No extraction data available to rebuild text layer.'
+                    'message' => 'Clean PDF base not found. Please reload the document and try again.',
                 ], 500);
             }
 
-            $extractionFile = $makeTempFile('extract_');
-            if (@file_put_contents($extractionFile, json_encode($extractionData)) === false) {
-                if (file_exists($editsFile)) {
-                    @unlink($editsFile);
-                }
+            // Fetch extraction data from DB (needed to redraw unchanged words).
+            $userEmail = auth()->user()->email ?? 'guest';
+            $sessionId = session()->getId();
+            $extractionRow = null;
+            if ($userEmail !== 'guest') {
+                $extractionRow = DB::table('pdf_extractions_fitz')
+                    ->where('document_id', $document->id)
+                    ->where('user_email', $userEmail)
+                    ->orderBy('id', 'desc')
+                    ->first();
+            }
+            if (!$extractionRow) {
+                $extractionRow = DB::table('pdf_extractions_fitz')
+                    ->where('document_id', $document->id)
+                    ->where('session_id', $sessionId)
+                    ->orderBy('id', 'desc')
+                    ->first();
+            }
+            if (!$extractionRow) {
+                $extractionRow = DB::table('pdf_extractions_fitz')
+                    ->where('document_id', $document->id)
+                    ->orderBy('id', 'desc')
+                    ->first();
+            }
+
+            if (!$extractionRow) {
+                if (file_exists($editsFile)) @unlink($editsFile);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No extraction data found. Please reload the document and try again.',
+                ], 500);
+            }
+
+            $extractionFile = $makeTempFile('extraction_');
+            if (@file_put_contents($extractionFile, $extractionRow->extraction_data) === false) {
+                if (file_exists($editsFile)) @unlink($editsFile);
                 return response()->json([
                     'success' => false,
                     'message' => 'Failed to write extraction temp file.',
                 ], 500);
             }
 
-            $cleanPath = Storage::path('temp/clean_' . $document->id . '.pdf');
-            $cleanScript = base_path('python/pdf-editor/create_clean_pdf.py');
-            $cleanCommand = sprintf(
-                '%s %s %s %s %s 2>&1',
-                escapeshellarg($pythonBinary),
-                escapeshellarg($cleanScript),
-                escapeshellarg($fullPath),
-                escapeshellarg($extractionFile),
-                escapeshellarg($cleanPath)
-            );
-            $cleanOutput = [];
-            $cleanCode = 0;
-            exec($cleanCommand, $cleanOutput, $cleanCode);
-
-            if ($cleanCode !== 0 || !file_exists($cleanPath)) {
-                \Log::error('Failed to create clean PDF before absolute text rebuild', [
-                    'document_id' => $document->id,
-                    'return_code' => $cleanCode,
-                    'output' => implode("\n", $cleanOutput),
-                ]);
-                if (file_exists($extractionFile)) {
-                    unlink($extractionFile);
-                }
-                if (file_exists($editsFile)) {
-                    @unlink($editsFile);
-                }
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Failed to prepare clean PDF for save.',
-                    'error' => implode("\n", $cleanOutput),
-                ], 500);
-            }
-
-            $pythonScript = base_path('python/pdf-editor/rebuild_pdf_from_overlay_extraction.py');
             $editedPagesFile = $makeTempFile('pages_');
             if (@file_put_contents($editedPagesFile, json_encode($editedPages)) === false) {
                 if (file_exists($extractionFile)) @unlink($extractionFile);
@@ -1669,21 +1817,23 @@ class DocumentController extends Controller
             }
 
             $command = sprintf(
-                '%s %s %s %s %s %s %s %s 2>&1',
+                '%s %s --fullpage %s %s %s %s %s %s 2>&1',
                 escapeshellarg($pythonBinary),
                 escapeshellarg($pythonScript),
                 escapeshellarg($cleanPath),
                 escapeshellarg('@' . $extractionFile),
                 escapeshellarg('@' . $editsFile),
                 escapeshellarg($fullPath),
-                escapeshellarg($backupPath),
-                escapeshellarg('@' . $editedPagesFile)
+                escapeshellarg('@' . $editedPagesFile),
+                escapeshellarg(Storage::path($document->original_backup_path))
             );
 
-            \Log::info('Applying PDF edits (full_page_save)', [
+            \Log::info('Applying PDF edits (full_page_save / fullpage rebuild)', [
                 'document_id' => $document->id,
                 'pdf_path' => $fullPath,
-                'clean_pdf_path' => $cleanPath,
+                'clean_path' => $cleanPath,
+                'backup_path' => $backupPath,
+                'original_backup_path' => Storage::path($document->original_backup_path),
                 'edits_count' => count($edits),
                 'edited_pages' => $editedPages,
             ]);
@@ -1778,6 +1928,22 @@ class DocumentController extends Controller
         }
 
         if ($returnCode !== 0) {
+            if (Auth::check()) {
+                UserActivity::create([
+                    'user_id' => Auth::id(),
+                    'action' => 'Save PDF Edits',
+                    'category' => 'pdf_save',
+                    'details' => [
+                        'edits_count' => count($edits),
+                        'edited_pages' => $editedPages,
+                        'error' => implode("\n", $output),
+                    ],
+                    'document_id' => $document->id,
+                    'status' => 'failed',
+                    'ip_address' => $request->ip(),
+                    'user_agent' => $request->userAgent(),
+                ]);
+            }
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to apply edits to PDF',
@@ -1786,6 +1952,22 @@ class DocumentController extends Controller
         }
 
         $document->touch();
+
+        if (Auth::check()) {
+            UserActivity::create([
+                'user_id' => Auth::id(),
+                'action' => 'Save PDF Edits',
+                'category' => 'pdf_save',
+                'details' => [
+                    'edits_count' => count($edits),
+                    'edited_pages' => $editedPages,
+                ],
+                'document_id' => $document->id,
+                'status' => 'success',
+                'ip_address' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+            ]);
+        }
 
         return response()->json([
             'success' => true,
@@ -2736,6 +2918,10 @@ class DocumentController extends Controller
             'srgb_profile' => ['boolean'],
         ]);
 
+        if ($response = $this->consumeMonthlyActionQuota($request)) {
+            return $response;
+        }
+
         $level = $validated['level'];
         $embedFonts = $validated['embed_fonts'] ?? true;
         $srgbProfile = $validated['srgb_profile'] ?? true;
@@ -2901,6 +3087,17 @@ class DocumentController extends Controller
             'status' => ['required', 'string', 'in:success,failed'],
         ]);
 
+        // Image exports are client-side conversions, so this endpoint is the
+        // only reliable place to count them toward monthly PDF action quota.
+        if (
+            ($validated['status'] ?? null) === 'success'
+            && ($validated['category'] ?? null) === 'image_export'
+        ) {
+            if ($response = $this->consumeMonthlyActionQuota($request)) {
+                return $response;
+            }
+        }
+
         UserActivity::create([
             'user_id' => Auth::id(),
             'action' => $validated['action'],
@@ -2924,6 +3121,10 @@ class DocumentController extends Controller
             'include_images' => ['boolean'],
             'ocr' => ['boolean'],
         ]);
+
+        if ($response = $this->consumeMonthlyActionQuota($request)) {
+            return $response;
+        }
 
         $layout = $validated['layout'];
         $includeImages = $validated['include_images'] ?? true;
@@ -3034,6 +3235,10 @@ class DocumentController extends Controller
             'merge_cells' => ['boolean'],
             'sheet_per_page' => ['boolean'],
         ]);
+
+        if ($response = $this->consumeMonthlyActionQuota($request)) {
+            return $response;
+        }
 
         $mode = $validated['mode'];
         $mergeCells = $validated['merge_cells'] ?? true;
@@ -3146,6 +3351,10 @@ class DocumentController extends Controller
             'to_page' => ['nullable', 'integer', 'min:1'],
             'pages' => ['nullable', 'string'],
         ]);
+
+        if ($response = $this->consumeMonthlyActionQuota($request)) {
+            return $response;
+        }
 
         $mode = $validated['mode'];
         $inputPath = Storage::path($document->path);
@@ -3346,5 +3555,75 @@ class DocumentController extends Controller
         return response()->download($data['path'], $data['name'], [
             'Content-Type' => $data['content_type'] ?? 'application/octet-stream',
         ])->deleteFileAfterSend(true);
+    }
+
+    private function consumeMonthlyUploadQuota(Request $request)
+    {
+        $user = $this->resolveQuotaUser();
+        if (!$user) {
+            return null;
+        }
+
+        $usage = $this->resolveMonthlyUsage($user);
+        if ($usage->uploads_count >= self::MONTHLY_UPLOAD_LIMIT) {
+            return redirect()
+                ->back()
+                ->withErrors("Monthly PDF upload limit reached (".self::MONTHLY_UPLOAD_LIMIT.").");
+        }
+
+        $usage->uploads_count = (int) $usage->uploads_count + 1;
+        $usage->save();
+
+        return null;
+    }
+
+    private function consumeMonthlyActionQuota(Request $request)
+    {
+        $user = $this->resolveQuotaUser();
+        if (!$user) {
+            return null;
+        }
+
+        $usage = $this->resolveMonthlyUsage($user);
+        $unlimited = $this->hasUnlimitedPdfActions($user);
+        $usage->has_unlimited_actions = $unlimited;
+
+        if (!$unlimited && $usage->actions_count >= self::MONTHLY_ACTION_LIMIT) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Monthly PDF action limit reached (' . self::MONTHLY_ACTION_LIMIT . ').',
+            ], 429);
+        }
+
+        $usage->actions_count = (int) $usage->actions_count + 1;
+        $usage->save();
+
+        return null;
+    }
+
+    private function resolveQuotaUser(): ?User
+    {
+        $user = Auth::user();
+        return $user instanceof User ? $user : null;
+    }
+
+    private function resolveMonthlyUsage(User $user): UserPdfMonthlyUsage
+    {
+        return UserPdfMonthlyUsage::firstOrCreate(
+            [
+                'user_id' => $user->id,
+                'month_start' => now()->startOfMonth()->toDateString(),
+            ],
+            [
+                'uploads_count' => 0,
+                'actions_count' => 0,
+                'has_unlimited_actions' => $this->hasUnlimitedPdfActions($user),
+            ]
+        );
+    }
+
+    private function hasUnlimitedPdfActions(User $user): bool
+    {
+        return $user->hasActiveSubscription('pdf-editor');
     }
 }

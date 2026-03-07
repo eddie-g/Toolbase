@@ -36,22 +36,52 @@ import tempfile
 FONT_FILES = {
     'Arial': 'fonts/Arimo-Regular.ttf',
     'Arial-Bold': 'fonts/Arimo-Bold.ttf',
+    'Arial-BoldItalic': 'fonts/Arimo-Bold.ttf',
+    'Arial-Italic': 'fonts/Arimo-Regular.ttf',
     'Arial-Regular': 'fonts/Arimo-Regular.ttf',
+    'ArialMT': 'fonts/Arimo-Regular.ttf',
+    'ArialMT-Bold': 'fonts/Arimo-Bold.ttf',
+    'ArialMT-Regular': 'fonts/Arimo-Regular.ttf',
+    'ArialMT_700wght': 'fonts/Arimo-Bold.ttf',
     'Arial_700wght': 'fonts/Arimo-Bold.ttf',
     'Arimo': 'fonts/Arimo-Regular.ttf',
     'Arimo-Bold': 'fonts/Arimo-Bold.ttf',
+    'Arimo-BoldItalic': 'fonts/Arimo-Bold.ttf',
+    'Arimo-Italic': 'fonts/Arimo-Regular.ttf',
     'Arimo-Regular': 'fonts/Arimo-Regular.ttf',
     'Arimo_700wght': 'fonts/Arimo-Bold.ttf',
+    'Calibri': 'fonts/Carlito-Regular.ttf',
+    'Calibri-Bold': 'fonts/Carlito-Bold.ttf',
+    'Calibri-Regular': 'fonts/Carlito-Regular.ttf',
+    'Calibri_700wght': 'fonts/Carlito-Bold.ttf',
     'Charmonman': 'fonts/Charmonman-Regular.ttf',
     'Charmonman-Bold': 'fonts/Charmonman-Bold.ttf',
     'Charmonman-Regular': 'fonts/Charmonman-Regular.ttf',
     'Charmonman_700wght': 'fonts/Charmonman-Bold.ttf',
+    'CourierNewPS': 'fonts/Cousine-Regular.ttf',
+    'CourierNewPS-Bold': 'fonts/Cousine-Bold.ttf',
+    'CourierNewPS-Regular': 'fonts/Cousine-Regular.ttf',
+    'CourierNewPSMT': 'fonts/Cousine-Regular.ttf',
+    'CourierNewPSMT-Bold': 'fonts/Cousine-Bold.ttf',
+    'CourierNewPSMT-Regular': 'fonts/Cousine-Regular.ttf',
+    'CourierNewPSMT_700wght': 'fonts/Cousine-Bold.ttf',
+    'CourierNewPS_700wght': 'fonts/Cousine-Bold.ttf',
+    'Cousine': 'fonts/Cousine-Regular.ttf',
+    'Cousine-Bold': 'fonts/Cousine-Bold.ttf',
+    'Cousine-Regular': 'fonts/Cousine-Regular.ttf',
+    'Cousine_700wght': 'fonts/Cousine-Bold.ttf',
+    'DrhchpLato': 'fonts/Lato-Regular.ttf',
+    'DrhchpLato-Bold': 'fonts/Lato-Bold.ttf',
+    'DrhchpLato-Regular': 'fonts/Lato-Regular.ttf',
+    'DrhchpLato_700wght': 'fonts/Lato-Bold.ttf',
     'Gelasio': 'fonts/Gelasio-Regular.ttf',
     'Gelasio-Bold': 'fonts/Gelasio-Bold.ttf',
     'Gelasio-Regular': 'fonts/Gelasio-Regular.ttf',
     'Gelasio_700wght': 'fonts/Gelasio-Bold.ttf',
     'Helvetica': 'fonts/Arimo-Regular.ttf',
     'Helvetica-Bold': 'fonts/Arimo-Bold.ttf',
+    'Helvetica-BoldItalic': 'fonts/Arimo-Bold.ttf',
+    'Helvetica-Italic': 'fonts/Arimo-Regular.ttf',
     'Helvetica-Regular': 'fonts/Arimo-Regular.ttf',
     'HelveticaWorld': 'fonts/Arimo-Regular.ttf',
     'HelveticaWorld-Bold': 'fonts/Arimo-Bold.ttf',
@@ -66,22 +96,36 @@ FONT_FILES = {
     'Montserrat-Bold': 'fonts/Montserrat-Bold.ttf',
     'Montserrat-Regular': 'fonts/Montserrat-Regular.ttf',
     'Montserrat-Thin': 'fonts/Montserrat-Thin.ttf',
-    'MontserratThin': 'fonts/Montserrat-Thin.ttf',
+    'MontserratThin': 'fonts/Montserrat-Light.ttf',
+    'MontserratThin-Bold': 'fonts/Montserrat-Bold.ttf',
+    'MontserratThin-Regular': 'fonts/Montserrat-Light.ttf',
     'MontserratThin_700wght': 'fonts/Montserrat-Bold.ttf',
     'Montserrat_100wght': 'fonts/Montserrat-Thin.ttf',
     'Montserrat_700wght': 'fonts/Montserrat-Bold.ttf',
     'OpenSans': 'fonts/OpenSans-Regular.ttf',
     'OpenSans-Bold': 'fonts/OpenSans-Bold.ttf',
+    'OpenSans-BoldItalic': 'fonts/OpenSans-Bold.ttf',
+    'OpenSans-Italic': 'fonts/OpenSans-Regular.ttf',
     'OpenSans-Regular': 'fonts/OpenSans-Regular.ttf',
     'OpenSans_700wght': 'fonts/OpenSans-Bold.ttf',
+    'PdbpbbLato': 'fonts/Lato-Regular.ttf',
+    'PdbpbbLato-Bold': 'fonts/Lato-Bold.ttf',
+    'PdbpbbLato-Regular': 'fonts/Lato-Regular.ttf',
+    'PdbpbbLato_700wght': 'fonts/Lato-Bold.ttf',
     'Poppins': 'fonts/Poppins-Regular.ttf',
     'Poppins-Bold': 'fonts/Poppins-Bold.ttf',
     'Poppins-Regular': 'fonts/Poppins-Regular.ttf',
     'Poppins_700wght': 'fonts/Poppins-Bold.ttf',
     'Roboto': 'fonts/Roboto-Regular.ttf',
     'Roboto-Bold': 'fonts/Roboto-Bold.ttf',
+    'Roboto-BoldItalic': 'fonts/Roboto-Bold.ttf',
+    'Roboto-Italic': 'fonts/Roboto-Regular.ttf',
     'Roboto-Regular': 'fonts/Roboto-Regular.ttf',
     'Roboto_700wght': 'fonts/Roboto-Bold.ttf',
+    'SourceSansPro': 'fonts/SourceSans3-Regular.ttf',
+    'SourceSansPro-Bold': 'fonts/SourceSans3-Bold.ttf',
+    'SourceSansPro-Regular': 'fonts/SourceSans3-Regular.ttf',
+    'SourceSansPro_700wght': 'fonts/SourceSans3-Bold.ttf',
     'TimesNewRomanPSMT': 'fonts/Tinos-Regular.ttf',
     'TimesNewRomanPSMT-Bold': 'fonts/Tinos-Bold.ttf',
     'TimesNewRomanPSMT-Regular': 'fonts/Tinos-Regular.ttf',
@@ -90,9 +134,13 @@ FONT_FILES = {
     'TimesNewRomanUnicode-Bold': 'fonts/Tinos-Bold.ttf',
     'Tinos': 'fonts/Tinos-Regular.ttf',
     'Tinos-Bold': 'fonts/Tinos-Bold.ttf',
+    'Tinos-BoldItalic': 'fonts/Tinos-Bold.ttf',
+    'Tinos-Italic': 'fonts/Tinos-Regular.ttf',
     'Tinos-Regular': 'fonts/Tinos-Regular.ttf',
     'Verdana': 'fonts/Arimo-Regular.ttf',
     'Verdana-Bold': 'fonts/Arimo-Bold.ttf',
+    'Verdana-BoldItalic': 'fonts/Arimo-Bold.ttf',
+    'Verdana-Italic': 'fonts/Arimo-Regular.ttf',
     'Verdana-Regular': 'fonts/Arimo-Regular.ttf',
     'Verdana_700wght': 'fonts/Arimo-Bold.ttf',
 }
@@ -214,11 +262,14 @@ def extract_font_buffer(doc, xref):
 _embedded_font_tempfiles = []
 _embedded_font_cache = {}
 
-def get_embedded_font(doc, font_xref, font_name=None, page_num=None):
+def get_embedded_font(doc, font_xref, font_name=None, page_num=None, want_bold=None, want_italic=None):
     """
     Extract an embedded font from the PDF and write it to a temp file.
     Returns a fitz.Font object or None.
     Uses font_xref first, falls back to name-based lookup.
+
+    want_bold / want_italic: passed to the name-based lookup to disambiguate
+    subset-renamed fonts (e.g. "OOPGPI+Verdana Regular" which is actually bold).
     """
     global _embedded_font_tempfiles, _embedded_font_cache
     
@@ -242,7 +293,7 @@ def get_embedded_font(doc, font_xref, font_name=None, page_num=None):
     
     # Try name-based lookup
     if font_name and page_num is not None:
-        found_xref = find_font_xref_by_name(doc, page_num, font_name)
+        found_xref = find_font_xref_by_name(doc, page_num, font_name, want_bold=want_bold, want_italic=want_italic)
         if found_xref and found_xref not in _embedded_font_cache:
             buf = extract_font_buffer(doc, found_xref)
             if buf and len(buf) > 100:
@@ -272,11 +323,14 @@ def cleanup_embedded_fonts():
     _embedded_font_cache.clear()
 
 
-def find_font_xref_by_name(doc, page_num, font_name):
+def find_font_xref_by_name(doc, page_num, font_name, want_bold=None, want_italic=None):
     """
     Find the current xref for a font by matching its name against page fonts.
     This handles the case where font xrefs change after PDF modifications.
-    
+
+    want_bold / want_italic: if provided, used for tie-breaking by extracting the
+    actual font binary and checking fitz.Font.is_bold / is_italic flags.
+
     Returns the xref of the best matching font, or None if not found.
     """
     if not font_name:
@@ -293,7 +347,8 @@ def find_font_xref_by_name(doc, page_num, font_name):
         
         best_xref = None
         best_score = -1
-        
+        best_candidates: list = []  # (score, xref) — accumulate ties
+
         for font in page_fonts:
             xref = font[0]
             basefont = font[3] if len(font) > 3 else ''
@@ -331,7 +386,9 @@ def find_font_xref_by_name(doc, page_num, font_name):
                     if target_family in cand_family or cand_family in target_family:
                         score += 3
                 
-                # Style matching (bold)
+                # Style matching (bold) — name-based only; may be unreliable for
+                # subset-renamed fonts (e.g. "OOPGPI+Verdana Regular" is actually
+                # bold).  We add it but rely on flag-based tie-breaking below.
                 cand_has_bold = any(x in candidate.lower() for x in ['bold', '700', 'black'])
                 if target_has_bold == cand_has_bold:
                     score += 2
@@ -339,7 +396,30 @@ def find_font_xref_by_name(doc, page_num, font_name):
                 if score > best_score:
                     best_score = score
                     best_xref = xref
-        
+                    best_candidates = [(score, xref)]
+                elif score == best_score and xref != best_xref:
+                    best_candidates.append((score, xref))
+
+        # If there are multiple candidates with the same top score, use actual
+        # font flag extraction to pick the one whose bold/italic matches the
+        # request.  This handles subset-renamed fonts like "OOPGPI+Verdana
+        # Regular" which are actually bold but have "Regular" in their name.
+        if (want_bold is not None or want_italic is not None) and len(best_candidates) > 1:
+            flag_winners = []
+            for _sc, xref in best_candidates:
+                try:
+                    buf = extract_font_buffer(doc, xref)
+                    if buf and len(buf) > 100:
+                        tmp_font = fitz.Font(fontbuffer=buf)
+                        bold_ok = (want_bold is None) or (tmp_font.is_bold == want_bold)
+                        italic_ok = (want_italic is None) or (tmp_font.is_italic == want_italic)
+                        if bold_ok and italic_ok:
+                            flag_winners.append(xref)
+                except Exception:
+                    pass
+            if flag_winners:
+                best_xref = flag_winners[0]
+
         if best_score > 0:
             print(f"  ℹ Font lookup: '{font_name}' → xref {best_xref} (score {best_score})")
             return best_xref

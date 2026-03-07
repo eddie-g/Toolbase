@@ -12,12 +12,168 @@ import fitz  # PyMuPDF
 import tempfile
 from typing import Any, Dict, List, Optional
 import re
+import math
 
 def _rect_center(rect: fitz.Rect):
     return ((rect.x0 + rect.x1) / 2.0, (rect.y0 + rect.y1) / 2.0)
 
 def _inflate_rect(rect: fitz.Rect, delta: float = 0.5) -> fitz.Rect:
     return fitz.Rect(rect.x0 - delta, rect.y0 - delta, rect.x1 + delta, rect.y1 + delta)
+
+
+def _measure_text_width(font_obj: fitz.Font, text: str, font_size: float) -> float:
+    try:
+        return float(font_obj.text_length(text or "", fontsize=font_size))
+    except Exception:
+        return float(len(text or "")) * float(font_size) * 0.6
+
+
+def _split_token_to_width(token: str, font_obj: fitz.Font, font_size: float, max_width: float) -> List[str]:
+    if not token:
+        return [""]
+    if max_width <= 0:
+        return [token]
+    out = []
+    chunk = ""
+    for ch in token:
+        candidate = f"{chunk}{ch}"
+        if chunk and _measure_text_width(font_obj, candidate, font_size) > max_width:
+            out.append(chunk)
+            chunk = ch
+        else:
+            chunk = candidate
+    if chunk:
+        out.append(chunk)
+    return out or [token]
+
+
+def _wrap_text_for_width(text: str, font_obj: fitz.Font, font_size: float, max_width: float) -> List[str]:
+    source_lines = (text or "").splitlines() or [""]
+    wrapped = []
+    for src in source_lines:
+        words = src.split(" ")
+        if not words:
+            wrapped.append("")
+            continue
+        current = ""
+        for word in words:
+            token = word if current == "" else f" {word}"
+            candidate = f"{current}{token}"
+            if current and _measure_text_width(font_obj, candidate, font_size) > max_width:
+                wrapped.append(current)
+                if _measure_text_width(font_obj, word, font_size) > max_width:
+                    parts = _split_token_to_width(word, font_obj, font_size, max_width)
+                    wrapped.extend(parts[:-1])
+                    current = parts[-1]
+                else:
+                    current = word
+            else:
+                if _measure_text_width(font_obj, token.strip(), font_size) > max_width and not current:
+                    parts = _split_token_to_width(token.strip(), font_obj, font_size, max_width)
+                    wrapped.extend(parts[:-1])
+                    current = parts[-1]
+                else:
+                    current = candidate
+        wrapped.append(current)
+    return wrapped or [""]
+
+
+def _pick_font_size_to_fit_rect(
+    text: str,
+    fontname: str,
+    desired_font_size: float,
+    rect: fitz.Rect,
+    line_height_factor: float = 1.2,
+    min_font_size: float = 4.0,
+) -> float:
+    try:
+        font_obj = fitz.Font(fontname=fontname)
+    except Exception:
+        font_obj = fitz.Font(fontname="helv")
+
+    start = max(float(desired_font_size or 12.0), min_font_size)
+    max_width = max(float(rect.width), 0.0)
+    max_height = max(float(rect.height), 0.0)
+
+    size = start
+    while size >= min_font_size:
+        lines = _wrap_text_for_width(text, font_obj, size, max_width)
+        required_height = max(len(lines), 1) * max(size * line_height_factor, 1.0)
+        widest = max((_measure_text_width(font_obj, ln, size) for ln in lines), default=0.0)
+        if required_height <= max_height + 0.01 and widest <= max_width + 0.01:
+            return size
+        size -= 0.25
+
+    return min_font_size
+
+
+def _insert_text_strict_in_bbox(
+    page: fitz.Page,
+    rect: fitz.Rect,
+    text: str,
+    fontname: str,
+    color: tuple,
+    desired_font_size: float,
+    line_height_factor: float = 1.2,
+):
+    # First try textbox with progressively smaller font sizes.
+    fs = max(float(desired_font_size), 1.0)
+    while fs >= 1.0:
+        rc = page.insert_textbox(
+            rect,
+            text,
+            fontsize=fs,
+            fontname=fontname,
+            color=color,
+            align=fitz.TEXT_ALIGN_LEFT,
+            overlay=True,
+        )
+        if rc >= 0:
+            return True, fs, "textbox"
+        fs -= 0.25
+
+    # Fallback: manual wrapped draw, constrained to bbox height.
+    try:
+        font_obj = fitz.Font(fontname=fontname)
+    except Exception:
+        font_obj = fitz.Font(fontname="helv")
+        fontname = "helv"
+
+    fs = max(min(float(desired_font_size), float(rect.height)), 1.0)
+    while fs >= 1.0:
+        lh = max(fs * max(line_height_factor, 1.0), 1.0)
+        max_lines = max(1, int(math.floor(float(rect.height) / lh)))
+        lines = _wrap_text_for_width(text, font_obj, fs, float(rect.width))
+        clipped = len(lines) > max_lines
+        lines = lines[:max_lines]
+        if not lines:
+            fs -= 0.25
+            continue
+
+        # If clipped, trim final line with ellipsis to remain inside width.
+        if clipped:
+            last = lines[-1].rstrip()
+            ell = "..."
+            while last and _measure_text_width(font_obj, f"{last}{ell}", fs) > float(rect.width):
+                last = last[:-1]
+            lines[-1] = f"{last}{ell}" if last else ell
+
+        y = float(rect.y0) + fs
+        for line in lines:
+            if y > float(rect.y1) + 0.001:
+                break
+            page.insert_text(
+                (float(rect.x0), y),
+                line,
+                fontsize=fs,
+                fontname=fontname,
+                color=color,
+                overlay=True,
+            )
+            y += lh
+        return True, fs, "manual-wrap"
+
+    return False, 0.0, "failed"
 
 
 def apply_edits_to_pdf(pdf_path, edits_data):
@@ -403,7 +559,13 @@ def apply_edits_to_pdf(pdf_path, edits_data):
                 rect = fitz.Rect(target_bbox)
                 font_size = edit.get('font_size', 12)
                 font_name = edit.get('font', 'helv')
-                
+                try:
+                    font_size = float(font_size)
+                except Exception:
+                    font_size = 12.0
+                if font_size <= 0:
+                    font_size = 12.0
+
                 # Convert hex color to RGB tuple (0-1 range)
                 color_hex = edit.get('color', '#000000').lstrip('#')
                 try:
@@ -413,66 +575,61 @@ def apply_edits_to_pdf(pdf_path, edits_data):
                 
                 # Map font name to PyMuPDF font
                 pymupdf_font = map_font_name(font_name)
-
-                # Insert text with overlay=True (no redaction at new position!)
+                line_height = edit.get('line_height')
                 try:
-                    rc = page.insert_textbox(
-                        rect,
-                        new_text,
-                        fontsize=font_size,
+                    line_height = float(line_height) if line_height is not None else None
+                except Exception:
+                    line_height = None
+                line_height_factor = max((line_height / font_size), 1.0) if line_height and font_size > 0 else 1.2
+                fitted_font_size = _pick_font_size_to_fit_rect(
+                    new_text,
+                    pymupdf_font,
+                    font_size,
+                    rect,
+                    line_height_factor=line_height_factor,
+                    min_font_size=4.0,
+                )
+
+                # Insert text strictly inside the provided bbox.
+                try:
+                    ok, used_fs, mode = _insert_text_strict_in_bbox(
+                        page=page,
+                        rect=rect,
+                        text=new_text,
                         fontname=pymupdf_font,
                         color=rgb,
-                        align=fitz.TEXT_ALIGN_LEFT,
-                        overlay=True  # CRITICAL: Overlay mode prevents image damage
+                        desired_font_size=fitted_font_size,
+                        line_height_factor=line_height_factor,
                     )
-                    if rc >= 0:
-                        print(f"    ✓ Inserted '{new_text[:30]}...' at ({target_bbox[0]:.1f}, {target_bbox[1]:.1f})")
+                    if ok:
+                        print(
+                            f"    ✓ Inserted '{new_text[:30]}...' at "
+                            f"({target_bbox[0]:.1f}, {target_bbox[1]:.1f}) fs={used_fs:.2f} mode={mode}"
+                        )
                     else:
-                        # insert_textbox can fail without raising (negative rc).
-                        # Fallback to baseline-anchored insert_text so text never disappears after redaction.
-                        lines = [ln for ln in str(new_text).split('\n')] or ['']
-                        line_height = max(font_size * 1.2, 1.0)
-                        baseline = rect.y0 + font_size
-                        for idx, ln in enumerate(lines):
-                            page.insert_text(
-                                (rect.x0, baseline + (idx * line_height)),
-                                ln,
-                                fontsize=font_size,
-                                fontname=pymupdf_font,
-                                color=rgb,
-                                overlay=True
-                            )
-                        print(f"    ✓ Fallback inserted '{new_text[:30]}...' after textbox rc={rc}")
+                        insert_failures += 1
+                        print(
+                            f"    ✗ Text did not fit bbox (strict insert failed) at "
+                            f"({target_bbox[0]:.1f}, {target_bbox[1]:.1f}, {target_bbox[2]:.1f}, {target_bbox[3]:.1f})"
+                        )
                 except Exception as e:
-                    # Fallback to a guaranteed built-in font.
+                    # Retry with guaranteed built-in sans font while preserving bbox constraints.
                     try:
                         print(f"    ⚠ Primary insert failed ({e}), retrying with 'helv'")
-                        rc = page.insert_textbox(
-                            rect,
-                            new_text,
-                            fontsize=font_size,
+                        ok, used_fs, mode = _insert_text_strict_in_bbox(
+                            page=page,
+                            rect=rect,
+                            text=new_text,
                             fontname='helv',
                             color=rgb,
-                            align=fitz.TEXT_ALIGN_LEFT,
-                            overlay=True
+                            desired_font_size=fitted_font_size,
+                            line_height_factor=line_height_factor,
                         )
-                        if rc >= 0:
-                            print(f"    ✓ Inserted with fallback font 'helv'")
+                        if ok:
+                            print(f"    ✓ Inserted with fallback font 'helv' fs={used_fs:.2f} mode={mode}")
                             continue
-                        # textbox failed silently; fallback to insert_text
-                        lines = [ln for ln in str(new_text).split('\n')] or ['']
-                        line_height = max(font_size * 1.2, 1.0)
-                        baseline = rect.y0 + font_size
-                        for idx, ln in enumerate(lines):
-                            page.insert_text(
-                                (rect.x0, baseline + (idx * line_height)),
-                                ln,
-                                fontsize=font_size,
-                                fontname='helv',
-                                color=rgb,
-                                overlay=True
-                            )
-                        print(f"    ✓ Fallback inserted with 'helv' after textbox rc={rc}")
+                        insert_failures += 1
+                        print(f"    ✗ Fallback insert did not fit bbox")
                     except Exception as e2:
                         insert_failures += 1
                         print(f"    ✗ Failed to insert text after fallback: {e2}")

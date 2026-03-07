@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Models\AiDomainRequest;
 use App\Services\DeveloperChatClient;
 use App\Services\NamecheapClient;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -22,7 +23,8 @@ class GenerateAiDomainsJob implements ShouldQueue
         public array $tlds,
         public string $promptModifier = 'none',
         public array $excluded = [],
-        public ?int $userId = null
+        public ?int $userId = null,
+        public ?int $domainRequestId = null
     ) {
         $this->onQueue('domain-generation');
     }
@@ -36,6 +38,12 @@ class GenerateAiDomainsJob implements ShouldQueue
             'status' => 'processing',
             'updated_at' => now()->toISOString(),
         ]), now()->addMinutes(30));
+
+        $domainRequest = $this->resolveDomainRequest();
+        if ($domainRequest) {
+            $domainRequest->status = 'processing';
+            $domainRequest->save();
+        }
 
         try {
             $tldCount = count($this->tlds);
@@ -82,6 +90,23 @@ class GenerateAiDomainsJob implements ShouldQueue
                 'done' => true,
                 'updated_at' => now()->toISOString(),
             ]), now()->addMinutes(30));
+
+            if ($domainRequest) {
+                $domainRequest->status = 'completed';
+                $domainRequest->response = $responseData;
+                $domainRequest->model = $data['response']['model'] ?? 'gemini-2.0-flash';
+                $domainRequest->usage = $usageMetadata ?: null;
+                $domainRequest->result_data = json_encode([
+                    'domains' => $domains,
+                    'results' => $check['results'],
+                    'usage' => $usageMetadata ?: null,
+                    'model' => $data['response']['model'] ?? 'gemini-2.0-flash',
+                    'error' => $check['error'],
+                    'job_id' => $this->jobId,
+                ]);
+                $domainRequest->error_message = $check['error'];
+                $domainRequest->save();
+            }
         } catch (\Throwable $e) {
             Cache::put($cacheKey, array_merge($existing, [
                 'status' => 'failed',
@@ -89,7 +114,33 @@ class GenerateAiDomainsJob implements ShouldQueue
                 'done' => true,
                 'updated_at' => now()->toISOString(),
             ]), now()->addMinutes(30));
+
+            if ($domainRequest) {
+                $domainRequest->status = 'failed';
+                $domainRequest->error_message = $e->getMessage();
+                $domainRequest->save();
+            }
         }
+    }
+
+    private function resolveDomainRequest(): ?AiDomainRequest
+    {
+        if ($this->domainRequestId) {
+            return AiDomainRequest::find($this->domainRequestId);
+        }
+
+        if (!$this->userId) {
+            return null;
+        }
+
+        $domainRequest = AiDomainRequest::create([
+            'user_id' => $this->userId,
+            'prompt' => $this->prompt,
+        ]);
+        $domainRequest->tlds = $this->tlds;
+        $domainRequest->save();
+
+        return $domainRequest;
     }
 
     private function cacheKey(): string

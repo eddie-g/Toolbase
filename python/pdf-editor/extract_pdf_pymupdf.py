@@ -786,11 +786,18 @@ def extract_text_with_pymupdf(pdf_path):
             # matches painted glyph bounds more closely across viewers.
             accurate_bboxes_flag = getattr(fitz, "TEXT_ACCURATE_BBOXES", 0)
             accurate_ascenders_flag = getattr(fitz, "TEXT_ACCURATE_ASCENDERS", 0)
+            # Suppress PyMuPDF's heuristic space insertion between glyphs whose
+            # advance gap exceeds the threshold.  Some PDFs use TJ kerning arrays
+            # that produce a small inter-glyph gap even inside a single word (e.g.
+            # "waives" is decoded as "w aives").  TEXT_INHIBIT_SPACES removes those
+            # spurious spaces while leaving genuine inter-word spaces intact.
+            inhibit_spaces_flag = getattr(fitz, "TEXT_INHIBIT_SPACES", 0)
             text_flags = (
                 fitz.TEXT_PRESERVE_LIGATURES
                 | fitz.TEXT_PRESERVE_WHITESPACE
                 | accurate_bboxes_flag
                 | accurate_ascenders_flag
+                | inhibit_spaces_flag
             )
             # Use sort parameter to help with better block detection.
             text_dict = page.get_text("dict", flags=text_flags, sort=True)
@@ -798,6 +805,12 @@ def extract_text_with_pymupdf(pdf_path):
             page_fonts = page.get_fonts(full=True)
             trace_index = _build_texttrace_index(page)
             horizontal_lines = _collect_horizontal_lines(page)
+
+            # Pre-fetch PyMuPDF word-level positions (with the same space-inhibit
+            # flag).  Used below to split spans that mix regular text with underscore
+            # placeholder runs so each sub-word gets an exact glyph bbox instead of
+            # relying on browser font-metric estimates in renderAnchoredUnderscoreSegments.
+            page_pymupdf_words = page.get_text('words', flags=inhibit_spaces_flag)
             
             page_words = []
             page_blocks = []  # Track paragraph blocks
@@ -1127,8 +1140,54 @@ def extract_text_with_pymupdf(pdf_path):
                                     'space_width': trace_spacewidth
                                 }
 
-                                page_words.append(word_data)
-                                block_word_bboxes.append(bbox)
+                                # When a span has a drawn underline AND contains an
+                                # underscore run with real text both before and after
+                                # it (e.g. "is $_______ or more."), split it into
+                                # sub-word entries using PyMuPDF's word-level positions.
+                                # This gives the overlay editor exact coordinates so
+                                # the text after the blank is positioned correctly.
+                                split_entries = None
+                                if has_drawn_underline and _EXTRACTION_UNDERLINE_RUN_RE.search(text):
+                                    us_parts = _EXTRACTION_UNDERLINE_RUN_RE.split(text, maxsplit=1)
+                                    pre_text = us_parts[0].strip() if us_parts else ''
+                                    post_text = us_parts[1].strip() if len(us_parts) > 1 else ''
+                                    if pre_text and post_text:
+                                        sx0, sy0, sx1, sy1 = bbox
+                                        sub_entries = []
+                                        for pw in page_pymupdf_words:
+                                            wx0, wy0, wx1, wy1, wtext = pw[0], pw[1], pw[2], pw[3], pw[4]
+                                            if wy0 < sy0 - 2 or wy1 > sy1 + 2:
+                                                continue
+                                            if wx1 < sx0 - 2 or wx0 > sx1 + 2:
+                                                continue
+                                            wtext_clean = sanitize_extracted_text(wtext)
+                                            if not wtext_clean:
+                                                continue
+                                            r_text_w, suppressed_w = _overlay_render_text(wtext_clean, has_drawn_underline)
+                                            sub_entry = dict(word_data)
+                                            sub_entry['text'] = wtext_clean
+                                            sub_entry['render_text'] = r_text_w
+                                            sub_entry['suppress_drawn_underline'] = suppressed_w
+                                            sub_entry['left'] = wx0
+                                            sub_entry['top'] = wy0
+                                            sub_entry['width'] = wx1 - wx0
+                                            sub_entry['height'] = wy1 - wy0
+                                            sub_entry['origin_x'] = wx0
+                                            sub_entry['origin_y'] = wy1
+                                            sub_entries.append((wx0, sub_entry))
+                                        if len(sub_entries) > 1:
+                                            split_entries = [e for _, e in sorted(sub_entries, key=lambda x: x[0])]
+
+                                if split_entries:
+                                    for se in split_entries:
+                                        page_words.append(se)
+                                        block_word_bboxes.append((
+                                            se['left'], se['top'],
+                                            se['left'] + se['width'], se['top'] + se['height']
+                                        ))
+                                else:
+                                    page_words.append(word_data)
+                                    block_word_bboxes.append(bbox)
                                 line_text += text + " "
                                 total_words += len(text.split())
 

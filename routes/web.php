@@ -48,6 +48,7 @@ Route::get('/documents/{document}/fullscreen', [DocumentController::class, 'full
 Route::get('/documents/{document}/edit-extracted', [DocumentController::class, 'editExtractedText'])->name('documents.editExtracted');
 Route::get('/documents/{document}/file', [DocumentController::class, 'file'])->name('documents.file');
 Route::post('/documents/{document}/save', [DocumentController::class, 'save'])->name('documents.save');
+Route::post('/documents/{document}/restore-original', [DocumentController::class, 'restoreOriginal'])->name('documents.restoreOriginal');
 Route::post('/documents/{document}/flatten-rotations', [DocumentController::class, 'flattenRotations'])->name('documents.flattenRotations');
 Route::post('/documents/{document}/apply-rotations', [DocumentController::class, 'applyRotations'])->name('documents.applyRotations');
 Route::get('/documents/{document}/apply-rotations', function () {
@@ -143,6 +144,8 @@ Route::post('/domain-search/generate-and-check', [DomainSearchController::class,
 Route::post('/domain-search/ai-generate', [DomainSearchController::class, 'aiGenerate'])->name('domainSearch.aiGenerate');
 Route::get('/domain-search/ai-status/{jobId}', [DomainSearchController::class, 'aiStatus'])->name('domainSearch.aiStatus');
 Route::post('/domain-search/record-file-upload', [DomainSearchController::class, 'recordFileUpload'])->middleware(['throttle:20,1'])->name('domainSearch.recordFileUpload');
+Route::get('/domain-search/saved-domains/refresh-status', [DomainSearchController::class, 'savedDomainsRefreshStatus'])->middleware('auth:web,admin')->name('domainSearch.savedDomainsRefreshStatus');
+Route::post('/domain-search/saved-domains/refresh', [DomainSearchController::class, 'refreshSavedDomains'])->middleware('auth:web,admin')->name('domainSearch.refreshSavedDomains');
 Route::post('/domain-search/generate-logo', [DomainSearchController::class, 'generateLogo'])->middleware('json.response')->name('domainSearch.generateLogo');
 Route::get('/domain-search/generate-logo', fn () => response()->json(['error' => 'POST method required.'], 405));
 Route::get('/domain-search/logo-status/{logoRequest}', [DomainSearchController::class, 'logoStatus'])->middleware('json.response')->name('domainSearch.logoStatus');

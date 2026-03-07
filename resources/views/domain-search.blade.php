@@ -561,6 +561,18 @@
                                     <span x-text="results.filter(r => r.taken).length"></span> taken
                                 </span>
                             </div>
+                            <button
+                                x-show="canRefreshSavedDomains"
+                                @click="refreshSavedDomains()"
+                                type="button"
+                                class="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-1.5 text-xs font-semibold text-gray-700 dark:text-gray-200 transition hover:border-gray-300 dark:hover:border-gray-600 disabled:opacity-60"
+                                :disabled="refreshButtonDisabled"
+                            >
+                                <svg class="h-3.5 w-3.5" :class="{ 'animate-spin': refreshBusy }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582M20 20v-5h-.581M5.49 9A9 9 0 0119 7.24M18.51 15A9 9 0 015 16.76"></path>
+                                </svg>
+                                <span x-text="refreshButtonLabel"></span>
+                            </button>
                             <!-- View Toggle -->
                             <div class="flex items-center rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
                                 <button @click="viewMode = 'list'" type="button"
@@ -821,7 +833,11 @@
                 wordMinLength: 4,
                 wordMaxLength: 10,
                 isLoggedIn: {{ (auth()->check() || auth('admin')->check()) ? 'true' : 'false' }},
+                canRefreshSavedDomains: {{ (!empty($canRefreshSavedDomains)) ? 'true' : 'false' }},
                 savedDomains: new Set(@json($savedDomains ?? [])),
+                refreshCooldownUntil: null,
+                refreshNowMs: Date.now(),
+                refreshBusy: false,
                 categoryOptions: [
                     { value: 'tech',    label: 'Tech' },
                     { value: 'fantasy', label: 'Fantasy' },
@@ -873,6 +889,10 @@
 
                     this.tlds = selected.length ? [...new Set(selected)] : [...new Set(domainSearchDefaultTlds.map((tld) => normalize(tld)))];
                     this.updateTldSuggestions();
+                    setInterval(() => { this.refreshNowMs = Date.now(); }, 1000);
+                    if (this.canRefreshSavedDomains) {
+                        this.fetchSavedDomainRefreshStatus();
+                    }
                 },
 
                 setMode(nextMode) {
@@ -1101,6 +1121,76 @@
                         'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
                         'Accept': 'application/json',
                     };
+                },
+
+                get refreshCooldownSeconds() {
+                    if (!this.refreshCooldownUntil) return 0;
+                    const ms = new Date(this.refreshCooldownUntil).getTime() - this.refreshNowMs;
+                    return Math.max(0, Math.ceil(ms / 1000));
+                },
+
+                get refreshButtonDisabled() {
+                    return this.refreshBusy || this.refreshCooldownSeconds > 0;
+                },
+
+                get refreshButtonLabel() {
+                    if (this.refreshBusy) return 'Refreshing...';
+                    if (this.refreshCooldownSeconds > 0) {
+                        return `Refresh in ${this.formatCooldown(this.refreshCooldownSeconds)}`;
+                    }
+                    return 'Refresh Domains';
+                },
+
+                formatCooldown(totalSeconds) {
+                    const seconds = Math.max(0, Number(totalSeconds || 0));
+                    const hours = Math.floor(seconds / 3600);
+                    const minutes = Math.floor((seconds % 3600) / 60);
+                    const secs = seconds % 60;
+                    if (hours > 0) return `${hours}h ${minutes}m`;
+                    if (minutes > 0) return `${minutes}m ${secs}s`;
+                    return `${secs}s`;
+                },
+
+                async fetchSavedDomainRefreshStatus() {
+                    try {
+                        const res = await fetch('{{ route('domainSearch.savedDomainsRefreshStatus') }}', {
+                            method: 'GET',
+                            headers: this.headers(),
+                        });
+                        const data = await res.json();
+                        if (res.ok) {
+                            this.refreshCooldownUntil = data.next_available_at || null;
+                        }
+                    } catch (e) {
+                        // Silent fail for status check.
+                    }
+                },
+
+                async refreshSavedDomains() {
+                    if (!this.canRefreshSavedDomains || this.refreshButtonDisabled) return;
+                    this.refreshBusy = true;
+                    try {
+                        const res = await fetch('{{ route('domainSearch.refreshSavedDomains') }}', {
+                            method: 'POST',
+                            headers: this.headers(),
+                        });
+                        const data = await res.json();
+
+                        if (!res.ok) {
+                            if (data.cooldown?.next_available_at) {
+                                this.refreshCooldownUntil = data.cooldown.next_available_at;
+                            }
+                            this.error = data.error || 'Failed to refresh saved domains.';
+                            return;
+                        }
+
+                        this.refreshCooldownUntil = data.cooldown?.next_available_at || null;
+                        this.error = null;
+                    } catch (e) {
+                        this.error = 'Failed to refresh saved domains.';
+                    } finally {
+                        this.refreshBusy = false;
+                    }
                 },
 
                 async searchDirect() {

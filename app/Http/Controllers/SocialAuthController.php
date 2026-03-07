@@ -45,9 +45,10 @@ class SocialAuthController extends Controller
 
             Auth::login($user);
 
-            return redirect()->intended('/admin');
+            // User OAuth login should land in the user portal, not admin panel.
+            return redirect()->intended('/portal');
         } catch (\Exception $e) {
-            return redirect('/admin/login')->withErrors(['msg' => 'Google Login failed: ' . $e->getMessage()]);
+            return redirect('/login')->withErrors(['msg' => 'Google Login failed: ' . $e->getMessage()]);
         }
     }
 }

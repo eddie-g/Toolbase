@@ -30,27 +30,83 @@
                     </div>
                 </div>
 
-                <!-- Hero Image -->
-                <div class="relative max-w-6xl mx-auto">
-                    <div class="rounded-2xl border border-gray-200 dark:border-gray-700 shadow-2xl overflow-hidden bg-white dark:bg-gray-800">
-                        <img src="https://tailadmin.com/_next/image?url=%2F_next%2Fstatic%2Fmedia%2Fmain-image.393386f9.png&w=1920&q=75" alt="Dashboard Preview" class="w-full">
-                    </div>
-                    <div class="absolute -bottom-6 left-10 right-10 h-12 bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 rounded-lg blur-3xl opacity-50"></div>
-                </div>
+                
             </div>
         </section>
 
-        <!-- Trusted By Section -->
-        <section id="pdf-features" class="py-16 px-4 sm:px-6 lg:px-8 bg-white dark:bg-gray-900">
+        <!-- Logo Generator Showcase Section -->
+        <section id="pdf-features" class="py-20 px-4 sm:px-6 lg:px-8 bg-gradient-to-b from-white via-slate-50 to-white dark:from-gray-900 dark:via-gray-900 dark:to-gray-900">
             <div class="container mx-auto">
-                <p class="text-center text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-8">
-                    Trusted by over 80,000 individuals and companies worldwide
-                </p>
-                <div class="flex flex-wrap items-center justify-center gap-8 opacity-50 grayscale">
-                    <div class="text-3xl font-bold text-gray-800 dark:text-gray-200">Alibaba</div>
-                    <div class="text-3xl font-bold text-gray-800 dark:text-gray-200">NVIDIA</div>
-                    <div class="text-3xl font-bold text-gray-800 dark:text-gray-200">Dolby</div>
-                    <div class="text-3xl font-bold text-gray-800 dark:text-gray-200">Pexels</div>
+                <div class="max-w-7xl mx-auto rounded-3xl border border-slate-200/80 dark:border-gray-700 bg-white/80 dark:bg-gray-800/70 backdrop-blur-xl shadow-[0_25px_60px_-30px_rgba(15,23,42,0.35)] p-5 sm:p-7 lg:p-8">
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 lg:gap-10 items-start">
+                        <div class="lg:col-span-2 space-y-5">
+                            <div class="flex flex-wrap items-center justify-between gap-3">
+                                <div>
+                                    <p class="text-xs font-semibold tracking-[0.2em] uppercase text-blue-600 dark:text-blue-400">Live Logo Studio</p>
+                                    <h2 class="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">Modern Logo Preview Gallery</h2>
+                                </div>
+                                <div class="inline-flex rounded-xl border border-slate-200 dark:border-gray-700 bg-slate-100/80 dark:bg-gray-900/70 p-1" id="logo-mode-switch">
+                                    <button type="button" class="logo-mode-btn px-4 py-2 text-sm font-semibold rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm" data-mode="vector">Vector</button>
+                                    <button type="button" class="logo-mode-btn px-4 py-2 text-sm font-semibold rounded-lg text-gray-600 dark:text-gray-300" data-mode="image">Raster</button>
+                                </div>
+                            </div>
+
+                            <div class="rounded-2xl border border-slate-200 dark:border-gray-700 bg-gradient-to-br from-slate-100 to-white dark:from-gray-800 dark:to-gray-900 p-4 shadow-inner">
+                                <img
+                                    id="logo-preview-main"
+                                    src="{{ asset('images/home_page_images/vector/vector_lion.svg') }}"
+                                    alt="Selected vector logo preview"
+                                    class="w-full h-[260px] sm:h-[340px] lg:h-[420px] object-cover rounded-xl"
+                                >
+                            </div>
+
+                            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3" id="logo-preview-thumbs">
+                                <button type="button" class="logo-thumb group rounded-xl border-2 border-blue-500 p-1 bg-white dark:bg-gray-800 transition" data-mode="vector" data-preview-src="{{ asset('images/home_page_images/vector/vector_lion.svg') }}" data-preview-alt="Vector lion logo preview">
+                                    <img src="{{ asset('images/home_page_images/vector/vector_lion.svg') }}" alt="Vector lion logo option" class="w-full h-20 object-cover rounded-lg">
+                                </button>
+                                <button type="button" class="logo-thumb group rounded-xl border-2 border-transparent hover:border-blue-400 p-1 bg-white dark:bg-gray-800 transition" data-mode="vector" data-preview-src="{{ asset('images/home_page_images/vector/vector_sun_abstract.svg') }}" data-preview-alt="Vector sun abstract logo preview">
+                                    <img src="{{ asset('images/home_page_images/vector/vector_sun_abstract.svg') }}" alt="Vector sun abstract logo option" class="w-full h-20 object-cover rounded-lg">
+                                </button>
+                                <button type="button" class="logo-thumb group rounded-xl border-2 border-transparent hover:border-blue-400 p-1 bg-white dark:bg-gray-800 transition hidden" data-mode="image" data-preview-src="{{ asset('images/home_page_images/image/raster_dragon_photorealistic.webp') }}" data-preview-alt="Raster dragon logo preview">
+                                    <img src="{{ asset('images/home_page_images/image/raster_dragon_photorealistic.webp') }}" alt="Raster dragon logo option" class="w-full h-20 object-cover rounded-lg">
+                                </button>
+                                <button type="button" class="logo-thumb group rounded-xl border-2 border-transparent hover:border-blue-400 p-1 bg-white dark:bg-gray-800 transition hidden" data-mode="image" data-preview-src="{{ asset('images/home_page_images/image/raster_icegiant_fantasy.png') }}" data-preview-alt="Raster ice giant logo preview">
+                                    <img src="{{ asset('images/home_page_images/image/raster_icegiant_fantasy.png') }}" alt="Raster ice giant logo option" class="w-full h-20 object-cover rounded-lg">
+                                </button>
+                            </div>
+
+                            <div class="rounded-2xl border border-blue-200 dark:border-blue-800/60 bg-blue-50/80 dark:bg-blue-900/20 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                <div>
+                                    <p class="text-sm font-semibold text-blue-900 dark:text-blue-200">Want more logo ideas?</p>
+                                    <p class="text-sm text-blue-700 dark:text-blue-300">Explore the full gallery of generated logos and open any design in the editor.</p>
+                                </div>
+                                <a href="{{ route('browse-logos') }}" class="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold transition whitespace-nowrap">
+                                    Browse Logos
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path>
+                                    </svg>
+                                </a>
+                            </div>
+                        </div>
+
+                        <div class="rounded-2xl border border-slate-200 dark:border-gray-700 bg-white/80 dark:bg-gray-900/70 p-6 shadow-sm">
+                            <p class="inline-flex items-center rounded-full bg-blue-100 dark:bg-blue-900/30 px-3 py-1 text-xs font-semibold text-blue-700 dark:text-blue-300 mb-4" id="logo-mode-badge">
+                                Viewing: Vector
+                            </p>
+                            <h3 class="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white mb-4">
+                                AI Logo Generator
+                            </h3>
+                            <p class="text-gray-600 dark:text-gray-300 mb-5">
+                                Explore logo concepts with quick switching between clean vector styles and realistic image-based directions.
+                            </p>
+                            <ul class="list-disc pl-5 space-y-3 text-gray-700 dark:text-gray-200">
+                                <li>Instantly toggle between vector and image logo modes</li>
+                                <li>Click any icon variation to update the main preview</li>
+                                <li>Compare design direction in a polished side-by-side workspace</li>
+                                <li>Use this gallery as a fast concept validation step</li>
+                            </ul>
+                        </div>
+                    </div>
                 </div>
             </div>
         </section>
@@ -300,5 +356,90 @@
                 </div>
             </div>
         </footer>
+
+        <script>
+            document.addEventListener('DOMContentLoaded', function () {
+                const preview = document.getElementById('logo-preview-main');
+                const thumbs = document.querySelectorAll('.logo-thumb');
+                const modeButtons = document.querySelectorAll('.logo-mode-btn');
+                const modeBadge = document.getElementById('logo-mode-badge');
+
+                if (!preview || !thumbs.length) {
+                    return;
+                }
+
+                function setActiveThumb(activeThumb) {
+                    thumbs.forEach(function (item) {
+                        item.classList.remove('border-blue-500');
+                        item.classList.add('border-transparent');
+                    });
+
+                    activeThumb.classList.remove('border-transparent');
+                    activeThumb.classList.add('border-blue-500');
+                }
+
+                function setPreviewFromThumb(thumb) {
+                    const nextSrc = thumb.getAttribute('data-preview-src');
+                    const nextAlt = thumb.getAttribute('data-preview-alt');
+
+                    if (nextSrc) {
+                        preview.src = nextSrc;
+                    }
+
+                    if (nextAlt) {
+                        preview.alt = nextAlt;
+                    }
+                }
+
+                function setMode(mode) {
+                    modeButtons.forEach(function (btn) {
+                        const selected = btn.getAttribute('data-mode') === mode;
+                        btn.classList.toggle('bg-white', selected);
+                        btn.classList.toggle('dark:bg-gray-700', selected);
+                        btn.classList.toggle('shadow-sm', selected);
+                        btn.classList.toggle('text-gray-900', selected);
+                        btn.classList.toggle('dark:text-white', selected);
+                        btn.classList.toggle('text-gray-600', !selected);
+                        btn.classList.toggle('dark:text-gray-300', !selected);
+                    });
+
+                    thumbs.forEach(function (thumb) {
+                        const thumbMode = thumb.getAttribute('data-mode');
+                        thumb.classList.toggle('hidden', thumbMode !== mode);
+                    });
+
+                    const visibleThumb = document.querySelector('.logo-thumb[data-mode="' + mode + '"]');
+                    if (visibleThumb) {
+                        setPreviewFromThumb(visibleThumb);
+                        setActiveThumb(visibleThumb);
+                    }
+
+                    if (modeBadge) {
+                        const modeLabel = mode === 'image' ? 'Raster' : 'Vector';
+                        modeBadge.textContent = 'Viewing: ' + modeLabel;
+                    }
+                }
+
+                thumbs.forEach(function (thumb) {
+                    thumb.addEventListener('click', function () {
+                        if (thumb.classList.contains('hidden')) {
+                            return;
+                        }
+
+                        setPreviewFromThumb(thumb);
+                        setActiveThumb(thumb);
+                    });
+                });
+
+                modeButtons.forEach(function (btn) {
+                    btn.addEventListener('click', function () {
+                        const selectedMode = btn.getAttribute('data-mode') || 'vector';
+                        setMode(selectedMode);
+                    });
+                });
+
+                setMode('vector');
+            });
+        </script>
     </body>
 </html>
