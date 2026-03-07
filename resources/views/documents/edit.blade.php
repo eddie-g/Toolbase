@@ -16667,6 +16667,100 @@
                         return !nestedInsideLargerWord;
                     });
                 };
+                const normalizeOverlayDuplicateWordText = (aText, bText) => {
+                    const left = sanitizeOverlayText(aText || '');
+                    const right = sanitizeOverlayText(bText || '');
+                    if (!left) return right;
+                    if (!right) return left;
+                    if (left === right) return left;
+
+                    const shorter = left.length <= right.length ? left : right;
+                    const longer = shorter === left ? right : left;
+
+                    if (longer.startsWith(shorter)) {
+                        const suffix = longer.slice(shorter.length);
+                        if (suffix.length > 0 && suffix.length <= 2 && /^([A-Za-z0-9])\1*$/.test(suffix)) {
+                            // Common extraction artifact: one duplicate drops the final
+                            // glyph while the other repeats it (e.g. "LV" vs "LVV").
+                            return shorter + suffix[0];
+                        }
+                    }
+
+                    if (left.includes(right) || right.includes(left)) {
+                        return left.length >= right.length ? left : right;
+                    }
+
+                    return null;
+                };
+                const collapseOverlayDuplicateWords = (words) => {
+                    if (!Array.isArray(words) || words.length < 2) return Array.isArray(words) ? words.slice() : [];
+
+                    const WORD_POS_EPS = 1.5;
+                    const dedupedWords = [];
+                    const sortedWords = [...words].sort((a, b) =>
+                        ((Number(a.top) || 0) - (Number(b.top) || 0)) ||
+                        ((Number(a.left) || 0) - (Number(b.left) || 0))
+                    );
+
+                    sortedWords.forEach((word) => {
+                        const matchIndex = dedupedWords.findIndex((kept) => {
+                            const sameLine = (
+                                kept.line_num != null &&
+                                word.line_num != null &&
+                                String(kept.line_num) === String(word.line_num)
+                            ) || Math.abs((Number(kept.top) || 0) - (Number(word.top) || 0)) <= WORD_POS_EPS;
+                            if (!sameLine) return false;
+                            if (Math.abs((Number(kept.left) || 0) - (Number(word.left) || 0)) > WORD_POS_EPS) return false;
+
+                            const keptText = sanitizeOverlayText(kept.text || '');
+                            const wordText = sanitizeOverlayText(word.text || '');
+                            return keptText === wordText
+                                || keptText.includes(wordText)
+                                || wordText.includes(keptText);
+                        });
+
+                        if (matchIndex === -1) {
+                            dedupedWords.push({ ...word });
+                            return;
+                        }
+
+                        const kept = dedupedWords[matchIndex];
+                        const mergedText = normalizeOverlayDuplicateWordText(kept.text, word.text);
+                        const mergedRenderText = normalizeOverlayDuplicateWordText(
+                            kept.render_text !== undefined && kept.render_text !== null ? kept.render_text : kept.text,
+                            word.render_text !== undefined && word.render_text !== null ? word.render_text : word.text
+                        );
+                        const keptLeft = Number(kept.left) || 0;
+                        const keptTop = Number(kept.top) || 0;
+                        const keptRight = keptLeft + (Number(kept.width) || 0);
+                        const keptBottom = keptTop + (Number(kept.height) || 0);
+                        const wordLeft = Number(word.left) || 0;
+                        const wordTop = Number(word.top) || 0;
+                        const wordRight = wordLeft + (Number(word.width) || 0);
+                        const wordBottom = wordTop + (Number(word.height) || 0);
+
+                        dedupedWords[matchIndex] = {
+                            ...(String(word.text || '').length > String(kept.text || '').length ? word : kept),
+                            text: mergedText || (String(word.text || '').length > String(kept.text || '').length ? word.text : kept.text),
+                            render_text: mergedRenderText || (
+                                String(
+                                    (word.render_text !== undefined && word.render_text !== null ? word.render_text : word.text) || ''
+                                ).length >
+                                String(
+                                    (kept.render_text !== undefined && kept.render_text !== null ? kept.render_text : kept.text) || ''
+                                ).length
+                                    ? (word.render_text !== undefined && word.render_text !== null ? word.render_text : word.text)
+                                    : (kept.render_text !== undefined && kept.render_text !== null ? kept.render_text : kept.text)
+                            ),
+                            left: Math.min(keptLeft, wordLeft),
+                            top: Math.min(keptTop, wordTop),
+                            width: Math.max(keptRight, wordRight) - Math.min(keptLeft, wordLeft),
+                            height: Math.max(keptBottom, wordBottom) - Math.min(keptTop, wordTop),
+                        };
+                    });
+
+                    return dedupedWords;
+                };
                 const getOverlayWordDisplayText = (word) => {
                     const sourceText = sanitizeOverlayText(word?.text || '');
                     const renderedText = sanitizeOverlayText(
@@ -17147,9 +17241,16 @@
                             const isUnderlineRun = /^_{3,}$/.test(chunk);
                             if (!isUnderlineRun && chunk.length > 0) {
                                 const seg = document.createElement('span');
+                                const segFontSizePx = (Number(word.font_size) || 10) * scaleY;
+                                const segLineHeightPx = Math.max(
+                                    segFontSizePx,
+                                    (Number(word.height) || 0) * scaleY,
+                                    1
+                                );
                                 seg.textContent = chunk;
                                 seg.style.fontFamily = wordFontFamily;
                                 seg.style.fontSize = fontSizePx + 'px';
+                                seg.style.lineHeight = segLineHeightPx + 'px';
                                 seg.style.fontWeight = wordWeight;
                                 seg.style.fontStyle = wordStyle;
                                 seg.style.color = getWordColor(word, '#000000');
@@ -17247,9 +17348,16 @@
                             }
 
                             const wordSpan = document.createElement('span');
+                            const wordFontSizePx = (Number(word.font_size) || 10) * scaleY;
+                            const wordLineHeightPx = Math.max(
+                                wordFontSizePx,
+                                (Number(word.height) || 0) * scaleY,
+                                1
+                            );
                             wordSpan.textContent = word._displayText;
                             wordSpan.style.fontFamily = wordFontFamily;
-                            wordSpan.style.fontSize = (word.font_size * scaleY) + 'px';
+                            wordSpan.style.fontSize = wordFontSizePx + 'px';
+                            wordSpan.style.lineHeight = wordLineHeightPx + 'px';
                             wordSpan.style.fontWeight = wordWeight;
                             wordSpan.style.fontStyle = wordStyle;
                             wordSpan.style.color = getWordColor(word, '#000000');
@@ -17493,6 +17601,11 @@
 
                 const computeOverlayPaddingPdf = (block) => {
                     const fontSize = Number(block?.font_size) || 12;
+                    if (fontSize >= 40) {
+                        // Large display headings need a more generous click/selection
+                        // target; their visual boxes are intentionally looser.
+                        return Math.max(4, Math.min(fontSize * 0.18, 18));
+                    }
                     const basePad = fontSize * 0.15;
                     // Tight padding — just enough for click-targeting
                     return Math.max(1, Math.min(basePad, 5));
@@ -18127,6 +18240,264 @@
                         dedupedBlocks.push(blk);
                     });
 
+                    const mergeVerticallyAdjacentBlocks = (blocks) => {
+                        if (!Array.isArray(blocks) || blocks.length < 2) return Array.isArray(blocks) ? blocks : [];
+
+                        const sorted = [...blocks].sort((a, b) => {
+                            const topDiff = (Number(a.top) || 0) - (Number(b.top) || 0);
+                            if (Math.abs(topDiff) > 3) return topDiff;
+                            return (Number(a.left) || 0) - (Number(b.left) || 0);
+                        });
+                        let nextMergedBlockNum = sorted.reduce((maxNum, block) => {
+                            return Math.max(maxNum, Number(block?.block_num) || 0);
+                        }, 0) + 1;
+                        const consumed = new Set();
+                        const out = [];
+                        const blockWordsCache = new Map();
+                        const getCachedBlockWords = (blockNum) => {
+                            if (!blockWordsCache.has(blockNum)) {
+                                blockWordsCache.set(
+                                    blockNum,
+                                    (pageData.words || []).filter((w) => String(w.block_num) === String(blockNum))
+                                );
+                            }
+                            return blockWordsCache.get(blockNum);
+                        };
+                        const shouldMergeStackedBlocks = (topBlock, bottomBlock, allBlocks) => {
+                            if (!topBlock || !bottomBlock) return false;
+                            if (topBlock._client_form_merge || bottomBlock._client_form_merge) return false;
+                            if (topBlock._client_539_row_merge || bottomBlock._client_539_row_merge) return false;
+
+                            const aL = Number(topBlock.left) || 0;
+                            const aT = Number(topBlock.top) || 0;
+                            const aW = Math.max(1, Number(topBlock.width) || 0);
+                            const aH = Math.max(1, Number(topBlock.height) || 0);
+                            const aR = aL + aW;
+                            const aB = aT + aH;
+                            const bL = Number(bottomBlock.left) || 0;
+                            const bT = Number(bottomBlock.top) || 0;
+                            const bW = Math.max(1, Number(bottomBlock.width) || 0);
+                            const bH = Math.max(1, Number(bottomBlock.height) || 0);
+                            const bR = bL + bW;
+                            const bB = bT + bH;
+
+                            if (bT < aT) return false;
+
+                            const interW = Math.max(0, Math.min(aR, bR) - Math.max(aL, bL));
+                            const xOverlapRatio = interW / Math.max(1, Math.min(aW, bW));
+                            if (xOverlapRatio < 0.55) return false;
+
+                            const centerA = aL + (aW / 2);
+                            const centerB = bL + (bW / 2);
+                            if (Math.abs(centerA - centerB) > Math.max(16, Math.min(aW, bW) * 0.18)) return false;
+
+                            const verticalGap = bT - aB;
+                            const verticalOverlap = Math.max(0, aB - bT);
+                            const minHeight = Math.max(1, Math.min(aH, bH));
+                            const maxGap = Math.max(8, Math.min(18, minHeight * 0.9));
+                            if (verticalGap > maxGap) return false;
+                            if ((verticalOverlap / minHeight) > 0.22) return false;
+
+                            const textA = getBlockTextSig(topBlock);
+                            const textB = getBlockTextSig(bottomBlock);
+                            if (!textA || !textB) return false;
+
+                            const hasIntervening = (allBlocks || []).some((other) => {
+                                if (!other || other === topBlock || other === bottomBlock) return false;
+                                const oL = Number(other.left) || 0;
+                                const oT = Number(other.top) || 0;
+                                const oW = Math.max(1, Number(other.width) || 0);
+                                const oH = Math.max(1, Number(other.height) || 0);
+                                const oR = oL + oW;
+                                const oB = oT + oH;
+                                if (oT < (aT - 2) || oB > (bB + 2)) return false;
+                                const interW2 = Math.max(0, Math.min(Math.max(aR, bR), oR) - Math.max(Math.min(aL, bL), oL));
+                                const columnW = Math.max(1, Math.min(Math.max(aR, bR) - Math.min(aL, bL), oW));
+                                return (interW2 / columnW) >= 0.55 && oT > aT && oB < bB;
+                            });
+                            if (hasIntervening) return false;
+
+                            return true;
+                        };
+                        const buildMergedBlock = (cluster) => {
+                            const clusterEntries = cluster.map((block) => ({
+                                block,
+                                words: getCachedBlockWords(block.block_num),
+                            }));
+                            const mergedWords = clusterEntries.flatMap((entry) => entry.words);
+                            if (!mergedWords.length) return null;
+
+                            const newBlockNum = nextMergedBlockNum++;
+                            mergedWords.forEach((w) => { w.block_num = newBlockNum; });
+
+                            let minL = Infinity, minT = Infinity, maxR = -Infinity, maxB = -Infinity;
+                            mergedWords.forEach((w) => {
+                                const wL = Number(w.left) || 0;
+                                const wT = Number(w.top) || 0;
+                                const wR = wL + (Number(w.width) || 0);
+                                const wB = wT + (Number(w.height) || 0);
+                                minL = Math.min(minL, wL);
+                                minT = Math.min(minT, wT);
+                                maxR = Math.max(maxR, wR);
+                                maxB = Math.max(maxB, wB);
+                            });
+
+                            const mergedLineBoxes = [];
+                            const mergedTextLines = [];
+                            clusterEntries.forEach(({ block, words }) => {
+                                const lineBBoxes = Array.isArray(block.line_bboxes) && block.line_bboxes.length
+                                    ? block.line_bboxes
+                                    : [[
+                                        Number(block.left) || 0,
+                                        Number(block.top) || 0,
+                                        (Number(block.left) || 0) + (Number(block.width) || 0),
+                                        (Number(block.top) || 0) + (Number(block.height) || 0),
+                                    ]];
+                                lineBBoxes.forEach((lb) => {
+                                    mergedLineBoxes.push([lb[0], lb[1], lb[2], lb[3]]);
+                                    const lineWords = words
+                                        .filter((w) => verticalOverlapRatio(
+                                            Number(w.top) || 0,
+                                            (Number(w.top) || 0) + (Number(w.height) || 0),
+                                            Number(lb[1]) || 0,
+                                            Number(lb[3]) || (Number(lb[1]) || 0)
+                                        ) >= 0.35)
+                                        .sort((a, b) => (Number(a.left) || 0) - (Number(b.left) || 0));
+                                    const lineText = lineWords
+                                        .map((w) => getOverlayWordDisplayText(w))
+                                        .filter((t) => t.length > 0)
+                                        .join(' ')
+                                        .replace(/[ \t]+/g, ' ')
+                                        .trim();
+                                    if (lineText) mergedTextLines.push(lineText);
+                                });
+                            });
+
+                            if (!Number.isFinite(minL) || !Number.isFinite(minT) || !Number.isFinite(maxR) || !Number.isFinite(maxB)) {
+                                return null;
+                            }
+
+                            const modelBase = cluster[0];
+                            const mergedFontSizes = mergedWords
+                                .map((w) => Number(w.font_size) || 0)
+                                .filter((v) => v > 0)
+                                .sort((a, b) => a - b);
+                            const representativeFontSize = mergedFontSizes.length
+                                ? mergedFontSizes[Math.floor((mergedFontSizes.length - 1) / 2)]
+                                : (Number(modelBase.font_size) || 12);
+                            const minMergedFontSize = mergedFontSizes.length ? mergedFontSizes[0] : representativeFontSize;
+                            const maxMergedFontSize = mergedFontSizes.length ? mergedFontSizes[mergedFontSizes.length - 1] : representativeFontSize;
+                            const mergedLineHeights = clusterEntries
+                                .flatMap(({ block }) => {
+                                    const values = [];
+                                    if (Number(block.line_height) > 0) values.push(Number(block.line_height));
+                                    if (Number(block.avg_line_height) > 0) values.push(Number(block.avg_line_height));
+                                    if (Array.isArray(block.line_bboxes)) {
+                                        block.line_bboxes.forEach((lb) => {
+                                            const h = (Number(lb?.[3]) || 0) - (Number(lb?.[1]) || 0);
+                                            if (h > 0) values.push(h);
+                                        });
+                                    }
+                                    return values;
+                                })
+                                .filter((v) => v > 0)
+                                .sort((a, b) => a - b);
+                            const representativeLineHeight = mergedLineHeights.length
+                                ? mergedLineHeights[Math.floor((mergedLineHeights.length - 1) / 2)]
+                                : (Number(modelBase.avg_line_height) || Number(modelBase.line_height) || (representativeFontSize * 1.2));
+                            const styleWeights = new Map();
+                            mergedWords.forEach((w) => {
+                                const textWeight = Math.max(
+                                    1,
+                                    sanitizeOverlayText(String(
+                                        (w.render_text !== undefined && w.render_text !== null) ? w.render_text : (w.text || '')
+                                    )).replace(/\s+/g, '').length
+                                );
+                                const styleKey = JSON.stringify({
+                                    font: w.font || modelBase.font || '',
+                                    font_size: Number(w.font_size) || representativeFontSize,
+                                    font_weight: Number(w.font_weight) || (w.bold ? 700 : 400),
+                                    italic: !!w.italic,
+                                    bold: !!w.bold,
+                                    color: w.color,
+                                    hex_color: w.hex_color || null,
+                                    font_xref: w.font_xref ?? null,
+                                });
+                                styleWeights.set(styleKey, (styleWeights.get(styleKey) || 0) + textWeight);
+                            });
+                            let dominantStyle = null;
+                            let dominantScore = -1;
+                            styleWeights.forEach((score, styleKey) => {
+                                if (score > dominantScore) {
+                                    dominantScore = score;
+                                    dominantStyle = JSON.parse(styleKey);
+                                }
+                            });
+                            return {
+                                ...modelBase,
+                                _client_split: true,
+                                _client_vertical_merge: true,
+                                _client_mixed_font_merge: (maxMergedFontSize - minMergedFontSize) >= 8,
+                                font: dominantStyle?.font || modelBase.font,
+                                block_num: newBlockNum,
+                                left: minL,
+                                top: minT,
+                                width: Math.max(1, maxR - minL),
+                                height: Math.max(1, maxB - minT),
+                                line_count: mergedLineBoxes.length || mergedTextLines.length,
+                                text: mergedTextLines.join('\n'),
+                                text_lines: mergedTextLines,
+                                line_bboxes: mergedLineBoxes,
+                                font_size: Number(dominantStyle?.font_size) || representativeFontSize,
+                                line_height: representativeLineHeight,
+                                avg_line_height: representativeLineHeight,
+                                font_weight: String(dominantStyle?.font_weight || modelBase.font_weight || (modelBase.bold ? 700 : 400)),
+                                bold: dominantStyle?.bold ?? modelBase.bold,
+                                italic: dominantStyle?.italic ?? modelBase.italic,
+                                color: dominantStyle?.color ?? modelBase.color,
+                                hex_color: dominantStyle?.hex_color || modelBase.hex_color,
+                                font_xref: dominantStyle?.font_xref ?? modelBase.font_xref,
+                            };
+                        };
+
+                        for (let i = 0; i < sorted.length; i++) {
+                            const base = sorted[i];
+                            if (!base || consumed.has(base.block_num)) continue;
+
+                            const cluster = [base];
+                            let current = base;
+                            for (let j = i + 1; j < sorted.length; j++) {
+                                const candidate = sorted[j];
+                                if (!candidate || consumed.has(candidate.block_num)) continue;
+                                if (!shouldMergeStackedBlocks(current, candidate, sorted)) continue;
+                                cluster.push(candidate);
+                                current = candidate;
+                            }
+
+                            if (cluster.length > 1) {
+                                cluster.forEach((blk) => consumed.add(blk.block_num));
+                                const merged = buildMergedBlock(cluster);
+                                if (merged) {
+                                    out.push(merged);
+                                    continue;
+                                }
+                                cluster.forEach((blk) => out.push(blk));
+                                continue;
+                            }
+
+                            consumed.add(base.block_num);
+                            out.push(base);
+                        }
+
+                        return out.sort((a, b) => {
+                            const topDiff = (Number(a.top) || 0) - (Number(b.top) || 0);
+                            if (Math.abs(topDiff) > 3) return topDiff;
+                            return (Number(a.left) || 0) - (Number(b.left) || 0);
+                        });
+                    };
+                    const mergedAdjacentBlocks = mergeVerticallyAdjacentBlocks(dedupedBlocks);
+                    pageData.blocks = mergedAdjacentBlocks;
+
                     const isLikelyOrphanTinyBlock = (block, textValue, allBlocks) => {
                         const t = sanitizeOverlayText(String(textValue || '')).trim();
                         if (!t || t.length > 2 || !/[A-Za-z0-9]/.test(t)) return false;
@@ -18160,7 +18531,7 @@
                     };
 
                     // Pre-compute base rectangles for all blocks so we can clamp padding to prevent overlaps
-                    const blockBaseRects = dedupedBlocks.map((blk) => {
+                    const blockBaseRects = mergedAdjacentBlocks.map((blk) => {
                         const blkKey = `block-${pageData.page_number}-${blk.block_num}`;
                         const blkEdit = getOverlayStoredEdit(blkKey);
                         const blkWords = pageData.words
@@ -18187,12 +18558,35 @@
                         for (let j = 0; j < blockBaseRects.length; j++) {
                             if (j === i) continue;
                             const o = blockBaseRects[j];
+                            const rectRight = rect.baseL + rect.baseW;
+                            const rectBottom = rect.baseT + rect.baseH;
+                            const otherRight = o.baseL + o.baseW;
+                            const otherBottom = o.baseT + o.baseH;
+                            const rectArea = Math.max(1, rect.baseW * rect.baseH);
+                            const otherArea = Math.max(1, o.baseW * o.baseH);
+                            const rectContainsOther =
+                                rect.baseL <= (o.baseL + 2) &&
+                                rectRight >= (otherRight - 2) &&
+                                rect.baseT <= (o.baseT + 2) &&
+                                rectBottom >= (otherBottom - 2);
+                            const otherContainsRect =
+                                o.baseL <= (rect.baseL + 2) &&
+                                otherRight >= (rectRight - 2) &&
+                                o.baseT <= (rect.baseT + 2) &&
+                                otherBottom >= (rectBottom - 2);
+                            const nestedAreaRatio = rectContainsOther
+                                ? (rectArea / otherArea)
+                                : (otherContainsRect ? (otherArea / rectArea) : 0);
+                            const isLargeNestedPair = nestedAreaRatio >= 3;
                             // Check if blocks share horizontal span (potential vertical overlap)
                             const hOverlap = rect.baseL < o.baseL + o.baseW && rect.baseL + rect.baseW > o.baseL;
                             // Check if blocks share vertical span (potential horizontal overlap)
                             const vOverlap = rect.baseT < o.baseT + o.baseH && rect.baseT + rect.baseH > o.baseT;
 
                             if (hOverlap) {
+                                if (isLargeNestedPair) {
+                                    continue;
+                                }
                                 let gap;
                                 if (o.baseT >= rect.baseT + rect.baseH) {
                                     gap = o.baseT - (rect.baseT + rect.baseH);
@@ -18204,6 +18598,9 @@
                                 maxPad = Math.min(maxPad, gap / 2);
                             }
                             if (vOverlap) {
+                                if (isLargeNestedPair) {
+                                    continue;
+                                }
                                 let gap;
                                 if (o.baseL >= rect.baseL + rect.baseW) {
                                     gap = o.baseL - (rect.baseL + rect.baseW);
@@ -18227,7 +18624,7 @@
                     const Y_ALIGNMENT_THRESHOLD = 15; // max Y difference in PDF units for alignment
                     const blockYAdjustments = new Map(); // block_num -> adjusted Y position
 
-                    dedupedBlocks.forEach((blockA, idxA) => {
+                    mergedAdjacentBlocks.forEach((blockA, idxA) => {
                         if (blockYAdjustments.has(blockA.block_num)) return;
                         
                         const aLeft = blockA.left || 0;
@@ -18235,7 +18632,7 @@
                         const aTop = blockA.top || 0;
                         
                         // Look for other blocks that horizontally overlap with this one
-                        dedupedBlocks.forEach((blockB, idxB) => {
+                        mergedAdjacentBlocks.forEach((blockB, idxB) => {
                             if (idxA === idxB) return;
                             if (blockYAdjustments.has(blockB.block_num)) return;
                             
@@ -18270,7 +18667,7 @@
                         });
                     });
 
-                    dedupedBlocks.forEach((block, blockIndex) => {
+                    mergedAdjacentBlocks.forEach((block, blockIndex) => {
                         const key = `block-${pageData.page_number}-${block.block_num}`;
                         if (renderedBlockKeys.has(key)) return;
                         renderedBlockKeys.add(key);
@@ -18329,6 +18726,7 @@
                         textSpan.style.padding = '0';
                         textSpan.style.margin = '0';
                         textSpan.style.overflow = 'hidden';
+                        textSpan.style.boxSizing = 'border-box';
                         
                         // Apply font styling from block data directly to the field for inheritance
                         const fontFamily = getCssFontFamily(block.font);
@@ -18400,12 +18798,12 @@
                         const rawBlockWords = pageData.words
                             ? pageData.words.filter((word) => word.block_num === block.block_num)
                             : [];
-                        const blockWords = filterOverlayArtifactWords(rawBlockWords).filter((word) => {
+                        const blockWords = collapseOverlayDuplicateWords(filterOverlayArtifactWords(rawBlockWords)).filter((word) => {
                             const display = getOverlayWordDisplayText(word);
                             return !isIgnorableOverlayToken(display);
                         });
 
-                        if (!storedEdit && isLikelyOrphanTinyBlock(block, safeBlockText, dedupedBlocks)) {
+                        if (!storedEdit && isLikelyOrphanTinyBlock(block, safeBlockText, mergedAdjacentBlocks)) {
                             return;
                         }
 
@@ -18512,11 +18910,25 @@
                         if (lineHeightPx) {
                             textSpan.style.lineHeight = lineHeightPx;
                         }
+                        if (block._client_mixed_font_merge) {
+                            const mixedTopPadPx = Math.max(6, Math.min(14, (parseFloat(fontSize) || 0) * 0.18));
+                            textSpan.style.paddingTop = mixedTopPadPx + 'px';
+                        }
                         
                         field.appendChild(textSpan);
 
                         // Apply positioning from PyMuPDF data (padding clamped to prevent overlap)
-                        const paddingPdf = storedEdit ? 0 : blockClampedPad[blockIndex];
+                        const isDisplayHeadingBlock = !block._client_vertical_merge &&
+                            (Number(block.font_size) || 0) >= 40 &&
+                            sanitizeOverlayText(safeBlockText).length > 0 &&
+                            sanitizeOverlayText(safeBlockText).length <= 40;
+                        const paddingPdf = storedEdit
+                            ? 0
+                            : (
+                                isDisplayHeadingBlock
+                                    ? Math.max(blockClampedPad[blockIndex], Math.min(18, (Number(block.font_size) || 0) * 0.18))
+                                    : blockClampedPad[blockIndex]
+                            );
                         const paddingX = paddingPdf * scaleX;
                         const paddingY = paddingPdf * scaleY;
                         const baseLeft = storedEdit ? storedEdit.bbox[0] : blockLeft;
@@ -18531,15 +18943,25 @@
                         // The buffer must also cover residual overflow from letter-spacing
                         // clamping when web fonts are wider than PDF-embedded fonts.
                         const fontSizeScaled = block.font_size * scaleY;
-                        const baseWidthBuffer = 4 + Math.max(4, fontSizeScaled * 0.3);
+                        const baseWidthBuffer = block._client_vertical_merge
+                            ? 4 + Math.max(2, fontSizeScaled * 0.08)
+                            : 4 + Math.max(4, fontSizeScaled * 0.3);
                         // Add a small right-edge glyph safety margin. Some fallback font
                         // combinations render final glyph stems slightly outside measured
                         // advances, which can clip characters at the box edge.
-                        const glyphEdgeSafetyPx = Math.max(2, Math.min(8, fontSizeScaled * 0.2));
+                        const glyphEdgeSafetyPx = block._client_vertical_merge
+                            ? Math.max(1, Math.min(4, fontSizeScaled * 0.08))
+                            : Math.max(2, Math.min(8, fontSizeScaled * 0.2));
                         const widthBuffer = baseWidthBuffer + glyphEdgeSafetyPx;
                         // Height buffer: 4px for border (2 top + 2 bottom) plus a small
                         // descender‐safety margin so glyphs like g/p/y are not clipped.
-                        const heightBuffer = 4 + Math.max(2, fontSizeScaled * 0.1);
+                        const heightBuffer = block._client_vertical_merge
+                            ? (
+                                block._client_mixed_font_merge
+                                    ? 4 + Math.max(16, fontSizeScaled * 0.8)
+                                    : 4 + Math.max(1, fontSizeScaled * 0.04)
+                            )
+                            : 4 + Math.max(2, fontSizeScaled * 0.1);
 
                         applyClampedRect(
                             field,
@@ -18601,7 +19023,7 @@
                                     maxMeasuredLineWidth = Math.max(maxMeasuredLineWidth, lineWidth);
                                 });
                                 const measuredFieldWidth = maxMeasuredLineWidth + (paddingX * 2) + widthBuffer;
-                                if (measuredFieldWidth > expectedWidth) {
+                                if (!block._client_vertical_merge && measuredFieldWidth > expectedWidth) {
                                     // Guard against runaway expansion on long underline/blank
                                     // form fields where fallback metrics can be much wider.
                                     // Keep a bounded safety margin for font mismatch while
