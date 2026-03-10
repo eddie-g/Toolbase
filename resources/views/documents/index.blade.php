@@ -395,6 +395,36 @@
                 </form>
             </div>
 
+            <!-- ── Blank PDF ────────────────────────────── -->
+                    <div class="card">
+                        <h2 style="margin: 0 0 6px;">Start with an Empty PDF</h2>
+                        <p style="margin: 0 0 16px; font-size: 14px; color: var(--muted);">Create a blank page to add text, images, and annotations from scratch.</p>
+                        <form action="{{ route('documents.createBlank') }}" method="POST" style="display:flex; flex-wrap:wrap; align-items:flex-end; gap:14px;">
+                            @csrf
+                            <div style="display:flex; flex-direction:column; gap:4px;">
+                                <label for="blank-page-size" style="font-size:12px; color:var(--muted); font-weight:600;">Page size</label>
+                                <select id="blank-page-size" name="page_size" style="background:var(--soft-bg); border:1px solid var(--surface-border); color:var(--ink); border-radius:8px; padding:9px 12px; font:inherit; font-size:14px; cursor:pointer;">
+                                    <option value="A4">A4</option>
+                                    <option value="Letter" selected>Letter</option>
+                                    <option value="Legal">Legal</option>
+                                    <option value="A3">A3</option>
+                                    <option value="A5">A5</option>
+                                </select>
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:4px;">
+                                <label for="blank-orientation" style="font-size:12px; color:var(--muted); font-weight:600;">Orientation</label>
+                                <select id="blank-orientation" name="orientation" style="background:var(--soft-bg); border:1px solid var(--surface-border); color:var(--ink); border-radius:8px; padding:9px 12px; font:inherit; font-size:14px; cursor:pointer;">
+                                    <option value="portrait" selected>Portrait</option>
+                                    <option value="landscape">Landscape</option>
+                                </select>
+                            </div>
+                            <button type="submit" class="btn-secondary" style="display:inline-flex; align-items:center; gap:8px; padding:10px 20px;">
+                                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="12" x2="12" y2="18"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+                                Create Blank PDF
+                            </button>
+                        </form>
+                    </div>
+
             <!-- ── Guided Templates ────────────────────────────── -->
                     <div class="card">
                 <h2 style="margin: 0 0 8px;">Guided Templates</h2>

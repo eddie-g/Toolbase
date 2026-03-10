@@ -11,6 +11,7 @@ class OverlayEditorTest extends Model
     protected $fillable = [
         'run_id',
         'test_type',
+        'test_key',
         'filename',
         'description',
         'test_category',
@@ -23,6 +24,7 @@ class OverlayEditorTest extends Model
         'file_size',
         'error',
         'warnings',
+        'artifacts',
     ];
 
     protected function casts(): array
@@ -30,6 +32,7 @@ class OverlayEditorTest extends Model
         return [
             'checks' => 'array',
             'warnings' => 'array',
+            'artifacts' => 'array',
         ];
     }
 }

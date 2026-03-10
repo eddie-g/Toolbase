@@ -27,6 +27,7 @@ class ViewOverlayEditorTest extends ViewRecord
                             ->color(fn (string $state): string => match ($state) {
                                 'extraction' => 'info',
                                 'shapes' => 'warning',
+                                'pdf' => 'danger',
                                 default => 'gray',
                             }),
                         Infolists\Components\TextEntry::make('status')
@@ -67,13 +68,16 @@ class ViewOverlayEditorTest extends ViewRecord
                         Infolists\Components\RepeatableEntry::make('checks')
                             ->label('')
                             ->schema([
-                                Infolists\Components\TextEntry::make('name')
+                                Infolists\Components\TextEntry::make('item')
+                                    ->getStateUsing(fn ($record) => $record['item'] ?? $record['name'] ?? '-')
                                     ->label('Check'),
-                                Infolists\Components\TextEntry::make('status')
+                                Infolists\Components\TextEntry::make('result')
                                     ->label('Result')
                                     ->badge()
-                                    ->color(fn ($state) => $state === 'pass' ? 'success' : 'danger'),
-                                Infolists\Components\TextEntry::make('message')
+                                    ->getStateUsing(fn ($record) => strtoupper((string) ($record['result'] ?? $record['status'] ?? '')))
+                                    ->color(fn ($state) => strtoupper((string) $state) === 'PASS' ? 'success' : 'danger'),
+                                Infolists\Components\TextEntry::make('detail')
+                                    ->getStateUsing(fn ($record) => $record['detail'] ?? $record['message'] ?? '-')
                                     ->label('Details'),
                             ])
                             ->columns(3),

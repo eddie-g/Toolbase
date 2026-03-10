@@ -61,6 +61,7 @@ class OverlayEditorTestResource extends Resource
                     ->color(fn (string $state): string => match ($state) {
                         'extraction' => 'info',
                         'shapes' => 'warning',
+                        'pdf' => 'danger',
                         default => 'gray',
                     })
                     ->formatStateUsing(fn (string $state): string => ucfirst($state))
@@ -121,6 +122,7 @@ class OverlayEditorTestResource extends Resource
                     ->options([
                         'extraction' => 'Extraction',
                         'shapes' => 'Shapes',
+                        'pdf' => 'PDF Tests',
                     ]),
                 Tables\Filters\SelectFilter::make('run_id')
                     ->label('Test Run')
@@ -153,6 +155,11 @@ class OverlayEditorTestResource extends Resource
                     ->icon('heroicon-o-play')
                     ->color('warning')
                     ->url(fn () => route('filament.admin.pages.run-shape-tests')),
+                Action::make('run_pdf_tests')
+                    ->label('Run PDF Tests')
+                    ->icon('heroicon-o-play')
+                    ->color('danger')
+                    ->url(fn () => route('filament.admin.pages.run-pdf-tests')),
             ]);
     }
 
