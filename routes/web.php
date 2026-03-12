@@ -8,6 +8,7 @@ use App\Http\Controllers\BrowseLogosController;
 use App\Http\Controllers\ComplianceController;
 use App\Http\Controllers\CreditController;
 use App\Http\Controllers\OverlayEditorTestController;
+use App\Http\Controllers\PdfTestController;
 use App\Http\Controllers\ShapeTestController;
 use Illuminate\Support\Facades\Route;
 
@@ -37,6 +38,7 @@ Route::get('auth/google/callback', [\App\Http\Controllers\SocialAuthController::
 
 Route::get('/pdf-editor', [DocumentController::class, 'index'])->name('documents.index');
 Route::post('/documents', [DocumentController::class, 'store'])->name('documents.store');
+Route::post('/documents/create-blank', [DocumentController::class, 'createBlank'])->name('documents.createBlank');
 Route::post('/documents/create-ai', [DocumentController::class, 'createAi'])->name('documents.createAi');
 Route::post('/documents/create-from-template', [DocumentController::class, 'createFromTemplate'])->name('documents.createFromTemplate');
 Route::post('/documents/create-simple-invoice', [DocumentController::class, 'createSimpleInvoice'])->name('documents.createSimpleInvoice');
@@ -55,6 +57,7 @@ Route::get('/documents/{document}/apply-rotations', function () {
     return response()->json(['error' => 'This endpoint only accepts POST requests'], 405);
 });
 Route::post('/documents/{document}/save-annotations', [DocumentController::class, 'saveAnnotations'])->name('documents.saveAnnotations');
+Route::get('/documents/{document}/saved-annotations', [DocumentController::class, 'getSavedAnnotations'])->name('documents.getSavedAnnotations');
 Route::post('/documents/{document}/mark-annotations-saved', [DocumentController::class, 'markAnnotationsSaved'])->name('documents.markAnnotationsSaved');
 Route::post('/documents/{document}/apply-annotations-direct', [DocumentController::class, 'applyAnnotationsDirect'])->name('documents.applyAnnotationsDirect');
 Route::post('documents/{document}/process-ocr', [DocumentController::class, 'processOcr'])->name('documents.processOcr');
@@ -63,8 +66,14 @@ Route::post('documents/{document}/process-fitz', [DocumentController::class, 'pr
 Route::get('documents/{document}/fitz-extraction-data', [DocumentController::class, 'getFitzExtractionData'])->name('documents.getFitzExtractionData');
 Route::match(['get', 'post'], '/documents/{document}/prepare-overlay', [DocumentController::class, 'prepareOverlay'])->name('documents.prepareOverlay');
 Route::get('/documents/{document}/clean-pdf', [DocumentController::class, 'cleanPdf'])->name('documents.cleanPdf');
+Route::get('/documents/{document}/edit/saved', [DocumentController::class, 'savedEditPreview'])->name('documents.savedEdit');
+Route::get('/documents/{document}/edit/saved/image/{variant}', [DocumentController::class, 'savedEditPreviewImage'])->name('documents.savedEditImage');
 Route::get('/documents/{document}/fonts', [DocumentController::class, 'getFonts'])->name('documents.getFonts');
 Route::post('/documents/{document}/save-edits', [DocumentController::class, 'saveEdits'])->name('documents.saveEdits');
+Route::post('/documents/{document}/live-save', [DocumentController::class, 'liveSave'])->name('documents.liveSave');
+Route::post('/documents/{document}/create-working-copy-snapshot', [DocumentController::class, 'createWorkingCopySnapshot'])->name('documents.createWorkingCopySnapshot');
+Route::post('/documents/{document}/restore-working-copy', [DocumentController::class, 'restoreWorkingCopy'])->name('documents.restoreWorkingCopy');
+Route::post('/documents/{document}/discard-working-copy-snapshot', [DocumentController::class, 'discardWorkingCopySnapshot'])->name('documents.discardWorkingCopySnapshot');
 Route::post('/documents/{document}/save-image', [DocumentController::class, 'saveImage'])->name('documents.saveImage');
 Route::post('/documents/{document}/match-fonts', [DocumentController::class, 'matchFonts'])->name('documents.matchFonts');
 Route::post('/documents/{document}/reorder-pages', [DocumentController::class, 'reorderPages'])->name('documents.reorderPages');
@@ -102,6 +111,11 @@ Route::post('/overlay-editor/run-single-test', [OverlayEditorTestController::cla
 Route::get('/shapes/test-files', [ShapeTestController::class, 'getTestFiles'])->name('shapes.testFiles');
 Route::post('/shapes/run-single-test', [ShapeTestController::class, 'runSingleTest'])->name('shapes.runSingleTest');
 Route::post('/shapes/run-all-tests', [ShapeTestController::class, 'runAllTests'])->name('shapes.runAllTests');
+
+Route::get('/pdf-tests/test-files', [PdfTestController::class, 'getTestFiles'])->name('pdfTests.testFiles');
+Route::post('/pdf-tests/run-single-test', [PdfTestController::class, 'runSingleTest'])->name('pdfTests.runSingleTest');
+Route::match(['GET', 'POST'], '/pdf-tests/create-blank', [PdfTestController::class, 'createBlank'])->name('pdfTests.createBlank');
+Route::get('/pdf-tests/artifacts/{filename}', [PdfTestController::class, 'artifact'])->name('pdfTests.artifact');
 
 Route::delete('/documents/{document}', [DocumentController::class, 'destroy'])->name('documents.destroy');
 Route::post('/documents/bulk-destroy', [DocumentController::class, 'bulkDestroy'])->name('documents.bulkDestroy');

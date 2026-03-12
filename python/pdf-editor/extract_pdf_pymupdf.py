@@ -20,6 +20,15 @@ _EXTRACTION_ZERO_WIDTH_RE = re.compile(r'[\u200B\u200C\u200D\u2060\uFEFF]')
 _EXTRACTION_PRIVATE_USE_RE = re.compile(r'[\uE000-\uF8FF]')
 _EXTRACTION_CONTROL_RE = re.compile(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]')
 _EXTRACTION_UNDERLINE_RUN_RE = re.compile(r'_{3,}')
+_EXTRACTION_LARGE_GAP_RE = re.compile(r' {8,}')
+_PDF_TEXT_SHOW_OP_RE = re.compile(
+    rb'BT\b|ET\b|'
+    rb'[-\d.]+\s+[-\d.]+\s+[-\d.]+\s+[-\d.]+\s+[-\d.]+\s+[-\d.]+\s+Tm\b|'
+    rb'[-\d.]+\s+[-\d.]+\s+T[dD]\b|'
+    rb'\((?:\\.|[^\\)])*\)\s*Tj\b|'
+    rb'\[(?:\\.|[^\]])*\]\s*TJ\b',
+    re.DOTALL,
+)
 
 
 def sanitize_extracted_text(text):
@@ -36,6 +45,318 @@ def sanitize_extracted_text(text):
     cleaned = _EXTRACTION_PRIVATE_USE_RE.sub('', cleaned)
     cleaned = _EXTRACTION_CONTROL_RE.sub('', cleaned)
     return cleaned
+
+
+def _decode_pdf_string_token(token):
+    if not token or len(token) < 2 or token[:1] != b'(' or token[-1:] != b')':
+        return ''
+    body = token[1:-1]
+    body = body.replace(b'\\(', b'(').replace(b'\\)', b')').replace(b'\\\\', b'\\')
+    return sanitize_extracted_text(body.decode('latin-1', errors='ignore'))
+
+
+def _collapse_source_op_text(text):
+    return ' '.join(sanitize_extracted_text(text).split())
+
+
+def _compact_source_op_text(text):
+    return re.sub(r'\s+', '', sanitize_extracted_text(text or ''))
+
+
+def _dedupe_source_content_ops(ops):
+    deduped = []
+    seen = set()
+    for op in ops or []:
+        if not isinstance(op, dict):
+            continue
+        try:
+            xref = int(op.get('xref'))
+            start = int(op.get('start'))
+            end = int(op.get('end'))
+        except Exception:
+            continue
+        key = (
+            xref,
+            start,
+            end,
+            sanitize_extracted_text(op.get('matched_text', '')),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append({
+            'xref': xref,
+            'start': start,
+            'end': end,
+            'operator': str(op.get('operator') or ''),
+            'operator_text': sanitize_extracted_text(op.get('operator_text', '')),
+            'matched_text': sanitize_extracted_text(op.get('matched_text', '')),
+            'collapsed_operator_text': _collapse_source_op_text(op.get('operator_text', '')),
+            'compact_operator_text': _compact_source_op_text(op.get('operator_text', '')),
+            'tm_x': float(op.get('tm_x')) if op.get('tm_x') is not None else None,
+            'tm_y': float(op.get('tm_y')) if op.get('tm_y') is not None else None,
+        })
+    return deduped
+
+
+def _clone_source_content_ops_with_matched_text(ops, matched_text):
+    cloned = []
+    for op in ops or []:
+        if not isinstance(op, dict):
+            continue
+        cloned.append({
+            **op,
+            'matched_text': sanitize_extracted_text(matched_text or op.get('matched_text', '')),
+        })
+    return _dedupe_source_content_ops(cloned)
+
+
+def _extract_text_show_ops_from_stream(stream, xref, page_height):
+    if not stream:
+        return []
+
+    ops = []
+    cur_x = None
+    cur_y = None
+    in_text = False
+    token_re = re.compile(rb'\((?:\\.|[^\\)])*\)|-?\d+(?:\.\d+)?')
+
+    for match in _PDF_TEXT_SHOW_OP_RE.finditer(stream):
+        raw = match.group(0)
+        stripped = raw.strip()
+
+        if stripped == b'BT':
+            in_text = True
+            cur_x = None
+            cur_y = None
+            continue
+        if stripped == b'ET':
+            in_text = False
+            cur_x = None
+            cur_y = None
+            continue
+        if not in_text:
+            continue
+
+        if stripped.endswith(b'Tm'):
+            nums = re.findall(rb'-?\d+(?:\.\d+)?', stripped)
+            if len(nums) >= 6:
+                try:
+                    cur_x = float(nums[4])
+                    cur_y = float(nums[5])
+                except Exception:
+                    pass
+            continue
+
+        if stripped.endswith(b'Td') or stripped.endswith(b'TD'):
+            nums = re.findall(rb'-?\d+(?:\.\d+)?', stripped)
+            if len(nums) >= 2:
+                try:
+                    dx = float(nums[0])
+                    dy = float(nums[1])
+                    if cur_x is None or cur_y is None:
+                        cur_x = dx
+                        cur_y = dy
+                    else:
+                        cur_x += dx
+                        cur_y += dy
+                except Exception:
+                    pass
+            continue
+
+        operator = None
+        op_text = ''
+        if stripped.endswith(b'Tj'):
+            operator = 'Tj'
+            str_match = re.search(rb'\((?:\\.|[^\\)])*\)\s*Tj\b', stripped, re.DOTALL)
+            if str_match:
+                string_token = str_match.group(0)[:-2].strip()
+                op_text = _decode_pdf_string_token(string_token)
+        elif stripped.endswith(b'TJ'):
+            operator = 'TJ'
+            open_idx = stripped.find(b'[')
+            close_idx = stripped.rfind(b']')
+            if open_idx >= 0 and close_idx > open_idx:
+                tokens = token_re.findall(stripped[open_idx + 1:close_idx])
+                op_text = sanitize_extracted_text(''.join(
+                    _decode_pdf_string_token(tok)
+                    for tok in tokens
+                    if tok.startswith(b'(')
+                ))
+
+        op_text = sanitize_extracted_text(op_text)
+        if not operator or not op_text:
+            continue
+
+        ops.append({
+            'xref': int(xref),
+            'start': int(match.start()),
+            'end': int(match.end()),
+            'operator': operator,
+            'operator_text': op_text,
+            'collapsed_operator_text': _collapse_source_op_text(op_text),
+            'compact_operator_text': _compact_source_op_text(op_text),
+            'tm_x': cur_x,
+            'tm_y': (page_height - cur_y) if cur_y is not None else None,
+        })
+
+    return ops
+
+
+def _build_source_content_op_index(doc, page):
+    by_text = {}
+    ordered_ops = []
+    page_height = float(page.rect.height or 0)
+    for xref in page.get_contents() or []:
+        try:
+            stream = doc.xref_stream(xref)
+        except Exception:
+            continue
+        for op in _extract_text_show_ops_from_stream(stream, xref, page_height):
+            ordered_ops.append(op)
+            exact_text = op.get('operator_text')
+            collapsed_text = op.get('collapsed_operator_text')
+            compact_text = op.get('compact_operator_text')
+            if exact_text:
+                by_text.setdefault(exact_text, []).append(op)
+            if collapsed_text and collapsed_text != exact_text:
+                by_text.setdefault(collapsed_text, []).append(op)
+            if compact_text and compact_text not in {exact_text, collapsed_text}:
+                by_text.setdefault(compact_text, []).append(op)
+    return {
+        'by_text': by_text,
+        'ordered_ops': ordered_ops,
+    }
+
+
+def _match_source_content_op(source_op_index, text, origin):
+    if not source_op_index or not text:
+        return None
+
+    text = sanitize_extracted_text(text)
+    if not text:
+        return None
+
+    collapsed_text = _collapse_source_op_text(text)
+    compact_text = _compact_source_op_text(text)
+    candidates = list(source_op_index.get('by_text', {}).get(text) or [])
+    if collapsed_text and collapsed_text != text:
+        candidates.extend(source_op_index.get('by_text', {}).get(collapsed_text) or [])
+    if compact_text and compact_text not in {text, collapsed_text}:
+        candidates.extend(source_op_index.get('by_text', {}).get(compact_text) or [])
+
+    target_x = None
+    target_y = None
+    if origin and len(origin) >= 2:
+        try:
+            target_x = float(origin[0])
+            target_y = float(origin[1])
+        except Exception:
+            target_x = None
+            target_y = None
+
+    ordered_ops = source_op_index.get('ordered_ops', []) or []
+    if collapsed_text:
+        for candidate in ordered_ops:
+            op_text = candidate.get('operator_text', '')
+            op_collapsed = candidate.get('collapsed_operator_text', '')
+            op_compact = candidate.get('compact_operator_text', '')
+            if not op_text:
+                continue
+            if text not in op_text and collapsed_text not in op_collapsed and compact_text not in op_compact:
+                continue
+            if candidate not in candidates:
+                candidates.append(candidate)
+
+    if not candidates:
+        return None
+
+    best = None
+    best_score = None
+    for candidate in candidates:
+        score = 0.0
+        cand_text = candidate.get('operator_text', '')
+        cand_collapsed = candidate.get('collapsed_operator_text', '')
+        cand_compact = candidate.get('compact_operator_text', '')
+        contains_match = False
+        strong_compact_match = False
+        if cand_text == text:
+            score -= 4.0
+        elif cand_collapsed == collapsed_text:
+            score -= 2.0
+            contains_match = True
+        elif compact_text and cand_compact == compact_text:
+            score -= 1.5
+            contains_match = True
+            strong_compact_match = True
+        elif text and text in cand_text:
+            score += 0.75
+            contains_match = True
+        elif collapsed_text and collapsed_text in cand_collapsed:
+            score += 1.0
+            contains_match = True
+        elif compact_text and compact_text in cand_compact:
+            score += 1.25
+            contains_match = True
+            strong_compact_match = len(compact_text) >= 8
+        else:
+            score += 3.0
+
+        if (
+            len(compact_text) < 4
+            and contains_match
+            and cand_text != text
+            and cand_collapsed != collapsed_text
+            and cand_compact != compact_text
+        ):
+            continue
+
+        cand_x = candidate.get('tm_x')
+        cand_y = candidate.get('tm_y')
+        if target_x is not None and target_y is not None and cand_x is not None and cand_y is not None:
+            dx = abs(float(cand_x) - target_x)
+            dy = abs(float(cand_y) - target_y)
+            if strong_compact_match:
+                if dy > 140.0 or dx > 1000.0:
+                    continue
+                score += min(dx, 250.0) * 0.005
+                score += dy * 0.05
+                score += min(len(cand_collapsed or cand_text), 500) * 0.001
+            elif contains_match:
+                if dy > 18.0 or dx > 400.0:
+                    continue
+                score += min(dx, 200.0) * 0.015
+                score += dy * 1.25
+                # Prefer shorter containing operators when a cell is embedded in a
+                # larger shared row stream.
+                score += min(len(cand_collapsed or cand_text), 500) * 0.002
+            else:
+                if dx > 80.0 or dy > 8.0:
+                    continue
+                score += dx * 0.05
+                score += dy * 0.75
+        elif target_y is not None and cand_y is not None:
+            dy = abs(float(cand_y) - target_y)
+            if strong_compact_match:
+                if dy > 140.0:
+                    continue
+                score += dy * 0.05
+                score += min(len(cand_collapsed or cand_text), 500) * 0.001
+            elif contains_match:
+                if dy > 10.0:
+                    continue
+                score += dy * 1.5
+                score += min(len(cand_collapsed or cand_text), 500) * 0.002
+            else:
+                if dy > 8.0:
+                    continue
+                score += dy
+
+        if best_score is None or score < best_score:
+            best = candidate
+            best_score = score
+
+    return best
 
 
 def _collect_horizontal_lines(page):
@@ -101,6 +422,69 @@ def _overlay_render_text(text, has_drawn_underline):
     return render_text, changed
 
 
+def _split_gap_separated_span_words(text, bbox, word_data, page_pymupdf_words, has_drawn_underline):
+    """
+    Split a single extracted span into sub-word entries when the PDF encoded
+    distant columns / header fragments as one text object with a huge internal
+    whitespace gap (for example: "Contract Concerning      Page of 10").
+    """
+    if not text or not bbox or not _EXTRACTION_LARGE_GAP_RE.search(text):
+        return None
+
+    sx0, sy0, sx1, sy1 = bbox
+    candidates = []
+
+    for pw in page_pymupdf_words:
+        wx0, wy0, wx1, wy1, wtext = pw[0], pw[1], pw[2], pw[3], pw[4]
+        if wy0 < sy0 - 2 or wy1 > sy1 + 2:
+            continue
+        if wx1 < sx0 - 2 or wx0 > sx1 + 2:
+            continue
+
+        wtext_clean = sanitize_extracted_text(wtext)
+        if not wtext_clean:
+            continue
+
+        render_text, suppressed = _overlay_render_text(wtext_clean, has_drawn_underline)
+        sub_entry = dict(word_data)
+        sub_entry['text'] = wtext_clean
+        sub_entry['render_text'] = render_text
+        sub_entry['suppress_drawn_underline'] = suppressed
+        sub_entry['left'] = wx0
+        sub_entry['top'] = wy0
+        sub_entry['width'] = wx1 - wx0
+        sub_entry['height'] = wy1 - wy0
+        sub_entry['origin_x'] = wx0
+        sub_entry['origin_y'] = wy1
+        candidates.append((wx0, sub_entry))
+
+    if len(candidates) < 2:
+        return None
+
+    ordered = [entry for _, entry in sorted(candidates, key=lambda item: item[0])]
+    collapsed_span = ' '.join(text.split())
+    collapsed_words = ' '.join(entry['text'] for entry in ordered)
+    if collapsed_span != collapsed_words:
+        return None
+
+    total_word_width = sum(max(0.1, float(entry['width'] or 0)) for entry in ordered)
+    span_width = max(0.1, float(sx1 - sx0))
+    if (span_width / total_word_width) < 1.8:
+        return None
+
+    largest_gap = 0.0
+    for prev, curr in zip(ordered, ordered[1:]):
+        prev_right = float(prev['left']) + float(prev['width'])
+        curr_left = float(curr['left'])
+        largest_gap = max(largest_gap, curr_left - prev_right)
+
+    gap_threshold = max(36.0, float(word_data.get('font_size') or 12) * 6.0)
+    if largest_gap < gap_threshold:
+        return None
+
+    return ordered
+
+
 def _normalize_font_name(font_name):
     if not font_name:
         return ''
@@ -134,10 +518,10 @@ def extract_embedded_fonts(pdf_path, document_id, output_dir=None):
     and CSS metadata (family, weight, style).
     """
     if output_dir is None:
-        # Default: save under public/fonts/extracted/{document_id}/
+        # Default: save under a writable public font folder.
         script_dir = os.path.dirname(os.path.abspath(__file__))
         project_root = os.path.abspath(os.path.join(script_dir, '..', '..'))
-        output_dir = os.path.join(project_root, 'public', 'fonts', 'extracted', str(document_id))
+        output_dir = os.path.join(project_root, 'public', 'fonts', 'runtime-extracted', str(document_id))
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -189,7 +573,9 @@ def extract_embedded_fonts(pdf_path, document_id, output_dir=None):
                 css_weight = '800'
             elif 'semibold' in lower_name or 'demibold' in lower_name:
                 css_weight = '600'
-            elif 'bold' in lower_name or 'black' in lower_name or 'heavy' in lower_name:
+            elif 'black' in lower_name or 'heavy' in lower_name:
+                css_weight = '900'
+            elif 'bold' in lower_name:
                 css_weight = '700'
             elif 'medium' in lower_name:
                 css_weight = '500'
@@ -208,8 +594,8 @@ def extract_embedded_fonts(pdf_path, document_id, output_dir=None):
             with open(filepath, 'wb') as f:
                 f.write(content)
 
-            # Web-relative path (from public/)
-            web_path = f"/fonts/extracted/{document_id}/{filename}"
+            # Web-relative path served directly from public/.
+            web_path = f"/fonts/runtime-extracted/{document_id}/{filename}"
 
             embedded_fonts[clean_name] = {
                 'pdf_font_name': font_name,
@@ -244,6 +630,10 @@ def _trace_text_from_chars(chars):
     return sanitize_extracted_text(''.join(out))
 
 
+def _collapse_trace_text(text):
+    return ' '.join(sanitize_extracted_text(text).split())
+
+
 def _build_texttrace_index(page):
     """
     Build a lookup structure keyed by sanitized text for fast matching from
@@ -268,17 +658,23 @@ def _build_texttrace_index(page):
         origin = first[2]
         rec = {
             'text': text,
+            'collapsed_text': _collapse_trace_text(text),
             'origin': origin,
             'font': tr.get('font', ''),
             'size': tr.get('size', 0),
             'bbox': tr.get('bbox'),
             'linewidth': tr.get('linewidth'),
             'render_type': tr.get('type'),
+            'opacity': tr.get('opacity'),
+            'seqno': tr.get('seqno'),
             'spacewidth': tr.get('spacewidth'),
             'ascender': tr.get('ascender'),
             'descender': tr.get('descender'),
         }
         by_text.setdefault(text, []).append(rec)
+        collapsed_text = rec['collapsed_text']
+        if collapsed_text and collapsed_text != text:
+            by_text.setdefault(collapsed_text, []).append(rec)
     return by_text
 
 
@@ -289,7 +685,10 @@ def _match_texttrace_span(trace_index, text, origin, font, size):
     """
     if not text or not origin:
         return None
+    collapsed_text = _collapse_trace_text(text)
     candidates = trace_index.get(text) or []
+    if not candidates and collapsed_text:
+        candidates = trace_index.get(collapsed_text) or []
     if not candidates:
         return None
 
@@ -316,6 +715,105 @@ def _match_texttrace_span(trace_index, text, origin, font, size):
             best = cand
             best_score = score
     return best
+
+
+def _is_invisible_text_render_type(render_type):
+    """
+    PDF text rendering modes 3 and 7 do not paint glyphs.
+    They can still be extractable, which makes overlay mode resurrect text
+    the user cannot actually see in the saved PDF.
+    """
+    try:
+        return int(render_type) in (3, 7)
+    except Exception:
+        return False
+
+
+def _rect_area(rect):
+    if not rect or len(rect) < 4:
+        return 0.0
+    width = max(0.0, float(rect[2]) - float(rect[0]))
+    height = max(0.0, float(rect[3]) - float(rect[1]))
+    return width * height
+
+
+def _rect_intersection_area(a, b):
+    if not a or not b or len(a) < 4 or len(b) < 4:
+        return 0.0
+    x0 = max(float(a[0]), float(b[0]))
+    y0 = max(float(a[1]), float(b[1]))
+    x1 = min(float(a[2]), float(b[2]))
+    y1 = min(float(a[3]), float(b[3]))
+    if x1 <= x0 or y1 <= y0:
+        return 0.0
+    return (x1 - x0) * (y1 - y0)
+
+
+def _build_opaque_fill_occluders(page):
+    """
+    Collect later opaque fill-path rectangles that can fully cover text painted
+    earlier in the same content stream.
+    """
+    occluders = []
+    try:
+        drawings = page.get_drawings() or []
+    except Exception:
+        return occluders
+
+    for drawing in drawings:
+        rect = drawing.get('rect')
+        seqno = drawing.get('seqno')
+        fill = drawing.get('fill')
+        fill_opacity = drawing.get('fill_opacity')
+        if rect is None or seqno is None or fill is None:
+            continue
+        try:
+            if float(fill_opacity if fill_opacity is not None else 1.0) < 0.98:
+                continue
+        except Exception:
+            continue
+        if _rect_area(rect) < 1.0:
+            continue
+        occluders.append({
+            'seqno': int(seqno),
+            'bbox': tuple(float(v) for v in rect),
+        })
+
+    return occluders
+
+
+def _is_texttrace_occluded(trace_match, occluders):
+    """
+    A text run is effectively invisible if a later opaque fill-path covers
+    nearly all of its painted bbox.
+    """
+    if not trace_match or not occluders:
+        return False
+
+    text_bbox = trace_match.get('bbox')
+    text_seqno = trace_match.get('seqno')
+    text_opacity = trace_match.get('opacity')
+    if not text_bbox or text_seqno is None:
+        return False
+
+    try:
+        if text_opacity is not None and float(text_opacity) < 0.01:
+            return True
+    except Exception:
+        pass
+
+    text_area = _rect_area(text_bbox)
+    if text_area <= 0:
+        return False
+
+    for occluder in occluders:
+        if int(occluder.get('seqno', -1)) <= int(text_seqno):
+            continue
+        overlap = _rect_intersection_area(text_bbox, occluder.get('bbox'))
+        if (overlap / text_area) >= 0.98:
+            return True
+
+    return False
 
 
 def _parse_font_style(font_name):
@@ -642,6 +1140,9 @@ def _merge_adjacent_page_blocks(page_blocks, page_width, page_words, page_lines)
                 merged_block['text'] = '\n'.join(merged_block['text_lines'])
                 merged_block['text_single_line'] = ' '.join(merged_block['text_lines'])
                 merged_block['spans'] = first.get('spans', []) + second.get('spans', [])
+                merged_block['source_content_ops'] = _dedupe_source_content_ops(
+                    (first.get('source_content_ops') or []) + (second.get('source_content_ops') or [])
+                )
                 merged_block['line_bboxes'] = first.get('line_bboxes', []) + second.get('line_bboxes', [])
                 merged_block['line_count'] = first.get('line_count', 0) + second.get('line_count', 0)
 
@@ -713,6 +1214,311 @@ def _merge_adjacent_page_blocks(page_blocks, page_width, page_words, page_lines)
                 line['block_num'] = new_bn
 
     return page_blocks
+
+
+def _merge_stacked_paragraph_blocks(page_blocks, page_words, page_lines):
+    """
+    Merge vertically stacked synthetic paragraph fragments back into a single block.
+    This targets stamped annotation text that lacks source_content_ops and is emitted
+    as multiple same-column blocks with tiny vertical gaps.
+    """
+    if len(page_blocks) <= 1:
+        return page_blocks
+
+    merge_map = {}
+    changed = True
+
+    def _style_key(block):
+        return (
+            str(block.get('font', '') or '').strip().lower(),
+            round(float(block.get('font_size', 0) or 0), 1),
+            str(block.get('font_weight', '')),
+            bool(block.get('bold')),
+            bool(block.get('italic')),
+            str(block.get('hex_color', '')),
+        )
+
+    while changed:
+        changed = False
+        new_blocks = []
+        used = set()
+
+        sorted_pairs = sorted(enumerate(page_blocks), key=lambda pair: (
+            round(float(pair[1].get('left', 0) or 0), 1),
+            round(float(pair[1].get('top', 0) or 0), 1),
+        ))
+
+        index_lookup = {orig_idx: pos for pos, (orig_idx, _block) in enumerate(sorted_pairs)}
+
+        for original_index, block_a in sorted_pairs:
+            if original_index in used:
+                continue
+
+            a_top = float(block_a.get('top', 0) or 0)
+            a_left = float(block_a.get('left', 0) or 0)
+            a_width = float(block_a.get('width', 0) or 0)
+            a_height = float(block_a.get('height', 0) or 0)
+            a_bottom = a_top + a_height
+            a_line_height = float(block_a.get('avg_line_height') or block_a.get('line_height') or 0) or max(1.0, a_height)
+            a_source_ops = block_a.get('source_content_ops') or []
+
+            merge_target_index = None
+
+            if a_source_ops or block_a.get('_from_xgap_split'):
+                new_blocks.append(block_a)
+                used.add(original_index)
+                continue
+
+            for candidate_pos in range(index_lookup[original_index] + 1, len(sorted_pairs)):
+                candidate_index, block_b = sorted_pairs[candidate_pos]
+                if candidate_index in used:
+                    continue
+
+                b_top = float(block_b.get('top', 0) or 0)
+                b_left = float(block_b.get('left', 0) or 0)
+                b_width = float(block_b.get('width', 0) or 0)
+                b_height = float(block_b.get('height', 0) or 0)
+                b_bottom = b_top + b_height
+                b_line_height = float(block_b.get('avg_line_height') or block_b.get('line_height') or 0) or max(1.0, b_height)
+                b_source_ops = block_b.get('source_content_ops') or []
+
+                if b_source_ops or block_b.get('_from_xgap_split'):
+                    continue
+
+                if _style_key(block_a) != _style_key(block_b):
+                    continue
+
+                if abs(a_left - b_left) > 3:
+                    continue
+
+                horizontal_overlap = min(a_left + a_width, b_left + b_width) - max(a_left, b_left)
+                min_width = min(a_width, b_width)
+                if min_width <= 0 or horizontal_overlap / min_width < 0.6:
+                    continue
+
+                vertical_gap = b_top - a_bottom
+                base_gap = max(8.0, max(a_line_height, b_line_height) * 1.15)
+                right_edge_delta = abs((a_left + a_width) - (b_left + b_width))
+                a_line_count = int(block_a.get('line_count', 0) or 0)
+                b_line_count = int(block_b.get('line_count', 0) or 0)
+                multiline_fragment = (
+                    a_line_count > 1
+                    or b_line_count > 1
+                )
+                similar_column_width = right_edge_delta <= max(24.0, max(a_line_height, b_line_height) * 2.0)
+                shorter_fragment_line_count = min(a_line_count or 1, b_line_count or 1)
+                width_ratio = (min_width / max(a_width, b_width)) if max(a_width, b_width) > 0 else 0.0
+                short_lead_paragraph_pair = (
+                    multiline_fragment
+                    and shorter_fragment_line_count <= 2
+                    and width_ratio <= 0.82
+                )
+                single_line_blank_separator_pair = (
+                    a_line_count == 1
+                    and b_line_count == 1
+                    and similar_column_width
+                )
+                a_text_lines = block_a.get('text_lines') or [block_a.get('text') or '']
+                b_text_lines = block_b.get('text_lines') or [block_b.get('text') or '']
+                a_primary_line = str(a_text_lines[0] if a_text_lines else block_a.get('text') or '').strip()
+                b_primary_line = str(b_text_lines[0] if b_text_lines else block_b.get('text') or '').strip()
+                single_line_text_length = max(len(a_primary_line), len(b_primary_line))
+                single_line_visual_width = max(a_width, b_width)
+                compact_single_line_pair = (
+                    single_line_text_length <= 14
+                    or single_line_visual_width <= max(60.0, max(a_line_height, b_line_height) * 5.5)
+                )
+                single_line_blank_separator_pair = single_line_blank_separator_pair and compact_single_line_pair
+                compatible_column_shape = similar_column_width or short_lead_paragraph_pair
+                max_allowed_gap = base_gap
+                widened_blank_line_pair = (
+                    (multiline_fragment and compatible_column_shape)
+                    or single_line_blank_separator_pair
+                )
+                if widened_blank_line_pair:
+                    # Blank lines inside one saved paragraph produce a larger synthetic
+                    # gap than ordinary wrapped lines, but should still stay in one block.
+                    max_allowed_gap = max(max_allowed_gap, max(a_line_height, b_line_height) * 2.35)
+                if vertical_gap < -1.0 or vertical_gap > max_allowed_gap:
+                    continue
+
+                merge_target_index = candidate_index
+                break
+
+            if merge_target_index is None:
+                new_blocks.append(block_a)
+                used.add(original_index)
+                continue
+
+            block_b = page_blocks[merge_target_index]
+            absorbed_block_num = block_b['block_num']
+            surviving_block_num = block_a['block_num']
+            merge_map[absorbed_block_num] = surviving_block_num
+
+            merged_left = min(block_a['left'], block_b['left'])
+            merged_top = min(block_a['top'], block_b['top'])
+            merged_right = max(block_a['left'] + block_a['width'], block_b['left'] + block_b['width'])
+            merged_bottom = max(block_a['top'] + block_a['height'], block_b['top'] + block_b['height'])
+
+            insert_blank_separator = widened_blank_line_pair and vertical_gap > (max(a_line_height, b_line_height) * 1.4)
+            separator_lines = [''] if insert_blank_separator else []
+            separator_line_bboxes = []
+            if insert_blank_separator:
+                blank_height = max(a_line_height, b_line_height)
+                blank_top = max(a_bottom, b_top - blank_height)
+                blank_bottom = min(b_top, blank_top + blank_height)
+                if blank_bottom <= blank_top:
+                    blank_bottom = blank_top + blank_height
+                separator_line_bboxes.append([merged_left, blank_top, merged_left, blank_bottom])
+
+            merged_block = {
+                **block_a,
+                'block_num': surviving_block_num,
+                'left': merged_left,
+                'top': merged_top,
+                'width': merged_right - merged_left,
+                'height': merged_bottom - merged_top,
+                'text_lines': (block_a.get('text_lines') or []) + separator_lines + (block_b.get('text_lines') or []),
+                'spans': (block_a.get('spans') or []) + (block_b.get('spans') or []),
+                'line_bboxes': (block_a.get('line_bboxes') or []) + separator_line_bboxes + (block_b.get('line_bboxes') or []),
+                'line_count': int(block_a.get('line_count', 0) or 0) + len(separator_lines) + int(block_b.get('line_count', 0) or 0),
+                'source_content_ops': _dedupe_source_content_ops((block_a.get('source_content_ops') or []) + (block_b.get('source_content_ops') or [])),
+                'has_mixed_styles': bool(block_a.get('has_mixed_styles')) or bool(block_b.get('has_mixed_styles')),
+            }
+            merged_block['text'] = '\n'.join(merged_block['text_lines'])
+            merged_block['text_single_line'] = ' '.join(merged_block['text_lines'])
+
+            all_heights = [bbox[3] - bbox[1] for bbox in merged_block.get('line_bboxes', [])]
+            if all_heights:
+                merged_block['avg_line_height'] = sum(all_heights) / len(all_heights)
+                merged_block['line_height'] = merged_block['avg_line_height']
+
+            new_blocks.append(merged_block)
+            used.add(original_index)
+            used.add(merge_target_index)
+            changed = True
+
+        page_blocks = new_blocks
+
+    old_to_new = {}
+    for idx, block in enumerate(page_blocks):
+        old_to_new[block['block_num']] = idx
+        block['block_num'] = idx
+
+    def resolve_block_num(old_num):
+        visited = set()
+        current = old_num
+        while current in merge_map and current not in visited:
+            visited.add(current)
+            current = merge_map[current]
+        return old_to_new.get(current)
+
+    words_to_remove = []
+    for i, word in enumerate(page_words):
+        old_bn = word['block_num']
+        if old_bn in old_to_new:
+            word['block_num'] = old_to_new[old_bn]
+        elif old_bn in merge_map:
+            new_bn = resolve_block_num(old_bn)
+            if new_bn is not None:
+                word['block_num'] = new_bn
+            else:
+                words_to_remove.append(i)
+
+    for line in page_lines:
+        old_bn = line['block_num']
+        if old_bn in old_to_new:
+            line['block_num'] = old_to_new[old_bn]
+        elif old_bn in merge_map:
+            new_bn = resolve_block_num(old_bn)
+            if new_bn is not None:
+                line['block_num'] = new_bn
+
+    for i in reversed(words_to_remove):
+        del page_words[i]
+
+    return page_blocks
+
+
+def _row_overlap_ratio(top_a, bottom_a, top_b, bottom_b):
+    inter = max(0.0, min(bottom_a, bottom_b) - max(top_a, top_b))
+    min_h = max(1.0, min(bottom_a - top_a, bottom_b - top_b))
+    return inter / min_h
+
+
+def _backfill_shared_row_source_content_ops(page_lines, page_words, page_blocks, source_op_index):
+    if not page_lines or not page_words or not source_op_index:
+        return
+
+    rows = []
+    sorted_lines = sorted(
+        [line for line in page_lines if (line.get('text') or '').strip()],
+        key=lambda line: (float(line.get('top', 0)), float(line.get('left', 0))),
+    )
+
+    for line in sorted_lines:
+        top = float(line.get('top', 0))
+        height = float(line.get('height', 0))
+        bottom = top + height
+        placed = False
+        for row in rows:
+            row_top = min(float(item.get('top', 0)) for item in row)
+            row_bottom = max(float(item.get('top', 0)) + float(item.get('height', 0)) for item in row)
+            if _row_overlap_ratio(top, bottom, row_top, row_bottom) >= 0.65 or abs(top - row_top) <= 2.5:
+                row.append(line)
+                placed = True
+                break
+        if not placed:
+            rows.append([line])
+
+    for row in rows:
+        if len(row) < 2:
+            continue
+        ordered_row = sorted(row, key=lambda item: float(item.get('left', 0)))
+        row_text = ' '.join((item.get('text') or '').strip() for item in ordered_row if (item.get('text') or '').strip()).strip()
+        if not row_text:
+            continue
+
+        row_left = min(float(item.get('left', 0)) for item in ordered_row)
+        row_bottom = max(float(item.get('top', 0)) + float(item.get('height', 0)) for item in ordered_row)
+        row_match = _match_source_content_op(source_op_index, row_text, (row_left, row_bottom))
+        if not row_match:
+            continue
+
+        for line in ordered_row:
+            existing_line_ops = line.get('source_content_ops') or []
+            if not existing_line_ops:
+                line['source_content_ops'] = _clone_source_content_ops_with_matched_text(
+                    [row_match],
+                    line.get('text', ''),
+                )
+
+        for word in page_words:
+            for line in ordered_row:
+                if word.get('block_num') != line.get('block_num') or word.get('line_num') != line.get('line_num'):
+                    continue
+                existing_word_ops = word.get('source_content_ops') or []
+                if existing_word_ops:
+                    continue
+                word['source_content_ops'] = _clone_source_content_ops_with_matched_text(
+                    [row_match],
+                    word.get('text', ''),
+                )
+                break
+
+    block_ops = {}
+    for word in page_words:
+        block_num = word.get('block_num')
+        if block_num is None:
+            continue
+        block_ops.setdefault(block_num, []).extend(word.get('source_content_ops') or [])
+
+    for block in page_blocks:
+        block_num = block.get('block_num')
+        existing_block_ops = block.get('source_content_ops') or []
+        merged_block_ops = _dedupe_source_content_ops(existing_block_ops + block_ops.get(block_num, []))
+        if merged_block_ops:
+            block['source_content_ops'] = merged_block_ops
 
 
 def get_db_connection():
@@ -804,6 +1610,8 @@ def extract_text_with_pymupdf(pdf_path):
             blocks = text_dict.get("blocks", [])
             page_fonts = page.get_fonts(full=True)
             trace_index = _build_texttrace_index(page)
+            source_content_op_index = _build_source_content_op_index(doc, page)
+            opaque_fill_occluders = _build_opaque_fill_occluders(page)
             horizontal_lines = _collect_horizontal_lines(page)
 
             # Pre-fetch PyMuPDF word-level positions (with the same space-inhibit
@@ -951,6 +1759,7 @@ def extract_text_with_pymupdf(pdf_path):
                         block_line_heights = []
                         block_style = None  # Dominant style for the block
                         style_counts = {}  # Track most common style
+                        block_source_content_ops = []
 
                         for item in sorted(group_items, key=lambda it: it['line_num']):
                             line = item['line']
@@ -961,14 +1770,19 @@ def extract_text_with_pymupdf(pdf_path):
 
                             line_spans = []
                             line_style = None
+                            line_source_content_ops = []
+                            line_origin = None
+                            line_word_start_idx = len(page_words)
 
                             for span_num, span in enumerate(line.get("spans", [])):
                                 text = sanitize_extracted_text(span.get("text", ""))
-                                if not text:
+                                if not text or not text.strip():
                                     continue
 
                                 bbox = span.get("bbox")  # (x0, y0, x1, y1)
                                 origin = span.get("origin")  # (x, y) baseline point
+                                if line_origin is None and origin:
+                                    line_origin = origin
                                 font = span.get("font", "")
                                 size = span.get("size", 12)
                                 color = span.get("color", 0)
@@ -986,6 +1800,10 @@ def extract_text_with_pymupdf(pdf_path):
                                 trace_render_type = None
                                 trace_spacewidth = None
                                 if trace_match:
+                                    if _is_invisible_text_render_type(trace_match.get("render_type")):
+                                        continue
+                                    if _is_texttrace_occluded(trace_match, opaque_fill_occluders):
+                                        continue
                                     if trace_match.get("bbox"):
                                         bbox = trace_match.get("bbox")
                                     trace_asc = trace_match.get("ascender")
@@ -997,6 +1815,16 @@ def extract_text_with_pymupdf(pdf_path):
                                     trace_linewidth = trace_match.get("linewidth")
                                     trace_render_type = trace_match.get("render_type")
                                     trace_spacewidth = trace_match.get("spacewidth")
+
+                                source_content_op = _match_source_content_op(
+                                    source_content_op_index,
+                                    trace_match.get('text') if trace_match else text,
+                                    trace_match.get('origin') if trace_match else origin,
+                                )
+                                source_content_ops = _clone_source_content_ops_with_matched_text(
+                                    [source_content_op] if source_content_op else [],
+                                    text,
+                                )
 
                                 has_drawn_underline = _span_has_drawn_underline(bbox, horizontal_lines)
                                 render_text, suppressed_drawn_underline = _overlay_render_text(
@@ -1079,10 +1907,13 @@ def extract_text_with_pymupdf(pdf_path):
                                     'origin': origin,  # (x, y) baseline point
                                     'line_width': trace_linewidth,
                                     'render_type': trace_render_type,
-                                    'space_width': trace_spacewidth
+                                    'space_width': trace_spacewidth,
+                                    'source_content_ops': source_content_ops,
                                 }
                                 block_spans.append(span_data)
                                 line_spans.append(span_data)
+                                line_source_content_ops.extend(source_content_ops)
+                                block_source_content_ops.extend(source_content_ops)
 
                                 if line_style is None:
                                     line_style = {
@@ -1137,7 +1968,8 @@ def extract_text_with_pymupdf(pdf_path):
                                     'descender': descender,
                                     'line_width': trace_linewidth,
                                     'render_type': trace_render_type,
-                                    'space_width': trace_spacewidth
+                                    'space_width': trace_spacewidth,
+                                    'source_content_ops': source_content_ops,
                                 }
 
                                 # When a span has a drawn underline AND contains an
@@ -1174,9 +2006,22 @@ def extract_text_with_pymupdf(pdf_path):
                                             sub_entry['height'] = wy1 - wy0
                                             sub_entry['origin_x'] = wx0
                                             sub_entry['origin_y'] = wy1
+                                            sub_entry['source_content_ops'] = _clone_source_content_ops_with_matched_text(
+                                                source_content_ops,
+                                                wtext_clean,
+                                            )
                                             sub_entries.append((wx0, sub_entry))
                                         if len(sub_entries) > 1:
                                             split_entries = [e for _, e in sorted(sub_entries, key=lambda x: x[0])]
+
+                                if not split_entries:
+                                    split_entries = _split_gap_separated_span_words(
+                                        text,
+                                        bbox,
+                                        word_data,
+                                        page_pymupdf_words,
+                                        has_drawn_underline,
+                                    )
 
                                 if split_entries:
                                     for se in split_entries:
@@ -1185,10 +2030,11 @@ def extract_text_with_pymupdf(pdf_path):
                                             se['left'], se['top'],
                                             se['left'] + se['width'], se['top'] + se['height']
                                         ))
+                                    line_text += " ".join(se['text'] for se in split_entries) + " "
                                 else:
                                     page_words.append(word_data)
                                     block_word_bboxes.append(bbox)
-                                line_text += text + " "
+                                    line_text += text + " "
                                 total_words += len(text.split())
 
                             if line_text.strip():
@@ -1203,10 +2049,36 @@ def extract_text_with_pymupdf(pdf_path):
                                     'height': line_bbox[3] - line_bbox[1],
                                     'block_num': block_counter,
                                     'line_num': item['line_num'],
-                                    'spans': line_spans
+                                    'spans': line_spans,
+                                    'source_content_ops': _dedupe_source_content_ops(line_source_content_ops),
                                 }
+
+                                effective_line_source_ops = _dedupe_source_content_ops(line_source_content_ops)
+                                if not effective_line_source_ops:
+                                    line_level_match = _match_source_content_op(
+                                        source_content_op_index,
+                                        line_text.strip(),
+                                        line_origin,
+                                    )
+                                    if line_level_match:
+                                        effective_line_source_ops = _clone_source_content_ops_with_matched_text(
+                                            [line_level_match],
+                                            line_text.strip(),
+                                        )
+                                        for page_word_idx in range(line_word_start_idx, len(page_words)):
+                                            existing_ops = page_words[page_word_idx].get('source_content_ops') or []
+                                            if existing_ops:
+                                                continue
+                                            page_words[page_word_idx]['source_content_ops'] = _clone_source_content_ops_with_matched_text(
+                                                effective_line_source_ops,
+                                                page_words[page_word_idx].get('text', ''),
+                                            )
+                                            block_source_content_ops.extend(page_words[page_word_idx]['source_content_ops'])
+
                                 if line_style:
                                     line_data.update(line_style)
+
+                                line_data['source_content_ops'] = effective_line_source_ops
                                 page_lines.append(line_data)
 
                         current_block['text'] = '\n'.join(block_text_lines)
@@ -1225,18 +2097,21 @@ def extract_text_with_pymupdf(pdf_path):
                         if block_line_heights:
                             current_block['avg_line_height'] = sum(block_line_heights) / len(block_line_heights)
                         current_block['spans'] = block_spans  # Store span data for rich text
+                        current_block['source_content_ops'] = _dedupe_source_content_ops(block_source_content_ops)
                         current_block['has_mixed_styles'] = len(style_counts) > 1  # Flag for mixed styling
                         if block_style:
                             if block_line_heights:
                                 block_style['line_height'] = sum(block_line_heights) / len(block_line_heights)
                             current_block.update(block_style)
 
-                        page_blocks.append(current_block)
-                        block_counter += 1
+                        if block_text_lines or block_spans or block_word_bboxes:
+                            page_blocks.append(current_block)
+                            block_counter += 1
 
             # Post-process: merge blocks that sit on the same visual line
             # This catches cases where PyMuPDF reports inline text as separate blocks
             page_blocks = _merge_adjacent_page_blocks(page_blocks, page_width, page_words, page_lines)
+            page_blocks = _merge_stacked_paragraph_blocks(page_blocks, page_words, page_lines)
 
             # ── Word-level deduplication ──────────────────────────────
             # PyMuPDF can emit duplicate spans for OCR layers, font
@@ -1259,6 +2134,8 @@ def extract_text_with_pymupdf(pdf_path):
             if removed > 0:
                 print(f"    ⚠ Removed {removed} duplicate word entries")
             page_words = deduped_words
+
+            _backfill_shared_row_source_content_ops(page_lines, page_words, page_blocks, source_content_op_index)
 
             # Combine all text from page
             page_full_text = "\n".join(page_text_lines)

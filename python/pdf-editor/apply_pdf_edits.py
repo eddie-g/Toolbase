@@ -14,11 +14,776 @@ from typing import Any, Dict, List, Optional
 import re
 import math
 
+SAFE_FONT_FILES = {
+    "sans_regular": "fonts/Arimo-Regular.ttf",
+    "sans_bold": "fonts/Arimo-Bold.ttf",
+    "serif_regular": "fonts/Tinos-Regular.ttf",
+    "serif_bold": "fonts/Tinos-Bold.ttf",
+    "mono_regular": "fonts/Cousine-Regular.ttf",
+    "mono_bold": "fonts/Cousine-Bold.ttf",
+}
+
+
+def normalize_smart_quotes(text: str) -> str:
+    return (
+        str(text or "")
+        .replace("\u2018", "'")
+        .replace("\u2019", "'")
+        .replace("\u201c", '"')
+        .replace("\u201d", '"')
+    )
+
+
+def _safe_font_file_for_name(font_name: str, font_weight: Optional[Any] = None) -> Optional[str]:
+    font_lower = (font_name or "").lower()
+    try:
+        is_bold = int(font_weight) >= 600 if font_weight is not None else False
+    except Exception:
+        is_bold = False
+    if not is_bold:
+        is_bold = any(token in font_lower for token in ("bold", "700", "black"))
+
+    if any(token in font_lower for token in ("courier", "cousine", "mono")):
+        key = "mono_bold" if is_bold else "mono_regular"
+    elif any(token in font_lower for token in ("times", "tinos", "serif")):
+        key = "serif_bold" if is_bold else "serif_regular"
+    else:
+        key = "sans_bold" if is_bold else "sans_regular"
+
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), SAFE_FONT_FILES[key])
+    return path if os.path.exists(path) else None
+
+
+def _resolve_insert_font(
+    page: fitz.Page,
+    inserted_fonts: Dict[str, str],
+    font_name: str,
+    font_weight: Optional[Any] = None,
+) -> tuple[str, Optional[fitz.Font]]:
+    font_file = _safe_font_file_for_name(font_name, font_weight=font_weight)
+    if not font_file:
+        return map_font_name(font_name), None
+
+    font_key = os.path.basename(font_file)
+    insert_font_name = inserted_fonts.get(font_key)
+    if not insert_font_name:
+        insert_font_name = f"safe_{len(inserted_fonts) + 1}_{Path(font_file).stem}"
+        page.insert_font(fontname=insert_font_name, fontfile=font_file)
+        inserted_fonts[font_key] = insert_font_name
+
+    try:
+        return insert_font_name, fitz.Font(fontfile=font_file)
+    except Exception:
+        return insert_font_name, None
+
+
 def _rect_center(rect: fitz.Rect):
     return ((rect.x0 + rect.x1) / 2.0, (rect.y0 + rect.y1) / 2.0)
 
 def _inflate_rect(rect: fitz.Rect, delta: float = 0.5) -> fitz.Rect:
     return fitz.Rect(rect.x0 - delta, rect.y0 - delta, rect.x1 + delta, rect.y1 + delta)
+
+
+def _point_hits_any_rect(page_height: float, x_pdf: float, y_pdf: float, rects) -> bool:
+    y_page = page_height - y_pdf
+    for rect in rects:
+        if (rect.x0 - 4.0) <= x_pdf <= (rect.x1 + 4.0) and (rect.y0 - 4.0) <= y_page <= (rect.y1 + 4.0):
+            return True
+    return False
+
+
+def _strip_text_show_ops_in_stream(stream: bytes, page_height: float, cleanup_rects) -> tuple[bytes, int]:
+    tm_re = re.compile(
+        rb'([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+Tm\b'
+    )
+    td_re = re.compile(rb'([-\d.]+)\s+([-\d.]+)\s+T[dD]\b')
+
+    cur_x = None
+    cur_y = None
+    in_text_object = False
+    removed = 0
+    out = bytearray()
+
+    for line in stream.splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped == b'BT':
+            in_text_object = True
+            cur_x = None
+            cur_y = None
+            out.extend(line)
+            continue
+        if stripped == b'ET':
+            in_text_object = False
+            cur_x = None
+            cur_y = None
+            out.extend(line)
+            continue
+
+        if in_text_object:
+            tm_match = tm_re.search(stripped)
+            if tm_match:
+                cur_x = float(tm_match.group(5))
+                cur_y = float(tm_match.group(6))
+                out.extend(line)
+                continue
+
+            td_match = td_re.search(stripped)
+            if td_match and cur_x is not None and cur_y is not None:
+                cur_x += float(td_match.group(1))
+                cur_y += float(td_match.group(2))
+                out.extend(line)
+                continue
+
+            if (
+                cur_x is not None
+                and cur_y is not None
+                and cleanup_rects
+                and (stripped.endswith(b'TJ') or stripped.endswith(b'Tj'))
+                and _point_hits_any_rect(page_height, cur_x, cur_y, cleanup_rects)
+            ):
+                removed += 1
+                continue
+
+        out.extend(line)
+
+    return bytes(out), removed
+
+
+def _strip_text_show_ops_in_rects(doc: fitz.Document, page: fitz.Page, cleanup_rects) -> int:
+    if not cleanup_rects:
+        return 0
+
+    removed_total = 0
+    xrefs = list(page.get_contents())
+    xrefs.extend(
+        xobj[0]
+        for xobj in page.get_xobjects()
+        if xobj
+    )
+
+    for xref in xrefs:
+        try:
+            stream = doc.xref_stream(xref)
+        except Exception:
+            continue
+        if not stream:
+            continue
+        updated_stream, removed_here = _strip_text_show_ops_in_stream(stream, page.rect.height, cleanup_rects)
+        if removed_here <= 0 or updated_stream == stream:
+            continue
+        doc.update_stream(xref, updated_stream)
+        removed_total += removed_here
+
+    if removed_total > 0:
+        try:
+            page.clean_contents()
+        except Exception:
+            pass
+
+    return removed_total
+
+
+def _decode_pdf_string_token(token: bytes) -> str:
+    if len(token) < 2 or token[:1] != b'(' or token[-1:] != b')':
+        return ''
+    body = token[1:-1]
+    body = body.replace(b'\\(', b'(').replace(b'\\)', b')').replace(b'\\\\', b'\\')
+    return body.decode('latin-1', errors='ignore')
+
+
+def _encode_pdf_string_token(text: str) -> bytes:
+    body = (
+        (text or "")
+        .replace("\\", "\\\\")
+        .replace("(", "\\(")
+        .replace(")", "\\)")
+    )
+    return f"({body})".encode("latin-1", errors="ignore")
+
+
+def _strip_text_from_tj_array_line(
+    line: bytes,
+    text_to_remove: str,
+    replacement_text: str = '',
+) -> tuple[bytes, bool]:
+    if not text_to_remove:
+        return line, False
+
+    stripped = line.strip()
+    if b'[' not in stripped or b']' not in stripped or not stripped.endswith(b'TJ'):
+        return line, False
+
+    open_idx = line.find(b'[')
+    close_idx = line.rfind(b']')
+    if open_idx < 0 or close_idx <= open_idx:
+        return line, False
+
+    token_re = re.compile(rb'\((?:\\.|[^\\)])*\)|-?\d+(?:\.\d+)?')
+    array_bytes = line[open_idx + 1:close_idx]
+    tokens = token_re.findall(array_bytes)
+    if not tokens:
+        return line, False
+
+    entries = []
+    flat_chars = []
+    for tok in tokens:
+        if tok.startswith(b'('):
+            decoded = _decode_pdf_string_token(tok)
+            entry_idx = len(entries)
+            entries.append({'kind': 'str', 'token': tok, 'text': decoded})
+            for char_idx, ch in enumerate(decoded):
+                flat_chars.append((entry_idx, char_idx, ch))
+        else:
+            entries.append({'kind': 'num', 'token': tok})
+
+    full_text = ''.join(ch for _, _, ch in flat_chars)
+    match_idx = full_text.find(text_to_remove)
+    if match_idx < 0:
+        return line, False
+
+    remove_positions = set(range(match_idx, match_idx + len(text_to_remove)))
+    replacement_chars = list(str(replacement_text or ''))
+    flat_pos = 0
+    changed = False
+    for entry in entries:
+        if entry['kind'] != 'str':
+            continue
+        kept_chars = []
+        for ch in entry['text']:
+            if flat_pos not in remove_positions:
+                kept_chars.append(ch)
+            else:
+                if replacement_chars:
+                    kept_chars.append(replacement_chars.pop(0))
+                changed = True
+            flat_pos += 1
+        entry['text'] = ''.join(kept_chars)
+
+    if not changed:
+        return line, False
+
+    rebuilt_tokens = []
+    for entry in entries:
+        if entry['kind'] == 'str':
+            if entry['text']:
+                rebuilt_tokens.append(_encode_pdf_string_token(entry['text']))
+        else:
+            rebuilt_tokens.append(entry['token'])
+
+    rebuilt_array = b' '.join(rebuilt_tokens)
+    rebuilt_line = line[:open_idx + 1] + rebuilt_array + line[close_idx:]
+    return rebuilt_line, True
+
+
+def _strip_text_from_tj_string_line(
+    line: bytes,
+    text_to_remove: str,
+    replacement_text: str = '',
+) -> tuple[bytes, bool]:
+    if not text_to_remove:
+        return line, False
+
+    stripped = line.strip()
+    if not stripped.endswith(b'Tj'):
+        return line, False
+
+    token_match = re.search(rb'\((?:\\.|[^\\)])*\)\s*Tj\b', stripped, re.DOTALL)
+    if not token_match:
+        return line, False
+
+    token = token_match.group(0)[:-2].strip()
+    decoded = _decode_pdf_string_token(token)
+    match_idx = decoded.find(text_to_remove)
+    if match_idx < 0:
+        return line, False
+
+    rebuilt_text = decoded[:match_idx] + str(replacement_text or '') + decoded[match_idx + len(text_to_remove):]
+    rebuilt_token = _encode_pdf_string_token(rebuilt_text)
+
+    token_start = line.find(token)
+    token_end = token_start + len(token)
+    if token_start < 0:
+        return line, False
+    rebuilt_line = line[:token_start] + rebuilt_token + line[token_end:]
+    return rebuilt_line, True
+
+
+def _normalize_source_content_ops(edit: Dict[str, Any]) -> List[Dict[str, Any]]:
+    normalized = []
+    seen = set()
+    for op in edit.get("source_content_ops") or []:
+        if not isinstance(op, dict):
+            continue
+        try:
+            xref = int(op.get("xref"))
+            start = int(op.get("start"))
+            end = int(op.get("end"))
+        except Exception:
+            continue
+        if end <= start:
+            continue
+        key = (
+            xref,
+            start,
+            end,
+            normalize_smart_quotes(op.get("matched_text", "")).strip(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append({
+            "xref": xref,
+            "start": start,
+            "end": end,
+            "operator": str(op.get("operator") or ""),
+            "operator_text": normalize_smart_quotes(op.get("operator_text", "")).strip(),
+            "matched_text": normalize_smart_quotes(op.get("matched_text", "")).strip(),
+        })
+    return normalized
+
+
+def _strip_using_source_content_ops(
+    doc: fitz.Document,
+    page: fitz.Page,
+    edit: Dict[str, Any],
+) -> int:
+    source_ops = _normalize_source_content_ops(edit)
+    if not source_ops:
+        return 0
+
+    original_norm = normalize_smart_quotes(str(edit.get("original_text") or "")).strip()
+    if not original_norm:
+        return 0
+
+    target_groups: Dict[tuple, Dict[str, Any]] = {}
+    for op in source_ops:
+        matched_text = op.get("matched_text") or original_norm
+        matched_text = normalize_smart_quotes(matched_text).strip()
+        if not matched_text:
+            continue
+
+        operator_text = op.get("operator_text") or ""
+        if operator_text:
+            if matched_text not in operator_text and original_norm not in operator_text:
+                continue
+
+        key = (op["xref"], op["start"], op["end"], op.get("operator") or "")
+        group = target_groups.setdefault(key, {
+            "xref": op["xref"],
+            "start": op["start"],
+            "end": op["end"],
+            "operator": op.get("operator") or "",
+            "texts": [],
+        })
+        if matched_text not in group["texts"]:
+            group["texts"].append(matched_text)
+
+    if not target_groups:
+        return 0
+
+    ops_by_xref: Dict[int, List[Dict[str, Any]]] = {}
+    for group in target_groups.values():
+        ops_by_xref.setdefault(group["xref"], []).append(group)
+
+    removed_total = 0
+    for xref, groups in ops_by_xref.items():
+        try:
+            stream = doc.xref_stream(xref)
+        except Exception:
+            continue
+        if not stream:
+            continue
+
+        new_stream = bytearray(stream)
+        changed_any = False
+        for group in sorted(groups, key=lambda item: item["start"], reverse=True):
+            start = group["start"]
+            end = group["end"]
+            if start < 0 or end > len(new_stream):
+                continue
+            raw_op = bytes(new_stream[start:end])
+            updated_op = raw_op
+            changed_op = False
+            for remove_text in sorted(group["texts"], key=len, reverse=True):
+                replacement = " " * len(remove_text)
+                if group["operator"] == "TJ":
+                    updated_op, removed_here = _strip_text_from_tj_array_line(
+                        updated_op,
+                        remove_text,
+                        replacement_text=replacement,
+                    )
+                elif group["operator"] == "Tj":
+                    updated_op, removed_here = _strip_text_from_tj_string_line(
+                        updated_op,
+                        remove_text,
+                        replacement_text=replacement,
+                    )
+                else:
+                    removed_here = False
+                if removed_here:
+                    changed_op = True
+
+            if not changed_op or updated_op == raw_op:
+                continue
+
+            new_stream[start:end] = updated_op
+            changed_any = True
+            removed_total += 1
+
+        if changed_any:
+            doc.update_stream(xref, bytes(new_stream))
+
+    if removed_total > 0:
+        try:
+            page.clean_contents()
+        except Exception:
+            pass
+
+    return removed_total
+
+
+def _collect_trace_text_candidates(page: fitz.Page, cleanup_rect: fitz.Rect, original_text: str) -> List[str]:
+    original_norm = normalize_smart_quotes(str(original_text or "")).strip()
+    if not original_norm:
+        return []
+
+    candidates = []
+    seen = set()
+    try:
+        traces = page.get_texttrace()
+    except Exception:
+        return []
+
+    for trace in traces:
+        bbox = trace.get("bbox")
+        if not bbox:
+            continue
+        trace_rect = fitz.Rect(bbox)
+        if not cleanup_rect.intersects(_inflate_rect(trace_rect, 1.0)):
+            continue
+        chars = trace.get("chars") or []
+        trace_text = ''.join(chr(ch[0]) for ch in chars).strip()
+        trace_norm = normalize_smart_quotes(trace_text)
+        if not trace_norm or original_norm not in trace_norm:
+            continue
+        if trace_norm in seen:
+            continue
+        seen.add(trace_norm)
+        candidates.append(trace_norm)
+
+    return candidates
+
+
+def _collect_raw_text_span_bboxes(page: fitz.Page, original_text: str) -> List[fitz.Rect]:
+    original_norm = normalize_smart_quotes(str(original_text or "")).strip()
+    if not original_norm:
+        return []
+
+    matches = []
+    try:
+        rawdict = page.get_text("rawdict")
+    except Exception:
+        return []
+
+    for block in rawdict.get("blocks", []):
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                text = ''.join(ch.get("c", "") for ch in span.get("chars", [])).strip()
+                if normalize_smart_quotes(text) != original_norm:
+                    continue
+                bbox = span.get("bbox")
+                if bbox:
+                    matches.append(fitz.Rect(bbox))
+
+    return sorted(matches, key=lambda rect: (rect.y0, rect.x0))
+
+
+def _strip_exact_text_from_trace_tj_runs(
+    doc: fitz.Document,
+    page: fitz.Page,
+    cleanup_rect: fitz.Rect,
+    original_text: str,
+) -> int:
+    original_norm = normalize_smart_quotes(str(original_text or "")).strip()
+    if not original_norm:
+        return 0
+
+    candidate_texts = _collect_trace_text_candidates(page, cleanup_rect, original_norm)
+    if not candidate_texts:
+        return 0
+
+    target_span_rects = _collect_raw_text_span_bboxes(page, original_norm)
+    target_index = 0
+    if target_span_rects:
+        cleanup_center = _rect_center(cleanup_rect)
+        target_index = min(
+            range(len(target_span_rects)),
+            key=lambda idx: (
+                abs(_rect_center(target_span_rects[idx])[1] - cleanup_center[1]),
+                abs(_rect_center(target_span_rects[idx])[0] - cleanup_center[0]),
+            )
+        )
+
+    candidate_ops = []
+    for xref in page.get_contents():
+        try:
+            stream = doc.xref_stream(xref)
+        except Exception:
+            continue
+        if not stream:
+            continue
+
+        for match in re.finditer(rb'\[(?:\\.|[^\]])*\]\s*TJ', stream):
+            raw_op = match.group(0)
+            open_idx = raw_op.find(b'[')
+            close_idx = raw_op.rfind(b']')
+            if open_idx < 0 or close_idx <= open_idx:
+                continue
+            token_re = re.compile(rb'\((?:\\.|[^\\)])*\)|-?\d+(?:\.\d+)?')
+            array_bytes = raw_op[open_idx + 1:close_idx]
+            tokens = token_re.findall(array_bytes)
+            full_text = ''.join(
+                _decode_pdf_string_token(tok)
+                for tok in tokens
+                if tok.startswith(b'(')
+            )
+            full_norm = normalize_smart_quotes(full_text).strip()
+            if not full_norm or original_norm not in full_norm:
+                continue
+            if not any(candidate in full_norm or full_norm in candidate for candidate in candidate_texts):
+                continue
+            candidate_ops.append({
+                "xref": xref,
+                "start": match.start(),
+                "end": match.end(),
+                "op": raw_op,
+            })
+
+    if not candidate_ops:
+        return 0
+
+    candidate_ops.sort(key=lambda item: (item["xref"], item["start"]))
+    target_op = candidate_ops[min(target_index, len(candidate_ops) - 1)]
+
+    removed_total = 0
+    for xref in page.get_contents():
+        try:
+            stream = doc.xref_stream(xref)
+        except Exception:
+            continue
+        if not stream or xref != target_op["xref"]:
+            continue
+
+        changed = False
+        updated_op, removed_here = _strip_text_from_tj_array_line(
+            target_op["op"],
+            original_norm,
+            replacement_text=(' ' * len(original_norm)),
+        )
+        if removed_here:
+            new_stream = bytearray(stream)
+            new_stream[target_op["start"]:target_op["end"]] = updated_op
+            removed_total += 1
+            changed = True
+
+        if changed:
+            doc.update_stream(xref, bytes(new_stream))
+
+    if removed_total > 0:
+        try:
+            page.clean_contents()
+        except Exception:
+            pass
+
+    return removed_total
+
+
+def _strip_tj_text_in_rects(doc: fitz.Document, page: fitz.Page, cleanup_rects, texts_to_remove) -> int:
+    normalized_texts = [t for t in {normalize_smart_quotes(str(t or "")).strip() for t in texts_to_remove} if t]
+    if not cleanup_rects or not normalized_texts:
+        return 0
+
+    tm_re = re.compile(
+        rb'([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+Tm\b'
+    )
+    td_re = re.compile(rb'([-\d.]+)\s+([-\d.]+)\s+T[dD]\b')
+    tstar_re = re.compile(rb'T\*\b')
+
+    removed_total = 0
+
+    for xref in page.get_contents():
+        try:
+            stream = doc.xref_stream(xref)
+        except Exception:
+            continue
+        if not stream:
+            continue
+
+        changed = False
+        out_lines = []
+        cur_x = None
+        cur_y = None
+        in_text_object = False
+
+        for line in stream.splitlines(keepends=True):
+            stripped = line.strip()
+            if stripped == b'BT':
+                in_text_object = True
+                cur_x = None
+                cur_y = None
+                out_lines.append(line)
+                continue
+            if stripped == b'ET':
+                in_text_object = False
+                cur_x = None
+                cur_y = None
+                out_lines.append(line)
+                continue
+
+            if in_text_object:
+                tm_match = tm_re.search(stripped)
+                if tm_match:
+                    cur_x = float(tm_match.group(5))
+                    cur_y = float(tm_match.group(6))
+                    out_lines.append(line)
+                    continue
+
+                td_match = td_re.search(stripped)
+                if td_match and cur_x is not None and cur_y is not None:
+                    cur_x += float(td_match.group(1))
+                    cur_y += float(td_match.group(2))
+                    out_lines.append(line)
+                    continue
+
+                if tstar_re.fullmatch(stripped) and cur_y is not None:
+                    out_lines.append(line)
+                    continue
+
+                if cur_x is not None and cur_y is not None and stripped.endswith(b'TJ'):
+                    current_line = line
+                    line_changed = False
+                    for text_to_remove in normalized_texts:
+                        current_line, removed_here = _strip_text_from_tj_array_line(current_line, text_to_remove)
+                        if removed_here:
+                            removed_total += 1
+                            line_changed = True
+                    if line_changed:
+                        changed = True
+                    out_lines.append(current_line)
+                    continue
+
+            out_lines.append(line)
+
+        if changed:
+            doc.update_stream(xref, b''.join(out_lines))
+
+    if removed_total > 0:
+        try:
+            page.clean_contents()
+        except Exception:
+            pass
+
+    return removed_total
+
+
+def _strip_tj_tail_for_prefixes(doc: fitz.Document, page: fitz.Page, prefixes) -> int:
+    normalized_prefixes = [p for p in prefixes if p]
+    if not normalized_prefixes:
+        return 0
+
+    token_re = re.compile(rb'\((?:\\.|[^\\)])*\)|-?\d+(?:\.\d+)?')
+    removed_total = 0
+
+    for xref in page.get_contents():
+        try:
+            stream = doc.xref_stream(xref)
+        except Exception:
+            continue
+        if not stream:
+            continue
+
+        changed = False
+        out_lines = []
+        for line in stream.splitlines(keepends=True):
+            stripped = line.strip()
+            if b'[' not in stripped or b']' not in stripped or not stripped.endswith(b'TJ'):
+                out_lines.append(line)
+                continue
+
+            open_idx = line.find(b'[')
+            close_idx = line.rfind(b']')
+            if open_idx < 0 or close_idx <= open_idx:
+                out_lines.append(line)
+                continue
+
+            array_bytes = line[open_idx + 1:close_idx]
+            tokens = token_re.findall(array_bytes)
+            if not tokens:
+                out_lines.append(line)
+                continue
+
+            decoded_tokens = []
+            full_text_parts = []
+            for tok in tokens:
+                if tok.startswith(b'('):
+                    decoded = _decode_pdf_string_token(tok)
+                    decoded_tokens.append(('str', tok, decoded))
+                    full_text_parts.append(decoded)
+                else:
+                    try:
+                        decoded_tokens.append(('num', tok, float(tok)))
+                    except Exception:
+                        decoded_tokens.append(('num', tok, 0.0))
+
+            full_text = ''.join(full_text_parts)
+            if not any(prefix in full_text for prefix in normalized_prefixes):
+                out_lines.append(line)
+                continue
+
+            cut_idx = None
+            for idx, entry in enumerate(decoded_tokens):
+                if entry[0] != 'str':
+                    continue
+                tail_text = ''.join(
+                    part[2] for part in decoded_tokens[idx:] if part[0] == 'str'
+                )
+                if not any(prefix in tail_text for prefix in normalized_prefixes):
+                    continue
+                cut_idx = idx
+                while cut_idx > 0:
+                    prev = decoded_tokens[cut_idx - 1]
+                    if prev[0] != 'num' or prev[2] > -1000:
+                        break
+                    cut_idx -= 1
+                break
+
+            if cut_idx is None:
+                out_lines.append(line)
+                continue
+
+            kept_tokens = decoded_tokens[:cut_idx]
+            if not any(entry[0] == 'str' and entry[2] for entry in kept_tokens):
+                out_lines.append(line)
+                continue
+
+            rebuilt_array = b' '.join(entry[1] for entry in kept_tokens)
+            rebuilt_line = line[:open_idx + 1] + rebuilt_array + line[close_idx:]
+            out_lines.append(rebuilt_line)
+            changed = True
+            removed_total += 1
+
+        if changed:
+            doc.update_stream(xref, b''.join(out_lines))
+
+    if removed_total > 0:
+        try:
+            page.clean_contents()
+        except Exception:
+            pass
+
+    return removed_total
 
 
 def _measure_text_width(font_obj: fitz.Font, text: str, font_size: float) -> float:
@@ -85,11 +850,13 @@ def _pick_font_size_to_fit_rect(
     rect: fitz.Rect,
     line_height_factor: float = 1.2,
     min_font_size: float = 4.0,
+    font_obj: Optional[fitz.Font] = None,
 ) -> float:
-    try:
-        font_obj = fitz.Font(fontname=fontname)
-    except Exception:
-        font_obj = fitz.Font(fontname="helv")
+    if font_obj is None:
+        try:
+            font_obj = fitz.Font(fontname=fontname)
+        except Exception:
+            font_obj = fitz.Font(fontname="helv")
 
     start = max(float(desired_font_size or 12.0), min_font_size)
     max_width = max(float(rect.width), 0.0)
@@ -107,6 +874,189 @@ def _pick_font_size_to_fit_rect(
     return min_font_size
 
 
+def _wrap_text_for_target_widths(
+    text: str,
+    font_obj: fitz.Font,
+    font_size: float,
+    target_widths: List[float],
+    fallback_width: float,
+) -> List[str]:
+    paragraphs = str(text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    widths = [max(float(width or 0.0), 1.0) for width in (target_widths or [])]
+    fallback_width = max(float(fallback_width or 0.0), 1.0)
+    line_index = 0
+    out: List[str] = []
+
+    def current_width(idx: int) -> float:
+        return widths[idx] if idx < len(widths) else fallback_width
+
+    for paragraph in paragraphs:
+        words = paragraph.split()
+        if not words:
+            out.append("")
+            line_index += 1
+            continue
+
+        current = ""
+        for word in words:
+            width_limit = current_width(line_index)
+            candidate = word if not current else f"{current} {word}"
+            if current and _measure_text_width(font_obj, candidate, font_size) > width_limit + 0.01:
+                out.append(current)
+                line_index += 1
+                width_limit = current_width(line_index)
+                if _measure_text_width(font_obj, word, font_size) > width_limit + 0.01:
+                    parts = _split_token_to_width(word, font_obj, font_size, width_limit)
+                    out.extend(parts[:-1])
+                    line_index += max(len(parts) - 1, 0)
+                    current = parts[-1]
+                else:
+                    current = word
+            else:
+                if not current and _measure_text_width(font_obj, word, font_size) > width_limit + 0.01:
+                    parts = _split_token_to_width(word, font_obj, font_size, width_limit)
+                    out.extend(parts[:-1])
+                    line_index += max(len(parts) - 1, 0)
+                    current = parts[-1]
+                else:
+                    current = candidate
+        out.append(current)
+        line_index += 1
+
+    return out or [""]
+
+
+def _insert_text_by_line_metrics(
+    page: fitz.Page,
+    edit: Dict[str, Any],
+    fontname: str,
+    font_obj: Optional[fitz.Font],
+    color: tuple,
+) -> bool:
+    line_metrics = edit.get("line_metrics")
+    if not isinstance(line_metrics, list) or len(line_metrics) < 2:
+        return False
+
+    new_text = "" if edit.get("new_text") is None else str(edit.get("new_text"))
+    if not new_text.strip():
+        return False
+
+    if font_obj is None:
+        try:
+            font_obj = fitz.Font(fontname=fontname)
+        except Exception:
+            return False
+
+    original_bbox = edit.get("original_bbox")
+    target_bbox = edit.get("bbox")
+    delta_x = 0.0
+    delta_y = 0.0
+    if (
+        isinstance(original_bbox, (list, tuple))
+        and len(original_bbox) >= 4
+        and isinstance(target_bbox, (list, tuple))
+        and len(target_bbox) >= 4
+    ):
+        try:
+            delta_x = float(target_bbox[0]) - float(original_bbox[0])
+            delta_y = float(target_bbox[1]) - float(original_bbox[1])
+        except Exception:
+            delta_x = 0.0
+            delta_y = 0.0
+
+    rect = fitz.Rect(target_bbox or original_bbox)
+    base_font_size = 0.0
+    target_widths: List[float] = []
+    tops: List[float] = []
+    origins_y: List[float] = []
+
+    for metric in line_metrics:
+        if not isinstance(metric, dict):
+            continue
+        try:
+            target_widths.append(max(float(metric.get("width") or rect.width), 1.0))
+            tops.append(float(metric.get("top") or rect.y0) + delta_y)
+            origins_y.append(float(metric.get("origin_y") or ((metric.get("top") or rect.y0) + (metric.get("height") or 0))) + delta_y)
+            metric_fs = float(metric.get("font_size") or 0.0)
+            if metric_fs > 0:
+                base_font_size = metric_fs
+        except Exception:
+            continue
+
+    if not target_widths:
+        return False
+    target_widths[-1] = max(target_widths[-1], float(rect.width))
+
+    if base_font_size <= 0:
+        try:
+            base_font_size = float(edit.get("font_size") or 12.0)
+        except Exception:
+            base_font_size = 12.0
+
+    line_height = edit.get("line_height")
+    try:
+        line_height = float(line_height) if line_height is not None else None
+    except Exception:
+        line_height = None
+    if not line_height or line_height <= 0:
+        if len(origins_y) >= 2:
+            line_height = max(origins_y[1] - origins_y[0], base_font_size * 1.2)
+        else:
+            line_height = max(base_font_size * 1.2, 1.0)
+
+    lines = _wrap_text_for_target_widths(
+        new_text,
+        font_obj,
+        base_font_size,
+        target_widths,
+        rect.width,
+    )
+
+    if len(lines) > len(line_metrics):
+        if origins_y:
+            projected_last_origin = origins_y[-1] + ((len(lines) - len(line_metrics)) * line_height)
+        else:
+            projected_last_origin = rect.y0 + base_font_size + ((len(lines) - 1) * line_height)
+        if projected_last_origin > rect.y1 + max(1.0, base_font_size * 0.25):
+            print("    ℹ Line-metric replay exceeds bbox height; falling back to textbox reflow")
+            return False
+
+    for idx, line in enumerate(lines):
+        if idx < len(line_metrics) and isinstance(line_metrics[idx], dict):
+            metric = line_metrics[idx]
+            try:
+                origin_x = float(metric.get("origin_x") or metric.get("left") or rect.x0) + delta_x
+                origin_y = float(metric.get("origin_y") or ((metric.get("top") or rect.y0) + (metric.get("height") or base_font_size))) + delta_y
+                metric_font_size = float(metric.get("font_size") or base_font_size)
+            except Exception:
+                origin_x = rect.x0
+                origin_y = rect.y0 + base_font_size
+                metric_font_size = base_font_size
+        else:
+            origin_x = rect.x0
+            origin_y = origins_y[0] + (idx * line_height) if origins_y else (rect.y0 + base_font_size + (idx * line_height))
+            metric_font_size = base_font_size
+
+        if origin_y > rect.y1 + 0.5:
+            print("    ℹ Line-metric replay would exceed target bbox; falling back to textbox reflow")
+            return False
+
+        page.insert_text(
+            (origin_x, origin_y),
+            line,
+            fontsize=metric_font_size,
+            fontname=fontname,
+            color=color,
+            overlay=True,
+        )
+
+    print(
+        f"    ✓ Inserted '{new_text[:30]}...' with line-metric replay "
+        f"({len(lines)} lines at fs={base_font_size:.2f})"
+    )
+    return True
+
+
 def _insert_text_strict_in_bbox(
     page: fitz.Page,
     rect: fitz.Rect,
@@ -115,6 +1065,7 @@ def _insert_text_strict_in_bbox(
     color: tuple,
     desired_font_size: float,
     line_height_factor: float = 1.2,
+    font_obj: Optional[fitz.Font] = None,
 ):
     # First try textbox with progressively smaller font sizes.
     fs = max(float(desired_font_size), 1.0)
@@ -133,11 +1084,12 @@ def _insert_text_strict_in_bbox(
         fs -= 0.25
 
     # Fallback: manual wrapped draw, constrained to bbox height.
-    try:
-        font_obj = fitz.Font(fontname=fontname)
-    except Exception:
-        font_obj = fitz.Font(fontname="helv")
-        fontname = "helv"
+    if font_obj is None:
+        try:
+            font_obj = fitz.Font(fontname=fontname)
+        except Exception:
+            font_obj = fitz.Font(fontname="helv")
+            fontname = "helv"
 
     fs = max(min(float(desired_font_size), float(rect.height)), 1.0)
     while fs >= 1.0:
@@ -176,6 +1128,180 @@ def _insert_text_strict_in_bbox(
     return False, 0.0, "failed"
 
 
+def _style_color_to_rgb(style: Dict[str, Any], fallback: tuple) -> tuple:
+    hex_color = style.get("hex_color")
+    if isinstance(hex_color, str) and hex_color:
+        hex_color = hex_color.lstrip("#")
+        if len(hex_color) == 6:
+            try:
+                return tuple(int(hex_color[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+            except Exception:
+                pass
+
+    raw_color = style.get("color")
+    if isinstance(raw_color, int):
+        try:
+            return (
+                ((raw_color >> 16) & 0xFF) / 255.0,
+                ((raw_color >> 8) & 0xFF) / 255.0,
+                (raw_color & 0xFF) / 255.0,
+            )
+        except Exception:
+            pass
+
+    return fallback
+
+
+def _edit_cleanup_rect(edit: Dict[str, Any]) -> Optional[fitz.Rect]:
+    rect = None
+    for key in ("original_bbox", "bbox", "cleanup_group_bbox"):
+        raw = edit.get(key)
+        if not isinstance(raw, (list, tuple)) or len(raw) < 4:
+            continue
+        try:
+            candidate = fitz.Rect(float(raw[0]), float(raw[1]), float(raw[2]), float(raw[3]))
+        except Exception:
+            continue
+        rect = candidate if rect is None else (rect | candidate)
+    return rect
+
+
+def _resolve_insert_font_name(
+    font_name: str,
+) -> str:
+    return map_font_name(font_name)
+
+
+def _normalize_style_run_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", "" if value is None else str(value)).strip()
+
+
+def _insert_styled_runs(
+    page: fitz.Page,
+    edit: Dict[str, Any],
+    fallback_rgb: tuple,
+) -> bool:
+    style_runs = edit.get("word_styles")
+    if not isinstance(style_runs, list) or not style_runs:
+        return False
+
+    expected_text = _normalize_style_run_text(edit.get("new_text"))
+    style_text = _normalize_style_run_text(" ".join(
+        "" if not isinstance(style, dict) else str(style.get("text") or "")
+        for style in style_runs
+    ))
+    if expected_text and style_text != expected_text:
+        print(
+            "    ℹ Skipping styled-run insertion because run text no longer matches "
+            "the edited block text; falling back to bbox reflow"
+        )
+        return False
+
+    original_bbox = edit.get("original_bbox")
+    target_bbox = edit.get("bbox")
+    ws_delta_x = 0.0
+    ws_delta_y = 0.0
+    if (
+        isinstance(original_bbox, (list, tuple))
+        and len(original_bbox) >= 4
+        and isinstance(target_bbox, (list, tuple))
+        and len(target_bbox) >= 4
+    ):
+        try:
+            ws_delta_x = float(target_bbox[0]) - float(original_bbox[0])
+            ws_delta_y = float(target_bbox[1]) - float(original_bbox[1])
+        except Exception:
+            ws_delta_x = 0.0
+            ws_delta_y = 0.0
+
+    if abs(ws_delta_x) > 0.5 or abs(ws_delta_y) > 0.5:
+        print(f"    ℹ styled-run position offset: dx={ws_delta_x:.1f}, dy={ws_delta_y:.1f}")
+
+    inserted_any = False
+    for style in style_runs:
+        if not isinstance(style, dict):
+            continue
+
+        run_text = "" if style.get("text") is None else str(style.get("text"))
+        if not run_text.strip():
+            continue
+
+        left = style.get("left")
+        top = style.get("top")
+        width = style.get("width")
+        height = style.get("height")
+        if left is None or top is None or width is None or height is None:
+            return False
+
+        try:
+            rect = fitz.Rect(
+                float(left) + ws_delta_x,
+                float(top) + ws_delta_y,
+                float(left) + float(width) + ws_delta_x,
+                float(top) + float(height) + ws_delta_y,
+            )
+        except Exception:
+            return False
+
+        if rect.width <= 0 or rect.height <= 0:
+            return False
+
+        font_size = style.get("font_size", edit.get("font_size", 12))
+        try:
+            font_size = float(font_size)
+        except Exception:
+            font_size = 12.0
+        if font_size <= 0:
+            font_size = 12.0
+
+        style_font = _resolve_insert_font_name(style.get("font") or edit.get("font") or "helv")
+        line_height_factor = max(float(rect.height) / font_size, 1.0) if font_size > 0 else 1.2
+        rgb = _style_color_to_rgb(style, fallback_rgb)
+
+        if "\n" not in run_text:
+            origin_x = style.get("origin_x", rect.x0)
+            origin_y = style.get("origin_y", rect.y1)
+            try:
+                origin_x = float(origin_x) + ws_delta_x
+                origin_y = float(origin_y) + ws_delta_y
+                page.insert_text(
+                    (origin_x, origin_y),
+                    run_text,
+                    fontsize=font_size,
+                    fontname=style_font,
+                    color=rgb,
+                    overlay=True,
+                )
+                inserted_any = True
+                print(
+                    f"    ✓ Inserted styled run '{run_text[:30]}...' at "
+                    f"({origin_x:.1f}, {origin_y:.1f}) fs={font_size:.2f} mode=origin"
+                )
+                continue
+            except Exception:
+                pass
+
+        ok, used_fs, mode = _insert_text_strict_in_bbox(
+            page=page,
+            rect=_inflate_rect(rect, 1.5),
+            text=run_text,
+            fontname=style_font,
+            color=rgb,
+            desired_font_size=font_size,
+            line_height_factor=line_height_factor,
+        )
+        if not ok:
+            return False
+
+        inserted_any = True
+        print(
+            f"    ✓ Inserted styled run '{run_text[:30]}...' at "
+            f"({rect.x0:.1f}, {rect.y0:.1f}) fs={used_fs:.2f} mode={mode}"
+        )
+
+    return inserted_any
+
+
 def apply_edits_to_pdf(pdf_path, edits_data):
     """
     Apply text edits to PDF using the 'Search-and-Destroy' Protocol:
@@ -204,6 +1330,7 @@ def apply_edits_to_pdf(pdf_path, edits_data):
     try:
         doc = fitz.open(pdf_path)
         print(f"✓ PDF opened: {doc.page_count} pages")
+        inserted_fonts: Dict[str, str] = {}
         
         # Group edits by page (normalize page numbers to 1-indexed ints)
         # and dedupe repeated payload entries to prevent duplicate insertion.
@@ -306,13 +1433,14 @@ def apply_edits_to_pdf(pdf_path, edits_data):
             for edit in page_edits:
                 original_text = '' if edit.get('original_text') is None else str(edit.get('original_text'))
                 new_text = '' if edit.get('new_text') is None else str(edit.get('new_text'))
+                force_reinsert = bool(edit.get('force_reinsert'))
                 if not original_text.strip():
                     continue
 
                 # SKIP NO-OP EDITS
                 original_bbox = edit.get('original_bbox')
                 bbox = edit.get('bbox')
-                if original_text.strip() == new_text.strip() and original_bbox and bbox:
+                if not force_reinsert and original_text.strip() == new_text.strip() and original_bbox and bbox:
                     pos_unchanged = (abs(original_bbox[0] - bbox[0]) < 2 and
                                      abs(original_bbox[1] - bbox[1]) < 2 and
                                      abs(original_bbox[2] - bbox[2]) < 2 and
@@ -326,24 +1454,114 @@ def apply_edits_to_pdf(pdf_path, edits_data):
                 # Always redact the full outer block bbox provided by the editor.
                 # This prevents partial scrub / duplicate glyph artifacts.
                 found_any = False
+                cleanup_base_rect = _edit_cleanup_rect(edit)
                 original_rect = None
+                target_rect = None
                 if isinstance(original_bbox, (list, tuple)) and len(original_bbox) >= 4:
                     original_rect = fitz.Rect(original_bbox[0], original_bbox[1], original_bbox[2], original_bbox[3])
+                if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+                    target_rect = fitz.Rect(bbox[0], bbox[1], bbox[2], bbox[3])
 
                 # Tight redaction padding minimizes accidental clipping of neighboring glyphs.
-                pad = 0.25
+                try:
+                    font_size = max(float(edit.get('font_size', 0) or 0), 0.0)
+                except Exception:
+                    font_size = 0.0
+                pad = max(0.5, min(2.0, font_size * 0.12)) if font_size > 0 else 0.75
                 if original_bbox:
+                    rect = fitz.Rect(cleanup_base_rect) if cleanup_base_rect is not None else (
+                        fitz.Rect(original_rect) if original_rect is not None else fitz.Rect(
+                        original_bbox[0],
+                        original_bbox[1],
+                        original_bbox[2],
+                        original_bbox[3]
+                    ))
                     rect = fitz.Rect(
-                        original_bbox[0] - pad,
-                        original_bbox[1] - pad,
-                        original_bbox[2] + pad,
-                        original_bbox[3] + pad
+                        rect.x0 - pad,
+                        rect.y0 - pad,
+                        rect.x1 + pad,
+                        rect.y1 + pad
                     )
+                    # Prefer exact operator locators captured during extraction.
+                    # This narrows the edit to the original Tj/TJ source instead of
+                    # inferring from a bbox that may overlap neighboring table text.
+                    source_op_stripped = _strip_using_source_content_ops(doc, page, edit)
+                    if source_op_stripped > 0:
+                        redaction_count += source_op_stripped
+                        found_any = True
+                        edit['_stream_text_replaced'] = True
+                        print(
+                            f"    ✓ Removed '{original_text[:30]}...' via "
+                            f"{source_op_stripped} extracted source op(s)"
+                        )
+                        continue
+
+                    # For tiny cell/value edits inside shared TJ table rows, try to
+                    # remove the exact substring from the owning mixed text run first.
+                    # This avoids bbox redaction collateral damage on neighboring row text.
+                    if new_text.strip():
+                        try:
+                            precise_stripped = _strip_exact_text_from_trace_tj_runs(doc, page, rect, original_text)
+                        except Exception as precise_strip_err:
+                            precise_stripped = 0
+                            print(f"    ⚠ Exact trace TJ strip failed: {precise_strip_err}")
+                        if precise_stripped > 0:
+                            redaction_count += precise_stripped
+                            found_any = True
+                            edit['_stream_text_replaced'] = True
+                            print(
+                                f"    ✓ Removed '{original_text[:30]}...' via "
+                                f"{precise_stripped} exact trace TJ strip(s)"
+                            )
+                            continue
+                    if not new_text.strip():
+                        precise_delete_rects = []
+                        seen_precise_delete_rects = set()
+                        for raw_line in re.split(r'[\r\n]+', original_text):
+                            line_text = raw_line.strip()
+                            if not line_text:
+                                continue
+                            try:
+                                matches = page.search_for(line_text)
+                            except Exception:
+                                matches = []
+                            for match_rect in matches:
+                                candidate = fitz.Rect(match_rect)
+                                if cleanup_base_rect is not None and not _inflate_rect(cleanup_base_rect, 4.0).intersects(candidate):
+                                    continue
+                                rect_key = tuple(round(v, 2) for v in (candidate.x0, candidate.y0, candidate.x1, candidate.y1))
+                                if rect_key in seen_precise_delete_rects:
+                                    continue
+                                seen_precise_delete_rects.add(rect_key)
+                                precise_delete_rects.append(candidate)
+                        if precise_delete_rects:
+                            for candidate in precise_delete_rects:
+                                page.add_redact_annot(_inflate_rect(candidate, 0.35), fill=None)
+                            redaction_count += len(precise_delete_rects)
+                            found_any = True
+                            print(
+                                f"    ✓ Redacting '{original_text[:30]}...' via "
+                                f"{len(precise_delete_rects)} precise search rect(s)"
+                            )
+                            continue
+                        stripped_ops = _strip_text_show_ops_in_rects(doc, page, [rect])
+                        if stripped_ops > 0:
+                            redaction_count += stripped_ops
+                            found_any = True
+                            print(
+                                f"    ✓ Removed '{original_text[:30]}...' via "
+                                f"{stripped_ops} in-stream text-show op(s)"
+                            )
+                            continue
                     overlaps_image = any(rect.intersects(img_rect) for img_rect in image_rects)
-                    redact_rect = _inflate_rect(rect, 0.5)
+                    redact_rect = _inflate_rect(rect, max(0.75, pad))
+                    # Preserve underlying vector/table art. White redaction fill
+                    # introduces visible patches on pure deletions, so keep the
+                    # fill transparent and rely on stream cleanup for persistence.
+                    fill_color = None
                     if overlaps_image:
                         image_overlap_count += 1
-                    page.add_redact_annot(redact_rect, fill=None)
+                    page.add_redact_annot(redact_rect, fill=fill_color)
                     redaction_count += 1
                     found_any = True
                     print(f"    ✓ Redacting '{original_text[:30]}...' via outer block bbox")
@@ -380,9 +1598,10 @@ def apply_edits_to_pdf(pdf_path, edits_data):
                                 if not (vicinity.x0 <= cx <= vicinity.x1 and vicinity.y0 <= cy <= vicinity.y1):
                                     continue
                                 overlaps_image = any(wrect.intersects(img_rect) for img_rect in image_rects)
+                                fill_color = None
                                 if overlaps_image:
                                     image_overlap_count += 1
-                                page.add_redact_annot(_inflate_rect(wrect, 0.5), fill=None)
+                                page.add_redact_annot(_inflate_rect(wrect, 0.5), fill=fill_color)
                                 redaction_count += 1
                                 tiny_redactions += 1
                             if tiny_redactions > 0:
@@ -402,9 +1621,10 @@ def apply_edits_to_pdf(pdf_path, edits_data):
                         
                         overlaps_image = any(rect.intersects(img_rect) for img_rect in image_rects)
                         redact_rect = _inflate_rect(rect, 0.5)
+                        fill_color = None
                         if overlaps_image:
                             image_overlap_count += 1
-                        page.add_redact_annot(redact_rect, fill=None)
+                        page.add_redact_annot(redact_rect, fill=fill_color)
                         redaction_count += 1
                         search_success_count += 1
                     else:
@@ -444,14 +1664,15 @@ def apply_edits_to_pdf(pdf_path, edits_data):
                         for edit in page_edits:
                             if edit.get('_skip_insert'):
                                 continue
-                            ob = edit.get('original_bbox')
-                            if not ob or len(ob) < 4:
+                            if edit.get('_stream_text_replaced'):
+                                continue
+                            cleanup_rect = _edit_cleanup_rect(edit)
+                            if cleanup_rect is None:
                                 continue
                             new_t = (edit.get('new_text') or '').strip()
-                            # Check if span bbox is inside the edit's original_bbox (with tolerance)
-                            tol = 3.0
-                            if (sb[0] >= ob[0] - tol and sb[1] >= ob[1] - tol and
-                                sb[2] <= ob[2] + tol and sb[3] <= ob[3] + tol):
+                            cleanup_rect = _inflate_rect(cleanup_rect, 2.0)
+                            span_rect = fitz.Rect(sb[0], sb[1], sb[2], sb[3])
+                            if cleanup_rect.intersects(span_rect):
                                 # This span is inside the edit rect — it should have been redacted
                                 # Skip if it IS the new text (already inserted)
                                 if st == new_t:
@@ -467,6 +1688,183 @@ def apply_edits_to_pdf(pdf_path, edits_data):
                 for rs in residual_spans:
                     print(f"      '{rs['text'][:40]}' at bbox {[round(x,1) for x in rs['bbox']]}")
 
+                # Run one more transparent cleanup pass on the exact residual
+                # span bboxes before touching raw content streams. Redacting the
+                # precise survivor bounds is often enough for clipped/truncated
+                # remnants that escaped the original outer-block scrub.
+                try:
+                    for rs in residual_spans:
+                        rs_rect = fitz.Rect(rs["bbox"][0], rs["bbox"][1], rs["bbox"][2], rs["bbox"][3])
+                        page.add_redact_annot(_inflate_rect(rs_rect, 0.75), fill=None)
+                    page.apply_redactions(images=0)
+                    try:
+                        page.clean_contents()
+                    except Exception as clean_err:
+                        print(f"    ⚠ page.clean_contents() warning after residual pass: {clean_err}")
+                    post_retry_spans = []
+                    for b in page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]:
+                        if b.get("type") != 0:
+                            continue
+                        for l in b.get("lines", []):
+                            for s in l.get("spans", []):
+                                st = (s.get("text") or "").strip()
+                                if not st:
+                                    continue
+                                span_rect = fitz.Rect(s["bbox"])
+                                for edit in page_edits:
+                                    if edit.get('_stream_text_replaced'):
+                                        continue
+                                    cleanup_rect = _edit_cleanup_rect(edit)
+                                    if cleanup_rect is None:
+                                        continue
+                                    cleanup_rect = _inflate_rect(cleanup_rect, 2.0)
+                                    if cleanup_rect.intersects(span_rect):
+                                        post_retry_spans.append({
+                                            "text": st,
+                                            "bbox": list(s["bbox"]),
+                                            "origin": list(s["origin"]),
+                                        })
+                                        break
+                    residual_spans = post_retry_spans
+                    if residual_spans:
+                        print(f"    ⚠ Residual retry still found {len(residual_spans)} span(s)")
+                    else:
+                        print("    ✓ Residual retry removed remaining spans")
+                except Exception as residual_retry_err:
+                    print(f"    ⚠ Residual retry redaction failed: {residual_retry_err}")
+
+                if residual_spans:
+                    try:
+                        residual_cleanup_rects = [
+                            _inflate_rect(fitz.Rect(rs["bbox"][0], rs["bbox"][1], rs["bbox"][2], rs["bbox"][3]), 0.75)
+                            for rs in residual_spans
+                        ]
+                        stripped_tj_text = _strip_tj_text_in_rects(
+                            doc,
+                            page,
+                            residual_cleanup_rects,
+                            [rs.get("text") for rs in residual_spans],
+                        )
+                        if stripped_tj_text > 0:
+                            print(f"    ✓ Stripped {stripped_tj_text} residual TJ substring(s) from content stream")
+                            refreshed_residuals = []
+                            for b in page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]:
+                                if b.get("type") != 0:
+                                    continue
+                                for l in b.get("lines", []):
+                                    for s in l.get("spans", []):
+                                        st = (s.get("text") or "").strip()
+                                        if not st:
+                                            continue
+                                        span_rect = fitz.Rect(s["bbox"])
+                                        for edit in page_edits:
+                                            if edit.get('_stream_text_replaced'):
+                                                continue
+                                            cleanup_rect = _edit_cleanup_rect(edit)
+                                            if cleanup_rect is None:
+                                                continue
+                                            cleanup_rect = _inflate_rect(cleanup_rect, 2.0)
+                                            if cleanup_rect.intersects(span_rect):
+                                                refreshed_residuals.append({
+                                                    "text": st,
+                                                    "bbox": list(s["bbox"]),
+                                                    "origin": list(s["origin"]),
+                                                })
+                                                break
+                            residual_spans = refreshed_residuals
+                            if residual_spans:
+                                print(f"    ⚠ Residual TJ substring strip still found {len(residual_spans)} span(s)")
+                            else:
+                                print("    ✓ Residual TJ substring strip removed remaining spans")
+                    except Exception as residual_tj_strip_err:
+                        print(f"    ⚠ Residual TJ substring strip failed: {residual_tj_strip_err}")
+
+                if residual_spans:
+                    try:
+                        residual_cleanup_rects = [
+                            _inflate_rect(fitz.Rect(rs["bbox"][0], rs["bbox"][1], rs["bbox"][2], rs["bbox"][3]), 0.75)
+                            for rs in residual_spans
+                        ]
+                        stripped_show_ops = _strip_text_show_ops_in_rects(doc, page, residual_cleanup_rects)
+                        if stripped_show_ops > 0:
+                            print(f"    ✓ Stripped {stripped_show_ops} residual text-show op(s) from content stream")
+                            refreshed_residuals = []
+                            for b in page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]:
+                                if b.get("type") != 0:
+                                    continue
+                                for l in b.get("lines", []):
+                                    for s in l.get("spans", []):
+                                        st = (s.get("text") or "").strip()
+                                        if not st:
+                                            continue
+                                        span_rect = fitz.Rect(s["bbox"])
+                                        for edit in page_edits:
+                                            if edit.get('_stream_text_replaced'):
+                                                continue
+                                            cleanup_rect = _edit_cleanup_rect(edit)
+                                            if cleanup_rect is None:
+                                                continue
+                                            cleanup_rect = _inflate_rect(cleanup_rect, 2.0)
+                                            if cleanup_rect.intersects(span_rect):
+                                                refreshed_residuals.append({
+                                                    "text": st,
+                                                    "bbox": list(s["bbox"]),
+                                                    "origin": list(s["origin"]),
+                                                })
+                                                break
+                            residual_spans = refreshed_residuals
+                            if residual_spans:
+                                print(f"    ⚠ Residual text-show strip still found {len(residual_spans)} span(s)")
+                            else:
+                                print("    ✓ Residual text-show strip removed remaining spans")
+                    except Exception as residual_strip_err:
+                        print(f"    ⚠ Residual text-show strip failed: {residual_strip_err}")
+
+                if residual_spans:
+                    try:
+                        delete_line_prefixes = []
+                        for ln in re.split(r'[\r\n]+', original_text):
+                            line_text = ln.strip()
+                            if not line_text:
+                                continue
+                            delete_line_prefixes.append(line_text)
+                            delete_line_prefixes.append(line_text[: min(len(line_text), 18)])
+                        stripped_tails = _strip_tj_tail_for_prefixes(doc, page, delete_line_prefixes)
+                        if stripped_tails > 0:
+                            print(f"    ✓ Stripped {stripped_tails} mixed TJ tail(s) for deletion cleanup")
+                            refreshed_residuals = []
+                            for b in page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]:
+                                if b.get("type") != 0:
+                                    continue
+                                for l in b.get("lines", []):
+                                    for s in l.get("spans", []):
+                                        st = (s.get("text") or "").strip()
+                                        if not st:
+                                            continue
+                                        span_rect = fitz.Rect(s["bbox"])
+                                        for edit in page_edits:
+                                            if edit.get('_stream_text_replaced'):
+                                                continue
+                                            cleanup_rect = _edit_cleanup_rect(edit)
+                                            if cleanup_rect is None:
+                                                continue
+                                            cleanup_rect = _inflate_rect(cleanup_rect, 2.0)
+                                            if cleanup_rect.intersects(span_rect):
+                                                refreshed_residuals.append({
+                                                    "text": st,
+                                                    "bbox": list(s["bbox"]),
+                                                    "origin": list(s["origin"]),
+                                                })
+                                                break
+                            residual_spans = refreshed_residuals
+                            if residual_spans:
+                                print(f"    ⚠ Mixed-TJ cleanup still found {len(residual_spans)} span(s)")
+                            else:
+                                print("    ✓ Mixed-TJ cleanup removed remaining spans")
+                    except Exception as mixed_tj_err:
+                        print(f"    ⚠ Mixed-TJ cleanup failed: {mixed_tj_err}")
+
+            if residual_spans:
                 # Strip residual spans by removing their BT..ET blocks
                 # from the content stream directly.
                 # We match BT blocks by checking if the block's Tm position
@@ -477,6 +1875,17 @@ def apply_edits_to_pdf(pdf_path, edits_data):
                 page_height = page.rect.height
                 xrefs = page.get_contents()
                 stripped_total = 0
+                cleanup_regions = []
+                for edit in page_edits:
+                    if edit.get('_skip_insert'):
+                        continue
+                    if edit.get('_stream_text_replaced'):
+                        continue
+                    cleanup_rect = _edit_cleanup_rect(edit)
+                    if cleanup_rect is None:
+                        continue
+                    cleanup_regions.append(_inflate_rect(cleanup_rect, 2.0))
+
                 for xref in xrefs:
                     stream = doc.xref_stream(xref)
                     if not stream:
@@ -500,13 +1909,19 @@ def apply_edits_to_pdf(pdf_path, edits_data):
                         # Convert PDF y-coord to PyMuPDF y-coord (top-down)
                         pymupdf_y = page_height - tm_f
 
+                        tm_point_inside_cleanup = False
+                        for cleanup_rect in cleanup_regions:
+                            if (cleanup_rect.x0 - 4.0) <= tm_e <= (cleanup_rect.x1 + 4.0) and (
+                                cleanup_rect.y0 - 4.0
+                            ) <= pymupdf_y <= (cleanup_rect.y1 + 4.0):
+                                tm_point_inside_cleanup = True
+                                break
+
+                        if not tm_point_inside_cleanup:
+                            continue
+
                         for rs in residual_spans:
-                            rt = rs["text"]
                             ro = rs["origin"]  # [x, y] in PyMuPDF coords
-                            # Text must appear as a parenthesized string in the block
-                            rt_encoded = b'(' + rt.encode('latin-1', errors='ignore') + b')'
-                            if rt_encoded not in blk_bytes:
-                                continue
                             # Position check: Tm position (e,f) is in page
                             # coords already.  Allow generous x tolerance
                             # for TJ displacement (e.g. [-2312.1(P)] shifts
@@ -517,6 +1932,12 @@ def apply_edits_to_pdf(pdf_path, edits_data):
                                 abs(tm_e - ro[0]) < x_tol):
                                 to_remove.add((m.start(), m.end()))
                                 break
+                        else:
+                            # Some residuals are re-encoded/truncated and do not
+                            # preserve a clean literal text match. If the text
+                            # object's origin lands inside the edited cleanup
+                            # region, remove it conservatively.
+                            to_remove.add((m.start(), m.end()))
 
                     if to_remove:
                         # Remove matched BT..ET blocks from the stream
@@ -574,7 +1995,17 @@ def apply_edits_to_pdf(pdf_path, edits_data):
                     rgb = (0, 0, 0)
                 
                 # Map font name to PyMuPDF font
-                pymupdf_font = map_font_name(font_name)
+                try:
+                    insert_font_name, measure_font_obj = _resolve_insert_font(
+                        page,
+                        inserted_fonts,
+                        font_name,
+                        font_weight=edit.get('font_weight'),
+                    )
+                except Exception as font_err:
+                    print(f"    ⚠ Safe font setup failed for '{font_name}': {font_err}")
+                    insert_font_name = map_font_name(font_name)
+                    measure_font_obj = None
                 line_height = edit.get('line_height')
                 try:
                     line_height = float(line_height) if line_height is not None else None
@@ -583,12 +2014,26 @@ def apply_edits_to_pdf(pdf_path, edits_data):
                 line_height_factor = max((line_height / font_size), 1.0) if line_height and font_size > 0 else 1.2
                 fitted_font_size = _pick_font_size_to_fit_rect(
                     new_text,
-                    pymupdf_font,
+                    insert_font_name,
                     font_size,
                     rect,
                     line_height_factor=line_height_factor,
                     min_font_size=4.0,
+                    font_obj=measure_font_obj,
                 )
+                synthetic_textbox = bool(edit.get('synthetic_textbox'))
+
+                if not synthetic_textbox and _insert_styled_runs(page, edit, rgb):
+                    continue
+
+                if _insert_text_by_line_metrics(
+                    page=page,
+                    edit=edit,
+                    fontname=insert_font_name,
+                    font_obj=measure_font_obj,
+                    color=rgb,
+                ):
+                    continue
 
                 # Insert text strictly inside the provided bbox.
                 try:
@@ -596,10 +2041,11 @@ def apply_edits_to_pdf(pdf_path, edits_data):
                         page=page,
                         rect=rect,
                         text=new_text,
-                        fontname=pymupdf_font,
+                        fontname=insert_font_name,
                         color=rgb,
                         desired_font_size=fitted_font_size,
                         line_height_factor=line_height_factor,
+                        font_obj=measure_font_obj,
                     )
                     if ok:
                         print(

@@ -100,6 +100,8 @@ def block_text(block: Dict[str, Any]) -> str:
 def resolve_edit_block_nums(extraction_pages: List[Dict[str, Any]], edits: List[Dict[str, Any]]) -> None:
     page_map = {int(p.get("page_number", 0)): p for p in extraction_pages if isinstance(p, dict)}
     for edit in edits:
+        if edit.get("preserve_partial_block"):
+            continue
         if edit.get("block_num") is not None:
             continue
         page_num = int(edit.get("page_number") or 0)

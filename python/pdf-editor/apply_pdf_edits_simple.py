@@ -49,6 +49,10 @@ FONT_FILES = {
     'ArialMT_700wght': 'fonts/Arimo-Bold.ttf',
     'Arial_700wght': 'fonts/Arimo-Bold.ttf',
     'Arimo': 'fonts/Arimo-Regular.ttf',
+    'Arimo Regular': 'fonts/Arimo-Regular.ttf',
+    'Arimo Regular-Bold': 'fonts/Arimo-Bold.ttf',
+    'Arimo Regular-Regular': 'fonts/Arimo-Regular.ttf',
+    'Arimo Regular_700wght': 'fonts/Arimo-Bold.ttf',
     'Arimo-Bold': 'fonts/Arimo-Bold.ttf',
     'Arimo-BoldItalic': 'fonts/Arimo-Bold.ttf',
     'Arimo-Italic': 'fonts/Arimo-Regular.ttf',
@@ -70,6 +74,9 @@ FONT_FILES = {
     'Charmonman-Bold': 'fonts/Charmonman-Bold.ttf',
     'Charmonman-Regular': 'fonts/Charmonman-Regular.ttf',
     'Charmonman_700wght': 'fonts/Charmonman-Bold.ttf',
+    'Courier': 'fonts/Cousine-Regular.ttf',
+    'Courier-Bold': 'fonts/Cousine-Bold.ttf',
+    'Courier-Regular': 'fonts/Cousine-Regular.ttf',
     'CourierNewPS': 'fonts/Cousine-Regular.ttf',
     'CourierNewPS-Bold': 'fonts/Cousine-Bold.ttf',
     'CourierNewPS-Regular': 'fonts/Cousine-Regular.ttf',
@@ -78,6 +85,7 @@ FONT_FILES = {
     'CourierNewPSMT-Regular': 'fonts/Cousine-Regular.ttf',
     'CourierNewPSMT_700wght': 'fonts/Cousine-Bold.ttf',
     'CourierNewPS_700wght': 'fonts/Cousine-Bold.ttf',
+    'Courier_700wght': 'fonts/Cousine-Bold.ttf',
     'Cousine': 'fonts/Cousine-Regular.ttf',
     'Cousine-Bold': 'fonts/Cousine-Bold.ttf',
     'Cousine-Regular': 'fonts/Cousine-Regular.ttf',
@@ -124,10 +132,10 @@ FONT_FILES = {
     'PdbpbbLato-Bold': 'fonts/Lato-Bold.ttf',
     'PdbpbbLato-Regular': 'fonts/Lato-Regular.ttf',
     'PdbpbbLato_700wght': 'fonts/Lato-Bold.ttf',
-    'Poppins': 'fonts/Poppins-Regular.ttf',
-    'Poppins-Bold': 'fonts/Poppins-SemiBold.ttf',
-    'Poppins-Regular': 'fonts/Poppins-Regular.ttf',
-    'Poppins_700wght': 'fonts/Poppins-SemiBold.ttf',
+    'Poppins': 'fonts/Poppins-Medium.ttf',
+    'Poppins-Bold': 'fonts/Poppins-Bold.ttf',
+    'Poppins-Regular': 'fonts/Poppins-Medium.ttf',
+    'Poppins_700wght': 'fonts/Poppins-Bold.ttf',
     'Roboto': 'fonts/Roboto-Regular.ttf',
     'Roboto-Bold': 'fonts/Roboto-Bold.ttf',
     'Roboto-BoldItalic': 'fonts/Roboto-Bold.ttf',
@@ -138,12 +146,26 @@ FONT_FILES = {
     'SourceSansPro-Bold': 'fonts/SourceSans3-Bold.ttf',
     'SourceSansPro-Regular': 'fonts/SourceSans3-Regular.ttf',
     'SourceSansPro_700wght': 'fonts/SourceSans3-Bold.ttf',
+    'TahomaUnicode': 'fonts/Arimo-Regular.ttf',
+    'TahomaUnicode,Bold': 'fonts/Arimo-Regular.ttf',
+    'TahomaUnicode,Bold,Italic': 'fonts/Arimo-Regular.ttf',
+    'TahomaUnicode,Bold,Italic-Bold': 'fonts/Arimo-Bold.ttf',
+    'TahomaUnicode,Bold,Italic-Regular': 'fonts/Arimo-Regular.ttf',
+    'TahomaUnicode,Bold,Italic_700wght': 'fonts/Arimo-Bold.ttf',
+    'TahomaUnicode,Bold-Bold': 'fonts/Arimo-Bold.ttf',
+    'TahomaUnicode,Bold-Regular': 'fonts/Arimo-Regular.ttf',
+    'TahomaUnicode,Bold_700wght': 'fonts/Arimo-Bold.ttf',
+    'TahomaUnicode-Bold': 'fonts/Arimo-Bold.ttf',
+    'TahomaUnicode-Regular': 'fonts/Arimo-Regular.ttf',
+    'TahomaUnicode_700wght': 'fonts/Arimo-Bold.ttf',
     'TimesNewRomanPSMT': 'fonts/Tinos-Regular.ttf',
     'TimesNewRomanPSMT-Bold': 'fonts/Tinos-Bold.ttf',
     'TimesNewRomanPSMT-Regular': 'fonts/Tinos-Regular.ttf',
     'TimesNewRomanPSMT_700wght': 'fonts/Tinos-Bold.ttf',
     'TimesNewRomanUnicode': 'fonts/Tinos-Regular.ttf',
     'TimesNewRomanUnicode-Bold': 'fonts/Tinos-Bold.ttf',
+    'TimesNewRomanUnicode-Regular': 'fonts/Tinos-Regular.ttf',
+    'TimesNewRomanUnicode_700wght': 'fonts/Tinos-Bold.ttf',
     'Tinos': 'fonts/Tinos-Regular.ttf',
     'Tinos-Bold': 'fonts/Tinos-Bold.ttf',
     'Tinos-BoldItalic': 'fonts/Tinos-Bold.ttf',
@@ -477,6 +499,10 @@ def normalize_smart_quotes(text):
     text = text.replace('\uFFFD', '')
     text = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', text)
     return text
+
+
+def normalize_style_run_text(value):
+    return re.sub(r"\s+", " ", "" if value is None else str(value)).strip()
 
 
 def apply_edits(pdf_path, edits_json):
@@ -817,6 +843,13 @@ def apply_edits(pdf_path, edits_json):
                 try:
                     original_text = (edit.get('original_text') or '').strip()
                     new_text_stripped = (new_text or '').strip()
+                    style_text = normalize_style_run_text(' '.join(
+                        '' if not isinstance(ws, dict) else str(ws.get('text') or '')
+                        for ws in word_styles
+                    ))
+                    if new_text_stripped and style_text != normalize_style_run_text(new_text_stripped):
+                        print("  ℹ Skipping word_styles replay because run text no longer matches edited text")
+                        raise ValueError("word_styles stale for edited block — use insert_textbox instead")
 
                     # ── POSITION OFFSET ────────────────────────────────────
                     # word_styles contain ABSOLUTE positions from the original

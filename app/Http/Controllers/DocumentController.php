@@ -21,6 +21,24 @@ class DocumentController extends Controller
     private const MONTHLY_UPLOAD_LIMIT = 100;
     private const MONTHLY_ACTION_LIMIT = 1000;
 
+    private function resolveEditorActor(): mixed
+    {
+        return Auth::guard('web')->user() ?? Auth::guard('admin')->user();
+    }
+
+    private function hasEditorAuthentication(): bool
+    {
+        return Auth::guard('web')->check() || Auth::guard('admin')->check();
+    }
+
+    private function resolveEditorEmail(string $fallback = 'guest'): ?string
+    {
+        $actor = $this->resolveEditorActor();
+        $email = is_object($actor) && isset($actor->email) ? trim((string) $actor->email) : '';
+
+        return $email !== '' ? $email : $fallback;
+    }
+
     private function resolvePythonBinaryForPdfEditor(?string $requiredModule = null): string
     {
         $candidates = array_values(array_unique([
@@ -84,6 +102,410 @@ class DocumentController extends Controller
         return $backupPath;
     }
 
+    private function findLatestFitzExtraction(int $documentId, ?string $userEmail = null, ?string $sessionId = null): ?object
+    {
+        if ($userEmail && $userEmail !== 'guest') {
+            $extraction = DB::table('pdf_extractions_fitz')
+                ->where('document_id', $documentId)
+                ->where('user_email', $userEmail)
+                ->orderBy('id', 'desc')
+                ->first();
+
+            if ($extraction) {
+                return $extraction;
+            }
+        }
+
+        if ($sessionId) {
+            $extraction = DB::table('pdf_extractions_fitz')
+                ->where('document_id', $documentId)
+                ->where('session_id', $sessionId)
+                ->orderBy('id', 'desc')
+                ->first();
+
+            if ($extraction) {
+                return $extraction;
+            }
+        }
+
+        return DB::table('pdf_extractions_fitz')
+            ->where('document_id', $documentId)
+            ->orderBy('id', 'desc')
+            ->first();
+    }
+
+    private function liveSavePreviewDirectory(Document $document): string
+    {
+        return storage_path('app/live-save-previews/' . $document->id);
+    }
+
+    private function liveSavePreviewMetadataPath(Document $document, string $entry = 'latest'): string
+    {
+        $safeEntry = preg_replace('/[^A-Za-z0-9T_\-:.Z]/', '', $entry) ?: 'latest';
+        return $this->liveSavePreviewDirectory($document) . '/' . $safeEntry . '.json';
+    }
+
+    private function readLiveSavePreview(Document $document, string $entry = 'latest'): ?array
+    {
+        $metadataPath = $this->liveSavePreviewMetadataPath($document, $entry);
+        if (!is_file($metadataPath)) {
+            return null;
+        }
+
+        $decoded = json_decode((string) @file_get_contents($metadataPath), true);
+        return is_array($decoded) ? $decoded : null;
+    }
+
+    private function listLiveSavePreviewHistory(Document $document): array
+    {
+        $dir = $this->liveSavePreviewDirectory($document);
+        if (!is_dir($dir)) {
+            return [];
+        }
+
+        $entries = [];
+        foreach (glob($dir . '/*.json') ?: [] as $path) {
+            $name = basename($path);
+            if ($name === 'latest.json') {
+                continue;
+            }
+
+            $decoded = json_decode((string) @file_get_contents($path), true);
+            if (!is_array($decoded)) {
+                continue;
+            }
+
+            $entries[] = $decoded;
+        }
+
+        usort($entries, static function (array $a, array $b): int {
+            return strcmp((string) ($b['created_at'] ?? ''), (string) ($a['created_at'] ?? ''));
+        });
+
+        return $entries;
+    }
+
+    private function buildLiveSavePreviewPayload(Document $document, ?array $preview = null): array
+    {
+        $preview ??= $this->readLiveSavePreview($document);
+        if (!$preview) {
+            return [];
+        }
+
+        $entry = $preview['save_id'] ?? 'latest';
+
+        return [
+            'saved_preview_url' => route('documents.savedEdit', $document),
+            'before_image_url' => route('documents.savedEditImage', ['document' => $document, 'variant' => 'before']) . '?entry=' . urlencode((string) $entry),
+            'redacted_image_url' => route('documents.savedEditImage', ['document' => $document, 'variant' => 'redacted']) . '?entry=' . urlencode((string) $entry),
+            'final_image_url' => route('documents.savedEditImage', ['document' => $document, 'variant' => 'final']) . '?entry=' . urlencode((string) $entry),
+            'preview' => $preview,
+        ];
+    }
+
+    private function syncLatestLiveSavePreview(Document $document): void
+    {
+        $dir = $this->liveSavePreviewDirectory($document);
+        if (!is_dir($dir)) {
+            return;
+        }
+
+        $history = $this->listLiveSavePreviewHistory($document);
+        $latestJson = $dir . '/latest.json';
+        $latestBefore = $dir . '/latest-before.png';
+        $latestRedacted = $dir . '/latest-redacted.png';
+        $latestFinal = $dir . '/latest-final.png';
+
+        if (empty($history)) {
+            foreach ([$latestJson, $latestBefore, $latestRedacted, $latestFinal] as $path) {
+                if (is_file($path)) {
+                    @unlink($path);
+                }
+            }
+            return;
+        }
+
+        $latest = $history[0];
+        $saveId = preg_replace('/[^A-Za-z0-9T_\-:.Z]/', '', (string) ($latest['save_id'] ?? '')) ?: null;
+        if (!$saveId) {
+            return;
+        }
+
+        $sourceJson = $dir . '/' . $saveId . '.json';
+        if (is_file($sourceJson)) {
+            @copy($sourceJson, $latestJson);
+        }
+
+        foreach (['before', 'redacted', 'final'] as $variant) {
+            $source = $dir . '/' . $saveId . '-' . $variant . '.png';
+            $dest = $dir . '/latest-' . $variant . '.png';
+            if (is_file($source)) {
+                @copy($source, $dest);
+            } elseif (is_file($dest)) {
+                @unlink($dest);
+            }
+        }
+    }
+
+    private function discardLiveSavePreviewEntries(Document $document, array $entries): void
+    {
+        $dir = $this->liveSavePreviewDirectory($document);
+        if (!is_dir($dir) || empty($entries)) {
+            return;
+        }
+
+        $discarded = [];
+        foreach ($entries as $entry) {
+            $saveId = preg_replace('/[^A-Za-z0-9T_\-:.Z]/', '', (string) $entry) ?: null;
+            if (!$saveId || isset($discarded[$saveId])) {
+                continue;
+            }
+            $discarded[$saveId] = true;
+
+            foreach ([
+                $dir . '/' . $saveId . '.json',
+                $dir . '/' . $saveId . '-before.png',
+                $dir . '/' . $saveId . '-redacted.png',
+                $dir . '/' . $saveId . '-final.png',
+            ] as $path) {
+                if (is_file($path)) {
+                    @unlink($path);
+                }
+            }
+        }
+
+        if (!empty($discarded)) {
+            $this->syncLatestLiveSavePreview($document);
+        }
+    }
+
+    private function liveSaveSnapshotDirectory(Document $document): string
+    {
+        return storage_path('app/live-save-working-copies/' . $document->id);
+    }
+
+    private function liveSaveSnapshotPath(Document $document, string $token): string
+    {
+        $safeToken = preg_replace('/[^A-Za-z0-9_\-]/', '', $token) ?: 'invalid';
+        return $this->liveSaveSnapshotDirectory($document) . '/' . $safeToken . '.pdf';
+    }
+
+    private function pruneLiveSaveSnapshots(Document $document, int $maxAgeSeconds = 21600): void
+    {
+        $dir = $this->liveSaveSnapshotDirectory($document);
+        if (!is_dir($dir)) {
+            return;
+        }
+
+        $cutoff = time() - max(60, $maxAgeSeconds);
+        foreach (glob($dir . '/*.pdf') ?: [] as $path) {
+            $mtime = @filemtime($path);
+            if ($mtime !== false && $mtime < $cutoff) {
+                @unlink($path);
+            }
+        }
+    }
+
+    private function createLiveSaveSnapshot(Document $document): array
+    {
+        $sourcePath = Storage::path($document->path);
+        if (!is_file($sourcePath)) {
+            throw new \RuntimeException('Document PDF not found.');
+        }
+
+        $dir = $this->liveSaveSnapshotDirectory($document);
+        if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
+            throw new \RuntimeException('Failed to create working-copy snapshot directory.');
+        }
+
+        $this->pruneLiveSaveSnapshots($document);
+
+        $token = now()->format('YmdHisv') . '_' . Str::random(12);
+        $snapshotPath = $this->liveSaveSnapshotPath($document, $token);
+        if (!@copy($sourcePath, $snapshotPath)) {
+            throw new \RuntimeException('Failed to create working-copy snapshot.');
+        }
+
+        return [
+            'token' => $token,
+            'path' => $snapshotPath,
+        ];
+    }
+
+    private function invalidateCleanPdf(Document $document): void
+    {
+        $cleanPath = Storage::path('temp/clean_' . $document->id . '.pdf');
+        if (file_exists($cleanPath)) {
+            @unlink($cleanPath);
+        }
+    }
+
+    private function refreshOverlayExtractionArtifacts(Document $document, string $pythonBinary, bool $skipRefresh = false): void
+    {
+        if ($skipRefresh) {
+            return;
+        }
+
+        $fullPath = Storage::path($document->path);
+        $extractScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
+        $userEmail = $this->resolveEditorEmail();
+        $sessionId = session()->getId();
+        $refreshCommand = sprintf(
+            '%s %s %s %d %s %s 2>&1',
+            escapeshellarg($pythonBinary),
+            escapeshellarg($extractScript),
+            escapeshellarg($fullPath),
+            $document->id,
+            escapeshellarg($userEmail),
+            escapeshellarg($sessionId)
+        );
+
+        $refreshOutput = [];
+        $refreshCode = 0;
+        exec($refreshCommand, $refreshOutput, $refreshCode);
+        \Log::info('Refreshed extraction data', [
+            'document_id' => $document->id,
+            'return_code' => $refreshCode,
+            'output' => implode("\n", $refreshOutput),
+        ]);
+
+        $cleanPath = Storage::path('temp/clean_' . $document->id . '.pdf');
+        $latestExtraction = $this->findLatestFitzExtraction($document->id, $userEmail, $sessionId);
+        if (!$latestExtraction) {
+            return;
+        }
+
+        $extractionFile = tempnam(sys_get_temp_dir(), 'extract_post_');
+        if ($extractionFile === false) {
+            throw new \RuntimeException('Failed to create post-save extraction temp file.');
+        }
+
+        try {
+            $extractionData = is_string($latestExtraction->extraction_data)
+                ? $latestExtraction->extraction_data
+                : json_encode($latestExtraction->extraction_data);
+
+            if (@file_put_contents($extractionFile, $extractionData) === false) {
+                throw new \RuntimeException('Failed to write post-save extraction temp file.');
+            }
+
+            $pythonScript = base_path('python/pdf-editor/create_clean_pdf.py');
+            $cleanCommand = sprintf(
+                '%s %s %s %s %s 2>&1',
+                escapeshellarg($pythonBinary),
+                escapeshellarg($pythonScript),
+                escapeshellarg($fullPath),
+                escapeshellarg($extractionFile),
+                escapeshellarg($cleanPath)
+            );
+
+            $cleanOutput = [];
+            $cleanCode = 0;
+            exec($cleanCommand, $cleanOutput, $cleanCode);
+
+            \Log::info('Regenerated clean PDF after save', [
+                'document_id' => $document->id,
+                'return_code' => $cleanCode,
+                'clean_exists' => file_exists($cleanPath),
+            ]);
+        } finally {
+            if (file_exists($extractionFile)) {
+                @unlink($extractionFile);
+            }
+        }
+    }
+
+    private function runLiveSaveScript(Document $document, array $edit, ?string $workingCopyToken = null): array
+    {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+        $pdfPath = $workingCopyToken
+            ? $this->liveSaveSnapshotPath($document, $workingCopyToken)
+            : Storage::path($document->path);
+
+        if (!file_exists($pdfPath)) {
+            return [
+                'success' => false,
+                'error' => 'PDF file not found.',
+                'status' => 404,
+            ];
+        }
+
+        $editFile = tempnam(sys_get_temp_dir(), 'tb_ls_');
+        if ($editFile === false) {
+            return [
+                'success' => false,
+                'error' => 'Could not create temp file.',
+                'status' => 500,
+            ];
+        }
+
+        $previewDir = $this->liveSavePreviewDirectory($document);
+        if (!is_dir($previewDir) && !@mkdir($previewDir, 0755, true) && !is_dir($previewDir)) {
+            @unlink($editFile);
+            return [
+                'success' => false,
+                'error' => 'Could not create preview directory.',
+                'status' => 500,
+            ];
+        }
+
+        try {
+            file_put_contents($editFile, json_encode($edit, JSON_UNESCAPED_UNICODE));
+
+            $script = base_path('python/pdf-editor/live_save.py');
+            $command = sprintf(
+                '%s %s %s %s %s 2>&1',
+                escapeshellarg($pythonBinary),
+                escapeshellarg($script),
+                escapeshellarg($pdfPath),
+                escapeshellarg($editFile),
+                escapeshellarg($previewDir)
+            );
+
+            $output = [];
+            $exitCode = 0;
+            exec($command, $output, $exitCode);
+            $outputStr = implode("\n", $output);
+
+            $jsonLine = '';
+            foreach (array_reverse($output) as $line) {
+                $line = trim($line);
+                if (str_starts_with($line, '{')) {
+                    $jsonLine = $line;
+                    break;
+                }
+            }
+
+            $result = $jsonLine ? json_decode($jsonLine, true) : null;
+            if ($exitCode !== 0 || !$result || !($result['success'] ?? false)) {
+                return [
+                    'success' => false,
+                    'error' => $result['error'] ?? ($outputStr ?: 'Live save failed.'),
+                    'status' => 500,
+                    'output' => $outputStr,
+                    'exit_code' => $exitCode,
+                ];
+            }
+
+            $this->invalidateCleanPdf($document);
+            $previewPayload = $this->buildLiveSavePreviewPayload($document);
+
+            return [
+                'success' => true,
+                'result' => $result,
+                'status' => 200,
+                'output' => $outputStr,
+                'exit_code' => $exitCode,
+                'python_binary' => $pythonBinary,
+                'preview' => $previewPayload,
+            ];
+        } finally {
+            if (file_exists($editFile)) {
+                @unlink($editFile);
+            }
+        }
+    }
+
     public function index()
     {
         $documents = Document::latest()->get();
@@ -141,6 +563,82 @@ class DocumentController extends Controller
         return redirect()
             ->route('documents.edit', $document)
             ->with('status', 'PDF uploaded. You can edit it below.');
+    }
+
+    public function createBlank(Request $request)
+    {
+        $validated = $request->validate([
+            'page_size' => ['nullable', 'string', 'in:A4,Letter,Legal,A3,A5'],
+            'orientation' => ['nullable', 'string', 'in:portrait,landscape'],
+        ]);
+
+        if ($response = $this->consumeMonthlyUploadQuota($request)) {
+            return $response;
+        }
+
+        $pageSize = $validated['page_size'] ?? 'A4';
+        $orientation = $validated['orientation'] ?? 'portrait';
+
+        // Page dimensions in points (72 pt = 1 inch)
+        $sizes = [
+            'A4'     => [595.28, 841.89],
+            'Letter' => [612.00, 792.00],
+            'Legal'  => [612.00, 1008.00],
+            'A3'     => [841.89, 1190.55],
+            'A5'     => [419.53, 595.28],
+        ];
+
+        [$width, $height] = $sizes[$pageSize];
+        if ($orientation === 'landscape') {
+            [$width, $height] = [$height, $width];
+        }
+
+        $uuid = Str::uuid()->toString();
+        $storedRelative = 'documents/' . $uuid . '.pdf';
+        $storedFull = Storage::path($storedRelative);
+
+        Storage::makeDirectory('documents');
+
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
+        // Write the Python code to a temp file to avoid shell quoting issues.
+        $scriptCode = implode("\n", [
+            'import fitz, sys',
+            'doc = fitz.open()',
+            sprintf('doc.new_page(width=%s, height=%s)', (float) $width, (float) $height),
+            sprintf('doc.save(%s)', var_export($storedFull, true)),
+            'doc.close()',
+        ]);
+        $tmpScript = tempnam(sys_get_temp_dir(), 'blank_pdf_') . '.py';
+        file_put_contents($tmpScript, $scriptCode);
+
+        $output = [];
+        $exitCode = 0;
+        exec(sprintf('%s %s 2>&1', escapeshellarg($pythonBinary), escapeshellarg($tmpScript)), $output, $exitCode);
+        @unlink($tmpScript);
+
+        if ($exitCode !== 0 || !file_exists($storedFull)) {
+            Log::error('Blank PDF creation failed', [
+                'output' => implode("\n", $output),
+                'exit_code' => $exitCode,
+            ]);
+            return redirect()
+                ->route('documents.index')
+                ->withErrors('Failed to create blank PDF. Please try again.');
+        }
+
+        $document = Document::create([
+            'user_id' => Auth::id(),
+            'original_name' => 'Blank ' . $pageSize . ' ' . ucfirst($orientation) . '.pdf',
+            'path' => $storedRelative,
+            'original_backup_path' => $this->createOriginalBackup($storedRelative),
+            'mime_type' => 'application/pdf',
+            'size_bytes' => filesize($storedFull),
+        ]);
+
+        return redirect()
+            ->route('documents.edit', $document)
+            ->with('status', 'Blank PDF created. You can now add text, images and annotations.');
     }
 
     public function createFromTemplate(Request $request)
@@ -664,7 +1162,7 @@ class DocumentController extends Controller
         $fullPath = Storage::path($document->path);
         $pythonScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
         $documentId = $document->id;
-        $userEmail = auth()->user()->email ?? 'guest';
+        $userEmail = $this->resolveEditorEmail();
         $sessionId = session()->getId();
         
         // Execute Python script in background (non-blocking)
@@ -690,31 +1188,9 @@ class DocumentController extends Controller
     {
         $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
 
-        $userEmail = auth()->user()->email ?? 'guest';
+        $userEmail = $this->resolveEditorEmail();
         $sessionId = session()->getId();
-        
-        // Prioritize user_email over session_id for authenticated users
-        if ($userEmail !== 'guest') {
-            $extraction = DB::table('pdf_extractions_fitz')
-                ->where('document_id', $document->id)
-                ->where('user_email', $userEmail)
-                ->orderBy('id', 'desc')
-                ->first();
-        } else {
-            $extraction = DB::table('pdf_extractions_fitz')
-                ->where('document_id', $document->id)
-                ->where('session_id', $sessionId)
-                ->orderBy('id', 'desc')
-                ->first();
-        }
-
-        // Fallback to any extraction if no user/session-specific one exists
-        if (!$extraction) {
-            $extraction = DB::table('pdf_extractions_fitz')
-                ->where('document_id', $document->id)
-                ->orderBy('id', 'desc')
-                ->first();
-        }
+        $extraction = $this->findLatestFitzExtraction($document->id, $userEmail, $sessionId);
 
         if (!$extraction) {
             return response()->json([
@@ -765,6 +1241,44 @@ class DocumentController extends Controller
         return view('documents.edit', [
             'document' => $document,
             'activeTab' => 'pdf-editor',
+            'pdfSaveMode' => strtolower((string) config('pdf_editor.save_mode', 'full_page_save')),
+            'savedEditPreviewUrl' => route('documents.savedEdit', $document),
+        ]);
+    }
+
+    public function savedEditPreview(Request $request, Document $document)
+    {
+        $selectedEntry = trim((string) $request->query('entry', 'latest'));
+        $preview = $this->readLiveSavePreview($document, $selectedEntry);
+        if (!$preview && $selectedEntry !== 'latest') {
+            $preview = $this->readLiveSavePreview($document);
+            $selectedEntry = 'latest';
+        }
+
+        return view('documents.saved', [
+            'document' => $document,
+            'preview' => $preview,
+            'previewHistory' => $this->listLiveSavePreviewHistory($document),
+            'selectedEntry' => $selectedEntry,
+        ]);
+    }
+
+    public function savedEditPreviewImage(Request $request, Document $document, string $variant)
+    {
+        abort_unless(in_array($variant, ['before', 'redacted', 'final'], true), 404);
+
+        $entry = trim((string) $request->query('entry', 'latest'));
+        $safeEntry = preg_replace('/[^A-Za-z0-9T_\-:.Z]/', '', $entry) ?: 'latest';
+        $path = $this->liveSavePreviewDirectory($document) . '/' . $safeEntry . '-' . $variant . '.png';
+        if (!is_file($path)) {
+            abort(404);
+        }
+
+        return response()->file($path, [
+            'Content-Type' => 'image/png',
+            'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+            'Pragma' => 'no-cache',
+            'Expires' => '0',
         ]);
     }
 
@@ -801,7 +1315,7 @@ class DocumentController extends Controller
         $aiDocument = \App\Models\AiDocument::create([
             'document_id' => $validated['document_id'],
             'session_id' => Str::uuid(),
-            'email' => auth()->user() ? auth()->user()->email : null,
+            'email' => $this->resolveEditorEmail(null),
         ]);
 
         return redirect()->to(route('documents.ai', ['document' => $aiDocument->id]));
@@ -845,31 +1359,9 @@ class DocumentController extends Controller
 
     public function editExtractedText(Document $document)
     {
-        $userEmail = auth()->user()->email ?? 'guest';
+        $userEmail = $this->resolveEditorEmail();
         $sessionId = session()->getId();
-        
-        // Get the latest PyMuPDF extraction data - prioritize user_email over session_id
-        if ($userEmail !== 'guest') {
-            $extraction = DB::table('pdf_extractions_fitz')
-                ->where('document_id', $document->id)
-                ->where('user_email', $userEmail)
-                ->orderBy('id', 'desc')
-                ->first();
-        } else {
-            $extraction = DB::table('pdf_extractions_fitz')
-                ->where('document_id', $document->id)
-                ->where('session_id', $sessionId)
-                ->orderBy('id', 'desc')
-                ->first();
-        }
-
-        // Fallback to any extraction if no user/session-specific one exists
-        if (!$extraction) {
-            $extraction = DB::table('pdf_extractions_fitz')
-                ->where('document_id', $document->id)
-                ->orderBy('id', 'desc')
-                ->first();
-        }
+        $extraction = $this->findLatestFitzExtraction($document->id, $userEmail, $sessionId);
 
         if (!$extraction) {
             return redirect()->back()->with('error', 'No extraction data found. Please wait for processing to complete.');
@@ -1305,7 +1797,7 @@ class DocumentController extends Controller
             return response()->json(['success' => false, 'error' => 'PDF file not found. The file may have been deleted or moved.'], 404);
         }
 
-        $userEmail = auth()->user()->email ?? 'guest';
+        $userEmail = $this->resolveEditorEmail();
         $sessionId = session()->getId();
         $forceRefresh = $request->boolean('force_refresh', false);
 
@@ -1341,28 +1833,7 @@ class DocumentController extends Controller
             }
         }
         
-        // Check if extraction data exists - prioritize user_email over session_id
-        if ($userEmail !== 'guest') {
-            $extraction = DB::table('pdf_extractions_fitz')
-                ->where('document_id', $document->id)
-                ->where('user_email', $userEmail)
-                ->orderBy('id', 'desc')
-                ->first();
-        } else {
-            $extraction = DB::table('pdf_extractions_fitz')
-                ->where('document_id', $document->id)
-                ->where('session_id', $sessionId)
-                ->orderBy('id', 'desc')
-                ->first();
-        }
-
-        // Fallback to any extraction if no user/session-specific one exists
-        if (!$extraction) {
-            $extraction = DB::table('pdf_extractions_fitz')
-                ->where('document_id', $document->id)
-                ->orderBy('id', 'desc')
-                ->first();
-        }
+        $extraction = $this->findLatestFitzExtraction($document->id, $userEmail, $sessionId);
 
         if (!$extraction) {
             // Run extraction automatically
@@ -1374,10 +1845,7 @@ class DocumentController extends Controller
             }
             
             // Reload extraction data
-            $extraction = DB::table('pdf_extractions_fitz')
-                ->where('document_id', $document->id)
-                ->orderBy('id', 'desc')
-                ->first();
+            $extraction = $this->findLatestFitzExtraction($document->id, $userEmail, $sessionId);
 
             if (!$extraction) {
                 return response()->json(['success' => false, 'error' => 'Failed to extract PDF text data.'], 500);
@@ -1401,10 +1869,7 @@ class DocumentController extends Controller
 
                 [$returnCode, $output] = $runFitzExtraction();
                 if ($returnCode === 0) {
-                    $extraction = DB::table('pdf_extractions_fitz')
-                        ->where('document_id', $document->id)
-                        ->orderBy('id', 'desc')
-                        ->first();
+                    $extraction = $this->findLatestFitzExtraction($document->id, $userEmail, $sessionId);
                 } else {
                     \Log::error('Failed to re-extract PDF after modification', ['output' => implode("\n", $output)]);
                 }
@@ -1418,10 +1883,7 @@ class DocumentController extends Controller
 
                 [$returnCode, $output] = $runFitzExtraction();
                 if ($returnCode === 0) {
-                    $extraction = DB::table('pdf_extractions_fitz')
-                        ->where('document_id', $document->id)
-                        ->orderBy('id', 'desc')
-                        ->first();
+                    $extraction = $this->findLatestFitzExtraction($document->id, $userEmail, $sessionId);
                 } else {
                     \Log::error('Failed to re-extract after script update', [
                         'document_id' => $document->id,
@@ -1451,10 +1913,7 @@ class DocumentController extends Controller
             if (!$hasFontXref) {
                 [$returnCode, $output] = $runFitzExtraction();
                 if ($returnCode === 0) {
-                    $extraction = DB::table('pdf_extractions_fitz')
-                        ->where('document_id', $document->id)
-                        ->orderBy('id', 'desc')
-                        ->first();
+                    $extraction = $this->findLatestFitzExtraction($document->id, $userEmail, $sessionId);
                 } else {
                     \Log::error('Failed to refresh extraction for missing font_xref', [
                         'document_id' => $document->id,
@@ -1532,12 +1991,100 @@ class DocumentController extends Controller
         return response()->json(['success' => true]);
     }
 
+    private function anchorChangedForTargetedSave(array $edit, float $tolerance = 0.75): bool
+    {
+        $originalBbox = $edit['original_bbox'] ?? null;
+        $newBbox = $edit['bbox'] ?? null;
+        if (!is_array($originalBbox) || !is_array($newBbox) || count($originalBbox) < 4 || count($newBbox) < 4) {
+            return false;
+        }
+
+        return abs((float) $originalBbox[0] - (float) $newBbox[0]) > $tolerance
+            || abs((float) $originalBbox[1] - (float) $newBbox[1]) > $tolerance;
+    }
+
+    private function normalizePdfStyleRunsForTargetedSave($runs): array
+    {
+        if (!is_array($runs)) {
+            return [];
+        }
+
+        return array_map(static function ($run) {
+            if (!is_array($run)) {
+                return [];
+            }
+
+            $normalizeColor = static function ($value): string {
+                $color = strtolower(trim((string) ($value ?? '')));
+                if ($color === '') {
+                    return '';
+                }
+
+                return str_starts_with($color, '#') ? $color : ('#' . $color);
+            };
+
+            return [
+                'text' => preg_replace('/\s+/', ' ', trim((string) ($run['text'] ?? ''))),
+                'font' => trim((string) ($run['font'] ?? '')),
+                'font_size' => round((float) ($run['font_size'] ?? 0), 2),
+                'font_weight' => trim((string) ($run['font_weight'] ?? '')),
+                'italic' => (bool) ($run['italic'] ?? false),
+                'bold' => (bool) ($run['bold'] ?? false),
+                'underline' => (bool) ($run['underline'] ?? false),
+                'hex_color' => $normalizeColor($run['hex_color'] ?? $run['color'] ?? ''),
+                'left' => round((float) ($run['left'] ?? 0), 2),
+                'top' => round((float) ($run['top'] ?? 0), 2),
+                'width' => round((float) ($run['width'] ?? 0), 2),
+                'height' => round((float) ($run['height'] ?? 0), 2),
+                'origin_x' => round((float) ($run['origin_x'] ?? 0), 2),
+                'origin_y' => round((float) ($run['origin_y'] ?? 0), 2),
+            ];
+        }, $runs);
+    }
+
+    private function stylesChangedForTargetedSave(array $edit): bool
+    {
+        $wordStyles = $this->normalizePdfStyleRunsForTargetedSave($edit['word_styles'] ?? null);
+        $lineMetrics = $this->normalizePdfStyleRunsForTargetedSave($edit['line_metrics'] ?? null);
+        if (!empty($wordStyles) && !empty($lineMetrics)) {
+            return $wordStyles !== $lineMetrics;
+        }
+
+        $fontWeight = strtolower(trim((string) ($edit['font_weight'] ?? '')));
+        $fontStyle = strtolower(trim((string) ($edit['font_style'] ?? 'normal')));
+        $color = strtolower(trim((string) ($edit['color'] ?? '#000000')));
+        if ($color !== '' && !str_starts_with($color, '#')) {
+            $color = '#' . $color;
+        }
+
+        return !in_array($fontWeight, ['', '400', 'normal'], true)
+            || $fontStyle !== 'normal'
+            || !in_array($color, ['', '#000000'], true)
+            || !empty($edit['underline']);
+    }
+
+    private function isMaterialEditForTargetedSave(array $edit): bool
+    {
+        $originalText = preg_replace('/\s+/', ' ', trim((string) ($edit['original_text'] ?? '')));
+        $newText = preg_replace('/\s+/', ' ', trim((string) ($edit['new_text'] ?? '')));
+
+        if ($originalText !== $newText) {
+            return true;
+        }
+
+        if ($this->anchorChangedForTargetedSave($edit)) {
+            return true;
+        }
+
+        return $this->stylesChangedForTargetedSave($edit);
+    }
+
     public function saveEdits(Request $request, Document $document)
     {
         $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
 
         $validated = $request->validate([
-            'edits' => ['required', 'array'],
+            'edits' => ['present', 'array'],
             'edits.*.page_number' => ['required', 'integer'],
             'edits.*.original_text' => ['present', 'string'],  // Changed from 'required' to 'present' - allow empty strings
             'edits.*.new_text' => ['nullable', 'string'],
@@ -1554,17 +2101,77 @@ class DocumentController extends Controller
             'edits.*.line_height' => ['nullable', 'numeric'],
             'edits.*.color' => ['nullable', 'string'],
             'edits.*.rich_html' => ['nullable', 'string'],
+            'edits.*.cleanup_group_bbox' => ['nullable', 'array'],
+            'edits.*.line_metrics' => ['nullable', 'array'],
+            'edits.*.line_metrics.*' => ['nullable', 'array'],
+            'edits.*.synthetic_textbox' => ['nullable', 'boolean'],
             'edits.*.word_styles' => ['nullable', 'array'],
             'edits.*.word_styles.*' => ['nullable', 'array'],
+            'edits.*.source_content_ops' => ['nullable', 'array'],
+            'edits.*.source_content_ops.*.xref' => ['nullable', 'integer'],
+            'edits.*.source_content_ops.*.start' => ['nullable', 'integer'],
+            'edits.*.source_content_ops.*.end' => ['nullable', 'integer'],
+            'edits.*.source_content_ops.*.operator' => ['nullable', 'string'],
+            'edits.*.source_content_ops.*.operator_text' => ['nullable', 'string'],
+            'edits.*.source_content_ops.*.matched_text' => ['nullable', 'string'],
+            'edits.*.source_content_ops.*.collapsed_operator_text' => ['nullable', 'string'],
+            'edits.*.source_content_ops.*.tm_x' => ['nullable', 'numeric'],
+            'edits.*.source_content_ops.*.tm_y' => ['nullable', 'numeric'],
+            'edits.*.preserve_partial_block' => ['nullable', 'boolean'],
+            'edits.*.force_reinsert' => ['nullable', 'boolean'],
             'skip_refresh' => ['nullable', 'boolean'],
+            'finalize_live_save' => ['nullable', 'boolean'],
+            'working_copy_token' => ['nullable', 'string'],
         ]);
 
         if ($response = $this->consumeMonthlyActionQuota($request)) {
             return $response;
         }
 
+        $edits = $validated['edits'] ?? [];
+        $saveMode = strtolower((string) config('pdf_editor.save_mode', 'full_page_save'));
+        $finalizeLiveSave = (bool) ($validated['finalize_live_save'] ?? false);
+        $workingCopyToken = isset($validated['working_copy_token']) && is_string($validated['working_copy_token'])
+            ? trim((string) $validated['working_copy_token'])
+            : '';
+
+        if (empty($edits)) {
+            if ($saveMode === 'live_save' && $finalizeLiveSave) {
+                if ($workingCopyToken !== '') {
+                    $snapshotPath = $this->liveSaveSnapshotPath($document, $workingCopyToken);
+                    if (!is_file($snapshotPath)) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Working-copy snapshot not found.',
+                        ], 404);
+                    }
+
+                    $fullPath = Storage::path($document->path);
+                    if (!@copy($snapshotPath, $fullPath)) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Failed to commit working-copy snapshot.',
+                        ], 500);
+                    }
+                    @unlink($snapshotPath);
+                }
+
+                $this->refreshOverlayExtractionArtifacts($document, $pythonBinary, (bool) ($validated['skip_refresh'] ?? false));
+                $document->touch();
+
+                return response()->json(array_merge([
+                    'success' => true,
+                    'message' => 'Live-save finalized successfully',
+                ], $this->buildLiveSavePreviewPayload($document)));
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'No overlay edits to save',
+            ]);
+        }
+
         // GUARD MECHANISM: Check if any entire page is being nulled out
-        $edits = $validated['edits'];
         $pageTextCounts = [];
         $pageDimensions = [];
         
@@ -1669,6 +2276,93 @@ class DocumentController extends Controller
         }
         unset($edit);
 
+        $receivedEditsCount = count($edits);
+        if (in_array($saveMode, ['targeted_save', 'live_save'], true)) {
+            $droppedEdits = [];
+            $edits = array_values(array_filter($edits, function ($edit) use (&$droppedEdits) {
+                $isMaterial = $this->isMaterialEditForTargetedSave($edit);
+                if (!$isMaterial) {
+                    $droppedEdits[] = [
+                        'page_number' => $edit['page_number'] ?? null,
+                        'block_num' => $edit['block_num'] ?? null,
+                        'original_text' => $edit['original_text'] ?? '',
+                        'new_text' => $edit['new_text'] ?? '',
+                    ];
+                }
+
+                return $isMaterial;
+            }));
+
+            if (!empty($droppedEdits)) {
+                \Log::info($saveMode . ' dropped no-op overlay edits', [
+                    'document_id' => $document->id,
+                    'received_edits' => $receivedEditsCount,
+                    'material_edits' => count($edits),
+                    'dropped_edits' => $droppedEdits,
+                ]);
+            }
+        }
+
+        if (empty($edits)) {
+            return response()->json([
+                'success' => true,
+                'message' => 'No material overlay edits to save',
+            ]);
+        }
+
+        if ($saveMode === 'live_save') {
+            $lastPreviewPayload = [];
+            foreach ($edits as $edit) {
+                $liveSave = $this->runLiveSaveScript($document, $edit, $workingCopyToken !== '' ? $workingCopyToken : null);
+                if (!($liveSave['success'] ?? false)) {
+                    \Log::error('live_save batch failed inside saveEdits', [
+                        'document_id' => $document->id,
+                        'edit' => [
+                            'page_number' => $edit['page_number'] ?? null,
+                            'original_text' => $edit['original_text'] ?? '',
+                            'new_text' => $edit['new_text'] ?? '',
+                        ],
+                        'output' => $liveSave['output'] ?? null,
+                        'error' => $liveSave['error'] ?? 'Live save failed.',
+                    ]);
+
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Failed to apply edits to PDF',
+                        'error' => $liveSave['error'] ?? 'Live save failed.',
+                    ], (int) ($liveSave['status'] ?? 500));
+                }
+
+                $lastPreviewPayload = $liveSave['preview'] ?? [];
+            }
+
+            $this->refreshOverlayExtractionArtifacts($document, $pythonBinary, (bool) ($validated['skip_refresh'] ?? false));
+            $document->touch();
+
+            if (Auth::check()) {
+                UserActivity::create([
+                    'user_id' => Auth::id(),
+                    'action' => 'Save PDF Edits',
+                    'category' => 'pdf_save',
+                    'details' => [
+                        'edits_count' => count($edits),
+                        'edited_pages' => array_values(array_unique(array_map(static fn ($edit) => (int) ($edit['page_number'] ?? 0), $edits))),
+                        'save_mode' => 'live_save',
+                    ],
+                    'document_id' => $document->id,
+                    'status' => 'success',
+                    'ip_address' => $request->ip(),
+                    'user_agent' => $request->userAgent(),
+                ]);
+            }
+
+            return response()->json(array_merge([
+                'success' => true,
+                'message' => 'Edits applied successfully',
+                'save_mode' => 'live_save',
+            ], $lastPreviewPayload));
+        }
+
         // Use unique temp files per request to avoid permission issues when
         // stale fixed filenames are owned by another user/process.
         $tempJsonDir = storage_path('app/temp');
@@ -1721,12 +2415,30 @@ class DocumentController extends Controller
         \Log::info('Pages with edits', [
             'document_id' => $document->id,
             'edited_pages' => $editedPages,
-            'total_edits' => count($edits)
+            'total_edits' => count($edits),
+            'received_edits' => $receivedEditsCount,
         ]);
 
         $fullPath = Storage::path($document->path);
-        $saveMode = strtolower((string) config('pdf_editor.save_mode', 'full_page_save'));
         $isNewSaveMode = $saveMode === 'new_save_mode';
+        $isSurgicalSaveMode = $saveMode === 'surgical_save';
+        $isTargetedSaveMode = $saveMode === 'targeted_save';
+        $allPartialBlockEdits = !empty($edits) && collect($edits)->every(function ($edit) {
+            return !empty($edit['preserve_partial_block']);
+        });
+        $allEditsSupportStrictSurgical = !empty($edits) && collect($edits)->every(function ($edit) {
+            $bbox = $edit['bbox'] ?? null;
+            $originalBbox = $edit['original_bbox'] ?? null;
+
+            return isset($edit['page_number'])
+                && array_key_exists('original_text', $edit)
+                && array_key_exists('new_text', $edit)
+                && is_array($bbox)
+                && count($bbox) >= 4
+                && is_array($originalBbox)
+                && count($originalBbox) >= 4;
+        });
+        $useStrictSurgicalSave = $isNewSaveMode || $isSurgicalSaveMode || $allPartialBlockEdits;
 
         // OPTIMIZATION: If no edits made, skip save pipeline entirely.
         if (empty($editedPages)) {
@@ -1760,7 +2472,29 @@ class DocumentController extends Controller
         $output = [];
         $returnCode = 0;
 
-        if ($isNewSaveMode) {
+        if ($isTargetedSaveMode) {
+            $pythonScript = base_path('python/pdf-editor/apply_pdf_edits_targeted.py');
+            $command = sprintf(
+                '%s %s %s %s 2>&1',
+                escapeshellarg($pythonBinary),
+                escapeshellarg($pythonScript),
+                escapeshellarg($fullPath),
+                escapeshellarg($editsFile)
+            );
+
+            \Log::info('Applying PDF edits (targeted_save)', [
+                'document_id' => $document->id,
+                'pipeline' => 'targeted_save',
+                'pdf_path' => $fullPath,
+                'backup_path' => $backupPath,
+                'received_edits' => $receivedEditsCount,
+                'material_edits' => count($edits),
+                'edited_pages' => $editedPages,
+                'configured_save_mode' => $saveMode,
+            ]);
+
+            exec($command, $output, $returnCode);
+        } elseif ($useStrictSurgicalSave) {
             // New save mode: strict in-place surgical edits only.
             // This path never rebuilds full pages and will abort if the
             // script cannot confidently locate the exact old text to remove.
@@ -1773,13 +2507,18 @@ class DocumentController extends Controller
                 escapeshellarg($editsFile)
             );
 
-            \Log::info('Applying PDF edits (new_save_mode)', [
+            \Log::info('Applying PDF edits (strict surgical)', [
                 'document_id' => $document->id,
-                'pipeline' => 'strict_surgical',
+                'pipeline' => $allPartialBlockEdits
+                    ? 'partial_block_surgical'
+                    : ($isSurgicalSaveMode ? 'configured_surgical_save' : 'strict_surgical'),
                 'pdf_path' => $fullPath,
                 'backup_path' => $backupPath,
                 'edits_count' => count($edits),
                 'edited_pages' => $editedPages,
+                'all_partial_block_edits' => $allPartialBlockEdits,
+                'configured_save_mode' => $saveMode,
+                'all_edits_support_strict_surgical' => $allEditsSupportStrictSurgical,
             ]);
 
             exec($command, $output, $returnCode);
@@ -1801,29 +2540,9 @@ class DocumentController extends Controller
             }
 
             // Fetch extraction data from DB (needed to redraw unchanged words).
-            $userEmail = auth()->user()->email ?? 'guest';
+            $userEmail = $this->resolveEditorEmail();
             $sessionId = session()->getId();
-            $extractionRow = null;
-            if ($userEmail !== 'guest') {
-                $extractionRow = DB::table('pdf_extractions_fitz')
-                    ->where('document_id', $document->id)
-                    ->where('user_email', $userEmail)
-                    ->orderBy('id', 'desc')
-                    ->first();
-            }
-            if (!$extractionRow) {
-                $extractionRow = DB::table('pdf_extractions_fitz')
-                    ->where('document_id', $document->id)
-                    ->where('session_id', $sessionId)
-                    ->orderBy('id', 'desc')
-                    ->first();
-            }
-            if (!$extractionRow) {
-                $extractionRow = DB::table('pdf_extractions_fitz')
-                    ->where('document_id', $document->id)
-                    ->orderBy('id', 'desc')
-                    ->first();
-            }
+            $extractionRow = $this->findLatestFitzExtraction($document->id, $userEmail, $sessionId);
 
             if (!$extractionRow) {
                 if (file_exists($editsFile)) @unlink($editsFile);
@@ -1872,6 +2591,7 @@ class DocumentController extends Controller
                 'original_backup_path' => Storage::path($document->original_backup_path),
                 'edits_count' => count($edits),
                 'edited_pages' => $editedPages,
+                'configured_save_mode' => $saveMode,
             ]);
 
             exec($command, $output, $returnCode);
@@ -1895,72 +2615,7 @@ class DocumentController extends Controller
         }
 
         if ($returnCode === 0) {
-            // Refresh extraction data so overlay editor reflects latest text positions
-            // Skip refresh if requested (e.g., during page reordering)
-            if (!($validated['skip_refresh'] ?? false)) {
-                $extractScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
-                $userEmail = auth()->user()->email ?? 'guest';
-                $sessionId = session()->getId();
-                $refreshCommand = sprintf(
-                    '%s %s %s %d %s %s 2>&1',
-                    escapeshellarg($pythonBinary),
-                    escapeshellarg($extractScript),
-                    escapeshellarg($fullPath),
-                    $document->id,
-                    escapeshellarg($userEmail),
-                    escapeshellarg($sessionId)
-                );
-                $refreshOutput = [];
-                $refreshCode = 0;
-                exec($refreshCommand, $refreshOutput, $refreshCode);
-                \Log::info('Refreshed extraction data', [
-                    'document_id' => $document->id,
-                    'return_code' => $refreshCode,
-                    'output' => implode("\n", $refreshOutput)
-                ]);
-                
-                // CRITICAL: Regenerate clean PDF after save
-                // This ensures overlay editor continues to work properly
-                $cleanPath = Storage::path('temp/clean_' . $document->id . '.pdf');
-                $latestExtraction = \App\Models\PdfExtractionFitz::where('document_id', $document->id)
-                    ->orderBy('id', 'desc')
-                    ->first();
-                
-                if ($latestExtraction) {
-                    $extractionFile = $makeTempFile('extract_post_');
-                    
-                    // Ensure extraction_data is a string (it might be an array)
-                    $extractionData = is_string($latestExtraction->extraction_data) 
-                        ? $latestExtraction->extraction_data 
-                        : json_encode($latestExtraction->extraction_data);
-                    
-                    if (@file_put_contents($extractionFile, $extractionData) === false) {
-                        throw new \RuntimeException('Failed to write post-save extraction temp file.');
-                    }
-                    
-                    $pythonScript = base_path('python/pdf-editor/create_clean_pdf.py');
-                    $cleanCommand = sprintf(
-                        '%s %s %s %s %s 2>&1',
-                        escapeshellarg($pythonBinary),
-                        escapeshellarg($pythonScript),
-                        escapeshellarg($fullPath),
-                        escapeshellarg($extractionFile),
-                        escapeshellarg($cleanPath)
-                    );
-                    exec($cleanCommand, $cleanOutput, $cleanCode);
-                    
-                    // Clean up temp extraction file
-                    if (file_exists($extractionFile)) {
-                        unlink($extractionFile);
-                    }
-                    
-                    \Log::info('Regenerated clean PDF after save', [
-                        'document_id' => $document->id,
-                        'return_code' => $cleanCode,
-                        'clean_exists' => file_exists($cleanPath)
-                    ]);
-                }
-            }
+            $this->refreshOverlayExtractionArtifacts($document, $pythonBinary, (bool) ($validated['skip_refresh'] ?? false));
         }
 
         if ($returnCode !== 0) {
@@ -2035,6 +2690,112 @@ class DocumentController extends Controller
         ]);
     }
 
+    public function createWorkingCopySnapshot(Request $request, Document $document)
+    {
+        try {
+            $snapshot = $this->createLiveSaveSnapshot($document);
+        } catch (\Throwable $e) {
+            Log::error('Failed to create working-copy snapshot', [
+                'document_id' => $document->id,
+                'path' => $document->path,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to create working-copy snapshot.',
+            ], 500);
+        }
+
+        return response()->json([
+            'success' => true,
+            'snapshot_token' => $snapshot['token'],
+        ]);
+    }
+
+    public function restoreWorkingCopy(Request $request, Document $document)
+    {
+        $request->validate([
+            'pdf' => ['nullable', 'file', 'mimes:pdf', 'max:51200'],
+            'snapshot_token' => ['nullable', 'string'],
+            'discard_preview_entries' => ['nullable', 'array'],
+            'discard_preview_entries.*' => ['nullable', 'string'],
+            'delete_snapshot' => ['nullable', 'boolean'],
+        ]);
+
+        $fullPath = Storage::path($document->path);
+        $snapshotToken = trim((string) $request->input('snapshot_token', ''));
+        $sourcePath = null;
+
+        if ($request->hasFile('pdf')) {
+            $file = $request->file('pdf');
+            $sourcePath = $file?->getPathname();
+        } elseif ($snapshotToken !== '') {
+            $snapshotPath = $this->liveSaveSnapshotPath($document, $snapshotToken);
+            if (!is_file($snapshotPath)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Working-copy snapshot not found.',
+                ], 404);
+            }
+            $sourcePath = $snapshotPath;
+        } else {
+            return response()->json([
+                'success' => false,
+                'message' => 'No working-copy restore source was provided.',
+            ], 422);
+        }
+
+        file_put_contents($fullPath, file_get_contents($sourcePath));
+
+        $discardPreviewEntries = $request->input('discard_preview_entries', []);
+        if (is_array($discardPreviewEntries) && !empty($discardPreviewEntries)) {
+            $this->discardLiveSavePreviewEntries($document, $discardPreviewEntries);
+        }
+
+        if ($snapshotToken !== '' && (bool) $request->boolean('delete_snapshot')) {
+            $snapshotPath = $this->liveSaveSnapshotPath($document, $snapshotToken);
+            if (is_file($snapshotPath)) {
+                @unlink($snapshotPath);
+            }
+        }
+
+        $this->invalidateCleanPdf($document);
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+        $this->refreshOverlayExtractionArtifacts($document, $pythonBinary, false);
+        $document->touch();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Working PDF restored successfully.',
+        ]);
+    }
+
+    public function discardWorkingCopySnapshot(Request $request, Document $document)
+    {
+        $request->validate([
+            'snapshot_token' => ['required', 'string'],
+            'discard_preview_entries' => ['nullable', 'array'],
+            'discard_preview_entries.*' => ['nullable', 'string'],
+        ]);
+
+        $snapshotToken = trim((string) $request->input('snapshot_token', ''));
+        $snapshotPath = $this->liveSaveSnapshotPath($document, $snapshotToken);
+        if (is_file($snapshotPath)) {
+            @unlink($snapshotPath);
+        }
+
+        $discardPreviewEntries = $request->input('discard_preview_entries', []);
+        if (is_array($discardPreviewEntries) && !empty($discardPreviewEntries)) {
+            $this->discardLiveSavePreviewEntries($document, $discardPreviewEntries);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Working-copy snapshot discarded.',
+        ]);
+    }
+
     public function cleanPdf(Document $document)
     {
         // After edits are saved, the "clean" PDF is deleted
@@ -2065,7 +2826,82 @@ class DocumentController extends Controller
             'Content-Disposition' => 'inline; filename="document.pdf"',
         ]);
     }
-    
+
+    /**
+     * Live save — surgically patch a single overlay-editor field into the PDF
+     * using an incremental save.  No page refresh; returns JSON success/fail.
+     */
+    public function liveSave(Request $request, Document $document)
+    {
+        $validated = $request->validate([
+            'page_number'   => ['required', 'integer', 'min:1'],
+            'original_text' => ['present', 'string'],
+            'new_text'      => ['nullable'],
+            'original_bbox' => ['required', 'array', 'min:4'],
+            'bbox'          => ['nullable', 'array'],
+            'origin_x'      => ['nullable', 'numeric'],
+            'origin_y'      => ['nullable', 'numeric'],
+            'font'          => ['required', 'string'],
+            'font_size'     => ['required', 'numeric'],
+            'font_weight'   => ['nullable', 'string'],
+            'font_style'    => ['nullable', 'string'],
+            'font_xref'     => ['nullable', 'integer'],
+            'underline'     => ['nullable', 'boolean'],
+            'line_height'   => ['nullable', 'numeric'],
+            'color'         => ['nullable', 'string'],
+            'word_styles'   => ['nullable', 'array'],
+            'line_metrics'  => ['nullable', 'array'],
+            'source_content_ops' => ['nullable', 'array'],
+            'synthetic_textbox' => ['nullable', 'boolean'],
+            'retry_mode'    => ['nullable', 'string'],
+            'redaction_padding' => ['nullable', 'numeric'],
+            'working_copy_token' => ['nullable', 'string'],
+        ]);
+
+        $rawNewText = $request->input('new_text', '');
+        if (is_array($rawNewText) || is_object($rawNewText)) {
+            return response()->json([
+                'success' => false,
+                'error' => 'The new text field must be a string.',
+            ], 422);
+        }
+        $validated['new_text'] = $rawNewText === null ? '' : (string) $rawNewText;
+        $validated['word_styles'] = is_array($request->input('word_styles')) ? $request->input('word_styles') : null;
+        $validated['line_metrics'] = is_array($request->input('line_metrics')) ? $request->input('line_metrics') : null;
+        $validated['source_content_ops'] = is_array($request->input('source_content_ops')) ? $request->input('source_content_ops') : null;
+        $validated['retry_mode'] = is_string($request->input('retry_mode')) ? $request->input('retry_mode') : null;
+        $validated['redaction_padding'] = is_numeric($request->input('redaction_padding'))
+            ? (float) $request->input('redaction_padding')
+            : null;
+        $workingCopyToken = is_string($request->input('working_copy_token')) ? trim((string) $request->input('working_copy_token')) : '';
+
+        if (!$this->isMaterialEditForTargetedSave($validated)) {
+            return response()->json([
+                'success' => true,
+                'skipped_noop' => true,
+                'message' => 'No material live-save changes detected.',
+            ]);
+        }
+
+        $liveSave = $this->runLiveSaveScript($document, $validated, $workingCopyToken !== '' ? $workingCopyToken : null);
+        if (!($liveSave['success'] ?? false)) {
+            \Log::error('live_save failed', [
+                'document_id' => $document->id,
+                'exit_code' => $liveSave['exit_code'] ?? null,
+                'output' => $liveSave['output'] ?? null,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => $liveSave['error'] ?? 'Live save failed.',
+            ], (int) ($liveSave['status'] ?? 500));
+        }
+
+        return response()->json(array_merge([
+            'success' => true,
+        ], $liveSave['preview'] ?? []));
+    }
+
     public function getFonts(Document $document)
     {
         $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
@@ -2289,7 +3125,7 @@ class DocumentController extends Controller
             ]);
             
             $pythonScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
-            $userEmail = auth()->user()->email ?? 'guest';
+            $userEmail = $this->resolveEditorEmail();
             $currentSessionId = session()->getId();
             
             $extractCommand = sprintf(
@@ -2410,7 +3246,7 @@ class DocumentController extends Controller
             
             // Re-extract the PDF to update extraction data after adding page
             $pythonScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
-            $userEmail = auth()->user()->email ?? 'guest';
+            $userEmail = $this->resolveEditorEmail();
             $currentSessionId = session()->getId();
             
             $extractCommand = sprintf(
@@ -2528,7 +3364,7 @@ class DocumentController extends Controller
             
             // Re-extract the PDF to update extraction data after rotation
             $pythonScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
-            $userEmail = auth()->user()->email ?? 'guest';
+            $userEmail = $this->resolveEditorEmail();
             $currentSessionId = session()->getId();
             
             $extractCommand = sprintf(
@@ -2668,14 +3504,19 @@ class DocumentController extends Controller
     {
         $validated = $request->validate([
             'annotations' => 'required|array',
-            'annotations.*.id' => 'nullable|string',
-            'annotations.*.type' => 'required|string|in:text,shape',
-            'annotations.*.pageIndex' => 'required|integer',
             'session_id' => 'required|string',
             'user_email' => 'nullable|email',
             'annotation_id' => 'nullable|string',
-            'state' => 'nullable|string|in:saved,not_saved',
+            'state' => 'nullable|string|in:saved,not_saved,deleted',
         ]);
+
+        $annotationsPayload = $request->input('annotations', []);
+        if (!is_array($annotationsPayload)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid annotations payload.',
+            ], 422);
+        }
 
         $sessionId = $validated['session_id'];
         $userEmail = $validated['user_email'] ?? null;
@@ -2683,7 +3524,13 @@ class DocumentController extends Controller
         
         // If annotation_id is provided, update/create that specific annotation
         if ($annotationId) {
-            $annotation = $validated['annotations'][0];
+            $annotation = is_array($annotationsPayload[0] ?? null) ? $annotationsPayload[0] : null;
+            if (!$annotation) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Missing annotation payload.',
+                ], 422);
+            }
             
             // Try to find existing annotation by annotation ID
             $existingAnnotation = PdfState::where('document_id', $document->id)
@@ -2733,11 +3580,14 @@ class DocumentController extends Controller
         \Log::info("Bulk save annotations", [
             'document_id' => $document->id,
             'session_id' => $sessionId,
-            'annotation_count' => count($validated['annotations']),
+            'annotation_count' => count($annotationsPayload),
             'target_state' => $targetState
         ]);
         
-        foreach ($validated['annotations'] as $annotation) {
+        foreach ($annotationsPayload as $annotation) {
+            if (!is_array($annotation)) {
+                continue;
+            }
             $annotationId = $annotation['id'] ?? null;
             
             if ($annotationId) {
@@ -2785,14 +3635,74 @@ class DocumentController extends Controller
         ]);
     }
 
+    public function getSavedAnnotations(Request $request, Document $document)
+    {
+        $validated = $request->validate([
+            'session_id' => 'nullable|string',
+        ]);
+
+        $requestedSessionId = is_string($validated['session_id'] ?? null)
+            ? trim((string) $validated['session_id'])
+            : '';
+
+        $fetchAnnotationsForSession = function (string $sessionId) use ($document) {
+            return PdfState::query()
+                ->where('document_id', $document->id)
+                ->where('session_id', $sessionId)
+                ->where('state', '!=', 'deleted')
+                ->orderBy('page_number')
+                ->orderBy('updated_at')
+                ->get();
+        };
+
+        $resolvedSessionId = '';
+        $records = collect();
+
+        if ($requestedSessionId !== '') {
+            $records = $fetchAnnotationsForSession($requestedSessionId);
+            if ($records->isNotEmpty()) {
+                $resolvedSessionId = $requestedSessionId;
+            }
+        }
+
+        if ($records->isEmpty()) {
+            $latestSessionId = (string) (PdfState::query()
+                ->where('document_id', $document->id)
+                ->where('state', '!=', 'deleted')
+                ->orderByDesc('updated_at')
+                ->value('session_id') ?? '');
+
+            if ($latestSessionId !== '') {
+                $records = $fetchAnnotationsForSession($latestSessionId);
+                $resolvedSessionId = $latestSessionId;
+            }
+        }
+
+        $annotations = $records->map(function (PdfState $record) {
+            $annotation = is_array($record->annotation_data) ? $record->annotation_data : [];
+            $annotation['db_state'] = $record->state;
+            $annotation['db_updated_at'] = optional($record->updated_at)?->toIso8601String();
+            return $annotation;
+        })->values();
+
+        return response()->json([
+            'success' => true,
+            'session_id' => $resolvedSessionId !== '' ? $resolvedSessionId : null,
+            'count' => $annotations->count(),
+            'annotations' => $annotations,
+        ]);
+    }
+
     public function applyAnnotationsDirect(Request $request, Document $document)
     {
         $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
 
         $validated = $request->validate([
-            'annotations' => 'required|array',
+            'annotations' => 'present|array',
             'annotations.*.type' => 'required|string',
             'annotations.*.pageIndex' => 'required',
+            'use_clean_pdf' => 'nullable|boolean',
+            'session_id' => 'nullable|string',
         ]);
         // IMPORTANT:
         // $validated['annotations'] only contains keys declared in validation rules
@@ -2805,8 +3715,52 @@ class DocumentController extends Controller
                 'message' => 'Invalid annotations payload.',
             ], 422);
         }
+        $annotationsPayload = array_map(function ($annotation) use ($document) {
+            if (!is_array($annotation)) {
+                return $annotation;
+            }
+            $annotation['__documentId'] = $document->id;
+            return $annotation;
+        }, $annotationsPayload);
+        $persistableAnnotationsPayload = array_map(static function ($annotation) {
+            if (!is_array($annotation)) {
+                return [];
+            }
+            unset($annotation['__documentId']);
+            return $annotation;
+        }, $annotationsPayload);
+        $sessionId = is_string($validated['session_id'] ?? null)
+            ? trim((string) $validated['session_id'])
+            : '';
 
         $pdfPath = Storage::path($document->path);
+        $useCleanPdf = $request->boolean('use_clean_pdf');
+        $workingPdfPath = $pdfPath;
+        $tempWorkingPdfPath = null;
+
+        if ($useCleanPdf) {
+            $cleanPath = Storage::path('temp/clean_' . $document->id . '.pdf');
+            if (!file_exists($cleanPath)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Clean PDF source not found.',
+                ], 404);
+            }
+
+            $tempWorkingPdfPath = Storage::path('temp/apply_annotations_' . $document->id . '_' . Str::uuid() . '.pdf');
+            $tempWorkingDir = dirname($tempWorkingPdfPath);
+            if (!is_dir($tempWorkingDir)) {
+                @mkdir($tempWorkingDir, 0775, true);
+            }
+            if (!@copy($cleanPath, $tempWorkingPdfPath)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to prepare clean PDF working copy.',
+                ], 500);
+            }
+            $workingPdfPath = $tempWorkingPdfPath;
+        }
+
         if (!file_exists($pdfPath)) {
             return response()->json([
                 'success' => false,
@@ -2868,7 +3822,7 @@ class DocumentController extends Controller
             '%s %s %s %s 2>&1',
             escapeshellarg($pythonBinary),
             escapeshellarg($script),
-            escapeshellarg($pdfPath),
+            escapeshellarg($workingPdfPath),
             escapeshellarg($annotationsFile)
         );
         $output = [];
@@ -2883,16 +3837,36 @@ class DocumentController extends Controller
             if (file_exists($backupPath)) {
                 @copy($backupPath, $pdfPath);
             }
+            if ($tempWorkingPdfPath && file_exists($tempWorkingPdfPath)) {
+                @unlink($tempWorkingPdfPath);
+            }
             \Log::error('Direct annotation apply failed', [
                 'document_id' => $document->id,
                 'return_code' => $returnCode,
                 'output' => implode("\n", $output),
+                'use_clean_pdf' => $useCleanPdf,
             ]);
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to apply annotations directly.',
                 'error' => implode("\n", $output),
             ], 500);
+        }
+
+        if ($useCleanPdf) {
+            if (!@copy($workingPdfPath, $pdfPath)) {
+                if ($tempWorkingPdfPath && file_exists($tempWorkingPdfPath)) {
+                    @unlink($tempWorkingPdfPath);
+                }
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to promote clean PDF save back to the document file.',
+                ], 500);
+            }
+            if ($tempWorkingPdfPath && file_exists($tempWorkingPdfPath)) {
+                @unlink($tempWorkingPdfPath);
+            }
+            $this->invalidateCleanPdf($document);
         }
 
         $size = @filesize($pdfPath) ?: $document->size_bytes;
@@ -2905,7 +3879,68 @@ class DocumentController extends Controller
             'annotation_types' => array_map(fn($a) => $a['type'] ?? 'unknown', $annotationsPayload),
             'first_annotation' => $annotationsPayload[0] ?? null,
             'new_size' => $size,
+            'use_clean_pdf' => $useCleanPdf,
         ]);
+
+        if ($sessionId !== '') {
+            $currentAnnotationIds = array_values(array_filter(array_map(
+                static fn ($annotation) => is_array($annotation) && is_string($annotation['id'] ?? null)
+                    ? trim((string) $annotation['id'])
+                    : '',
+                $persistableAnnotationsPayload
+            )));
+            $currentAnnotationIdSet = array_fill_keys($currentAnnotationIds, true);
+
+            foreach ($persistableAnnotationsPayload as $annotation) {
+                if (!is_array($annotation)) {
+                    continue;
+                }
+                $annotationId = is_string($annotation['id'] ?? null)
+                    ? trim((string) $annotation['id'])
+                    : '';
+                if ($annotationId === '') {
+                    continue;
+                }
+
+                $existingRecord = PdfState::query()
+                    ->where('document_id', $document->id)
+                    ->where('session_id', $sessionId)
+                    ->whereRaw("JSON_EXTRACT(annotation_data, '$.id') = ?", [$annotationId])
+                    ->first();
+
+                if ($existingRecord) {
+                    $existingRecord->update([
+                        'annotation_data' => $annotation,
+                        'page_number' => $annotation['pageIndex'] ?? null,
+                        'state' => 'saved',
+                    ]);
+                    continue;
+                }
+
+                PdfState::create([
+                    'document_id' => $document->id,
+                    'user_email' => null,
+                    'session_id' => $sessionId,
+                    'page_number' => $annotation['pageIndex'] ?? null,
+                    'annotation_data' => $annotation,
+                    'state' => 'saved',
+                ]);
+            }
+
+            PdfState::query()
+                ->where('document_id', $document->id)
+                ->where('session_id', $sessionId)
+                ->get()
+                ->each(function (PdfState $record) use ($currentAnnotationIdSet) {
+                    $recordAnnotationId = is_array($record->annotation_data)
+                        ? trim((string) ($record->annotation_data['id'] ?? ''))
+                        : '';
+                    $record->state = ($recordAnnotationId !== '' && isset($currentAnnotationIdSet[$recordAnnotationId]))
+                        ? 'saved'
+                        : 'deleted';
+                    $record->save();
+                });
+        }
 
         return response()->json([
             'success' => true,
@@ -2918,13 +3953,16 @@ class DocumentController extends Controller
         $validated = $request->validate([
             'session_id' => 'required|string',
             'annotation_ids' => 'nullable|array',
+            'annotation_ids.*' => 'nullable|string',
         ]);
 
         $sessionId = $validated['session_id'];
-        $annotationIds = $validated['annotation_ids'] ?? null;
+        $annotationIds = array_values(array_filter(array_map(
+            static fn ($value) => is_string($value) ? trim($value) : '',
+            $validated['annotation_ids'] ?? []
+        )));
 
-        if ($annotationIds) {
-            // Mark specific annotations as saved
+        if (!empty($annotationIds)) {
             foreach ($annotationIds as $annotationId) {
                 PdfState::where('document_id', $document->id)
                     ->where('session_id', $sessionId)
@@ -2932,7 +3970,6 @@ class DocumentController extends Controller
                     ->update(['state' => 'saved']);
             }
         } else {
-            // Mark all annotations for this session as saved
             PdfState::where('document_id', $document->id)
                 ->where('session_id', $sessionId)
                 ->update(['state' => 'saved']);
@@ -3112,7 +4149,7 @@ class DocumentController extends Controller
 
     public function logExportActivity(Request $request, Document $document)
     {
-        if (!Auth::check()) {
+        if (!$this->hasEditorAuthentication()) {
             return response()->json(['success' => false, 'message' => 'Not authenticated'], 401);
         }
 
@@ -3134,16 +4171,18 @@ class DocumentController extends Controller
             }
         }
 
-        UserActivity::create([
-            'user_id' => Auth::id(),
-            'action' => $validated['action'],
-            'category' => $validated['category'],
-            'details' => $validated['details'] ?? null,
-            'document_id' => $document->id,
-            'status' => $validated['status'],
-            'ip_address' => $request->ip(),
-            'user_agent' => $request->userAgent(),
-        ]);
+        if (Auth::guard('web')->check()) {
+            UserActivity::create([
+                'user_id' => Auth::id(),
+                'action' => $validated['action'],
+                'category' => $validated['category'],
+                'details' => $validated['details'] ?? null,
+                'document_id' => $document->id,
+                'status' => $validated['status'],
+                'ip_address' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+            ]);
+        }
 
         return response()->json(['success' => true]);
     }

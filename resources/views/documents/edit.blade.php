@@ -1,5 +1,8 @@
 @php
     $hasOriginalBackup = filled($document->original_backup_path) && \Illuminate\Support\Facades\Storage::exists($document->original_backup_path);
+    $editorUser = auth()->user() ?? auth('admin')->user();
+    $editorIsAdmin = auth('admin')->check();
+    $editorIsAuthenticated = auth()->check() || $editorIsAdmin;
 @endphp
 <!DOCTYPE html>
 <html lang="en">
@@ -65,6 +68,18 @@
             @font-face {
                 font-family: 'Gelasio';
                 src: url('/fonts/Gelasio-Bold.ttf') format('truetype');
+                font-weight: 700;
+                font-style: normal;
+            }
+            @font-face {
+                font-family: 'Cousine';
+                src: url('/fonts/Cousine-Regular.ttf') format('truetype');
+                font-weight: 400;
+                font-style: normal;
+            }
+            @font-face {
+                font-family: 'Cousine';
+                src: url('/fonts/Cousine-Bold.ttf') format('truetype');
                 font-weight: 700;
                 font-style: normal;
             }
@@ -1335,18 +1350,25 @@
             /* Edit text mode info banner */
             .edit-text-banner {
                 display: none;
+                position: sticky;
+                top: 0;
+                z-index: 120;
                 background: rgba(17, 24, 39, 0.97);
                 border-bottom: 1px solid rgba(255,255,255,0.08);
-                padding: 0 12px;
-                height: 44px;
+                padding: 6px 12px;
+                min-height: 56px;
                 color: #e5e7eb;
                 font-size: 13px;
                 backdrop-filter: blur(12px);
+                overflow-x: auto;
+                overflow-y: hidden;
+                box-shadow: 0 10px 24px rgba(0,0,0,0.22);
             }
             .edit-text-banner.visible {
                 display: flex;
                 align-items: center;
                 gap: 6px;
+                flex-wrap: nowrap;
             }
             .edit-text-banner .etb-divider {
                 width: 1px;
@@ -1356,7 +1378,7 @@
                 flex-shrink: 0;
             }
             .edit-text-banner select,
-            .edit-text-banner input[type="number"] {
+            .edit-text-banner input[type="range"] {
                 background: rgba(255,255,255,0.07);
                 border: 1px solid rgba(255,255,255,0.12);
                 color: #e5e7eb;
@@ -1368,7 +1390,7 @@
                 transition: border-color 0.15s;
             }
             .edit-text-banner select:focus,
-            .edit-text-banner input[type="number"]:focus {
+            .edit-text-banner input[type="range"]:focus {
                 border-color: rgba(110, 231, 183, 0.5);
             }
             .edit-text-banner select {
@@ -1380,16 +1402,35 @@
                 background-repeat: no-repeat;
                 background-position: right 8px center;
             }
-            .edit-text-banner .etb-font-select { width: 130px; }
-            .edit-text-banner .etb-size-input {
-                width: 56px;
-                text-align: center;
-                -moz-appearance: textfield;
+            .edit-text-banner .etb-font-select { width: 158px; }
+            .edit-text-banner .etb-size-group {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                min-width: 214px;
             }
-            .edit-text-banner .etb-size-input::-webkit-inner-spin-button,
-            .edit-text-banner .etb-size-input::-webkit-outer-spin-button {
-                -webkit-appearance: none;
-                margin: 0;
+            .edit-text-banner .etb-size-slider {
+                width: 132px;
+                height: 32px;
+                padding: 0;
+                border: none;
+                background: transparent;
+                accent-color: #6ee7b7;
+                cursor: ew-resize;
+            }
+            .edit-text-banner .etb-size-value {
+                min-width: 42px;
+                padding: 0 8px;
+                height: 32px;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                border-radius: 6px;
+                background: rgba(255,255,255,0.07);
+                border: 1px solid rgba(255,255,255,0.12);
+                color: #e5e7eb;
+                font-size: 12px;
+                font-variant-numeric: tabular-nums;
             }
             .edit-text-banner .etb-btn {
                 width: 32px;
@@ -1484,9 +1525,18 @@
                 color: #111;
                 font-size: 16px;
                 padding: 4px 8px;
-                resize: none;
                 font-family: inherit;
                 box-sizing: border-box;
+                white-space: pre-wrap;
+                overflow-wrap: break-word;
+                word-break: break-word;
+                user-select: text;
+                cursor: text;
+            }
+            .text-box-creator .tbc-input:empty::before {
+                content: attr(data-placeholder);
+                color: #9ca3af;
+                pointer-events: none;
             }
             .text-box-creator .tbc-menu {
                 position: absolute;
@@ -1607,6 +1657,11 @@
                 border-color: rgba(66, 133, 244, 0.8) !important;
                 box-shadow: 0 0 0 1px rgba(66, 133, 244, 0.3) !important;
                 overflow: visible;
+            }
+            .overlay-field.selected:not(.active) {
+                border-color: rgba(66, 133, 244, 0.65) !important;
+                box-shadow: 0 0 0 1px rgba(66, 133, 244, 0.18) !important;
+                background: rgba(66, 133, 244, 0.05) !important;
             }
             .overlay-field.active:not(.editing) {
                 cursor: move;
@@ -1903,8 +1958,12 @@
                 margin: 0 auto 24px;
                 box-shadow: 0 12px 30px rgba(0,0,0,0.35);
                 border-radius: 8px;
-                overflow: hidden;
+                overflow: visible;
                 background: #0f1522;
+            }
+            .overlay-page > canvas {
+                border-radius: 8px;
+                display: block;
             }
             .overlay {
                 position: absolute;
@@ -1951,10 +2010,39 @@
                 align-items: center;
                 gap: 4px;
                 border: 1px solid transparent;
+                box-sizing: border-box;
+                overflow: visible;
+            }
+            .annotation.has-bounds {
+                display: block;
+                padding: 0;
+                align-items: stretch;
+                gap: 0;
+            }
+            .annotation .text-content-wrapper {
+                position: relative;
+                z-index: 1;
+            }
+            .annotation.has-bounds .text-content-wrapper {
+                display: block;
+                width: 100%;
+                height: 100%;
+                padding: 2px 6px;
+                box-sizing: border-box;
+                overflow: hidden;
             }
             .annotation.dragging {
                 cursor: grabbing;
                 opacity: 0.9;
+            }
+            .annotation.dragging .annotation-tbc-menu,
+            .annotation.dragging .text-resize-handle,
+            .annotation.dragging .text-rotate-handle,
+            .annotation.dragging .delete-btn {
+                display: none !important;
+            }
+            .annotation.dragging:hover {
+                background: transparent;
             }
             .annotation.selected {
                 background: transparent;
@@ -2101,6 +2189,18 @@
                 display: inline-block;
                 padding: 1px 2px;
                 border-radius: 4px;
+                white-space: pre-wrap;
+                overflow-wrap: break-word;
+                user-select: text;
+            }
+            .annotation.promoted-extraction .annotation-text {
+                padding: 0;
+                white-space: pre;
+                overflow-wrap: normal;
+            }
+            .annotation.has-bounds .annotation-text {
+                display: block;
+                width: 100%;
             }
             .text-editor {
                 position: absolute;
@@ -3026,18 +3126,18 @@
                             </svg>
                         </button>
                         
-                        @guest
+                        @if(!$editorIsAuthenticated)
                             <a href="{{ route('login') }}" class="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition">
                                 Login
                             </a>
-                        @endguest
+                        @endif
 
-                        @auth
+                        @if($editorIsAuthenticated && $editorUser)
                             <div class="relative ml-2">
                                 <button type="button" class="flex items-center justify-center w-10 h-10 rounded-full bg-gray-700 text-white hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-white transition" id="user-menu-button" aria-expanded="false" aria-haspopup="true" onclick="const menu = document.getElementById('user-menu'); menu.classList.toggle('hidden');">
                                     <span class="sr-only">Open user menu</span>
-                                    @if(Auth::user()->avatar)
-                                        <img class="h-9 w-9 rounded-full object-cover border-2 border-gray-600" src="{{ Auth::user()->avatar }}" alt="">
+                                    @if(!empty($editorUser->avatar ?? null))
+                                        <img class="h-9 w-9 rounded-full object-cover border-2 border-gray-600" src="{{ $editorUser->avatar }}" alt="">
                                     @else
                                         <svg class="h-6 w-6 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
                                     @endif
@@ -3046,14 +3146,14 @@
                                 <div class="hidden absolute right-0 z-50 mt-2 w-48 origin-top-right rounded-xl bg-[#1a2332] py-2 shadow-2xl ring-1 ring-white/10 focus:outline-none border border-gray-700/50 backdrop-blur-xl" role="menu" aria-orientation="vertical" aria-labelledby="user-menu-button" tabindex="-1" id="user-menu">
                                     <div class="px-4 py-3 border-b border-gray-700/50 mb-1">
                                         <p class="text-xs text-gray-400">Signed in as</p>
-                                        <p class="text-sm font-medium text-white truncate">{{ Auth::user()->name }}</p>
+                                        <p class="text-sm font-medium text-white truncate">{{ $editorUser->name ?? $editorUser->email ?? 'User' }}</p>
                                     </div>
-                                    @if(auth()->guard('admin')->check())
+                                    @if($editorIsAdmin)
                                     <a href="/admin" class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-700/50 hover:text-white transition-colors" role="menuitem" tabindex="-1">Admin Dashboard</a>
                                     <a href="{{ route('filament.admin.pages.security') }}" class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-700/50 hover:text-white transition-colors" role="menuitem" tabindex="-1">Security</a>
                                     @endif
                                     <a href="/portal" class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-700/50 hover:text-white transition-colors" role="menuitem" tabindex="-1">My Dashboard</a>
-                                    <form method="POST" action="{{ route('logout') }}">
+                                    <form method="POST" action="{{ $editorIsAdmin ? route('filament.admin.auth.logout') : route('logout') }}">
                                         @csrf
                                         <button type="submit" class="block w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-gray-700/50 hover:text-red-300 transition-colors" role="menuitem" tabindex="-1">Sign out</button>
                                     </form>
@@ -3068,7 +3168,7 @@
                                     }
                                 });
                             </script>
-                        @endauth
+                        @endif
                     </div>
                 </div>
             </div>
@@ -3197,6 +3297,10 @@
                                     <span class="hidden sm:inline">Add Text</span>
                                     <span class="sm:hidden">Text</span>
                                 </button>
+                                <button id="mode-table" type="button" class="px-3 py-2 bg-gray-700/50 hover:bg-gray-700 rounded-lg text-sm font-medium transition">
+                                    <span class="hidden sm:inline">Table</span>
+                                    <span class="sm:hidden">⊞</span>
+                                </button>
                                 <button id="mode-sign" type="button" class="px-3 py-2 bg-gray-700/50 hover:bg-gray-700 rounded-lg text-sm font-medium transition">Sign</button>
                                 <button id="mode-shape" type="button" class="px-3 py-2 bg-gray-700/50 hover:bg-gray-700 rounded-lg text-sm font-medium transition">
                                     <span class="hidden sm:inline">Shapes</span>
@@ -3209,6 +3313,10 @@
                                 <button id="view-original-pdf" type="button" class="px-4 py-2 bg-transparent border border-gray-600 hover:bg-gray-700/50 rounded-lg text-sm font-medium transition">
                                     <span class="hidden sm:inline">View Original PDF</span>
                                     <span class="sm:hidden">Original</span>
+                                </button>
+                                <button id="view-clean-pdf" type="button" class="px-4 py-2 bg-transparent border border-gray-600 hover:bg-gray-700/50 rounded-lg text-sm font-medium transition" title="Open the text-stripped (redacted) PDF generated by the Python process">
+                                    <span class="hidden sm:inline">View Redacted PDF</span>
+                                    <span class="sm:hidden">Redacted</span>
                                 </button>
                                 <button
                                     id="revert-original-pdf"
@@ -3280,6 +3388,10 @@
                                     <span class="hidden sm:inline">Save PDF</span>
                                     <span class="sm:hidden">Save</span>
                                 </button>
+                                <a id="saved-edit-preview-btn" href="{{ $savedEditPreviewUrl ?? route('documents.savedEdit', $document) }}" target="_blank" rel="noopener" class="px-4 py-2 bg-amber-100 hover:bg-amber-200 text-amber-900 font-semibold rounded-lg text-sm transition flex items-center gap-1.5 border border-amber-300">
+                                    <span class="hidden sm:inline">Last Redaction</span>
+                                    <span class="sm:hidden">Preview</span>
+                                </a>
                             </div>
                         </div>
                         <div class="flex flex-wrap items-center gap-2 mt-2" style="display: none;">
@@ -3290,11 +3402,14 @@
                             <div class="tb-group">
                                 <select id="selected-font" disabled>
                                     <option value="Helvetica">Helvetica</option>
-                                    <option value="Helvetica-Bold">Helvetica Bold</option>
-                                    <option value="Times-Roman">Times</option>
-                                    <option value="Times-Bold">Times Bold</option>
+                                    <option value="Arial">Arial</option>
+                                    <option value="Verdana">Verdana</option>
+                                    <option value="TrebuchetMS">Trebuchet MS</option>
+                                    <option value="TimesRoman">Times Roman</option>
+                                    <option value="Georgia">Georgia</option>
+                                    <option value="Palatino">Palatino</option>
+                                    <option value="Garamond">Garamond</option>
                                     <option value="Courier">Courier</option>
-                                    <option value="Courier-Bold">Courier Bold</option>
                                 </select>
                                 <select id="selected-weight" disabled style="min-width:72px;">
                                     <option value="100">Thin</option>
@@ -3347,6 +3462,8 @@
                                 </select>
                             </div>
                             <div class="tb-divider"></div>
+                            <button type="button" id="selected-merge" class="icon-btn" title="Merge selected overlay blocks" disabled>Merge</button>
+                            <div class="tb-divider"></div>
                             <button type="button" id="selected-delete" class="danger-btn" title="Delete" disabled>🗑 Delete</button>
                         </div>
                     </div>
@@ -3356,12 +3473,22 @@
                     <!-- Font Family -->
                     <select class="etb-font-select" id="etb-font" title="Font Family">
                         <option value="Helvetica">Helvetica</option>
+                        <option value="Arial">Arial</option>
+                        <option value="Verdana">Verdana</option>
+                        <option value="TrebuchetMS">Trebuchet MS</option>
                         <option value="TimesRoman">Times Roman</option>
+                        <option value="Georgia">Georgia</option>
+                        <option value="Palatino">Palatino</option>
+                        <option value="Garamond">Garamond</option>
                         <option value="Courier">Courier</option>
                     </select>
                     <div class="etb-divider"></div>
                     <!-- Font Size -->
-                    <input type="number" class="etb-size-input" id="etb-size" min="8" max="144" value="16" title="Font Size" />
+                    <div class="etb-size-group" title="Font Size">
+                        <span class="etb-label">Size</span>
+                        <input type="range" class="etb-size-slider" id="etb-size" min="8" max="144" step="1" value="16" />
+                        <span class="etb-size-value" id="etb-size-value">16px</span>
+                    </div>
                     <div class="etb-divider"></div>
                     <!-- Text Color -->
                     <div class="etb-color-wrap" title="Text Color">
@@ -3428,7 +3555,7 @@
         </div>
         </div>
         <div class="tab-content{{ ($activeTab ?? '') === 'extracted-text' ? ' active' : '' }}" id="extracted-text" @if(($activeTab ?? 'pdf-editor') !== 'extracted-text') style="display:none;" @endif>
-            @guest
+            @if(!$editorIsAuthenticated)
                 <div class="absolute inset-0 z-50 flex items-center justify-center backdrop-blur-sm bg-gray-900/50">
                     <div class="p-8 text-center bg-gray-800 border border-gray-700 shadow-2xl rounded-2xl max-w-md mx-4">
                         <div class="mb-4 inline-flex items-center justify-center w-16 h-16 rounded-full bg-emerald-500/10">
@@ -3448,8 +3575,8 @@
                         </div>
                     </div>
                 </div>
-            @endguest
-        <div class="layout" @guest style="pointer-events: none; opacity: 0.5;" @endguest>
+            @endif
+        <div class="layout" @if(!$editorIsAuthenticated) style="pointer-events: none; opacity: 0.5;" @endif>
             <!-- AI Chat Sidebar -->
             <aside class="ai-chat-sidebar">
                 <div class="ai-chat-header">AI Assistant</div>
@@ -4365,6 +4492,112 @@
             </div>
         </div>
 
+        <!-- Table Drawing Modal -->
+        <div class="modal" id="table-modal" aria-hidden="true">
+            <div style="background: linear-gradient(145deg, #0d1526, #111827); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; width: min(460px, 96vw); box-shadow: 0 24px 64px rgba(0,0,0,0.7), 0 0 0 1px rgba(77,208,168,0.08); overflow: hidden;">
+                <!-- Header -->
+                <div style="display: flex; align-items: center; justify-content: space-between; padding: 20px 24px 0;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <div style="width: 36px; height: 36px; border-radius: 10px; background: linear-gradient(135deg, #4dd0a8, #3b82f6); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="1"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+                        </div>
+                        <div>
+                            <div style="font-size: 15px; font-weight: 700; color: #f1f5f9; letter-spacing: -0.01em;">Draw Table</div>
+                            <div style="font-size: 11px; color: rgba(255,255,255,0.35); margin-top: 1px;">Configure then drag on the page</div>
+                        </div>
+                    </div>
+                    <button id="table-close" type="button" style="width: 32px; height: 32px; border-radius: 8px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08); color: rgba(255,255,255,0.5); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 18px; transition: all 0.15s;" onmouseenter="this.style.background='rgba(255,255,255,0.12)'" onmouseleave="this.style.background='rgba(255,255,255,0.06)'">&times;</button>
+                </div>
+
+                <div style="padding: 20px 24px 24px; max-height: 75vh; overflow-y: auto;">
+
+                    <!-- Grid preview + rows/cols -->
+                    <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 16px; margin-bottom: 16px;">
+                        <div style="font-size: 11px; font-weight: 600; color: rgba(77,208,168,0.8); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 12px;">Grid Size</div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                            <div>
+                                <label style="font-size: 12px; color: rgba(255,255,255,0.45); display: block; margin-bottom: 6px;">Rows</label>
+                                <div style="display: flex; align-items: center; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; overflow: hidden; background: rgba(255,255,255,0.05);">
+                                    <input type="number" id="table-rows" min="1" max="30" value="3" style="flex: 1; background: transparent; border: none; padding: 8px 12px; color: #f1f5f9; font-size: 15px; font-weight: 600; text-align: center; outline: none; width: 0;">
+                                </div>
+                            </div>
+                            <div>
+                                <label style="font-size: 12px; color: rgba(255,255,255,0.45); display: block; margin-bottom: 6px;">Columns</label>
+                                <div style="display: flex; align-items: center; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; overflow: hidden; background: rgba(255,255,255,0.05);">
+                                    <input type="number" id="table-cols" min="1" max="30" value="3" style="flex: 1; background: transparent; border: none; padding: 8px 12px; color: #f1f5f9; font-size: 15px; font-weight: 600; text-align: center; outline: none; width: 0;">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Border section -->
+                    <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 16px; margin-bottom: 16px;">
+                        <div style="font-size: 11px; font-weight: 600; color: rgba(77,208,168,0.8); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 14px;">Border</div>
+
+                        <!-- Border color -->
+                        <div style="margin-bottom: 14px;">
+                            <label style="font-size: 12px; color: rgba(255,255,255,0.45); display: block; margin-bottom: 8px;">Color</label>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <div style="position: relative; width: 38px; height: 38px; border-radius: 8px; overflow: hidden; border: 1px solid rgba(255,255,255,0.12); flex-shrink: 0; cursor: pointer;">
+                                    <input type="color" id="table-border-color" value="#000000" style="position: absolute; width: 200%; height: 200%; top: -50%; left: -50%; border: none; cursor: pointer;">
+                                </div>
+                                <input type="text" id="table-border-hex" value="#000000" style="flex: 1; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 8px 12px; color: #f1f5f9; font-size: 13px; font-family: 'JetBrains Mono', 'Courier New', monospace; outline: none;">
+                            </div>
+                        </div>
+
+                        <!-- Border width -->
+                        <div style="margin-bottom: 14px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                <label style="font-size: 12px; color: rgba(255,255,255,0.45);">Width</label>
+                                <span id="table-border-width-label" style="font-size: 12px; font-weight: 600; color: #4dd0a8; background: rgba(77,208,168,0.1); padding: 2px 8px; border-radius: 4px;">1px</span>
+                            </div>
+                            <input type="range" id="table-border-width" min="1" max="10" value="1" style="width: 100%; height: 4px; border-radius: 2px; outline: none; cursor: pointer; accent-color: #4dd0a8;">
+                        </div>
+
+                        <!-- Outer border toggle -->
+                        <div id="table-outer-border-row" style="display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 10px; border-radius: 8px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); transition: background 0.15s;" onmouseenter="this.style.background='rgba(255,255,255,0.06)'" onmouseleave="this.style.background='rgba(255,255,255,0.03)'">
+                            <div style="position: relative; width: 36px; height: 20px; flex-shrink: 0; pointer-events: none;">
+                                <div id="table-outer-border-track" style="width: 36px; height: 20px; border-radius: 10px; background: #4dd0a8; transition: background 0.2s;"></div>
+                                <div id="table-outer-border-thumb" style="position: absolute; top: 3px; left: 17px; width: 14px; height: 14px; border-radius: 50%; background: white; transition: left 0.2s;"></div>
+                            </div>
+                            <div>
+                                <div style="font-size: 13px; font-weight: 500; color: #e2e8f0;">Outer border</div>
+                                <div style="font-size: 11px; color: rgba(255,255,255,0.3);">Show border around the whole table</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Fill section -->
+                    <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 16px; margin-bottom: 20px;">
+                        <div style="font-size: 11px; font-weight: 600; color: rgba(77,208,168,0.8); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 14px;">Cell Fill</div>
+
+                        <div id="table-fill-toggle-row" style="display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 10px; border-radius: 8px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); margin-bottom: 12px; transition: background 0.15s;" onmouseenter="this.style.background='rgba(255,255,255,0.06)'" onmouseleave="this.style.background='rgba(255,255,255,0.03)'">
+                            <div style="position: relative; width: 36px; height: 20px; flex-shrink: 0; pointer-events: none;">
+                                <div id="table-fill-track" style="width: 36px; height: 20px; border-radius: 10px; background: rgba(255,255,255,0.15); transition: background 0.2s;"></div>
+                                <div id="table-fill-thumb" style="position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: white; transition: left 0.2s;"></div>
+                            </div>
+                            <div>
+                                <div style="font-size: 13px; font-weight: 500; color: #e2e8f0;">Transparent fill</div>
+                                <div style="font-size: 11px; color: rgba(255,255,255,0.3);">No background color for cells</div>
+                            </div>
+                        </div>
+
+                        <div id="table-fill-row" style="display: none; align-items: center; gap: 8px;">
+                            <div style="position: relative; width: 38px; height: 38px; border-radius: 8px; overflow: hidden; border: 1px solid rgba(255,255,255,0.12); flex-shrink: 0; cursor: pointer;">
+                                <input type="color" id="table-fill-color" value="#ffffff" style="position: absolute; width: 200%; height: 200%; top: -50%; left: -50%; border: none; cursor: pointer;">
+                            </div>
+                            <input type="text" id="table-fill-hex" value="#ffffff" style="flex: 1; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 8px 12px; color: #f1f5f9; font-size: 13px; font-family: 'JetBrains Mono', 'Courier New', monospace; outline: none;">
+                        </div>
+                    </div>
+
+                    <button type="button" id="table-apply" style="width: 100%; padding: 13px 16px; background: linear-gradient(135deg, #4dd0a8, #3b82f6); color: #fff; border: none; border-radius: 10px; font-weight: 700; cursor: pointer; font-size: 14px; letter-spacing: 0.01em; transition: opacity 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px;" onmouseenter="this.style.opacity='0.9'" onmouseleave="this.style.opacity='1'">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="18" height="18" rx="1"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+                        Draw Table
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- Draw Tool Modal -->
         <div class="modal" id="draw-modal" aria-hidden="true">
             <div class="modal-card" style="width: min(420px, 94vw);">
@@ -5203,17 +5436,36 @@
             const pdfUrl = "{{ route('documents.file', $document) }}";
             const cleanPdfUrl = "{{ route('documents.cleanPdf', $document) }}";
             const saveUrl = "{{ route('documents.save', $document) }}";
+            const liveSaveUrl = "{{ route('documents.liveSave', $document) }}";
+            const savedEditPreviewUrl = "{{ $savedEditPreviewUrl ?? route('documents.savedEdit', $document) }}";
+            const overlaySaveMode = @json($pdfSaveMode ?? strtolower((string) config('pdf_editor.save_mode', 'full_page_save')));
+            const liveSaveVerifyMaxAttempts = 5;
+            const liveSaveVerifyMismatchThreshold = 0.18;
+            const liveSaveVerifyPixelDelta = 32;
+            const liveSaveVerifyMinDiffPixels = 120;
+            const liveSaveVerifyPaddingPx = 28;
             const processOcrUrl = "{{ route('documents.processOcr', $document) }}";
             const extractionDataUrl = "{{ route('documents.getExtractionData', $document) }}";
             const processFitzUrl = "{{ route('documents.processFitz', $document) }}";
             const fitzExtractionDataUrl = "{{ route('documents.getFitzExtractionData', $document) }}";
+            const prepareOverlayUrl = "{{ route('documents.prepareOverlay', $document) }}";
             const restoreOriginalUrl = "{{ route('documents.restoreOriginal', $document) }}";
+            const createWorkingCopySnapshotUrl = "{{ route('documents.createWorkingCopySnapshot', $document) }}";
+            const restoreWorkingCopyUrl = "{{ route('documents.restoreWorkingCopy', $document) }}";
+            const discardWorkingCopySnapshotUrl = "{{ route('documents.discardWorkingCopySnapshot', $document) }}";
             const addBlankPageUrl = "{{ route('documents.addBlankPage', $document) }}";
             const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
             let pdfVersion = Date.now();
             const documentMimeType = @json($document->mime_type);
             const isImageDocument = documentMimeType && documentMimeType.startsWith('image/');
             const viewer = document.getElementById('viewer');
+            const savedEditPreviewBtn = document.getElementById('saved-edit-preview-btn');
+            const promotedTextAnnotationsEnabled = true;
+
+            function updateSavedEditPreviewLink(url) {
+                if (!savedEditPreviewBtn) return;
+                savedEditPreviewBtn.href = url || savedEditPreviewUrl;
+            }
 
             // Theme switcher
             const themeToggle = document.getElementById('theme-toggle');
@@ -5361,6 +5613,7 @@
             const DEBUG_KEEP_ANNOTATIONS = true; // Set to false to delete annotations after save
             
             const documentId = "{{ $document->id }}";
+            const overlayDocumentRevision = "{{ $document->updated_at ? $document->updated_at->format('Uu') : '0' }}";
             // Keep a single generic overlay pipeline for all PDFs.
             // Doc-specific debug behavior is disabled by default.
             const overlayDebug539HeadingOnly = false;
@@ -5391,10 +5644,12 @@
             const selectedBgSwatch = document.getElementById('selected-bg-swatch');
             const selectedAlign = document.getElementById('selected-align');
             const selectedOpacity = document.getElementById('selected-opacity');
+            const selectedMerge = document.getElementById('selected-merge');
             const selectedDelete = document.getElementById('selected-delete');
             const insertX = document.getElementById('insert-x');
             const insertCheckbox = document.getElementById('insert-checkbox');
             const modeText = document.getElementById('mode-text');
+            const modeTable = document.getElementById('mode-table');
             const modeEditText = document.getElementById('mode-edit-text');
             const modeSign = document.getElementById('mode-sign');
             const modeShape = document.getElementById('mode-shape');
@@ -5419,6 +5674,7 @@
             const signatureFont = document.getElementById('signature-font');
             const signatureText = document.getElementById('signature-text');
             const viewOriginalPdfBtn = document.getElementById('view-original-pdf');
+            const viewCleanPdfBtn = document.getElementById('view-clean-pdf');
             const revertOriginalPdfBtn = document.getElementById('revert-original-pdf');
             const saveSpinner = document.getElementById('save-spinner');
             const saveSpinnerText = document.getElementById('save-spinner-text');
@@ -5447,7 +5703,10 @@
             let activeEditor = null;
             let selectedAnnotation = null;
             let selectedOverlayField = null;
+            let selectedOverlayFields = new Set();
             let overlaySelectionRange = null;
+            let annotationSelectionRange = null;
+            let activeEditorSelectionRange = null;
             
             // Set initial scale based on screen size
             const isMobile = window.innerWidth < 768;
@@ -5481,6 +5740,9 @@
                     } else if (annotation.type === 'shape') {
                         icon = '▭';
                         title = `New ${annotation.shapeType || 'shape'} ${annotations.filter((a, i) => a.type === 'shape' && i <= index).length}`;
+                    } else if (annotation.type === 'table') {
+                        icon = '⊞';
+                        title = `Table ${annotation.rows || ''}×${annotation.cols || ''} ${annotations.filter((a, i) => a.type === 'table' && i <= index).length}`;
                     } else if (annotation.type === 'image') {
                         icon = '🖼';
                         title = `New Image ${annotations.filter((a, i) => a.type === 'image' && i <= index).length}`;
@@ -5577,7 +5839,7 @@
             document.getElementById('remove-all-annotations')?.addEventListener('click', () => {
                 if (annotations.length === 0) return;
                 if (confirm(`Remove all ${annotations.length} annotations?`)) {
-                    annotations.length = 0;
+                    clearAllAnnotationRecords();
                     persistAnnotations();
                     rerenderPdf();
                     updateAnnotationsList();
@@ -5586,7 +5848,13 @@
 
             const fontMap = {
                 Helvetica: { css: '"Helvetica", Arial, sans-serif', pdf: PDFLib.StandardFonts.Helvetica },
+                Arial: { css: 'Arial, "Helvetica Neue", sans-serif', pdf: PDFLib.StandardFonts.Helvetica },
+                Verdana: { css: 'Verdana, Geneva, sans-serif', pdf: PDFLib.StandardFonts.Helvetica },
+                TrebuchetMS: { css: '"Trebuchet MS", "Helvetica Neue", sans-serif', pdf: PDFLib.StandardFonts.Helvetica },
                 TimesRoman: { css: '"Times New Roman", Times, serif', pdf: PDFLib.StandardFonts.TimesRoman },
+                Georgia: { css: 'Georgia, serif', pdf: PDFLib.StandardFonts.TimesRoman },
+                Palatino: { css: '"Palatino Linotype", "Book Antiqua", Palatino, serif', pdf: PDFLib.StandardFonts.TimesRoman },
+                Garamond: { css: 'Garamond, Baskerville, serif', pdf: PDFLib.StandardFonts.TimesRoman },
                 Courier: { css: '"Courier New", Courier, monospace', pdf: PDFLib.StandardFonts.Courier },
             };
             const pdfFontVariants = {
@@ -5596,7 +5864,43 @@
                     italic: PDFLib.StandardFonts.HelveticaOblique,
                     boldItalic: PDFLib.StandardFonts.HelveticaBoldOblique,
                 },
+                Arial: {
+                    normal: PDFLib.StandardFonts.Helvetica,
+                    bold: PDFLib.StandardFonts.HelveticaBold,
+                    italic: PDFLib.StandardFonts.HelveticaOblique,
+                    boldItalic: PDFLib.StandardFonts.HelveticaBoldOblique,
+                },
+                Verdana: {
+                    normal: PDFLib.StandardFonts.Helvetica,
+                    bold: PDFLib.StandardFonts.HelveticaBold,
+                    italic: PDFLib.StandardFonts.HelveticaOblique,
+                    boldItalic: PDFLib.StandardFonts.HelveticaBoldOblique,
+                },
+                TrebuchetMS: {
+                    normal: PDFLib.StandardFonts.Helvetica,
+                    bold: PDFLib.StandardFonts.HelveticaBold,
+                    italic: PDFLib.StandardFonts.HelveticaOblique,
+                    boldItalic: PDFLib.StandardFonts.HelveticaBoldOblique,
+                },
                 TimesRoman: {
+                    normal: PDFLib.StandardFonts.TimesRoman,
+                    bold: PDFLib.StandardFonts.TimesRomanBold,
+                    italic: PDFLib.StandardFonts.TimesRomanItalic,
+                    boldItalic: PDFLib.StandardFonts.TimesRomanBoldItalic,
+                },
+                Georgia: {
+                    normal: PDFLib.StandardFonts.TimesRoman,
+                    bold: PDFLib.StandardFonts.TimesRomanBold,
+                    italic: PDFLib.StandardFonts.TimesRomanItalic,
+                    boldItalic: PDFLib.StandardFonts.TimesRomanBoldItalic,
+                },
+                Palatino: {
+                    normal: PDFLib.StandardFonts.TimesRoman,
+                    bold: PDFLib.StandardFonts.TimesRomanBold,
+                    italic: PDFLib.StandardFonts.TimesRomanItalic,
+                    boldItalic: PDFLib.StandardFonts.TimesRomanBoldItalic,
+                },
+                Garamond: {
                     normal: PDFLib.StandardFonts.TimesRoman,
                     bold: PDFLib.StandardFonts.TimesRomanBold,
                     italic: PDFLib.StandardFonts.TimesRomanItalic,
@@ -5620,6 +5924,13 @@
             let shapeFill = '#000000';
             let shapeFillTransparentState = true;
             let shapeOpacityValue = 1;
+            let tableRows = 3;
+            let tableCols = 3;
+            let tableStroke = '#000000';
+            let tableStrokeWidth = 1;
+            let tableFill = '#ffffff';
+            let tableFillTransparent = true;
+            let tableOuterBorder = true;
             let drawToolType = 'eraser'; // 'brush' | 'highlighter' | 'eraser'
             let drawBrushSize = 20;
             let gridlinesEnabled = false;
@@ -5640,6 +5951,10 @@
             let overlayExtractionData = null;
             let overlayEmbeddedFonts = null;  // Embedded font data from PDF extraction
             let overlayPdfDoc = null;  // Track overlay PDF for cleanup
+            let promotedExtractionBootstrapPromise = null;
+            let promotedExtractionHydrated = false;
+            const deletedPromotedSourceKeys = new Set();
+            const deletedSavedTextAnnotationIds = new Set();
             let overlayEditedFields = new Map();
             let overlayPersistedEdits = new Map();
             let overlayLoadToken = 0;
@@ -5648,7 +5963,8 @@
             let overlayResizePosition = '';
             let overlayInteractionActive = false; // true during resize/drag to block doFontReRender
             const overlayLoadedFonts = new Set();
-            const overlayEditsStorageKey = `pdf-overlay-edits-${documentId}`;
+            const overlayEditsStoragePrefix = `pdf-overlay-edits-${documentId}`;
+            const overlayEditsStorageKey = `${overlayEditsStoragePrefix}-${overlayDocumentRevision}`;
             let overlayRendered = false;
             let overlayUndoStack = [];
             let overlayRedoStack = [];
@@ -5660,6 +5976,127 @@
             const overlayLoadingProgress = document.getElementById('overlay-loading-progress');
             const overlayLoadingPercent = document.getElementById('overlay-loading-percent');
 
+            function sanitizeOverlayStorageText(value) {
+                if (value == null) return '';
+                return String(value)
+                    .replace(/\u00A0/g, ' ')
+                    .replace(/\uFFFD/g, '')
+                    .replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, '')
+                    .replace(/[\uE000-\uF8FF]/g, '')
+                    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
+            }
+
+            function normalizeOverlayStorageText(value) {
+                return sanitizeOverlayStorageText(value).replace(/\s+/g, ' ').trim();
+            }
+
+            function overlayBboxesRoughlyMatch(a, b, tolerance = 6) {
+                if (!Array.isArray(a) || !Array.isArray(b) || a.length < 4 || b.length < 4) {
+                    return false;
+                }
+                return a.every((value, index) => Math.abs((Number(value) || 0) - (Number(b[index]) || 0)) <= tolerance);
+            }
+
+            function clearStaleOverlayEditStorage() {
+                try {
+                    const staleKeys = [];
+                    for (let i = 0; i < sessionStorage.length; i++) {
+                        const key = sessionStorage.key(i);
+                        if (key && key.startsWith(overlayEditsStoragePrefix) && key !== overlayEditsStorageKey) {
+                            staleKeys.push(key);
+                        }
+                    }
+                    staleKeys.forEach((key) => sessionStorage.removeItem(key));
+                } catch (err) {
+                    console.warn('Failed to clear stale overlay edit storage', err);
+                }
+            }
+
+            function buildOverlayExtractionEditIndex() {
+                const extractionPages = Array.isArray(overlayExtractionData) ? overlayExtractionData : [];
+                const index = new Map();
+
+                extractionPages.forEach((page) => {
+                    if (!page || !page.page_number) return;
+
+                    const pageNumber = Number(page.page_number) || 0;
+                    const pageBlocks = Array.isArray(page.blocks) ? page.blocks : [];
+                    const pageWords = Array.isArray(page.words) ? page.words : [];
+
+                    pageBlocks.forEach((block) => {
+                        if (!block || block.block_num === undefined || block.block_num === null) return;
+                        const blockText = Array.isArray(block.text_lines) && block.text_lines.length
+                            ? block.text_lines.map((line) => sanitizeOverlayStorageText(line)).join('\n')
+                            : sanitizeOverlayStorageText(block.text || '');
+                        index.set(`block-${pageNumber}-${block.block_num}`, {
+                            page_number: pageNumber,
+                            text: blockText,
+                            bbox: [
+                                Number(block.left) || 0,
+                                Number(block.top) || 0,
+                                (Number(block.left) || 0) + (Number(block.width) || 0),
+                                (Number(block.top) || 0) + (Number(block.height) || 0),
+                            ],
+                        });
+                    });
+
+                    pageWords.forEach((word, wordIndex) => {
+                        if (!word) return;
+                        index.set(`${pageNumber}-${wordIndex}`, {
+                            page_number: pageNumber,
+                            text: sanitizeOverlayStorageText(word.text || ''),
+                            bbox: [
+                                Number(word.left) || 0,
+                                Number(word.top) || 0,
+                                (Number(word.left) || 0) + (Number(word.width) || 0),
+                                (Number(word.top) || 0) + (Number(word.height) || 0),
+                            ],
+                        });
+                    });
+                });
+
+                return index;
+            }
+
+            function pruneOverlayEditsAgainstExtraction() {
+                if (!(overlayEditedFields instanceof Map) || overlayEditedFields.size === 0) {
+                    return;
+                }
+
+                const extractionIndex = buildOverlayExtractionEditIndex();
+                if (extractionIndex.size === 0) {
+                    return;
+                }
+
+                let removedCount = 0;
+                Array.from(overlayEditedFields.entries()).forEach(([key, edit]) => {
+                    const source = extractionIndex.get(String(key));
+                    if (!source) {
+                        overlayEditedFields.delete(key);
+                        removedCount++;
+                        return;
+                    }
+
+                    const samePage = !edit?.page_number || Number(edit.page_number) === Number(source.page_number);
+                    const editOriginalText = normalizeOverlayStorageText(edit?.original_text || '');
+                    const sourceText = normalizeOverlayStorageText(source.text || '');
+                    const textMismatch = editOriginalText && sourceText && editOriginalText !== sourceText;
+                    const bboxMismatch = Array.isArray(edit?.original_bbox)
+                        && !overlayBboxesRoughlyMatch(edit.original_bbox, source.bbox);
+
+                    if (!samePage || textMismatch || bboxMismatch) {
+                        overlayEditedFields.delete(key);
+                        removedCount++;
+                    }
+                });
+
+                if (removedCount > 0) {
+                    persistOverlayEdits();
+                    updateOverlaySaveButton();
+                    console.info(`[Overlay Debug] Dropped ${removedCount} stale overlay edit(s) for document revision ${overlayDocumentRevision}.`);
+                }
+            }
+
             /**
              * Get system font fallback stack for a given font family name.
              * Used as fallback after embedded PDF fonts for characters not in the subset.
@@ -5667,6 +6104,12 @@
             const _getSystemFallback = (family) => {
                 const lower = family.toLowerCase();
                 const fallbacks = {
+                    'arimo': '"Arimo", Arial, Helvetica, sans-serif',
+                    'tinos': '"Tinos", "Times New Roman", Times, serif',
+                    'cousine': '"Cousine", "Courier New", Courier, monospace',
+                    'gelasio': '"Gelasio", Georgia, serif',
+                    'roboto': '"Roboto", Arial, Helvetica, sans-serif',
+                    'nimbussans': 'Helvetica, Arial, sans-serif',
                     'tahoma': 'Tahoma, Arial, Verdana, sans-serif',
                     'tahomaunicode': 'Tahoma, Arial, Verdana, sans-serif',
                     'timesnewroman': 'Times New Roman, Times, serif',
@@ -5687,6 +6130,203 @@
                 return 'Arial, sans-serif';
             };
 
+            const normalizePdfEditableFontFamily = (fontName) => {
+                if (!fontName) return '';
+                let cleaned = String(fontName).replace(/['"]/g, '').trim();
+
+                if (cleaned.includes('+')) {
+                    const parts = cleaned.split('+', 2);
+                    if (parts[0].length === 6) {
+                        cleaned = parts[1];
+                    }
+                }
+
+                if (/^[A-Za-z]{6}[A-Z]/.test(cleaned) && cleaned.length > 7) {
+                    const withoutPrefix = cleaned.substring(6);
+                    if (/^[A-Z][a-z]/.test(withoutPrefix)) {
+                        cleaned = withoutPrefix;
+                    }
+                }
+
+                const basePart = cleaned.split(/[-_,]/)[0] || cleaned;
+                const weightSuffixes = [
+                    'Thin', 'Hairline', 'ExtraLight', 'UltraLight', 'Light',
+                    'Regular', 'Medium', 'SemiBold', 'DemiBold', 'Bold',
+                    'ExtraBold', 'UltraBold', 'Black', 'Heavy',
+                ];
+                let family = basePart;
+                for (const suffix of weightSuffixes) {
+                    if (family.endsWith(suffix) && family.length > suffix.length) {
+                        family = family.substring(0, family.length - suffix.length);
+                        break;
+                    }
+                }
+
+                return family.replace(/[,\s]+$/g, '').trim();
+            };
+
+            function shouldPreferWebFontFamily(fontName) {
+                const normalized = normalizePdfEditableFontFamily(fontName);
+                if (!normalized) {
+                    return false;
+                }
+                return new Set([
+                    'Roboto',
+                    'OpenSans',
+                    'Lato',
+                    'Montserrat',
+                    'Poppins',
+                    'Raleway',
+                    'Nunito',
+                    'Inter',
+                    'Oswald',
+                    'SourceSansPro',
+                    'PlayfairDisplay',
+                    'Merriweather',
+                ]).has(normalized);
+            }
+
+            function shouldBypassEmbeddedOverlayFont(fontName) {
+                const normalized = normalizePdfEditableFontFamily(fontName);
+                if (!normalized) {
+                    return false;
+                }
+
+                return new Set([
+                    'Arial',
+                    'Helvetica',
+                    'Verdana',
+                    'Tahoma',
+                    'TahomaUnicode',
+                    'Times',
+                    'TimesNewRoman',
+                    'Courier',
+                    'Calibri',
+                    'Roboto',
+                    'Lato',
+                    'Montserrat',
+                    'OpenSans',
+                    'Poppins',
+                    'Raleway',
+                    'Nunito',
+                    'Inter',
+                    'Oswald',
+                    'SourceSansPro',
+                    'PlayfairDisplay',
+                    'Merriweather',
+                ]).has(normalized);
+            }
+
+            function ensureWebFontFamilyLoaded(fontName) {
+                const family = normalizePdfEditableFontFamily(fontName);
+                if (!family || overlayLoadedFonts.has(family)) {
+                    return;
+                }
+                overlayLoadedFonts.add(family);
+                const link = document.createElement('link');
+                link.rel = 'stylesheet';
+                link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap`;
+                document.head.appendChild(link);
+            }
+
+            function preloadExtractionFontFamilies(extractionPages) {
+                (Array.isArray(extractionPages) ? extractionPages : []).forEach((page) => {
+                    (Array.isArray(page?.words) ? page.words : []).forEach((word) => {
+                        if (shouldPreferWebFontFamily(word?.font)) {
+                            ensureWebFontFamilyLoaded(word.font);
+                        }
+                    });
+                    (Array.isArray(page?.blocks) ? page.blocks : []).forEach((block) => {
+                        if (shouldPreferWebFontFamily(block?.font)) {
+                            ensureWebFontFamilyLoaded(block.font);
+                        }
+                    });
+                });
+            }
+
+            const resolveAnnotationCssFontFamily = (fontName, { preferExact = false, exactFontName = '' } = {}) => {
+                if (!fontName) {
+                    return fontMap.Helvetica.css;
+                }
+
+                const rawFamily = String(fontName).replace(/['"]/g, '').trim();
+                const normalizedFamily = normalizePdfEditableFontFamily(rawFamily) || rawFamily;
+                const rawExactName = String(exactFontName || '').replace(/['"]/g, '').trim();
+                const normalizedExactName = normalizePdfEditableFontFamily(rawExactName) || rawExactName;
+                const systemPreferredFamilyMappings = {
+                    Arial: 'Arial, Helvetica, sans-serif',
+                    Helvetica: 'Helvetica, Arial, sans-serif',
+                    Verdana: 'Verdana, Geneva, sans-serif',
+                    Tahoma: 'Tahoma, Arial, Verdana, sans-serif',
+                    TahomaUnicode: 'Tahoma, Arial, Verdana, sans-serif',
+                    TimesNewRoman: '"Times New Roman", Times, serif',
+                    Times: '"Times New Roman", Times, serif',
+                    Courier: '"Courier New", Courier, monospace',
+                    Calibri: 'Calibri, Arial, sans-serif',
+                    Roboto: '"Roboto", Arial, Helvetica, sans-serif',
+                    Lato: '"Lato", Arial, Helvetica, sans-serif',
+                    Montserrat: '"Montserrat", Arial, Helvetica, sans-serif',
+                };
+                for (const [key, value] of Object.entries(systemPreferredFamilyMappings)) {
+                    if (
+                        normalizedFamily.toLowerCase() === key.toLowerCase()
+                        || normalizedExactName.toLowerCase() === key.toLowerCase()
+                    ) {
+                        return value;
+                    }
+                }
+
+                if (preferExact || !fontMap[rawFamily]) {
+                    if (overlayEmbeddedFonts) {
+                        for (const [fontKey, fontData] of Object.entries(overlayEmbeddedFonts)) {
+                            const cleanFontName = String(fontData.clean_name || fontKey || '').trim();
+                            const embeddedFamily = String(fontData.family || fontKey || '').trim();
+                            const normalizedCleanFontName = normalizePdfEditableFontFamily(cleanFontName) || cleanFontName;
+                            const normalizedEmbeddedFamily = normalizePdfEditableFontFamily(embeddedFamily) || embeddedFamily;
+                            if (
+                                rawExactName && (
+                                    cleanFontName.toLowerCase() === rawExactName.toLowerCase()
+                                    || cleanFontName.toLowerCase() === normalizedExactName.toLowerCase()
+                                    || normalizedCleanFontName.toLowerCase() === normalizedExactName.toLowerCase()
+                                )
+                            ) {
+                                return `'PDF_${cleanFontName}', ${_getSystemFallback(normalizedEmbeddedFamily || cleanFontName)}`;
+                            }
+                            if (
+                                embeddedFamily.toLowerCase() === rawFamily.toLowerCase()
+                                || embeddedFamily.toLowerCase() === normalizedFamily.toLowerCase()
+                                || normalizedEmbeddedFamily.toLowerCase() === normalizedFamily.toLowerCase()
+                            ) {
+                                return `'PDF_${embeddedFamily}', ${_getSystemFallback(normalizedFamily || embeddedFamily)}`;
+                            }
+                        }
+                    }
+
+                    const exactFamilyMappings = {
+                        Arimo: '"Arimo", Arial, Helvetica, sans-serif',
+                        Tinos: '"Tinos", "Times New Roman", Times, serif',
+                        Cousine: '"Cousine", "Courier New", Courier, monospace',
+                        Gelasio: '"Gelasio", Georgia, serif',
+                    };
+                    for (const [key, value] of Object.entries(exactFamilyMappings)) {
+                        if (normalizedFamily.toLowerCase() === key.toLowerCase()) {
+                            return value;
+                        }
+                    }
+                }
+
+                if (fontMap[rawFamily]?.css) {
+                    return fontMap[rawFamily].css;
+                }
+
+                const builtinFamily = normalizeBuiltinAnnotationFontFamily(rawFamily);
+                if (!preferExact && fontMap[builtinFamily]?.css) {
+                    return fontMap[builtinFamily].css;
+                }
+
+                return `"${normalizedFamily}", ${_getSystemFallback(normalizedFamily)}`;
+            };
+
             /**
              * Create @font-face CSS rules from embedded PDF fonts.
              * This ensures the overlay uses the exact same fonts as the original PDF.
@@ -5704,10 +6344,20 @@
 
                 for (const [fontKey, fontData] of Object.entries(embeddedFonts)) {
                     const family = fontData.family || fontKey;
+                    const exactFontName = fontData.clean_name || fontKey || family;
+                    if (
+                        shouldBypassEmbeddedOverlayFont(family)
+                        || shouldBypassEmbeddedOverlayFont(exactFontName)
+                    ) {
+                        continue;
+                    }
                     const weight = fontData.css_weight || '400';
                     const fontStyle = fontData.css_style || 'normal';
                     const filePath = fontData.file_path;
                     const ext = fontData.file_ext || 'ttf';
+                    if (!filePath) {
+                        continue;
+                    }
 
                     // Determine format string for @font-face src
                     let format = 'truetype';
@@ -5715,7 +6365,16 @@
                     else if (ext === 'woff') format = 'woff';
                     else if (ext === 'otf' || ext === 'cff') format = 'opentype';
 
+                    const exactEmbeddedFamily = `PDF_${exactFontName}`;
                     const embeddedFamily = `PDF_${family}`;
+
+                    css += `@font-face {\n`;
+                    css += `  font-family: '${exactEmbeddedFamily}';\n`;
+                    css += `  src: url('${filePath}') format('${format}');\n`;
+                    css += `  font-weight: ${weight};\n`;
+                    css += `  font-style: ${fontStyle};\n`;
+                    css += `  font-display: swap;\n`;
+                    css += `}\n\n`;
 
                     css += `@font-face {\n`;
                     css += `  font-family: '${embeddedFamily}';\n`;
@@ -5725,7 +6384,7 @@
                     css += `  font-display: swap;\n`;
                     css += `}\n\n`;
 
-                    console.log(`@font-face: '${embeddedFamily}' weight=${weight} style=${fontStyle} → ${filePath}`);
+                    console.log(`@font-face: '${exactEmbeddedFamily}'/'${embeddedFamily}' weight=${weight} style=${fontStyle} → ${filePath}`);
                 }
 
                 style.textContent = css;
@@ -5811,11 +6470,101 @@
             
             pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
 
-            function serializeAnnotations() {
-                return annotations.map((annotation) => {
-                    const { element, ...rest } = annotation;
-                    return rest;
+            function stripInternalAnnotationFields(annotation) {
+                if (!annotation || typeof annotation !== 'object') {
+                    return annotation;
+                }
+
+                const {
+                    element,
+                    textWrapper,
+                    shapeSvg,
+                    db_state,
+                    db_updated_at,
+                    ...rest
+                } = annotation;
+
+                return rest;
+            }
+
+            function shouldPersistAnnotationLocally(annotation) {
+                if (!annotation || typeof annotation !== 'object') {
+                    return false;
+                }
+                if (annotation.promotedFromExtraction && !annotation.promotedDirty) {
+                    return false;
+                }
+                return true;
+            }
+
+            function trackPromotedAnnotationDeletion(annotation) {
+                if (!annotation || typeof annotation !== 'object') {
+                    return;
+                }
+                if (annotation.promotedFromExtraction && annotation.promotedSourceKey) {
+                    deletedPromotedSourceKeys.add(String(annotation.promotedSourceKey));
+                }
+                if (annotation.savedTextOverlay && annotation.id) {
+                    deletedSavedTextAnnotationIds.add(String(annotation.id));
+                }
+            }
+
+            function clearTrackedPromotedAnnotationDeletion(annotation) {
+                if (!annotation || typeof annotation !== 'object') {
+                    return;
+                }
+                if (annotation.promotedSourceKey) {
+                    deletedPromotedSourceKeys.delete(String(annotation.promotedSourceKey));
+                }
+                if (annotation.id) {
+                    deletedSavedTextAnnotationIds.delete(String(annotation.id));
+                }
+            }
+
+            function hasPendingPromotedAnnotationDeletions() {
+                return deletedPromotedSourceKeys.size > 0 || deletedSavedTextAnnotationIds.size > 0;
+            }
+
+            function removeAnnotationRecord(annotation, { removeElement = true } = {}) {
+                if (!annotation || typeof annotation !== 'object') {
+                    return false;
+                }
+
+                trackPromotedAnnotationDeletion(annotation);
+
+                const index = annotations.indexOf(annotation);
+                if (index >= 0) {
+                    annotations.splice(index, 1);
+                }
+
+                if (removeElement) {
+                    const element = annotation.element;
+                    if (element?.parentNode) {
+                        element.parentNode.removeChild(element);
+                    } else if (typeof element?.remove === 'function') {
+                        element.remove();
+                    }
+                }
+
+                if (selectedAnnotation === annotation) {
+                    selectedAnnotation = null;
+                }
+
+                return index >= 0;
+            }
+
+            function clearAllAnnotationRecords() {
+                annotations.forEach((annotation) => {
+                    trackPromotedAnnotationDeletion(annotation);
                 });
+                annotations.length = 0;
+                selectedAnnotation = null;
+            }
+
+            function serializeAnnotations() {
+                return annotations
+                    .filter((annotation) => shouldPersistAnnotationLocally(annotation))
+                    .map((annotation) => stripInternalAnnotationFields(annotation));
             }
 
             function persistAnnotations() {
@@ -5834,11 +6583,11 @@
                 try {
                     const stored = sessionStorage.getItem(annotationsStorageKey);
                     if (!stored) {
-                        return;
+                        return 0;
                     }
                     const parsed = JSON.parse(stored);
                     if (!Array.isArray(parsed)) {
-                        return;
+                        return 0;
                     }
                     parsed.forEach((annotation) => {
                         const normalized = {
@@ -5853,8 +6602,610 @@
                         normalizeTextAnnotation(normalized);
                         annotations.push(normalized);
                     });
+                    return parsed.length;
                 } catch (err) {
                     console.warn('Failed to read annotations', err);
+                    return 0;
+                }
+            }
+
+            function sanitizePromotedExtractionText(value) {
+                return String(value ?? '')
+                    .replace(/\r\n/g, '\n')
+                    .replace(/\r/g, '\n')
+                    .replace(/\u00A0/g, ' ')
+                    .replace(/[ \t]+\n/g, '\n')
+                    .replace(/\n{3,}/g, '\n\n')
+                    .trim();
+            }
+
+            function sanitizePromotedExtractionLine(value) {
+                return String(value ?? '')
+                    .replace(/\r\n/g, '\n')
+                    .replace(/\r/g, '\n')
+                    .replace(/\u00A0/g, ' ')
+                    .replace(/[ \t]+$/g, '');
+            }
+
+            function toPromotedReflowText(value) {
+                const normalized = String(value ?? '')
+                    .replace(/\r\n/g, '\n')
+                    .replace(/\r/g, '\n')
+                    .trim();
+                if (!normalized) {
+                    return '';
+                }
+
+                return normalized
+                    .split(/\n{2,}/)
+                    .map((paragraph) => paragraph.replace(/\s*\n\s*/g, ' ').replace(/\s{2,}/g, ' ').trim())
+                    .filter(Boolean)
+                    .join('\n\n');
+            }
+
+            function normalizePromotedAnnotationColor(block) {
+                if (block?.hex_color) {
+                    return colorToHex(String(block.hex_color));
+                }
+                if (block?.color !== undefined && block?.color !== null) {
+                    if (typeof block.color === 'number') {
+                        return colorToHex('#' + block.color.toString(16).padStart(6, '0'));
+                    }
+                    return colorToHex(String(block.color));
+                }
+                return '#000000';
+            }
+
+            function buildTextAnnotationFromExtractionBlock(block, pageData) {
+                const textLines = Array.isArray(block?.text_lines) && block.text_lines.length
+                    ? block.text_lines.map((line) => sanitizePromotedExtractionLine(line))
+                    : [];
+                while (textLines.length && textLines[0] === '') {
+                    textLines.shift();
+                }
+                while (textLines.length && textLines[textLines.length - 1] === '') {
+                    textLines.pop();
+                }
+                const blockText = textLines.length
+                    ? textLines.join('\n')
+                    : sanitizePromotedExtractionText(block?.text || '');
+
+                if (!blockText) {
+                    return null;
+                }
+
+                const left = Number(block?.left) || 0;
+                const top = Number(block?.top) || 0;
+                const width = Number(block?.width) || 0;
+                const height = Number(block?.height) || 0;
+                const pageHeight = Number(pageData?.height) || 0;
+                if (width <= 1 || height <= 1 || pageHeight <= 0) {
+                    return null;
+                }
+
+                const lineCount = Math.max(
+                    1,
+                    textLines.length || blockText.split('\n').length
+                );
+                const fontWeight = block?.font_weight
+                    ? String(block.font_weight)
+                    : (block?.bold ? '700' : '400');
+                const extractedLineHeight = Number(block?.avg_line_height)
+                    || Number(block?.line_height)
+                    || (height / lineCount);
+
+                const annotation = {
+                    id: `promoted_${pageData.page_number}_${block.block_num}`,
+                    type: 'text',
+                    text: blockText,
+                    originalText: blockText,
+                    pageIndex: Math.max(0, (Number(pageData?.page_number) || 1) - 1),
+                    pdfX: left,
+                    pdfY: pageHeight - (top + height),
+                    pdfWidth: width,
+                    pdfHeight: height,
+                    keepBounds: true,
+                    fontSize: Math.max(6, Number(block?.font_size) || 12),
+                    fontFamily: normalizePdfEditableFontFamily(block?.font || 'Helvetica') || normalizeBuiltinAnnotationFontFamily(block?.font || 'Helvetica'),
+                    fontSourceName: String(block?.font || '').trim(),
+                    lineHeight: extractedLineHeight > 0 ? extractedLineHeight : null,
+                    textColor: normalizePromotedAnnotationColor(block),
+                    backgroundColor: 'transparent',
+                    fontWeight,
+                    fontStyle: block?.italic ? 'italic' : 'normal',
+                    underline: Boolean(block?.underline),
+                    textAlign: 'left',
+                    opacity: 1,
+                    rotation: 0,
+                    promotedFromExtraction: true,
+                    promotedDirty: false,
+                    promotedSourceKey: `block-${pageData.page_number}-${block.block_num}`,
+                    promotedSourceBlockNum: Number(block?.block_num) || 0,
+                    promotedSourcePage: Number(pageData?.page_number) || 1,
+                };
+
+                normalizeTextAnnotation(annotation);
+                return annotation;
+            }
+
+            function buildTextAnnotationFromSavedState(annotationData) {
+                if (!annotationData || typeof annotationData !== 'object') {
+                    return null;
+                }
+
+                const normalized = {
+                    ...annotationData,
+                    pageIndex: Number(annotationData.pageIndex) || 0,
+                    pdfX: Number(annotationData.pdfX) || 0,
+                    pdfY: Number(annotationData.pdfY) || 0,
+                    fontSize: Number(annotationData.fontSize) || 12,
+                    opacity: Number(annotationData.opacity ?? 1),
+                };
+
+                if (!normalized.promotedFromExtraction) {
+                    normalized.savedTextOverlay = true;
+                } else {
+                    delete normalized.savedTextOverlay;
+                }
+
+                if (annotationData.pdfWidth !== undefined && annotationData.pdfWidth !== null) {
+                    normalized.pdfWidth = Number(annotationData.pdfWidth) || 0;
+                }
+                if (annotationData.pdfHeight !== undefined && annotationData.pdfHeight !== null) {
+                    normalized.pdfHeight = Number(annotationData.pdfHeight) || 0;
+                }
+                if (annotationData.lineHeight !== undefined && annotationData.lineHeight !== null) {
+                    normalized.lineHeight = Number(annotationData.lineHeight) || null;
+                }
+
+                normalizeTextAnnotation(normalized);
+                return normalized;
+            }
+
+            function clearPromotedExtractionAnnotations() {
+                for (let index = annotations.length - 1; index >= 0; index -= 1) {
+                    if (annotations[index]?.promotedFromExtraction) {
+                        annotations.splice(index, 1);
+                    }
+                }
+            }
+
+            function clearSavedTextOverlayAnnotations() {
+                for (let index = annotations.length - 1; index >= 0; index -= 1) {
+                    if (annotations[index]?.savedTextOverlay) {
+                        annotations.splice(index, 1);
+                    }
+                }
+            }
+
+            function hydrateSavedTextAnnotations(savedAnnotations) {
+                const hydrated = [];
+                const seenIds = new Set();
+
+                (Array.isArray(savedAnnotations) ? savedAnnotations : []).forEach((annotationData) => {
+                    const annotation = buildTextAnnotationFromSavedState(annotationData);
+                    if (!annotation || deletedSavedTextAnnotationIds.has(String(annotation.id || ''))) {
+                        return;
+                    }
+                    const annotationId = String(annotation.id || '');
+                    if (annotationId && seenIds.has(annotationId)) {
+                        return;
+                    }
+                    if (annotationId) {
+                        seenIds.add(annotationId);
+                    }
+                    hydrated.push(annotation);
+                });
+
+                clearSavedTextOverlayAnnotations();
+                hydrated.forEach((annotation) => annotations.push(annotation));
+                return hydrated.length;
+            }
+
+            async function loadSavedTextAnnotationsFromDatabase() {
+                const sessionId = localStorage.getItem('pdf_session_id') || '';
+                const savedAnnotationsUrl = new URL(`{{ route('documents.getSavedAnnotations', $document) }}`, window.location.origin);
+                if (sessionId) {
+                    savedAnnotationsUrl.searchParams.set('session_id', sessionId);
+                }
+
+                const response = await fetch(savedAnnotationsUrl.toString(), {
+                    credentials: 'same-origin',
+                    headers: {
+                        Accept: 'application/json',
+                    },
+                });
+
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok || !payload?.success || !Array.isArray(payload.annotations)) {
+                    return {
+                        standaloneSavedAnnotations: [],
+                        promotedSavedAnnotations: [],
+                    };
+                }
+
+                if (payload?.session_id && String(payload.session_id).trim() !== '') {
+                    localStorage.setItem('pdf_session_id', String(payload.session_id).trim());
+                }
+
+                const savedTextAnnotations = payload.annotations.filter((annotation) => (
+                    annotation
+                    && (annotation.type === 'text' || !annotation.type)
+                    && annotation.db_state !== 'deleted'
+                ));
+
+                const standaloneSavedAnnotations = [];
+                const promotedSavedAnnotations = [];
+
+                savedTextAnnotations.forEach((annotation) => {
+                    if (!annotation || typeof annotation !== 'object') {
+                        return;
+                    }
+                    if (annotation.promotedFromExtraction && annotation.promotedSourceKey) {
+                        const annotationId = String(annotation.id || '');
+                        const sourceKey = String(annotation.promotedSourceKey || '');
+                        if (
+                            annotationId && deletedSavedTextAnnotationIds.has(annotationId)
+                            || sourceKey && deletedPromotedSourceKeys.has(sourceKey)
+                        ) {
+                            return;
+                        }
+                        promotedSavedAnnotations.push(annotation);
+                        return;
+                    }
+                    standaloneSavedAnnotations.push(annotation);
+                });
+
+                return {
+                    standaloneSavedAnnotations,
+                    promotedSavedAnnotations,
+                };
+            }
+
+            function hydratePromotedAnnotationsFromExtraction(extractionPages, {
+                savedPromotedAnnotations = [],
+                savedStandaloneAnnotations = [],
+            } = {}) {
+                const promotedAnnotations = [];
+                const seenKeys = new Set();
+                const matchedSavedPromotedAnnotationIds = new Set();
+                const savedStandaloneTextAnnotations = (Array.isArray(savedStandaloneAnnotations) ? savedStandaloneAnnotations : [])
+                    .map((annotation) => buildTextAnnotationFromSavedState(annotation))
+                    .filter(Boolean);
+                const hydratedSavedPromotedAnnotations = (Array.isArray(savedPromotedAnnotations) ? savedPromotedAnnotations : [])
+                    .map((annotation) => buildTextAnnotationFromSavedState(annotation))
+                    .filter((annotation) => annotation?.promotedFromExtraction);
+                const hydratedSavedPromotedBySourceKey = new Map(
+                    hydratedSavedPromotedAnnotations
+                        .filter((annotation) => annotation?.promotedSourceKey)
+                        .map((annotation) => [String(annotation.promotedSourceKey), annotation])
+                );
+                const existingDirtyPromotedByKey = new Map(
+                    annotations
+                        .filter((annotation) => annotation?.promotedFromExtraction && annotation?.promotedDirty && annotation?.promotedSourceKey)
+                        .map((annotation) => [annotation.promotedSourceKey, annotation])
+                );
+                const normalizePromotedComparableText = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                const estimateStandaloneTextBounds = (annotation) => {
+                    const fontSize = Math.max(1, Number(annotation?.fontSize) || 12);
+                    const fontFamily = resolveAnnotationCssFontFamily(annotation?.fontFamily || 'Helvetica', {
+                        preferExact: Boolean(annotation?.promotedFromExtraction),
+                        exactFontName: annotation?.fontSourceName || '',
+                    });
+                    const lineHeight = Math.max(1, Number(annotation?.lineHeight) || (fontSize * 1.2));
+                    const lines = String(annotation?.text || '').split('\n');
+                    const widestLine = lines.reduce((maxWidth, line) => (
+                        Math.max(maxWidth, measureAnnotationTextWidth(line, fontSize, fontFamily, annotation?.fontWeight, annotation?.fontStyle))
+                    ), 0);
+
+                    return {
+                        width: widestLine,
+                        height: lineHeight * Math.max(1, lines.length),
+                    };
+                };
+                const getAnnotationRect = (annotation) => {
+                    if (!annotation) {
+                        return null;
+                    }
+                    const left = Number(annotation.pdfX) || 0;
+                    const bottom = Number(annotation.pdfY) || 0;
+                    let width = Number(annotation.pdfWidth) || 0;
+                    let height = Number(annotation.pdfHeight) || 0;
+                    if ((width <= 0 || height <= 0) && annotation.savedTextOverlay) {
+                        const estimatedBounds = estimateStandaloneTextBounds(annotation);
+                        width = width > 0 ? width : estimatedBounds.width;
+                        height = height > 0 ? height : estimatedBounds.height;
+                    }
+                    if (width <= 0 || height <= 0) {
+                        return null;
+                    }
+                    return {
+                        left,
+                        bottom,
+                        right: left + width,
+                        top: bottom + height,
+                        width,
+                        height,
+                    };
+                };
+                const rectIntersectionArea = (rectA, rectB) => {
+                    if (!rectA || !rectB) {
+                        return 0;
+                    }
+                    const overlapWidth = Math.max(0, Math.min(rectA.right, rectB.right) - Math.max(rectA.left, rectB.left));
+                    const overlapHeight = Math.max(0, Math.min(rectA.top, rectB.top) - Math.max(rectA.bottom, rectB.bottom));
+                    return overlapWidth * overlapHeight;
+                };
+                const rectOverlapRatio = (rectA, rectB) => {
+                    const intersectionArea = rectIntersectionArea(rectA, rectB);
+                    if (intersectionArea <= 0) {
+                        return 0;
+                    }
+                    const minArea = Math.max(1, Math.min(rectA.width * rectA.height, rectB.width * rectB.height));
+                    return intersectionArea / minArea;
+                };
+                const isPromotedAnnotationCompatibleWithExtractionBlock = (savedAnnotation, extractedAnnotation, sourceKey = '') => {
+                    if (!savedAnnotation || !extractedAnnotation) {
+                        return false;
+                    }
+                    if ((Number(savedAnnotation.pageIndex) || 0) !== (Number(extractedAnnotation.pageIndex) || 0)) {
+                        return false;
+                    }
+
+                    const savedRect = getAnnotationRect(savedAnnotation);
+                    const extractedRect = getAnnotationRect(extractedAnnotation);
+                    if (!savedRect || !extractedRect) {
+                        return false;
+                    }
+
+                    const overlapRatio = rectOverlapRatio(savedRect, extractedRect);
+                    const savedCenterX = (savedRect.left + savedRect.right) / 2;
+                    const savedCenterY = (savedRect.bottom + savedRect.top) / 2;
+                    const extractedCenterX = (extractedRect.left + extractedRect.right) / 2;
+                    const extractedCenterY = (extractedRect.bottom + extractedRect.top) / 2;
+                    const centerDelta = Math.hypot(savedCenterX - extractedCenterX, savedCenterY - extractedCenterY);
+                    const geometryCompatible = (
+                        overlapRatio >= 0.55
+                        || (
+                            centerDelta <= 14
+                            && Math.abs(savedRect.width - extractedRect.width) <= 18
+                            && Math.abs(savedRect.height - extractedRect.height) <= 18
+                        )
+                    );
+                    if (!geometryCompatible) {
+                        return false;
+                    }
+
+                    const savedOriginalText = normalizePromotedComparableText(savedAnnotation.originalText || '');
+                    const savedCurrentText = normalizePromotedComparableText(savedAnnotation.text || '');
+                    const extractedText = normalizePromotedComparableText(extractedAnnotation.text || '');
+
+                    if (sourceKey && String(savedAnnotation.promotedSourceKey || '') === String(sourceKey)) {
+                        return true;
+                    }
+
+                    return (
+                        (savedOriginalText && savedOriginalText === extractedText)
+                        || (savedCurrentText && savedCurrentText === extractedText)
+                    );
+                };
+                const overlapsSavedStandaloneAnnotation = (annotation) => {
+                    if (!annotation) {
+                        return false;
+                    }
+                    const left = Number(annotation.pdfX) || 0;
+                    const bottom = Number(annotation.pdfY) || 0;
+                    const width = Number(annotation.pdfWidth) || 0;
+                    const height = Number(annotation.pdfHeight) || 0;
+                    const right = left + width;
+                    const top = bottom + height;
+                    if (width <= 0 || height <= 0) {
+                        return false;
+                    }
+
+                    return savedStandaloneTextAnnotations.some((savedAnnotation) => {
+                        if ((Number(savedAnnotation.pageIndex) || 0) !== (Number(annotation.pageIndex) || 0)) {
+                            return false;
+                        }
+                        const savedLeft = Number(savedAnnotation.pdfX) || 0;
+                        const savedBottom = Number(savedAnnotation.pdfY) || 0;
+                        const estimatedBounds = estimateStandaloneTextBounds(savedAnnotation);
+                        const savedWidth = Number(savedAnnotation.pdfWidth) || estimatedBounds.width || 0;
+                        const savedHeight = Number(savedAnnotation.pdfHeight) || estimatedBounds.height || 0;
+                        const savedRight = savedLeft + savedWidth;
+                        const savedTop = savedBottom + savedHeight;
+                        if (savedWidth <= 0 || savedHeight <= 0) {
+                            return false;
+                        }
+
+                        return right > savedLeft
+                            && left < savedRight
+                            && top > savedBottom
+                            && bottom < savedTop;
+                    });
+                };
+
+                (Array.isArray(extractionPages) ? extractionPages : []).forEach((pageData) => {
+                    const pageBlocks = Array.isArray(pageData?.blocks) ? pageData.blocks : [];
+                    pageBlocks.forEach((block) => {
+                        const sourceKey = `block-${pageData.page_number}-${block.block_num}`;
+                        if (deletedPromotedSourceKeys.has(sourceKey)) {
+                            return;
+                        }
+                        const builtAnnotation = buildTextAnnotationFromExtractionBlock(block, pageData);
+                        if (
+                            builtAnnotation
+                            && !existingDirtyPromotedByKey.has(sourceKey)
+                            && !hydratedSavedPromotedBySourceKey.has(sourceKey)
+                            && overlapsSavedStandaloneAnnotation(builtAnnotation)
+                        ) {
+                            return;
+                        }
+                        let savedPromotedMatch = null;
+                        const exactSavedPromotedMatch = hydratedSavedPromotedBySourceKey.get(sourceKey);
+                        if (isPromotedAnnotationCompatibleWithExtractionBlock(exactSavedPromotedMatch, builtAnnotation, sourceKey)) {
+                            savedPromotedMatch = exactSavedPromotedMatch;
+                        }
+                        if (!savedPromotedMatch) {
+                            savedPromotedMatch = hydratedSavedPromotedAnnotations.find((candidate) => {
+                                const candidateId = String(candidate?.id || '');
+                                if (candidateId && matchedSavedPromotedAnnotationIds.has(candidateId)) {
+                                    return false;
+                                }
+                                return isPromotedAnnotationCompatibleWithExtractionBlock(candidate, builtAnnotation);
+                            }) || null;
+                        }
+
+                        const annotation = existingDirtyPromotedByKey.get(sourceKey)
+                            || savedPromotedMatch
+                            || builtAnnotation;
+                        if (!annotation) {
+                            return;
+                        }
+                        if (savedPromotedMatch?.id) {
+                            matchedSavedPromotedAnnotationIds.add(String(savedPromotedMatch.id));
+                        }
+
+                        const dedupeKey = [
+                            annotation.pageIndex,
+                            annotation.promotedSourceBlockNum,
+                            annotation.pdfX.toFixed(2),
+                            annotation.pdfY.toFixed(2),
+                            annotation.pdfWidth.toFixed(2),
+                            annotation.pdfHeight.toFixed(2),
+                            annotation.text.replace(/\s+/g, ' ').trim(),
+                        ].join('|');
+                        if (seenKeys.has(dedupeKey)) {
+                            return;
+                        }
+                        seenKeys.add(dedupeKey);
+                        promotedAnnotations.push(annotation);
+                    });
+                });
+
+                existingDirtyPromotedByKey.forEach((annotation, key) => {
+                    if (!promotedAnnotations.includes(annotation) && !deletedPromotedSourceKeys.has(String(key))) {
+                        promotedAnnotations.push(annotation);
+                    }
+                });
+
+                clearPromotedExtractionAnnotations();
+                promotedAnnotations.forEach((annotation) => annotations.push(annotation));
+                promotedExtractionHydrated = promotedAnnotations.length > 0;
+                return promotedAnnotations.length;
+            }
+
+            function hydrateSavedPromotedAnnotations(savedAnnotations) {
+                const hydrated = [];
+                const seenIds = new Set();
+
+                (Array.isArray(savedAnnotations) ? savedAnnotations : []).forEach((annotationData) => {
+                    const annotation = buildTextAnnotationFromSavedState(annotationData);
+                    if (!annotation || !annotation.promotedFromExtraction) {
+                        return;
+                    }
+                    const annotationId = String(annotation.id || '');
+                    if (annotationId && seenIds.has(annotationId)) {
+                        return;
+                    }
+                    if (annotationId) {
+                        seenIds.add(annotationId);
+                    }
+                    hydrated.push(annotation);
+                });
+
+                clearPromotedExtractionAnnotations();
+                hydrated.forEach((annotation) => annotations.push(annotation));
+                promotedExtractionHydrated = hydrated.length > 0;
+                return hydrated.length;
+            }
+
+            function countPromotedExtractionBlocks(extractionPages) {
+                return (Array.isArray(extractionPages) ? extractionPages : []).reduce((count, pageData) => (
+                    count + (Array.isArray(pageData?.blocks) ? pageData.blocks.reduce((pageCount, block) => (
+                        buildTextAnnotationFromExtractionBlock(block, pageData) ? pageCount + 1 : pageCount
+                    ), 0) : 0)
+                ), 0);
+            }
+
+            function shouldPreferSavedPromotedSnapshot(savedPromotedAnnotations, extractionPages) {
+                const savedCount = Array.isArray(savedPromotedAnnotations) ? savedPromotedAnnotations.length : 0;
+                if (savedCount < 8) {
+                    return false;
+                }
+                const extractedCount = countPromotedExtractionBlocks(extractionPages);
+                if (extractedCount <= 0) {
+                    return savedCount > 0;
+                }
+                return savedCount >= Math.max(8, Math.floor(extractedCount * 0.75));
+            }
+
+            async function bootstrapPromotedTextAnnotations({ force = false } = {}) {
+                if (!promotedTextAnnotationsEnabled || isImageDocument) {
+                    return 0;
+                }
+                if (!force && promotedExtractionHydrated) {
+                    return annotations.filter((annotation) => annotation?.promotedFromExtraction).length;
+                }
+                if (!force && annotations.some((annotation) => !annotation?.promotedFromExtraction && !annotation?.savedTextOverlay)) {
+                    return 0;
+                }
+                if (promotedExtractionBootstrapPromise && !force) {
+                    return promotedExtractionBootstrapPromise;
+                }
+
+                promotedExtractionBootstrapPromise = (async () => {
+                    const prepareResponse = await fetch(`${prepareOverlayUrl}?force_refresh=1&v=${Date.now()}`, {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: {
+                            'X-CSRF-TOKEN': csrfToken,
+                            'X-Requested-With': 'XMLHttpRequest',
+                            'Accept': 'application/json',
+                        },
+                    });
+                    if (!prepareResponse.ok) {
+                        const errorText = await prepareResponse.text().catch(() => '');
+                        throw new Error(`Failed to prepare editable PDF source (${prepareResponse.status}): ${errorText.slice(0, 300)}`);
+                    }
+
+                    const extractionResponse = await fetch(`${fitzExtractionDataUrl}?v=${Date.now()}`, {
+                        credentials: 'same-origin',
+                        headers: { Accept: 'application/json' },
+                    });
+                    const extractionData = await extractionResponse.json().catch(() => ({}));
+                    if (!extractionResponse.ok || !extractionData?.success || !Array.isArray(extractionData.extraction_data)) {
+                        throw new Error(extractionData?.message || `Failed to load extracted text data (${extractionResponse.status})`);
+                    }
+
+                    overlayExtractionData = extractionData.extraction_data;
+                    if (extractionData.embedded_fonts && typeof extractionData.embedded_fonts === 'object') {
+                        overlayEmbeddedFonts = extractionData.embedded_fonts;
+                        loadEmbeddedFontFaces(overlayEmbeddedFonts);
+                    }
+                    preloadExtractionFontFamilies(overlayExtractionData);
+                    basePdfUrl = cleanPdfUrl;
+                    pdfVersion = Date.now();
+
+                    const {
+                        standaloneSavedAnnotations,
+                        promotedSavedAnnotations,
+                    } = await loadSavedTextAnnotationsFromDatabase();
+                    const standaloneSavedAnnotationCount = hydrateSavedTextAnnotations(standaloneSavedAnnotations);
+                    const promotedAnnotationCount = shouldPreferSavedPromotedSnapshot(promotedSavedAnnotations, overlayExtractionData)
+                        ? hydrateSavedPromotedAnnotations(promotedSavedAnnotations)
+                        : hydratePromotedAnnotationsFromExtraction(overlayExtractionData, {
+                            savedPromotedAnnotations: promotedSavedAnnotations,
+                            savedStandaloneAnnotations: standaloneSavedAnnotations,
+                        });
+
+                    return standaloneSavedAnnotationCount + promotedAnnotationCount;
+                })();
+
+                try {
+                    return await promotedExtractionBootstrapPromise;
+                } finally {
+                    promotedExtractionBootstrapPromise = null;
                 }
             }
 
@@ -5862,7 +7213,13 @@
                 try {
                     setStatus(isImageDocument ? 'Loading image...' : 'Loading PDF...', '');
                     loadAnnotationsFromStorage();
+                    if (!isImageDocument && promotedTextAnnotationsEnabled) {
+                        await bootstrapPromotedTextAnnotations();
+                    }
                     await rerenderPdf();
+                    if (!isImageDocument && promotedTextAnnotationsEnabled) {
+                        schedulePromotedAnnotationFontRefit();
+                    }
                     setStatus(isImageDocument ? 'Image loaded successfully.' : 'PDF loaded successfully.', 'ok');
                 } catch (err) {
                     setStatus('Failed to load: ' + err.message, 'err');
@@ -5893,6 +7250,17 @@
                 saveSpinner.setAttribute('aria-hidden', visible ? 'false' : 'true');
             };
 
+            const reloadEditorAfterSave = (message = 'Saved! Reloading...') => {
+                setSaveSpinner(true, message);
+                setStatus(message, 'ok');
+                if (viewer) {
+                    viewer.style.visibility = 'hidden';
+                }
+                window.setTimeout(() => {
+                    window.location.reload();
+                }, 500);
+            };
+
             function setSelection(annotation) {
                 if (selectedAnnotation && selectedAnnotation.element) {
                     selectedAnnotation.element.classList.remove('selected');
@@ -5914,8 +7282,8 @@
                 }
                 if (selectedAnnotation && selectedAnnotation.element) {
                     selectedAnnotation.element.classList.add('selected');
-                    // Show resize handles and action bar for selected shape
-                    if (selectedAnnotation.type === 'shape') {
+                    // Show resize handles and action bar for selected shape or table
+                    if (selectedAnnotation.type === 'shape' || selectedAnnotation.type === 'table') {
                         const handles = selectedAnnotation.element.querySelectorAll('.shape-resize-handle');
                         handles.forEach(h => h.style.display = 'block');
                         const rotateHandle = selectedAnnotation.element.querySelector('.rotate-handle');
@@ -5938,8 +7306,85 @@
                 viewer.classList.toggle('edit-text-mode', toolMode === 'edit-text');
             }
 
+            function populateSelectionBarFromOverlayFields(fields) {
+                const liveFields = Array.isArray(fields)
+                    ? fields.filter((field) => field && document.body.contains(field))
+                    : [];
+                if (!liveFields.length) {
+                    return;
+                }
+
+                const referenceField = liveFields.includes(selectedOverlayField)
+                    ? selectedOverlayField
+                    : liveFields[liveFields.length - 1];
+                const textEl = getOverlayTextElement(referenceField);
+                if (!textEl) {
+                    return;
+                }
+
+                const styles = window.getComputedStyle(textEl);
+                if (selectedFont) selectedFont.disabled = false;
+                if (selectedWeight) selectedWeight.disabled = false;
+                if (selectedSize) selectedSize.disabled = false;
+                if (selectedBold) selectedBold.disabled = false;
+                if (selectedItalic) selectedItalic.disabled = false;
+                if (selectedUnderline) selectedUnderline.disabled = false;
+                if (selectedColor) selectedColor.disabled = false;
+                if (selectedBg) selectedBg.disabled = false;
+                if (selectedAlign) selectedAlign.disabled = false;
+                if (selectedOpacity) selectedOpacity.disabled = false;
+                if (selectedDelete) selectedDelete.disabled = liveFields.length > 1;
+
+                if (selectedFont) {
+                    selectedFont.value = mapFontFamilyToKey(styles.fontFamily);
+                }
+                if (selectedWeight) {
+                    const weightValue = parseInt(styles.fontWeight, 10);
+                    const normalizedWeight = Number.isFinite(weightValue) ? String(Math.round(weightValue / 100) * 100) : '400';
+                    selectedWeight.value = ['100','200','300','400','500','600','700','800','900'].includes(normalizedWeight) ? normalizedWeight : '400';
+                }
+                if (selectedSize) selectedSize.value = Math.round(parseFloat(styles.fontSize) || 16);
+                if (selectedColor) selectedColor.value = colorToHex(styles.color) || '#000000';
+                if (selectedBg) {
+                    const bgColor = colorToHex(styles.backgroundColor);
+                    selectedBg.value = bgColor && bgColor !== 'transparent' ? bgColor : '#ffffff';
+                }
+                if (selectedAlign) selectedAlign.value = styles.textAlign || 'left';
+                if (selectedOpacity) {
+                    const opacityValue = String(parseFloat(styles.opacity || '1'));
+                    if ([...selectedOpacity.options].some((option) => option.value === opacityValue)) {
+                        selectedOpacity.value = opacityValue;
+                    } else {
+                        selectedOpacity.value = '1';
+                    }
+                }
+                if (selectedBold) {
+                    selectedBold.classList.toggle('active', liveFields.every((field) => {
+                        const fieldStyles = window.getComputedStyle(getOverlayTextElement(field));
+                        const fieldWeight = parseInt(fieldStyles.fontWeight, 10);
+                        return Number.isFinite(fieldWeight) ? fieldWeight >= 600 : fieldStyles.fontWeight === 'bold';
+                    }));
+                }
+                if (selectedItalic) {
+                    selectedItalic.classList.toggle('active', liveFields.every((field) => {
+                        const fieldStyles = window.getComputedStyle(getOverlayTextElement(field));
+                        return fieldStyles.fontStyle === 'italic' || fieldStyles.fontStyle === 'oblique';
+                    }));
+                }
+                if (selectedUnderline) {
+                    selectedUnderline.classList.toggle('active', liveFields.every((field) => {
+                        const fieldStyles = window.getComputedStyle(getOverlayTextElement(field));
+                        return String(fieldStyles.textDecorationLine || '').includes('underline');
+                    }));
+                }
+            }
+
             function updateSelectionBar() {
                 console.log('updateSelectionBar called - selectedAnnotation:', selectedAnnotation, 'selectedOverlayField:', selectedOverlayField);
+                const liveOverlayFields = getSelectedOverlayFields();
+                const multiOverlaySelection = !selectedAnnotation && liveOverlayFields.length > 1;
+                const samePageOverlaySelection = multiOverlaySelection
+                    && new Set(liveOverlayFields.map((field) => String(field?.dataset?.pageNumber || ''))).size === 1;
                 if (!selectedAnnotation && !selectedOverlayField) {
                     console.log('No selection, disabling toolbar');
                     if (selectionLabel) selectionLabel.textContent = overlayEditorActive ? 'Click a text block to edit' : 'No text selected';
@@ -5947,6 +7392,10 @@
                     if (selectedFont) {
                         selectedFont.value = 'Helvetica';
                         selectedFont.disabled = true;
+                    }
+                    if (selectedWeight) {
+                        selectedWeight.value = '400';
+                        selectedWeight.disabled = true;
                     }
                     if (selectedSize) {
                         selectedSize.value = 16;
@@ -5959,12 +7408,23 @@
                     if (selectedBg) selectedBg.disabled = true;
                     if (selectedAlign) selectedAlign.disabled = true;
                     if (selectedOpacity) selectedOpacity.disabled = true;
+                    if (selectedMerge) selectedMerge.disabled = true;
                     if (selectedDelete) selectedDelete.disabled = true;
                     return;
                 }
 
-                if (selectionLabel) selectionLabel.textContent = 'Selected text';
+                if (selectionLabel) selectionLabel.textContent = multiOverlaySelection
+                    ? `${liveOverlayFields.length} blocks selected`
+                    : 'Selected text';
                 if (selectionControls) selectionControls.classList.remove('disabled');
+
+                if (multiOverlaySelection) {
+                    populateSelectionBarFromOverlayFields(liveOverlayFields);
+                    if (selectedMerge) selectedMerge.disabled = !samePageOverlaySelection;
+                    return;
+                }
+
+                if (selectedMerge) selectedMerge.disabled = true;
 
                 if (selectedAnnotation) {
                     const isText = selectedAnnotation.type === 'text' || !selectedAnnotation.type;
@@ -5980,7 +7440,7 @@
                     if (selectedOpacity) selectedOpacity.disabled = !isText;
                     if (selectedDelete) selectedDelete.disabled = false;
                     if (isText) {
-                        if (selectedFont) selectedFont.value = selectedAnnotation.fontFamily;
+                        if (selectedFont) selectedFont.value = normalizeBuiltinAnnotationFontFamily(selectedAnnotation.fontFamily);
                         if (selectedWeight) {
                             const annoWeight = String(selectedAnnotation.fontWeight);
                             selectedWeight.value = ['100','200','300','400','500','600','700','800','900'].includes(annoWeight) ? annoWeight : (annoWeight === 'bold' ? '700' : '400');
@@ -6016,74 +7476,327 @@
 
                 if (selectedOverlayField) {
                     console.log('Updating toolbar for overlay field');
-                    const textEl = getOverlayTextElement(selectedOverlayField);
-                    const styles = window.getComputedStyle(textEl);
-                    if (selectedFont) selectedFont.disabled = false;
-                    if (selectedWeight) selectedWeight.disabled = false;
-                    if (selectedSize) selectedSize.disabled = false;
-                    if (selectedBold) selectedBold.disabled = false;
-                    if (selectedItalic) selectedItalic.disabled = false;
-                    if (selectedUnderline) selectedUnderline.disabled = false;
-                    if (selectedColor) selectedColor.disabled = false;
-                    if (selectedBg) selectedBg.disabled = false;
-                    if (selectedAlign) selectedAlign.disabled = false;
-                    if (selectedOpacity) selectedOpacity.disabled = false;
-                    if (selectedDelete) selectedDelete.disabled = false;
+                    populateSelectionBarFromOverlayFields([selectedOverlayField]);
                     console.log('Toolbar controls enabled for overlay field');
-
-                    if (selectedFont) {
-                        const mappedFont = mapFontFamilyToKey(styles.fontFamily);
-                        selectedFont.value = mappedFont;
-                    }
-                    if (selectedWeight) {
-                        const weightValue = parseInt(styles.fontWeight, 10);
-                        const normalizedWeight = Number.isFinite(weightValue) ? String(Math.round(weightValue / 100) * 100) : '400';
-                        selectedWeight.value = ['100','200','300','400','500','600','700','800','900'].includes(normalizedWeight) ? normalizedWeight : '400';
-                    }
-                    if (selectedSize) selectedSize.value = Math.round(parseFloat(styles.fontSize) || 16);
-                    if (selectedColor) selectedColor.value = colorToHex(styles.color) || '#000000';
-                    if (selectedBg) {
-                        const bgColor = colorToHex(styles.backgroundColor);
-                        selectedBg.value = bgColor && bgColor !== 'transparent' ? bgColor : '#ffffff';
-                    }
-                    if (selectedAlign) selectedAlign.value = styles.textAlign || 'left';
-                    if (selectedOpacity) {
-                        const opacityValue = String(parseFloat(styles.opacity || '1'));
-                        if ([...selectedOpacity.options].some((option) => option.value === opacityValue)) {
-                            selectedOpacity.value = opacityValue;
-                        } else {
-                            selectedOpacity.value = '1';
-                        }
-                    }
-                    if (selectedBold) selectedBold.classList.toggle('active', Number.isFinite(parseInt(styles.fontWeight, 10)) ? parseInt(styles.fontWeight, 10) >= 600 : styles.fontWeight === 'bold');
-                    if (selectedItalic) selectedItalic.classList.toggle('active', styles.fontStyle === 'italic' || styles.fontStyle === 'oblique');
-                    if (selectedUnderline) {
-                        const decoration = styles.textDecorationLine || '';
-                        selectedUnderline.classList.toggle('active', decoration.includes('underline'));
-                    }
                 }
+            }
+
+            function getSelectedOverlayFields() {
+                const liveFields = Array.from(selectedOverlayFields).filter((field) => field && document.body.contains(field));
+                if (liveFields.length !== selectedOverlayFields.size) {
+                    selectedOverlayFields = new Set(liveFields);
+                }
+                if (selectedOverlayField && !selectedOverlayFields.has(selectedOverlayField)) {
+                    selectedOverlayField = liveFields[0] || null;
+                }
+                return liveFields;
+            }
+
+            function getOverlayStyleTargets() {
+                const liveFields = getSelectedOverlayFields();
+                if (liveFields.length) {
+                    return liveFields;
+                }
+                return selectedOverlayField ? [selectedOverlayField] : [];
+            }
+
+            function deactivateOverlayField(field, options = {}) {
+                if (!field) return;
+                const keepSelected = options.keepSelected === true;
+                field.classList.remove('active', 'editing');
+                if (!keepSelected) {
+                    field.classList.remove('selected');
+                }
+                const ce = field.querySelector('[contenteditable]');
+                if (ce) {
+                    ce.contentEditable = false;
+                }
+                if (field.dataset.originalZIndex) {
+                    field.style.zIndex = field.dataset.originalZIndex;
+                }
+            }
+
+            function activateOverlayField(field) {
+                if (!field) return;
+                field.classList.add('selected', 'active');
+                if (!field.dataset.originalZIndex) {
+                    field.dataset.originalZIndex = field.style.zIndex || '1';
+                }
+                field.style.zIndex = '9999';
             }
 
             function clearOverlaySelection() {
-                if (selectedOverlayField) {
-                    selectedOverlayField.classList.remove('selected');
-                }
+                getSelectedOverlayFields().forEach((field) => deactivateOverlayField(field));
+                selectedOverlayFields = new Set();
                 selectedOverlayField = null;
+                overlaySelectionRange = null;
             }
 
-            function setOverlaySelection(field) {
+            function setOverlaySelection(field, options = {}) {
                 if (!field) {
                     return;
                 }
+                const additive = options.additive === true;
                 console.log('setOverlaySelection called with field:', field);
                 if (selectedAnnotation) {
                     setSelection(null);
                 }
-                clearOverlaySelection();
+
+                if (!additive && selectedOverlayField === field && selectedOverlayFields.size === 1) {
+                    activateOverlayField(field);
+                    updateSelectionBar();
+                    return;
+                }
+
+                const liveFields = getSelectedOverlayFields();
+                const currentPageNumber = String(field.dataset.pageNumber || '');
+                const selectionSpansMultiplePages = liveFields.length > 0
+                    && liveFields.some((candidate) => String(candidate?.dataset?.pageNumber || '') !== currentPageNumber);
+
+                if (!additive || selectionSpansMultiplePages) {
+                    clearOverlaySelection();
+                }
+
+                const alreadySelected = selectedOverlayFields.has(field);
+                if (additive && alreadySelected && selectedOverlayFields.size > 1) {
+                    deactivateOverlayField(field);
+                    selectedOverlayFields.delete(field);
+                    const remaining = getSelectedOverlayFields();
+                    selectedOverlayField = remaining[remaining.length - 1] || null;
+                    if (selectedOverlayField) {
+                        activateOverlayField(selectedOverlayField);
+                        remaining.forEach((candidate) => {
+                            if (candidate !== selectedOverlayField) {
+                                deactivateOverlayField(candidate, { keepSelected: true });
+                                candidate.classList.add('selected');
+                            }
+                        });
+                    }
+                    updateSelectionBar();
+                    return;
+                }
+
+                getSelectedOverlayFields().forEach((candidate) => {
+                    if (candidate !== field) {
+                        deactivateOverlayField(candidate, { keepSelected: additive });
+                        if (additive) {
+                            candidate.classList.add('selected');
+                        }
+                    }
+                });
+
+                selectedOverlayFields.add(field);
                 selectedOverlayField = field;
-                selectedOverlayField.classList.add('selected');
+                activateOverlayField(selectedOverlayField);
                 console.log('Calling updateSelectionBar from setOverlaySelection');
                 updateSelectionBar();
+            }
+
+            function getOverlayCurrentText(field) {
+                const textEl = getOverlayTextElement(field);
+                if (!textEl) return '';
+                const hasPositionedSpans = Array.from(textEl.querySelectorAll('span')).some((span) => span.style.position === 'absolute');
+                if (hasPositionedSpans) {
+                    return String(field.dataset.stableFlowText || field.dataset.originalText || '').trim();
+                }
+                return String(getOverlayExplicitText(textEl) || field.dataset.originalText || '').trim();
+            }
+
+            function getOverlayFieldSourcePageData(pageNumber) {
+                const extractionPages = Array.isArray(overlayExtractionData) ? overlayExtractionData : [];
+                return extractionPages.find((page) => Number(page?.page_number) === Number(pageNumber)) || null;
+            }
+
+            function getNextSyntheticOverlayBlockNum(pageData) {
+                const pageBlocks = Array.isArray(pageData?.blocks) ? pageData.blocks : [];
+                const maxBlockNum = pageBlocks.reduce((maxValue, block) => {
+                    const blockNum = Number(block?.block_num);
+                    return Number.isFinite(blockNum) ? Math.max(maxValue, blockNum) : maxValue;
+                }, -1);
+                return maxBlockNum + 1;
+            }
+
+            function mergeSelectedOverlayFieldsText(records) {
+                const sorted = [...records].sort((a, b) =>
+                    (a.bbox[1] - b.bbox[1])
+                    || (a.bbox[0] - b.bbox[0])
+                );
+                const rows = [];
+                const verticalOverlapRatio = (aTop, aBottom, bTop, bBottom) => {
+                    const inter = Math.max(0, Math.min(aBottom, bBottom) - Math.max(aTop, bTop));
+                    const minHeight = Math.max(1, Math.min(aBottom - aTop, bBottom - bTop));
+                    return inter / minHeight;
+                };
+
+                sorted.forEach((record) => {
+                    const top = Number(record?.bbox?.[1]) || 0;
+                    const bottom = Number(record?.bbox?.[3]) || top;
+                    let row = rows.find((candidate) => verticalOverlapRatio(candidate.top, candidate.bottom, top, bottom) >= 0.35);
+                    if (!row) {
+                        row = { top, bottom, records: [] };
+                        rows.push(row);
+                    } else {
+                        row.top = Math.min(row.top, top);
+                        row.bottom = Math.max(row.bottom, bottom);
+                    }
+                    row.records.push(record);
+                });
+
+                return rows
+                    .sort((a, b) => a.top - b.top)
+                    .map((row) => row.records
+                        .sort((a, b) => (a.bbox[0] - b.bbox[0]))
+                        .map((record) => String(record.text || '')
+                            .split('\n')
+                            .map((line) => line.trim())
+                            .filter(Boolean)
+                            .join(' ')
+                            .trim()
+                        )
+                        .filter(Boolean)
+                        .join(' ')
+                        .trim()
+                    )
+                    .filter(Boolean)
+                    .join('\n');
+            }
+
+            async function mergeSelectedOverlayFields() {
+                const fields = getSelectedOverlayFields();
+                if (fields.length < 2) {
+                    return;
+                }
+
+                const pageNumbers = [...new Set(fields.map((field) => Number(field?.dataset?.pageNumber) || 0))];
+                if (pageNumbers.length !== 1 || !pageNumbers[0]) {
+                    setStatus('Merge only works for overlay blocks on the same page.', 'warn');
+                    return;
+                }
+
+                const pageNumber = pageNumbers[0];
+                const pageData = getOverlayFieldSourcePageData(pageNumber);
+                if (!pageData) {
+                    setStatus('Could not find overlay source data for the selected page.', 'err');
+                    return;
+                }
+
+                pushUndoState();
+
+                const primaryField = selectedOverlayField && fields.includes(selectedOverlayField)
+                    ? selectedOverlayField
+                    : fields[fields.length - 1];
+                const builtRecords = fields
+                    .map((field) => ({ field, built: buildOverlayEditRecordFromField(field) }))
+                    .filter((entry) => entry.built && entry.built.value && Array.isArray(entry.built.value.bbox));
+
+                if (builtRecords.length < 2) {
+                    setStatus('Merge requires at least two valid overlay blocks.', 'warn');
+                    return;
+                }
+
+                const mergedText = mergeSelectedOverlayFieldsText(
+                    builtRecords.map(({ field, built }) => ({
+                        bbox: built.value.bbox,
+                        text: getOverlayCurrentText(field),
+                    }))
+                ).trim();
+
+                if (!mergedText) {
+                    setStatus('Merge failed because the selected blocks do not contain text.', 'warn');
+                    return;
+                }
+
+                const mergedBbox = builtRecords.reduce((acc, { built }) => {
+                    const bbox = built.value.bbox;
+                    return [
+                        Math.min(acc[0], Number(bbox[0]) || 0),
+                        Math.min(acc[1], Number(bbox[1]) || 0),
+                        Math.max(acc[2], Number(bbox[2]) || 0),
+                        Math.max(acc[3], Number(bbox[3]) || 0),
+                    ];
+                }, [Infinity, Infinity, -Infinity, -Infinity]);
+
+                const mergedBlockNum = getNextSyntheticOverlayBlockNum(pageData);
+                const mergedKey = `block-${pageNumber}-${mergedBlockNum}`;
+                const primarySourceBlock = primaryField?._overlaySourceBlock || {};
+                const primaryFont = primaryField.dataset.fontFamily || primaryField.dataset.font || primarySourceBlock.font || 'Helvetica';
+                const primaryFontSize = parseFloat(primaryField.dataset.fontSize || primarySourceBlock.font_size || '12') || 12;
+                const primaryFontWeight = primaryField.dataset.fontWeight || primarySourceBlock.font_weight || '400';
+                const primaryFontStyle = primaryField.dataset.fontStyle || (primarySourceBlock.italic ? 'italic' : 'normal');
+                const primaryColor = primaryField.dataset.textColor || primarySourceBlock.hex_color || '#000000';
+                const mergedTextLines = mergedText.split('\n').map((line) => line.trim()).filter(Boolean);
+
+                builtRecords.forEach(({ built }) => {
+                    overlayEditedFields.set(built.key, {
+                        ...built.value,
+                        new_text: '',
+                        rich_html: null,
+                        word_styles: null,
+                        line_metrics: null,
+                        synthetic_textbox: false,
+                    });
+                });
+
+                overlayEditedFields.set(mergedKey, {
+                    page_number: pageNumber,
+                    block_num: mergedBlockNum,
+                    original_text: '',
+                    new_text: mergedText,
+                    rich_html: null,
+                    word_styles: null,
+                    line_metrics: null,
+                    bbox: [...mergedBbox],
+                    original_bbox: [...mergedBbox],
+                    origin_x: mergedBbox[0],
+                    origin_y: mergedBbox[3],
+                    font_xref: primaryField.dataset.fontXref ? parseInt(primaryField.dataset.fontXref, 10) : null,
+                    font: primaryFont,
+                    font_size: primaryFontSize,
+                    font_weight: String(primaryFontWeight),
+                    font_style: primaryFontStyle,
+                    underline: primaryField.dataset.underline === 'true',
+                    line_height: parseFloat(primaryField.dataset.lineHeight || primarySourceBlock.line_height || '0') || null,
+                    color: primaryColor,
+                    synthetic_textbox: true,
+                    force_reinsert: true,
+                });
+
+                pageData.blocks.push({
+                    ...primarySourceBlock,
+                    block_num: mergedBlockNum,
+                    left: mergedBbox[0],
+                    top: mergedBbox[1],
+                    width: mergedBbox[2] - mergedBbox[0],
+                    height: mergedBbox[3] - mergedBbox[1],
+                    text: mergedText,
+                    text_single_line: mergedTextLines.join(' '),
+                    text_lines: mergedTextLines,
+                    line_count: mergedTextLines.length || 1,
+                    line_bboxes: [],
+                    spans: [],
+                    has_mixed_styles: false,
+                    font: primaryFont,
+                    font_size: primaryFontSize,
+                    font_weight: String(primaryFontWeight),
+                    italic: primaryFontStyle === 'italic',
+                    bold: Number(primaryFontWeight) >= 700 || String(primaryFontWeight).toLowerCase() === 'bold',
+                    hex_color: primaryColor,
+                    _client_multi_merge: true,
+                });
+
+                clearOverlaySelection();
+                persistOverlayEdits();
+                updateOverlaySaveButton();
+                await renderPdfWithOverlay(true);
+
+                const mergedField = document.querySelector(`.overlay-field[data-word-index="${mergedKey}"]`);
+                if (mergedField) {
+                    setOverlaySelection(mergedField);
+                } else {
+                    updateSelectionBar();
+                }
+
+                setStatus(`Merged ${builtRecords.length} overlay blocks into one block.`, 'ok');
             }
 
             function getOverlayTextElement(field) {
@@ -6117,15 +7830,21 @@
             }
 
             function applyOverlayStyle(updateFn) {
-                if (!selectedOverlayField) {
+                const targetFields = getOverlayStyleTargets();
+                if (!targetFields.length) {
                     return;
                 }
-                const textEl = getOverlayTextElement(selectedOverlayField);
-                updateFn(textEl, selectedOverlayField);
-                const wordSpans = textEl.querySelectorAll('span');
-                if (wordSpans.length) {
-                    wordSpans.forEach((span) => updateFn(span, selectedOverlayField));
-                }
+                targetFields.forEach((field) => {
+                    const textEl = getOverlayTextElement(field);
+                    if (!textEl) {
+                        return;
+                    }
+                    updateFn(textEl, field);
+                    const wordSpans = textEl.querySelectorAll('span');
+                    if (wordSpans.length) {
+                        wordSpans.forEach((span) => updateFn(span, field));
+                    }
+                });
                 updateSelectionBar();
             }
 
@@ -6259,35 +7978,63 @@
                 return `<div style="${wrapperStyle}">${cloned.innerHTML}</div>`;
             }
 
-            /**
-             * Mark the currently selected overlay field as dirty (changed) so
-             * the save button appears.  This is called after style-only changes
-             * (bold, italic, underline, color, font, size, etc.) that do NOT
-             * move or resize the field.
-             */
-            function markOverlayFieldDirty() {
-                if (!selectedOverlayField) return;
-                const field = selectedOverlayField;
+            function dedupeOverlaySourceContentOps(ops) {
+                const deduped = [];
+                const seen = new Set();
+                (Array.isArray(ops) ? ops : []).forEach((op) => {
+                    if (!op || typeof op !== 'object') return;
+                    const xref = Number(op.xref);
+                    const start = Number(op.start);
+                    const end = Number(op.end);
+                    if (!Number.isFinite(xref) || !Number.isFinite(start) || !Number.isFinite(end)) return;
+                    const matchedText = String(op.matched_text || '');
+                    const key = `${xref}:${start}:${end}:${matchedText}`;
+                    if (seen.has(key)) return;
+                    seen.add(key);
+                    deduped.push({
+                        xref,
+                        start,
+                        end,
+                        operator: String(op.operator || ''),
+                        operator_text: String(op.operator_text || ''),
+                        matched_text: matchedText,
+                        collapsed_operator_text: String(op.collapsed_operator_text || ''),
+                        tm_x: op.tm_x == null ? null : Number(op.tm_x),
+                        tm_y: op.tm_y == null ? null : Number(op.tm_y),
+                    });
+                });
+                return deduped;
+            }
+
+            function collectOverlaySourceContentOps(field, sourceWords = null, sourceBlock = null) {
+                const ops = [];
+                const block = sourceBlock || field?._overlaySourceBlock || null;
+                if (Array.isArray(block?.source_content_ops)) {
+                    ops.push(...block.source_content_ops);
+                }
+                const words = Array.isArray(sourceWords) ? sourceWords : (Array.isArray(field?._blockWords) ? field._blockWords : []);
+                words.forEach((word) => {
+                    if (Array.isArray(word?.source_content_ops)) {
+                        ops.push(...word.source_content_ops);
+                    }
+                });
+                return dedupeOverlaySourceContentOps(ops);
+            }
+
+            function buildOverlayEditRecordFromField(field, options = {}) {
+                if (!field) return null;
                 const textEl = getOverlayTextElement(field);
-                if (!textEl) return;
+                if (!textEl) return null;
 
                 const pageNumber = parseInt(field.dataset.pageNumber || '0', 10);
                 const editKey = field.dataset.wordIndex || `${pageNumber}-0`;
 
-                // Get current text correctly — if word spans are still absolutely
-                // positioned, textContent concatenates without spaces. Use innerText
-                // which respects visual layout, or join spans manually.
                 const hasPositionedSpans = textEl.querySelector('span') &&
-                    Array.from(textEl.querySelectorAll('span')).some(s => s.style.position === 'absolute');
-                let currentText;
-                if (hasPositionedSpans) {
-                    // Spans still positioned — text hasn't been edited yet, use original
-                    currentText = field.dataset.originalText || '';
-                } else {
-                    currentText = getOverlayExplicitText(textEl);
-                }
+                    Array.from(textEl.querySelectorAll('span')).some((span) => span.style.position === 'absolute');
+                const currentText = hasPositionedSpans
+                    ? (field.dataset.originalText || '')
+                    : getOverlayExplicitText(textEl);
 
-                // Compute scale factors from field dataset
                 const pageWidth = parseFloat(field.dataset.pageWidth || '0');
                 const pageHeight = parseFloat(field.dataset.pageHeight || '0');
                 const canvasWidth = parseFloat(field.dataset.canvasWidth || '0');
@@ -6295,7 +8042,6 @@
                 const scaleX = canvasWidth / (pageWidth || 1);
                 const scaleY = canvasHeight / (pageHeight || 1);
 
-                // Convert pixel positions to PDF coordinates
                 const pad = parseFloat(field.dataset.padding || '0');
                 const pdfLeft = (parseFloat(field.style.left) / scaleX) + pad;
                 const pdfTop = (parseFloat(field.style.top) / scaleY) + pad;
@@ -6304,13 +8050,11 @@
                 const pdfOriginX = pdfLeft;
                 const pdfOriginY = pdfTop + pdfHeight;
 
-                // Original bbox
                 const origLeft = parseFloat(field.dataset.originalLeft || '0');
                 const origTop = parseFloat(field.dataset.originalTop || '0');
                 const origWidth = parseFloat(field.dataset.originalWidth || '0');
                 const origHeight = parseFloat(field.dataset.originalHeight || '0');
 
-                // Font info
                 const fontFamily = field.style.fontFamily || 'Helvetica';
                 const fontWeight = field.dataset.fontWeight || '400';
                 const fontStyle = field.dataset.fontStyle || 'normal';
@@ -6321,65 +8065,2343 @@
                 const fontSizePdf = parseFloat(field.dataset.fontSize || (parseFloat(fontSizePx) / scaleY) || '12');
                 const textColor = field.dataset.textColor || computedStyle.color || '#000000';
                 const lineHeightValue = parseFloat(field.dataset.lineHeight) || null;
-
-                // Resolve the font name for saving: prefer user-selected font
-                // (fontFamily from dropdown) over original extraction font.
                 const resolvedFont = field.dataset.fontFamily || field.dataset.font || 'Helvetica';
 
-                // Build rich_html and word_styles (same as input handler)
                 const richHtml = buildBlockRichHtml(textEl, fontFamily, fontWeight, fontStyle, fontSizePx, lineHeightPx, textColor);
+                const wordStylesArr = buildOverlayWordStylesForSave(field, resolvedFont, fontWeight, fontStyle);
+                const lineMetricsArr = buildOverlayLineMetricsForSave(field, resolvedFont, fontWeight, fontStyle);
+                const syntheticTextbox = shouldConvertOverlayWordsToSyntheticTextbox(
+                    field,
+                    currentText,
+                    null,
+                    field.dataset.originalText || ''
+                );
+                const effectiveText = syntheticTextbox
+                    ? buildSyntheticTextboxText(field, currentText, null, field.dataset.originalText || '')
+                    : currentText;
+                const sourceContentOps = collectOverlaySourceContentOps(field);
 
-                // When building word_styles, apply any field-level style overrides
-                // (e.g., user toggled bold on the whole block via toolbar).
-                const fieldFontWeight = parseInt(fontWeight) || 400;
-                const fieldIsBold = fieldFontWeight >= 700;
-                const fieldIsItalic = fontStyle === 'italic';
+                return {
+                    key: editKey,
+                    value: {
+                        page_number: pageNumber,
+                        block_num: field.dataset.blockNum ? parseInt(field.dataset.blockNum, 10) : undefined,
+                        original_text: field.dataset.originalText || '',
+                        new_text: effectiveText,
+                        rich_html: syntheticTextbox ? null : richHtml,
+                        word_styles: syntheticTextbox ? null : wordStylesArr,
+                        line_metrics: lineMetricsArr,
+                        bbox: [pdfLeft, pdfTop, pdfLeft + pdfWidth, pdfTop + pdfHeight],
+                        original_bbox: [origLeft, origTop, origLeft + origWidth, origTop + origHeight],
+                        origin_x: pdfOriginX,
+                        origin_y: pdfOriginY,
+                        font: resolvedFont,
+                        font_size: fontSizePdf,
+                        font_weight: fontWeight,
+                        font_style: fontStyle,
+                        underline: fieldUnderline,
+                        font_xref: field.dataset.fontXref ? parseInt(field.dataset.fontXref, 10) : null,
+                        line_height: lineHeightValue,
+                        color: textColor,
+                        synthetic_textbox: syntheticTextbox,
+                        force_reinsert: !!options.forceReinsert,
+                        source_content_ops: sourceContentOps,
+                    }
+                };
+            }
 
-                const wordStylesArr = (field._blockWords || []).map(w => ({
-                    text: w.text,
-                    font: resolvedFont || w.font,
-                    font_xref: w.font_xref || null,
-                    font_size: w.font_size,
-                    font_weight: fieldFontWeight || w.font_weight || 400,
-                    italic: fieldIsItalic || !!w.italic,
-                    bold: fieldIsBold || !!w.bold,
-                    underline: fieldUnderline || false,
-                    color: w.color,
-                    hex_color: textColor || w.hex_color || '#000000',
-                    left: w.left,
-                    top: w.top,
-                    width: w.width,
-                    height: w.height,
-                    origin_x: w.origin_x,
-                    origin_y: w.origin_y,
-                    ascender: w.ascender,
-                    descender: w.descender
-                }));
+            function buildOverlaySourceSegmentForBlock(block, words = []) {
+                if (!block) return null;
+                const safeWords = Array.isArray(words) ? words : [];
+                const cleanText = (value) => sanitizeOverlayStorageText(value);
+                const textLines = Array.isArray(block.text_lines) && block.text_lines.length
+                    ? block.text_lines.map((line) => cleanText(String(line || '')))
+                    : [];
+                const text = textLines.length
+                    ? textLines.join('\n')
+                    : cleanText(String(block.text || ''));
+                const bbox = [
+                    Number(block.left) || 0,
+                    Number(block.top) || 0,
+                    (Number(block.left) || 0) + (Number(block.width) || 0),
+                    (Number(block.top) || 0) + (Number(block.height) || 0),
+                ];
+                return {
+                    block_num: block.block_num,
+                    bbox,
+                    text,
+                    text_lines: textLines,
+                    line_bboxes: Array.isArray(block.line_bboxes) ? block.line_bboxes.map((lb) => [...lb]) : [],
+                    words: safeWords.map((word) => ({ ...word })),
+                    source_content_ops: collectOverlaySourceContentOps(null, safeWords, block),
+                };
+            }
 
-                overlayEditedFields.set(editKey, {
-                    page_number: pageNumber,
-                    block_num: field.dataset.blockNum ? parseInt(field.dataset.blockNum, 10) : undefined,
-                    original_text: field.dataset.originalText || '',
-                    new_text: currentText,
-                    rich_html: richHtml,
-                    word_styles: wordStylesArr,
-                    bbox: [pdfLeft, pdfTop, pdfLeft + pdfWidth, pdfTop + pdfHeight],
-                    original_bbox: [origLeft, origTop, origLeft + origWidth, origTop + origHeight],
-                    origin_x: pdfOriginX,
-                    origin_y: pdfOriginY,
-                    font: resolvedFont,
-                    font_size: fontSizePdf,
-                    font_weight: fontWeight,
-                    font_style: fontStyle,
-                    underline: fieldUnderline,
-                    font_xref: field.dataset.fontXref ? parseInt(field.dataset.fontXref, 10) : null,
-                    line_height: lineHeightValue,
-                    color: textColor
+            function buildOverlayCleanupRect(editData) {
+                if (!editData) return null;
+                const rects = [];
+                if (Array.isArray(editData.original_bbox) && editData.original_bbox.length >= 4) {
+                    rects.push(editData.original_bbox);
+                }
+                if (Array.isArray(editData.bbox) && editData.bbox.length >= 4) {
+                    rects.push(editData.bbox);
+                }
+                if (!rects.length) return null;
+                const xs = rects.flatMap((rect) => [Number(rect[0]) || 0, Number(rect[2]) || 0]);
+                const ys = rects.flatMap((rect) => [Number(rect[1]) || 0, Number(rect[3]) || 0]);
+                return {
+                    l: Math.min(...xs),
+                    t: Math.min(...ys),
+                    r: Math.max(...xs),
+                    b: Math.max(...ys),
+                };
+            }
+
+            function overlayCleanupRectsIntersect(a, b, tolerance = 0.5) {
+                if (!a || !b) return false;
+                const interW = Math.min(a.r, b.r) - Math.max(a.l, b.l);
+                const interH = Math.min(a.b, b.b) - Math.max(a.t, b.t);
+                return interW > tolerance && interH > tolerance;
+            }
+
+            function collectOverlayOverlapGroupEdits() {
+                const fieldMetas = Array.from(document.querySelectorAll('.overlay-field[data-word-index]')).map((field) => {
+                    const built = buildOverlayEditRecordFromField(field);
+                    if (!built) return null;
+                    return {
+                        field,
+                        key: built.key,
+                        pageNumber: built.value.page_number,
+                        editData: built.value,
+                        cleanupRect: buildOverlayCleanupRect(built.value),
+                    };
+                }).filter(Boolean);
+
+                const metaByKey = new Map(fieldMetas.map((meta) => [meta.key, meta]));
+                const expandedEdits = new Map();
+                const overlapGroupKeys = new Set();
+                const queue = [];
+
+                overlayEditedFields.forEach((editData, key) => {
+                    const fallbackMeta = metaByKey.get(key);
+                    const mergedEditData = {
+                        ...(fallbackMeta?.editData || {}),
+                        ...editData,
+                    };
+                    expandedEdits.set(key, mergedEditData);
+                    if (buildOverlayCleanupRect(mergedEditData)) {
+                        overlapGroupKeys.add(key);
+                        queue.push(key);
+                    }
+                });
+
+                while (queue.length > 0) {
+                    const currentKey = queue.shift();
+                    const currentEdit = expandedEdits.get(currentKey) || metaByKey.get(currentKey)?.editData;
+                    const currentRect = buildOverlayCleanupRect(currentEdit);
+                    if (!currentRect) continue;
+                    const currentPage = Number(currentEdit?.page_number) || metaByKey.get(currentKey)?.pageNumber || 0;
+
+                    fieldMetas.forEach((meta) => {
+                        if (meta.key === currentKey) return;
+                        if (meta.pageNumber !== currentPage) return;
+                        if (!overlayCleanupRectsIntersect(currentRect, meta.cleanupRect)) return;
+                        if (overlapGroupKeys.has(meta.key)) return;
+                        overlapGroupKeys.add(meta.key);
+                        queue.push(meta.key);
+                    });
+                }
+
+                overlapGroupKeys.forEach((key) => {
+                    const meta = metaByKey.get(key);
+                    if (!meta) return;
+                    const existing = expandedEdits.get(key);
+                    if (existing) {
+                        expandedEdits.set(key, { ...existing, force_reinsert: true });
+                        return;
+                    }
+                    expandedEdits.set(key, {
+                        ...meta.editData,
+                        force_reinsert: true,
+                    });
+                });
+
+                return expandedEdits;
+            }
+
+            function getCanonicalOverlayEditForKey(key, fallbackEditData = null) {
+                const field = document.querySelector(`.overlay-field[data-word-index="${key}"]`);
+                const built = field ? buildOverlayEditRecordFromField(field) : null;
+                const canonicalEdit = built?.value
+                    ? { ...(fallbackEditData || {}), ...built.value }
+                    : (fallbackEditData ? { ...fallbackEditData } : null);
+                return { field, editData: canonicalEdit };
+            }
+
+            function buildAtomicLiveSaveEditsForKey(key, fallbackEditData = null) {
+                const { field, editData } = getCanonicalOverlayEditForKey(key, fallbackEditData);
+                if (!editData) {
+                    return [];
+                }
+
+                const originalText = normalizeOverlayComparableText(editData.original_text || '');
+                const newText = normalizeOverlayComparableText(editData.new_text || '');
+                const moveOnlyEdit = originalText === newText && overlayEditHasMoved(editData);
+                if (moveOnlyEdit) {
+                    return [{
+                        ...editData,
+                        force_reinsert: true,
+                    }];
+                }
+
+                const segmentEdits = field ? buildOverlaySegmentEditsForSave(field, editData) : null;
+                if (Array.isArray(segmentEdits) && segmentEdits.length > 0) {
+                    return segmentEdits;
+                }
+
+                return [editData];
+            }
+
+            function buildLiveSavePayloadFromEdit(editData) {
+                return {
+                    page_number:   editData.page_number,
+                    original_text: editData.original_text || '',
+                    new_text:      String(editData.new_text ?? ''),
+                    original_bbox: editData.original_bbox || editData.bbox || [0,0,0,0],
+                    bbox:          editData.bbox || editData.original_bbox || [0,0,0,0],
+                    origin_x:      editData.origin_x || 0,
+                    origin_y:      editData.origin_y || 0,
+                    font:          editData.font || 'Helvetica',
+                    font_size:     editData.font_size || 12,
+                    font_weight:   editData.font_weight || null,
+                    font_style:    editData.font_style || null,
+                    font_xref:     editData.font_xref || null,
+                    underline:     !!editData.underline,
+                    line_height:   editData.line_height || null,
+                    color:         editData.color || '#000000',
+                    word_styles:   Array.isArray(editData.word_styles) ? editData.word_styles : null,
+                    line_metrics:  Array.isArray(editData.line_metrics) ? editData.line_metrics : null,
+                    source_content_ops: Array.isArray(editData.source_content_ops) ? editData.source_content_ops : null,
+                    synthetic_textbox: !!editData.synthetic_textbox,
+                    paragraph_bbox: Array.isArray(editData.paragraph_bbox) ? editData.paragraph_bbox : null,
+                    retry_mode: typeof editData.retry_mode === 'string' ? editData.retry_mode : null,
+                    redaction_padding: Number.isFinite(Number(editData.redaction_padding)) ? Number(editData.redaction_padding) : null,
+                };
+            }
+
+            function buildLiveSaveRetryEdit(editData, attempt = 1) {
+                const retryEdit = clonePlainData(editData);
+                if (attempt <= 1) {
+                    delete retryEdit.retry_mode;
+                    delete retryEdit.redaction_padding;
+                    return retryEdit;
+                }
+
+                const lineCount = Array.isArray(retryEdit.line_metrics) ? retryEdit.line_metrics.length : 0;
+                const isMultiline = lineCount > 1
+                    || String(retryEdit.original_text ?? '').includes('\n')
+                    || String(retryEdit.new_text ?? '').includes('\n');
+                const hasSourceOps = Array.isArray(retryEdit.source_content_ops) && retryEdit.source_content_ops.length > 0;
+
+                const retryPlan = isMultiline
+                    ? [
+                        { mode: 'paragraph_strict', pad: 0.0 },
+                        { mode: 'span_search', pad: 0.0 },
+                        { mode: 'paragraph_strict', pad: 1.0 },
+                        { mode: 'paragraph_strict', pad: 1.75 },
+                    ]
+                    : [
+                        { mode: 'precise_coords_strict', pad: 0.0 },
+                        { mode: 'span_search', pad: 0.0 },
+                        { mode: hasSourceOps ? 'source_ops_strict' : 'line_range_strict', pad: 0.75 },
+                        { mode: 'precise_coords_strict', pad: 1.25 },
+                    ];
+
+                const step = retryPlan[Math.min(retryPlan.length - 1, Math.max(0, attempt - 2))];
+                retryEdit.retry_mode = step.mode;
+                retryEdit.redaction_padding = step.pad;
+                return retryEdit;
+            }
+
+            function normalizeOverlayComparableText(value) {
+                return String(value ?? '')
+                    .replace(/\r\n/g, '\n')
+                    .replace(/\r/g, '\n')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+            }
+
+            function overlayEditHasMoved(editData, tolerance = 2) {
+                if (!Array.isArray(editData?.original_bbox) || !Array.isArray(editData?.bbox)) {
+                    return true;
+                }
+                const originalBbox = editData.original_bbox;
+                const currentBbox = editData.bbox;
+                return Math.abs((Number(originalBbox[0]) || 0) - (Number(currentBbox[0]) || 0)) > tolerance
+                    || Math.abs((Number(originalBbox[1]) || 0) - (Number(currentBbox[1]) || 0)) > tolerance
+                    || Math.abs((Number(originalBbox[2]) || 0) - (Number(currentBbox[2]) || 0)) > tolerance
+                    || Math.abs((Number(originalBbox[3]) || 0) - (Number(currentBbox[3]) || 0)) > tolerance;
+            }
+
+            function overlayEditHasStyleMutation(editData) {
+                if (!editData) {
+                    return false;
+                }
+                const fontWeight = String(editData.font_weight || '').trim().toLowerCase();
+                const fontStyle = String(editData.font_style || '').trim().toLowerCase();
+                const color = String(editData.color || '').trim().toLowerCase();
+                return Boolean(editData.rich_html)
+                    || (Array.isArray(editData.word_styles) && editData.word_styles.length > 0)
+                    || Boolean(editData.underline)
+                    || (fontWeight && fontWeight !== '400' && fontWeight !== 'normal')
+                    || (fontStyle && fontStyle !== 'normal')
+                    || (color && color !== '#000000' && color !== '000000' && color !== 'rgb(0, 0, 0)');
+            }
+
+            function isMaterialOverlaySaveEdit(editData, { honorForceReinsert = true } = {}) {
+                if (!editData) {
+                    return false;
+                }
+                if (honorForceReinsert && editData.force_reinsert) {
+                    return true;
+                }
+
+                const originalText = normalizeOverlayComparableText(editData.original_text || '');
+                const newText = normalizeOverlayComparableText(editData.new_text || '');
+
+                if (originalText !== newText) {
+                    return true;
+                }
+                if (overlayEditHasMoved(editData)) {
+                    return true;
+                }
+                return overlayEditHasStyleMutation(editData);
+            }
+
+            function clonePlainData(value) {
+                return value == null ? value : JSON.parse(JSON.stringify(value));
+            }
+
+            function cloneOverlayEditMap(sourceMap) {
+                const clone = new Map();
+                if (!(sourceMap instanceof Map)) {
+                    return clone;
+                }
+                sourceMap.forEach((value, key) => {
+                    clone.set(key, clonePlainData(value));
+                });
+                return clone;
+            }
+
+            function snapshotOverlayEditState() {
+                return {
+                    edited: cloneOverlayEditMap(overlayEditedFields),
+                    persisted: cloneOverlayEditMap(overlayPersistedEdits),
+                };
+            }
+
+            function restoreOverlayEditState(snapshot) {
+                overlayEditedFields = cloneOverlayEditMap(snapshot?.edited);
+                overlayPersistedEdits = cloneOverlayEditMap(snapshot?.persisted || snapshot?.edited);
+                document.querySelectorAll('.overlay-field[data-live-save-state]').forEach((field) => {
+                    delete field.dataset.liveSaveState;
+                });
+                persistOverlayEdits();
+                updateOverlaySaveButton();
+            }
+
+            function getOverlayPageDataByNumber(pageNumber) {
+                if (!Array.isArray(overlayExtractionData)) {
+                    return null;
+                }
+                return overlayExtractionData.find((page) => Number(page?.page_number) === Number(pageNumber)) || null;
+            }
+
+            function getRenderedPageWrapper(pageNumber) {
+                return document.querySelector(`.page-wrapper.overlay-page[data-page-number="${pageNumber}"]`)
+                    || document.querySelector(`.page[data-page-index="${Math.max(0, Number(pageNumber) - 1)}"]`)
+                    || null;
+            }
+
+            function parseCssPx(value, fallback = 0) {
+                const parsed = parseFloat(String(value || '').replace('px', ''));
+                return Number.isFinite(parsed) ? parsed : fallback;
+            }
+
+            function getRectRelativeTo(element, ancestorRect) {
+                const rect = element.getBoundingClientRect();
+                return {
+                    left: rect.left - ancestorRect.left,
+                    top: rect.top - ancestorRect.top,
+                    width: rect.width,
+                    height: rect.height,
+                    right: rect.right - ancestorRect.left,
+                    bottom: rect.bottom - ancestorRect.top,
+                };
+            }
+
+            function buildCanvasFont(style) {
+                const fontStyle = style.fontStyle || 'normal';
+                const fontWeight = style.fontWeight || '400';
+                const fontSize = style.fontSize || '16px';
+                const fontFamily = style.fontFamily || 'sans-serif';
+                return `${fontStyle} ${fontWeight} ${fontSize} ${fontFamily}`;
+            }
+
+            function drawTextRun(ctx, text, x, y, letterSpacing = 0) {
+                if (!text) {
+                    return 0;
+                }
+                if (!letterSpacing) {
+                    ctx.fillText(text, x, y);
+                    return ctx.measureText(text).width;
+                }
+
+                let cursorX = x;
+                for (const char of Array.from(text)) {
+                    ctx.fillText(char, cursorX, y);
+                    cursorX += ctx.measureText(char).width + letterSpacing;
+                }
+                return cursorX - x;
+            }
+
+            function wrapCanvasText(ctx, text, maxWidth) {
+                const normalizedLines = String(text ?? '')
+                    .replace(/\r\n/g, '\n')
+                    .replace(/\r/g, '\n')
+                    .split('\n');
+                const lines = [];
+
+                normalizedLines.forEach((rawLine) => {
+                    if (!rawLine.length) {
+                        lines.push('');
+                        return;
+                    }
+
+                    const words = rawLine.split(/(\s+)/).filter((token) => token.length > 0);
+                    let currentLine = '';
+
+                    words.forEach((token) => {
+                        const candidate = currentLine + token;
+                        if (!currentLine || ctx.measureText(candidate).width <= maxWidth) {
+                            currentLine = candidate;
+                            return;
+                        }
+
+                        if (currentLine.trim().length) {
+                            lines.push(currentLine.trimEnd());
+                            currentLine = token.trimStart();
+                            if (ctx.measureText(currentLine).width <= maxWidth) {
+                                return;
+                            }
+                        }
+
+                        let partial = '';
+                        for (const char of Array.from(token)) {
+                            const nextPartial = partial + char;
+                            if (partial && ctx.measureText(nextPartial).width > maxWidth) {
+                                lines.push(partial);
+                                partial = char;
+                            } else {
+                                partial = nextPartial;
+                            }
+                        }
+                        currentLine = partial;
+                    });
+
+                    lines.push(currentLine.trimEnd());
+                });
+
+                return lines;
+            }
+
+            function drawMultilineTextBox(ctx, textElement, wrapperRect) {
+                const style = window.getComputedStyle(textElement);
+                const boxRect = getRectRelativeTo(textElement, wrapperRect);
+                const fontSize = parseCssPx(style.fontSize, 16);
+                const lineHeight = parseCssPx(style.lineHeight, fontSize * 1.2);
+                const paddingLeft = parseCssPx(style.paddingLeft);
+                const paddingTop = parseCssPx(style.paddingTop);
+                const paddingRight = parseCssPx(style.paddingRight);
+                const maxWidth = Math.max(1, boxRect.width - paddingLeft - paddingRight);
+                const letterSpacing = parseCssPx(style.letterSpacing);
+                const drawUnderline = String(style.textDecorationLine || '').includes('underline');
+
+                ctx.save();
+                ctx.font = buildCanvasFont(style);
+                ctx.fillStyle = style.color || '#000000';
+                ctx.textBaseline = 'top';
+                ctx.globalAlpha = Math.min(1, Math.max(0, parseFloat(style.opacity || '1')));
+
+                const textAlign = style.textAlign || 'left';
+                const lines = wrapCanvasText(ctx, textElement.innerText || textElement.textContent || '', maxWidth);
+                lines.forEach((line, lineIndex) => {
+                    const lineWidth = ctx.measureText(line).width;
+                    let lineX = boxRect.left + paddingLeft;
+                    if (textAlign === 'center') {
+                        lineX += Math.max(0, (maxWidth - lineWidth) / 2);
+                    } else if (textAlign === 'right' || textAlign === 'end') {
+                        lineX += Math.max(0, maxWidth - lineWidth);
+                    }
+                    const lineY = boxRect.top + paddingTop + (lineIndex * lineHeight);
+                    drawTextRun(ctx, line, lineX, lineY, letterSpacing);
+
+                    if (drawUnderline && line.trim().length > 0) {
+                        ctx.beginPath();
+                        ctx.lineWidth = Math.max(1, fontSize * 0.06);
+                        ctx.strokeStyle = style.color || '#000000';
+                        ctx.moveTo(lineX, lineY + fontSize * 0.96);
+                        ctx.lineTo(lineX + lineWidth, lineY + fontSize * 0.96);
+                        ctx.stroke();
+                    }
+                });
+
+                ctx.restore();
+            }
+
+            function drawPositionedTextRuns(ctx, textElement, wrapperRect) {
+                const positionedSpans = Array.from(textElement.querySelectorAll('span')).filter((span) => {
+                    const style = window.getComputedStyle(span);
+                    return style.position === 'absolute' && (span.textContent || '').trim().length > 0;
+                });
+
+                positionedSpans.forEach((span) => {
+                    const style = window.getComputedStyle(span);
+                    const spanRect = getRectRelativeTo(span, wrapperRect);
+                    const fontSize = parseCssPx(style.fontSize, 16);
+                    const letterSpacing = parseCssPx(style.letterSpacing);
+                    const drawUnderline = String(style.textDecorationLine || '').includes('underline');
+
+                    ctx.save();
+                    ctx.font = buildCanvasFont(style);
+                    ctx.fillStyle = style.color || '#000000';
+                    ctx.textBaseline = 'top';
+                    ctx.globalAlpha = Math.min(1, Math.max(0, parseFloat(style.opacity || '1')));
+                    const textWidth = drawTextRun(ctx, span.textContent || '', spanRect.left, spanRect.top, letterSpacing);
+
+                    if (drawUnderline) {
+                        ctx.beginPath();
+                        ctx.lineWidth = Math.max(1, fontSize * 0.06);
+                        ctx.strokeStyle = style.color || '#000000';
+                        ctx.moveTo(spanRect.left, spanRect.top + fontSize * 0.96);
+                        ctx.lineTo(spanRect.left + textWidth, spanRect.top + fontSize * 0.96);
+                        ctx.stroke();
+                    }
+                    ctx.restore();
+                });
+            }
+
+            function drawOverlayFieldSnapshot(ctx, field, wrapperRect) {
+                if (!(field instanceof Element)) {
+                    return;
+                }
+                const fieldStyle = window.getComputedStyle(field);
+                if (fieldStyle.display === 'none' || fieldStyle.visibility === 'hidden' || parseFloat(fieldStyle.opacity || '1') <= 0) {
+                    return;
+                }
+
+                const textElement = field.querySelector('[contenteditable]') || field;
+                const hasAbsoluteRuns = Array.from(textElement.querySelectorAll('span')).some((span) => {
+                    const style = window.getComputedStyle(span);
+                    return style.position === 'absolute';
+                });
+
+                if (hasAbsoluteRuns) {
+                    drawPositionedTextRuns(ctx, textElement, wrapperRect);
+                } else {
+                    drawMultilineTextBox(ctx, textElement, wrapperRect);
+                }
+            }
+
+            function rectsIntersect(a, b) {
+                if (!a || !b) {
+                    return false;
+                }
+                const aRight = Number.isFinite(a.right) ? a.right : (a.left + a.width);
+                const aBottom = Number.isFinite(a.bottom) ? a.bottom : (a.top + a.height);
+                const bRight = Number.isFinite(b.right) ? b.right : (b.left + b.width);
+                const bBottom = Number.isFinite(b.bottom) ? b.bottom : (b.top + b.height);
+                return a.left <= bRight
+                    && aRight >= b.left
+                    && a.top <= bBottom
+                    && aBottom >= b.top;
+            }
+
+            function normalizeVerificationText(value) {
+                return String(value ?? '')
+                    .replace(/\r\n/g, '\n')
+                    .replace(/\r/g, '\n')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+            }
+
+            function compactVerificationText(value) {
+                return normalizeVerificationText(value)
+                    .toLowerCase()
+                    .replace(/\s+/g, '');
+            }
+
+            function verificationTargetIsSingleLine(target) {
+                if (!target || !Array.isArray(target.edits) || target.edits.length === 0) {
+                    return false;
+                }
+
+                return target.edits.every((edit) => {
+                    return verificationEditIsSingleLine(edit);
+                });
+            }
+
+            function verificationEditIsSingleLine(edit) {
+                if (!edit) {
+                    return false;
+                }
+                const originalText = String(edit?.original_text ?? '');
+                const newText = String(edit?.new_text ?? '');
+                const lineMetrics = Array.isArray(edit?.line_metrics) ? edit.line_metrics : [];
+                return !originalText.includes('\n')
+                    && !newText.includes('\n')
+                    && lineMetrics.length <= 1;
+            }
+
+            function buildVerificationExpectedTextSignature(pageEdits) {
+                if (!Array.isArray(pageEdits) || pageEdits.length === 0) {
+                    return '';
+                }
+
+                const ordered = [...pageEdits].sort((a, b) => {
+                    const aBox = Array.isArray(a?.bbox) ? a.bbox : (Array.isArray(a?.original_bbox) ? a.original_bbox : [0, 0, 0, 0]);
+                    const bBox = Array.isArray(b?.bbox) ? b.bbox : (Array.isArray(b?.original_bbox) ? b.original_bbox : [0, 0, 0, 0]);
+                    const aTop = Number(aBox[1]) || 0;
+                    const bTop = Number(bBox[1]) || 0;
+                    if (Math.abs(aTop - bTop) >= 2) {
+                        return aTop - bTop;
+                    }
+                    return (Number(aBox[0]) || 0) - (Number(bBox[0]) || 0);
+                });
+
+                return normalizeVerificationText(ordered.map((edit) => String(edit?.new_text ?? '')).join(' '));
+            }
+
+            function getLiveSavePreviewEntries(saveResult) {
+                if (Array.isArray(saveResult?.liveSavePreviews) && saveResult.liveSavePreviews.length > 0) {
+                    return saveResult.liveSavePreviews;
+                }
+                if (saveResult?.preview) {
+                    return [saveResult.preview];
+                }
+                return [];
+            }
+
+            function getLiveSavePreviewAssets(saveResult) {
+                if (Array.isArray(saveResult?.liveSavePreviewAssets) && saveResult.liveSavePreviewAssets.length > 0) {
+                    return saveResult.liveSavePreviewAssets;
+                }
+                const entries = getLiveSavePreviewEntries(saveResult);
+                if (entries.length === 0) {
+                    return [];
+                }
+                return entries.map((preview) => ({ preview }));
+            }
+
+            function collectLiveSavePreviewEntryIds(saveResult) {
+                return getLiveSavePreviewEntries(saveResult)
+                    .map((preview) => String(preview?.save_id || '').trim())
+                    .filter((value) => value.length > 0);
+            }
+
+            function previewMatchesVerificationTarget(preview, target) {
+                if (!preview || !target) {
+                    return false;
+                }
+
+                const previewPage = Number(preview?.page_number) || 0;
+                if (previewPage !== Number(target.pageNumber || 0)) {
+                    return false;
+                }
+
+                const previewText = compactVerificationText(preview?.new_text || '');
+                const targetText = compactVerificationText(target?.targetTextSignature || '');
+                if (!previewText || !targetText) {
+                    return false;
+                }
+
+                return previewText === targetText
+                    || previewText.includes(targetText)
+                    || targetText.includes(previewText);
+            }
+
+            function buildVerificationClipRectFromPreview(target, preview) {
+                if (!target || !preview?.clip_rect) {
+                    return null;
+                }
+                const clipRect = preview.clip_rect;
+                const pageData = target.edits?.find((edit) => Number(edit?.page_width) > 0 && Number(edit?.page_height) > 0) || {};
+                const pageWidth = Number(pageData.page_width) || Number(getOverlayPageDataByNumber(target.pageNumber)?.width) || 0;
+                const pageHeight = Number(pageData.page_height) || Number(getOverlayPageDataByNumber(target.pageNumber)?.height) || 0;
+                return pdfRectToCanvasRect(
+                    [clipRect.x0, clipRect.y0, clipRect.x1, clipRect.y1],
+                    pageWidth,
+                    pageHeight,
+                    target.fullCanvas.width,
+                    target.fullCanvas.height,
+                    0,
+                    0
+                );
+            }
+
+            function pdfRectToCanvasRect(rect, pageWidth, pageHeight, canvasWidth, canvasHeight, padX = 0, padY = padX) {
+                if (!Array.isArray(rect) || rect.length < 4 || pageWidth <= 0 || pageHeight <= 0 || canvasWidth <= 0 || canvasHeight <= 0) {
+                    return null;
+                }
+                const scaleX = canvasWidth / pageWidth;
+                const scaleY = canvasHeight / pageHeight;
+                const left = Math.max(0, Math.floor((Math.min(Number(rect[0]) || 0, Number(rect[2]) || 0) * scaleX) - padX));
+                const top = Math.max(0, Math.floor((Math.min(Number(rect[1]) || 0, Number(rect[3]) || 0) * scaleY) - padY));
+                const right = Math.min(canvasWidth, Math.ceil((Math.max(Number(rect[0]) || 0, Number(rect[2]) || 0) * scaleX) + padX));
+                const bottom = Math.min(canvasHeight, Math.ceil((Math.max(Number(rect[1]) || 0, Number(rect[3]) || 0) * scaleY) + padY));
+                return {
+                    x: left,
+                    y: top,
+                    width: Math.max(1, right - left),
+                    height: Math.max(1, bottom - top),
+                };
+            }
+
+            function buildVerificationEraseRects(pageEdits, canvasWidth, canvasHeight) {
+                if (!Array.isArray(pageEdits) || pageEdits.length === 0) {
+                    return [];
+                }
+                return pageEdits.flatMap((entry) => {
+                    const edit = entry?.editData || entry;
+                    const originalText = String(edit?.original_text ?? '');
+                    const newText = String(edit?.new_text ?? '');
+                    const isSingleLine = verificationEditIsSingleLine(edit);
+                    const padX = isSingleLine ? 3 : 10;
+                    const padY = isSingleLine ? 2 : 8;
+                    const pageWidth = Number(edit?.page_width) || 0;
+                    const pageHeight = Number(edit?.page_height) || 0;
+                    const rects = [edit?.original_bbox, edit?.bbox]
+                        .map((rect) => pdfRectToCanvasRect(rect, pageWidth, pageHeight, canvasWidth, canvasHeight, padX, padY))
+                        .filter(Boolean);
+                    if (originalText === newText && rects.length > 1) {
+                        return rects.slice(0, 1);
+                    }
+                    return rects;
+                });
+            }
+
+            function buildVerificationCropBounds(cropRect) {
+                return {
+                    left: Number(cropRect?.x) || 0,
+                    top: Number(cropRect?.y) || 0,
+                    width: Math.max(1, Number(cropRect?.width) || 0),
+                    height: Math.max(1, Number(cropRect?.height) || 0),
+                    right: (Number(cropRect?.x) || 0) + Math.max(1, Number(cropRect?.width) || 0),
+                    bottom: (Number(cropRect?.y) || 0) + Math.max(1, Number(cropRect?.height) || 0),
+                };
+            }
+
+            function captureOverlayVerificationTextSignature(pageWrapper, cropRect) {
+                if (!(pageWrapper instanceof Element)) {
+                    return '';
+                }
+
+                const wrapperRect = pageWrapper.getBoundingClientRect();
+                const cropBounds = buildVerificationCropBounds(cropRect);
+                const entries = Array.from(pageWrapper.querySelectorAll('.overlay-field'))
+                    .map((field) => {
+                        const style = window.getComputedStyle(field);
+                        if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity || '1') <= 0) {
+                            return null;
+                        }
+                        const textElement = field.querySelector('[contenteditable]') || field;
+                        const fieldRect = getRectRelativeTo(textElement, wrapperRect);
+                        const bounds = {
+                            left: fieldRect.left,
+                            top: fieldRect.top,
+                            width: fieldRect.width,
+                            height: fieldRect.height,
+                            right: fieldRect.left + fieldRect.width,
+                            bottom: fieldRect.top + fieldRect.height,
+                        };
+                        if (!rectsIntersect(bounds, cropBounds)) {
+                            return null;
+                        }
+                        const text = normalizeVerificationText(textElement?.innerText || textElement?.textContent || '');
+                        if (!text) {
+                            return null;
+                        }
+                        return {
+                            top: bounds.top,
+                            left: bounds.left,
+                            text,
+                        };
+                    })
+                    .filter(Boolean)
+                    .sort((a, b) => (Math.abs(a.top - b.top) < 2 ? a.left - b.left : a.top - b.top));
+
+                return normalizeVerificationText(entries.map((entry) => entry.text).join(' '));
+            }
+
+            async function captureRenderedPageSnapshot(pageWrapper, pageEdits = []) {
+                const wrapperRect = pageWrapper.getBoundingClientRect();
+                const width = Math.max(1, Math.round(wrapperRect.width));
+                const height = Math.max(1, Math.round(wrapperRect.height));
+                const snapshotCanvas = document.createElement('canvas');
+                snapshotCanvas.width = width;
+                snapshotCanvas.height = height;
+                const context = snapshotCanvas.getContext('2d');
+                context.fillStyle = '#ffffff';
+                context.fillRect(0, 0, width, height);
+
+                const baseCanvas = pageWrapper.querySelector('canvas');
+                if (baseCanvas) {
+                    context.drawImage(baseCanvas, 0, 0, width, height);
+                }
+
+                buildVerificationEraseRects(pageEdits, width, height).forEach((rect) => {
+                    context.fillStyle = '#ffffff';
+                    context.fillRect(rect.x, rect.y, rect.width, rect.height);
+                });
+
+                pageEdits.forEach((entry) => {
+                    const key = String(entry?.key ?? '');
+                    if (!key) {
+                        return;
+                    }
+                    const selector = window.CSS && typeof window.CSS.escape === 'function'
+                        ? `.overlay-field[data-word-index="${window.CSS.escape(key)}"]`
+                        : `.overlay-field[data-word-index="${key.replace(/"/g, '\\"')}"]`;
+                    const field = pageWrapper.querySelector(selector);
+                    if (field) {
+                        drawOverlayFieldSnapshot(context, field, wrapperRect);
+                    }
+                });
+
+                return snapshotCanvas;
+            }
+
+            function buildVerificationCropRect(pageNumber, pageEdits, canvasWidth, canvasHeight) {
+                const pageData = getOverlayPageDataByNumber(pageNumber);
+                const fallbackDims = pageEdits.find((edit) => Number(edit?.page_width) > 0 && Number(edit?.page_height) > 0) || {};
+                const pageWidth = Number(pageData?.width) || Number(fallbackDims.page_width) || 0;
+                const pageHeight = Number(pageData?.height) || Number(fallbackDims.page_height) || 0;
+
+                const pdfRects = [];
+                pageEdits.forEach((edit) => {
+                    [edit?.original_bbox, edit?.bbox].forEach((rect) => {
+                        if (!Array.isArray(rect) || rect.length < 4) {
+                            return;
+                        }
+                        pdfRects.push([
+                            Number(rect[0]) || 0,
+                            Number(rect[1]) || 0,
+                            Number(rect[2]) || 0,
+                            Number(rect[3]) || 0,
+                        ]);
+                    });
+                });
+
+                if (!pdfRects.length || pageWidth <= 0 || pageHeight <= 0) {
+                    return { x: 0, y: 0, width: canvasWidth, height: canvasHeight };
+                }
+
+                const left = Math.max(0, Math.min(...pdfRects.map((rect) => Math.min(rect[0], rect[2]))));
+                const top = Math.max(0, Math.min(...pdfRects.map((rect) => Math.min(rect[1], rect[3]))));
+                const right = Math.max(...pdfRects.map((rect) => Math.max(rect[0], rect[2])));
+                const bottom = Math.max(...pdfRects.map((rect) => Math.max(rect[1], rect[3])));
+                const scaleX = canvasWidth / pageWidth;
+                const scaleY = canvasHeight / pageHeight;
+
+                const singleLine = Array.isArray(pageEdits) && pageEdits.length > 0 && pageEdits.every((edit) => verificationEditIsSingleLine(edit));
+                const padX = singleLine ? 10 : liveSaveVerifyPaddingPx;
+                const padY = singleLine ? 8 : liveSaveVerifyPaddingPx;
+
+                const cropLeft = Math.max(0, Math.floor(left * scaleX) - padX);
+                const cropTop = Math.max(0, Math.floor(top * scaleY) - padY);
+                const cropRight = Math.min(canvasWidth, Math.ceil(right * scaleX) + padX);
+                const cropBottom = Math.min(canvasHeight, Math.ceil(bottom * scaleY) + padY);
+
+                return {
+                    x: cropLeft,
+                    y: cropTop,
+                    width: Math.max(1, cropRight - cropLeft),
+                    height: Math.max(1, cropBottom - cropTop),
+                };
+            }
+
+            function cropCanvasRegion(sourceCanvas, rect) {
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.max(1, Math.floor(rect.width));
+                canvas.height = Math.max(1, Math.floor(rect.height));
+                const context = canvas.getContext('2d');
+                context.drawImage(
+                    sourceCanvas,
+                    rect.x,
+                    rect.y,
+                    rect.width,
+                    rect.height,
+                    0,
+                    0,
+                    canvas.width,
+                    canvas.height
+                );
+                return canvas;
+            }
+
+            async function captureLiveSaveVerificationTargets(editSnapshot) {
+                const pageEdits = new Map();
+                editSnapshot?.edited?.forEach((editData, key) => {
+                    if (!isMaterialOverlaySaveEdit(editData, { honorForceReinsert: false })) {
+                        return;
+                    }
+                    const pageNumber = Number(editData?.page_number) || 0;
+                    if (!pageNumber) {
+                        return;
+                    }
+                    if (!pageEdits.has(pageNumber)) {
+                        pageEdits.set(pageNumber, []);
+                    }
+                    pageEdits.get(pageNumber).push({
+                        key,
+                        editData: clonePlainData(editData),
+                    });
+                });
+
+                const targets = [];
+                for (const [pageNumber, editEntries] of pageEdits.entries()) {
+                    const pageWrapper = getRenderedPageWrapper(pageNumber);
+                    if (!pageWrapper) {
+                        throw new Error(`Verification could not find page ${pageNumber} in the viewer.`);
+                    }
+                    const edits = editEntries.map((entry) => entry.editData);
+                    const snapshotCanvas = await captureRenderedPageSnapshot(pageWrapper, editEntries);
+                    const cropRect = buildVerificationCropRect(pageNumber, edits, snapshotCanvas.width, snapshotCanvas.height);
+                    targets.push({
+                        pageNumber,
+                        edits,
+                        editEntries,
+                        fullCanvas: snapshotCanvas,
+                        cropRect,
+                        targetTextSignature: buildVerificationExpectedTextSignature(edits),
+                    });
+                }
+
+                return targets;
+            }
+
+            async function createWorkingCopySnapshot() {
+                const response = await fetch(createWorkingCopySnapshotUrl, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: {
+                        'X-CSRF-TOKEN': csrfToken,
+                        'Accept': 'application/json',
+                    },
+                });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    throw new Error(result.error || result.message || `Failed to create working-copy snapshot (${response.status}).`);
+                }
+                if (!result?.success || !result?.snapshot_token) {
+                    throw new Error(result.error || result.message || 'Working-copy snapshot did not return a token.');
+                }
+                return result;
+            }
+
+            async function restorePdfWorkingCopy(snapshotToken, { discardPreviewEntries = [], deleteSnapshot = false } = {}) {
+                const response = await fetch(restoreWorkingCopyUrl, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: {
+                        'X-CSRF-TOKEN': csrfToken,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        snapshot_token: snapshotToken,
+                        discard_preview_entries: discardPreviewEntries,
+                        delete_snapshot: !!deleteSnapshot,
+                    }),
+                });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok || !result.success) {
+                    throw new Error(result.error || result.message || `Failed to restore working copy (${response.status}).`);
+                }
+                pdfVersion = Date.now();
+                return result;
+            }
+
+            async function discardWorkingCopySnapshot(snapshotToken, { discardPreviewEntries = [] } = {}) {
+                if (!snapshotToken) {
+                    return { success: true };
+                }
+
+                const response = await fetch(discardWorkingCopySnapshotUrl, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: {
+                        'X-CSRF-TOKEN': csrfToken,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        snapshot_token: snapshotToken,
+                        discard_preview_entries: discardPreviewEntries,
+                    }),
+                });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok || !result.success) {
+                    throw new Error(result.error || result.message || `Failed to discard working-copy snapshot (${response.status}).`);
+                }
+                return result;
+            }
+
+            async function extractSavedPdfVerificationTextSignature(pdf, pageNumber, cropRect) {
+                const page = await pdf.getPage(pageNumber);
+                const viewport = page.getViewport({ scale: currentScale });
+                const cropBounds = buildVerificationCropBounds(cropRect);
+                const textContent = await page.getTextContent();
+                const entries = textContent.items
+                    .map((item) => {
+                        const transform = pdfjsLib.Util.transform(viewport.transform, item.transform);
+                        const left = transform[4];
+                        const baselineY = transform[5];
+                        const height = Math.abs(transform[3]) || Math.abs(item.height || 0);
+                        const width = Math.max(
+                            0,
+                            (Number(item.width) || 0) * viewport.scale
+                        );
+                        const bounds = {
+                            left,
+                            top: baselineY - height,
+                            width,
+                            height,
+                            right: left + width,
+                            bottom: baselineY,
+                        };
+                        if (!rectsIntersect(bounds, cropBounds)) {
+                            return null;
+                        }
+                        const text = normalizeVerificationText(item.str);
+                        if (!text) {
+                            return null;
+                        }
+                        return {
+                            top: bounds.top,
+                            left: bounds.left,
+                            text,
+                        };
+                    })
+                    .filter(Boolean)
+                    .sort((a, b) => (Math.abs(a.top - b.top) < 2 ? a.left - b.left : a.top - b.top));
+
+                return normalizeVerificationText(entries.map((entry) => entry.text).join(' '));
+            }
+
+            async function renderSavedPdfVerificationCanvases(targets) {
+                const joiner = pdfUrl.includes('?') ? '&' : '?';
+                const loadingTask = pdfjsLib.getDocument(`${pdfUrl}${joiner}verify=${Date.now()}`);
+                const pdf = await loadingTask.promise;
+                try {
+                    const rendered = new Map();
+                    for (const target of targets) {
+                        const page = await pdf.getPage(target.pageNumber);
+                        const viewport = page.getViewport({ scale: currentScale });
+                        const renderCanvas = document.createElement('canvas');
+                        renderCanvas.width = Math.max(1, Math.ceil(viewport.width));
+                        renderCanvas.height = Math.max(1, Math.ceil(viewport.height));
+                        await page.render({
+                            canvasContext: renderCanvas.getContext('2d'),
+                            viewport,
+                        }).promise;
+
+                        if (renderCanvas.width !== target.fullCanvas.width || renderCanvas.height !== target.fullCanvas.height) {
+                            const scaledCanvas = document.createElement('canvas');
+                            scaledCanvas.width = target.fullCanvas.width;
+                            scaledCanvas.height = target.fullCanvas.height;
+                            scaledCanvas.getContext('2d').drawImage(renderCanvas, 0, 0, scaledCanvas.width, scaledCanvas.height);
+                            rendered.set(target.pageNumber, {
+                                canvas: scaledCanvas,
+                                textSignature: await extractSavedPdfVerificationTextSignature(pdf, target.pageNumber, target.cropRect),
+                            });
+                        } else {
+                            rendered.set(target.pageNumber, {
+                                canvas: renderCanvas,
+                                textSignature: await extractSavedPdfVerificationTextSignature(pdf, target.pageNumber, target.cropRect),
+                            });
+                        }
+                    }
+                    return rendered;
+                } finally {
+                    if (pdf?.destroy) {
+                        await pdf.destroy().catch(() => {});
+                    }
+                }
+            }
+
+            async function loadVerificationImageCanvas(imageUrl, targetWidth = null, targetHeight = null) {
+                if (!imageUrl) {
+                    return null;
+                }
+
+                const response = await fetch(`${imageUrl}${imageUrl.includes('?') ? '&' : '?'}verify_image=${Date.now()}`, {
+                    credentials: 'same-origin',
+                    cache: 'no-store',
+                });
+                if (!response.ok) {
+                    throw new Error(`Failed to load verification image (${response.status}).`);
+                }
+
+                const blob = await response.blob();
+                const bitmap = await createImageBitmap(blob);
+                const width = Math.max(1, Math.round(Number(targetWidth) || bitmap.width || 1));
+                const height = Math.max(1, Math.round(Number(targetHeight) || bitmap.height || 1));
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const context = canvas.getContext('2d');
+                context.drawImage(bitmap, 0, 0, width, height);
+                bitmap.close?.();
+                return canvas;
+            }
+
+            function compareVerificationCanvases(targetCanvas, savedCanvas) {
+                const width = Math.max(1, Math.min(targetCanvas.width, savedCanvas.width));
+                const height = Math.max(1, Math.min(targetCanvas.height, savedCanvas.height));
+                const targetData = targetCanvas.getContext('2d').getImageData(0, 0, width, height);
+                const savedData = savedCanvas.getContext('2d').getImageData(0, 0, width, height);
+                const diffCanvas = document.createElement('canvas');
+                diffCanvas.width = width;
+                diffCanvas.height = height;
+                const diffContext = diffCanvas.getContext('2d');
+                const diffData = diffContext.createImageData(width, height);
+
+                let diffPixels = 0;
+                for (let offset = 0; offset < targetData.data.length; offset += 4) {
+                    const delta = Math.abs(targetData.data[offset] - savedData.data[offset])
+                        + Math.abs(targetData.data[offset + 1] - savedData.data[offset + 1])
+                        + Math.abs(targetData.data[offset + 2] - savedData.data[offset + 2])
+                        + Math.abs(targetData.data[offset + 3] - savedData.data[offset + 3]);
+                    if (delta > liveSaveVerifyPixelDelta) {
+                        diffPixels += 1;
+                        diffData.data[offset] = 220;
+                        diffData.data[offset + 1] = 38;
+                        diffData.data[offset + 2] = 38;
+                        diffData.data[offset + 3] = 255;
+                    } else {
+                        diffData.data[offset] = savedData.data[offset];
+                        diffData.data[offset + 1] = savedData.data[offset + 1];
+                        diffData.data[offset + 2] = savedData.data[offset + 2];
+                        diffData.data[offset + 3] = Math.max(48, savedData.data[offset + 3]);
+                    }
+                }
+                diffContext.putImageData(diffData, 0, 0);
+
+                return {
+                    diffPixels,
+                    totalPixels: width * height,
+                    mismatchRatio: diffPixels / Math.max(1, width * height),
+                    diffCanvas,
+                };
+            }
+
+            async function verifySavedPdfAgainstTargets(targets, attempt, saveResult = null) {
+                if (!Array.isArray(targets) || targets.length === 0) {
+                    return { ok: true, pages: [], attempt };
+                }
+
+                await new Promise((resolve) => setTimeout(resolve, 300));
+                const backendPreviewEntries = getLiveSavePreviewEntries(saveResult);
+                const backendPreviewAssets = getLiveSavePreviewAssets(saveResult);
+                const renderedPages = await renderSavedPdfVerificationCanvases(targets);
+                const pageResults = [];
+
+                for (const target of targets) {
+                    const matchingPreviewAssets = backendPreviewAssets.filter((asset) => previewMatchesVerificationTarget(asset?.preview, target));
+                    let targetCropRect = target.cropRect;
+                    let savedCrop = null;
+                    let savedTextSignature = '';
+                    let backendPreviewMatched = false;
+                    let previewImageMatched = false;
+                    let usedBackendPreviewImage = false;
+
+                    if (matchingPreviewAssets.length === 1 && matchingPreviewAssets[0]?.finalImageUrl) {
+                        const previewAsset = matchingPreviewAssets[0];
+                        const previewCropRect = buildVerificationClipRectFromPreview(target, previewAsset.preview);
+                        if (previewCropRect) {
+                            targetCropRect = previewCropRect;
+                        }
+                        usedBackendPreviewImage = true;
+                        const targetCrop = cropCanvasRegion(target.fullCanvas, targetCropRect);
+                        savedCrop = await loadVerificationImageCanvas(
+                            previewAsset.finalImageUrl,
+                            targetCrop.width,
+                            targetCrop.height
+                        );
+                        backendPreviewMatched = previewMatchesVerificationTarget(previewAsset?.preview, target);
+                        const comparison = compareVerificationCanvases(targetCrop, savedCrop);
+                        previewImageMatched = comparison.diffPixels < liveSaveVerifyMinDiffPixels
+                            || comparison.mismatchRatio <= liveSaveVerifyMismatchThreshold;
+                        const targetTextSignature = normalizeVerificationText(target.targetTextSignature);
+                        const compactTargetTextSignature = compactVerificationText(target.targetTextSignature);
+                        const compactSavedTextSignature = '';
+                        const strictTextMatched = false;
+                        const compactTextMatched = false;
+                        const textMatched = false;
+                        pageResults.push({
+                            pageNumber: target.pageNumber,
+                            cropRect: targetCropRect,
+                            mismatchRatio: comparison.mismatchRatio,
+                            diffPixels: comparison.diffPixels,
+                            totalPixels: comparison.totalPixels,
+                            targetTextSignature,
+                            savedTextSignature,
+                            compactTargetTextSignature,
+                            compactSavedTextSignature,
+                            backendPreviewMatched,
+                            previewImageMatched,
+                            usedBackendPreviewImage,
+                            strictTextMatched,
+                            compactTextMatched,
+                            textMatched,
+                            targetCanvas: targetCrop,
+                            savedCanvas: savedCrop,
+                            diffCanvas: comparison.diffCanvas,
+                        });
+                        continue;
+                    }
+
+                    const savedPage = renderedPages.get(target.pageNumber);
+                    if (!savedPage?.canvas) {
+                        throw new Error(`Verification render missed page ${target.pageNumber}.`);
+                    }
+                    const savedCanvas = savedPage.canvas;
+                    const targetCrop = cropCanvasRegion(target.fullCanvas, target.cropRect);
+                    savedCrop = cropCanvasRegion(savedCanvas, target.cropRect);
+                    const comparison = compareVerificationCanvases(targetCrop, savedCrop);
+                    backendPreviewMatched = backendPreviewEntries.some((preview) => previewMatchesVerificationTarget(preview, target));
+                    const targetTextSignature = normalizeVerificationText(target.targetTextSignature);
+                    savedTextSignature = normalizeVerificationText(savedPage.textSignature);
+                    const compactTargetTextSignature = compactVerificationText(target.targetTextSignature);
+                    const compactSavedTextSignature = compactVerificationText(savedPage.textSignature);
+                    const strictTextMatched = targetTextSignature.length > 0
+                        && targetTextSignature === savedTextSignature;
+                    const compactTextMatched = compactTargetTextSignature.length > 0
+                        && (
+                            compactTargetTextSignature === compactSavedTextSignature
+                            || compactSavedTextSignature.includes(compactTargetTextSignature)
+                            || compactTargetTextSignature.includes(compactSavedTextSignature)
+                        );
+                    const textMatched = backendPreviewMatched
+                        || strictTextMatched
+                        || (verificationTargetIsSingleLine(target) && compactTextMatched);
+                    pageResults.push({
+                        pageNumber: target.pageNumber,
+                        cropRect: target.cropRect,
+                        mismatchRatio: comparison.mismatchRatio,
+                        diffPixels: comparison.diffPixels,
+                        totalPixels: comparison.totalPixels,
+                        targetTextSignature,
+                        savedTextSignature,
+                        compactTargetTextSignature,
+                        compactSavedTextSignature,
+                        backendPreviewMatched,
+                        previewImageMatched,
+                        usedBackendPreviewImage,
+                        strictTextMatched,
+                        compactTextMatched,
+                        textMatched,
+                        targetCanvas: targetCrop,
+                        savedCanvas: savedCrop,
+                        diffCanvas: comparison.diffCanvas,
+                    });
+                }
+
+                const failingPages = pageResults.filter((result) => {
+                    const hasVisualMismatch = result.diffPixels >= liveSaveVerifyMinDiffPixels
+                        && result.mismatchRatio > liveSaveVerifyMismatchThreshold;
+                    if (!hasVisualMismatch) {
+                        return false;
+                    }
+                    if (result.usedBackendPreviewImage) {
+                        return !result.previewImageMatched;
+                    }
+                    return !result.textMatched;
+                });
+
+                window.__lastLiveSaveVerification = {
+                    attempt,
+                    pages: pageResults.map((result) => ({
+                        pageNumber: result.pageNumber,
+                        cropRect: result.cropRect,
+                        mismatchRatio: result.mismatchRatio,
+                        diffPixels: result.diffPixels,
+                        totalPixels: result.totalPixels,
+                        targetTextSignature: result.targetTextSignature,
+                        savedTextSignature: result.savedTextSignature,
+                        compactTargetTextSignature: result.compactTargetTextSignature,
+                        compactSavedTextSignature: result.compactSavedTextSignature,
+                        backendPreviewMatched: result.backendPreviewMatched,
+                        strictTextMatched: result.strictTextMatched,
+                        compactTextMatched: result.compactTextMatched,
+                        textMatched: result.textMatched,
+                        targetDataUrl: result.targetCanvas.toDataURL('image/png'),
+                        savedDataUrl: result.savedCanvas.toDataURL('image/png'),
+                        diffDataUrl: result.diffCanvas.toDataURL('image/png'),
+                    })),
+                };
+
+                if (failingPages.length === 0) {
+                    return { ok: true, attempt, pages: pageResults };
+                }
+
+                const worstPage = failingPages.reduce((currentWorst, page) => (
+                    !currentWorst || page.mismatchRatio > currentWorst.mismatchRatio ? page : currentWorst
+                ), null);
+
+                return {
+                    ok: false,
+                    attempt,
+                    pages: pageResults,
+                    message: `Verification mismatch on page ${worstPage.pageNumber} (attempt ${attempt}): ${(worstPage.mismatchRatio * 100).toFixed(2)}% pixel drift in the edited region.`,
+                };
+            }
+
+            async function saveOverlayEditsWithVerification() {
+                const overlayState = snapshotOverlayEditState();
+                const targets = await captureLiveSaveVerificationTargets(overlayState);
+                if (targets.length === 0) {
+                    return saveOverlayEditsIfNeeded(1);
+                }
+                let lastFailure = null;
+                let baseSnapshotToken = null;
+                let activeSnapshotToken = null;
+                let activeDiscardPreviewEntries = [];
+
+                try {
+                    const baseSnapshot = await createWorkingCopySnapshot();
+                    baseSnapshotToken = baseSnapshot.snapshot_token;
+
+                    for (let attempt = 1; attempt <= liveSaveVerifyMaxAttempts; attempt += 1) {
+                        if (activeSnapshotToken) {
+                            await discardWorkingCopySnapshot(activeSnapshotToken, {
+                                discardPreviewEntries: activeDiscardPreviewEntries,
+                            });
+                            activeSnapshotToken = null;
+                            activeDiscardPreviewEntries = [];
+                        }
+
+                        if (attempt > 1 && baseSnapshotToken) {
+                            await restorePdfWorkingCopy(baseSnapshotToken);
+                        }
+
+                        const workingCopySnapshot = await createWorkingCopySnapshot();
+                        activeSnapshotToken = workingCopySnapshot.snapshot_token;
+                        restoreOverlayEditState(overlayState);
+                        _liveSavedKeys.clear();
+
+                        setSaveSpinner(true, `Saving PDF... attempt ${attempt}/${liveSaveVerifyMaxAttempts}`);
+                        setStatus(`Saving PDF... verifying attempt ${attempt}/${liveSaveVerifyMaxAttempts}`, '');
+
+                        const saveResult = await saveOverlayEditsIfNeeded(attempt, {
+                            workingCopyToken: activeSnapshotToken,
+                            finalizeLiveSave: false,
+                        });
+                        if (!saveResult?.saved) {
+                            if (activeSnapshotToken) {
+                                await discardWorkingCopySnapshot(activeSnapshotToken, {
+                                    discardPreviewEntries: activeDiscardPreviewEntries,
+                                });
+                                activeSnapshotToken = null;
+                                activeDiscardPreviewEntries = [];
+                            }
+                            if (baseSnapshotToken) {
+                                await restorePdfWorkingCopy(baseSnapshotToken, {
+                                    deleteSnapshot: true,
+                                });
+                                baseSnapshotToken = null;
+                            }
+                            return saveResult;
+                        }
+
+                        const verification = await verifySavedPdfAgainstTargets(targets, attempt, saveResult);
+                        if (verification.ok) {
+                            const finalized = await finalizeLiveSaveSession({ workingCopyToken: activeSnapshotToken });
+                            try {
+                                await discardWorkingCopySnapshot(activeSnapshotToken);
+                            } catch (cleanupError) {
+                                console.warn('[live-save verify] snapshot cleanup failed', cleanupError);
+                            }
+                            activeSnapshotToken = null;
+                            if (baseSnapshotToken) {
+                                try {
+                                    await discardWorkingCopySnapshot(baseSnapshotToken);
+                                } catch (cleanupError) {
+                                    console.warn('[live-save verify] base snapshot cleanup failed', cleanupError);
+                                }
+                                baseSnapshotToken = null;
+                            }
+                            return {
+                                ...saveResult,
+                                ...finalized,
+                                verification,
+                            };
+                        }
+
+                        activeDiscardPreviewEntries.push(...collectLiveSavePreviewEntryIds(saveResult));
+                        lastFailure = verification;
+                        console.warn('[live-save verify] mismatch', verification);
+                    }
+                } catch (error) {
+                    lastFailure = error;
+                }
+
+                if (activeSnapshotToken) {
+                    try {
+                        await discardWorkingCopySnapshot(activeSnapshotToken, {
+                            discardPreviewEntries: activeDiscardPreviewEntries,
+                        });
+                    } catch (discardError) {
+                        console.error('[live-save verify] failed to discard attempt snapshot', discardError);
+                    } finally {
+                        activeSnapshotToken = null;
+                    }
+                }
+                if (baseSnapshotToken) {
+                    try {
+                        await restorePdfWorkingCopy(baseSnapshotToken, {
+                            deleteSnapshot: true,
+                        });
+                    } catch (restoreError) {
+                        console.error('[live-save verify] failed to restore pre-save PDF snapshot', restoreError);
+                    } finally {
+                        baseSnapshotToken = null;
+                    }
+                }
+                restoreOverlayEditState(overlayState);
+                _liveSavedKeys.clear();
+                updateOverlaySaveButton();
+                throw new Error(lastFailure?.message || 'Saved PDF did not match the frontend after repeated verification attempts.');
+            }
+
+            /**
+             * Mark the currently selected overlay field as dirty (changed) so
+             * the save button appears.  This is called after style-only changes
+             * (bold, italic, underline, color, font, size, etc.) that do NOT
+             * move or resize the field.
+             */
+            function markOverlayFieldDirty(fields = null) {
+                const targetFields = Array.isArray(fields) && fields.length
+                    ? fields.filter((field) => field && document.body.contains(field))
+                    : getOverlayStyleTargets();
+                if (!targetFields.length) return;
+
+                targetFields.forEach((field) => {
+                    const built = buildOverlayEditRecordFromField(field);
+                    if (!built) return;
+                    overlayEditedFields.set(built.key, built.value);
                 });
 
                 persistOverlayEdits();
                 updateOverlaySaveButton();
                 pushUndoState();
+            }
+
+            function buildOverlayWordStylesForSave(field, fallbackFont, fallbackWeight, fallbackStyle, sourceWords = null, overrideText = null) {
+                const blockWords = Array.isArray(sourceWords) ? sourceWords : (Array.isArray(field?._blockWords) ? field._blockWords : []);
+                if (!blockWords.length) {
+                    return [];
+                }
+
+                const normalizeWeightValue = (value, fallback = 400) => {
+                    if (value === null || value === undefined || value === '') return fallback;
+                    const lower = String(value).toLowerCase().trim();
+                    if (lower === 'bold') return 700;
+                    if (lower === 'normal') return 400;
+                    const parsed = parseInt(lower, 10);
+                    return Number.isFinite(parsed) ? parsed : fallback;
+                };
+
+                const resolvedFont = field.dataset.fontFamily || field.dataset.font || fallbackFont || 'Helvetica';
+                const resolvedStyle = field.dataset.fontStyle || fallbackStyle || 'normal';
+                const resolvedWeight = normalizeWeightValue(field.dataset.fontWeight || fallbackWeight, 400);
+                const currentColor = (field.dataset.textColor || '').trim();
+                const originalColor = (field.dataset.originalTextColor || currentColor || '#000000').trim();
+                const hasFontOverride = !!field.dataset.fontFamily && field.dataset.fontFamily !== field.dataset.font;
+                const hasWeightOverride = resolvedWeight !== normalizeWeightValue(field.dataset.originalFontWeight || fallbackWeight, 400);
+                const hasStyleOverride = resolvedStyle !== (field.dataset.originalFontStyle || fallbackStyle || 'normal');
+                const hasColorOverride = currentColor && currentColor.toLowerCase() !== originalColor.toLowerCase();
+                const hasUnderlineOverride = field.dataset.underline === 'true';
+                const cleanText = (value) => String(value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                const getWordBounds = (words) => {
+                    if (!Array.isArray(words) || !words.length) return null;
+                    let minLeft = Infinity;
+                    let minTop = Infinity;
+                    let maxRight = -Infinity;
+                    let maxBottom = -Infinity;
+                    let maxOriginY = -Infinity;
+                    words.forEach((word) => {
+                        const left = Number(word?.left) || 0;
+                        const top = Number(word?.top) || 0;
+                        const width = Number(word?.width) || 0;
+                        const height = Number(word?.height) || 0;
+                        minLeft = Math.min(minLeft, left);
+                        minTop = Math.min(minTop, top);
+                        maxRight = Math.max(maxRight, left + width);
+                        maxBottom = Math.max(maxBottom, top + height);
+                        maxOriginY = Math.max(maxOriginY, Number(word?.origin_y) || (top + height));
+                    });
+                    if (!Number.isFinite(minLeft) || !Number.isFinite(minTop) || !Number.isFinite(maxRight) || !Number.isFinite(maxBottom)) {
+                        return null;
+                    }
+                    return {
+                        left: minLeft,
+                        top: minTop,
+                        width: Math.max(1, maxRight - minLeft),
+                        height: Math.max(1, maxBottom - minTop),
+                        origin_y: Number.isFinite(maxOriginY) ? maxOriginY : maxBottom,
+                    };
+                };
+                const groupWordsByVisualLine = (words) => {
+                    const sortedWords = [...words].sort((a, b) => ((Number(a.top) || 0) - (Number(b.top) || 0)) || ((Number(a.left) || 0) - (Number(b.left) || 0)));
+                    const groups = [];
+                    sortedWords.forEach((word) => {
+                        const wordTop = Number(word?.top) || 0;
+                        const wordHeight = Number(word?.height) || 0;
+                        const wordBottom = wordTop + wordHeight;
+                        let targetGroup = groups.find((group) => {
+                            const groupTop = group.top;
+                            const groupBottom = group.bottom;
+                            const inter = Math.max(0, Math.min(groupBottom, wordBottom) - Math.max(groupTop, wordTop));
+                            const minHeight = Math.max(1, Math.min(groupBottom - groupTop, wordHeight));
+                            return (inter / minHeight) >= 0.35;
+                        });
+                        if (!targetGroup) {
+                            targetGroup = {
+                                words: [],
+                                top: wordTop,
+                                bottom: wordBottom,
+                            };
+                            groups.push(targetGroup);
+                        } else {
+                            targetGroup.top = Math.min(targetGroup.top, wordTop);
+                            targetGroup.bottom = Math.max(targetGroup.bottom, wordBottom);
+                        }
+                        targetGroup.words.push(word);
+                    });
+                    return groups
+                        .map((group) => ({
+                            words: group.words.sort((a, b) => ((Number(a.left) || 0) - (Number(b.left) || 0))),
+                            bounds: getWordBounds(group.words),
+                        }))
+                        .filter((group) => group.words.length > 0 && group.bounds);
+                };
+                const currentEditor = field?.querySelector?.('[contenteditable]');
+                const currentText = cleanText(
+                    overrideText !== null && overrideText !== undefined
+                        ? overrideText
+                        : (currentEditor ? currentEditor.innerText : field?.innerText)
+                );
+                const currentLines = currentText
+                    .split('\n')
+                    .map((line) => line.trim())
+                    .filter((line) => line.length > 0);
+                const visualLineGroups = groupWordsByVisualLine(blockWords);
+                const normalizeComparableText = (value) => cleanText(value).replace(/\s+/g, ' ').trim();
+                const visualLineTexts = visualLineGroups.map((group) => group.words
+                    .map((word) => cleanText(word?.text || '').trim())
+                    .filter((text) => text.length > 0)
+                    .join(' ')
+                    .trim()
+                ).filter((line) => line.length > 0);
+                const sourceText = visualLineTexts.join('\n');
+                const textChanged = normalizeComparableText(currentText) !== normalizeComparableText(sourceText);
+
+                // If multiline text has been reflowed, the original per-word geometry is stale.
+                // Falling back to block insertion avoids scattering paragraph fragments across
+                // old word positions during save.
+                if (visualLineGroups.length > 1 && textChanged && currentLines.length !== visualLineGroups.length) {
+                    return [];
+                }
+
+                if (visualLineGroups.length > 0 && currentLines.length === visualLineGroups.length) {
+                    return visualLineGroups.map((group, index) => {
+                        const styleWord = [...group.words].sort((a, b) => ((Number(b.font_size) || 0) - (Number(a.font_size) || 0)) || ((Number(a.left) || 0) - (Number(b.left) || 0)))[0];
+                        const originalWeight = normalizeWeightValue(styleWord.font_weight, styleWord.bold ? 700 : 400);
+                        const originalColorHex = (styleWord.hex_color || currentColor || '#000000').trim();
+
+                        return {
+                            text: currentLines[index],
+                            font: hasFontOverride ? resolvedFont : (styleWord.font || fallbackFont || 'Helvetica'),
+                            font_xref: hasFontOverride ? null : (styleWord.font_xref || null),
+                            font_size: styleWord.font_size,
+                            font_weight: hasWeightOverride ? resolvedWeight : originalWeight,
+                            italic: hasStyleOverride ? (resolvedStyle === 'italic') : !!styleWord.italic,
+                            bold: hasWeightOverride ? (resolvedWeight >= 700) : !!styleWord.bold,
+                            underline: hasUnderlineOverride ? true : !!styleWord.underline,
+                            color: hasColorOverride ? currentColor : (styleWord.color ?? null),
+                            hex_color: hasColorOverride ? currentColor : (originalColorHex || '#000000'),
+                            left: group.bounds.left,
+                            top: group.bounds.top,
+                            width: group.bounds.width,
+                            height: group.bounds.height,
+                            origin_x: group.bounds.left,
+                            origin_y: group.bounds.origin_y,
+                            ascender: styleWord.ascender,
+                            descender: styleWord.descender,
+                        };
+                    });
+                }
+
+                return blockWords.map((w) => {
+                    const originalWeight = normalizeWeightValue(w.font_weight, w.bold ? 700 : 400);
+                    const originalColorHex = (w.hex_color || currentColor || '#000000').trim();
+
+                    return {
+                        text: w.text,
+                        font: hasFontOverride ? resolvedFont : (w.font || fallbackFont || 'Helvetica'),
+                        font_xref: hasFontOverride ? null : (w.font_xref || null),
+                        font_size: w.font_size,
+                        font_weight: hasWeightOverride ? resolvedWeight : originalWeight,
+                        italic: hasStyleOverride ? (resolvedStyle === 'italic') : !!w.italic,
+                        bold: hasWeightOverride ? (resolvedWeight >= 700) : !!w.bold,
+                        underline: hasUnderlineOverride ? true : !!w.underline,
+                        color: hasColorOverride ? currentColor : (w.color ?? null),
+                        hex_color: hasColorOverride ? currentColor : (originalColorHex || '#000000'),
+                        left: w.left,
+                        top: w.top,
+                        width: w.width,
+                        height: w.height,
+                        origin_x: w.origin_x,
+                        origin_y: w.origin_y,
+                        ascender: w.ascender,
+                        descender: w.descender,
+                    };
+                });
+            }
+
+            function buildOverlayLineMetricsForSave(field, fallbackFont, fallbackWeight, fallbackStyle, sourceWords = null) {
+                const blockWords = Array.isArray(sourceWords) ? sourceWords : (Array.isArray(field?._blockWords) ? field._blockWords : []);
+                if (!blockWords.length) {
+                    return [];
+                }
+
+                const normalizeWeightValue = (value, fallback = 400) => {
+                    if (value === null || value === undefined || value === '') return fallback;
+                    const lower = String(value).toLowerCase().trim();
+                    if (lower === 'bold') return 700;
+                    if (lower === 'normal') return 400;
+                    const parsed = parseInt(lower, 10);
+                    return Number.isFinite(parsed) ? parsed : fallback;
+                };
+
+                const resolvedFont = field.dataset.fontFamily || field.dataset.font || fallbackFont || 'Helvetica';
+                const resolvedStyle = field.dataset.fontStyle || fallbackStyle || 'normal';
+                const resolvedWeight = normalizeWeightValue(field.dataset.fontWeight || fallbackWeight, 400);
+                const currentColor = (field.dataset.textColor || '').trim();
+                const originalColor = (field.dataset.originalTextColor || currentColor || '#000000').trim();
+                const hasFontOverride = !!field.dataset.fontFamily && field.dataset.fontFamily !== field.dataset.font;
+                const hasWeightOverride = resolvedWeight !== normalizeWeightValue(field.dataset.originalFontWeight || fallbackWeight, 400);
+                const hasStyleOverride = resolvedStyle !== (field.dataset.originalFontStyle || fallbackStyle || 'normal');
+                const hasColorOverride = currentColor && currentColor.toLowerCase() !== originalColor.toLowerCase();
+                const hasUnderlineOverride = field.dataset.underline === 'true';
+                const cleanText = (value) => String(value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                const getWordBounds = (words) => {
+                    if (!Array.isArray(words) || !words.length) return null;
+                    let minLeft = Infinity;
+                    let minTop = Infinity;
+                    let maxRight = -Infinity;
+                    let maxBottom = -Infinity;
+                    let maxOriginY = -Infinity;
+                    words.forEach((word) => {
+                        const left = Number(word?.left) || 0;
+                        const top = Number(word?.top) || 0;
+                        const width = Number(word?.width) || 0;
+                        const height = Number(word?.height) || 0;
+                        minLeft = Math.min(minLeft, left);
+                        minTop = Math.min(minTop, top);
+                        maxRight = Math.max(maxRight, left + width);
+                        maxBottom = Math.max(maxBottom, top + height);
+                        maxOriginY = Math.max(maxOriginY, Number(word?.origin_y) || (top + height));
+                    });
+                    if (!Number.isFinite(minLeft) || !Number.isFinite(minTop) || !Number.isFinite(maxRight) || !Number.isFinite(maxBottom)) {
+                        return null;
+                    }
+                    return {
+                        left: minLeft,
+                        top: minTop,
+                        width: Math.max(1, maxRight - minLeft),
+                        height: Math.max(1, maxBottom - minTop),
+                        origin_y: Number.isFinite(maxOriginY) ? maxOriginY : maxBottom,
+                    };
+                };
+                const groupWordsByVisualLine = (words) => {
+                    const sortedWords = [...words].sort((a, b) => ((Number(a.top) || 0) - (Number(b.top) || 0)) || ((Number(a.left) || 0) - (Number(b.left) || 0)));
+                    const groups = [];
+                    sortedWords.forEach((word) => {
+                        const wordTop = Number(word?.top) || 0;
+                        const wordHeight = Number(word?.height) || 0;
+                        const wordBottom = wordTop + wordHeight;
+                        let targetGroup = groups.find((group) => {
+                            const groupTop = group.top;
+                            const groupBottom = group.bottom;
+                            const inter = Math.max(0, Math.min(groupBottom, wordBottom) - Math.max(groupTop, wordTop));
+                            const minHeight = Math.max(1, Math.min(groupBottom - groupTop, wordHeight));
+                            return (inter / minHeight) >= 0.35;
+                        });
+                        if (!targetGroup) {
+                            targetGroup = {
+                                words: [],
+                                top: wordTop,
+                                bottom: wordBottom,
+                            };
+                            groups.push(targetGroup);
+                        } else {
+                            targetGroup.top = Math.min(targetGroup.top, wordTop);
+                            targetGroup.bottom = Math.max(targetGroup.bottom, wordBottom);
+                        }
+                        targetGroup.words.push(word);
+                    });
+                    return groups
+                        .map((group) => ({
+                            words: group.words.sort((a, b) => ((Number(a.left) || 0) - (Number(b.left) || 0))),
+                            bounds: getWordBounds(group.words),
+                        }))
+                        .filter((group) => group.words.length > 0 && group.bounds);
+                };
+
+                return groupWordsByVisualLine(blockWords).map((group) => {
+                    const styleWord = [...group.words].sort((a, b) => ((Number(b.font_size) || 0) - (Number(a.font_size) || 0)) || ((Number(a.left) || 0) - (Number(b.left) || 0)))[0];
+                    const originalWeight = normalizeWeightValue(styleWord.font_weight, styleWord.bold ? 700 : 400);
+                    const originalColorHex = (styleWord.hex_color || currentColor || '#000000').trim();
+                    const lineText = group.words
+                        .map((word) => cleanText(word?.text || '').trim())
+                        .filter((text) => text.length > 0)
+                        .join(' ')
+                        .trim();
+
+                    return {
+                        text: lineText,
+                        font: hasFontOverride ? resolvedFont : (styleWord.font || fallbackFont || 'Helvetica'),
+                        font_xref: hasFontOverride ? null : (styleWord.font_xref || null),
+                        font_size: styleWord.font_size,
+                        font_weight: hasWeightOverride ? resolvedWeight : originalWeight,
+                        italic: hasStyleOverride ? (resolvedStyle === 'italic') : !!styleWord.italic,
+                        bold: hasWeightOverride ? (resolvedWeight >= 700) : !!styleWord.bold,
+                        underline: hasUnderlineOverride ? true : !!styleWord.underline,
+                        color: hasColorOverride ? currentColor : (styleWord.color ?? null),
+                        hex_color: hasColorOverride ? currentColor : (originalColorHex || '#000000'),
+                        left: group.bounds.left,
+                        top: group.bounds.top,
+                        width: group.bounds.width,
+                        height: group.bounds.height,
+                        origin_x: group.bounds.left,
+                        origin_y: group.bounds.origin_y,
+                        ascender: styleWord.ascender,
+                        descender: styleWord.descender,
+                    };
+                });
+            }
+
+            function shouldConvertOverlayWordsToSyntheticTextbox(field, currentText = null, sourceWords = null, originalText = null) {
+                const blockWords = Array.isArray(sourceWords) ? sourceWords : (Array.isArray(field?._blockWords) ? field._blockWords : []);
+                if (blockWords.length < 2) {
+                    return false;
+                }
+
+                const normalizeWeightValue = (value, fallback = 400) => {
+                    if (value === null || value === undefined || value === '') return fallback;
+                    const lower = String(value).toLowerCase().trim();
+                    if (lower === 'bold') return 700;
+                    if (lower === 'normal') return 400;
+                    const parsed = parseInt(lower, 10);
+                    return Number.isFinite(parsed) ? parsed : fallback;
+                };
+                const normalizeComparableText = (value) => String(value ?? '')
+                    .replace(/\r\n/g, '\n')
+                    .replace(/\r/g, '\n')
+                    .replace(/\s+/g, ' ')
+                    .trim()
+                    .toLowerCase();
+
+                const currentNorm = normalizeComparableText(
+                    currentText !== null && currentText !== undefined
+                        ? currentText
+                        : (field?.querySelector?.('[contenteditable]')?.innerText || field?.innerText || '')
+                );
+                const originalNorm = normalizeComparableText(
+                    originalText !== null && originalText !== undefined
+                        ? originalText
+                        : (field?.dataset?.originalText || '')
+                );
+                if (!currentNorm || currentNorm === originalNorm) {
+                    return false;
+                }
+
+                const uniqueLinePositions = new Set(
+                    blockWords.map((word) => Math.round((Number(word?.top) || 0) * 2) / 2)
+                );
+                if (uniqueLinePositions.size < 2) {
+                    return false;
+                }
+
+                const styleSignatures = new Set(
+                    blockWords.map((word) => {
+                        const weight = normalizeWeightValue(word?.font_weight, word?.bold ? 700 : 400);
+                        return [
+                            String(word?.font || ''),
+                            Number(word?.font_size || 0).toFixed(2),
+                            String(weight),
+                            String(!!word?.italic),
+                            String(!!word?.bold),
+                        ].join('|');
+                    })
+                );
+
+                return styleSignatures.size > 1;
+            }
+
+            function buildSyntheticTextboxText(field, currentText = null, sourceWords = null, originalText = null) {
+                const blockWords = Array.isArray(sourceWords) ? sourceWords : (Array.isArray(field?._blockWords) ? field._blockWords : []);
+                const block = field?._overlaySourceBlock || null;
+                const cleanText = (value) => String(value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                const normalizeComparableText = (value) => cleanText(value).replace(/\s+/g, ' ').trim();
+                const originalLines = Array.isArray(block?.text_lines) && block.text_lines.length
+                    ? block.text_lines.map((line) => cleanText(line).trim()).filter((line) => line.length > 0)
+                    : [];
+                const currentRaw = cleanText(
+                    currentText !== null && currentText !== undefined
+                        ? currentText
+                        : (field?.querySelector?.('[contenteditable]')?.innerText || field?.innerText || '')
+                );
+                const originalRaw = cleanText(
+                    originalText !== null && originalText !== undefined
+                        ? originalText
+                        : (field?.dataset?.originalText || '')
+                );
+
+                if (!originalLines.length) {
+                    return currentRaw;
+                }
+
+                const currentNorm = normalizeComparableText(currentRaw);
+                const originalNorm = normalizeComparableText(originalRaw || originalLines.join('\n'));
+                if (!currentNorm || !originalNorm) {
+                    return currentRaw;
+                }
+
+                if (currentNorm === originalNorm) {
+                    return originalLines.join('\n');
+                }
+
+                if (currentNorm.startsWith(originalNorm)) {
+                    const suffix = currentNorm.slice(originalNorm.length).trim();
+                    if (suffix.length > 0) {
+                        const rebuilt = [...originalLines];
+                        rebuilt[rebuilt.length - 1] = `${rebuilt[rebuilt.length - 1]} ${suffix}`.trim();
+                        return rebuilt.join('\n');
+                    }
+                }
+
+                return currentRaw;
+            }
+
+            function buildOverlaySourceSegmentEditsForSave(field, editData) {
+                const sourceSegments = Array.isArray(field?._overlaySaveSegments)
+                    ? field._overlaySaveSegments.filter((segment) => segment && Array.isArray(segment.bbox) && segment.bbox.length >= 4)
+                    : [];
+                if (sourceSegments.length < 2) {
+                    return null;
+                }
+
+                const cleanText = (value) => String(value ?? '')
+                    .replace(/\r\n/g, '\n')
+                    .replace(/\r/g, '\n');
+                const normalizeComparableText = (value) => String(value ?? '')
+                    .replace(/\r\n/g, '\n')
+                    .replace(/\r/g, '\n')
+                    .replace(/\s+/g, ' ')
+                    .trim()
+                    .toLowerCase();
+
+                const fullOriginalText = normalizeComparableText(editData?.original_text || field?.dataset?.originalText || '');
+                const editedText = String(editData?.new_text || '');
+                const editedTextNorm = normalizeComparableText(editedText);
+                if (!editedTextNorm || editedTextNorm === fullOriginalText) {
+                    return null;
+                }
+
+                // Distribute the edited text to each source segment proportionally by
+                // the original line count of each segment. This ensures the new text for
+                // each segment is only the portion that belongs to it, preventing the
+                // full merged-field text from being written into a single segment's
+                // smaller bbox (which caused text duplication / overflow artifacts).
+                const segmentLineCounts = sourceSegments.map(
+                    (s) => Math.max(1, Array.isArray(s.text_lines) ? s.text_lines.length : 0)
+                );
+                const totalOriginalLines = segmentLineCounts.reduce((a, b) => a + b, 0);
+                let computedSegmentNewTexts = null;
+
+                // Prefer paragraph-boundary splits when the editor introduces blank
+                // separator lines between vertically merged source segments.
+                const editedParagraphs = cleanText(editedText)
+                    .split(/\n\s*\n+/)
+                    .map((paragraph) => paragraph
+                        .split('\n')
+                        .map((line) => cleanText(line))
+                        .filter((line) => line.trim().length > 0)
+                        .join('\n')
+                        .trim())
+                    .filter((paragraph) => paragraph.length > 0);
+                if (editedParagraphs.length === sourceSegments.length) {
+                    computedSegmentNewTexts = editedParagraphs;
+                }
+
+                if (!computedSegmentNewTexts) {
+                    const editedLines = cleanText(editedText)
+                        .split('\n')
+                        .map((line) => cleanText(line))
+                        .filter((line) => line.trim().length > 0);
+
+                    // Only proceed with per-segment line-based splitting when the
+                    // effective line count is preserved. Blank separator lines
+                    // between source paragraphs are ignored.
+                    if (editedLines.length === totalOriginalLines) {
+                        let lineOffset = 0;
+                        computedSegmentNewTexts = segmentLineCounts.map((count) => {
+                            const lines = editedLines.slice(lineOffset, lineOffset + count);
+                            lineOffset += count;
+                            return lines.join('\n').trim();
+                        });
+                    }
+                }
+
+                if (!computedSegmentNewTexts) {
+                    const matchIndexes = sourceSegments
+                        .map((segment, index) => {
+                            const segmentNorm = normalizeComparableText(String(segment.text || ''));
+                            if (!segmentNorm) {
+                                return null;
+                            }
+                            const prefix = segmentNorm.slice(0, Math.min(segmentNorm.length, 96));
+                            const suffix = segmentNorm.slice(Math.max(0, segmentNorm.length - 96));
+                            const likelyMatch =
+                                editedTextNorm === segmentNorm
+                                || editedTextNorm.startsWith(segmentNorm)
+                                || segmentNorm.startsWith(editedTextNorm)
+                                || (prefix.length >= 24 && editedTextNorm.includes(prefix))
+                                || (suffix.length >= 24 && editedTextNorm.includes(suffix));
+                            return likelyMatch ? index : null;
+                        })
+                        .filter((index) => index !== null);
+
+                    if (matchIndexes.length === 1) {
+                        const matchedIndex = matchIndexes[0];
+                        computedSegmentNewTexts = sourceSegments.map((segment, index) => (
+                            index === matchedIndex
+                                ? editedText.trim()
+                                : String(segment.text || '')
+                        ));
+                    }
+                }
+
+                if (!computedSegmentNewTexts) {
+                    return null;
+                }
+
+                // Bail out without generating any edits when nothing actually changed.
+                const anySegmentChanged = sourceSegments.some((segment, index) =>
+                    normalizeComparableText(String(segment.text || '')) !==
+                    normalizeComparableText(computedSegmentNewTexts[index] || '')
+                );
+                if (!anySegmentChanged) {
+                    return null;
+                }
+
+                const resolvedFont = editData.font || field.dataset.fontFamily || field.dataset.font || 'Helvetica';
+                const resolvedWeight = editData.font_weight || field.dataset.fontWeight || field.style.fontWeight || '400';
+                const resolvedStyle = editData.font_style || field.dataset.fontStyle || field.style.fontStyle || 'normal';
+
+                return sourceSegments.map((segment, index) => {
+                    const segmentText = String(segment.text || '');
+                    const segmentNewText = computedSegmentNewTexts[index];
+                    const isChanged = normalizeComparableText(segmentText) !== normalizeComparableText(segmentNewText);
+
+                    const segmentBbox = [
+                        Number(segment.bbox[0]) || 0,
+                        Number(segment.bbox[1]) || 0,
+                        Number(segment.bbox[2]) || 0,
+                        Number(segment.bbox[3]) || 0,
+                    ];
+                    const segmentWords = Array.isArray(segment.words) ? segment.words : [];
+                    const segmentWordStyles = buildOverlayWordStylesForSave(
+                        field,
+                        resolvedFont,
+                        resolvedWeight,
+                        resolvedStyle,
+                        segmentWords,
+                        isChanged ? segmentNewText : segmentText
+                    );
+                    const segmentLineMetrics = buildOverlayLineMetricsForSave(
+                        field,
+                        resolvedFont,
+                        resolvedWeight,
+                        resolvedStyle,
+                        segmentWords
+                    );
+                    const syntheticTextbox = shouldConvertOverlayWordsToSyntheticTextbox(
+                        field,
+                        segmentNewText,
+                        segmentWords,
+                        segmentText
+                    );
+                    const effectiveSegmentText = isChanged
+                        ? (
+                            syntheticTextbox
+                                ? buildSyntheticTextboxText(field, segmentNewText, segmentWords, segmentText)
+                                : segmentNewText
+                        )
+                        : segmentText;
+
+                    return {
+                        ...editData,
+                        block_num: segment.block_num ?? editData.block_num,
+                        original_text: segmentText,
+                        new_text: effectiveSegmentText,
+                        bbox: segmentBbox,
+                        original_bbox: segmentBbox,
+                        origin_x: segmentBbox[0],
+                        origin_y: segmentBbox[3],
+                        preserve_partial_block: false,
+                        force_reinsert: !!editData.force_reinsert || !isChanged,
+                        cleanup_group_bbox: Array.isArray(editData.original_bbox) && editData.original_bbox.length >= 4
+                            ? [...editData.original_bbox]
+                            : null,
+                        word_styles: (isChanged && syntheticTextbox) ? null : (segmentWordStyles.length > 0 ? segmentWordStyles : null),
+                        line_metrics: segmentLineMetrics.length > 0 ? segmentLineMetrics : null,
+                        rich_html: null,
+                        synthetic_textbox: !!(isChanged && syntheticTextbox),
+                        paragraph_bbox: [...segmentBbox],
+                        source_content_ops: dedupeOverlaySourceContentOps(
+                            (Array.isArray(segment.source_content_ops) ? segment.source_content_ops : [])
+                                .concat(segmentWords.flatMap((word) => Array.isArray(word?.source_content_ops) ? word.source_content_ops : []))
+                        ),
+                    };
+                });
+            }
+
+            function buildOverlayTableRowClusterEditsForSave(field, editData) {
+                const rowCluster = Array.isArray(field?._overlayTableRowCluster)
+                    ? field._overlayTableRowCluster.filter((segment) => segment && Array.isArray(segment.bbox) && segment.bbox.length >= 4)
+                    : [];
+                if (rowCluster.length < 2) {
+                    return null;
+                }
+
+                const currentKey = String(field?.dataset?.wordIndex || '');
+                if (!currentKey) {
+                    return null;
+                }
+
+                const normalizeComparableText = (value) => String(value ?? '')
+                    .replace(/\r\n/g, '\n')
+                    .replace(/\r/g, '\n')
+                    .replace(/\s+/g, ' ')
+                    .trim()
+                    .toLowerCase();
+
+                const editedClusterKeys = rowCluster
+                    .map((segment) => String(segment.key || ''))
+                    .filter((key) => key && overlayEditedFields.has(key))
+                    .sort();
+                const leaderKey = editedClusterKeys.length > 0 ? editedClusterKeys[0] : currentKey;
+                if (leaderKey !== currentKey) {
+                    return [];
+                }
+
+                return rowCluster.map((segment) => {
+                    const segmentKey = String(segment.key || '');
+                    const siblingField = segmentKey
+                        ? document.querySelector(`.overlay-field[data-word-index="${segmentKey}"]`)
+                        : null;
+                    const siblingEdit = segmentKey ? overlayEditedFields.get(segmentKey) : null;
+                    const segmentText = String(segment.text || '');
+                    const segmentNewText = siblingEdit
+                        ? String(siblingEdit.new_text || '')
+                        : (segmentKey === currentKey
+                            ? String(editData?.new_text || '')
+                            : segmentText);
+                    const isChanged = normalizeComparableText(segmentText) !== normalizeComparableText(segmentNewText);
+                    const resolvedFont = segment.font || editData.font || field.dataset.fontFamily || field.dataset.font || 'Helvetica';
+                    const resolvedWeight = segment.font_weight || editData.font_weight || field.dataset.fontWeight || field.style.fontWeight || '400';
+                    const resolvedStyle = segment.font_style || editData.font_style || field.dataset.fontStyle || field.style.fontStyle || 'normal';
+                    const styleField = siblingField || field;
+                    const syntheticTextbox = isChanged && shouldConvertOverlayWordsToSyntheticTextbox(
+                        styleField,
+                        segmentNewText,
+                        segment.words,
+                        segmentText
+                    );
+                    const effectiveSegmentText = isChanged
+                        ? (
+                            syntheticTextbox
+                                ? buildSyntheticTextboxText(styleField, segmentNewText, segment.words, segmentText)
+                                : segmentNewText
+                        )
+                        : segmentText;
+                    const segmentWordStyles = buildOverlayWordStylesForSave(
+                        styleField,
+                        resolvedFont,
+                        resolvedWeight,
+                        resolvedStyle,
+                        segment.words,
+                        effectiveSegmentText
+                    );
+                    const segmentLineMetrics = buildOverlayLineMetricsForSave(
+                        styleField,
+                        resolvedFont,
+                        resolvedWeight,
+                        resolvedStyle,
+                        segment.words
+                    );
+
+                    return {
+                        ...editData,
+                        page_number: editData.page_number,
+                        block_num: segment.block_num ?? editData.block_num,
+                        original_text: segmentText,
+                        new_text: effectiveSegmentText,
+                        bbox: [...segment.bbox],
+                        original_bbox: [...segment.bbox],
+                        origin_x: Number(segment.bbox[0]) || 0,
+                        origin_y: Number(segment.bbox[3]) || 0,
+                        font: resolvedFont,
+                        font_size: Number(segment.font_size) || Number(editData.font_size) || 12,
+                        font_weight: String(resolvedWeight),
+                        font_style: resolvedStyle,
+                        font_xref: segment.font_xref ?? editData.font_xref ?? null,
+                        line_height: segment.line_height || editData.line_height || null,
+                        color: segment.color || editData.color || '#000000',
+                        preserve_partial_block: false,
+                        force_reinsert: true,
+                        table_row_cluster_rebuild: true,
+                        cleanup_group_bbox: Array.isArray(segment.bbox) ? [...segment.bbox] : null,
+                        word_styles: syntheticTextbox ? null : (segmentWordStyles.length > 0 ? segmentWordStyles : null),
+                        line_metrics: segmentLineMetrics.length > 0 ? segmentLineMetrics : null,
+                        rich_html: null,
+                        synthetic_textbox: !!syntheticTextbox,
+                        paragraph_bbox: [...segment.bbox],
+                        source_content_ops: dedupeOverlaySourceContentOps(
+                            (Array.isArray(segment.source_content_ops) ? segment.source_content_ops : [])
+                                .concat(Array.isArray(segment.words) ? segment.words.flatMap((word) => Array.isArray(word?.source_content_ops) ? word.source_content_ops : []) : [])
+                        ),
+                    };
+                });
+            }
+
+            function buildOverlaySegmentEditsForSave(field, editData) {
+                const sourceSegmentEdits = buildOverlaySourceSegmentEditsForSave(field, editData);
+                if (Array.isArray(sourceSegmentEdits) && sourceSegmentEdits.length > 0) {
+                    return sourceSegmentEdits;
+                }
+
+                const block = field?._overlaySourceBlock;
+                const blockWords = Array.isArray(field?._blockWords) ? field._blockWords : [];
+                const lineBBoxes = Array.isArray(block?.line_bboxes) ? block.line_bboxes : [];
+                const textLines = Array.isArray(block?.text_lines) ? block.text_lines : [];
+                const cleanText = (value) => String(value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                const localVerticalOverlapRatio = (topA, bottomA, topB, bottomB) => {
+                    const inter = Math.max(0, Math.min(bottomA, bottomB) - Math.max(topA, topB));
+                    const minHeight = Math.max(1, Math.min(bottomA - topA, bottomB - topB));
+                    return inter / minHeight;
+                };
+                const localGetWordBounds = (words) => {
+                    if (!Array.isArray(words) || !words.length) return null;
+                    let minLeft = Infinity;
+                    let minTop = Infinity;
+                    let maxRight = -Infinity;
+                    let maxBottom = -Infinity;
+                    words.forEach((word) => {
+                        const left = Number(word?.left) || 0;
+                        const top = Number(word?.top) || 0;
+                        const width = Number(word?.width) || 0;
+                        const height = Number(word?.height) || 0;
+                        minLeft = Math.min(minLeft, left);
+                        minTop = Math.min(minTop, top);
+                        maxRight = Math.max(maxRight, left + width);
+                        maxBottom = Math.max(maxBottom, top + height);
+                    });
+                    if (!Number.isFinite(minLeft) || !Number.isFinite(minTop) || !Number.isFinite(maxRight) || !Number.isFinite(maxBottom)) {
+                        return null;
+                    }
+                    return {
+                        left: minLeft,
+                        top: minTop,
+                        width: Math.max(1, maxRight - minLeft),
+                        height: Math.max(1, maxBottom - minTop),
+                    };
+                };
+                if (!block || blockWords.length === 0 || lineBBoxes.length < 2 || textLines.length !== lineBBoxes.length) {
+                    return [editData];
+                }
+
+                const lineEntries = lineBBoxes.map((lb, idx) => {
+                    const left = Number(lb?.[0]) || 0;
+                    const top = Number(lb?.[1]) || 0;
+                    const right = Number(lb?.[2]) || left;
+                    const bottom = Number(lb?.[3]) || top;
+                    return {
+                        idx,
+                        left,
+                        top,
+                        right,
+                        bottom,
+                        height: Math.max(1, bottom - top),
+                        text: cleanText(textLines[idx] || ''),
+                    };
+                }).sort((a, b) => a.top - b.top || a.left - b.left);
+
+                const sortedHeights = lineEntries.map((line) => line.height).sort((a, b) => a - b);
+                const medianHeight = sortedHeights.length
+                    ? sortedHeights[Math.floor(sortedHeights.length / 2)]
+                    : 12;
+                const segmentGapThreshold = Math.max(6, Math.min(18, medianHeight * 0.6));
+
+                const segments = [];
+                let currentSegment = [lineEntries[0]];
+                for (let i = 1; i < lineEntries.length; i++) {
+                    const prev = lineEntries[i - 1];
+                    const line = lineEntries[i];
+                    const gap = line.top - prev.bottom;
+                    if (gap > segmentGapThreshold) {
+                        segments.push(currentSegment);
+                        currentSegment = [line];
+                    } else {
+                        currentSegment.push(line);
+                    }
+                }
+                if (currentSegment.length) {
+                    segments.push(currentSegment);
+                }
+
+                if (segments.length < 2) {
+                    return [editData];
+                }
+
+                const newLines = String(editData?.new_text || '').split('\n');
+                const originalLineTotal = segments.reduce((sum, segment) => sum + segment.length, 0);
+                if (newLines.length !== originalLineTotal) {
+                    return [editData];
+                }
+
+                const resolvedFont = editData.font || field.dataset.fontFamily || field.dataset.font || block.font || 'Helvetica';
+                const resolvedWeight = editData.font_weight || field.dataset.fontWeight || field.style.fontWeight || '400';
+                const resolvedStyle = editData.font_style || field.dataset.fontStyle || field.style.fontStyle || 'normal';
+                let lineCursor = 0;
+                const splitIntoMinimalLineEdits = [];
+
+                const segmentEdits = segments.map((segment, segmentIndex) => {
+                    const segmentLines = newLines.slice(lineCursor, lineCursor + segment.length);
+                    lineCursor += segment.length;
+
+                    const segTop = Math.min(...segment.map((line) => line.top));
+                    const segBottom = Math.max(...segment.map((line) => line.bottom));
+                    const segWords = blockWords
+                        .filter((word) => {
+                            const wTop = Number(word?.top) || 0;
+                            const wBottom = wTop + (Number(word?.height) || 0);
+                            return segment.some((line) => localVerticalOverlapRatio(wTop, wBottom, line.top, line.bottom) >= 0.35);
+                        })
+                        .sort((a, b) => ((Number(a.top) || 0) - (Number(b.top) || 0)) || ((Number(a.left) || 0) - (Number(b.left) || 0)));
+
+                    if (!segWords.length) {
+                        return null;
+                    }
+
+                    const wordBounds = localGetWordBounds(segWords);
+                    if (!wordBounds) {
+                        return null;
+                    }
+
+                    const segmentOriginalText = segment.map((line) => line.text).join('\n').trim();
+                    const segmentNewText = segmentLines.join('\n').trim();
+                    const lineDescriptors = segment.map((line, lineIndex) => {
+                        const lineWords = segWords
+                            .filter((word) => {
+                                const wTop = Number(word?.top) || 0;
+                                const wBottom = wTop + (Number(word?.height) || 0);
+                                return localVerticalOverlapRatio(wTop, wBottom, line.top, line.bottom) >= 0.35;
+                            })
+                            .sort((a, b) => ((Number(a.left) || 0) - (Number(b.left) || 0)));
+                        const lineBounds = localGetWordBounds(lineWords);
+                        return {
+                            lineIndex,
+                            originalText: cleanText(line.text || ''),
+                            newText: cleanText(segmentLines[lineIndex] || ''),
+                            words: lineWords,
+                            bounds: lineBounds,
+                            top: line.top,
+                            bottom: line.bottom,
+                        };
+                    });
+                    const changedLineDescriptors = lineDescriptors.filter((line) => line.originalText !== line.newText);
+                    if (lineDescriptors.length > 1 && changedLineDescriptors.length > 0 && changedLineDescriptors.length < lineDescriptors.length) {
+                        changedLineDescriptors.forEach((line) => {
+                            if (!line.bounds || !line.words.length) return;
+                            const lineWordStyles = buildOverlayWordStylesForSave(field, resolvedFont, resolvedWeight, resolvedStyle, line.words);
+                            splitIntoMinimalLineEdits.push({
+                                ...editData,
+                                block_num: null,
+                                preserve_partial_block: true,
+                                original_text: line.originalText,
+                                new_text: line.newText,
+                                bbox: [line.bounds.left, line.top, line.bounds.left + line.bounds.width, line.bottom],
+                                original_bbox: [line.bounds.left, line.top, line.bounds.left + line.bounds.width, line.bottom],
+                                origin_x: line.bounds.left,
+                                origin_y: line.bottom,
+                                word_styles: lineWordStyles.length > 0 ? lineWordStyles : null,
+                                rich_html: null,
+                                source_content_ops: dedupeOverlaySourceContentOps(
+                                    Array.isArray(line.words)
+                                        ? line.words.flatMap((word) => Array.isArray(word?.source_content_ops) ? word.source_content_ops : [])
+                                        : []
+                                ),
+                            });
+                        });
+                        return null;
+                    }
+
+                    if (segmentOriginalText === segmentNewText) {
+                        return null;
+                    }
+                    const segWordStyles = buildOverlayWordStylesForSave(field, resolvedFont, resolvedWeight, resolvedStyle, segWords);
+
+                    return {
+                        ...editData,
+                        block_num: segmentIndex === 0 ? editData.block_num : null,
+                        preserve_partial_block: segmentIndex !== 0,
+                        original_text: segmentOriginalText,
+                        new_text: segmentNewText,
+                        bbox: [wordBounds.left, segTop, wordBounds.left + wordBounds.width, segBottom],
+                        original_bbox: [wordBounds.left, segTop, wordBounds.left + wordBounds.width, segBottom],
+                        origin_x: wordBounds.left,
+                        origin_y: segBottom,
+                        word_styles: segWordStyles.length > 0 ? segWordStyles : null,
+                        rich_html: null,
+                        source_content_ops: dedupeOverlaySourceContentOps(
+                            Array.isArray(segWords)
+                                ? segWords.flatMap((word) => Array.isArray(word?.source_content_ops) ? word.source_content_ops : [])
+                                : []
+                        ),
+                    };
+                }).filter(Boolean);
+
+                if (splitIntoMinimalLineEdits.length > 0) {
+                    return splitIntoMinimalLineEdits;
+                }
+
+                return segmentEdits.length > 0 ? segmentEdits : [editData];
             }
 
             function mapFontFamilyToKey(fontFamily) {
@@ -6423,6 +10445,50 @@
                 return 'Helvetica';
             }
 
+            function normalizeBuiltinAnnotationFontFamily(fontFamily) {
+                if (!fontFamily) {
+                    return 'Helvetica';
+                }
+
+                const lower = String(fontFamily)
+                    .toLowerCase()
+                    .replace(/['"]/g, '')
+                    .replace(/\s+/g, '')
+                    .trim();
+
+                if (lower.includes('arial')) {
+                    return 'Arial';
+                }
+                if (lower.includes('arimo') || lower.includes('helvetica') || lower.includes('nimbussans')) {
+                    return 'Helvetica';
+                }
+                if (lower.includes('verdana') || lower.includes('geneva')) {
+                    return 'Verdana';
+                }
+                if (lower.includes('trebuchet')) {
+                    return 'TrebuchetMS';
+                }
+                if (lower.includes('georgia')) {
+                    return 'Georgia';
+                }
+                if (lower.includes('palatino') || lower.includes('bookantiqua')) {
+                    return 'Palatino';
+                }
+                if (lower.includes('garamond') || lower.includes('baskerville')) {
+                    return 'Garamond';
+                }
+                if (lower.includes('times')) {
+                    return 'TimesRoman';
+                }
+                if (lower.includes('tinos')) {
+                    return 'TimesRoman';
+                }
+                if (lower.includes('courier') || lower.includes('cousine') || lower.includes('mono')) {
+                    return 'Courier';
+                }
+                return 'Helvetica';
+            }
+
             function colorToHex(color) {
                 if (!color) {
                     return '#000000';
@@ -6448,21 +10514,397 @@
                 return `#${r}${g}${b}`;
             }
 
-            document.addEventListener('selectionchange', () => {
-                if (!selectedOverlayField) {
-                    overlaySelectionRange = null;
+            function rangeInsideNode(range, node) {
+                return !!(range && node && node.contains(range.commonAncestorContainer));
+            }
+
+            function escapeAnnotationHtml(value) {
+                return String(value ?? '')
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+            }
+
+            function escapeAnnotationHtmlAttribute(value) {
+                return escapeAnnotationHtml(value);
+            }
+
+            function serializeAnnotationRichTextNode(node) {
+                if (!node) {
+                    return '';
+                }
+                if (node.nodeType === Node.TEXT_NODE) {
+                    return escapeAnnotationHtml(node.nodeValue || '');
+                }
+                if (node.nodeType !== Node.ELEMENT_NODE) {
+                    return '';
+                }
+
+                const tagName = String(node.tagName || '').toLowerCase();
+                if (tagName === 'br') {
+                    return '<br>';
+                }
+
+                let inner = '';
+                node.childNodes.forEach((child) => {
+                    inner += serializeAnnotationRichTextNode(child);
+                });
+
+                if (tagName === 'div' || tagName === 'p') {
+                    return `${inner}<br>`;
+                }
+
+                if (tagName !== 'span') {
+                    return inner;
+                }
+
+                const styles = [];
+                const rawColor = String(node.style.color || '').trim();
+                const rawBackgroundColor = String(node.style.backgroundColor || '').trim();
+                const color = rawColor ? colorToHex(rawColor) : '';
+                const backgroundColor = rawBackgroundColor ? colorToHex(rawBackgroundColor) : '';
+                const fontSize = String(node.style.fontSize || '').trim();
+                const fontWeight = String(node.style.fontWeight || '').trim();
+                const fontStyle = String(node.style.fontStyle || '').trim();
+                const textDecoration = String(node.style.textDecoration || node.style.textDecorationLine || '').trim();
+                const fontFamily = String(node.style.fontFamily || '').trim();
+
+                if (color && color !== '#000000' && color !== 'transparent') styles.push(`color:${color}`);
+                if (backgroundColor && backgroundColor !== 'transparent') styles.push(`background-color:${backgroundColor}`);
+                if (fontSize) styles.push(`font-size:${fontSize}`);
+                if (fontWeight && fontWeight !== '400' && fontWeight !== 'normal') styles.push(`font-weight:${fontWeight}`);
+                if (fontStyle && fontStyle !== 'normal') styles.push(`font-style:${fontStyle}`);
+                if (textDecoration && textDecoration !== 'none') styles.push(`text-decoration:${textDecoration}`);
+                if (fontFamily) styles.push(`font-family:${fontFamily}`);
+
+                if (styles.length === 0) {
+                    return inner;
+                }
+
+                return `<span style="${escapeAnnotationHtmlAttribute(styles.join(';'))}">${inner}</span>`;
+            }
+
+            function buildAnnotationRichTextHtml(textEl) {
+                if (!textEl) {
+                    return '';
+                }
+                let html = '';
+                textEl.childNodes.forEach((child) => {
+                    html += serializeAnnotationRichTextNode(child);
+                });
+                return html.replace(/(?:<br>)+$/g, '');
+            }
+
+            function setRichEditableContent(element, text = '', richHtml = '') {
+                if (!element) {
                     return;
+                }
+                const nextHtml = String(richHtml || '').trim();
+                if (nextHtml) {
+                    element.innerHTML = nextHtml;
+                    return;
+                }
+
+                const lines = String(text ?? '')
+                    .replace(/\r\n/g, '\n')
+                    .replace(/\r/g, '\n')
+                    .split('\n');
+                element.innerHTML = '';
+                lines.forEach((line, index) => {
+                    if (index > 0) {
+                        element.appendChild(document.createElement('br'));
+                    }
+                    if (line.length > 0) {
+                        element.appendChild(document.createTextNode(line));
+                    }
+                });
+            }
+
+            function annotationRichTextHasFormatting(html) {
+                return /<span\b[^>]*style=/i.test(String(html || ''));
+            }
+
+            function getActiveEditorInput() {
+                if (!activeEditor || !activeEditor.classList.contains('text-box-creator')) {
+                    return null;
+                }
+                return activeEditor._tbcInput || activeEditor.querySelector('.tbc-input');
+            }
+
+            function getActiveEditorText() {
+                const input = getActiveEditorInput();
+                return input ? getOverlayExplicitText(input) : '';
+            }
+
+            function readRichEditorBaseStyles(input, fallback = {}) {
+                if (!input) {
+                    return {
+                        fontFamily: fallback.fontFamily || defaultTextFont,
+                        fontSizePx: fallback.fontSizePx || defaultTextSize,
+                        textColor: fallback.textColor || '#000000',
+                        bgColor: fallback.bgColor || 'transparent',
+                        opacityVal: fallback.opacityVal ?? 1,
+                        fontWeight: fallback.fontWeight || 'normal',
+                        fontStyle: fallback.fontStyle || 'normal',
+                        underline: Boolean(fallback.underline),
+                        textAlign: fallback.textAlign || 'left',
+                    };
+                }
+
+                const computedStyle = window.getComputedStyle(input);
+                const resolvedFontFamily = normalizeBuiltinAnnotationFontFamily(computedStyle.fontFamily || fallback.fontFamily || defaultTextFont);
+                const resolvedFontSize = Math.max(8, Math.min(144, Math.round(parseFloat(computedStyle.fontSize || String(fallback.fontSizePx || defaultTextSize)) || defaultTextSize)));
+                const resolvedTextColor = colorToHex(computedStyle.color || fallback.textColor || '#000000');
+                const resolvedBgColor = colorToHex(computedStyle.backgroundColor || fallback.bgColor || 'transparent');
+                const resolvedWeight = String(computedStyle.fontWeight || fallback.fontWeight || '400');
+                const resolvedStyle = String(computedStyle.fontStyle || fallback.fontStyle || 'normal');
+                const resolvedDecoration = String(computedStyle.textDecorationLine || computedStyle.textDecoration || '').toLowerCase();
+                const resolvedAlign = String(computedStyle.textAlign || fallback.textAlign || 'left');
+                const resolvedOpacity = parseFloat(computedStyle.opacity || String(fallback.opacityVal ?? 1)) || 1;
+
+                return {
+                    fontFamily: resolvedFontFamily,
+                    fontSizePx: resolvedFontSize,
+                    textColor: resolvedTextColor === 'transparent' ? '#000000' : resolvedTextColor,
+                    bgColor: resolvedBgColor === '#ffffff' ? 'transparent' : resolvedBgColor,
+                    opacityVal: resolvedOpacity,
+                    fontWeight: Number.isFinite(parseInt(resolvedWeight, 10))
+                        ? String(Math.round(parseInt(resolvedWeight, 10) / 100) * 100)
+                        : (resolvedWeight.toLowerCase() === 'bold' ? '700' : '400'),
+                    fontStyle: resolvedStyle === 'italic' || resolvedStyle === 'oblique' ? 'italic' : 'normal',
+                    underline: resolvedDecoration.includes('underline'),
+                    textAlign: ['left', 'center', 'right'].includes(resolvedAlign) ? resolvedAlign : 'left',
+                };
+            }
+
+            function insertPlainTextIntoEditable(input, plainText) {
+                if (!input) {
+                    return;
+                }
+
+                const normalizedText = String(plainText ?? '')
+                    .replace(/\r\n/g, '\n')
+                    .replace(/\r/g, '\n');
+
+                input.focus();
+                const selection = window.getSelection();
+                let range = null;
+                if (selection && selection.rangeCount > 0) {
+                    const liveRange = selection.getRangeAt(0);
+                    if (rangeInsideNode(liveRange, input)) {
+                        range = liveRange;
+                    }
+                }
+
+                if (!range) {
+                    range = document.createRange();
+                    range.selectNodeContents(input);
+                    range.collapse(false);
+                }
+
+                range.deleteContents();
+                const fragment = document.createDocumentFragment();
+                const lines = normalizedText.split('\n');
+                lines.forEach((line, index) => {
+                    if (index > 0) {
+                        fragment.appendChild(document.createElement('br'));
+                    }
+                    if (line.length > 0) {
+                        fragment.appendChild(document.createTextNode(line));
+                    }
+                });
+
+                const lastNode = fragment.lastChild;
+                range.insertNode(fragment);
+
+                if (selection) {
+                    const caretRange = document.createRange();
+                    if (lastNode) {
+                        if (lastNode.nodeType === Node.TEXT_NODE) {
+                            caretRange.setStart(lastNode, lastNode.nodeValue.length);
+                        } else {
+                            caretRange.setStartAfter(lastNode);
+                        }
+                    } else {
+                        caretRange.selectNodeContents(input);
+                    }
+                    caretRange.collapse(true);
+                    selection.removeAllRanges();
+                    selection.addRange(caretRange);
+                }
+
+                activeEditorSelectionRange = null;
+            }
+
+            function getActiveEditorRange() {
+                const input = getActiveEditorInput();
+                if (!input) {
+                    return null;
                 }
                 const selection = window.getSelection();
-                if (!selection || selection.rangeCount === 0) {
+                if (selection && selection.rangeCount > 0) {
+                    const liveRange = selection.getRangeAt(0);
+                    if (liveRange && !liveRange.collapsed && rangeInsideNode(liveRange, input)) {
+                        return liveRange;
+                    }
+                }
+                if (activeEditorSelectionRange && rangeInsideNode(activeEditorSelectionRange, input)) {
+                    return activeEditorSelectionRange;
+                }
+                return null;
+            }
+
+            function applyActiveEditorStyleToSelection(styleProperty, styleValue) {
+                const input = getActiveEditorInput();
+                const range = getActiveEditorRange();
+                if (!input || !range || range.collapsed || !rangeInsideNode(range, input)) {
+                    return false;
+                }
+
+                const span = document.createElement('span');
+                span.style[styleProperty] = styleValue;
+                try {
+                    range.surroundContents(span);
+                } catch (err) {
+                    const contents = range.extractContents();
+                    span.appendChild(contents);
+                    range.insertNode(span);
+                }
+
+                const selection = window.getSelection();
+                if (selection) {
+                    selection.removeAllRanges();
+                }
+                activeEditorSelectionRange = null;
+                input.focus();
+                return true;
+            }
+
+            function getSelectedAnnotationTextElement() {
+                return selectedAnnotation?.element?.querySelector('.annotation-text') || null;
+            }
+
+            function getSelectedAnnotationRange() {
+                const textEl = getSelectedAnnotationTextElement();
+                if (!textEl) {
+                    return null;
+                }
+                const selection = window.getSelection();
+                if (selection && selection.rangeCount > 0) {
+                    const liveRange = selection.getRangeAt(0);
+                    if (liveRange && !liveRange.collapsed && rangeInsideNode(liveRange, textEl)) {
+                        return liveRange;
+                    }
+                }
+                if (annotationSelectionRange && rangeInsideNode(annotationSelectionRange, textEl)) {
+                    return annotationSelectionRange;
+                }
+                return null;
+            }
+
+            function syncRichTextAnnotationFromDom(annotation) {
+                if (!annotation || !annotation.element || (annotation.type && annotation.type !== 'text')) {
+                    return false;
+                }
+
+                const textEl = annotation.element.querySelector('.annotation-text');
+                if (!textEl) {
+                    return false;
+                }
+
+                annotation.text = getOverlayExplicitText(textEl);
+                const richTextHtml = buildAnnotationRichTextHtml(textEl);
+                if (annotationRichTextHasFormatting(richTextHtml)) {
+                    annotation.richTextHtml = richTextHtml;
+                } else {
+                    delete annotation.richTextHtml;
+                }
+
+                if (annotation.richTextHtml) {
+                    const pageContext = resolveAnnotationPageContext(annotation);
+                    const measuredBounds = measureTextAnnotationContentBounds(annotation);
+                    if (pageContext && measuredBounds && annotation.element) {
+                        annotation.keepBounds = true;
+                        setTextAnnotationBounds(
+                            annotation,
+                            pageContext.pageInfo,
+                            annotation.element.offsetLeft,
+                            annotation.element.offsetTop,
+                            measuredBounds.widthPx,
+                            measuredBounds.heightPx
+                        );
+                    }
+                }
+
+                return true;
+            }
+
+            function finalizeSelectedAnnotationRichTextChange() {
+                if (!selectedAnnotation) {
+                    return false;
+                }
+                syncRichTextAnnotationFromDom(selectedAnnotation);
+                syncTextAnnotationStyleFromDom(selectedAnnotation);
+                applyAnnotationStyle(selectedAnnotation);
+                persistAnnotations();
+                syncSelectedAnnotationEditState();
+                saveAnnotationToDatabase(selectedAnnotation);
+                updateSelectionBar();
+                updateEditTextBanner();
+                return true;
+            }
+
+            function applyAnnotationStyleToSelection(styleProperty, styleValue) {
+                const annotation = selectedAnnotation;
+                const textEl = getSelectedAnnotationTextElement();
+                const range = getSelectedAnnotationRange();
+                if (!annotation || !textEl || !range || range.collapsed || !rangeInsideNode(range, textEl)) {
+                    return false;
+                }
+
+                const span = document.createElement('span');
+                span.style[styleProperty] = styleValue;
+                try {
+                    range.surroundContents(span);
+                } catch (err) {
+                    const contents = range.extractContents();
+                    span.appendChild(contents);
+                    range.insertNode(span);
+                }
+
+                const selection = window.getSelection();
+                if (selection) {
+                    selection.removeAllRanges();
+                }
+                annotationSelectionRange = null;
+                finalizeSelectedAnnotationRichTextChange();
+                return true;
+            }
+
+            document.addEventListener('selectionchange', () => {
+                const selection = window.getSelection();
+                const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+
+                if (!selectedOverlayField) {
                     overlaySelectionRange = null;
-                    return;
+                } else {
+                    const overlayTextEl = getOverlayTextElement(selectedOverlayField);
+                    overlaySelectionRange = (range && !range.collapsed && rangeInsideNode(range, overlayTextEl))
+                        ? range.cloneRange()
+                        : null;
                 }
-                const range = selection.getRangeAt(0);
-                const textEl = getOverlayTextElement(selectedOverlayField);
-                if (range && !range.collapsed && textEl.contains(range.commonAncestorContainer)) {
-                    overlaySelectionRange = range.cloneRange();
-                }
+
+                const annotationTextEl = getSelectedAnnotationTextElement();
+                annotationSelectionRange = (range && !range.collapsed && rangeInsideNode(range, annotationTextEl))
+                    ? range.cloneRange()
+                    : null;
+
+                const activeEditorInput = getActiveEditorInput();
+                activeEditorSelectionRange = (range && !range.collapsed && rangeInsideNode(range, activeEditorInput))
+                    ? range.cloneRange()
+                    : null;
             });
 
             function applyAnnotationStyle(annotation) {
@@ -6470,32 +10912,82 @@
                     return;
                 }
                 if (annotation.type === 'text' || !annotation.type) {
-                    const fontFamily = fontMap[annotation.fontFamily]?.css || 'inherit';
+                    const fontFamily = resolveAnnotationCssFontFamily(annotation.fontFamily, {
+                        preferExact: Boolean(annotation.promotedFromExtraction),
+                        exactFontName: annotation.fontSourceName || annotation.fontFamily,
+                    });
                     const fontSizePx = annotation.fontSize * currentScale;
+                    const hasBounds = annotationHasBounds(annotation);
+                    const promotedExtraction = Boolean(annotation.promotedFromExtraction);
+                    const preservePromotedLines = promotedExtraction && !annotation.promotedReflowEnabled;
+                    const textWrapper = annotation.textWrapper || annotation.element.querySelector('.text-content-wrapper');
                     annotation.element.style.fontFamily = fontFamily;
                     annotation.element.style.fontSize = fontSizePx + 'px';
                     annotation.element.style.textAlign = annotation.textAlign || 'left';
+                    annotation.element.classList.toggle('has-bounds', hasBounds);
+                    annotation.element.classList.toggle('promoted-extraction', promotedExtraction);
+                    annotation.element.style.display = hasBounds ? 'block' : 'inline-flex';
+                    annotation.element.style.alignItems = hasBounds ? 'stretch' : 'center';
+                    annotation.element.style.padding = hasBounds ? '0' : '2px 6px';
+                    annotation.element.style.gap = hasBounds ? '0' : '4px';
+                    annotation.element.style.overflow = 'visible';
+                    annotation.element.style.wordWrap = '';
+                    const lineHeightPx = Number(annotation.lineHeight) > 0
+                        ? (Number(annotation.lineHeight) * currentScale)
+                        : 0;
+                    annotation.element.style.lineHeight = lineHeightPx > 0 ? `${lineHeightPx}px` : '';
                     const span = annotation.element.querySelector('.annotation-text');
                     if (span) {
-                        span.textContent = annotation.text;
+                        const nextRichHtml = typeof annotation.richTextHtml === 'string' ? annotation.richTextHtml : '';
+                        if (nextRichHtml) {
+                            if (span.innerHTML !== nextRichHtml) {
+                                span.innerHTML = nextRichHtml;
+                            }
+                        } else if (span.textContent !== annotation.text) {
+                            span.textContent = annotation.text;
+                        }
                         span.style.color = annotation.textColor || '#000000';
                         span.style.backgroundColor = annotation.backgroundColor || 'transparent';
                         span.style.fontWeight = annotation.fontWeight || 'normal';
                         span.style.fontStyle = annotation.fontStyle || 'normal';
                         span.style.textDecoration = annotation.underline ? 'underline' : 'none';
                         span.style.opacity = annotation.opacity ?? 1;
+                        span.style.padding = promotedExtraction ? '0' : '';
+                        span.style.lineHeight = lineHeightPx > 0 ? `${lineHeightPx}px` : '';
+                        span.style.whiteSpace = promotedExtraction ? (preservePromotedLines ? 'pre' : 'pre-wrap') : '';
+                        span.style.overflowWrap = promotedExtraction ? (preservePromotedLines ? 'normal' : 'break-word') : '';
+                        span.style.wordBreak = promotedExtraction ? (preservePromotedLines ? 'normal' : 'break-word') : '';
+                    }
+                    if (textWrapper) {
+                        textWrapper.style.display = hasBounds ? 'block' : 'inline-block';
+                        textWrapper.style.width = hasBounds ? '100%' : 'auto';
+                        textWrapper.style.height = hasBounds ? '100%' : 'auto';
+                        textWrapper.style.padding = hasBounds
+                            ? (promotedExtraction ? '0' : '2px 6px')
+                            : '0';
+                        textWrapper.style.boxSizing = hasBounds ? 'border-box' : '';
+                        textWrapper.style.overflow = hasBounds ? 'hidden' : 'visible';
                     }
                     // Apply bounding box size if present
-                    if (annotation.pdfWidth && annotation.pdfHeight) {
+                    if (hasBounds) {
                         annotation.element.style.width = (annotation.pdfWidth * currentScale) + 'px';
                         annotation.element.style.height = (annotation.pdfHeight * currentScale) + 'px';
-                        annotation.element.style.overflow = 'hidden';
-                        annotation.element.style.wordWrap = 'break-word';
+                    } else {
+                        annotation.element.style.width = '';
+                        annotation.element.style.height = '';
                     }
                     // Alignment translateX on the label (no rotation here — rotation goes on textWrapper)
-                    const width = annotation.pdfWidth ? (annotation.pdfWidth * currentScale) : measureAnnotationTextWidth(annotation.text, fontSizePx, fontFamily, annotation.fontWeight, annotation.fontStyle);
+                    const measuredRichWidth = !hasBounds && span
+                        ? Math.ceil(span.getBoundingClientRect().width || span.scrollWidth || 0)
+                        : 0;
+                    const width = hasBounds
+                        ? (annotation.pdfWidth * currentScale)
+                        : Math.max(
+                            measuredRichWidth,
+                            measureAnnotationTextWidth(annotation.text, fontSizePx, fontFamily, annotation.fontWeight, annotation.fontStyle)
+                        );
                     let translateX = 0;
-                    if (!annotation.pdfWidth) {
+                    if (!hasBounds) {
                         if (annotation.textAlign === 'center') {
                             translateX = -width / 2;
                         } else if (annotation.textAlign === 'right') {
@@ -6513,12 +11005,137 @@
                 }
             }
 
+            function syncTextAnnotationStyleFromDom(annotation) {
+                if (!annotation || !annotation.element || (annotation.type && annotation.type !== 'text')) {
+                    return;
+                }
+                const span = annotation.element.querySelector('.annotation-text');
+                const spanStyle = span ? window.getComputedStyle(span) : null;
+                const elementStyle = window.getComputedStyle(annotation.element);
+                const resolvedFontSizePx = parseFloat(spanStyle?.fontSize || elementStyle.fontSize || '0');
+                const resolvedFontFamily = spanStyle?.fontFamily || elementStyle.fontFamily || annotation.fontFamily || 'Helvetica';
+                const resolvedTextColor = colorToHex(spanStyle?.color || annotation.textColor || '#000000');
+                const resolvedBgColor = colorToHex(spanStyle?.backgroundColor || annotation.backgroundColor || 'transparent');
+                const resolvedWeight = String(spanStyle?.fontWeight || annotation.fontWeight || '400');
+                const resolvedStyle = String(spanStyle?.fontStyle || annotation.fontStyle || 'normal');
+                const resolvedLineHeightPx = parseFloat(spanStyle?.lineHeight || elementStyle.lineHeight || '0');
+                const resolvedDecoration = String(spanStyle?.textDecorationLine || '').toLowerCase();
+                const resolvedAlign = String(spanStyle?.textAlign || elementStyle.textAlign || annotation.textAlign || 'left');
+                const resolvedOpacity = parseFloat(spanStyle?.opacity || elementStyle.opacity || annotation.opacity || '1') || 1;
+                const explicitText = span ? getOverlayExplicitText(span) : annotation.text;
+                const richTextHtml = span ? buildAnnotationRichTextHtml(span) : '';
+
+                if (annotation.promotedFromExtraction) {
+                    const existingFontFamily = String(annotation.fontFamily || '').trim();
+                    const existingNormalized = normalizePdfEditableFontFamily(existingFontFamily);
+                    const resolvedNormalized = normalizePdfEditableFontFamily(resolvedFontFamily);
+                    annotation.fontFamily = (
+                        existingFontFamily
+                        && existingNormalized
+                        && resolvedNormalized
+                        && existingNormalized.toLowerCase() === resolvedNormalized.toLowerCase()
+                    )
+                        ? existingFontFamily
+                        : (resolvedNormalized || existingFontFamily || normalizeBuiltinAnnotationFontFamily(resolvedFontFamily));
+                } else {
+                    annotation.fontFamily = normalizeBuiltinAnnotationFontFamily(resolvedFontFamily);
+                }
+                if (resolvedFontSizePx > 0 && currentScale > 0) {
+                    annotation.fontSize = resolvedFontSizePx / currentScale;
+                }
+                annotation.text = explicitText;
+                if (annotationRichTextHasFormatting(richTextHtml)) {
+                    annotation.richTextHtml = richTextHtml;
+                } else {
+                    delete annotation.richTextHtml;
+                }
+                annotation.textColor = resolvedTextColor === 'transparent' ? '#000000' : resolvedTextColor;
+                annotation.backgroundColor = resolvedBgColor === '#ffffff' ? 'transparent' : resolvedBgColor;
+                annotation.fontWeight = Number.isFinite(parseInt(resolvedWeight, 10))
+                    ? String(Math.round(parseInt(resolvedWeight, 10) / 100) * 100)
+                    : (resolvedWeight.toLowerCase() === 'bold' ? '700' : '400');
+                annotation.fontStyle = resolvedStyle === 'italic' || resolvedStyle === 'oblique' ? 'italic' : 'normal';
+                annotation.underline = resolvedDecoration.includes('underline');
+                annotation.textAlign = ['left', 'center', 'right'].includes(resolvedAlign) ? resolvedAlign : 'left';
+                annotation.opacity = resolvedOpacity;
+                if (resolvedLineHeightPx > 0 && currentScale > 0) {
+                    annotation.lineHeight = resolvedLineHeightPx / currentScale;
+                }
+                normalizeTextAnnotation(annotation);
+
+                if (annotation.richTextHtml) {
+                    const pageContext = resolveAnnotationPageContext(annotation);
+                    const measuredBounds = measureTextAnnotationContentBounds(annotation);
+                    if (pageContext && measuredBounds && annotation.element) {
+                        annotation.keepBounds = true;
+                        setTextAnnotationBounds(
+                            annotation,
+                            pageContext.pageInfo,
+                            annotation.element.offsetLeft,
+                            annotation.element.offsetTop,
+                            measuredBounds.widthPx,
+                            measuredBounds.heightPx
+                        );
+                    }
+                }
+            }
+
+            function syncAnnotationsForSave() {
+                annotations.forEach((annotation) => {
+                    syncTextAnnotationStyleFromDom(annotation);
+                });
+                persistAnnotations();
+            }
+
+            function syncSelectedAnnotationEditState() {
+                if (!selectedAnnotation || (selectedAnnotation.type && selectedAnnotation.type !== 'text')) {
+                    return;
+                }
+
+                if (typeof populateEditTextBanner === 'function') {
+                    populateEditTextBanner(selectedAnnotation);
+                }
+
+                if (!activeEditor || !activeEditor.classList.contains('text-box-creator')) {
+                    return;
+                }
+
+                const input = activeEditor._tbcInput || activeEditor.querySelector('.tbc-input');
+                if (!input) {
+                    return;
+                }
+
+                input.style.fontFamily = selectedAnnotation.promotedFromExtraction
+                    ? resolveAnnotationCssFontFamily(selectedAnnotation.fontFamily, {
+                        preferExact: true,
+                        exactFontName: selectedAnnotation.fontSourceName || selectedAnnotation.fontFamily,
+                    })
+                    : (fontMap[selectedAnnotation.fontFamily]?.css || 'inherit');
+                input.style.fontSize = `${Math.round(selectedAnnotation.fontSize * currentScale)}px`;
+                input.style.color = selectedAnnotation.textColor || '#000000';
+                input.style.backgroundColor = selectedAnnotation.backgroundColor || 'transparent';
+                input.style.fontWeight = selectedAnnotation.fontWeight || 'normal';
+                input.style.fontStyle = selectedAnnotation.fontStyle || 'normal';
+                input.style.textDecoration = selectedAnnotation.underline ? 'underline' : 'none';
+                input.style.textAlign = selectedAnnotation.textAlign || 'left';
+                input.style.opacity = String(selectedAnnotation.opacity ?? 1);
+                if (selectedAnnotation.promotedFromExtraction && selectedAnnotation.promotedReflowEnabled) {
+                    input.style.whiteSpace = 'pre-wrap';
+                    input.style.overflowWrap = 'break-word';
+                    input.style.wordBreak = 'break-word';
+                    input.style.padding = '';
+                }
+            }
+
             function normalizeTextAnnotation(annotation) {
-                if (!annotation || annotation.type === 'signature' || annotation.type === 'shape' || annotation.type === 'eraser') {
+                if (!annotation || annotation.type === 'signature' || annotation.type === 'shape' || annotation.type === 'eraser' || annotation.type === 'table') {
                     return;
                 }
                 annotation.type = annotation.type || 'text';
                 annotation.fontFamily = annotation.fontFamily || 'Helvetica';
+                if (typeof annotation.fontSourceName === 'string') {
+                    annotation.fontSourceName = annotation.fontSourceName.trim();
+                }
                 annotation.textColor = annotation.textColor || '#000000';
                 annotation.backgroundColor = annotation.backgroundColor || 'transparent';
                 annotation.fontWeight = annotation.fontWeight || 'normal';
@@ -6527,6 +11144,332 @@
                 annotation.textAlign = annotation.textAlign || 'left';
                 annotation.opacity = typeof annotation.opacity === 'number' ? annotation.opacity : 1;
                 annotation.rotation = annotation.rotation || 0;
+                annotation.keepBounds = Boolean(annotation.keepBounds);
+                if (annotation.lineHeight !== null && annotation.lineHeight !== undefined) {
+                    const parsedLineHeight = Number(annotation.lineHeight);
+                    if (parsedLineHeight > 0) {
+                        annotation.lineHeight = parsedLineHeight;
+                    } else {
+                        delete annotation.lineHeight;
+                    }
+                }
+                if (typeof annotation.richTextHtml !== 'string' || !annotation.richTextHtml.trim()) {
+                    delete annotation.richTextHtml;
+                }
+            }
+
+            function annotationHasBounds(annotation) {
+                return Boolean(
+                    annotation
+                    && Number(annotation.pdfWidth) > 0
+                    && Number(annotation.pdfHeight) > 0
+                );
+            }
+
+            function getTextAnnotationTopPx(annotation, pageInfo) {
+                if (annotationHasBounds(annotation)) {
+                    return pageInfo.canvasHeight - ((annotation.pdfY + annotation.pdfHeight) * pageInfo.scale);
+                }
+                return pageInfo.canvasHeight - (annotation.pdfY * pageInfo.scale);
+            }
+
+            function setTextAnnotationPosition(annotation, pageInfo, leftPx, topPx) {
+                annotation.pdfX = leftPx / pageInfo.scale;
+                if (annotationHasBounds(annotation)) {
+                    annotation.pdfY = (pageInfo.canvasHeight - topPx) / pageInfo.scale - annotation.pdfHeight;
+                } else {
+                    annotation.pdfY = (pageInfo.canvasHeight - topPx) / pageInfo.scale;
+                }
+            }
+
+            function setTextAnnotationBounds(annotation, pageInfo, leftPx, topPx, widthPx, heightPx) {
+                annotation.pdfWidth = widthPx / pageInfo.scale;
+                annotation.pdfHeight = heightPx / pageInfo.scale;
+                setTextAnnotationPosition(annotation, pageInfo, leftPx, topPx);
+            }
+
+            function clearTextAnnotationBounds(annotation, pageInfo, leftPx, topPx) {
+                delete annotation.pdfWidth;
+                delete annotation.pdfHeight;
+                setTextAnnotationPosition(annotation, pageInfo, leftPx, topPx);
+            }
+
+            function countTextBoxEditorLines(input) {
+                if (!input) {
+                    return 1;
+                }
+
+                const computedStyle = window.getComputedStyle(input);
+                const fontSizePx = parseFloat(computedStyle.fontSize || '0') || 16;
+                const lineHeightPx = parseFloat(computedStyle.lineHeight || '0') || (fontSizePx * 1.2);
+                const probe = document.createElement('div');
+                probe.style.position = 'absolute';
+                probe.style.visibility = 'hidden';
+                probe.style.pointerEvents = 'none';
+                probe.style.left = '-99999px';
+                probe.style.top = '-99999px';
+                probe.style.width = `${Math.max(1, input.clientWidth || input.offsetWidth || 1)}px`;
+                probe.style.boxSizing = 'border-box';
+                probe.style.padding = computedStyle.padding;
+                probe.style.fontFamily = computedStyle.fontFamily;
+                probe.style.fontSize = computedStyle.fontSize;
+                probe.style.fontWeight = computedStyle.fontWeight;
+                probe.style.fontStyle = computedStyle.fontStyle;
+                probe.style.letterSpacing = computedStyle.letterSpacing;
+                probe.style.lineHeight = computedStyle.lineHeight;
+                probe.style.textAlign = computedStyle.textAlign;
+                probe.style.whiteSpace = 'pre-wrap';
+                probe.style.overflowWrap = 'break-word';
+                probe.textContent = getOverlayExplicitText(input) || ' ';
+                document.body.appendChild(probe);
+                const measuredHeight = probe.getBoundingClientRect().height || lineHeightPx;
+                probe.remove();
+                return Math.max(1, Math.round(measuredHeight / Math.max(lineHeightPx, 1)));
+            }
+
+            function shouldKeepTextAnnotationBounds({ text, input, dragW, dragH, editAnnotation }) {
+                const hasRequestedBounds = Boolean(dragW || dragH || (editAnnotation && annotationHasBounds(editAnnotation)));
+                if (!hasRequestedBounds) {
+                    return false;
+                }
+
+                if (editAnnotation?.keepBounds) {
+                    return true;
+                }
+
+                if (/(?:\r\n|\r|\n)/.test(text || '')) {
+                    return true;
+                }
+
+                return countTextBoxEditorLines(input) > 1;
+            }
+
+            function resolveAnnotationPageContext(annotation) {
+                if (!annotation) {
+                    return null;
+                }
+
+                const wrapper = annotation.element?.closest('.page, .page-wrapper')
+                    || viewer.querySelector(`.page[data-page-index="${annotation.pageIndex}"], .page-wrapper[data-page-number="${Number(annotation.pageIndex) + 1}"]`);
+                if (!wrapper) {
+                    return null;
+                }
+
+                const overlay = wrapper.querySelector('.overlay');
+                const canvas = wrapper.querySelector('canvas');
+                const canvasHeight = overlay?.clientHeight || canvas?.height || 0;
+                if (!canvasHeight) {
+                    return null;
+                }
+
+                return {
+                    wrapper,
+                    overlay,
+                    canvas,
+                    pageInfo: {
+                        scale: currentScale,
+                        canvasHeight,
+                    },
+                };
+            }
+
+            function measureTextAnnotationContentBounds(annotation) {
+                if (!annotation || (annotation.type && annotation.type !== 'text') || !annotation.element) {
+                    return null;
+                }
+
+                const label = annotation.element;
+                const textWrapper = annotation.textWrapper || label.querySelector('.text-content-wrapper');
+                const textEl = label.querySelector('.annotation-text');
+                if (!textEl) {
+                    return null;
+                }
+
+                const labelStyle = window.getComputedStyle(label);
+                const wrapperStyle = textWrapper ? window.getComputedStyle(textWrapper) : null;
+                const textStyle = window.getComputedStyle(textEl);
+                const labelPadX = (parseFloat(labelStyle.paddingLeft || '0') || 0) + (parseFloat(labelStyle.paddingRight || '0') || 0);
+                const labelPadY = (parseFloat(labelStyle.paddingTop || '0') || 0) + (parseFloat(labelStyle.paddingBottom || '0') || 0);
+                const wrapperPadX = (parseFloat(wrapperStyle?.paddingLeft || '0') || 0) + (parseFloat(wrapperStyle?.paddingRight || '0') || 0);
+                const wrapperPadY = (parseFloat(wrapperStyle?.paddingTop || '0') || 0) + (parseFloat(wrapperStyle?.paddingBottom || '0') || 0);
+                const textPadX = (parseFloat(textStyle.paddingLeft || '0') || 0) + (parseFloat(textStyle.paddingRight || '0') || 0);
+                const textPadY = (parseFloat(textStyle.paddingTop || '0') || 0) + (parseFloat(textStyle.paddingBottom || '0') || 0);
+                const textRect = textEl.getBoundingClientRect();
+
+                return {
+                    widthPx: Math.max(30, Math.ceil(textRect.width + labelPadX + wrapperPadX + textPadX)),
+                    heightPx: Math.max(16, Math.ceil(textRect.height + labelPadY + wrapperPadY + textPadY)),
+                };
+            }
+
+            function fitTextAnnotationBoundsToRenderedContent(annotation, pageInfo) {
+                if (!annotationHasBounds(annotation) || !annotation?.element || !pageInfo || (annotation.type && annotation.type !== 'text')) {
+                    return false;
+                }
+
+                const label = annotation.element;
+                const textWrapper = annotation.textWrapper || label.querySelector('.text-content-wrapper');
+                const textEl = label.querySelector('.annotation-text');
+                if (!textEl) {
+                    return false;
+                }
+
+                const labelStyle = window.getComputedStyle(label);
+                const wrapperStyle = textWrapper ? window.getComputedStyle(textWrapper) : null;
+                const textStyle = window.getComputedStyle(textEl);
+                const labelPadX = (parseFloat(labelStyle.paddingLeft || '0') || 0) + (parseFloat(labelStyle.paddingRight || '0') || 0);
+                const labelPadY = (parseFloat(labelStyle.paddingTop || '0') || 0) + (parseFloat(labelStyle.paddingBottom || '0') || 0);
+                const wrapperPadX = (parseFloat(wrapperStyle?.paddingLeft || '0') || 0) + (parseFloat(wrapperStyle?.paddingRight || '0') || 0);
+                const wrapperPadY = (parseFloat(wrapperStyle?.paddingTop || '0') || 0) + (parseFloat(wrapperStyle?.paddingBottom || '0') || 0);
+                const textPadX = (parseFloat(textStyle.paddingLeft || '0') || 0) + (parseFloat(textStyle.paddingRight || '0') || 0);
+                const textPadY = (parseFloat(textStyle.paddingTop || '0') || 0) + (parseFloat(textStyle.paddingBottom || '0') || 0);
+                const promotedExtraction = Boolean(annotation.promotedFromExtraction);
+                const preservePromotedLines = promotedExtraction && !annotation.promotedReflowEnabled;
+                const fontFamily = resolveAnnotationCssFontFamily(annotation.fontFamily, {
+                    preferExact: promotedExtraction,
+                    exactFontName: annotation.fontSourceName || annotation.fontFamily,
+                });
+                const fontSizePx = annotation.fontSize * currentScale;
+                const widthSafety = promotedExtraction ? 4 : 2;
+                const heightSafety = promotedExtraction ? 3 : 1;
+
+                const requiredWidth = Math.max(
+                    label.offsetWidth || 0,
+                    Math.ceil((textEl.scrollWidth || textEl.getBoundingClientRect().width || 0) + labelPadX + wrapperPadX + textPadX + widthSafety)
+                );
+                const measuredLineWidth = preservePromotedLines
+                    ? Math.max(
+                        ...String(annotation.text || '')
+                            .replace(/\r\n/g, '\n')
+                            .replace(/\r/g, '\n')
+                            .split('\n')
+                            .map((line) => measureAnnotationTextWidth(line || ' ', fontSizePx, fontFamily, annotation.fontWeight, annotation.fontStyle))
+                      )
+                    : 0;
+                const requiredHeight = Math.max(
+                    label.offsetHeight || 0,
+                    Math.ceil((textEl.scrollHeight || textEl.getBoundingClientRect().height || 0) + labelPadY + wrapperPadY + textPadY + heightSafety)
+                );
+                const exactRequiredWidth = measuredLineWidth > 0
+                    ? Math.ceil(measuredLineWidth + labelPadX + wrapperPadX + textPadX + widthSafety)
+                    : 0;
+
+                const currentWidth = label.offsetWidth || 0;
+                const currentHeight = label.offsetHeight || 0;
+                const nextRequiredWidth = Math.max(requiredWidth, exactRequiredWidth);
+                const widthNeedsGrowth = nextRequiredWidth > (currentWidth + 1);
+                const heightNeedsGrowth = requiredHeight > (currentHeight + 1);
+
+                if (!widthNeedsGrowth && !heightNeedsGrowth) {
+                    return false;
+                }
+
+                setTextAnnotationBounds(
+                    annotation,
+                    pageInfo,
+                    label.offsetLeft,
+                    label.offsetTop,
+                    Math.max(currentWidth, nextRequiredWidth),
+                    Math.max(currentHeight, requiredHeight)
+                );
+                applyAnnotationStyle(annotation);
+                return true;
+            }
+
+            let promotedAnnotationFontRefitToken = 0;
+
+            function schedulePromotedAnnotationFontRefit() {
+                if (!document.fonts || !document.fonts.ready) {
+                    return;
+                }
+
+                const refitToken = ++promotedAnnotationFontRefitToken;
+                const runRefit = () => {
+                    if (refitToken !== promotedAnnotationFontRefitToken) {
+                        return;
+                    }
+
+                    annotations.forEach((annotation) => {
+                        if (!annotation?.promotedFromExtraction || !annotation?.element) {
+                            return;
+                        }
+                        const pageContext = resolveAnnotationPageContext(annotation);
+                        if (!pageContext?.pageInfo) {
+                            return;
+                        }
+                        applyAnnotationStyle(annotation);
+                        fitTextAnnotationBoundsToRenderedContent(annotation, pageContext.pageInfo);
+                    });
+                };
+
+                window.setTimeout(() => {
+                    document.fonts.ready.then(() => {
+                        requestAnimationFrame(runRefit);
+                        window.setTimeout(runRefit, 180);
+                    });
+                }, 0);
+            }
+
+            function buildCopiedAnnotationSnapshot(annotation) {
+                const copied = JSON.parse(JSON.stringify(stripInternalAnnotationFields(annotation)));
+
+                if (annotation.type === 'text' || !annotation.type) {
+                    const pageContext = resolveAnnotationPageContext(annotation);
+                    const leftPx = annotation.element ? annotation.element.offsetLeft : (annotation.pdfX * currentScale);
+                    const topPx = pageContext ? (
+                        annotation.element ? annotation.element.offsetTop : getTextAnnotationTopPx(annotation, pageContext.pageInfo)
+                    ) : 0;
+                    const measuredBounds = measureTextAnnotationContentBounds(annotation);
+
+                    copied.__copyMeta = {
+                        leftPx,
+                        topPx,
+                        widthPx: measuredBounds?.widthPx || null,
+                        heightPx: measuredBounds?.heightPx || null,
+                    };
+                }
+
+                return copied;
+            }
+
+            function createAnnotationFromCopiedSnapshot(copiedAnnotation, offsetPx = 10) {
+                const newAnnotation = JSON.parse(JSON.stringify(copiedAnnotation));
+                const copyMeta = newAnnotation.__copyMeta || null;
+                delete newAnnotation.__copyMeta;
+                delete newAnnotation.element;
+                delete newAnnotation.textWrapper;
+                delete newAnnotation.shapeSvg;
+                newAnnotation.id = generateAnnotationId();
+
+                if (newAnnotation.type === 'text' || !newAnnotation.type) {
+                    const pageContext = resolveAnnotationPageContext(newAnnotation);
+                    if (pageContext) {
+                        const baseLeftPx = Number(copyMeta?.leftPx) || (Number(newAnnotation.pdfX) || 0) * currentScale;
+                        const baseTopPx = Number(copyMeta?.topPx) || getTextAnnotationTopPx(newAnnotation, pageContext.pageInfo);
+                        const widthPx = Number(copyMeta?.widthPx) || 0;
+                        const heightPx = Number(copyMeta?.heightPx) || 0;
+
+                        if (newAnnotation.keepBounds && widthPx > 0 && heightPx > 0) {
+                            setTextAnnotationBounds(newAnnotation, pageContext.pageInfo, baseLeftPx + offsetPx, baseTopPx + offsetPx, widthPx, heightPx);
+                        } else {
+                            delete newAnnotation.keepBounds;
+                            clearTextAnnotationBounds(newAnnotation, pageContext.pageInfo, baseLeftPx + offsetPx, baseTopPx + offsetPx);
+                        }
+                    } else {
+                        newAnnotation.pdfX = (Number(newAnnotation.pdfX) || 0) + (offsetPx / currentScale);
+                        newAnnotation.pdfY = (Number(newAnnotation.pdfY) || 0) + (offsetPx / currentScale);
+                        delete newAnnotation.keepBounds;
+                        delete newAnnotation.pdfWidth;
+                        delete newAnnotation.pdfHeight;
+                    }
+
+                    normalizeTextAnnotation(newAnnotation);
+                    return newAnnotation;
+                }
+
+                newAnnotation.pdfX = (Number(newAnnotation.pdfX) || 0) + (offsetPx / currentScale);
+                newAnnotation.pdfY = (Number(newAnnotation.pdfY) || 0) + (offsetPx / currentScale);
+                return newAnnotation;
             }
 
             function addPageThumbnail(pageNumber, canvas) {
@@ -6947,7 +11890,82 @@
                             setSelection(annotation);
                             setStatus('Shape added to new page. Click Save to keep changes.', 'ok');
                         });
-                        
+
+                        // ─── Table drawing on pending page ───
+                        let pendingDrawingTable = null;
+
+                        overlay.addEventListener('pointerdown', (event) => {
+                            if (toolMode !== 'table') return;
+                            if (event.target !== overlay && event.target.closest('.annotation')) return;
+                            event.preventDefault();
+                            overlay.setPointerCapture(event.pointerId);
+                            const rect = overlay.getBoundingClientRect();
+                            const startX = event.clientX - rect.left;
+                            const startY = event.clientY - rect.top;
+                            const tableEl = document.createElement('div');
+                            tableEl.style.cssText = `position:absolute;left:${startX}px;top:${startY}px;width:0;height:0;border:${tableStrokeWidth}px solid ${tableStroke};background:${tableFillTransparent ? 'transparent' : tableFill};opacity:0.7;pointer-events:none;box-sizing:border-box;z-index:1000;`;
+                            overlay.appendChild(tableEl);
+                            pendingDrawingTable = { element: tableEl, startX, startY };
+                        });
+
+                        overlay.addEventListener('pointermove', (event) => {
+                            if (!pendingDrawingTable || toolMode !== 'table') return;
+                            const rect = overlay.getBoundingClientRect();
+                            const currentX = event.clientX - rect.left;
+                            const currentY = event.clientY - rect.top;
+                            const left = Math.min(currentX, pendingDrawingTable.startX);
+                            const top = Math.min(currentY, pendingDrawingTable.startY);
+                            const width = Math.max(1, Math.abs(currentX - pendingDrawingTable.startX));
+                            const height = Math.max(1, Math.abs(currentY - pendingDrawingTable.startY));
+                            pendingDrawingTable.element.style.left = left + 'px';
+                            pendingDrawingTable.element.style.top = top + 'px';
+                            pendingDrawingTable.element.style.width = width + 'px';
+                            pendingDrawingTable.element.style.height = height + 'px';
+                        });
+
+                        overlay.addEventListener('pointerup', (event) => {
+                            if (!pendingDrawingTable || toolMode !== 'table') return;
+                            const elRect = pendingDrawingTable.element.getBoundingClientRect();
+                            const overlayRect = overlay.getBoundingClientRect();
+                            const width = elRect.width;
+                            const height = elRect.height;
+                            if (width < 10 || height < 10) {
+                                pendingDrawingTable.element.remove();
+                                pendingDrawingTable = null;
+                                return;
+                            }
+                            const left = elRect.left - overlayRect.left;
+                            const top = elRect.top - overlayRect.top;
+                            const pdfX = left / currentScale;
+                            const pdfWidth = width / currentScale;
+                            const pdfHeight = height / currentScale;
+                            const pdfY = (overlay.clientHeight - top) / currentScale - pdfHeight;
+                            const annotation = {
+                                id: generateAnnotationId(),
+                                type: 'table',
+                                rows: tableRows,
+                                cols: tableCols,
+                                strokeColor: tableStroke,
+                                strokeWidth: tableStrokeWidth,
+                                fillColor: tableFill,
+                                fillTransparent: tableFillTransparent,
+                                outerBorder: tableOuterBorder,
+                                opacity: 1,
+                                pageIndex: pendingPageId,
+                                pdfX, pdfY, pdfWidth, pdfHeight,
+                            };
+                            annotations.push(annotation);
+                            persistAnnotations();
+                            updateAnnotationsList();
+                            addAnnotationElement(blankPageEl, annotation, pageInfo);
+                            pendingDrawingTable.element.remove();
+                            pendingDrawingTable = null;
+                            toolMode = 'select';
+                            updateModeButtons();
+                            setSelection(annotation);
+                            setStatus('Table added to new page. Click Save to keep changes.', 'ok');
+                        });
+
                         // Insert after the reference page in main viewer
                         if (insertAfterMainPage && insertAfterMainPage.nextSibling) {
                             mainViewer.insertBefore(blankPageEl, insertAfterMainPage.nextSibling);
@@ -7214,13 +12232,23 @@
                 if (!text) {
                     return text;
                 }
-                let sanitized = text
+                let sanitized = String(text)
                     .replace(/✕/g, 'X')
                     .replace(/×/g, 'x')
                     .replace(/☐/g, '[ ]')
                     .replace(/☑/g, '[x]')
-                    .replace(/☒/g, '[x]');
-                sanitized = sanitized.replace(/[^\x20-\x7E]/g, '?');
+                    .replace(/☒/g, '[x]')
+                    .replace(/[‘’‚‛‹›]/g, "'")
+                    .replace(/[“”„‟«»]/g, '"')
+                    .replace(/[–—―]/g, '-')
+                    .replace(/…/g, '...')
+                    .replace(/\u00A0/g, ' ');
+                try {
+                    sanitized = sanitized.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+                } catch (error) {
+                    // Ignore environments without Unicode normalization support.
+                }
+                sanitized = sanitized.replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '');
                 return sanitized;
             }
 
@@ -7234,8 +12262,13 @@
 
             async function saveAnnotationToDatabase(annotation) {
                 try {
+                    clearTrackedPromotedAnnotationDeletion(annotation);
+                    if (annotation?.promotedFromExtraction) {
+                        annotation.promotedDirty = true;
+                    }
                     const sessionId = localStorage.getItem('pdf_session_id') || generateSessionId();
                     localStorage.setItem('pdf_session_id', sessionId);
+                    const annotationPayload = stripInternalAnnotationFields(annotation);
                     
                     const saveUrl = `{{ route('documents.saveAnnotations', $document) }}`;
                     const response = await fetch(saveUrl, {
@@ -7245,7 +12278,7 @@
                             'X-CSRF-TOKEN': csrfToken,
                         },
                         body: JSON.stringify({
-                            annotations: [annotation],
+                            annotations: [annotationPayload],
                             session_id: sessionId,
                             user_email: null,
                             annotation_id: annotation.id,
@@ -7298,6 +12331,7 @@
                 }
                 
                 activeEditor = null;
+                activeEditorSelectionRange = null;
             }
 
             // Close any open text edit popup
@@ -7437,7 +12471,7 @@
                 // Build pageInfo from canvas
                 const pageInfo = {
                     scale: currentScale,
-                    canvasHeight: canvas.height,
+                    canvasHeight: overlay.clientHeight || canvas.height,
                 };
                 const pageIndex = annotation.pageIndex;
 
@@ -7460,7 +12494,7 @@
                 };
 
                 const x = annotation.pdfX * currentScale;
-                const y = pageInfo.canvasHeight - annotation.pdfY * currentScale;
+                const y = getTextAnnotationTopPx(annotation, pageInfo);
                 const dw = annotation.pdfWidth ? annotation.pdfWidth * currentScale : 0;
                 const dh = annotation.pdfHeight ? annotation.pdfHeight * currentScale : 0;
 
@@ -7493,10 +12527,17 @@
 
             function createTextBoxCreator(overlay, x, y, pageIndex, canvas, wrapper, pageInfo, opts, dragW, dragH, editAnnotation) {
                 const { fontFamily, fontSizePx, textColor, bgColor, opacityVal, fontWeight, fontStyle, underline, textAlign } = opts;
+                const editingPromotedExtraction = Boolean(editAnnotation?.promotedFromExtraction);
+                const editLineHeightPx = Number(editAnnotation?.lineHeight) > 0
+                    ? Number(editAnnotation.lineHeight) * currentScale
+                    : 0;
                 
                 // Remove any existing text-box-creator
                 document.querySelectorAll('.text-box-creator').forEach(el => el.remove());
                 removeActiveEditor();
+                if (!editAnnotation) {
+                    setSelection(null);
+                }
                 
                 const box = document.createElement('div');
                 box.className = 'text-box-creator';
@@ -7506,24 +12547,48 @@
                     box.style.width = Math.max(60, dragW) + 'px';
                     box.style.height = Math.max(28, dragH) + 'px';
                     box.style.minWidth = '0';
+                    if (editingPromotedExtraction) {
+                        box.style.minHeight = '0';
+                    }
                 }
                 
-                // Input area – textarea for multi-line
-                const input = document.createElement('textarea');
+                // Input area – contenteditable for partial word styling
+                const input = document.createElement('div');
                 input.className = 'tbc-input';
-                input.placeholder = 'Type text here...';
+                input.contentEditable = 'true';
+                input.setAttribute('role', 'textbox');
+                input.setAttribute('aria-multiline', 'true');
+                input.setAttribute('data-placeholder', 'Type text here...');
                 input.style.fontSize = fontSizePx + 'px';
-                input.style.fontFamily = fontMap[fontFamily]?.css || 'inherit';
+                const preservePromotedLinesInEditor = Boolean(editAnnotation?.promotedFromExtraction && !editAnnotation?.promotedReflowEnabled);
+                input.style.fontFamily = editAnnotation?.promotedFromExtraction
+                    ? resolveAnnotationCssFontFamily(fontFamily, {
+                        preferExact: true,
+                        exactFontName: editAnnotation?.fontSourceName || fontFamily,
+                    })
+                    : (fontMap[fontFamily]?.css || 'inherit');
                 input.style.color = textColor;
                 input.style.fontWeight = fontWeight;
                 input.style.fontStyle = fontStyle;
                 input.style.textDecoration = underline ? 'underline' : 'none';
                 input.style.textAlign = textAlign;
                 input.style.opacity = opacityVal;
-                if (dragH) input.style.height = Math.max(28, dragH - 8) + 'px';
+                if (dragH) input.style.minHeight = Math.max(28, dragH - 8) + 'px';
+                if (editingPromotedExtraction && preservePromotedLinesInEditor) {
+                    input.style.padding = '0';
+                    input.style.whiteSpace = 'pre';
+                    input.style.overflowWrap = 'normal';
+                    input.style.wordBreak = 'normal';
+                    if (dragH) {
+                        input.style.minHeight = Math.max(1, dragH) + 'px';
+                    }
+                }
+                if (editLineHeightPx > 0) {
+                    input.style.lineHeight = editLineHeightPx + 'px';
+                }
                 // Pre-fill text when editing an existing annotation
                 if (editAnnotation) {
-                    input.value = editAnnotation.text;
+                    setRichEditableContent(input, editAnnotation.text, editAnnotation.richTextHtml || '');
                 }
                 
                 // Hover menu bar
@@ -7573,7 +12638,7 @@
                 // OK / confirm button
                 const okBtn = document.createElement('button');
                 okBtn.className = 'tbc-menu-btn tbc-ok';
-                okBtn.title = 'Confirm (Enter)';
+                okBtn.title = 'Confirm (Ctrl+Enter)';
                 okBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
                 
                 const divider1 = document.createElement('div');
@@ -7586,7 +12651,7 @@
                 upperBtn.innerHTML = '<span style="font-weight:700;font-size:12px;">Tt</span>';
                 upperBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    input.value = input.value.toUpperCase();
+                    setRichEditableContent(input, getActiveEditorText().toUpperCase());
                     input.focus();
                 });
                 
@@ -7597,7 +12662,7 @@
                 lowerBtn.innerHTML = '<span style="font-size:12px;">tl</span>';
                 lowerBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    input.value = input.value.toLowerCase();
+                    setRichEditableContent(input, getActiveEditorText().toLowerCase());
                     input.focus();
                 });
                 
@@ -7611,8 +12676,9 @@
                 copyBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
                 copyBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    if (input.value.trim()) {
-                        navigator.clipboard.writeText(input.value).then(() => {
+                    const currentText = getOverlayExplicitText(input).trim();
+                    if (currentText) {
+                        navigator.clipboard.writeText(currentText).then(() => {
                             setStatus('Text copied to clipboard.', 'ok');
                         });
                     }
@@ -7641,44 +12707,59 @@
                 const commitText = () => {
                     if (finished) return;
                     finished = true;
-                    const text = input.value.trim();
-                    if (text) {
+                    const rawText = getOverlayExplicitText(input);
+                    const text = editingPromotedExtraction ? rawText : rawText.trim();
+                    const hasTextContent = editingPromotedExtraction ? rawText.trim() : text;
+                    const richTextHtml = buildAnnotationRichTextHtml(input);
+                    const hasRichText = annotationRichTextHasFormatting(richTextHtml);
+                    if (hasTextContent) {
                         const boxLeft = parseFloat(box.style.left);
                         const boxTop = parseFloat(box.style.top);
-                        // Read live values from banner
-                        const curFont = document.getElementById('etb-font')?.value || fontFamily;
-                        const curSize = parseInt(document.getElementById('etb-size')?.value, 10) || fontSizePx;
-                        const curTextColor = document.getElementById('etb-text-color')?.value || textColor;
-                        const curBgColor = document.getElementById('etb-bg-color')?.value || bgColor;
-                        const curOpacity = parseFloat(document.getElementById('etb-opacity')?.value) || opacityVal;
-                        const curBold = document.getElementById('etb-bold')?.classList.contains('active') ? '700' : 'normal';
-                        const curItalic = document.getElementById('etb-italic')?.classList.contains('active') ? 'italic' : 'normal';
-                        const curUnderline = document.getElementById('etb-underline')?.classList.contains('active') || false;
-                        const curAlign = document.getElementById('etb-align')?.value || textAlign;
+                        const boxW = box.offsetWidth;
+                        const boxH = box.offsetHeight;
+                        const baseStyles = readRichEditorBaseStyles(input, {
+                            fontFamily,
+                            fontSizePx,
+                            textColor,
+                            bgColor,
+                            opacityVal,
+                            fontWeight,
+                            fontStyle,
+                            underline,
+                            textAlign,
+                        });
+                        const shouldPersistBounds = shouldKeepTextAnnotationBounds({
+                            text,
+                            input,
+                            dragW,
+                            dragH,
+                            editAnnotation,
+                        });
                         
                         if (editAnnotation) {
                             // Update existing annotation
                             editAnnotation.text = text;
-                            editAnnotation.pdfX = boxLeft / currentScale;
-                            editAnnotation.pdfY = (canvas.height - boxTop) / currentScale;
-                            editAnnotation.fontSize = curSize / currentScale;
-                            editAnnotation.fontFamily = curFont;
-                            editAnnotation.textColor = curTextColor;
-                            editAnnotation.backgroundColor = curBgColor === '#ffffff' ? 'transparent' : curBgColor;
-                            editAnnotation.fontWeight = curBold;
-                            editAnnotation.fontStyle = curItalic;
-                            editAnnotation.underline = curUnderline;
-                            editAnnotation.textAlign = curAlign;
-                            editAnnotation.opacity = curOpacity;
-                            const boxW = box.offsetWidth;
-                            const boxH = box.offsetHeight;
-                            /* 
-                            // Removed to fix user issue: Text box should size to content, not initial drag
-                            if (dragW || dragH) {
-                                editAnnotation.pdfWidth = boxW / currentScale;
-                                editAnnotation.pdfHeight = boxH / currentScale;
+                            if (hasRichText) {
+                                editAnnotation.richTextHtml = richTextHtml;
+                            } else {
+                                delete editAnnotation.richTextHtml;
                             }
-                            */
+                            editAnnotation.fontSize = baseStyles.fontSizePx / currentScale;
+                            editAnnotation.fontFamily = baseStyles.fontFamily;
+                            editAnnotation.textColor = baseStyles.textColor;
+                            editAnnotation.backgroundColor = baseStyles.bgColor;
+                            editAnnotation.fontWeight = baseStyles.fontWeight;
+                            editAnnotation.fontStyle = baseStyles.fontStyle;
+                            editAnnotation.underline = baseStyles.underline;
+                            editAnnotation.textAlign = baseStyles.textAlign;
+                            editAnnotation.opacity = baseStyles.opacityVal;
+                            if (shouldPersistBounds) {
+                                editAnnotation.keepBounds = true;
+                                setTextAnnotationBounds(editAnnotation, pageInfo, boxLeft, boxTop, boxW, boxH);
+                            } else {
+                                delete editAnnotation.keepBounds;
+                                clearTextAnnotationBounds(editAnnotation, pageInfo, boxLeft, boxTop);
+                            }
                             if (editAnnotation.element) {
                                 editAnnotation.element.style.visibility = '';
                             }
@@ -7693,31 +12774,29 @@
                             const annotation = {
                                 id: generateAnnotationId(),
                                 text,
+                                ...(hasRichText ? { richTextHtml } : {}),
                                 pageIndex: pageIndex,
                                 pdfX: boxLeft / currentScale,
                                 pdfY: (canvas.height - boxTop) / currentScale,
-                                fontSize: curSize / currentScale,
-                                fontFamily: curFont,
+                                fontSize: baseStyles.fontSizePx / currentScale,
+                                fontFamily: baseStyles.fontFamily,
                                 type: 'text',
-                                textColor: curTextColor,
-                                backgroundColor: curBgColor === '#ffffff' ? 'transparent' : curBgColor,
-                                fontWeight: curBold,
-                                fontStyle: curItalic,
-                                underline: curUnderline,
-                                textAlign: curAlign,
-                                opacity: curOpacity,
+                                textColor: baseStyles.textColor,
+                                backgroundColor: baseStyles.bgColor,
+                                fontWeight: baseStyles.fontWeight,
+                                fontStyle: baseStyles.fontStyle,
+                                underline: baseStyles.underline,
+                                textAlign: baseStyles.textAlign,
+                                opacity: baseStyles.opacityVal,
                                 rotation: 0,
                             };
-                            // Store bounding box size if the box was drag-sized
-                            const boxW = box.offsetWidth;
-                            const boxH = box.offsetHeight;
-                            /*
-                            // Removed to fix user issue: Text box should size to content, not initial drag
-                            if (dragW || dragH) {
-                                annotation.pdfWidth = boxW / currentScale;
-                                annotation.pdfHeight = boxH / currentScale;
+                            if (shouldPersistBounds) {
+                                annotation.keepBounds = true;
+                                setTextAnnotationBounds(annotation, pageInfo, boxLeft, boxTop, boxW, boxH);
+                            } else {
+                                delete annotation.keepBounds;
+                                clearTextAnnotationBounds(annotation, pageInfo, boxLeft, boxTop);
                             }
-                            */
                             normalizeTextAnnotation(annotation);
                             annotations.push(annotation);
                             persistAnnotations();
@@ -7735,6 +12814,7 @@
                     }
                     box.remove();
                     if (activeEditor === box) activeEditor = null;
+                    activeEditorSelectionRange = null;
                     document.removeEventListener('pointerdown', outsideClickHandler, true);
                 };
                 
@@ -7747,9 +12827,12 @@
                     }
                     box.remove();
                     if (activeEditor === box) activeEditor = null;
+                    activeEditorSelectionRange = null;
                     document.removeEventListener('pointerdown', outsideClickHandler, true);
                 };
-                
+                box._commitText = commitText;
+                box._cancelText = cancelBox;
+
                 // Click outside to confirm (request #2)
                 const outsideClickHandler = (e) => {
                     if (finished) return;
@@ -7757,12 +12840,18 @@
                     // Don't confirm if clicking on edit-text-banner controls
                     const banner = document.getElementById('edit-text-banner');
                     if (banner && banner.contains(e.target)) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (typeof e.stopImmediatePropagation === 'function') {
+                        e.stopImmediatePropagation();
+                    }
                     commitText();
                 };
-                // Delay so the drag-up event doesn't immediately fire
-                setTimeout(() => {
+                // Attach on the next frame so the creation click finishes first,
+                // but the first real outside click is still captured.
+                requestAnimationFrame(() => {
                     if (!finished) document.addEventListener('pointerdown', outsideClickHandler, true);
-                }, 100);
+                });
                 
                 okBtn.addEventListener('click', (e) => { e.stopPropagation(); commitText(); });
                 deleteBtn.addEventListener('click', (e) => { 
@@ -7781,6 +12870,7 @@
                         }
                         box.remove();
                         if (activeEditor === box) activeEditor = null;
+                        activeEditorSelectionRange = null;
                         document.removeEventListener('pointerdown', outsideClickHandler, true);
                     } else {
                         cancelBox();
@@ -7789,12 +12879,32 @@
                 
                 input.addEventListener('keydown', (e) => {
                     e.stopPropagation();
-                    if (e.key === 'Enter' && !e.shiftKey) {
+                    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
                         e.preventDefault();
                         commitText();
+                    } else if (e.key === 'Enter') {
+                        e.preventDefault();
+                        input.focus();
+                        if (typeof document.execCommand === 'function') {
+                            if (document.queryCommandSupported && document.queryCommandSupported('insertLineBreak')) {
+                                document.execCommand('insertLineBreak');
+                            } else {
+                                document.execCommand('insertHTML', false, '<br>');
+                            }
+                        }
+                        activeEditorSelectionRange = null;
                     } else if (e.key === 'Escape') {
                         cancelBox();
                     }
+                });
+
+                input.addEventListener('paste', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const pastedText = e.clipboardData?.getData('text/plain')
+                        || window.clipboardData?.getData('Text')
+                        || '';
+                    insertPlainTextIntoEditable(input, pastedText);
                 });
                 
                 // Prevent clicks inside the box from bubbling to overlay
@@ -7817,6 +12927,7 @@
             function addAnnotationElement(wrapper, annotation, pageInfo) {
                 const label = document.createElement('div');
                 label.className = 'annotation';
+                label.classList.toggle('promoted-extraction', Boolean(annotation.promotedFromExtraction));
                 
                 // Set z-index based on position in annotations array for proper layering
                 const zIndex = annotations.indexOf(annotation);
@@ -7952,6 +13063,63 @@
                     label.style.border = 'none';
                     label.style.cursor = 'pointer';
                     label.style.boxShadow = '0 0 0 1px rgba(200,200,200,0.3)';
+                } else if (annotation.type === 'table') {
+                    const tRows = Math.max(1, parseInt(annotation.rows) || 1);
+                    const tCols = Math.max(1, parseInt(annotation.cols) || 1);
+                    const tStroke = annotation.strokeColor || '#000000';
+                    const tStrokeW = annotation.strokeWidth || 1;
+                    const tFill = annotation.fillTransparent ? 'none' : (annotation.fillColor || '#ffffff');
+                    const tOpacity = annotation.opacity !== undefined ? annotation.opacity : 1;
+                    shapeSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                    shapeSvg.setAttribute('width', '100%');
+                    shapeSvg.setAttribute('height', '100%');
+                    // Expand view by half a stroke unit on each side so outer rect strokes are not half-clipped
+                    const hw = tStrokeW / 2;
+                    shapeSvg.setAttribute('viewBox', `${-hw} ${-hw} ${100 + tStrokeW} ${100 + tStrokeW}`);
+                    shapeSvg.setAttribute('preserveAspectRatio', 'none');
+                    shapeSvg.style.display = 'block';
+                    shapeSvg.style.overflow = 'visible';
+                    // Cell fill
+                    if (tFill !== 'none') {
+                        const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                        bg.setAttribute('x', '0'); bg.setAttribute('y', '0');
+                        bg.setAttribute('width', '100'); bg.setAttribute('height', '100');
+                        bg.setAttribute('fill', tFill);
+                        bg.setAttribute('opacity', String(tOpacity));
+                        shapeSvg.appendChild(bg);
+                    }
+                    // Outer rect + grid lines
+                    const tableG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                    tableG.setAttribute('stroke', tStroke);
+                    tableG.setAttribute('stroke-width', String(tStrokeW));
+                    tableG.setAttribute('opacity', String(tOpacity));
+                    // Outer rectangle (conditional)
+                    if (annotation.outerBorder !== false) {
+                        const outerRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                        outerRect.setAttribute('x', '0'); outerRect.setAttribute('y', '0');
+                        outerRect.setAttribute('width', '100'); outerRect.setAttribute('height', '100');
+                        outerRect.setAttribute('fill', 'none');
+                        tableG.appendChild(outerRect);
+                    }
+                    // Horizontal lines
+                    for (let r = 1; r < tRows; r++) {
+                        const y = (r / tRows * 100).toFixed(2);
+                        const hLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                        hLine.setAttribute('x1', '0'); hLine.setAttribute('y1', y);
+                        hLine.setAttribute('x2', '100'); hLine.setAttribute('y2', y);
+                        hLine.setAttribute('fill', 'none');
+                        tableG.appendChild(hLine);
+                    }
+                    // Vertical lines
+                    for (let c = 1; c < tCols; c++) {
+                        const x = (c / tCols * 100).toFixed(2);
+                        const vLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                        vLine.setAttribute('x1', x); vLine.setAttribute('y1', '0');
+                        vLine.setAttribute('x2', x); vLine.setAttribute('y2', '100');
+                        vLine.setAttribute('fill', 'none');
+                        tableG.appendChild(vLine);
+                    }
+                    shapeSvg.appendChild(tableG);
                 } else {
                     textSpan = document.createElement('span');
                     textSpan.className = 'annotation-text';
@@ -7964,18 +13132,11 @@
                 deleteBtn.style.cssText = 'position: absolute; top: -8px; right: -8px; width: 24px; height: 24px; border-radius: 50%; background: var(--danger); color: white; border: 2px solid var(--bg); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: bold; line-height: 1; z-index: 10; opacity: 0; transition: opacity 0.2s;';
                 deleteBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    wrapper.querySelector('.overlay').removeChild(label);
-                    const idx = annotations.indexOf(annotation);
-                    if (idx >= 0) {
-                        annotations.splice(idx, 1);
-                        if (selectedAnnotation === annotation) {
-                            selectedAnnotation = null;
-                        }
-                        updateSelectionBar();
-                        persistAnnotations();
-                        updateAnnotationsList();
-                        setStatus('Text deleted. Click Save to keep changes.', 'ok');
-                    }
+                    removeAnnotationRecord(annotation);
+                    updateSelectionBar();
+                    persistAnnotations();
+                    updateAnnotationsList();
+                    setStatus('Text deleted. Click Save to keep changes.', 'ok');
                 });
 
                 if (textSpan) {
@@ -8349,8 +13510,13 @@
                     label.appendChild(rotateHandle);
                 }
                 label.appendChild(deleteBtn);
-                if (annotation.type !== 'signature' && annotation.type !== 'shape' && annotation.type !== 'eraser') {
-                    label.style.fontFamily = fontMap[annotation.fontFamily]?.css || 'inherit';
+                if (annotation.type !== 'signature' && annotation.type !== 'shape' && annotation.type !== 'eraser' && annotation.type !== 'table') {
+                    label.style.fontFamily = annotation.promotedFromExtraction
+                        ? resolveAnnotationCssFontFamily(annotation.fontFamily, {
+                            preferExact: true,
+                            exactFontName: annotation.fontSourceName || annotation.fontFamily,
+                        })
+                        : (fontMap[annotation.fontFamily]?.css || 'inherit');
                     // Hide old delete button (we use tbc-menu instead)
                     deleteBtn.style.display = 'none';
                     
@@ -8426,11 +13592,7 @@
                     tbcDel.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
                     tbcDel.addEventListener('click', (e) => {
                         e.stopPropagation();
-                        const ov = wrapper.querySelector('.overlay');
-                        if (ov) ov.removeChild(label);
-                        const idx = annotations.indexOf(annotation);
-                        if (idx >= 0) annotations.splice(idx, 1);
-                        if (selectedAnnotation === annotation) selectedAnnotation = null;
+                        removeAnnotationRecord(annotation);
                         updateSelectionBar();
                         updateEditTextBanner();
                         persistAnnotations();
@@ -8552,6 +13714,12 @@
                             e.stopPropagation();
                             e.preventDefault();
                             label.dataset.resizing = 'true';
+                            if (annotation.promotedFromExtraction && !annotation.promotedReflowEnabled) {
+                                annotation.promotedReflowEnabled = true;
+                                annotation.text = toPromotedReflowText(annotation.text);
+                                delete annotation.richTextHtml;
+                                applyAnnotationStyle(annotation);
+                            }
                             const startX = e.clientX;
                             const startY = e.clientY;
                             const startW = label.offsetWidth;
@@ -8609,17 +13777,13 @@
                                 label.style.height = nh + 'px';
                                 label.style.left = nl + 'px';
                                 label.style.top = nt + 'px';
-                                annotation.pdfWidth = nw / pageInfo.scale;
-                                annotation.pdfHeight = nh / pageInfo.scale;
-                                annotation.pdfX = nl / pageInfo.scale;
-                                annotation.pdfY = (pageInfo.canvasHeight - nt) / pageInfo.scale;
+                                annotation.keepBounds = true;
+                                setTextAnnotationBounds(annotation, pageInfo, nl, nt, nw, nh);
                             };
                             const onResizeUp = () => {
                                 delete label.dataset.resizing;
                                 // Mark the label as having explicit bounds
-                                if (annotation.pdfWidth && annotation.pdfHeight) {
-                                    label.classList.add('has-bounds');
-                                }
+                                label.classList.toggle('has-bounds', annotationHasBounds(annotation));
                                 window.removeEventListener('pointermove', onResizeMove);
                                 window.removeEventListener('pointerup', onResizeUp);
                                 persistAnnotations();
@@ -8641,6 +13805,9 @@
                 } else if (annotation.type === 'eraser') {
                     // Eraser: keep delete button visible (hover to show, like text annotations)
                     // No further setup needed
+                } else if (annotation.type === 'table') {
+                    // Tables use the shape action bar for deletion
+                    deleteBtn.style.display = 'none';
                 }
 
                 const overlay = wrapper.querySelector('.overlay');
@@ -8672,6 +13839,14 @@
                             annotation.shapeSvg.style.transform = `rotate(${annotation.rotation}deg)`;
                             annotation.shapeSvg.style.transformOrigin = 'center';
                         }
+                    } else if (annotation.type === 'table') {
+                        const width = annotation.pdfWidth * pageInfo.scale;
+                        const height = annotation.pdfHeight * pageInfo.scale;
+                        const y = pageInfo.canvasHeight - (annotation.pdfY + annotation.pdfHeight) * pageInfo.scale;
+                        label.style.left = x + 'px';
+                        label.style.top = y + 'px';
+                        label.style.width = width + 'px';
+                        label.style.height = height + 'px';
                     } else if (annotation.type === 'eraser') {
                         const width = annotation.pdfWidth * pageInfo.scale;
                         const height = annotation.pdfHeight * pageInfo.scale;
@@ -8681,23 +13856,29 @@
                         label.style.width = width + 'px';
                         label.style.height = height + 'px';
                     } else {
-                        const y = pageInfo.canvasHeight - annotation.pdfY * pageInfo.scale;
+                        const y = getTextAnnotationTopPx(annotation, pageInfo);
                         label.style.left = x + 'px';
                         label.style.top = y + 'px';
                         label.style.fontSize = (annotation.fontSize * pageInfo.scale) + 'px';
                         // Apply bounding box if present
-                        if (annotation.pdfWidth && annotation.pdfHeight) {
+                        if (annotationHasBounds(annotation)) {
                             label.style.width = (annotation.pdfWidth * pageInfo.scale) + 'px';
                             label.style.height = (annotation.pdfHeight * pageInfo.scale) + 'px';
-                            label.style.overflow = 'hidden';
-                            label.style.wordWrap = 'break-word';
+                        } else {
+                            label.style.width = '';
+                            label.style.height = '';
                         }
                         // Alignment translateX on label (rotation goes on textWrapper)
-                        const fontFamily = fontMap[annotation.fontFamily]?.css || 'inherit';
+                        const fontFamily = annotation.promotedFromExtraction
+                            ? resolveAnnotationCssFontFamily(annotation.fontFamily, {
+                                preferExact: true,
+                                exactFontName: annotation.fontSourceName || annotation.fontFamily,
+                            })
+                            : (fontMap[annotation.fontFamily]?.css || 'inherit');
                         const fontSizePx = annotation.fontSize * pageInfo.scale;
-                        const textWidth = annotation.pdfWidth ? (annotation.pdfWidth * pageInfo.scale) : measureAnnotationTextWidth(annotation.text, fontSizePx, fontFamily, annotation.fontWeight, annotation.fontStyle);
+                        const textWidth = annotationHasBounds(annotation) ? (annotation.pdfWidth * pageInfo.scale) : measureAnnotationTextWidth(annotation.text, fontSizePx, fontFamily, annotation.fontWeight, annotation.fontStyle);
                         let translateX = 0;
-                        if (!annotation.pdfWidth) {
+                        if (!annotationHasBounds(annotation)) {
                             if (annotation.textAlign === 'center') translateX = -textWidth / 2;
                             else if (annotation.textAlign === 'right') translateX = -textWidth;
                         }
@@ -8729,13 +13910,14 @@
                     const maxY = rect.height - label.offsetHeight;
                     const clampedX = Math.max(0, Math.min(maxX, x));
                     const clampedY = Math.max(0, Math.min(maxY, y));
-                    annotation.pdfX = clampedX / pageInfo.scale;
                     if (annotation.type === 'signature') {
+                        annotation.pdfX = clampedX / pageInfo.scale;
                         annotation.pdfY = (pageInfo.canvasHeight - clampedY) / pageInfo.scale - annotation.pdfHeight;
-                    } else if (annotation.type === 'shape' || annotation.type === 'eraser') {
+                    } else if (annotation.type === 'shape' || annotation.type === 'eraser' || annotation.type === 'table') {
+                        annotation.pdfX = clampedX / pageInfo.scale;
                         annotation.pdfY = (pageInfo.canvasHeight - clampedY) / pageInfo.scale - annotation.pdfHeight;
                     } else {
-                        annotation.pdfY = (pageInfo.canvasHeight - clampedY) / pageInfo.scale;
+                        setTextAnnotationPosition(annotation, pageInfo, clampedX, clampedY);
                     }
                     label.style.left = clampedX + 'px';
                     label.style.top = clampedY + 'px';
@@ -8758,13 +13940,9 @@
                         saveAnnotationToDatabase(annotation);
                         setStatus('Text moved. Click Save to keep changes.', 'ok');
                     } else {
-                        // Single click without drag: if text annotation and not from tbc-menu, enter inline edit
-                        if ((annotation.type === 'text' || !annotation.type) && !dragFromMenu) {
-                            setSelection(annotation);
-                            startInlineEdit(wrapper, annotation);
-                        } else {
-                            setSelection(annotation);
-                        }
+                        // Single click without drag selects the annotation.
+                        // Editing remains available via double click or the menu edit button.
+                        setSelection(annotation);
                     }
                 };
 
@@ -8778,6 +13956,13 @@
 
                 label.addEventListener('pointerdown', (event) => {
                     if (event.target === deleteBtn) {
+                        return;
+                    }
+                    if ((annotation.type === 'text' || !annotation.type) && event.target.closest('.annotation-text')) {
+                        if (selectedAnnotation !== annotation) {
+                            event.preventDefault();
+                            setSelection(annotation);
+                        }
                         return;
                     }
                     // Don't start dragging if clicking on rotate handle or tbc-menu (except move button)
@@ -8835,6 +14020,20 @@
                     label.classList.add('selected');
                 }
                 overlay.appendChild(label);
+                if (annotationHasBounds(annotation) && (annotation.type === 'text' || !annotation.type)) {
+                    requestAnimationFrame(() => {
+                        if (!annotation.element || !annotation.element.isConnected) {
+                            return;
+                        }
+                        fitTextAnnotationBoundsToRenderedContent(annotation, pageInfo);
+                        setTimeout(() => {
+                            if (!annotation.element || !annotation.element.isConnected) {
+                                return;
+                            }
+                            fitTextAnnotationBoundsToRenderedContent(annotation, pageInfo);
+                        }, 120);
+                    });
+                }
             }
 
             function rerenderAnnotations() {
@@ -9534,6 +14733,86 @@
                         }, 10);
                     });
 
+                    // ─── Table drawing tool pointer events ───
+                    let drawingTable = null;
+                    overlay.addEventListener('pointerdown', (event) => {
+                        if (toolMode !== 'table') return;
+                        if (event.target !== overlay) return;
+                        const rect = overlay.getBoundingClientRect();
+                        const startX = event.clientX - rect.left;
+                        const startY = event.clientY - rect.top;
+
+                        const tablePreview = document.createElement('div');
+                        tablePreview.style.cssText = `position:absolute;left:${startX}px;top:${startY}px;width:1px;height:1px;border:${tableStrokeWidth}px solid ${tableStroke};background:${tableFillTransparent ? 'transparent' : tableFill};opacity:0.7;pointer-events:none;box-sizing:border-box;z-index:1000;`;
+                        overlay.appendChild(tablePreview);
+
+                        drawingTable = { startX, startY, element: tablePreview, pageInfo };
+                    });
+
+                    overlay.addEventListener('pointermove', (event) => {
+                        if (!drawingTable) return;
+                        const rect = overlay.getBoundingClientRect();
+                        const currentX = event.clientX - rect.left;
+                        const currentY = event.clientY - rect.top;
+                        const left = Math.min(drawingTable.startX, currentX);
+                        const top = Math.min(drawingTable.startY, currentY);
+                        const width = Math.max(1, Math.abs(currentX - drawingTable.startX));
+                        const height = Math.max(1, Math.abs(currentY - drawingTable.startY));
+                        drawingTable.element.style.left = left + 'px';
+                        drawingTable.element.style.top = top + 'px';
+                        drawingTable.element.style.width = width + 'px';
+                        drawingTable.element.style.height = height + 'px';
+                    });
+
+                    overlay.addEventListener('pointerup', (event) => {
+                        if (!drawingTable) return;
+                        const elRect = drawingTable.element.getBoundingClientRect();
+                        const overlayRect = overlay.getBoundingClientRect();
+                        const width = elRect.width;
+                        const height = elRect.height;
+                        if (width < 10 || height < 10) {
+                            drawingTable.element.remove();
+                            drawingTable = null;
+                            return;
+                        }
+                        const left = elRect.left - overlayRect.left;
+                        const top = elRect.top - overlayRect.top;
+                        const pdfX = left / currentScale;
+                        const pdfWidth = width / currentScale;
+                        const pdfHeight = height / currentScale;
+                        const pdfY = (overlay.clientHeight - top) / currentScale - pdfHeight;
+
+                        const annotation = {
+                            id: generateAnnotationId(),
+                            type: 'table',
+                            rows: tableRows,
+                            cols: tableCols,
+                            strokeColor: tableStroke,
+                            strokeWidth: tableStrokeWidth,
+                            fillColor: tableFill,
+                            fillTransparent: tableFillTransparent,
+                            outerBorder: tableOuterBorder,
+                            opacity: 1,
+                            pageIndex: pageNumber - 1,
+                            pdfX,
+                            pdfY,
+                            pdfWidth,
+                            pdfHeight,
+                        };
+                        annotations.push(annotation);
+                        persistAnnotations();
+                        updateAnnotationsList();
+                        addAnnotationElement(wrapper, annotation, pageInfo);
+                        drawingTable.element.remove();
+                        drawingTable = null;
+                        toolMode = 'select';
+                        setTimeout(() => {
+                            updateModeButtons();
+                            setSelection(annotation);
+                            setStatus('Table added. Click Save to keep changes.', 'ok');
+                        }, 10);
+                    });
+
                     // ─── Draw / Eraser tool pointer events ───
                     let eraserDrag = null;
                     overlay.addEventListener('pointerdown', (event) => {
@@ -9676,6 +14955,66 @@
                 return variant.normal || fontMap[family]?.pdf || PDFLib.StandardFonts.Helvetica;
             }
 
+            function wrapPdfTextToWidth(font, text, fontSize, maxWidth) {
+                const safeText = String(text || '').replace(/\r\n?/g, '\n');
+                const paragraphs = safeText.split('\n');
+                const lines = [];
+
+                const pushWrappedWord = (word) => {
+                    let segment = '';
+                    for (const char of word) {
+                        const candidate = segment + char;
+                        if (!segment || font.widthOfTextAtSize(candidate, fontSize) <= maxWidth) {
+                            segment = candidate;
+                            continue;
+                        }
+                        lines.push(segment);
+                        segment = char;
+                    }
+                    if (segment) {
+                        lines.push(segment);
+                    }
+                };
+
+                paragraphs.forEach((paragraph, paragraphIndex) => {
+                    const words = paragraph.split(/\s+/).filter(Boolean);
+                    if (!words.length) {
+                        lines.push('');
+                    } else {
+                        let currentLine = '';
+                        words.forEach((word) => {
+                            const candidate = currentLine ? `${currentLine} ${word}` : word;
+                            if (!currentLine || font.widthOfTextAtSize(candidate, fontSize) <= maxWidth) {
+                                currentLine = candidate;
+                                return;
+                            }
+
+                            if (currentLine) {
+                                lines.push(currentLine);
+                                currentLine = '';
+                            }
+
+                            if (font.widthOfTextAtSize(word, fontSize) <= maxWidth) {
+                                currentLine = word;
+                                return;
+                            }
+
+                            pushWrappedWord(word);
+                        });
+
+                        if (currentLine) {
+                            lines.push(currentLine);
+                        }
+                    }
+
+                    if (paragraphIndex < paragraphs.length - 1) {
+                        lines.push('');
+                    }
+                });
+
+                return lines.length ? lines : [''];
+            }
+
             // Helper: create a PDF ExtGState dictionary with proper PDFName values
             // CRITICAL: context.obj({Type: 'ExtGState'}) creates string value (ExtGState)
             // but PDF spec requires name value /ExtGState. MuPDF rejects the string form.
@@ -9712,14 +15051,23 @@
                 return gsName;
             }
 
+            function shouldUseCleanPdfForAnnotationSave() {
+                return annotations.some((annotation) => annotation?.promotedFromExtraction || annotation?.savedTextOverlay) || hasPendingPromotedAnnotationDeletions();
+            }
+
             async function savePdf() {
+                if (activeEditor && typeof activeEditor._commitText === 'function') {
+                    activeEditor._commitText();
+                }
+                syncAnnotationsForSave();
                 const hasTextEdits = pdfTextItems.some((item) => item.modified);
                 const hasRotations = Object.keys(pageRotations).some(pageIndex => pageRotations[pageIndex] !== 0);
                 const hasDeletedPages = pendingDeletedPages.length > 0;
                 const hasNewPages = pendingNewPages.length > 0;
                 const hasAnnotations = annotations.length > 0;
+                const hasPromotedExtractionDeletions = hasPendingPromotedAnnotationDeletions();
                 
-                if (!hasAnnotations && !hasTextEdits && !hasRotations && !hasDeletedPages && !hasNewPages) {
+                if (!hasAnnotations && !hasPromotedExtractionDeletions && !hasTextEdits && !hasRotations && !hasDeletedPages && !hasNewPages) {
                     setStatus('No changes to save.', 'err');
                     return;
                 }
@@ -9808,9 +15156,9 @@
 
                 // Direct annotation stamping path (PyMuPDF):
                 // keeps shapes/text stamps independent from overlay/text rewrite pipeline.
-                const directAnnotationTypes = new Set(['shape', 'eraser', 'signature', 'text']);
+                const directAnnotationTypes = new Set(['shape', 'eraser', 'signature', 'text', 'table']);
                 const canApplyAnnotationsDirect =
-                    hasAnnotations &&
+                    (hasAnnotations || hasPromotedExtractionDeletions) &&
                     !hasTextEdits &&
                     !hasRotations &&
                     !hasDeletedPages &&
@@ -9820,6 +15168,7 @@
                 console.log('=== SAVE PATH DECISION ===', {
                     canApplyAnnotationsDirect,
                     hasAnnotations,
+                    hasPromotedExtractionDeletions,
                     hasTextEdits,
                     hasRotations,
                     hasDeletedPages,
@@ -9829,6 +15178,7 @@
 
                 if (canApplyAnnotationsDirect) {
                     console.log('>>> USING DIRECT PATH (PyMuPDF)');
+                    const sessionId = localStorage.getItem('pdf_session_id') || null;
                     const directResponse = await fetch('{{ route("documents.applyAnnotationsDirect", $document) }}', {
                         method: 'POST',
                         headers: {
@@ -9836,7 +15186,11 @@
                             'Content-Type': 'application/json',
                             'Accept': 'application/json',
                         },
-                        body: JSON.stringify({ annotations }),
+                        body: JSON.stringify({
+                            annotations,
+                            use_clean_pdf: shouldUseCleanPdfForAnnotationSave(),
+                            session_id: sessionId,
+                        }),
                     });
 
                     if (!directResponse.ok) {
@@ -9853,6 +15207,8 @@
                     // annotation is visible without relying on a redirect race.
                     setStatus('Saved! Reloading PDF...', 'ok');
                     setSelection(null);
+                    deletedPromotedSourceKeys.clear();
+                    deletedSavedTextAnnotationIds.clear();
                     annotations.length = 0;
                     persistAnnotations();
                     updateAnnotationsList();
@@ -9882,7 +15238,7 @@
 
                 // Load the CURRENT version of the PDF (not the original), so we keep previous stamps
                 // IMPORTANT: Always use the original PDF URL, not cleanPdfUrl, to preserve text content
-                const saveFromUrl = pdfUrl; // Use original PDF, not basePdfUrl which might be cleanPdfUrl
+                const saveFromUrl = shouldUseCleanPdfForAnnotationSave() ? cleanPdfUrl : pdfUrl;
                 const joiner = saveFromUrl.includes('?') ? '&' : '?';
                 const currentPdfUrl = `${saveFromUrl}${joiner}v=${pdfVersion}`;
                 const currentPdfResponse = await fetch(currentPdfUrl);
@@ -10703,20 +16059,74 @@
                     }
                     const font = fontCache[fontCacheKey];
                     const safeText = sanitizeTextForPdf(annotation.text);
-                    if (safeText !== annotation.text) {
-                        annotation.text = safeText;
-                        applyAnnotationStyle(annotation);
-                        persistAnnotations();
+                    const textOpacity = typeof annotation.opacity === 'number' ? annotation.opacity : 1;
+                    if (annotationHasBounds(annotation)) {
+                        const boxX = annotation.pdfX;
+                        const boxY = annotation.pdfY;
+                        const boxWidth = annotation.pdfWidth;
+                        const boxHeight = annotation.pdfHeight;
+                        const paddingX = Math.min(2, Math.max(0.5, boxWidth * 0.02));
+                        const paddingTop = Math.min(annotation.fontSize * 0.25, Math.max(0.5, boxHeight * 0.03));
+                        const availableWidth = Math.max(1, boxWidth - (paddingX * 2));
+                        const lineHeight = annotation.fontSize * 1.2;
+                        const lines = wrapPdfTextToWidth(font, safeText, annotation.fontSize, availableWidth);
+
+                        if (annotation.backgroundColor && annotation.backgroundColor !== 'transparent') {
+                            page.drawRectangle({
+                                x: boxX,
+                                y: boxY,
+                                width: boxWidth,
+                                height: boxHeight,
+                                color: hexToRgb(annotation.backgroundColor),
+                                opacity: textOpacity,
+                            });
+                        }
+
+                        lines.forEach((line, lineIndex) => {
+                            const baselineY = (boxY + boxHeight) - annotation.fontSize - paddingTop - (lineIndex * lineHeight);
+                            if (baselineY < boxY) {
+                                return;
+                            }
+
+                            const textWidth = line ? font.widthOfTextAtSize(line, annotation.fontSize) : 0;
+                            let drawX = boxX + paddingX;
+                            if (annotation.textAlign === 'center') {
+                                drawX = boxX + paddingX + Math.max(0, (availableWidth - textWidth) / 2);
+                            } else if (annotation.textAlign === 'right') {
+                                drawX = boxX + boxWidth - paddingX - textWidth;
+                            }
+
+                            page.drawText(line, {
+                                x: drawX,
+                                y: baselineY,
+                                size: annotation.fontSize,
+                                font,
+                                color: hexToRgb(annotation.textColor || '#000000'),
+                                opacity: textOpacity,
+                            });
+
+                            if (annotation.underline && line) {
+                                const underlineY = baselineY - (annotation.fontSize * 0.12);
+                                page.drawLine({
+                                    start: { x: drawX, y: underlineY },
+                                    end: { x: drawX + textWidth, y: underlineY },
+                                    thickness: Math.max(0.5, annotation.fontSize * 0.06),
+                                    color: hexToRgb(annotation.textColor || '#000000'),
+                                    opacity: textOpacity,
+                                });
+                            }
+                        });
+                        continue;
                     }
+
                     const baselineY = Math.max(0, annotation.pdfY - annotation.fontSize);
-                    const textWidth = font.widthOfTextAtSize(annotation.text, annotation.fontSize);
+                    const textWidth = font.widthOfTextAtSize(safeText, annotation.fontSize);
                     let drawX = annotation.pdfX;
                     if (annotation.textAlign === 'center') {
                         drawX -= textWidth / 2;
                     } else if (annotation.textAlign === 'right') {
                         drawX -= textWidth;
                     }
-                    const textOpacity = typeof annotation.opacity === 'number' ? annotation.opacity : 1;
                     if (annotation.backgroundColor && annotation.backgroundColor !== 'transparent') {
                         const bgHeight = annotation.fontSize * 1.15;
                         const bgY = baselineY - (annotation.fontSize * 0.25);
@@ -10729,7 +16139,7 @@
                             opacity: textOpacity,
                         });
                     }
-                    page.drawText(annotation.text, {
+                    page.drawText(safeText, {
                         x: drawX,
                         y: baselineY,
                         size: annotation.fontSize,
@@ -10802,6 +16212,7 @@
                     }
                     
                     // Clear all annotations data and DOM elements since they're permanently stamped
+                    deletedPromotedSourceKeys.clear();
                     annotations.length = 0;
                     persistAnnotations();
                     updateAnnotationsList(); // Clear annotations menu sidebar
@@ -10942,7 +16353,8 @@
                 const hasDeletedPages = pendingDeletedPages.length > 0;
                 const hasNewPages = pendingNewPages.length > 0;
                 const hasAnnotations = annotations.length > 0;
-                const hasPdfChanges = hasAnnotations || hasTextEdits || hasRotations || hasDeletedPages || hasNewPages;
+                const hasPromotedExtractionDeletions = hasPendingPromotedAnnotationDeletions();
+                const hasPdfChanges = hasAnnotations || hasPromotedExtractionDeletions || hasTextEdits || hasRotations || hasDeletedPages || hasNewPages;
 
                 console.groupCollapsed('[Save Debug] Save button pressed');
                 console.log('meta', {
@@ -10953,6 +16365,7 @@
                     hasDeletedPages,
                     hasNewPages,
                     hasAnnotations,
+                    hasPromotedExtractionDeletions,
                     hasPdfChanges,
                     overlayEditedFieldsCount: overlayEditedFields.size,
                     annotationsCount: annotations.length,
@@ -10996,11 +16409,30 @@
                         }
                         console.log('Edit coordinates:', JSON.stringify(editsForVerification, null, 2));
 
-                        const saved = await saveOverlayEditsIfNeeded();
-                        if (!saved) {
+                        // Flush debounced saves and wait for any in-flight requests
+                        // before checking whether everything is already on disk.
+                        await flushLiveSaves();
+                        const overlaySaveResult = (overlaySaveMode === 'live_save' && !hasPdfChanges)
+                            ? await saveOverlayEditsWithVerification()
+                            : await saveOverlayEditsIfNeeded();
+                        if (!overlaySaveResult.saved) {
                             console.log('Overlay edits were no-ops, skipping...');
                         } else {
                             console.log('Overlay edits saved successfully');
+                        }
+
+                        // For overlay-only saves, never show the intermediate local
+                        // teardown state. The saved PDF is correct; the glitchy frame
+                        // comes from mutating the viewer before the hard reload lands.
+                        if (!hasPdfChanges) {
+                            if (overlaySaveResult.noRefresh) {
+                                setSaveSpinner(false);
+                                const verifiedSuffix = overlaySaveResult.verification?.ok ? ' Verified against frontend.' : '';
+                                setStatus(`Saved.${verifiedSuffix}`.trim(), 'ok');
+                            } else {
+                                reloadEditorAfterSave();
+                            }
+                            return;
                         }
 
                         // Clean up overlay state after save
@@ -11021,14 +16453,6 @@
                             console.warn('Failed to clear sessionStorage:', e);
                         }
 
-                        // If there are NO annotation/shape changes, just reload
-                        if (!hasPdfChanges) {
-                            setSaveSpinner(true, 'Saved! Reloading...');
-                            setStatus('Saved! Reloading document...', 'ok');
-                            setTimeout(() => { window.location.reload(); }, 500);
-                            return;
-                        }
-
                         // Wait briefly for the backend to finish writing the PDF
                         // before proceeding to save annotations on top of it
                         await new Promise(r => setTimeout(r, 1000));
@@ -11043,9 +16467,7 @@
                         await savePdf();
                         // After a combined overlay+annotation save always do a full reload
                         // to prevent stale overlay toggle / extraction state on next edit.
-                        setSaveSpinner(true, 'Saved! Reloading...');
-                        setStatus('Saved! Reloading document...', 'ok');
-                        setTimeout(() => { window.location.reload(); }, 500);
+                        reloadEditorAfterSave();
                         return;
                     }
 
@@ -11092,15 +16514,71 @@
             const isTextSelection = () =>
                 (selectedAnnotation && (selectedAnnotation.type === 'text' || !selectedAnnotation.type)) || !!selectedOverlayField;
 
+            function cacheSelectedTextRange() {
+                const selection = window.getSelection();
+                if (!selection || selection.rangeCount === 0) {
+                    return;
+                }
+                const range = selection.getRangeAt(0);
+                if (!range || range.collapsed) {
+                    return;
+                }
+
+                if (selectedOverlayField) {
+                    const textEl = getOverlayTextElement(selectedOverlayField);
+                    if (rangeInsideNode(range, textEl)) {
+                        overlaySelectionRange = range.cloneRange();
+                    }
+                }
+
+                const annotationTextEl = getSelectedAnnotationTextElement();
+                if (rangeInsideNode(range, annotationTextEl)) {
+                    annotationSelectionRange = range.cloneRange();
+                }
+
+                const activeEditorInput = getActiveEditorInput();
+                if (rangeInsideNode(range, activeEditorInput)) {
+                    activeEditorSelectionRange = range.cloneRange();
+                }
+            }
+
+            [
+                selectedFont,
+                selectedWeight,
+                selectedSize,
+                selectedColor,
+                selectedBg,
+                selectedColorSwatch,
+                selectedBgSwatch,
+            ].forEach((control) => {
+                if (!control) return;
+                control.addEventListener('mousedown', () => {
+                    cacheSelectedTextRange();
+                });
+            });
+
             if (selectedFont) {
                 selectedFont.addEventListener('change', () => {
                 if (!isTextSelection()) {
                     return;
                 }
                 if (selectedAnnotation) {
-                    selectedAnnotation.fontFamily = selectedFont.value;
+                    const normalizedFont = normalizeBuiltinAnnotationFontFamily(selectedFont.value);
+                    const cssFamily = fontMap[normalizedFont]?.css || normalizedFont;
+                    if (applyAnnotationStyleToSelection('fontFamily', cssFamily)) {
+                        if (selectedFont.value !== normalizedFont) {
+                            selectedFont.value = normalizedFont;
+                        }
+                        setStatus('Selected text font updated. Click Save to keep changes.', 'ok');
+                        return;
+                    }
+                    selectedAnnotation.fontFamily = normalizedFont;
+                    if (selectedFont.value !== normalizedFont) {
+                        selectedFont.value = normalizedFont;
+                    }
                     applyAnnotationStyle(selectedAnnotation);
                     persistAnnotations();
+                    syncSelectedAnnotationEditState();
                     setStatus('Font updated. Click Save to keep changes.', 'ok');
                     return;
                 }
@@ -11118,8 +16596,9 @@
                     // Check if there's an active text selection
                     const selection = window.getSelection();
                     const hasSelection = selection && selection.rangeCount > 0 && !selection.getRangeAt(0).collapsed;
+                    const canApplyToSelection = getOverlayStyleTargets().length === 1;
                     
-                    if (hasSelection) {
+                    if (hasSelection && canApplyToSelection) {
                         // Apply to selection only
                         applyOverlayStyleToSelection('fontFamily', cssFamily);
                     } else {
@@ -11143,9 +16622,15 @@
                 }
                 const weightValue = selectedWeight.value;
                 if (selectedAnnotation) {
+                    if (applyAnnotationStyleToSelection('fontWeight', weightValue)) {
+                        setStatus('Selected text weight updated. Click Save to keep changes.', 'ok');
+                        updateSelectionBar();
+                        return;
+                    }
                     selectedAnnotation.fontWeight = weightValue;
                     applyAnnotationStyle(selectedAnnotation);
                     persistAnnotations();
+                    syncSelectedAnnotationEditState();
                     setStatus('Font weight updated. Click Save to keep changes.', 'ok');
                     updateSelectionBar();
                     return;
@@ -11154,8 +16639,9 @@
                     // Check if there's an active text selection
                     const selection = window.getSelection();
                     const hasSelection = selection && selection.rangeCount > 0 && !selection.getRangeAt(0).collapsed;
+                    const canApplyToSelection = getOverlayStyleTargets().length === 1;
                     
-                    if (hasSelection) {
+                    if (hasSelection && canApplyToSelection) {
                         // Apply to selection only
                         applyOverlayStyleToSelection('fontWeight', weightValue);
                     } else {
@@ -11178,9 +16664,14 @@
                     }
                     const sizePx = Math.max(8, Math.min(48, parseInt(selectedSize.value || '16', 10)));
                     if (selectedAnnotation) {
+                        if (applyAnnotationStyleToSelection('fontSize', `${sizePx}px`)) {
+                            setStatus('Selected text size updated. Click Save to keep changes.', 'ok');
+                            return;
+                        }
                         selectedAnnotation.fontSize = sizePx / currentScale;
                         applyAnnotationStyle(selectedAnnotation);
                         persistAnnotations();
+                        syncSelectedAnnotationEditState();
                         setStatus('Size updated. Click Save to keep changes.', 'ok');
                         return;
                     }
@@ -11199,16 +16690,9 @@
             [selectedBold, selectedItalic, selectedUnderline].forEach(btn => {
                 if (!btn) return;
                 btn.addEventListener('mousedown', (e) => {
-                    if (!selectedOverlayField) return;
+                    if (!selectedOverlayField && !selectedAnnotation) return;
                     e.preventDefault(); // Prevent blur/deselection
-                    const selection = window.getSelection();
-                    if (selection && selection.rangeCount > 0) {
-                        const range = selection.getRangeAt(0);
-                        const textEl = getOverlayTextElement(selectedOverlayField);
-                        if (range && !range.collapsed && textEl && textEl.contains(range.commonAncestorContainer)) {
-                            overlaySelectionRange = range.cloneRange();
-                        }
-                    }
+                    cacheSelectedTextRange();
                 });
             });
 
@@ -11218,26 +16702,35 @@
                         return;
                     }
                     if (selectedAnnotation) {
+                        const newWeight = selectedAnnotation.fontWeight === '700' || selectedAnnotation.fontWeight === 'bold'
+                            ? 'normal'
+                            : '700';
+                        if (applyAnnotationStyleToSelection('fontWeight', newWeight)) {
+                            updateSelectionBar();
+                            return;
+                        }
                         selectedAnnotation.fontWeight = selectedAnnotation.fontWeight === '700' || selectedAnnotation.fontWeight === 'bold'
                             ? 'normal'
                             : '700';
                         applyAnnotationStyle(selectedAnnotation);
                         persistAnnotations();
+                        syncSelectedAnnotationEditState();
                         updateSelectionBar();
                         return;
                     }
                     if (selectedOverlayField) {
                         const isActive = selectedBold.classList.contains('active');
                         const newWeight = isActive ? 'normal' : '700';
-                        const appliedToSel = applyOverlayStyleToSelection('fontWeight', newWeight);
+                        const appliedToSel = getOverlayStyleTargets().length === 1
+                            ? applyOverlayStyleToSelection('fontWeight', newWeight)
+                            : false;
                         if (!appliedToSel) {
                             applyOverlayStyle((textEl, field) => {
                                 textEl.style.fontWeight = newWeight;
                                 field.style.fontWeight = newWeight;
+                                field.dataset.fontWeight = newWeight;
                             });
                         }
-                        // Always update dataset so markOverlayFieldDirty captures it
-                        selectedOverlayField.dataset.fontWeight = newWeight;
                         markOverlayFieldDirty();
                         updateSelectionBar();
                     }
@@ -11250,24 +16743,31 @@
                         return;
                     }
                     if (selectedAnnotation) {
+                        const newStyle = selectedAnnotation.fontStyle === 'italic' ? 'normal' : 'italic';
+                        if (applyAnnotationStyleToSelection('fontStyle', newStyle)) {
+                            updateSelectionBar();
+                            return;
+                        }
                         selectedAnnotation.fontStyle = selectedAnnotation.fontStyle === 'italic' ? 'normal' : 'italic';
                         applyAnnotationStyle(selectedAnnotation);
                         persistAnnotations();
+                        syncSelectedAnnotationEditState();
                         updateSelectionBar();
                         return;
                     }
                     if (selectedOverlayField) {
                         const isActive = selectedItalic.classList.contains('active');
                         const newStyle = isActive ? 'normal' : 'italic';
-                        const appliedToSel = applyOverlayStyleToSelection('fontStyle', newStyle);
+                        const appliedToSel = getOverlayStyleTargets().length === 1
+                            ? applyOverlayStyleToSelection('fontStyle', newStyle)
+                            : false;
                         if (!appliedToSel) {
                             applyOverlayStyle((textEl, field) => {
                                 textEl.style.fontStyle = newStyle;
                                 field.style.fontStyle = newStyle;
+                                field.dataset.fontStyle = newStyle;
                             });
                         }
-                        // Always update dataset so markOverlayFieldDirty captures it
-                        selectedOverlayField.dataset.fontStyle = newStyle;
                         markOverlayFieldDirty();
                         updateSelectionBar();
                     }
@@ -11280,23 +16780,30 @@
                         return;
                     }
                     if (selectedAnnotation) {
+                        const newDecoration = selectedAnnotation.underline ? 'none' : 'underline';
+                        if (applyAnnotationStyleToSelection('textDecoration', newDecoration)) {
+                            updateSelectionBar();
+                            return;
+                        }
                         selectedAnnotation.underline = !selectedAnnotation.underline;
                         applyAnnotationStyle(selectedAnnotation);
                         persistAnnotations();
+                        syncSelectedAnnotationEditState();
                         updateSelectionBar();
                         return;
                     }
                     if (selectedOverlayField) {
                         const isActive = selectedUnderline.classList.contains('active');
                         const newDecoration = isActive ? 'none' : 'underline';
-                        const appliedToSel = applyOverlayStyleToSelection('textDecoration', newDecoration);
+                        const appliedToSel = getOverlayStyleTargets().length === 1
+                            ? applyOverlayStyleToSelection('textDecoration', newDecoration)
+                            : false;
                         if (!appliedToSel) {
                             applyOverlayStyle((textEl, field) => {
                                 textEl.style.textDecoration = newDecoration;
+                                field.dataset.underline = String(!isActive);
                             });
                         }
-                        // Always update dataset so markOverlayFieldDirty captures it
-                        selectedOverlayField.dataset.underline = String(!isActive);
                         markOverlayFieldDirty();
                         updateSelectionBar();
                     }
@@ -11309,13 +16816,19 @@
                         return;
                     }
                     if (selectedAnnotation) {
+                        if (applyAnnotationStyleToSelection('color', selectedColor.value)) {
+                            return;
+                        }
                         selectedAnnotation.textColor = selectedColor.value;
                         applyAnnotationStyle(selectedAnnotation);
                         persistAnnotations();
+                        syncSelectedAnnotationEditState();
                         return;
                     }
                     if (selectedOverlayField) {
-                        const appliedToSelection = applyOverlayColorToSelection(selectedColor.value);
+                        const appliedToSelection = getOverlayStyleTargets().length === 1
+                            ? applyOverlayColorToSelection(selectedColor.value)
+                            : false;
                         if (!appliedToSelection) {
                             applyOverlayStyle((textEl, field) => {
                                 textEl.style.color = selectedColor.value;
@@ -11331,41 +16844,23 @@
             // Save selection when clicking on the color swatch label (before color picker opens)
             if (selectedColorSwatch) {
                 selectedColorSwatch.addEventListener('mousedown', (e) => {
-                    if (!selectedOverlayField) {
+                    if (!selectedOverlayField && !selectedAnnotation) {
                         return;
                     }
                     // Prevent blur of textSpan
                     e.preventDefault();
-                    
-                    const selection = window.getSelection();
-                    if (selection && selection.rangeCount > 0) {
-                        const range = selection.getRangeAt(0);
-                        const textEl = getOverlayTextElement(selectedOverlayField);
-                        if (range && !range.collapsed && textEl && textEl.contains(range.commonAncestorContainer)) {
-                            overlaySelectionRange = range.cloneRange();
-                            console.log('Saved color selection on mousedown:', overlaySelectionRange.toString());
-                        }
-                    }
+                    cacheSelectedTextRange();
                 });
             }
 
             if (selectedBgSwatch) {
                 selectedBgSwatch.addEventListener('mousedown', (e) => {
-                    if (!selectedOverlayField) {
+                    if (!selectedOverlayField && !selectedAnnotation) {
                         return;
                     }
                     // Prevent blur of textSpan
                     e.preventDefault();
-                    
-                    const selection = window.getSelection();
-                    if (selection && selection.rangeCount > 0) {
-                        const range = selection.getRangeAt(0);
-                        const textEl = getOverlayTextElement(selectedOverlayField);
-                        if (range && !range.collapsed && textEl && textEl.contains(range.commonAncestorContainer)) {
-                            overlaySelectionRange = range.cloneRange();
-                            console.log('Saved bg selection on mousedown:', overlaySelectionRange.toString());
-                        }
-                    }
+                    cacheSelectedTextRange();
                 });
             }
 
@@ -11375,13 +16870,19 @@
                         return;
                     }
                     if (selectedAnnotation) {
+                        if (applyAnnotationStyleToSelection('backgroundColor', selectedBg.value)) {
+                            return;
+                        }
                         selectedAnnotation.backgroundColor = selectedBg.value;
                         applyAnnotationStyle(selectedAnnotation);
                         persistAnnotations();
+                        syncSelectedAnnotationEditState();
                         return;
                     }
                     if (selectedOverlayField) {
-                        const appliedToSelection = applyOverlayBgToSelection(selectedBg.value);
+                        const appliedToSelection = getOverlayStyleTargets().length === 1
+                            ? applyOverlayBgToSelection(selectedBg.value)
+                            : false;
                         if (!appliedToSelection) {
                             applyOverlayStyle((textEl, field) => {
                                 textEl.style.backgroundColor = selectedBg.value;
@@ -11402,6 +16903,7 @@
                         selectedAnnotation.textAlign = selectedAlign.value;
                         applyAnnotationStyle(selectedAnnotation);
                         persistAnnotations();
+                        syncSelectedAnnotationEditState();
                         return;
                     }
                     if (selectedOverlayField) {
@@ -11424,6 +16926,7 @@
                         selectedAnnotation.opacity = parseFloat(selectedOpacity.value || '1') || 1;
                         applyAnnotationStyle(selectedAnnotation);
                         persistAnnotations();
+                        syncSelectedAnnotationEditState();
                         return;
                     }
                     if (selectedOverlayField) {
@@ -11440,15 +16943,7 @@
             if (selectedDelete) {
                 selectedDelete.addEventListener('click', () => {
                     if (selectedAnnotation) {
-                        const element = selectedAnnotation.element;
-                        const idx = annotations.indexOf(selectedAnnotation);
-                        if (idx >= 0) {
-                            annotations.splice(idx, 1);
-                        }
-                        if (element && element.parentNode) {
-                            element.parentNode.removeChild(element);
-                        }
-                        selectedAnnotation = null;
+                        removeAnnotationRecord(selectedAnnotation);
                         updateSelectionBar();
                         persistAnnotations();
                         updateAnnotationsList();
@@ -11492,6 +16987,114 @@
                 });
             }
 
+            if (selectedMerge) {
+                selectedMerge.addEventListener('click', async () => {
+                    if (selectedMerge.disabled) {
+                        return;
+                    }
+                    try {
+                        await mergeSelectedOverlayFields();
+                    } catch (error) {
+                        console.error('Merge overlay blocks failed:', error);
+                        setStatus('Merge failed: ' + error.message, 'err');
+                    }
+                });
+            }
+
+            function getSelectionToolbarStyleState() {
+                return {
+                    selectionType: selectedAnnotation ? 'annotation' : (selectedOverlayField ? 'overlay' : null),
+                    fontFamily: selectedFont ? selectedFont.value : null,
+                    fontSize: selectedSize ? parseInt(selectedSize.value || '0', 10) || 0 : 0,
+                    textColor: selectedColor ? colorToHex(selectedColor.value || '#000000') : '#000000',
+                    backgroundColor: selectedBg ? colorToHex(selectedBg.value || '#ffffff') : '#ffffff',
+                    fontWeight: selectedWeight ? selectedWeight.value : '400',
+                    bold: !!(selectedBold && selectedBold.classList.contains('active')),
+                    italic: !!(selectedItalic && selectedItalic.classList.contains('active')),
+                    underline: !!(selectedUnderline && selectedUnderline.classList.contains('active')),
+                    textAlign: selectedAlign ? selectedAlign.value : 'left',
+                    opacity: selectedOpacity ? parseFloat(selectedOpacity.value || '1') || 1 : 1,
+                    enabled: Boolean(isTextSelection()),
+                };
+            }
+
+            function dispatchSelectionToolbarValue(control, value, eventType = 'change') {
+                if (!control) {
+                    throw new Error('Selection toolbar control is missing.');
+                }
+                control.value = value;
+                control.dispatchEvent(new Event(eventType, { bubbles: true }));
+            }
+
+            function setSelectionToolbarToggle(control, desiredState) {
+                if (!control) {
+                    throw new Error('Selection toolbar toggle is missing.');
+                }
+                const nextState = Boolean(desiredState);
+                if (control.classList.contains('active') !== nextState) {
+                    control.click();
+                }
+            }
+
+            window.pdfSelectionToolbarApi = {
+                getState() {
+                    return getSelectionToolbarStyleState();
+                },
+                setFont(fontFamily) {
+                    const nextFont = selectedAnnotation
+                        ? normalizeBuiltinAnnotationFontFamily(fontFamily)
+                        : String(fontFamily || 'Helvetica');
+                    dispatchSelectionToolbarValue(selectedFont, nextFont, 'change');
+                    return getSelectionToolbarStyleState();
+                },
+                setSize(fontSizePx) {
+                    const sizePx = Math.max(8, Math.min(144, parseInt(fontSizePx, 10) || 16));
+                    dispatchSelectionToolbarValue(selectedSize, String(sizePx), 'change');
+                    return getSelectionToolbarStyleState();
+                },
+                setColor(color) {
+                    dispatchSelectionToolbarValue(selectedColor, colorToHex(color || '#000000'), 'input');
+                    return getSelectionToolbarStyleState();
+                },
+                setBackgroundColor(color) {
+                    dispatchSelectionToolbarValue(selectedBg, colorToHex(color || '#ffffff'), 'input');
+                    return getSelectionToolbarStyleState();
+                },
+                setBold(enabled) {
+                    setSelectionToolbarToggle(selectedBold, enabled);
+                    return getSelectionToolbarStyleState();
+                },
+                setItalic(enabled) {
+                    setSelectionToolbarToggle(selectedItalic, enabled);
+                    return getSelectionToolbarStyleState();
+                },
+                setUnderline(enabled) {
+                    setSelectionToolbarToggle(selectedUnderline, enabled);
+                    return getSelectionToolbarStyleState();
+                },
+                setAlign(align) {
+                    dispatchSelectionToolbarValue(selectedAlign, align || 'left', 'change');
+                    return getSelectionToolbarStyleState();
+                },
+                setOpacity(opacity) {
+                    const normalized = Math.max(0.1, Math.min(1, Number(opacity) || 1));
+                    dispatchSelectionToolbarValue(selectedOpacity, String(normalized), 'change');
+                    return getSelectionToolbarStyleState();
+                },
+                applyStyles(styles = {}) {
+                    if (styles.fontFamily) this.setFont(styles.fontFamily);
+                    if (styles.fontSize !== undefined) this.setSize(styles.fontSize);
+                    if (styles.textColor) this.setColor(styles.textColor);
+                    if (styles.backgroundColor) this.setBackgroundColor(styles.backgroundColor);
+                    if (styles.bold !== undefined) this.setBold(styles.bold);
+                    if (styles.italic !== undefined) this.setItalic(styles.italic);
+                    if (styles.underline !== undefined) this.setUnderline(styles.underline);
+                    if (styles.textAlign) this.setAlign(styles.textAlign);
+                    if (styles.opacity !== undefined) this.setOpacity(styles.opacity);
+                    return getSelectionToolbarStyleState();
+                },
+            };
+
             // ── Keyboard Delete for overlay fields ──────────────────────────
             document.addEventListener('keydown', (e) => {
                 if (!overlayEditorActive) return;
@@ -11512,6 +17115,7 @@
             (function wireEditTextBanner() {
                 const etbFont = document.getElementById('etb-font');
                 const etbSize = document.getElementById('etb-size');
+                const etbSizeValue = document.getElementById('etb-size-value');
                 const etbTextColor = document.getElementById('etb-text-color');
                 const etbBgColor = document.getElementById('etb-bg-color');
                 const etbOpacity = document.getElementById('etb-opacity');
@@ -11521,13 +17125,35 @@
                 const etbAlign = document.getElementById('etb-align');
                 const etbCopy = document.getElementById('etb-copy');
                 const etbDelete = document.getElementById('etb-delete');
+
+                [
+                    etbFont,
+                    etbSize,
+                    etbTextColor,
+                    etbBgColor,
+                    etbBold,
+                    etbItalic,
+                    etbUnderline,
+                ].forEach((control) => {
+                    if (!control) return;
+                    control.addEventListener('mousedown', () => {
+                        cacheSelectedTextRange();
+                    });
+                });
                 
                 // Helper: push current banner styles into active text-box-creator input (request #3)
                 function syncToActiveBox() {
                     if (!activeEditor || !activeEditor.classList.contains('text-box-creator')) return;
                     const inp = activeEditor._tbcInput || activeEditor.querySelector('.tbc-input');
                     if (!inp) return;
-                    if (etbFont) inp.style.fontFamily = fontMap[etbFont.value]?.css || 'inherit';
+                    if (etbFont) {
+                        inp.style.fontFamily = selectedAnnotation?.promotedFromExtraction
+                            ? resolveAnnotationCssFontFamily(selectedAnnotation.fontFamily || etbFont.value, {
+                                preferExact: true,
+                                exactFontName: selectedAnnotation.fontSourceName || selectedAnnotation.fontFamily || etbFont.value,
+                            })
+                            : (fontMap[etbFont.value]?.css || 'inherit');
+                    }
                     if (etbSize) inp.style.fontSize = Math.max(8, Math.min(144, parseInt(etbSize.value || '16', 10))) + 'px';
                     if (etbTextColor) inp.style.color = etbTextColor.value;
                     if (etbBold) inp.style.fontWeight = etbBold.classList.contains('active') ? '700' : 'normal';
@@ -11537,31 +17163,68 @@
                     if (etbOpacity) inp.style.opacity = etbOpacity.value;
                     if (etbBgColor) inp.style.backgroundColor = etbBgColor.value;
                 }
+
+                function applyStyleToActiveBoxSelection(styleProperty, styleValue) {
+                    return applyActiveEditorStyleToSelection(styleProperty, styleValue);
+                }
+
+                function syncSizeControl() {
+                    syncEditTextBannerSizeValue();
+                    if (etbSizeValue && etbSize) {
+                        etbSizeValue.title = `Font size ${etbSize.value}px`;
+                    }
+                }
                 
                 if (etbFont) etbFont.addEventListener('change', () => {
-                    syncToActiveBox();
+                    const normalizedFont = normalizeBuiltinAnnotationFontFamily(etbFont.value);
+                    const cssFamily = fontMap[normalizedFont]?.css || normalizedFont;
+                    if (!applyStyleToActiveBoxSelection('fontFamily', cssFamily)) {
+                        syncToActiveBox();
+                    }
                     if (!selectedAnnotation || (selectedAnnotation.type !== 'text' && selectedAnnotation.type)) return;
-                    selectedAnnotation.fontFamily = etbFont.value;
+                    if (applyAnnotationStyleToSelection('fontFamily', cssFamily)) {
+                        if (selectedFont) selectedFont.value = normalizedFont;
+                        return;
+                    }
+                    selectedAnnotation.fontFamily = normalizedFont;
                     applyAnnotationStyle(selectedAnnotation);
                     persistAnnotations();
                     saveAnnotationToDatabase(selectedAnnotation);
-                    if (selectedFont) selectedFont.value = etbFont.value;
+                    if (selectedFont) selectedFont.value = normalizedFont;
                 });
                 
-                if (etbSize) etbSize.addEventListener('change', () => {
-                    syncToActiveBox();
-                    if (!selectedAnnotation || (selectedAnnotation.type !== 'text' && selectedAnnotation.type)) return;
-                    const sizePx = Math.max(8, Math.min(144, parseInt(etbSize.value || '16', 10)));
-                    selectedAnnotation.fontSize = sizePx / currentScale;
-                    applyAnnotationStyle(selectedAnnotation);
-                    persistAnnotations();
-                    saveAnnotationToDatabase(selectedAnnotation);
-                    if (selectedSize) selectedSize.value = sizePx;
-                });
+                if (etbSize) {
+                    const applySize = () => {
+                        syncSizeControl();
+                        const sizePx = Math.max(8, Math.min(144, parseInt(etbSize.value || '16', 10)));
+                        if (!applyStyleToActiveBoxSelection('fontSize', `${sizePx}px`)) {
+                            syncToActiveBox();
+                        }
+                        if (!selectedAnnotation || (selectedAnnotation.type !== 'text' && selectedAnnotation.type)) return;
+                        if (applyAnnotationStyleToSelection('fontSize', `${sizePx}px`)) {
+                            if (selectedSize) selectedSize.value = sizePx;
+                            return;
+                        }
+                        selectedAnnotation.fontSize = sizePx / currentScale;
+                        applyAnnotationStyle(selectedAnnotation);
+                        persistAnnotations();
+                        saveAnnotationToDatabase(selectedAnnotation);
+                        if (selectedSize) selectedSize.value = sizePx;
+                    };
+                    etbSize.addEventListener('input', applySize);
+                    etbSize.addEventListener('change', applySize);
+                    syncSizeControl();
+                }
                 
                 if (etbTextColor) etbTextColor.addEventListener('input', () => {
-                    syncToActiveBox();
+                    if (!applyStyleToActiveBoxSelection('color', etbTextColor.value)) {
+                        syncToActiveBox();
+                    }
                     if (!selectedAnnotation || (selectedAnnotation.type !== 'text' && selectedAnnotation.type)) return;
+                    if (applyAnnotationStyleToSelection('color', etbTextColor.value)) {
+                        if (selectedColor) selectedColor.value = etbTextColor.value;
+                        return;
+                    }
                     selectedAnnotation.textColor = etbTextColor.value;
                     applyAnnotationStyle(selectedAnnotation);
                     persistAnnotations();
@@ -11570,8 +17233,14 @@
                 });
                 
                 if (etbBgColor) etbBgColor.addEventListener('input', () => {
-                    syncToActiveBox();
+                    if (!applyStyleToActiveBoxSelection('backgroundColor', etbBgColor.value)) {
+                        syncToActiveBox();
+                    }
                     if (!selectedAnnotation || (selectedAnnotation.type !== 'text' && selectedAnnotation.type)) return;
+                    if (applyAnnotationStyleToSelection('backgroundColor', etbBgColor.value)) {
+                        if (selectedBg) selectedBg.value = etbBgColor.value;
+                        return;
+                    }
                     selectedAnnotation.backgroundColor = etbBgColor.value;
                     applyAnnotationStyle(selectedAnnotation);
                     persistAnnotations();
@@ -11591,9 +17260,17 @@
                 
                 if (etbBold) etbBold.addEventListener('click', () => {
                     etbBold.classList.toggle('active');
-                    syncToActiveBox();
+                    const nextWeight = etbBold.classList.contains('active') ? '700' : 'normal';
+                    if (!applyStyleToActiveBoxSelection('fontWeight', nextWeight)) {
+                        syncToActiveBox();
+                    }
                     if (!selectedAnnotation || (selectedAnnotation.type !== 'text' && selectedAnnotation.type)) return;
-                    selectedAnnotation.fontWeight = etbBold.classList.contains('active') ? '700' : 'normal';
+                    if (applyAnnotationStyleToSelection('fontWeight', nextWeight)) {
+                        if (selectedBold) selectedBold.classList.toggle('active', nextWeight === '700');
+                        updateSelectionBar();
+                        return;
+                    }
+                    selectedAnnotation.fontWeight = nextWeight;
                     applyAnnotationStyle(selectedAnnotation);
                     persistAnnotations();
                     saveAnnotationToDatabase(selectedAnnotation);
@@ -11603,9 +17280,17 @@
                 
                 if (etbItalic) etbItalic.addEventListener('click', () => {
                     etbItalic.classList.toggle('active');
-                    syncToActiveBox();
+                    const nextStyle = etbItalic.classList.contains('active') ? 'italic' : 'normal';
+                    if (!applyStyleToActiveBoxSelection('fontStyle', nextStyle)) {
+                        syncToActiveBox();
+                    }
                     if (!selectedAnnotation || (selectedAnnotation.type !== 'text' && selectedAnnotation.type)) return;
-                    selectedAnnotation.fontStyle = etbItalic.classList.contains('active') ? 'italic' : 'normal';
+                    if (applyAnnotationStyleToSelection('fontStyle', nextStyle)) {
+                        if (selectedItalic) selectedItalic.classList.toggle('active', nextStyle === 'italic');
+                        updateSelectionBar();
+                        return;
+                    }
+                    selectedAnnotation.fontStyle = nextStyle;
                     applyAnnotationStyle(selectedAnnotation);
                     persistAnnotations();
                     saveAnnotationToDatabase(selectedAnnotation);
@@ -11615,9 +17300,17 @@
                 
                 if (etbUnderline) etbUnderline.addEventListener('click', () => {
                     etbUnderline.classList.toggle('active');
-                    syncToActiveBox();
+                    const nextUnderline = etbUnderline.classList.contains('active');
+                    if (!applyStyleToActiveBoxSelection('textDecoration', nextUnderline ? 'underline' : 'none')) {
+                        syncToActiveBox();
+                    }
                     if (!selectedAnnotation || (selectedAnnotation.type !== 'text' && selectedAnnotation.type)) return;
-                    selectedAnnotation.underline = etbUnderline.classList.contains('active');
+                    if (applyAnnotationStyleToSelection('textDecoration', nextUnderline ? 'underline' : 'none')) {
+                        if (selectedUnderline) selectedUnderline.classList.toggle('active', nextUnderline);
+                        updateSelectionBar();
+                        return;
+                    }
+                    selectedAnnotation.underline = nextUnderline;
                     applyAnnotationStyle(selectedAnnotation);
                     persistAnnotations();
                     saveAnnotationToDatabase(selectedAnnotation);
@@ -11637,28 +17330,23 @@
                 
                 if (etbCopy) etbCopy.addEventListener('click', () => {
                     if (!selectedAnnotation || (selectedAnnotation.type !== 'text' && selectedAnnotation.type)) return;
-                    const newAnnotation = {
-                        ...JSON.parse(JSON.stringify(selectedAnnotation)),
-                        id: generateAnnotationId(),
-                        pdfX: selectedAnnotation.pdfX + 10 / currentScale,
-                        pdfY: selectedAnnotation.pdfY - 10 / currentScale,
-                    };
-                    delete newAnnotation.element;
-                    normalizeTextAnnotation(newAnnotation);
+                    const newAnnotation = createAnnotationFromCopiedSnapshot(buildCopiedAnnotationSnapshot(selectedAnnotation));
                     annotations.push(newAnnotation);
                     persistAnnotations();
                     saveAnnotationToDatabase(newAnnotation);
-                    rerenderPdf();
+                    const pageContext = resolveAnnotationPageContext(newAnnotation);
+                    if (pageContext) {
+                        addAnnotationElement(pageContext.wrapper, newAnnotation, pageContext.pageInfo);
+                    } else {
+                        rerenderPdf();
+                    }
+                    setSelection(newAnnotation);
                     setStatus('Text duplicated.', 'ok');
                 });
                 
                 if (etbDelete) etbDelete.addEventListener('click', () => {
                     if (!selectedAnnotation) return;
-                    const element = selectedAnnotation.element;
-                    const idx = annotations.indexOf(selectedAnnotation);
-                    if (idx >= 0) annotations.splice(idx, 1);
-                    if (element && element.parentNode) element.parentNode.removeChild(element);
-                    selectedAnnotation = null;
+                    removeAnnotationRecord(selectedAnnotation);
                     updateSelectionBar();
                     updateEditTextBanner();
                     persistAnnotations();
@@ -11897,6 +17585,26 @@
             const shapeOpacityInput = document.getElementById('shape-opacity');
             const shapeOpacityLabel = document.getElementById('shape-opacity-label');
 
+            // Table Drawing Modal
+            const tableModal = document.getElementById('table-modal');
+            const tableClose = document.getElementById('table-close');
+            const tableApply = document.getElementById('table-apply');
+            const tableRowsInput = document.getElementById('table-rows');
+            const tableColsInput = document.getElementById('table-cols');
+            const tableBorderColorInput = document.getElementById('table-border-color');
+            const tableBorderHexInput = document.getElementById('table-border-hex');
+            const tableBorderWidthInput = document.getElementById('table-border-width');
+            const tableBorderWidthLabel = document.getElementById('table-border-width-label');
+            const tableFillRow = document.getElementById('table-fill-row');
+            const tableFillColorInput = document.getElementById('table-fill-color');
+            const tableFillHexInput = document.getElementById('table-fill-hex');
+            const tableOuterBorderRow = document.getElementById('table-outer-border-row');
+            const tableOuterBorderTrack = document.getElementById('table-outer-border-track');
+            const tableOuterBorderThumb = document.getElementById('table-outer-border-thumb');
+            const tableFillToggleRow = document.getElementById('table-fill-toggle-row');
+            const tableFillTrack = document.getElementById('table-fill-track');
+            const tableFillThumb = document.getElementById('table-fill-thumb');
+
             // Draw Tool Modal
             const drawModal = document.getElementById('draw-modal');
             const drawClose = document.getElementById('draw-close');
@@ -11969,7 +17677,7 @@
             let pdfaDownloadUrl = null;
 
             // Auth status for gating features
-            const isAuthenticated = @json(Auth::check());
+            const isAuthenticated = @json($editorIsAuthenticated);
             const loginUrl = "{{ route('login') }}";
 
             // PDF base name for filenames
@@ -13106,6 +18814,93 @@
                 shapeModal.setAttribute('aria-hidden', 'true');
             }
 
+            function openTableModal() {
+                if (tableModal) {
+                    tableModal.classList.add('active');
+                    tableModal.setAttribute('aria-hidden', 'false');
+                }
+            }
+
+            function closeTableModal() {
+                if (tableModal) {
+                    tableModal.classList.remove('active');
+                    tableModal.setAttribute('aria-hidden', 'true');
+                }
+            }
+
+            // Wire table modal controls
+            if (tableClose) tableClose.addEventListener('click', closeTableModal);
+            if (tableModal) tableModal.addEventListener('click', (e) => { if (e.target === tableModal) closeTableModal(); });
+
+            if (tableBorderColorInput) {
+                tableBorderColorInput.addEventListener('input', () => {
+                    tableStroke = tableBorderColorInput.value;
+                    if (tableBorderHexInput) tableBorderHexInput.value = tableStroke;
+                });
+            }
+            if (tableBorderHexInput) {
+                tableBorderHexInput.addEventListener('input', () => {
+                    const v = tableBorderHexInput.value.trim();
+                    if (/^#[0-9a-fA-F]{6}$/.test(v)) {
+                        tableStroke = v;
+                        if (tableBorderColorInput) tableBorderColorInput.value = v;
+                    }
+                });
+            }
+            if (tableBorderWidthInput) {
+                tableBorderWidthInput.addEventListener('input', () => {
+                    tableStrokeWidth = parseInt(tableBorderWidthInput.value) || 1;
+                    if (tableBorderWidthLabel) tableBorderWidthLabel.textContent = tableStrokeWidth + 'px';
+                });
+            }
+            // Outer border toggle (plain div, no label/checkbox double-toggle issue)
+            if (tableOuterBorderRow) {
+                tableOuterBorderRow.addEventListener('click', () => {
+                    tableOuterBorder = !tableOuterBorder;
+                    tableOuterBorderTrack.style.background = tableOuterBorder ? '#4dd0a8' : 'rgba(255,255,255,0.15)';
+                    tableOuterBorderThumb.style.left = tableOuterBorder ? '17px' : '3px';
+                });
+            }
+            // Fill transparent toggle (plain div, no label/checkbox double-toggle issue)
+            if (tableFillToggleRow) {
+                tableFillToggleRow.addEventListener('click', () => {
+                    tableFillTransparent = !tableFillTransparent;
+                    tableFillTrack.style.background = tableFillTransparent ? 'rgba(255,255,255,0.15)' : '#4dd0a8';
+                    tableFillThumb.style.left = tableFillTransparent ? '3px' : '17px';
+                    if (tableFillRow) tableFillRow.style.display = tableFillTransparent ? 'none' : 'flex';
+                });
+            }
+            if (tableFillColorInput) {
+                tableFillColorInput.addEventListener('input', () => {
+                    tableFill = tableFillColorInput.value;
+                    if (tableFillHexInput) tableFillHexInput.value = tableFill;
+                });
+            }
+            if (tableFillHexInput) {
+                tableFillHexInput.addEventListener('input', () => {
+                    const v = tableFillHexInput.value.trim();
+                    if (/^#[0-9a-fA-F]{6}$/.test(v)) {
+                        tableFill = v;
+                        if (tableFillColorInput) tableFillColorInput.value = v;
+                    }
+                });
+            }
+            if (tableApply) {
+                tableApply.addEventListener('click', () => {
+                    tableRows = Math.max(1, Math.min(30, parseInt(tableRowsInput?.value) || 3));
+                    tableCols = Math.max(1, Math.min(30, parseInt(tableColsInput?.value) || 3));
+                    // tableOuterBorder and tableFillTransparent are already up-to-date from the toggle clicks
+                    closeTableModal();
+                    toolMode = 'table';
+                    insertMode = null;
+                    if (insertX) insertX.classList.remove('pill-active');
+                    if (insertCheckbox) insertCheckbox.classList.remove('pill-active');
+                    updateModeButtons();
+                    updateEditTextBanner();
+                    setStatus(`Table mode: drag on a page to draw a ${tableRows}×${tableCols} table.`, 'ok');
+                });
+            }
+
             // Color picker for shapes
             function openShapeColorPicker(annotation, shapeSvg, label) {
                 // Remove any existing color picker
@@ -13817,69 +19612,88 @@
                 });
             }
 
-            async function saveOverlayEditsIfNeeded() {
+            async function saveOverlayEditsIfNeeded(liveSaveRetryAttempt = 1, { workingCopyToken = null, finalizeLiveSave = true } = {}) {
                 if (overlayEditedFields.size === 0) {
-                    return false;
+                    return { saved: false, noRefresh: true, mode: overlaySaveMode };
+                }
+
+                // Fast-path: if every edited field has already been patched on disk via
+                // live-save, skip the heavyweight overlay rewrite entirely.
+                if (!workingCopyToken && allOverlayEditsLiveSaved()) {
+                    console.log('[live-save] All edits already on disk — skipping overlay rewrite');
+                    if (overlaySaveMode === 'live_save') {
+                        await finalizeLiveSaveSession();
+                    }
+                    overlayEditedFields.clear();
+                    overlayPersistedEdits.clear();
+                    try { sessionStorage.removeItem(overlayEditsStorageKey); } catch(e) {}
+                    _liveSavedKeys.clear();
+                    updateOverlaySaveButton();
+                    setStatus('', '');
+                    return { saved: true, noRefresh: true, mode: overlaySaveMode, usedLiveSave: true, savedPreviewUrl: savedEditPreviewUrl };
                 }
 
                 setStatus('Saving overlay edits...', '');
 
                 const edits = [];
-                for (const [key, editData] of overlayEditedFields.entries()) {
-                    console.log('Preparing edit:', key, editData);
+                const preparedOverlayEdits = overlaySaveMode === 'live_save'
+                    ? new Map(overlayEditedFields)
+                    : collectOverlayOverlapGroupEdits();
+                for (const [key, editData] of preparedOverlayEdits.entries()) {
+                    if (overlaySaveMode === 'live_save' && _liveSavedKeys.has(key)) {
+                        continue;
+                    }
+                    const field = document.querySelector(`.overlay-field[data-word-index="${key}"]`);
+                    const expandedEdits = overlaySaveMode === 'live_save'
+                        ? buildAtomicLiveSaveEditsForKey(key, editData)
+                        : (field ? buildOverlaySegmentEditsForSave(field, editData) : [editData]);
+
+                    for (const expandedEditData of expandedEdits) {
+                    const candidateEditData = overlaySaveMode === 'live_save'
+                        ? buildLiveSaveRetryEdit(expandedEditData, liveSaveRetryAttempt)
+                        : expandedEditData;
+                    console.log('Preparing edit:', key, candidateEditData);
                     
-                    // SKIP NO-OP EDITS: If text is unchanged, position hasn't moved,
-                    // AND style hasn't changed, don't send to server at all.
-                    // This prevents duplication bugs where the scrub phase fails to
-                    // remove old text and insertion adds a copy.
-                    const origText = String(editData.original_text || '').trim();
-                    const newText = String(editData.new_text || '').trim();
-                    if (origText === newText && editData.original_bbox && editData.bbox) {
-                        const ob = editData.original_bbox;
-                        const nb = editData.bbox;
-                        const posUnchanged = Math.abs(ob[0] - nb[0]) < 2 &&
-                                             Math.abs(ob[1] - nb[1]) < 2 &&
-                                             Math.abs(ob[2] - nb[2]) < 2 &&
-                                             Math.abs(ob[3] - nb[3]) < 2;
-                        // Check if any style property or rich data was changed
-                        const hasStyleEdit = (editData.font_weight && editData.font_weight !== '400' && editData.font_weight !== 'normal') ||
-                                             (editData.font_style && editData.font_style !== 'normal') ||
-                                             editData.underline ||
-                                             (editData.color && editData.color !== '#000000') ||
-                                             editData.rich_html ||
-                                             (editData.word_styles && editData.word_styles.length > 0);
-                        if (posUnchanged && !hasStyleEdit) {
-                            console.log('Skipping no-op edit (text, position & style unchanged):', key);
-                            continue;
-                        }
+                    if (!isMaterialOverlaySaveEdit(candidateEditData, { honorForceReinsert: overlaySaveMode !== 'live_save' })) {
+                        console.log('Skipping no-op edit (text, position & style unchanged):', key);
+                        continue;
                     }
                     
                     // Ensure color has # prefix
-                    let color = editData.color || '#000000';
+                    let color = candidateEditData.color || '#000000';
                     if (!color.startsWith('#')) {
                         color = '#' + color;
                     }
                     
                     edits.push({
-                        page_number: editData.page_number,
-                        block_num: editData.block_num,              // IMPORTANT: Include block_num for proper line handling
-                        original_text: String(editData.original_text || ''),
-                        new_text: String(editData.new_text || ''),
-                        bbox: editData.bbox || [0, 0, 100, 100],
-                        original_bbox: editData.original_bbox || editData.bbox || [0, 0, 100, 100],
-                        origin_x: editData.origin_x || (editData.bbox ? editData.bbox[0] : 0),
-                        origin_y: editData.origin_y || (editData.bbox ? editData.bbox[1] : 0),
-                        font_xref: editData.font_xref || null,
-                        font: editData.font || 'Helvetica',
-                        font_size: editData.font_size || 12,
-                        font_weight: editData.font_weight || null,  // Explicit weight (400, 700, etc.)
-                        font_style: editData.font_style || null,    // Explicit style (normal, italic)
-                        underline: editData.underline || false,     // Text decoration underline
-                        line_height: editData.line_height || null,   // Include line height
+                        page_number: candidateEditData.page_number,
+                        block_num: candidateEditData.block_num,              // IMPORTANT: Include block_num for proper line handling
+                        original_text: String(candidateEditData.original_text || ''),
+                        new_text: String(candidateEditData.new_text || ''),
+                        bbox: candidateEditData.bbox || [0, 0, 100, 100],
+                        original_bbox: candidateEditData.original_bbox || candidateEditData.bbox || [0, 0, 100, 100],
+                        origin_x: candidateEditData.origin_x || (candidateEditData.bbox ? candidateEditData.bbox[0] : 0),
+                        origin_y: candidateEditData.origin_y || (candidateEditData.bbox ? candidateEditData.bbox[1] : 0),
+                        font_xref: candidateEditData.font_xref || null,
+                        font: candidateEditData.font || 'Helvetica',
+                        font_size: candidateEditData.font_size || 12,
+                        preserve_partial_block: !!candidateEditData.preserve_partial_block,
+                        force_reinsert: !!candidateEditData.force_reinsert,
+                        font_weight: candidateEditData.font_weight || null,  // Explicit weight (400, 700, etc.)
+                        font_style: candidateEditData.font_style || null,    // Explicit style (normal, italic)
+                        underline: candidateEditData.underline || false,     // Text decoration underline
+                        line_height: candidateEditData.line_height || null,   // Include line height
                         color: color,
-                        rich_html: editData.rich_html || null,        // Always send rich_html for per-word font info
-                        word_styles: editData.word_styles || null     // Per-word formatting (font, size, italic, etc.)
+                        rich_html: candidateEditData.rich_html || null,        // Always send rich_html for per-word font info
+                        cleanup_group_bbox: candidateEditData.cleanup_group_bbox || null,
+                        line_metrics: candidateEditData.line_metrics || null,
+                        synthetic_textbox: !!candidateEditData.synthetic_textbox,
+                        word_styles: candidateEditData.word_styles || null,     // Per-word formatting (font, size, italic, etc.)
+                        source_content_ops: dedupeOverlaySourceContentOps(candidateEditData.source_content_ops || []),
+                        retry_mode: candidateEditData.retry_mode || null,
+                        redaction_padding: Number.isFinite(Number(candidateEditData.redaction_padding)) ? Number(candidateEditData.redaction_padding) : null,
                     });
+                    }
                 }
                 
                 console.log('Sending edits to server:', edits);
@@ -13888,9 +19702,11 @@
                 if (edits.length === 0) {
                     console.log('All edits were no-ops after filtering, clearing dirty state');
                     overlayEditedFields.clear();
+                    overlayPersistedEdits.clear();
+                    try { sessionStorage.removeItem(overlayEditsStorageKey); } catch(e) {}
                     updateOverlaySaveButton();
                     setStatus('No effective changes to save.', '');
-                    return false;
+                    return { saved: false, noRefresh: true, mode: overlaySaveMode };
                 }
                 
                 // Validate edits before sending
@@ -13903,47 +19719,55 @@
                     }
                 });
 
-                const saveEditsRequestBody = { edits };
-                console.groupCollapsed('[Save Debug] Request -> documents.saveEdits');
-                console.log('url', '{{ route("documents.saveEdits", $document) }}');
-                console.log('method', 'POST');
-                console.log('headers', {
-                    'X-CSRF-TOKEN': 'present',
-                    'X-Requested-With': 'XMLHttpRequest',
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json',
-                });
-                console.log('body', saveEditsRequestBody);
-                console.groupEnd();
-
-                const saveResponse = await fetch('{{ route("documents.saveEdits", $document) }}', {
-                    method: 'POST',
-                    credentials: 'same-origin',
-                    headers: {
-                        'X-CSRF-TOKEN': csrfToken,
+                let saveResult;
+                if (overlaySaveMode === 'live_save') {
+                    saveResult = await runOverlayEditsThroughLiveSave(edits, {
+                        workingCopyToken,
+                        finalize: finalizeLiveSave,
+                    });
+                } else {
+                    const saveEditsRequestBody = { edits };
+                    console.groupCollapsed('[Save Debug] Request -> documents.saveEdits');
+                    console.log('url', '{{ route("documents.saveEdits", $document) }}');
+                    console.log('method', 'POST');
+                    console.log('headers', {
+                        'X-CSRF-TOKEN': 'present',
                         'X-Requested-With': 'XMLHttpRequest',
                         'Content-Type': 'application/json',
-                        'Accept': 'application/json'
-                    },
-                    body: JSON.stringify(saveEditsRequestBody)
-                });
+                        'Accept': 'application/json',
+                    });
+                    console.log('body', saveEditsRequestBody);
+                    console.groupEnd();
 
-                if (!saveResponse.ok) {
-                    const errorText = await saveResponse.text();
-                    let errorMessage;
-                    try {
-                        const errorJson = JSON.parse(errorText);
-                        errorMessage = errorJson.error || errorText;
-                    } catch (e) {
-                        errorMessage = errorText;
+                    const saveResponse = await fetch('{{ route("documents.saveEdits", $document) }}', {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: {
+                            'X-CSRF-TOKEN': csrfToken,
+                            'X-Requested-With': 'XMLHttpRequest',
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json'
+                        },
+                        body: JSON.stringify(saveEditsRequestBody)
+                    });
+
+                    if (!saveResponse.ok) {
+                        const errorText = await saveResponse.text();
+                        let errorMessage;
+                        try {
+                            const errorJson = JSON.parse(errorText);
+                            errorMessage = errorJson.error || errorText;
+                        } catch (e) {
+                            errorMessage = errorText;
+                        }
+                        throw new Error(errorMessage || `Overlay save failed (${saveResponse.status})`);
                     }
-                    throw new Error(errorMessage || `Overlay save failed (${saveResponse.status})`);
-                }
 
-                const saveResult = await saveResponse.json();
+                    saveResult = await saveResponse.json();
 
-                if (!saveResult.success) {
-                    throw new Error(saveResult.error || saveResult.message || 'Failed to save overlay edits: Unknown error');
+                    if (!saveResult.success) {
+                        throw new Error(saveResult.error || saveResult.message || 'Failed to save overlay edits: Unknown error');
+                    }
                 }
 
                 // CRITICAL: Clear both edited and persisted edits after successful save
@@ -13960,7 +19784,21 @@
                 
                 updateOverlaySaveButton();
 
-                return true;
+                updateSavedEditPreviewLink(saveResult.saved_preview_url || savedEditPreviewUrl);
+
+                return {
+                    saved: true,
+                    noRefresh: overlaySaveMode === 'live_save',
+                    mode: overlaySaveMode,
+                    usedLiveSave: overlaySaveMode === 'live_save',
+                    savedPreviewUrl: saveResult.saved_preview_url || savedEditPreviewUrl,
+                    preview: saveResult.preview || null,
+                    liveSavePreviews: Array.isArray(saveResult.liveSavePreviews) ? saveResult.liveSavePreviews : [],
+                    liveSavePreviewAssets: Array.isArray(saveResult.liveSavePreviewAssets) ? saveResult.liveSavePreviewAssets : [],
+                    before_image_url: saveResult.before_image_url || null,
+                    redacted_image_url: saveResult.redacted_image_url || null,
+                    final_image_url: saveResult.final_image_url || null,
+                };
             }
 
             async function applyPageReorder() {
@@ -13992,7 +19830,15 @@
                                 font_style: editData.font_style || null,
                                 line_height: editData.line_height || null,  // Include line height
                                 color: editData.color || '000000',
-                                rich_html: editData.rich_html || null
+                                rich_html: editData.rich_html || null,
+                                cleanup_group_bbox: editData.cleanup_group_bbox || null,
+                                line_metrics: editData.line_metrics || null,
+                                synthetic_textbox: !!editData.synthetic_textbox,
+                                word_styles: editData.word_styles || null,
+                                source_content_ops: dedupeOverlaySourceContentOps(
+                                    editData.source_content_ops
+                                    || collectOverlaySourceContentOps(document.querySelector(`.overlay-field[data-word-index="${key}"]`))
+                                )
                             });
                         }
                         
@@ -14740,6 +20586,7 @@
                 if (modeSign) modeSign.classList.toggle('active', toolMode === 'sign');
                 if (modeShape) modeShape.classList.toggle('active', toolMode === 'shape');
                 if (modeDraw) modeDraw.classList.toggle('active', toolMode === 'draw');
+                if (modeTable) modeTable.classList.toggle('active', toolMode === 'table');
                 if (modeOverlay) {
                     modeOverlay.checked = overlayEditorActive;
                 }
@@ -14825,6 +20672,7 @@
                 
                 if (isTextMode || hasTextAnnotation) {
                     banner.classList.add('visible');
+                    syncEditTextBannerStickyOffset();
                     // Populate controls from selected annotation
                     if (hasTextAnnotation) {
                         populateEditTextBanner(selectedAnnotation);
@@ -14835,6 +20683,36 @@
                 } else {
                     banner.classList.remove('visible');
                 }
+            }
+
+            function syncEditTextBannerSizeValue() {
+                const size = document.getElementById('etb-size');
+                const sizeValue = document.getElementById('etb-size-value');
+                if (!size || !sizeValue) return;
+                const numericValue = Math.max(8, Math.min(144, parseInt(size.value || '16', 10)));
+                sizeValue.textContent = `${numericValue}px`;
+            }
+
+            function syncEditTextBannerStickyOffset() {
+                const banner = document.getElementById('edit-text-banner');
+                const modeBar = document.getElementById('pdf-mode-bar');
+                if (!banner || !modeBar) return;
+
+                let stickyBottom = 0;
+                const modeBarRect = modeBar.getBoundingClientRect();
+                if (modeBarRect.height > 0) {
+                    stickyBottom = Math.max(stickyBottom, modeBarRect.bottom);
+                }
+
+                const selectionToolbar = document.getElementById('selection-toolbar');
+                if (selectionToolbar && !selectionToolbar.classList.contains('hidden')) {
+                    const selectionRect = selectionToolbar.getBoundingClientRect();
+                    if (selectionRect.height > 0) {
+                        stickyBottom = Math.max(stickyBottom, selectionRect.bottom);
+                    }
+                }
+
+                banner.style.top = `${Math.max(0, Math.round(stickyBottom))}px`;
             }
             
             function populateEditTextBanner(annotation) {
@@ -14850,6 +20728,7 @@
                 
                 if (font) font.value = annotation.fontFamily || 'Helvetica';
                 if (size) size.value = Math.round(annotation.fontSize * currentScale) || 16;
+                syncEditTextBannerSizeValue();
                 if (textColor) textColor.value = annotation.textColor || '#000000';
                 if (bgColor) {
                     const bg = annotation.backgroundColor || 'transparent';
@@ -14882,6 +20761,7 @@
                 
                 if (font) font.value = defaultTextFont;
                 if (size) size.value = defaultTextSize;
+                syncEditTextBannerSizeValue();
                 if (textColor) textColor.value = '#000000';
                 if (bgColor) bgColor.value = '#ffffff';
                 if (opacity) opacity.value = '1';
@@ -15014,6 +20894,16 @@
                 });
             }
 
+            if (modeTable) {
+                modeTable.addEventListener('click', () => {
+                    if (overlayEditorActive) {
+                        setStatus('Turn off Overlay Editor first to use Table.', 'warn');
+                        return;
+                    }
+                    openTableModal();
+                });
+            }
+
             // Draw Tool Modal open/close
             function openDrawModal() {
                 if (drawModal) drawModal.classList.add('active');
@@ -15123,7 +21013,7 @@
                 if (modeOverlay) {
                     modeOverlay.checked = false;
                 }
-                if (basePdfUrl === cleanPdfUrl && overlayExtractionData) {
+                if (overlayEditorActive && basePdfUrl === cleanPdfUrl && overlayExtractionData) {
                     viewer.classList.add('overlay-view-mode');
                     viewer.classList.remove('overlay-hidden');
                     renderPdfWithOverlay(true);
@@ -15140,6 +21030,13 @@
                     // Open the original PDF in a new tab
                     const originalUrl = `${pdfUrl}?v=${Date.now()}`;
                     window.open(originalUrl, '_blank');
+                });
+            }
+
+            if (viewCleanPdfBtn) {
+                viewCleanPdfBtn.addEventListener('click', () => {
+                    // Open the text-stripped clean PDF in a new tab
+                    window.open(`${cleanPdfUrl}?v=${Date.now()}`, '_blank');
                 });
             }
 
@@ -15293,7 +21190,7 @@
                     if (e.key === 'c' && selectedAnnotation) {
                         // Copy selected annotation
                         e.preventDefault();
-                        copiedAnnotation = JSON.parse(JSON.stringify(selectedAnnotation));
+                        copiedAnnotation = buildCopiedAnnotationSnapshot(selectedAnnotation);
                         setStatus('Annotation copied', 'ok');
                         return;
                     } else if (e.key === 'v' && copiedAnnotation) {
@@ -15301,28 +21198,19 @@
                         e.preventDefault();
                         
                         // Create new annotation with offset position
-                        const newAnnotation = JSON.parse(JSON.stringify(copiedAnnotation));
-                        delete newAnnotation.id; // Remove ID so it gets a new one
-                        
-                        // Offset position so it's visible (use a fixed offset in PDF coordinates)
-                        newAnnotation.pdfX += 10;
-                        newAnnotation.pdfY += 10;
+                        const newAnnotation = createAnnotationFromCopiedSnapshot(copiedAnnotation);
                         
                         // Add to annotations array
                         annotations.push(newAnnotation);
                         persistAnnotations();
+                        saveAnnotationToDatabase(newAnnotation);
                         
                         // Get the wrapper and render the new annotation
                         const wrapper = viewer.querySelector(`[data-page-index="${newAnnotation.pageIndex}"]`);
                         if (wrapper) {
-                            const overlay = wrapper.querySelector('.overlay');
-                            const canvas = wrapper.querySelector('canvas');
-                            if (overlay && canvas) {
-                                const pageInfo = {
-                                    scale: currentScale,
-                                    canvasHeight: canvas.height,
-                                };
-                                addAnnotationElement(wrapper, newAnnotation, pageInfo);
+                            const pageContext = resolveAnnotationPageContext(newAnnotation);
+                            if (pageContext) {
+                                addAnnotationElement(pageContext.wrapper, newAnnotation, pageContext.pageInfo);
                             }
                         }
                         
@@ -15374,6 +21262,10 @@
                                 // Get base family name
                                 const family = cleaned.split(/[-_]/)[0] || cleaned;
                                 if (family) {
+                                    const familyLower = family.toLowerCase();
+                                    if (familyLower === 'helvetica' || familyLower === 'times' || familyLower === 'timesroman' || familyLower === 'courier') {
+                                        return;
+                                    }
                                     fontsSet.add(family);
                                 }
                             }
@@ -15394,6 +21286,10 @@
                                 }
                                 const family = cleaned.split(/[-_]/)[0] || cleaned;
                                 if (family) {
+                                    const familyLower = family.toLowerCase();
+                                    if (familyLower === 'helvetica' || familyLower === 'times' || familyLower === 'timesroman' || familyLower === 'courier') {
+                                        return;
+                                    }
                                     fontsSet.add(family);
                                 }
                             }
@@ -15678,15 +21574,11 @@
                                 const hasEmbedded = overlayEmbeddedFonts && Object.values(overlayEmbeddedFonts).some(
                                     fd => (fd.family || '').toLowerCase() === family.toLowerCase()
                                 );
-                                if (hasEmbedded) {
+                                if (hasEmbedded && !shouldPreferWebFontFamily(family)) {
                                     overlayLoadedFonts.add(family);
                                     return;  // Already loaded via @font-face from embedded fonts
                                 }
-                                overlayLoadedFonts.add(family);
-                                const link = document.createElement('link');
-                                link.rel = 'stylesheet';
-                                link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap`;
-                                document.head.appendChild(link);
+                                ensureWebFontFamilyLoaded(family);
                             }
                         });
                     }
@@ -15725,7 +21617,8 @@
                         if (!overlayEditorActive || fontsLoadedToken !== overlayLoadToken) return;
                         // If user is mid-resize or mid-drag, defer the re-render
                         // to avoid destroying the field they're interacting with.
-                        if (overlayInteractionActive) {
+                        const hasActiveOverlayEditor = !!document.querySelector('.overlay-field.editing');
+                        if (overlayInteractionActive || hasActiveOverlayEditor) {
                             setTimeout(doFontReRender, 300);
                             return;
                         }
@@ -16358,6 +22251,81 @@
 
                     drawingShape = null;
                 });
+
+                // ─── Table drawing tool pointer events (overlay render path) ───
+                let lmDrawingTable = null;
+                overlay.addEventListener('pointerdown', (event) => {
+                    if (toolMode !== 'table') return;
+                    if (event.target !== overlay) return;
+                    const rect = overlay.getBoundingClientRect();
+                    const startX = event.clientX - rect.left;
+                    const startY = event.clientY - rect.top;
+                    const tablePreview = document.createElement('div');
+                    tablePreview.style.cssText = `position:absolute;left:${startX}px;top:${startY}px;width:1px;height:1px;border:${tableStrokeWidth}px solid ${tableStroke};background:${tableFillTransparent ? 'transparent' : tableFill};opacity:0.7;pointer-events:none;box-sizing:border-box;z-index:1000;`;
+                    overlay.appendChild(tablePreview);
+                    lmDrawingTable = { startX, startY, element: tablePreview };
+                });
+                overlay.addEventListener('pointermove', (event) => {
+                    if (!lmDrawingTable) return;
+                    const rect = overlay.getBoundingClientRect();
+                    const currentX = event.clientX - rect.left;
+                    const currentY = event.clientY - rect.top;
+                    const left = Math.min(lmDrawingTable.startX, currentX);
+                    const top = Math.min(lmDrawingTable.startY, currentY);
+                    const width = Math.max(1, Math.abs(currentX - lmDrawingTable.startX));
+                    const height = Math.max(1, Math.abs(currentY - lmDrawingTable.startY));
+                    lmDrawingTable.element.style.left = left + 'px';
+                    lmDrawingTable.element.style.top = top + 'px';
+                    lmDrawingTable.element.style.width = width + 'px';
+                    lmDrawingTable.element.style.height = height + 'px';
+                });
+                overlay.addEventListener('pointerup', (event) => {
+                    if (!lmDrawingTable) return;
+                    const elRect = lmDrawingTable.element.getBoundingClientRect();
+                    const overlayRect = overlay.getBoundingClientRect();
+                    const width = elRect.width;
+                    const height = elRect.height;
+                    if (width < 10 || height < 10) {
+                        lmDrawingTable.element.remove();
+                        lmDrawingTable = null;
+                        return;
+                    }
+                    const left = elRect.left - overlayRect.left;
+                    const top = elRect.top - overlayRect.top;
+                    const pdfX = left / currentScale;
+                    const pdfWidth = width / currentScale;
+                    const pdfHeight = height / currentScale;
+                    const pdfY = (overlay.clientHeight - top) / currentScale - pdfHeight;
+                    const annotation = {
+                        id: generateAnnotationId(),
+                        type: 'table',
+                        rows: tableRows,
+                        cols: tableCols,
+                        strokeColor: tableStroke,
+                        strokeWidth: tableStrokeWidth,
+                        fillColor: tableFill,
+                        fillTransparent: tableFillTransparent,
+                        outerBorder: tableOuterBorder,
+                        opacity: 1,
+                        pageIndex: pageNumber - 1,
+                        pdfX,
+                        pdfY,
+                        pdfWidth,
+                        pdfHeight,
+                    };
+                    annotations.push(annotation);
+                    persistAnnotations();
+                    updateAnnotationsList();
+                    addAnnotationElement(wrapper, annotation, pageInfo);
+                    lmDrawingTable.element.remove();
+                    lmDrawingTable = null;
+                    toolMode = 'select';
+                    setTimeout(() => {
+                        updateModeButtons();
+                        setSelection(annotation);
+                        setStatus('Table added. Click Save to keep changes.', 'ok');
+                    }, 10);
+                });
                 
                 wrapper.appendChild(canvas);
                 wrapper.appendChild(overlay);
@@ -16529,15 +22497,11 @@
                         const hasEmbedded = overlayEmbeddedFonts && Object.values(overlayEmbeddedFonts).some(
                             fd => (fd.family || '').toLowerCase() === family.toLowerCase()
                         );
-                        if (hasEmbedded) {
+                        if (hasEmbedded && !shouldPreferWebFontFamily(family)) {
                             overlayLoadedFonts.add(family);
                             return;
                         }
-                        overlayLoadedFonts.add(family);
-                        const link = document.createElement('link');
-                        link.rel = 'stylesheet';
-                        link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap`;
-                        document.head.appendChild(link);
+                        ensureWebFontFamilyLoaded(family);
                     });
                 };
 
@@ -16562,15 +22526,11 @@
                             const hasEmbedded = overlayEmbeddedFonts && Object.values(overlayEmbeddedFonts).some(
                                 fd => (fd.family || '').toLowerCase() === family.toLowerCase()
                             );
-                            if (hasEmbedded) {
+                            if (hasEmbedded && !shouldPreferWebFontFamily(family)) {
                                 overlayLoadedFonts.add(family);
                                 return;
                             }
-                            overlayLoadedFonts.add(family);
-                            const link = document.createElement('link');
-                            link.rel = 'stylesheet';
-                            link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap`;
-                            document.head.appendChild(link);
+                            ensureWebFontFamilyLoaded(family);
                         }
                     });
                 }
@@ -16848,6 +22808,13 @@
                             : sourceText
                     );
                     const hasDrawnUnderline = !!(word && (word.has_drawn_underline || word.suppress_drawn_underline));
+                    if (hasDrawnUnderline && /_{3,}/.test(sourceText)) {
+                        const stripped = sourceText
+                            .replace(/\s*_{3,}\s*/g, ' ')
+                            .replace(/[ \t]+/g, ' ')
+                            .trim();
+                        return stripped;
+                    }
                     const sourceUnderscoreRuns = (sourceText.match(/_{3,}/g) || []).length;
                     const sourceAlphaTokens = sourceText.replace(/_{3,}/g, ' ')
                         .split(/\s+/)
@@ -17161,14 +23128,40 @@
                 };
                 const shouldUseFlowRenderForBlock = (block, words, blockText) => {
                     const text = sanitizeOverlayText(blockText || '');
+                    const blockSpans = Array.isArray(block?.spans) ? block.spans : [];
+                    const hasDrawnUnderlineSpan = blockSpans.some((span) =>
+                        (span?.has_drawn_underline || span?.suppress_drawn_underline)
+                        && /_{3,}/.test(sanitizeOverlayText(span.text || ''))
+                    );
+                    const hasValueSpan = blockSpans.some((span) => {
+                        const spanText = sanitizeOverlayText((span?.render_text !== undefined && span?.render_text !== null) ? span.render_text : (span?.text || ''));
+                        return !!spanText
+                            && !/_{3,}/.test(spanText)
+                            && !spanText.includes(':');
+                    });
                     if (isOptionChoiceBlock(block, words, text)) {
                         // Keep checkbox/radio rows in absolute-word mode so marker X
                         // and option labels stay exactly where extracted.
                         return false;
                     }
                     if (isLabelUnderlineValueBlock(block, words, text)) {
-                        // These fields need absolute placement over printed lines.
-                        return false;
+                        // When the PDF already draws the underline, render these as
+                        // collapsed flow text (e.g. "Name: Natasha") instead of
+                        // replaying placeholder underscore glyphs.
+                        return (
+                            (Array.isArray(words) && words.some((w) =>
+                                (w.has_drawn_underline || w.suppress_drawn_underline)
+                                && /_{3,}/.test(sanitizeOverlayText(w.text || ''))
+                            ))
+                            || (Array.isArray(block?.spans) && block.spans.some((span) =>
+                                (span?.has_drawn_underline || span?.suppress_drawn_underline)
+                                && /_{3,}/.test(sanitizeOverlayText(span.text || ''))
+                            ))
+                            || /_{3,}/.test(text)
+                        );
+                    }
+                    if (hasDrawnUnderlineSpan && hasValueSpan) {
+                        return true;
                     }
                     const hasUnderscore = text.includes('_') ||
                         (Array.isArray(words) && words.some((w) => sanitizeOverlayText(w.text || '').includes('_')));
@@ -17190,6 +23183,32 @@
                     // Form-like lines with long underscore runs are unstable when rendered
                     // as absolutely-positioned spans (huge reconstructed gaps on edit).
                     return /_{6,}/.test(text) || !!(block && (block._client_form_merge || block._client_539_row_merge));
+                };
+                const getPreferredFlowTextForBlock = (block, words, blockText) => {
+                    const fallbackText = normalizeStableFlowText(blockText || '', {
+                        collapseRepeatedNonEmptyLines: true,
+                    });
+                    const fromWords = normalizeStableFlowText(buildStableFlowTextFromWords(block, words) || '', {
+                        collapseRepeatedNonEmptyLines: true,
+                    });
+                    if (!fallbackText) return fromWords;
+                    if (!fromWords) return fallbackText;
+
+                    if (isLabelUnderlineValueBlock(block, words, blockText)) {
+                        const fromWordsHasValue = fromWords.includes(':') && !/:\s*$/.test(fromWords);
+                        const fallbackHasValue = fallbackText.includes(':') && !/:\s*$/.test(fallbackText);
+                        if (!fromWordsHasValue && fallbackHasValue) {
+                            return fallbackText;
+                        }
+                    }
+                    const blockCameFromClientMerge = !!(block && (block._client_form_merge || block._client_539_row_merge));
+                    const fallbackClearlyRicher = fallbackText.length > (fromWords.length + 6)
+                        && (!!fromWords ? fallbackText.includes(fromWords) : true);
+                    if (blockCameFromClientMerge && fallbackClearlyRicher) {
+                        return fallbackText;
+                    }
+
+                    return fromWords;
                 };
 
                 const buildStyledWordSpans = (container, words, scaleX, scaleY, blockLeft, blockTop, sourceBlock, sourceBlockText) => {
@@ -17873,6 +23892,71 @@
                     // Tight padding — just enough for click-targeting
                     return Math.max(1, Math.min(basePad, 5));
                 };
+                const shouldTrimUnderlinedTailLine = (block) => {
+                    if (!block || block._client_line_split) return false;
+                    const textLines = Array.isArray(block.text_lines)
+                        ? block.text_lines.map((line) => sanitizeOverlayText(line)).filter((line) => line.length > 0)
+                        : [];
+                    const spans = Array.isArray(block.spans) ? block.spans : [];
+                    if (textLines.length < 3 || textLines.length > 4) return false;
+                    if (spans.length !== textLines.length) return false;
+                    const blockHeight = Number(block.height) || 0;
+                    if (blockHeight <= 70) return false;
+
+                    const tailSpan = spans[spans.length - 1];
+                    const tailUnderlined = !!(tailSpan?.has_drawn_underline || tailSpan?.suppress_drawn_underline);
+                    if (!tailUnderlined) return false;
+
+                    const headSpans = spans.slice(0, -1);
+                    const headAllPlain = headSpans.every((span) => !(span?.has_drawn_underline || span?.suppress_drawn_underline));
+                    if (!headAllPlain) return false;
+
+                    const headLines = textLines.slice(0, -1);
+                    const tailLine = textLines[textLines.length - 1] || '';
+                    const headLooksCompact = headLines.every((line) => line.length > 0 && line.length <= 70);
+                    const tailLooksTemplateLike = /^[A-Z0-9 .,&()'/-]+$/.test(tailLine) && tailLine.length >= 18;
+                    return headLooksCompact && tailLooksTemplateLike;
+                };
+                const getTrimmedBlockDisplayData = (block) => {
+                    const rawTextLines = Array.isArray(block?.text_lines)
+                        ? block.text_lines.map((line) => sanitizeOverlayText(line)).filter((line) => line.length > 0)
+                        : [];
+                    if (!shouldTrimUnderlinedTailLine(block) || rawTextLines.length < 2) {
+                        return {
+                            trimmed: false,
+                            textLines: rawTextLines,
+                            bounds: null,
+                        };
+                    }
+
+                    const keptTextLines = rawTextLines.slice(0, -1);
+                    const lineBBoxes = Array.isArray(block?.line_bboxes) ? block.line_bboxes : [];
+                    const keptLineBoxes = lineBBoxes.slice(0, keptTextLines.length).filter((lb) => Array.isArray(lb) && lb.length >= 4);
+                    let bounds = null;
+                    if (keptLineBoxes.length) {
+                        const minL = Math.min(...keptLineBoxes.map((lb) => Number(lb[0]) || 0));
+                        const minT = Math.min(...keptLineBoxes.map((lb) => Number(lb[1]) || 0));
+                        const maxR = Math.max(...keptLineBoxes.map((lb) => Number(lb[2]) || 0));
+                        const maxB = Math.max(...keptLineBoxes.map((lb) => Number(lb[3]) || 0));
+                        bounds = {
+                            left: minL,
+                            top: minT,
+                            width: Math.max(1, maxR - minL),
+                            height: Math.max(1, maxB - minT),
+                        };
+                    }
+
+                    return {
+                        trimmed: true,
+                        textLines: keptTextLines,
+                        bounds,
+                    };
+                };
+                const renderOverlayUnderlineMasks = () => {
+                    // Keep the PDF's original underline strokes visible. Masking them
+                    // makes form blanks disappear in overlay mode.
+                    return;
+                };
 
                 const renderOverlayBlocks = () => {
                     if (!pageData.blocks || pageData.blocks.length === 0) {
@@ -17883,6 +23967,8 @@
                     // Canvas backing size may be DPR-scaled.
                     const effectiveWidth = viewport.width || overlay.clientWidth || 1;
                     const effectiveHeight = viewport.height || overlay.clientHeight || 1;
+
+                    renderOverlayUnderlineMasks();
                     const scaleX = pageData.width ? effectiveWidth / pageData.width : 1;
                     const scaleY = pageData.height ? effectiveHeight / pageData.height : 1;
                     const overlayWidthPx = Math.max(1, overlay.clientWidth || effectiveWidth);
@@ -17906,6 +23992,68 @@
                         field.style.width = rect.width + 'px';
                         field.style.height = rect.height + 'px';
                     };
+                    const fitOverlayFieldToRenderedContent = (field, textSpan) => {
+                        if (!field || !textSpan) return false;
+
+                        const fieldLeft = parseFloat(field.style.left) || 0;
+                        const fieldTop = parseFloat(field.style.top) || 0;
+                        const fieldWidth = parseFloat(field.style.width) || field.offsetWidth || 0;
+                        const fieldHeight = parseFloat(field.style.height) || field.offsetHeight || 0;
+                        if (fieldWidth <= 0 || fieldHeight <= 0) {
+                            return false;
+                        }
+
+                        const fieldStyle = window.getComputedStyle(field);
+                        const borderX = (parseFloat(fieldStyle.borderLeftWidth || '0') || 0)
+                            + (parseFloat(fieldStyle.borderRightWidth || '0') || 0);
+                        const borderY = (parseFloat(fieldStyle.borderTopWidth || '0') || 0)
+                            + (parseFloat(fieldStyle.borderBottomWidth || '0') || 0);
+                        const padX = (parseFloat(fieldStyle.paddingLeft || '0') || 0)
+                            + (parseFloat(fieldStyle.paddingRight || '0') || 0);
+                        const padY = (parseFloat(fieldStyle.paddingTop || '0') || 0)
+                            + (parseFloat(fieldStyle.paddingBottom || '0') || 0);
+
+                        let contentWidth = Math.max(
+                            textSpan.scrollWidth || 0,
+                            textSpan.getBoundingClientRect().width || 0
+                        );
+                        let contentHeight = Math.max(
+                            textSpan.scrollHeight || 0,
+                            textSpan.getBoundingClientRect().height || 0
+                        );
+
+                        const positionedChildren = Array.from(textSpan.querySelectorAll('span')).filter((span) => {
+                            const style = span.style || {};
+                            return style.position === 'absolute';
+                        });
+                        if (positionedChildren.length > 0) {
+                            let maxRight = 0;
+                            let maxBottom = 0;
+                            positionedChildren.forEach((span) => {
+                                const left = parseFloat(span.style.left || '0') || 0;
+                                const top = parseFloat(span.style.top || '0') || 0;
+                                const rect = span.getBoundingClientRect();
+                                const width = rect.width || span.offsetWidth || 0;
+                                const height = rect.height || span.offsetHeight || 0;
+                                maxRight = Math.max(maxRight, left + width);
+                                maxBottom = Math.max(maxBottom, top + height);
+                            });
+                            contentWidth = Math.max(contentWidth, maxRight);
+                            contentHeight = Math.max(contentHeight, maxBottom);
+                        }
+
+                        const desiredWidth = Math.ceil(contentWidth + padX + borderX);
+                        const desiredHeight = Math.ceil(contentHeight + padY + borderY);
+                        const nextWidth = Math.max(fieldWidth, desiredWidth);
+                        const nextHeight = Math.max(fieldHeight, desiredHeight);
+
+                        if ((nextWidth - fieldWidth) < 1 && (nextHeight - fieldHeight) < 1) {
+                            return false;
+                        }
+
+                        applyClampedRect(field, fieldLeft, fieldTop, nextWidth, nextHeight);
+                        return true;
+                    };
 
                     // ── Gap-based block splitting ──────────────────────────────
                     // PyMuPDF merges entire table rows into one block. We detect
@@ -17914,6 +24062,31 @@
                     // gets its own bounding box.
                     const GAP_FACTOR = 3; // gap > GAP_FACTOR × avg font size = column break
                     const SPLIT_ALIGN_TOLERANCE_PX = 6;
+                    const blockHasSplittableInternalGap = (words) => {
+                        if (!Array.isArray(words) || words.length < 2) return false;
+                        const lineMap = new Map();
+                        words.forEach((word) => {
+                            const lineNum = word.line_num ?? 0;
+                            if (!lineMap.has(lineNum)) lineMap.set(lineNum, []);
+                            lineMap.get(lineNum).push(word);
+                        });
+
+                        for (const lineWords of lineMap.values()) {
+                            const sorted = lineWords.slice().sort((a, b) => (Number(a.left) || 0) - (Number(b.left) || 0));
+                            if (sorted.length < 2) continue;
+                            const avgFontSize = sorted.reduce((sum, word) => sum + (Number(word.font_size) || 10), 0) / sorted.length;
+                            const gapThreshold = avgFontSize * GAP_FACTOR;
+                            for (let i = 1; i < sorted.length; i++) {
+                                const prevRight = (Number(sorted[i - 1].left) || 0) + (Number(sorted[i - 1].width) || 0);
+                                const currLeft = Number(sorted[i].left) || 0;
+                                if ((currLeft - prevRight) > gapThreshold) {
+                                    return true;
+                                }
+                            }
+                        }
+
+                        return false;
+                    };
 
                     // Prepare block data only once per extracted page payload. Repeating
                     // the split+retag pass on every re-render can create drifting block
@@ -17930,16 +24103,19 @@
                         if (consumedByFormMerge.has(block.block_num)) {
                             return;
                         }
-                        // Avoid double-splitting blocks that were already split upstream
-                        // or by this client-side renderer on a prior pass.
-                        if (block._from_xgap_split || block._client_split) {
-                            expandedBlocks.push(block);
-                            return;
-                        }
-
                         const blockWords = pageData.words
                             ? pageData.words.filter(w => w.block_num === block.block_num)
                             : [];
+
+                        // Avoid double-splitting blocks that were already split upstream
+                        // or by this client-side renderer on a prior pass. Some PDFs
+                        // still arrive with a surviving large internal word gap even
+                        // when `_from_xgap_split` is set, so allow one more pass for
+                        // those blocks.
+                        if ((block._from_xgap_split || block._client_split) && !blockHasSplittableInternalGap(blockWords)) {
+                            expandedBlocks.push(block);
+                            return;
+                        }
 
                         // Form-row helper: merge multi-line underscore blocks with their
                         // sibling value blocks (e.g. Address + 1810..., Wife, 1980) into
@@ -18111,6 +24287,13 @@
                         // Split all words into column groups based on gap positions
                         const numCols = splitPositions.length + 1;
                         const columnWords = Array.from({ length: numCols }, () => []);
+                        const rowClusterId = `table-row-${pageData.page_number}-${block.block_num}`;
+                        const rowClusterBbox = [
+                            Number(block.left) || 0,
+                            Number(block.top) || 0,
+                            (Number(block.left) || 0) + (Number(block.width) || 0),
+                            (Number(block.top) || 0) + (Number(block.height) || 0),
+                        ];
                         blockWords.forEach(w => {
                             const wCenter = w.left + w.width / 2;
                             let col = 0;
@@ -18150,6 +24333,9 @@
                             expandedBlocks.push({
                                 ...block,
                                 _client_split: true,
+                                _client_table_cell: true,
+                                _client_table_row_cluster_id: rowClusterId,
+                                _client_table_row_cluster_bbox: rowClusterBbox,
                                 block_num: subNum,
                                 left: minL,
                                 top: minT,
@@ -18264,6 +24450,107 @@
                             });
                         });
                         expandedBlocks = afterUnderlineSplit;
+
+                        // Split narrow stacked value cells (e.g. "no" + stray "1")
+                        // into per-line fields so editing one line does not rewrite
+                        // the whole stacked block.
+                        const afterNarrowLineSplit = [];
+                        const overlapsVertically = (aTop, aBottom, bTop, bBottom) => {
+                            const inter = Math.max(0, Math.min(aBottom, bBottom) - Math.max(aTop, bTop));
+                            const minH = Math.max(1, Math.min(aBottom - aTop, bBottom - bTop));
+                            return (inter / minH) >= 0.35;
+                        };
+                        const normalizeLineText = (value) => sanitizeOverlayText(String(value || ''))
+                            .replace(/\s+/g, ' ')
+                            .trim();
+                        const shouldSplitNarrowStackedBlock = (block, blockWords) => {
+                            if (!block || !Array.isArray(blockWords) || blockWords.length < 2) return false;
+                            if (block._client_form_merge || block._client_539_row_merge || block._client_line_split) return false;
+                            const textLines = Array.isArray(block.text_lines)
+                                ? block.text_lines.map((line) => normalizeLineText(line)).filter((line) => line.length > 0)
+                                : [];
+                            const lineBBoxes = Array.isArray(block.line_bboxes) ? block.line_bboxes : [];
+                            if (textLines.length !== 2 || lineBBoxes.length !== textLines.length) return false;
+                            const blockWidth = Number(block.width) || 0;
+                            if (blockWidth <= 0 || blockWidth > 36) return false;
+                            if (textLines.some((line) => line.length === 0 || line.length > 8)) return false;
+
+                            const lineWordCounts = lineBBoxes.map((lb) => {
+                                const lTop = Number(lb?.[1]) || 0;
+                                const lBottom = Number(lb?.[3]) || lTop;
+                                return blockWords.filter((word) => {
+                                    const wTop = Number(word?.top) || 0;
+                                    const wBottom = wTop + (Number(word?.height) || 0);
+                                    return overlapsVertically(lTop, lBottom, wTop, wBottom);
+                                }).length;
+                            });
+
+                            return lineWordCounts.every((count) => count >= 1 && count <= 2);
+                        };
+
+                        expandedBlocks.forEach((block) => {
+                            const blockWords = (pageData.words || []).filter((w) => w.block_num === block.block_num);
+                            if (!shouldSplitNarrowStackedBlock(block, blockWords)) {
+                                afterNarrowLineSplit.push(block);
+                                return;
+                            }
+
+                            const textLines = Array.isArray(block.text_lines) ? block.text_lines : [];
+                            const lineBBoxes = Array.isArray(block.line_bboxes) ? block.line_bboxes : [];
+                            const sourceOpsByKey = new Set(
+                                (Array.isArray(block.source_content_ops) ? block.source_content_ops : []).map((op) => (
+                                    `${Number(op?.xref) || 0}:${Number(op?.start) || 0}:${Number(op?.end) || 0}:${String(op?.matched_text || '')}`
+                                ))
+                            );
+
+                            lineBBoxes.forEach((lb, lineIndex) => {
+                                const lTop = Number(lb?.[1]) || 0;
+                                const lBottom = Number(lb?.[3]) || lTop;
+                                const lineWords = blockWords
+                                    .filter((word) => {
+                                        const wTop = Number(word?.top) || 0;
+                                        const wBottom = wTop + (Number(word?.height) || 0);
+                                        return overlapsVertically(lTop, lBottom, wTop, wBottom);
+                                    })
+                                    .sort((a, b) => (Number(a.left) || 0) - (Number(b.left) || 0));
+                                if (!lineWords.length) return;
+
+                                const subNum = nextSyntheticBlockNum++;
+                                lineWords.forEach((word) => { word.block_num = subNum; });
+
+                                const text = normalizeLineText(textLines[lineIndex] || lineWords.map((word) => getOverlayWordDisplayText(word)).join(' '));
+                                const minL = Math.min(...lineWords.map((word) => Number(word.left) || 0));
+                                const minT = Math.min(...lineWords.map((word) => Number(word.top) || 0));
+                                const maxR = Math.max(...lineWords.map((word) => (Number(word.left) || 0) + (Number(word.width) || 0)));
+                                const maxB = Math.max(...lineWords.map((word) => (Number(word.top) || 0) + (Number(word.height) || 0)));
+                                const seenLineOpKeys = new Set();
+                                const lineSourceOps = lineWords
+                                    .flatMap((word) => Array.isArray(word?.source_content_ops) ? word.source_content_ops : [])
+                                    .filter((op) => {
+                                        const key = `${Number(op?.xref) || 0}:${Number(op?.start) || 0}:${Number(op?.end) || 0}:${String(op?.matched_text || '')}`;
+                                        if (seenLineOpKeys.has(key)) return false;
+                                        seenLineOpKeys.add(key);
+                                        return sourceOpsByKey.size === 0 || sourceOpsByKey.has(key);
+                                    });
+
+                                afterNarrowLineSplit.push({
+                                    ...block,
+                                    _client_split: true,
+                                    _client_line_split: true,
+                                    block_num: subNum,
+                                    left: minL,
+                                    top: minT,
+                                    width: Math.max(1, maxR - minL),
+                                    height: Math.max(1, maxB - minT),
+                                    line_count: 1,
+                                    text,
+                                    text_lines: [text],
+                                    line_bboxes: [[minL, minT, maxR, maxB]],
+                                    source_content_ops: lineSourceOps,
+                                });
+                            });
+                        });
+                        expandedBlocks = afterNarrowLineSplit;
 
                         // Persist the expanded blocks back into pageData so subsequent
                         // re-renders (toggle off/on, zoom, etc.) see the already-split
@@ -18390,6 +24677,169 @@
                         pageData._overlay539RowGroupPrepared = true;
                     }
 
+                    // Final pass: split tiny stacked value blocks after all client-side
+                    // merges so each short line becomes its own editable field.
+                    const finalSplitNarrowStackedBlocks = [];
+                    const finalNextSyntheticBlockNumStart = (expandedBlocks || []).reduce((m, b) => Math.max(m, Number(b.block_num) || 0), 0) + 1;
+                    let finalNextSyntheticBlockNum = finalNextSyntheticBlockNumStart;
+                    const finalOverlapsVertically = (aTop, aBottom, bTop, bBottom) => {
+                        const inter = Math.max(0, Math.min(aBottom, bBottom) - Math.max(aTop, bTop));
+                        const minH = Math.max(1, Math.min(aBottom - aTop, bBottom - bTop));
+                        return (inter / minH) >= 0.3;
+                    };
+                    const finalNormalizeLineText = (value) => sanitizeOverlayText(String(value || ''))
+                        .replace(/\s+/g, ' ')
+                        .trim();
+
+                    (expandedBlocks || []).forEach((block) => {
+                        const blockWords = (pageData.words || []).filter((w) => w.block_num === block.block_num);
+                        const textLines = Array.isArray(block?.text_lines)
+                            ? block.text_lines.map((line) => finalNormalizeLineText(line)).filter((line) => line.length > 0)
+                            : [];
+                        const lineBBoxes = Array.isArray(block?.line_bboxes) ? block.line_bboxes : [];
+                        const blockWidth = Number(block?.width) || 0;
+                        const shouldSplitFinal = !!block
+                            && blockWords.length >= 2
+                            && textLines.length >= 2
+                            && textLines.length <= 3
+                            && lineBBoxes.length === textLines.length
+                            && blockWidth > 0
+                            && blockWidth <= 24
+                            && textLines.every((line) => line.length > 0 && line.length <= 8);
+
+                        if (!shouldSplitFinal) {
+                            finalSplitNarrowStackedBlocks.push(block);
+                            return;
+                        }
+
+                        const groupedLineWords = lineBBoxes.map((lb) => {
+                            const lTop = Number(lb?.[1]) || 0;
+                            const lBottom = Number(lb?.[3]) || lTop;
+                            return blockWords
+                                .filter((word) => {
+                                    const wTop = Number(word?.top) || 0;
+                                    const wBottom = wTop + (Number(word?.height) || 0);
+                                    return finalOverlapsVertically(lTop, lBottom, wTop, wBottom);
+                                })
+                                .sort((a, b) => (Number(a.left) || 0) - (Number(b.left) || 0));
+                        });
+
+                        if (!groupedLineWords.every((lineWords) => lineWords.length >= 1 && lineWords.length <= 2)) {
+                            finalSplitNarrowStackedBlocks.push(block);
+                            return;
+                        }
+
+                        groupedLineWords.forEach((lineWords, lineIndex) => {
+                            const subNum = finalNextSyntheticBlockNum++;
+                            lineWords.forEach((word) => { word.block_num = subNum; });
+
+                            const minL = Math.min(...lineWords.map((word) => Number(word.left) || 0));
+                            const minT = Math.min(...lineWords.map((word) => Number(word.top) || 0));
+                            const maxR = Math.max(...lineWords.map((word) => (Number(word.left) || 0) + (Number(word.width) || 0)));
+                            const maxB = Math.max(...lineWords.map((word) => (Number(word.top) || 0) + (Number(word.height) || 0)));
+                            const text = finalNormalizeLineText(
+                                textLines[lineIndex] || lineWords.map((word) => getOverlayWordDisplayText(word)).join(' ')
+                            );
+                            const seenOpKeys = new Set();
+                            const sourceOps = lineWords
+                                .flatMap((word) => Array.isArray(word?.source_content_ops) ? word.source_content_ops : [])
+                                .filter((op) => {
+                                    const key = `${Number(op?.xref) || 0}:${Number(op?.start) || 0}:${Number(op?.end) || 0}:${String(op?.matched_text || '')}`;
+                                    if (seenOpKeys.has(key)) return false;
+                                    seenOpKeys.add(key);
+                                    return true;
+                                });
+
+                            finalSplitNarrowStackedBlocks.push({
+                                ...block,
+                                _client_split: true,
+                                _client_line_split: true,
+                                block_num: subNum,
+                                left: minL,
+                                top: minT,
+                                width: Math.max(1, maxR - minL),
+                                height: Math.max(1, maxB - minT),
+                                line_count: 1,
+                                text,
+                                text_lines: [text],
+                                line_bboxes: [[minL, minT, maxR, maxB]],
+                                source_content_ops: sourceOps,
+                            });
+                        });
+                    });
+                    expandedBlocks = finalSplitNarrowStackedBlocks;
+
+                    // Split a tracked underlined tail line (e.g. "TO CONTRACT
+                    // CONCERNING THE PROPERTY AT") out of a taller centered
+                    // heading block so it renders as its own field instead of
+                    // being swallowed by the header.
+                    const separatedUnderlineTailBlocks = [];
+                    (expandedBlocks || []).forEach((block) => {
+                        const blockWords = (pageData.words || []).filter((word) => word.block_num === block.block_num);
+                        if (!shouldTrimUnderlinedTailLine(block) || blockWords.length === 0) {
+                            separatedUnderlineTailBlocks.push(block);
+                            return;
+                        }
+
+                        const textLines = Array.isArray(block.text_lines)
+                            ? block.text_lines.map((line) => finalNormalizeLineText(line)).filter((line) => line.length > 0)
+                            : [];
+                        const spans = Array.isArray(block.spans) ? block.spans : [];
+                        const tailLine = textLines[textLines.length - 1] || '';
+                        const tailSpan = spans[spans.length - 1] || null;
+                        const normalizedTailLine = finalNormalizeLineText(tailLine);
+                        const tailWords = blockWords.filter((word) => {
+                            const rendered = finalNormalizeLineText(getOverlayWordDisplayText(word));
+                            const source = finalNormalizeLineText(word?.text || '');
+                            return rendered === normalizedTailLine
+                                || source === normalizedTailLine
+                                || (rendered.length > 0 && normalizedTailLine.includes(rendered))
+                                || (source.length > 0 && normalizedTailLine.includes(source));
+                        });
+
+                        if (!tailWords.length) {
+                            separatedUnderlineTailBlocks.push(block);
+                            return;
+                        }
+
+                        const tailNum = finalNextSyntheticBlockNum++;
+                        tailWords.forEach((word) => { word.block_num = tailNum; });
+
+                        const minL = Math.min(...tailWords.map((word) => Number(word.left) || 0));
+                        const minT = Math.min(...tailWords.map((word) => Number(word.top) || 0));
+                        const maxR = Math.max(...tailWords.map((word) => (Number(word.left) || 0) + (Number(word.width) || 0)));
+                        const maxB = Math.max(...tailWords.map((word) => (Number(word.top) || 0) + (Number(word.height) || 0)));
+                        const seenOpKeys = new Set();
+                        const tailSourceOps = tailWords
+                            .flatMap((word) => Array.isArray(word?.source_content_ops) ? word.source_content_ops : [])
+                            .filter((op) => {
+                                const key = `${Number(op?.xref) || 0}:${Number(op?.start) || 0}:${Number(op?.end) || 0}:${String(op?.matched_text || '')}`;
+                                if (seenOpKeys.has(key)) return false;
+                                seenOpKeys.add(key);
+                                return true;
+                            });
+
+                        separatedUnderlineTailBlocks.push(block);
+                        separatedUnderlineTailBlocks.push({
+                            ...block,
+                            _client_split: true,
+                            _client_trimmed_tail_line: true,
+                            block_num: tailNum,
+                            left: minL,
+                            top: minT,
+                            width: Math.max(1, maxR - minL),
+                            height: Math.max(1, maxB - minT),
+                            line_count: 1,
+                            text: tailLine,
+                            text_lines: [tailLine],
+                            line_bboxes: [[minL, minT, maxR, maxB]],
+                            spans: tailSpan ? [tailSpan] : [],
+                            source_content_ops: tailSourceOps,
+                        });
+                    });
+                    expandedBlocks = separatedUnderlineTailBlocks;
+                    pageData.blocks = expandedBlocks;
+
                     // Sort blocks by vertical position (top to bottom) then horizontal (left to right)
                     const sortedBlocks = [...expandedBlocks].sort((a, b) => {
                         const topDiff = a.top - b.top;
@@ -18431,6 +24881,21 @@
                         const smaller = Math.min(areaA, areaB);
                         return smaller > 0 ? (inter / smaller) : 0;
                     };
+                    const looksLikeFormCompositeText = (text) => {
+                        const normalized = sanitizeOverlayText(String(text || ''))
+                            .replace(/\s+/g, ' ')
+                            .trim();
+                        return /_{3,}/.test(normalized) && /[A-Za-z][^:\n]{0,120}:/.test(normalized);
+                    };
+                    const looksLikeFilledValueText = (text) => {
+                        const normalized = sanitizeOverlayText(String(text || ''))
+                            .replace(/\s+/g, ' ')
+                            .trim();
+                        return !!normalized
+                            && !/_{3,}/.test(normalized)
+                            && /[A-Za-z0-9]/.test(normalized)
+                            && normalized.length <= 120;
+                    };
                     const isLikelyDuplicateBlock = (a, b) => {
                         const textA = a._textSig;
                         const textB = b._textSig;
@@ -18438,6 +24903,7 @@
                         const iou = rectIou(a._rect, b._rect);
                         const topClose = Math.abs((a.top || 0) - (b.top || 0)) <= 2;
                         const leftClose = Math.abs((a.left || 0) - (b.left || 0)) <= 2;
+                        const sameRow = verticalOverlapRatio(a._rect.t, a._rect.b, b._rect.t, b._rect.b) >= 0.6;
                         if (textA === textB) {
                             return iou >= 0.7 || (topClose && leftClose);
                         }
@@ -18450,13 +24916,40 @@
                         if (shortFrag && iou >= 0.85 && topClose) {
                             return true;
                         }
+                        const overlapSmaller = rectOverlapSmaller(a._rect, b._rect);
+                        const preferFormCompositeBlock = sameRow && overlapSmaller >= 0.25 && (
+                            (textA.includes(textB) && looksLikeFormCompositeText(textA) && looksLikeFilledValueText(textB))
+                            || (textB.includes(textA) && looksLikeFormCompositeText(textB) && looksLikeFilledValueText(textA))
+                        );
+                        if (preferFormCompositeBlock) {
+                            return true;
+                        }
+                        const textALower = textA.toLowerCase();
+                        const textBLower = textB.toLowerCase();
+                        const isPrefixSuffixPair =
+                            textALower.startsWith(textBLower) ||
+                            textBLower.startsWith(textALower) ||
+                            textALower.endsWith(textBLower) ||
+                            textBLower.endsWith(textALower);
+                        const leftNear = Math.abs((a._rect.l || 0) - (b._rect.l || 0)) <= Math.max(
+                            8,
+                            Math.min(
+                                Math.max(1, (a._rect.r || 0) - (a._rect.l || 0)),
+                                Math.max(1, (b._rect.r || 0) - (b._rect.l || 0))
+                            ) * 0.25
+                        );
+                        // Catch clipped/truncated extraction fragments like
+                        // "create PDF/A-conforming docume" that share the same
+                        // row/origin as the full block text.
+                        if (isPrefixSuffixPair && sameRow && leftNear && overlapSmaller >= 0.45) {
+                            return true;
+                        }
                         // Catch overlapping text layers at the same position but with
                         // different text (e.g., prior edit remnants like "violate" vs
                         // "violated").  If the smaller block is mostly inside the
                         // larger one AND they share the same vertical position, they
                         // are overlapping text layers — deduplicate.
                         if (topClose && leftClose) {
-                            const overlapSmaller = rectOverlapSmaller(a._rect, b._rect);
                             if (overlapSmaller >= 0.5) {
                                 return true;
                             }
@@ -18633,6 +25126,7 @@
                             if (!topBlock || !bottomBlock) return false;
                             if (topBlock._client_form_merge || bottomBlock._client_form_merge) return false;
                             if (topBlock._client_539_row_merge || bottomBlock._client_539_row_merge) return false;
+                            if (topBlock._client_line_split || bottomBlock._client_line_split) return false;
 
                             const aL = Number(topBlock.left) || 0;
                             const aT = Number(topBlock.top) || 0;
@@ -18670,6 +25164,11 @@
                             const textA = getBlockTextSig(topBlock);
                             const textB = getBlockTextSig(bottomBlock);
                             if (!textA || !textB) return false;
+                            const shortStackedValues = Math.max(textA.length, textB.length) <= 8
+                                && Math.max(aW, bW) <= 24
+                                && /^[A-Za-z0-9 ]+$/.test(textA)
+                                && /^[A-Za-z0-9 ]+$/.test(textB);
+                            if (shortStackedValues) return false;
 
                             const hasIntervening = (allBlocks || []).some((other) => {
                                 if (!other || other === topBlock || other === bottomBlock) return false;
@@ -18749,6 +25248,9 @@
                             }
 
                             const modelBase = cluster[0];
+                            const sourceSegments = clusterEntries
+                                .map(({ block, words }) => buildOverlaySourceSegmentForBlock(block, words))
+                                .filter(Boolean);
                             const mergedFontSizes = mergedWords
                                 .map((w) => Number(w.font_size) || 0)
                                 .filter((v) => v > 0)
@@ -18828,6 +25330,7 @@
                                 color: dominantStyle?.color ?? modelBase.color,
                                 hex_color: dominantStyle?.hex_color || modelBase.hex_color,
                                 font_xref: dominantStyle?.font_xref ?? modelBase.font_xref,
+                                _overlay_source_segments: sourceSegments,
                             };
                         };
                         for (let i = 0; i < sorted.length; i++) {
@@ -18869,6 +25372,7 @@
                     pageData.blocks = mergedAdjacentBlocks;
 
                     const isLikelyOrphanTinyBlock = (block, textValue, allBlocks) => {
+                        if (block?._client_line_split) return false;
                         const t = sanitizeOverlayText(String(textValue || '')).trim();
                         if (!t || t.length > 2 || !/[A-Za-z0-9]/.test(t)) return false;
                         const bL = Number(block.left) || 0;
@@ -18897,6 +25401,28 @@
                             const centerInsideX = bCx >= (oL - 1) && bCx <= (oR + 1);
                             const nestedHoriz = bL >= (oL - 1) && bR <= (oR + 1);
                             return centerInsideX || nestedHoriz;
+                        });
+                    };
+                    const isValueShadowOfCompositeField = (block, textValue, allBlocks) => {
+                        if (block?._client_line_split) return false;
+                        const candidateText = sanitizeOverlayText(String(textValue || '')).replace(/\s+/g, ' ').trim();
+                        if (!candidateText || !looksLikeFilledValueText(candidateText)) return false;
+                        const candidateRect = getRect(block);
+                        return (allBlocks || []).some((other) => {
+                            if (!other || other === block) return false;
+                            const otherText = sanitizeOverlayText(
+                                (Array.isArray(other.text_lines) && other.text_lines.length)
+                                    ? other.text_lines.join('\n')
+                                    : (other.text || '')
+                            ).replace(/\s+/g, ' ').trim();
+                            const looksLikeCompositeOwner = looksLikeFormCompositeText(otherText)
+                                || (otherText.includes(':') && otherText.length > (candidateText.length + 4));
+                            if (!otherText || !looksLikeCompositeOwner) return false;
+                            if (!otherText.includes(candidateText)) return false;
+                            const otherRect = getRect(other);
+                            const overlapSmaller = rectOverlapSmaller(candidateRect, otherRect);
+                            const sameRow = verticalOverlapRatio(candidateRect.t, candidateRect.b, otherRect.t, otherRect.b) >= 0.2;
+                            return sameRow && overlapSmaller >= 0.15;
                         });
                     };
 
@@ -19043,9 +25569,12 @@
                         renderedBlockKeys.add(key);
                         const storedEdit = getOverlayStoredEdit(key);
 
-                        const blockText = (block.text_lines && block.text_lines.length)
-                            ? block.text_lines.map(line => sanitizeOverlayText(line)).join('\n')
-                            : sanitizeOverlayText(block.text || '');
+                        const trimmedBlockDisplay = getTrimmedBlockDisplayData(block);
+                        const blockText = trimmedBlockDisplay.textLines.length
+                            ? trimmedBlockDisplay.textLines.join('\n')
+                            : ((block.text_lines && block.text_lines.length)
+                                ? block.text_lines.map(line => sanitizeOverlayText(line)).join('\n')
+                                : sanitizeOverlayText(block.text || ''));
                         // Ensure blockText is always a string, never undefined
                         const safeBlockText = sanitizeOverlayText(String(blockText || ''));
                         if (storedEdit && storedEdit.new_text === '') {
@@ -19056,6 +25585,12 @@
                         let blockTop = block.top;
                         let blockWidth = block.width;
                         let blockHeight = block.height;
+                        if (!storedEdit && trimmedBlockDisplay.bounds) {
+                            blockLeft = trimmedBlockDisplay.bounds.left;
+                            blockTop = trimmedBlockDisplay.bounds.top;
+                            blockWidth = trimmedBlockDisplay.bounds.width;
+                            blockHeight = trimmedBlockDisplay.bounds.height;
+                        }
 
                         // Apply Y-axis alignment adjustment if this block overlaps horizontally with another
                         if (blockYAdjustments.has(block.block_num)) {
@@ -19172,8 +25707,23 @@
                             const display = getOverlayWordDisplayText(word);
                             return !isIgnorableOverlayToken(display);
                         });
+                        const preferredFlowText = trimmedBlockDisplay.trimmed
+                            ? safeBlockText
+                            : getPreferredFlowTextForBlock(block, blockWords, safeBlockText);
+                        const forceFlowRender = trimmedBlockDisplay.trimmed
+                            ? true
+                            : shouldUseFlowRenderForBlock(block, blockWords, safeBlockText);
+                        const wordDerivedFlowText = normalizeStableFlowText(buildStableFlowTextFromWords(block, blockWords) || '', {
+                            collapseRepeatedNonEmptyLines: true,
+                        });
+                        const flowNeedsBlockBounds = trimmedBlockDisplay.trimmed || (forceFlowRender
+                            && preferredFlowText.length > 0
+                            && preferredFlowText.length > (wordDerivedFlowText.length + 3));
 
                         if (!storedEdit && isLikelyOrphanTinyBlock(block, safeBlockText, mergedAdjacentBlocks)) {
+                            return;
+                        }
+                        if (!storedEdit && isValueShadowOfCompositeField(block, safeBlockText, mergedAdjacentBlocks)) {
                             return;
                         }
 
@@ -19181,7 +25731,7 @@
                             return;
                         }
 
-                        if (!storedEdit && blockWords.length > 0) {
+                        if (!storedEdit && blockWords.length > 0 && !flowNeedsBlockBounds) {
                             const bounds = getWordBounds(blockWords);
                             if (bounds) {
                                 blockLeft = bounds.left;
@@ -19221,8 +25771,18 @@
                                 r: blockLeft + blockWidth,
                                 b: blockTop + blockHeight
                             };
+                        const candidateFormComposite = looksLikeFormCompositeText(safeBlockText);
+                        const candidateFilledValue = looksLikeFilledValueText(candidateTextSig);
                         const shouldDedupField = !overlayDebug539HeadingOnly;
                         const isDuplicateField = shouldDedupField && renderedFieldFingerprints.some((prev) => {
+                            const overlapSmaller = rectOverlapSmaller(candidateRect, prev.rect);
+                            const preserveFormCompositePair = overlapSmaller >= 0.25 && (
+                                (candidateFormComposite && prev.valueOnly && candidateTextSig.includes(prev.text))
+                                || (prev.formComposite && candidateFilledValue && prev.text.includes(candidateTextSig))
+                            );
+                            if (preserveFormCompositePair) {
+                                return false;
+                            }
                             const sameWords = candidateWordSig && prev.words && candidateWordSig === prev.words;
                             if (sameWords) {
                                 return rectIou(candidateRect, prev.rect) >= 0.6;
@@ -19253,16 +25813,17 @@
                         renderedFieldFingerprints.push({
                             text: candidateTextSig,
                             words: candidateWordSig,
-                            rect: candidateRect
+                            rect: candidateRect,
+                            formComposite: candidateFormComposite,
+                            valueOnly: candidateFilledValue,
                         });
 
-                        const forceFlowRender = shouldUseFlowRenderForBlock(block, blockWords, safeBlockText);
                         if (hasStoredEdit && hasMeaningfulTextEdit) {
                             textSpan.textContent = sanitizeOverlayText(storedEdit.new_text);
                             textSpan.style.whiteSpace = 'pre-wrap';
                             textSpan.style.wordBreak = 'break-word';
                         } else if (forceFlowRender && blockWords.length > 0) {
-                            textSpan.textContent = buildStableFlowTextFromWords(block, blockWords) || safeBlockText;
+                            textSpan.textContent = preferredFlowText || safeBlockText;
                             textSpan.style.whiteSpace = 'pre';
                             textSpan.style.wordBreak = 'normal';
                         } else if (blockWords.length > 0) {
@@ -19279,6 +25840,9 @@
                         
                         if (lineHeightPx) {
                             textSpan.style.lineHeight = lineHeightPx;
+                        }
+                        if (trimmedBlockDisplay.trimmed) {
+                            textSpan.style.textAlign = 'center';
                         }
                         if (block._client_mixed_font_merge) {
                             const mixedTopPadPx = Math.max(6, Math.min(14, (parseFloat(fontSize) || 0) * 0.18));
@@ -19347,7 +25911,7 @@
                         // must stay at its original PDF coordinate).
                         field.style.padding = paddingY + 'px ' + paddingX + 'px';
 
-                        if (!storedEdit && blockWords.length > 0) {
+                        if (!storedEdit && blockWords.length > 0 && !flowNeedsBlockBounds) {
                             const bounds = getWordBounds(blockWords);
                             if (bounds) {
                                 const expectedLeft = (bounds.left * scaleX) - paddingX;
@@ -19416,21 +25980,19 @@
                         // Keep a stable, block-level text snapshot for edit-entry.
                         // This avoids reassembling text from absolute word spans, which
                         // can include stray duplicate glyph fragments in some PDFs.
-                        field.dataset.stableFlowText = normalizeStableFlowText(
-                            buildStableFlowTextFromWords(block, blockWords) || safeBlockText
-                        );
+                        field.dataset.stableFlowText = preferredFlowText;
                         // Preserve a stable edit-entry snapshot for form/underscore
                         // blocks so dblclick doesn't rebuild huge gap spaces that
                         // push values to the far right.
                         const hasUnderscoreContent = (safeBlockText || '').includes('_') ||
                             (Array.isArray(blockWords) && blockWords.some((w) => sanitizeOverlayText(w.text || '').includes('_')));
+                        const labelUnderlineValueBlock = isLabelUnderlineValueBlock(block, blockWords, safeBlockText);
                         if (block._client_form_merge || block._client_539_row_merge || hasUnderscoreContent) {
-                            const stableFromWords = buildStableFlowTextFromWords(block, blockWords);
                             const isOptionRow = isOptionChoiceBlock(block, blockWords, safeBlockText);
                             field.dataset.stableFlowText = isOptionRow
-                                ? collapseLabelValueLines(stableFromWords || normalizeStableFlowText(safeBlockText))
-                                : normalizeStableFlowText(safeBlockText);
-                            field.dataset.preserveUnderscores = (!isOptionRow && hasUnderscoreContent) ? '1' : '0';
+                                ? collapseLabelValueLines(preferredFlowText || normalizeStableFlowText(safeBlockText))
+                                : normalizeStableFlowText(preferredFlowText || safeBlockText, { collapseRepeatedNonEmptyLines: true });
+                            field.dataset.preserveUnderscores = (!isOptionRow && hasUnderscoreContent && !labelUnderlineValueBlock) ? '1' : '0';
                             field.dataset.lockFormLayout = '1';
                         }
                         field.dataset.pageNumber = pageData.page_number;
@@ -19448,6 +26010,66 @@
                         field.dataset.pageHeight = pageData.height;
                         field.dataset.padding = paddingPdf;
                         field._overlaySourceBlock = block;
+                        field._overlaySaveSegments = Array.isArray(block._overlay_source_segments) && block._overlay_source_segments.length
+                            ? block._overlay_source_segments.map((segment) => ({
+                                ...segment,
+                                bbox: Array.isArray(segment.bbox) ? [...segment.bbox] : segment.bbox,
+                                text_lines: Array.isArray(segment.text_lines) ? [...segment.text_lines] : [],
+                                line_bboxes: Array.isArray(segment.line_bboxes) ? segment.line_bboxes.map((lb) => [...lb]) : [],
+                                words: Array.isArray(segment.words) ? segment.words.map((word) => ({ ...word })) : [],
+                            }))
+                            : (() => {
+                                const baseSegment = buildOverlaySourceSegmentForBlock(block, blockWords);
+                                return baseSegment ? [baseSegment] : [];
+                            })();
+                        field._overlayTableRowCluster = (() => {
+                            const clusterId = block._client_table_row_cluster_id;
+                            const blockTop = Number(block.top) || 0;
+                            const blockBottom = blockTop + (Number(block.height) || 0);
+                            const blockHeight = Math.max(1, blockBottom - blockTop);
+                            const rowClusterBlocks = (pageData.blocks || []).filter((clusterBlock) => {
+                                if (!clusterBlock) return false;
+                                if (clusterId) {
+                                    return clusterBlock._client_table_row_cluster_id === clusterId;
+                                }
+                                if (!block._from_xgap_split || !clusterBlock._from_xgap_split) {
+                                    return false;
+                                }
+                                const clusterTop = Number(clusterBlock.top) || 0;
+                                const clusterBottom = clusterTop + (Number(clusterBlock.height) || 0);
+                                const clusterHeight = Math.max(1, clusterBottom - clusterTop);
+                                const topClose = Math.abs(clusterTop - blockTop) <= 2.5;
+                                const inter = Math.max(0, Math.min(blockBottom, clusterBottom) - Math.max(blockTop, clusterTop));
+                                const overlapRatio = inter / Math.max(1, Math.min(blockHeight, clusterHeight));
+                                return topClose || overlapRatio >= 0.85;
+                            });
+                            if (rowClusterBlocks.length < 2) return [];
+                            return rowClusterBlocks
+                                .sort((a, b) => ((Number(a.left) || 0) - (Number(b.left) || 0)))
+                                .map((clusterBlock) => {
+                                    const clusterWords = (pageData.words || [])
+                                        .filter((word) => word.block_num === clusterBlock.block_num)
+                                        .map((word) => ({ ...word }));
+                                    const sourceSegment = buildOverlaySourceSegmentForBlock(clusterBlock, clusterWords);
+                                    if (!sourceSegment) return null;
+                                    return {
+                                        ...sourceSegment,
+                                        key: `block-${pageData.page_number}-${clusterBlock.block_num}`,
+                                        block_num: clusterBlock.block_num,
+                                        font: clusterBlock.font || block.font,
+                                        font_size: Number(clusterBlock.font_size) || Number(block.font_size) || 12,
+                                        font_weight: String(clusterBlock.font_weight || block.font_weight || (clusterBlock.bold ? 700 : 400)),
+                                        font_style: clusterBlock.italic ? 'italic' : (block.italic ? 'italic' : 'normal'),
+                                        font_xref: clusterBlock.font_xref ?? block.font_xref ?? null,
+                                        line_height: Number(clusterBlock.line_height) || Number(clusterBlock.avg_line_height) || null,
+                                        color: clusterBlock.hex_color || block.hex_color || '#000000',
+                                        cleanup_group_bbox: Array.isArray(clusterBlock._client_table_row_cluster_bbox)
+                                            ? [...clusterBlock._client_table_row_cluster_bbox]
+                                            : null,
+                                    };
+                                })
+                                .filter(Boolean);
+                        })();
 
                         // Store per-word style data for preserving formatting on save
                         if (blockWords.length > 0) {
@@ -19494,26 +26116,7 @@
                             const inputFieldIsItalic = (field.dataset.fontStyle || fontStyle) === 'italic';
                             const inputFieldUnderline = field.dataset.underline === 'true';
 
-                            const wordStylesArr = (field._blockWords || []).map(w => ({
-                                text: w.text,
-                                font: inputResolvedFont || w.font,
-                                font_xref: w.font_xref || null,
-                                font_size: w.font_size,
-                                font_weight: inputFieldWeight || w.font_weight || 400,
-                                italic: inputFieldIsItalic || !!w.italic,
-                                bold: inputFieldIsBold || !!w.bold,
-                                underline: inputFieldUnderline || false,
-                                color: w.color,
-                                hex_color: field.dataset.textColor || w.hex_color || '#000000',
-                                left: w.left,
-                                top: w.top,
-                                width: w.width,
-                                height: w.height,
-                                origin_x: w.origin_x,
-                                origin_y: w.origin_y,
-                                ascender: w.ascender,
-                                descender: w.descender
-                            }));
+                            const wordStylesArr = buildOverlayWordStylesForSave(field, inputResolvedFont, inputFieldWeight, field.dataset.fontStyle || fontStyle);
 
                             overlayEditedFields.set(editKey, {
                                 page_number: pageData.page_number,
@@ -19524,6 +26127,8 @@
                                 word_styles: wordStylesArr,          // PER-WORD FORMATTING
                                 bbox: [currentLeft, currentTop, currentLeft + currentWidth, currentTop + currentHeight],
                                 original_bbox: [blockLeft, blockTop, blockLeft + blockWidth, blockTop + blockHeight],
+                                // Raw block bounds in PDF space — used by live_save as the hard redaction boundary
+                                paragraph_bbox: [block.left, block.top, block.left + block.width, block.top + block.height],
                                 origin_x: currentOriginX,           // CURRENT POSITION X
                                 origin_y: currentOriginY,           // CURRENT POSITION Y (bottom)
                                 font: inputResolvedFont,            // FONT NAME (user-selected or original)
@@ -19539,6 +26144,10 @@
                             persistOverlayEdits();
                             updateOverlaySaveButton();
                             pushUndoState();
+
+                            // Do not patch the PDF on every keystroke. In live_save mode
+                            // we save atomically when the user explicitly clicks Save PDF,
+                            // so the preview "before" image reflects the untouched PDF.
                         });
 
                         // Save undo state when user starts editing
@@ -19589,30 +26198,18 @@
                         // Single click = SELECT (show handles, enable drag, no text editing)
                         field.addEventListener('mousedown', function(e) {
                             if (e.target.closest('.box-menu') || e.target.classList.contains('resize-handle')) return;
-                            // Deactivate other fields and restore their z-index
-                            overlay.querySelectorAll('.overlay-field.active').forEach(f => {
-                                if (f !== field) {
-                                    f.classList.remove('active', 'editing');
-                                    const ce = f.querySelector('[contenteditable]');
-                                    if (ce) ce.contentEditable = false;
-                                    // Restore original z-index
-                                    if (f.dataset.originalZIndex) f.style.zIndex = f.dataset.originalZIndex;
-                                }
-                            });
-                            if (!field.classList.contains('active')) {
-                                // First click: select only (no text editing)
-                                field.classList.add('active');
-                                // Bump z-index so box-menu isn't hidden behind adjacent fields
-                                if (!field.dataset.originalZIndex) field.dataset.originalZIndex = field.style.zIndex || '1';
-                                field.style.zIndex = '9999';
-                                setOverlaySelection(field);
-                            }
+                            field.dataset.overlayWasSelectedBeforeMouseDown = selectedOverlayFields.has(field) ? '1' : '0';
+                            setOverlaySelection(field, { additive: e.shiftKey });
+                            e.stopPropagation();
                         });
 
                         // Double click = EDIT (enable text cursor)
                         field.addEventListener('dblclick', function(e) {
                             if (!overlayEditorActive) return;
                             if (e.target.closest('.box-menu') || e.target.classList.contains('resize-handle')) return;
+                            if (getSelectedOverlayFields().length > 1) {
+                                setOverlaySelection(field);
+                            }
                             field.classList.add('active', 'editing');
 
                             // Normalize immediately on edit-entry so caret and typing
@@ -19647,10 +26244,11 @@
                             // Delay to allow button clicks to register
                             setTimeout(() => {
                                 if (!field.contains(document.activeElement) && !field.matches(':hover')) {
-                                    field.classList.remove('active', 'editing');
+                                    field.classList.remove('editing');
                                     textSpan.contentEditable = false;
-                                    // Restore original z-index
-                                    if (field.dataset.originalZIndex) field.style.zIndex = field.dataset.originalZIndex;
+                                    if (selectedOverlayField !== field) {
+                                        deactivateOverlayField(field, { keepSelected: selectedOverlayFields.has(field) });
+                                    }
                                 }
                             }, 250);
                         });
@@ -19897,11 +26495,12 @@
                                 if (e.target.closest('.box-menu') || e.target.classList.contains('resize-handle')) {
                                     return;
                                 }
+                                const wasSelectedBeforeMouseDown = field.dataset.overlayWasSelectedBeforeMouseDown === '1';
                                 // Only drag if selected but not in text-editing mode.
                                 // Skip on multi-clicks (e.detail >= 2) so double-click word
                                 // selection works — otherwise startDrag's preventDefault()
                                 // kills the browser's native selection.
-                                if (field.classList.contains('active') && !field.classList.contains('editing') && e.detail < 2) {
+                                if (wasSelectedBeforeMouseDown && field.classList.contains('active') && !field.classList.contains('editing') && e.detail < 2) {
                                     startDrag(e);
                                 }
                             });
@@ -19932,6 +26531,7 @@
                             };
                             
                             const upHandler = function() {
+                                field.dataset.overlayWasSelectedBeforeMouseDown = '0';
                                 if (isDragging) {
                                     isDragging = false;
                                     dragBtn.style.cursor = 'grab';
@@ -19994,26 +26594,7 @@
                                     const moveFieldIsItalic = (field.dataset.fontStyle || fontStyle) === 'italic';
                                     const moveFieldUnderline = field.dataset.underline === 'true';
 
-                                    const moveWordStylesArr = (field._blockWords || []).map(w => ({
-                                        text: w.text,
-                                        font: moveResolvedFont || w.font,
-                                        font_xref: w.font_xref || null,
-                                        font_size: w.font_size,
-                                        font_weight: moveFieldWeight || w.font_weight || 400,
-                                        italic: moveFieldIsItalic || !!w.italic,
-                                        bold: moveFieldIsBold || !!w.bold,
-                                        underline: moveFieldUnderline || false,
-                                        color: w.color,
-                                        hex_color: field.dataset.textColor || w.hex_color || '#000000',
-                                        left: w.left,
-                                        top: w.top,
-                                        width: w.width,
-                                        height: w.height,
-                                        origin_x: w.origin_x,
-                                        origin_y: w.origin_y,
-                                        ascender: w.ascender,
-                                        descender: w.descender
-                                    }));
+                                    const moveWordStylesArr = buildOverlayWordStylesForSave(field, moveResolvedFont, moveFieldWeight, field.dataset.fontStyle || fontStyle);
 
                                     overlayEditedFields.set(key, {
                                         page_number: pageData.page_number,
@@ -20221,6 +26802,7 @@
                                 // Read current toolbar overrides from the field's dataset
                                 const resizeResolvedFont = field.dataset.fontFamily || field.dataset.font || block.font;
                                 const resizeFieldWeight = parseInt(field.dataset.fontWeight || fontWeight) || 400;
+                                const resizeWordStylesArr = buildOverlayWordStylesForSave(field, resizeResolvedFont, resizeFieldWeight, field.dataset.fontStyle || fontStyle);
                                 const resizeFieldUnderline = field.dataset.underline === 'true';
 
                                 overlayEditedFields.set(key, {
@@ -20229,6 +26811,7 @@
                                     original_text: safeBlockText,               // ORIGINAL PDF TEXT
                                     new_text: currentText,                      // TEXT WITH PRESERVED NEWLINES
                                     rich_html: richHtml,
+                                    word_styles: resizeWordStylesArr.length > 0 ? resizeWordStylesArr : null,
                                     bbox: [newLeft, newTop, newLeft + newWidth, newTop + newHeight],
                                     original_bbox: [blockLeft, blockTop, blockLeft + blockWidth, blockTop + blockHeight],
                                     origin_x: newOriginX,                       // NEW POSITION X
@@ -20253,6 +26836,7 @@
                         });
 
                         overlay.appendChild(field);
+                        fitOverlayFieldToRenderedContent(field, textSpan);
                     });
                 };
 
@@ -20278,12 +26862,16 @@
                             // Only re-render fields that still use absolutely-positioned
                             // word spans (not user-edited plain text).
                             const textSpan = field.querySelector('[contenteditable]');
-                            if (!textSpan || textSpan.textContent !== '') {
-                                // If textContent is set (user-edited or fallback text), skip
-                                // Only re-render if the container holds word spans
-                                const hasAbsoluteSpans = textSpan.querySelector('span[style*="position: absolute"]') ||
-                                    textSpan.querySelector('span[style*="position:absolute"]');
-                                if (!hasAbsoluteSpans) return;
+                            if (!textSpan) return;
+                            const hasAbsoluteSpans = textSpan.querySelector('span[style*="position: absolute"]') ||
+                                textSpan.querySelector('span[style*="position:absolute"]');
+                            if (textSpan.textContent !== '') {
+                                // Flow-text blocks are already rendered; just refit them after
+                                // the real font metrics become available.
+                                if (!hasAbsoluteSpans) {
+                                    fitOverlayFieldToRenderedContent(field, textSpan);
+                                    return;
+                                }
                             }
                             const blockLeft = parseFloat(field.dataset.originalLeft) || 0;
                             const blockTop = parseFloat(field.dataset.originalTop) || 0;
@@ -20299,6 +26887,7 @@
                                 field._overlaySourceBlock || null,
                                 field.dataset.originalText || ''
                             );
+                            fitOverlayFieldToRenderedContent(field, textSpan);
                         });
                     });
                 }
@@ -20911,6 +27500,206 @@
                 persistOverlayEdits();
             }
             
+            // ── Live-save state ──────────────────────────────────────────────────
+            // _liveSavedKeys  : keys successfully written to disk
+            // _lsPendingData  : keys debounced but not yet sent (timer still running)
+            // _lsInflight     : keys currently in-flight (fetch in progress)
+            const _liveSavedKeys  = new Set();
+            const _lsPendingData  = new Map(); // editKey → { editData, timerId }
+            const _lsInflight     = new Map(); // editKey → Promise<void>
+
+            async function _executeLiveSave(editKey, editData) {
+                _lsPendingData.delete(editKey);
+                _liveSavedKeys.delete(editKey);
+                const field = document.querySelector(`.overlay-field[data-word-index="${editKey}"]`);
+                if (field) field.dataset.liveSaveState = 'saving';
+                updateOverlaySaveButton();
+
+                try {
+                    const atomicEdits = buildAtomicLiveSaveEditsForKey(editKey, editData)
+                        .filter((atomicEdit) => isMaterialOverlaySaveEdit(atomicEdit, { honorForceReinsert: false }));
+                    if (atomicEdits.length === 0) {
+                        _liveSavedKeys.add(editKey);
+                        if (field) field.dataset.liveSaveState = 'saved';
+                        return;
+                    }
+                    let lastResult = null;
+
+                    for (const atomicEdit of atomicEdits) {
+                        const payload = buildLiveSavePayloadFromEdit(atomicEdit);
+                        payload.paragraph_bbox = Array.isArray(atomicEdit.paragraph_bbox) ? atomicEdit.paragraph_bbox : null;
+
+                        const resp = await fetch(liveSaveUrl, {
+                            method: 'POST',
+                            credentials: 'same-origin',
+                            headers: {
+                                'X-CSRF-TOKEN': csrfToken,
+                                'Content-Type': 'application/json',
+                                'Accept': 'application/json',
+                            },
+                            body: JSON.stringify(payload),
+                        });
+
+                        const result = await resp.json().catch(() => ({}));
+                        if (!resp.ok || !result.success) {
+                            if (field) field.dataset.liveSaveState = 'error';
+                            console.warn(`[live-save] ✗ key=${editKey}`, result.error || resp.status);
+                            return;
+                        }
+                        lastResult = result;
+                    }
+
+                    _liveSavedKeys.add(editKey);
+                    if (field) field.dataset.liveSaveState = 'saved';
+                    updateSavedEditPreviewLink(lastResult?.saved_preview_url || savedEditPreviewUrl);
+                    console.log(`[live-save] ✓ key=${editKey}`);
+                } catch (err) {
+                    if (field) field.dataset.liveSaveState = 'error';
+                    console.warn('[live-save] network error', err);
+                } finally {
+                    _lsInflight.delete(editKey);
+                    updateOverlaySaveButton();
+                }
+            }
+
+            /**
+             * Schedule a live-save for a single field with a short debounce.
+             * Called every time a field is committed.
+             */
+            function triggerLiveSave(editKey, editData) {
+                // Cancel any pending debounce for this key
+                const existing = _lsPendingData.get(editKey);
+                if (existing) clearTimeout(existing.timerId);
+
+                _lsPendingData.delete(editKey);
+                _liveSavedKeys.delete(editKey);
+                const field = document.querySelector(`.overlay-field[data-word-index="${editKey}"]`);
+                if (field) delete field.dataset.liveSaveState;
+                updateOverlaySaveButton();
+
+                // Schedule the debounced save
+                const timerId = setTimeout(() => {
+                    _lsPendingData.delete(editKey);
+                    if (!_lsInflight.has(editKey)) {
+                        const promise = _executeLiveSave(editKey, editData);
+                        _lsInflight.set(editKey, promise);
+                    }
+                }, 800);
+                _lsPendingData.set(editKey, { editData, timerId });
+            }
+
+            /**
+             * Called by the Save button handler.
+             * Fires all pending debounced saves immediately, then waits for every
+             * in-flight request to settle — so the "all saved" check is reliable.
+             */
+            async function flushLiveSaves() {
+                // Fire any pending (debounced) saves immediately
+                for (const [key, { editData, timerId }] of _lsPendingData.entries()) {
+                    clearTimeout(timerId);
+                    if (!_lsInflight.has(key)) {
+                        const promise = _executeLiveSave(key, editData);
+                        _lsInflight.set(key, promise);
+                    }
+                }
+                _lsPendingData.clear();
+                // Await everything in-flight
+                if (_lsInflight.size > 0) {
+                    await Promise.allSettled([..._lsInflight.values()]);
+                }
+            }
+
+            /** True when every pending overlay edit has been live-saved to disk. */
+            function allOverlayEditsLiveSaved() {
+                return false;
+            }
+
+            async function finalizeLiveSaveSession({ workingCopyToken = null } = {}) {
+                if (overlaySaveMode !== 'live_save') {
+                    return { success: true };
+                }
+
+                const response = await fetch('{{ route("documents.saveEdits", $document) }}', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: {
+                        'X-CSRF-TOKEN': csrfToken,
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        edits: [],
+                        finalize_live_save: true,
+                        working_copy_token: workingCopyToken || null,
+                    })
+                });
+
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok || !result.success) {
+                    throw new Error(result.error || result.message || `Live-save finalize failed (${response.status})`);
+                }
+
+                updateSavedEditPreviewLink(result.saved_preview_url || savedEditPreviewUrl);
+                return result;
+            }
+
+            async function runOverlayEditsThroughLiveSave(edits, { workingCopyToken = null, finalize = true } = {}) {
+                let lastResult = null;
+                const liveSavePreviews = [];
+                const liveSavePreviewAssets = [];
+                const materialEdits = edits.filter((edit) => isMaterialOverlaySaveEdit(edit, { honorForceReinsert: false }));
+
+                if (materialEdits.length === 0) {
+                    return { success: true, skipped_noop: true, saved_preview_url: savedEditPreviewUrl, liveSavePreviews, liveSavePreviewAssets };
+                }
+
+                for (const edit of materialEdits) {
+                    const resp = await fetch(liveSaveUrl, {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: {
+                            'X-CSRF-TOKEN': csrfToken,
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            ...buildLiveSavePayloadFromEdit(edit),
+                            working_copy_token: workingCopyToken || null,
+                        }),
+                    });
+
+                    const result = await resp.json().catch(() => ({}));
+                    if (result.skipped_noop) {
+                        continue;
+                    }
+                    if (!resp.ok || !result.success) {
+                        throw new Error(result.error || result.message || `Live save failed (${resp.status})`);
+                    }
+
+                    lastResult = result;
+                    if (result?.preview) {
+                        liveSavePreviews.push(clonePlainData(result.preview));
+                        liveSavePreviewAssets.push({
+                            preview: clonePlainData(result.preview),
+                            beforeImageUrl: result.before_image_url || null,
+                            redactedImageUrl: result.redacted_image_url || null,
+                            finalImageUrl: result.final_image_url || null,
+                        });
+                    }
+                    updateSavedEditPreviewLink(result.saved_preview_url || savedEditPreviewUrl);
+                }
+
+                if (finalize) {
+                    await finalizeLiveSaveSession({ workingCopyToken });
+                }
+                return {
+                    ...(lastResult || { success: true, saved_preview_url: savedEditPreviewUrl }),
+                    liveSavePreviews,
+                    liveSavePreviewAssets,
+                };
+            }
+
             function updateOverlaySaveButton() {
                 // Unified save button — update label to indicate pending overlay changes
                 const unifiedBtn = document.getElementById('save-btn');
@@ -20918,8 +27707,11 @@
                 const desktopSpan = unifiedBtn.querySelector('span.hidden.sm\\:inline');
                 const mobileSpan = unifiedBtn.querySelector('span.sm\\:hidden');
                 if (overlayEditedFields.size > 0) {
-                    if (desktopSpan) desktopSpan.textContent = `Save PDF (${overlayEditedFields.size})`;
-                    if (mobileSpan) mobileSpan.textContent = `Save (${overlayEditedFields.size})`;
+                    const savedCount = Array.from(overlayEditedFields.keys()).filter(k => _liveSavedKeys.has(k)).length;
+                    const total = overlayEditedFields.size;
+                    const label = savedCount === total ? `Save PDF ✓ (${total})` : `Save PDF (${savedCount}/${total})`;
+                    if (desktopSpan) desktopSpan.textContent = label;
+                    if (mobileSpan) mobileSpan.textContent = savedCount === total ? `Save ✓` : `Save (${savedCount}/${total})`;
                 } else {
                     if (desktopSpan) desktopSpan.textContent = 'Save PDF';
                     if (mobileSpan) mobileSpan.textContent = 'Save';
@@ -20998,16 +27790,21 @@
 
             function loadOverlayEdits() {
                 overlayEditedFields.clear();
+                clearStaleOverlayEditStorage();
                 try {
                     const stored = sessionStorage.getItem(overlayEditsStorageKey);
                     if (!stored) return;
                     const parsed = JSON.parse(stored);
-                    if (!Array.isArray(parsed)) return;
-                    parsed.forEach((item) => {
+                    const edits = Array.isArray(parsed)
+                        ? parsed
+                        : (Array.isArray(parsed?.edits) ? parsed.edits : []);
+                    if (!Array.isArray(edits)) return;
+                    edits.forEach((item) => {
                         if (item && item.key && item.value) {
                             overlayEditedFields.set(item.key, item.value);
                         }
                     });
+                    pruneOverlayEditsAgainstExtraction();
                 } catch (err) {
                     console.warn('Failed to load overlay edits', err);
                 }
@@ -21034,7 +27831,7 @@
                     return;
                 }
 
-                if (basePdfUrl === cleanPdfUrl && overlayExtractionData) {
+                if (overlayEditorActive && basePdfUrl === cleanPdfUrl && overlayExtractionData) {
                     renderPdfWithOverlay(true);
                 } else {
                     rerenderPdf();
@@ -21102,20 +27899,35 @@
                 });
             }
 
-            loadAnnotationsFromStorage();
-            updateAnnotationsList(); // Populate annotations panel with loaded annotations
-            if (!isImageDocument) {
-                loadOriginalPdfBytes().catch((err) => {
-                    console.warn('Failed to cache original PDF bytes', err);
+            (async () => {
+                loadAnnotationsFromStorage();
+                const overlayChipEl = document.getElementById('mode-overlay-chip');
+                if (overlayChipEl && promotedTextAnnotationsEnabled) {
+                    overlayChipEl.style.display = 'none';
+                }
+                if (!isImageDocument && promotedTextAnnotationsEnabled) {
+                    try {
+                        setStatus('Preparing editable text boxes...', 'loading');
+                        await bootstrapPromotedTextAnnotations();
+                    } catch (error) {
+                        console.warn('Failed to promote extracted text into annotations', error);
+                        basePdfUrl = pdfUrl;
+                    }
+                }
+                updateAnnotationsList(); // Populate annotations panel with loaded annotations
+                if (!isImageDocument) {
+                    loadOriginalPdfBytes().catch((err) => {
+                        console.warn('Failed to cache original PDF bytes', err);
+                    });
+                }
+                updateOverlayShowOriginalToggle();
+                updateModeButtons();
+                updateSelectionBar();
+
+                renderPdf().catch(() => {
+                    setStatus(isImageDocument ? 'Failed to load image.' : 'Failed to load PDF.', 'err');
                 });
-            }
-            updateOverlayShowOriginalToggle();
-            updateModeButtons();
-            updateSelectionBar();
-            
-            renderPdf().catch(() => {
-                setStatus(isImageDocument ? 'Failed to load image.' : 'Failed to load PDF.', 'err');
-            });
+            })();
 
             // Page navigation (separate pages instead of tabs)
             let aiViewerRendered = false;
@@ -21126,6 +27938,7 @@
             const floatingZoomBar = document.getElementById('floating-zoom-bar');
             const pdfEditorContent = document.querySelector('#pdf-editor > .flex');
             const sidebarEl = document.getElementById('sidebar');
+            const editTextBanner = document.getElementById('edit-text-banner');
 
             // Track whether guided mode is engaged (hides the PDF viewer)
             let guidedModeActive = false;
@@ -21153,6 +27966,15 @@
             if (_currentTab !== 'pdf-editor') {
                 if (pdfModeBar) pdfModeBar.style.display = 'none';
                 if (selectionToolbar) selectionToolbar.style.display = 'none';
+            }
+
+            if (editTextBanner) {
+                window.addEventListener('scroll', syncEditTextBannerStickyOffset, { passive: true });
+                window.addEventListener('resize', syncEditTextBannerStickyOffset);
+                if (viewer) {
+                    viewer.addEventListener('scroll', syncEditTextBannerStickyOffset, { passive: true });
+                }
+                requestAnimationFrame(syncEditTextBannerStickyOffset);
             }
             
             async function renderAIViewer() {
