@@ -21,6 +21,24 @@ class DocumentController extends Controller
     private const MONTHLY_UPLOAD_LIMIT = 100;
     private const MONTHLY_ACTION_LIMIT = 1000;
 
+    private function resolveEditorActor(): mixed
+    {
+        return Auth::guard('web')->user() ?? Auth::guard('admin')->user();
+    }
+
+    private function hasEditorAuthentication(): bool
+    {
+        return Auth::guard('web')->check() || Auth::guard('admin')->check();
+    }
+
+    private function resolveEditorEmail(string $fallback = 'guest'): ?string
+    {
+        $actor = $this->resolveEditorActor();
+        $email = is_object($actor) && isset($actor->email) ? trim((string) $actor->email) : '';
+
+        return $email !== '' ? $email : $fallback;
+    }
+
     private function resolvePythonBinaryForPdfEditor(?string $requiredModule = null): string
     {
         $candidates = array_values(array_unique([
@@ -330,7 +348,7 @@ class DocumentController extends Controller
 
         $fullPath = Storage::path($document->path);
         $extractScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
-        $userEmail = auth()->user()->email ?? 'guest';
+        $userEmail = $this->resolveEditorEmail();
         $sessionId = session()->getId();
         $refreshCommand = sprintf(
             '%s %s %s %d %s %s 2>&1',
@@ -1144,7 +1162,7 @@ class DocumentController extends Controller
         $fullPath = Storage::path($document->path);
         $pythonScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
         $documentId = $document->id;
-        $userEmail = auth()->user()->email ?? 'guest';
+        $userEmail = $this->resolveEditorEmail();
         $sessionId = session()->getId();
         
         // Execute Python script in background (non-blocking)
@@ -1170,7 +1188,7 @@ class DocumentController extends Controller
     {
         $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
 
-        $userEmail = auth()->user()->email ?? 'guest';
+        $userEmail = $this->resolveEditorEmail();
         $sessionId = session()->getId();
         $extraction = $this->findLatestFitzExtraction($document->id, $userEmail, $sessionId);
 
@@ -1297,7 +1315,7 @@ class DocumentController extends Controller
         $aiDocument = \App\Models\AiDocument::create([
             'document_id' => $validated['document_id'],
             'session_id' => Str::uuid(),
-            'email' => auth()->user() ? auth()->user()->email : null,
+            'email' => $this->resolveEditorEmail(null),
         ]);
 
         return redirect()->to(route('documents.ai', ['document' => $aiDocument->id]));
@@ -1341,7 +1359,7 @@ class DocumentController extends Controller
 
     public function editExtractedText(Document $document)
     {
-        $userEmail = auth()->user()->email ?? 'guest';
+        $userEmail = $this->resolveEditorEmail();
         $sessionId = session()->getId();
         $extraction = $this->findLatestFitzExtraction($document->id, $userEmail, $sessionId);
 
@@ -1779,7 +1797,7 @@ class DocumentController extends Controller
             return response()->json(['success' => false, 'error' => 'PDF file not found. The file may have been deleted or moved.'], 404);
         }
 
-        $userEmail = auth()->user()->email ?? 'guest';
+        $userEmail = $this->resolveEditorEmail();
         $sessionId = session()->getId();
         $forceRefresh = $request->boolean('force_refresh', false);
 
@@ -2522,7 +2540,7 @@ class DocumentController extends Controller
             }
 
             // Fetch extraction data from DB (needed to redraw unchanged words).
-            $userEmail = auth()->user()->email ?? 'guest';
+            $userEmail = $this->resolveEditorEmail();
             $sessionId = session()->getId();
             $extractionRow = $this->findLatestFitzExtraction($document->id, $userEmail, $sessionId);
 
@@ -3107,7 +3125,7 @@ class DocumentController extends Controller
             ]);
             
             $pythonScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
-            $userEmail = auth()->user()->email ?? 'guest';
+            $userEmail = $this->resolveEditorEmail();
             $currentSessionId = session()->getId();
             
             $extractCommand = sprintf(
@@ -3228,7 +3246,7 @@ class DocumentController extends Controller
             
             // Re-extract the PDF to update extraction data after adding page
             $pythonScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
-            $userEmail = auth()->user()->email ?? 'guest';
+            $userEmail = $this->resolveEditorEmail();
             $currentSessionId = session()->getId();
             
             $extractCommand = sprintf(
@@ -3346,7 +3364,7 @@ class DocumentController extends Controller
             
             // Re-extract the PDF to update extraction data after rotation
             $pythonScript = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
-            $userEmail = auth()->user()->email ?? 'guest';
+            $userEmail = $this->resolveEditorEmail();
             $currentSessionId = session()->getId();
             
             $extractCommand = sprintf(
@@ -3680,9 +3698,11 @@ class DocumentController extends Controller
         $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
 
         $validated = $request->validate([
-            'annotations' => 'required|array',
+            'annotations' => 'present|array',
             'annotations.*.type' => 'required|string',
             'annotations.*.pageIndex' => 'required',
+            'use_clean_pdf' => 'nullable|boolean',
+            'session_id' => 'nullable|string',
         ]);
         // IMPORTANT:
         // $validated['annotations'] only contains keys declared in validation rules
@@ -3695,8 +3715,52 @@ class DocumentController extends Controller
                 'message' => 'Invalid annotations payload.',
             ], 422);
         }
+        $annotationsPayload = array_map(function ($annotation) use ($document) {
+            if (!is_array($annotation)) {
+                return $annotation;
+            }
+            $annotation['__documentId'] = $document->id;
+            return $annotation;
+        }, $annotationsPayload);
+        $persistableAnnotationsPayload = array_map(static function ($annotation) {
+            if (!is_array($annotation)) {
+                return [];
+            }
+            unset($annotation['__documentId']);
+            return $annotation;
+        }, $annotationsPayload);
+        $sessionId = is_string($validated['session_id'] ?? null)
+            ? trim((string) $validated['session_id'])
+            : '';
 
         $pdfPath = Storage::path($document->path);
+        $useCleanPdf = $request->boolean('use_clean_pdf');
+        $workingPdfPath = $pdfPath;
+        $tempWorkingPdfPath = null;
+
+        if ($useCleanPdf) {
+            $cleanPath = Storage::path('temp/clean_' . $document->id . '.pdf');
+            if (!file_exists($cleanPath)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Clean PDF source not found.',
+                ], 404);
+            }
+
+            $tempWorkingPdfPath = Storage::path('temp/apply_annotations_' . $document->id . '_' . Str::uuid() . '.pdf');
+            $tempWorkingDir = dirname($tempWorkingPdfPath);
+            if (!is_dir($tempWorkingDir)) {
+                @mkdir($tempWorkingDir, 0775, true);
+            }
+            if (!@copy($cleanPath, $tempWorkingPdfPath)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to prepare clean PDF working copy.',
+                ], 500);
+            }
+            $workingPdfPath = $tempWorkingPdfPath;
+        }
+
         if (!file_exists($pdfPath)) {
             return response()->json([
                 'success' => false,
@@ -3758,7 +3822,7 @@ class DocumentController extends Controller
             '%s %s %s %s 2>&1',
             escapeshellarg($pythonBinary),
             escapeshellarg($script),
-            escapeshellarg($pdfPath),
+            escapeshellarg($workingPdfPath),
             escapeshellarg($annotationsFile)
         );
         $output = [];
@@ -3773,16 +3837,36 @@ class DocumentController extends Controller
             if (file_exists($backupPath)) {
                 @copy($backupPath, $pdfPath);
             }
+            if ($tempWorkingPdfPath && file_exists($tempWorkingPdfPath)) {
+                @unlink($tempWorkingPdfPath);
+            }
             \Log::error('Direct annotation apply failed', [
                 'document_id' => $document->id,
                 'return_code' => $returnCode,
                 'output' => implode("\n", $output),
+                'use_clean_pdf' => $useCleanPdf,
             ]);
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to apply annotations directly.',
                 'error' => implode("\n", $output),
             ], 500);
+        }
+
+        if ($useCleanPdf) {
+            if (!@copy($workingPdfPath, $pdfPath)) {
+                if ($tempWorkingPdfPath && file_exists($tempWorkingPdfPath)) {
+                    @unlink($tempWorkingPdfPath);
+                }
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to promote clean PDF save back to the document file.',
+                ], 500);
+            }
+            if ($tempWorkingPdfPath && file_exists($tempWorkingPdfPath)) {
+                @unlink($tempWorkingPdfPath);
+            }
+            $this->invalidateCleanPdf($document);
         }
 
         $size = @filesize($pdfPath) ?: $document->size_bytes;
@@ -3795,7 +3879,68 @@ class DocumentController extends Controller
             'annotation_types' => array_map(fn($a) => $a['type'] ?? 'unknown', $annotationsPayload),
             'first_annotation' => $annotationsPayload[0] ?? null,
             'new_size' => $size,
+            'use_clean_pdf' => $useCleanPdf,
         ]);
+
+        if ($sessionId !== '') {
+            $currentAnnotationIds = array_values(array_filter(array_map(
+                static fn ($annotation) => is_array($annotation) && is_string($annotation['id'] ?? null)
+                    ? trim((string) $annotation['id'])
+                    : '',
+                $persistableAnnotationsPayload
+            )));
+            $currentAnnotationIdSet = array_fill_keys($currentAnnotationIds, true);
+
+            foreach ($persistableAnnotationsPayload as $annotation) {
+                if (!is_array($annotation)) {
+                    continue;
+                }
+                $annotationId = is_string($annotation['id'] ?? null)
+                    ? trim((string) $annotation['id'])
+                    : '';
+                if ($annotationId === '') {
+                    continue;
+                }
+
+                $existingRecord = PdfState::query()
+                    ->where('document_id', $document->id)
+                    ->where('session_id', $sessionId)
+                    ->whereRaw("JSON_EXTRACT(annotation_data, '$.id') = ?", [$annotationId])
+                    ->first();
+
+                if ($existingRecord) {
+                    $existingRecord->update([
+                        'annotation_data' => $annotation,
+                        'page_number' => $annotation['pageIndex'] ?? null,
+                        'state' => 'saved',
+                    ]);
+                    continue;
+                }
+
+                PdfState::create([
+                    'document_id' => $document->id,
+                    'user_email' => null,
+                    'session_id' => $sessionId,
+                    'page_number' => $annotation['pageIndex'] ?? null,
+                    'annotation_data' => $annotation,
+                    'state' => 'saved',
+                ]);
+            }
+
+            PdfState::query()
+                ->where('document_id', $document->id)
+                ->where('session_id', $sessionId)
+                ->get()
+                ->each(function (PdfState $record) use ($currentAnnotationIdSet) {
+                    $recordAnnotationId = is_array($record->annotation_data)
+                        ? trim((string) ($record->annotation_data['id'] ?? ''))
+                        : '';
+                    $record->state = ($recordAnnotationId !== '' && isset($currentAnnotationIdSet[$recordAnnotationId]))
+                        ? 'saved'
+                        : 'deleted';
+                    $record->save();
+                });
+        }
 
         return response()->json([
             'success' => true,
@@ -4004,7 +4149,7 @@ class DocumentController extends Controller
 
     public function logExportActivity(Request $request, Document $document)
     {
-        if (!Auth::check()) {
+        if (!$this->hasEditorAuthentication()) {
             return response()->json(['success' => false, 'message' => 'Not authenticated'], 401);
         }
 
@@ -4026,16 +4171,18 @@ class DocumentController extends Controller
             }
         }
 
-        UserActivity::create([
-            'user_id' => Auth::id(),
-            'action' => $validated['action'],
-            'category' => $validated['category'],
-            'details' => $validated['details'] ?? null,
-            'document_id' => $document->id,
-            'status' => $validated['status'],
-            'ip_address' => $request->ip(),
-            'user_agent' => $request->userAgent(),
-        ]);
+        if (Auth::guard('web')->check()) {
+            UserActivity::create([
+                'user_id' => Auth::id(),
+                'action' => $validated['action'],
+                'category' => $validated['category'],
+                'details' => $validated['details'] ?? null,
+                'document_id' => $document->id,
+                'status' => $validated['status'],
+                'ip_address' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+            ]);
+        }
 
         return response()->json(['success' => true]);
     }

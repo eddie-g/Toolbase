@@ -50,6 +50,131 @@ const PARAGRAPH_TEXT = [
 ].join(' ');
 const PARAGRAPH_TEXT_FRAGMENT = 'Lorem ipsum dolor sit amet, consectetur adipiscing elit.';
 const PARAGRAPH_PUNCTUATION_EXPECTED = `I'd recommend this direction: normal "Save" updates DB state, and a separate "Flatten annotations" export step is available when you want them permanently baked in.`;
+const PARAGRAPH_BLANK_LINE_TEXT = [
+    'Updated the save path and the regression suite.',
+    '',
+    'In apply_annotations_direct.py (line 737), text save now expands the effective drawing height for wrapped paragraph annotations before stamping, so long paragraphs no longer get clipped at save. In run_pdf_tests.cjs (line 774), the test helper now reconstructs contiguous extracted blocks into a paragraph candidate when MuPDF splits one saved paragraph across multiple neighboring blocks.',
+].join('\n');
+const PARAGRAPH_BLANK_LINE_START = 'Updated the save path and the regression suite.';
+const PARAGRAPH_BLANK_LINE_END = 'the test helper now reconstructs contiguous extracted blocks into a paragraph candidate when MuPDF splits one saved paragraph across multiple neighboring blocks.';
+const PARAGRAPH_SHORT_INTRO_BLANK_LINE_TEXT = [
+    'Fixed the blank-line split in extraction.',
+    '',
+    'The merge pass in extract_pdf_pymupdf.py (line 1299) now allows a larger vertical gap when two synthetic same-style fragments clearly belong to the same multiline paragraph column. That covers the \\n\\n case where MuPDF was returning two separate blocks after save.',
+    '',
+    'I also added a dedicated regression for this in run_pdf_tests.cjs (line 53) and run_pdf_tests.cjs (line 2248). It creates one text annotation with an explicit blank line, saves it, and verifies extraction keeps both paragraphs in a single raw block.',
+].join('\n');
+const PARAGRAPH_SHORT_INTRO_START = 'Fixed the blank-line split in extraction.';
+const PARAGRAPH_SHORT_INTRO_END = 'It creates one text annotation with an explicit blank line, saves it, and verifies extraction keeps both paragraphs in a single raw block.';
+const PARAGRAPH_EDITED_NEWLINES_TEXT = [
+    'Line 1',
+    '',
+    'Line 2',
+    '',
+    'Line 3',
+    '',
+    'Line 4',
+].join('\n');
+const PARAGRAPH_INDENTED_TEXT = [
+    '    Andreas was able to secure us an',
+    'invitation to the DIT-WIT party, with some of',
+    "the world's leading DITs in attendance. It was",
+    'a great place for informal feedback on Drylab',
+    'Viewer. The pattern was the same as for',
+    'other users: Initial polite interest turns to',
+    'real enthusiasm the moment someone is able',
+    'to personally try Drylab Viewer! We also',
+    'met with Pomfort and Apple about our on-',
+    'going collaborations; ARRI and Teradek/',
+].join('\n');
+const PARAGRAPH_INDENTED_START = 'Andreas was able to secure us an';
+const PARAGRAPH_SEPARATE_LINE_CASES = [
+    {
+        fragment: 'Separate Alpha',
+        text: 'This is a line.. Alpha',
+        left: 70,
+        top: 85,
+        width: 180,
+        height: 42,
+    },
+    {
+        fragment: 'Separate Beta',
+        text: 'This is a line.. Beta',
+        left: 70,
+        top: 135,
+        width: 180,
+        height: 42,
+    },
+    {
+        fragment: 'Separate Gamma',
+        text: 'This is a line.. Gamma',
+        left: 70,
+        top: 185,
+        width: 180,
+        height: 42,
+    },
+];
+const PARAGRAPH_TINY_SEPARATE_LINE_CASES = [
+    {
+        seed: 'Tiny Seed 1',
+        text: 'no',
+        left: 58,
+        top: 118,
+        width: 36,
+        height: 24,
+    },
+    {
+        seed: 'Tiny Seed 2',
+        text: 'yes',
+        left: 57,
+        top: 130,
+        width: 42,
+        height: 24,
+    },
+    {
+        seed: 'Tiny Seed 3',
+        text: 'no',
+        left: 57,
+        top: 145,
+        width: 36,
+        height: 24,
+    },
+    {
+        seed: 'Tiny Seed 4',
+        text: 'yes',
+        left: 59,
+        top: 159,
+        width: 42,
+        height: 24,
+    },
+];
+const PARAGRAPH_POSITION_CASES = [
+    {
+        fragment: 'Position Alpha',
+        text: 'Position Alpha Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.',
+        left: 36,
+        top: 72,
+        width: 220,
+        height: 180,
+    },
+    {
+        fragment: 'Position Beta',
+        text: 'Position Beta Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.',
+        left: 292,
+        top: 312,
+        width: 230,
+        height: 190,
+    },
+    {
+        fragment: 'Position Gamma',
+        text: 'Position Gamma Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.',
+        left: 116,
+        top: 676,
+        width: 240,
+        height: 170,
+    },
+];
+const PARAGRAPH_POSITION_TOLERANCE = 3;
 const PARAGRAPH_NARROW_WIDTH = 200;
 const PARAGRAPH_NARROW_HEIGHT = 500;
 const PARAGRAPH_WIDE_WIDTH = 800;
@@ -88,6 +213,66 @@ const TESTS = {
         description: 'Create a lorem ipsum paragraph as a text annotation, resize it from a tall 200px column to 800px wide and back, move it, save through the annotation path, verify an unsaved deleted paragraph does not get stamped, and save three side-by-side 200px by 800px paragraph columns.',
         run: runParagraphFlow,
     },
+    test_4_three_paragraph_columns: {
+        key: 'test_4_three_paragraph_columns',
+        label: 'Test 4 : Three Paragraph Columns',
+        description: 'Create three 200px by 800px paragraph annotations side by side, save through the annotation path, and verify each column is stamped into the saved PDF in left-to-right order.',
+        run: runThreeParagraphColumnsFlow,
+    },
+    test_5_paragraph_block_integrity: {
+        key: 'test_5_paragraph_block_integrity',
+        label: 'Test 5 : Paragraph Block Integrity',
+        description: 'Create one paragraph annotation, save it, and verify the saved extraction keeps it as a single paragraph block instead of splitting it into individual line blocks.',
+        run: runParagraphBlockIntegrityFlow,
+    },
+    test_6_paragraph_blank_line_integrity: {
+        key: 'test_6_paragraph_blank_line_integrity',
+        label: 'Test 6 : Paragraph Blank Line Integrity',
+        description: 'Create one paragraph annotation with an explicit blank line, save it, and verify the saved extraction keeps both paragraphs in a single block.',
+        run: runParagraphBlankLineIntegrityFlow,
+    },
+    test_7_short_intro_blank_line_integrity: {
+        key: 'test_7_short_intro_blank_line_integrity',
+        label: 'Test 7 : Short Intro Blank Line Integrity',
+        description: 'Create one annotation with a short first paragraph, blank lines, and longer following paragraphs, then verify save keeps it as one raw block.',
+        run: runShortIntroBlankLineIntegrityFlow,
+    },
+    test_8_edited_paragraph_newlines_preserved: {
+        key: 'test_8_edited_paragraph_newlines_preserved',
+        label: 'Test 8 : Edited Paragraph Newlines',
+        description: 'Edit a text annotation into short lines separated by blank lines, save it, and verify the explicit newlines are preserved after save.',
+        run: runEditedParagraphNewlinesPreservedFlow,
+    },
+    test_9_paragraph_position_accuracy: {
+        key: 'test_9_paragraph_position_accuracy',
+        label: 'Test 9 : Paragraph Position Accuracy',
+        description: 'Create multiple paragraph annotations at distinct positions, save them, and verify their positions remain accurate after save and reload.',
+        run: runParagraphPositionAccuracyFlow,
+    },
+    test_10_delete_all_promoted_text_save: {
+        key: 'test_10_delete_all_promoted_text_save',
+        label: 'Test 10 : Delete All Promoted Text Save',
+        description: 'Save a paragraph, reload it as promoted text, delete all promoted annotations, save again, and verify the PDF is saved without the deleted paragraph.',
+        run: runDeleteAllPromotedTextSaveFlow,
+    },
+    test_11_separate_lines_not_grouped: {
+        key: 'test_11_separate_lines_not_grouped',
+        label: 'Test 11 : Separate Lines Not Grouped',
+        description: 'Create three separate one-line text boxes in the same column, save them, and verify they remain separate raw blocks instead of being grouped into one paragraph block.',
+        run: runSeparateLinesNotGroupedFlow,
+    },
+    test_12_tiny_saved_labels_reload_separately: {
+        key: 'test_12_tiny_saved_labels_reload_separately',
+        label: 'Test 12 : Tiny Saved Labels Reload Separately',
+        description: 'Create tiny stacked one-line text boxes, save them, reload the editor, and verify they come back as separate saved text annotations instead of one merged text area.',
+        run: runTinySavedLabelsReloadSeparatelyFlow,
+    },
+    test_13_paragraph_indent_preserved: {
+        key: 'test_13_paragraph_indent_preserved',
+        label: 'Test 13 : Paragraph Indent Preserved',
+        description: 'Create one multiline paragraph annotation with an indented first line, save it, and verify extraction keeps it as one block with the first-line indent preserved.',
+        run: runParagraphIndentPreservedFlow,
+    },
 };
 
 function ensureOutputDir() {
@@ -100,6 +285,7 @@ function normalize(text) {
 
 function normalizeTypographicAscii(text) {
     return normalize(String(text || '')
+        .replace(/[\u00ad\u2010\u2011]/g, '-')
         .replace(/[\u2018\u2019]/g, "'")
         .replace(/[\u201C\u201D]/g, '"')
         .replace(/[\u2013\u2014]/g, '-'));
@@ -372,6 +558,7 @@ echo $document->id;
 
     return Number(match[1]);
 }
+
 
 async function createBlankDocumentViaBrowser(page, bootstrapErrors, options = {}) {
     const pageSize = options.pageSize || 'Letter';
@@ -771,11 +958,86 @@ function extractMatchingLine(extraction, targetText) {
     return (pageData.lines || []).find((line) => normalize(line?.text) === normalize(targetText)) || null;
 }
 
+function mergeParagraphBlocks(blocks) {
+    const normalizedBlocks = (Array.isArray(blocks) ? blocks : [])
+        .map((block, index) => ({
+            ...block,
+            __index: index,
+            __left: Number(block?.left) || 0,
+            __top: Number(block?.top) || 0,
+            __width: Number(block?.width) || 0,
+            __height: Number(block?.height) || 0,
+            __right: (Number(block?.left) || 0) + (Number(block?.width) || 0),
+            __bottom: (Number(block?.top) || 0) + (Number(block?.height) || 0),
+            __font: String(block?.font || ''),
+            __fontSize: Number(block?.font_size) || 0,
+            __lineHeight: Number(block?.avg_line_height) || Number(block?.line_height) || Number(block?.height) || 0,
+        }))
+        .sort((a, b) => {
+            const leftDelta = a.__left - b.__left;
+            if (Math.abs(leftDelta) > 4) {
+                return leftDelta;
+            }
+            return a.__top - b.__top;
+        });
+
+    const candidates = [];
+    for (let startIndex = 0; startIndex < normalizedBlocks.length; startIndex += 1) {
+        const start = normalizedBlocks[startIndex];
+        let merged = [start];
+        let prev = start;
+        candidates.push(start);
+
+        for (let nextIndex = startIndex + 1; nextIndex < normalizedBlocks.length; nextIndex += 1) {
+            const next = normalizedBlocks[nextIndex];
+            const sameColumn = Math.abs(next.__left - start.__left) <= 3;
+            const sameFont = normalize(next.__font) === normalize(start.__font);
+            const similarSize = Math.abs(next.__fontSize - start.__fontSize) <= 0.75;
+            const verticalGap = next.__top - prev.__bottom;
+            const allowedGap = Math.max(8, prev.__lineHeight * 1.8);
+            const overlapsHorizontally = next.__right > (start.__left + 20);
+
+            if (!sameColumn || !sameFont || !similarSize || !overlapsHorizontally || verticalGap < -1 || verticalGap > allowedGap) {
+                break;
+            }
+
+            merged.push(next);
+            prev = next;
+            const mergedTextLines = merged.flatMap((block) => (
+                Array.isArray(block.text_lines) && block.text_lines.length
+                    ? block.text_lines.map((line) => String(line))
+                    : String(block.text || '').split(/\r?\n/)
+            )).map((line) => String(line || '').trim()).filter(Boolean);
+            const mergedLeft = Math.min(...merged.map((block) => block.__left));
+            const mergedTop = Math.min(...merged.map((block) => block.__top));
+            const mergedRight = Math.max(...merged.map((block) => block.__right));
+            const mergedBottom = Math.max(...merged.map((block) => block.__bottom));
+            candidates.push({
+                ...start,
+                left: mergedLeft,
+                top: mergedTop,
+                width: mergedRight - mergedLeft,
+                height: mergedBottom - mergedTop,
+                text: mergedTextLines.join('\n'),
+                text_lines: mergedTextLines,
+                line_count: mergedTextLines.length,
+                avg_line_height: start.__lineHeight,
+                line_height: start.__lineHeight,
+                block_num: `${start.block_num}-${next.block_num}`,
+                merged_block_nums: merged.map((block) => block.block_num),
+            });
+        }
+    }
+
+    return candidates;
+}
+
 function extractMatchingBlock(extraction, targetTextFragment) {
     const pageData = extraction?.extraction_data?.[0] || {};
     const fragment = normalize(targetTextFragment);
+    const candidates = mergeParagraphBlocks(pageData.blocks || []);
 
-    return (pageData.blocks || [])
+    return candidates
         .filter((block) => normalize(block?.text).includes(fragment))
         .sort((a, b) => normalize(b?.text).length - normalize(a?.text).length)[0] || null;
 }
@@ -1890,6 +2152,1225 @@ async function runParagraphFlow() {
         if (columnsDocumentId) {
             try {
                 await deleteDocument(page, columnsDocumentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runThreeParagraphColumnsFlow() {
+    const test = TESTS.test_4_three_paragraph_columns;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const screenshotName = buildArtifactName(test.key, runToken, 'three_columns_save');
+    const pdfName = buildArtifactName(test.key, runToken, 'three_columns_save', 'pdf');
+    const screenshotPath = path.join(OUTPUT_DIR, screenshotName);
+    const pdfPath = path.join(OUTPUT_DIR, pdfName);
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+
+    try {
+        documentId = await createBlankDocument(page, {
+            pageSize: 'Legal',
+            orientation: 'portrait',
+        });
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+
+        for (let index = 0; index < PARAGRAPH_COLUMN_TEXTS.length; index += 1) {
+            const fragment = PARAGRAPH_COLUMN_FRAGMENTS[index];
+            await createTextAnnotationAt(page, fragment, 30, 120);
+            await updateTextAnnotation(page, fragment, {
+                text: PARAGRAPH_COLUMN_TEXTS[index],
+                keepBounds: true,
+                left: PARAGRAPH_COLUMN_LEFTS[index],
+                top: 80,
+                width: PARAGRAPH_COLUMN_WIDTH,
+                height: PARAGRAPH_COLUMN_HEIGHT,
+            });
+        }
+
+        await clickOutsideFirstPage(page);
+        await waitForAnnotationSave(page);
+        await downloadSavedPdf(page, documentId, pdfPath);
+        await forceRefreshOverlay(page, documentId);
+        const extraction = await fetchExtraction(page, documentId);
+        const columnBlocks = PARAGRAPH_COLUMN_FRAGMENTS.map((fragment) => extractMatchingBlock(extraction, fragment));
+        await capturePageScreenshot(page, screenshotPath);
+
+        const leftPositions = columnBlocks.map((block) => (block ? blockBBox(block)[0] : null));
+        const leftToRightOrdered = leftPositions.every((value, index) => (
+            index === 0 || value === null || leftPositions[index - 1] === null || value > leftPositions[index - 1]
+        ));
+
+        const checks = [
+            {
+                item: 'blank_pdf_created',
+                result: documentId ? 'PASS' : 'FAIL',
+                description: 'A fresh blank PDF was created through the frontend blank-PDF flow.',
+                detail: `document=${documentId}`,
+            },
+            {
+                item: 'three_side_by_side_paragraphs_saved',
+                result: columnBlocks.every(Boolean) ? 'PASS' : 'FAIL',
+                description: 'Three side-by-side 200px by 800px paragraph annotations were all stamped into the saved PDF.',
+                detail: JSON.stringify(columnBlocks.map((block, index) => ({
+                    fragment: PARAGRAPH_COLUMN_FRAGMENTS[index],
+                    found: Boolean(block),
+                    bbox: block ? blockBBox(block) : null,
+                }))),
+            },
+            {
+                item: 'three_columns_preserve_left_to_right_order',
+                result: leftToRightOrdered ? 'PASS' : 'FAIL',
+                description: 'The saved paragraph columns remain ordered from left to right after save.',
+                detail: JSON.stringify(leftPositions),
+            },
+        ];
+
+        const hasFailure = checks.some((check) => check.result !== 'PASS');
+        const finalPdfStats = fs.statSync(pdfPath);
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: hasFailure ? 'fail' : 'pass',
+            checks,
+            fileSize: finalPdfStats.size,
+            artifacts: [
+                {
+                    label: 'Three Columns Save',
+                    kind: 'image',
+                    filename: screenshotName,
+                },
+                {
+                    label: 'Three Columns PDF',
+                    kind: 'pdf',
+                    filename: pdfName,
+                },
+            ],
+            metadata: {
+                document_id: documentId,
+                left_positions: leftPositions,
+                column_saved_blocks: columnBlocks,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runParagraphBlockIntegrityFlow() {
+    const test = TESTS.test_5_paragraph_block_integrity;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const screenshotName = buildArtifactName(test.key, runToken, 'paragraph_block_save');
+    const pdfName = buildArtifactName(test.key, runToken, 'paragraph_block_save', 'pdf');
+    const screenshotPath = path.join(OUTPUT_DIR, screenshotName);
+    const pdfPath = path.join(OUTPUT_DIR, pdfName);
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+
+    try {
+        documentId = await createBlankDocument(page);
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+
+        await createTextAnnotationAt(page, PARAGRAPH_SEED_TEXT, 30, 120);
+        await updateTextAnnotation(page, PARAGRAPH_SEED_TEXT, {
+            text: PARAGRAPH_TEXT,
+            keepBounds: true,
+            left: 30,
+            top: 120,
+            width: PARAGRAPH_NARROW_WIDTH,
+            height: PARAGRAPH_NARROW_HEIGHT,
+        });
+
+        await clickOutsideFirstPage(page);
+        await waitForAnnotationSave(page);
+        await downloadSavedPdf(page, documentId, pdfPath);
+        await forceRefreshOverlay(page, documentId);
+        const extraction = await fetchExtraction(page, documentId);
+        const rawBlocks = extraction?.extraction_data?.[0]?.blocks || [];
+        const expectedStart = normalizeTypographicAscii(PARAGRAPH_TEXT_FRAGMENT);
+        const expectedTail = normalizeTypographicAscii(PARAGRAPH_PUNCTUATION_EXPECTED);
+        const rawParagraphBlock = rawBlocks.find((block) => {
+            const text = normalizeTypographicAscii(block?.text || '');
+            return text.includes(expectedStart) && text.includes(expectedTail);
+        }) || null;
+
+        const siblingParagraphBlocks = rawParagraphBlock
+            ? rawBlocks.filter((block) => (
+                Math.abs((Number(block?.left) || 0) - (Number(rawParagraphBlock?.left) || 0)) <= 3
+                && Math.abs((Number(block?.font_size) || 0) - (Number(rawParagraphBlock?.font_size) || 0)) <= 0.75
+                && normalize(block?.font || '') === normalize(rawParagraphBlock?.font || '')
+                && (Number(block?.top) || 0) >= ((Number(rawParagraphBlock?.top) || 0) - 1)
+                && ((Number(block?.top) || 0) + (Number(block?.height) || 0)) <= (((Number(rawParagraphBlock?.top) || 0) + (Number(rawParagraphBlock?.height) || 0)) + 1)
+            ))
+            : [];
+
+        const paragraphLines = rawParagraphBlock ? extractBlockLines(extraction, rawParagraphBlock) : [];
+        await capturePageScreenshot(page, screenshotPath);
+
+        const checks = [
+            {
+                item: 'blank_pdf_created',
+                result: documentId ? 'PASS' : 'FAIL',
+                description: 'A fresh blank PDF was created through the frontend blank-PDF flow.',
+                detail: `document=${documentId}`,
+            },
+            {
+                item: 'paragraph_saved_as_single_raw_block',
+                result: rawParagraphBlock ? 'PASS' : 'FAIL',
+                description: 'The saved extraction contains one raw paragraph block that includes both the start and end of the paragraph text.',
+                detail: rawParagraphBlock
+                    ? JSON.stringify({
+                        bbox: blockBBox(rawParagraphBlock),
+                        line_count: rawParagraphBlock.line_count,
+                        text_preview: String(rawParagraphBlock.text || '').slice(0, 220),
+                    })
+                    : JSON.stringify(rawBlocks, null, 2),
+            },
+            {
+                item: 'paragraph_raw_block_has_multiple_lines',
+                result: rawParagraphBlock && paragraphLines.length > 1 ? 'PASS' : 'FAIL',
+                description: 'The saved paragraph block exposes multiple wrapped lines inside one block.',
+                detail: JSON.stringify(paragraphLines),
+            },
+            {
+                item: 'paragraph_not_split_into_raw_line_blocks',
+                result: rawParagraphBlock && siblingParagraphBlocks.length === 1 ? 'PASS' : 'FAIL',
+                description: 'The saved paragraph is not split into multiple raw blocks on the same column and font.',
+                detail: JSON.stringify(siblingParagraphBlocks.map((block) => ({
+                    bbox: blockBBox(block),
+                    text: block?.text,
+                    block_num: block?.block_num,
+                    line_count: block?.line_count,
+                }))),
+            },
+        ];
+
+        const hasFailure = checks.some((check) => check.result !== 'PASS');
+        const finalPdfStats = fs.statSync(pdfPath);
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: hasFailure ? 'fail' : 'pass',
+            checks,
+            fileSize: finalPdfStats.size,
+            artifacts: [
+                {
+                    label: 'Paragraph Block Save',
+                    kind: 'image',
+                    filename: screenshotName,
+                },
+                {
+                    label: 'Paragraph Block PDF',
+                    kind: 'pdf',
+                    filename: pdfName,
+                },
+            ],
+            metadata: {
+                document_id: documentId,
+                raw_paragraph_block: rawParagraphBlock,
+                sibling_paragraph_blocks: siblingParagraphBlocks,
+                paragraph_lines: paragraphLines,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runParagraphBlankLineIntegrityFlow() {
+    const test = TESTS.test_6_paragraph_blank_line_integrity;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const screenshotName = buildArtifactName(test.key, runToken, 'paragraph_blank_line_save');
+    const pdfName = buildArtifactName(test.key, runToken, 'paragraph_blank_line_save', 'pdf');
+    const screenshotPath = path.join(OUTPUT_DIR, screenshotName);
+    const pdfPath = path.join(OUTPUT_DIR, pdfName);
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+
+    try {
+        documentId = await createBlankDocument(page);
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+
+        await createTextAnnotationAt(page, PARAGRAPH_SEED_TEXT, 30, 120);
+        await updateTextAnnotation(page, PARAGRAPH_SEED_TEXT, {
+            text: PARAGRAPH_BLANK_LINE_TEXT,
+            keepBounds: true,
+            left: 30,
+            top: 120,
+            width: PARAGRAPH_NARROW_WIDTH,
+            height: PARAGRAPH_NARROW_HEIGHT,
+        });
+
+        await clickOutsideFirstPage(page);
+        await waitForAnnotationSave(page);
+        await downloadSavedPdf(page, documentId, pdfPath);
+        await forceRefreshOverlay(page, documentId);
+        const extraction = await fetchExtraction(page, documentId);
+        const rawBlocks = extraction?.extraction_data?.[0]?.blocks || [];
+        const expectedStart = normalizeTypographicAscii(PARAGRAPH_BLANK_LINE_START);
+        const expectedTail = normalizeTypographicAscii(PARAGRAPH_BLANK_LINE_END);
+        const rawParagraphBlock = rawBlocks.find((block) => {
+            const text = normalizeTypographicAscii(block?.text || '');
+            return text.includes(expectedStart) && text.includes(expectedTail);
+        }) || null;
+
+        const siblingParagraphBlocks = rawParagraphBlock
+            ? rawBlocks.filter((block) => (
+                Math.abs((Number(block?.left) || 0) - (Number(rawParagraphBlock?.left) || 0)) <= 3
+                && Math.abs((Number(block?.font_size) || 0) - (Number(rawParagraphBlock?.font_size) || 0)) <= 0.75
+                && normalize(block?.font || '') === normalize(rawParagraphBlock?.font || '')
+                && (Number(block?.top) || 0) >= ((Number(rawParagraphBlock?.top) || 0) - 1)
+                && ((Number(block?.top) || 0) + (Number(block?.height) || 0)) <= (((Number(rawParagraphBlock?.top) || 0) + (Number(rawParagraphBlock?.height) || 0)) + 1)
+            ))
+            : [];
+
+        const paragraphLines = rawParagraphBlock ? extractBlockLines(extraction, rawParagraphBlock) : [];
+        await capturePageScreenshot(page, screenshotPath);
+
+        const checks = [
+            {
+                item: 'blank_pdf_created',
+                result: documentId ? 'PASS' : 'FAIL',
+                description: 'A fresh blank PDF was created through the frontend blank-PDF flow.',
+                detail: `document=${documentId}`,
+            },
+            {
+                item: 'blank_line_paragraph_saved_as_single_raw_block',
+                result: rawParagraphBlock ? 'PASS' : 'FAIL',
+                description: 'The saved extraction contains one raw block that includes both the first paragraph and the post-blank-line paragraph text.',
+                detail: rawParagraphBlock
+                    ? JSON.stringify({
+                        bbox: blockBBox(rawParagraphBlock),
+                        line_count: rawParagraphBlock.line_count,
+                        text_preview: String(rawParagraphBlock.text || '').slice(0, 240),
+                    })
+                    : JSON.stringify(rawBlocks, null, 2),
+            },
+            {
+                item: 'blank_line_paragraph_not_split_into_raw_blocks',
+                result: rawParagraphBlock && siblingParagraphBlocks.length === 1 ? 'PASS' : 'FAIL',
+                description: 'The saved annotation with an explicit blank line is not split into multiple raw blocks on the same column and font.',
+                detail: JSON.stringify(siblingParagraphBlocks.map((block) => ({
+                    bbox: blockBBox(block),
+                    text: block.text,
+                    block_num: block.block_num,
+                    line_count: block.line_count,
+                }))),
+            },
+            {
+                item: 'blank_line_separator_preserved_in_raw_text',
+                result: rawParagraphBlock && String(rawParagraphBlock.text || '').includes('\n\n') ? 'PASS' : 'FAIL',
+                description: 'The saved raw block preserves the explicit blank-line separator as a double newline.',
+                detail: rawParagraphBlock ? JSON.stringify(rawParagraphBlock.text) : 'null',
+            },
+            {
+                item: 'blank_line_paragraph_has_multiple_lines',
+                result: paragraphLines.length >= 4 ? 'PASS' : 'FAIL',
+                description: 'The saved blank-line paragraph still exposes multiple wrapped lines inside the merged block.',
+                detail: JSON.stringify(paragraphLines),
+            },
+        ];
+
+        const status = checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail';
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status,
+            checks,
+            artifacts: [
+                { label: 'Paragraph Blank Line Save', kind: 'image', filename: screenshotName },
+                { label: 'Paragraph Blank Line PDF', kind: 'pdf', filename: pdfName },
+            ],
+            fileSize: fs.existsSync(pdfPath) ? fs.statSync(pdfPath).size : 0,
+            metadata: {
+                document_id: documentId,
+                raw_blank_line_block: rawParagraphBlock,
+                paragraph_lines: paragraphLines,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runParagraphIndentPreservedFlow() {
+    const test = TESTS.test_13_paragraph_indent_preserved;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const screenshotName = buildArtifactName(test.key, runToken, 'paragraph_indent_save');
+    const pdfName = buildArtifactName(test.key, runToken, 'paragraph_indent_save', 'pdf');
+    const screenshotPath = path.join(OUTPUT_DIR, screenshotName);
+    const pdfPath = path.join(OUTPUT_DIR, pdfName);
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+
+    try {
+        documentId = await createBlankDocument(page);
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+
+        await createTextAnnotationAt(page, PARAGRAPH_SEED_TEXT, 30, 120);
+        await updateTextAnnotation(page, PARAGRAPH_SEED_TEXT, {
+            text: PARAGRAPH_INDENTED_TEXT,
+            keepBounds: true,
+            left: 48,
+            top: 96,
+            width: 320,
+            height: 280,
+        });
+
+        await clickOutsideFirstPage(page);
+        await waitForAnnotationSave(page);
+        await downloadSavedPdf(page, documentId, pdfPath);
+        await forceRefreshOverlay(page, documentId);
+        const extraction = await fetchExtraction(page, documentId);
+        const rawBlocks = extraction?.extraction_data?.[0]?.blocks || [];
+        const rawParagraphBlock = rawBlocks.find((block) => normalizeTypographicAscii(block?.text || '').includes(normalizeTypographicAscii(PARAGRAPH_INDENTED_START))) || null;
+        const blockLines = rawParagraphBlock ? extractBlockLines(extraction, rawParagraphBlock) : [];
+        const lineBBoxes = Array.isArray(rawParagraphBlock?.line_bboxes) ? rawParagraphBlock.line_bboxes : [];
+        const normalizedLineLefts = lineBBoxes
+            .filter((bbox) => Array.isArray(bbox) && bbox.length >= 4)
+            .map((bbox) => Number(bbox[0]) || 0);
+        const firstLineLeft = normalizedLineLefts[0] ?? null;
+        const followingLineLefts = normalizedLineLefts.slice(1);
+        const minimumFollowingLeft = followingLineLefts.length ? Math.min(...followingLineLefts) : null;
+        const indentDelta = (firstLineLeft !== null && minimumFollowingLeft !== null)
+            ? firstLineLeft - minimumFollowingLeft
+            : null;
+
+        await capturePageScreenshot(page, screenshotPath);
+
+        const checks = [
+            {
+                item: 'blank_pdf_created',
+                result: documentId ? 'PASS' : 'FAIL',
+                description: 'A fresh blank PDF was created through the frontend blank-PDF flow.',
+                detail: `document=${documentId}`,
+            },
+            {
+                item: 'indented_paragraph_saved_as_single_raw_block',
+                result: rawParagraphBlock ? 'PASS' : 'FAIL',
+                description: 'The saved extraction contains one raw block for the indented paragraph.',
+                detail: rawParagraphBlock
+                    ? JSON.stringify({
+                        bbox: blockBBox(rawParagraphBlock),
+                        line_count: rawParagraphBlock.line_count,
+                        text_preview: String(rawParagraphBlock.text || '').slice(0, 220),
+                    })
+                    : JSON.stringify(rawBlocks, null, 2),
+            },
+            {
+                item: 'indented_paragraph_has_multiple_lines',
+                result: rawParagraphBlock && blockLines.length >= 4 ? 'PASS' : 'FAIL',
+                description: 'The saved indented paragraph still exposes multiple lines inside one block.',
+                detail: JSON.stringify(blockLines),
+            },
+            {
+                item: 'first_line_indent_preserved',
+                result: indentDelta !== null && indentDelta >= 8 ? 'PASS' : 'FAIL',
+                description: 'The saved block preserves a measurable first-line indent instead of flattening all lines to the same left edge.',
+                detail: JSON.stringify({
+                    first_line_left: firstLineLeft,
+                    minimum_following_left: minimumFollowingLeft,
+                    indent_delta: indentDelta,
+                    line_bboxes: lineBBoxes,
+                }),
+            },
+        ];
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Paragraph Indent Save', kind: 'image', filename: screenshotName },
+                { label: 'Paragraph Indent PDF', kind: 'pdf', filename: pdfName },
+            ],
+            fileSize: fs.existsSync(pdfPath) ? fs.statSync(pdfPath).size : 0,
+            metadata: {
+                document_id: documentId,
+                raw_paragraph_block: rawParagraphBlock,
+                block_lines: blockLines,
+                line_bboxes: lineBBoxes,
+                indent_delta: indentDelta,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runShortIntroBlankLineIntegrityFlow() {
+    const test = TESTS.test_7_short_intro_blank_line_integrity;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const screenshotName = buildArtifactName(test.key, runToken, 'short_intro_blank_line_save');
+    const pdfName = buildArtifactName(test.key, runToken, 'short_intro_blank_line_save', 'pdf');
+    const screenshotPath = path.join(OUTPUT_DIR, screenshotName);
+    const pdfPath = path.join(OUTPUT_DIR, pdfName);
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+
+    try {
+        documentId = await createBlankDocument(page);
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+
+        await createTextAnnotationAt(page, PARAGRAPH_SEED_TEXT, 30, 120);
+        await updateTextAnnotation(page, PARAGRAPH_SEED_TEXT, {
+            text: PARAGRAPH_SHORT_INTRO_BLANK_LINE_TEXT,
+            keepBounds: true,
+            left: 30,
+            top: 120,
+            width: 420,
+            height: PARAGRAPH_NARROW_HEIGHT,
+        });
+
+        await clickOutsideFirstPage(page);
+        await waitForAnnotationSave(page);
+        await downloadSavedPdf(page, documentId, pdfPath);
+        await forceRefreshOverlay(page, documentId);
+        const extraction = await fetchExtraction(page, documentId);
+        const rawBlocks = extraction?.extraction_data?.[0]?.blocks || [];
+        const expectedStart = normalizeTypographicAscii(PARAGRAPH_SHORT_INTRO_START);
+        const expectedTail = normalizeTypographicAscii(PARAGRAPH_SHORT_INTRO_END);
+        const rawParagraphBlock = rawBlocks.find((block) => {
+            const text = normalizeTypographicAscii(block?.text || '');
+            return text.includes(expectedStart) && text.includes(expectedTail);
+        }) || null;
+
+        const siblingParagraphBlocks = rawParagraphBlock
+            ? rawBlocks.filter((block) => (
+                Math.abs((Number(block?.left) || 0) - (Number(rawParagraphBlock?.left) || 0)) <= 3
+                && Math.abs((Number(block?.font_size) || 0) - (Number(rawParagraphBlock?.font_size) || 0)) <= 0.75
+                && normalize(block?.font || '') === normalize(rawParagraphBlock?.font || '')
+                && (Number(block?.top) || 0) >= ((Number(rawParagraphBlock?.top) || 0) - 1)
+                && ((Number(block?.top) || 0) + (Number(block?.height) || 0)) <= (((Number(rawParagraphBlock?.top) || 0) + (Number(rawParagraphBlock?.height) || 0)) + 1)
+            ))
+            : [];
+
+        await capturePageScreenshot(page, screenshotPath);
+
+        const checks = [
+            {
+                item: 'blank_pdf_created',
+                result: documentId ? 'PASS' : 'FAIL',
+                description: 'A fresh blank PDF was created through the frontend blank-PDF flow.',
+                detail: `document=${documentId}`,
+            },
+            {
+                item: 'short_intro_paragraph_saved_as_single_raw_block',
+                result: rawParagraphBlock ? 'PASS' : 'FAIL',
+                description: 'The saved extraction contains one raw block spanning the short intro paragraph and later paragraph text.',
+                detail: rawParagraphBlock
+                    ? JSON.stringify({
+                        bbox: blockBBox(rawParagraphBlock),
+                        line_count: rawParagraphBlock.line_count,
+                        text_preview: String(rawParagraphBlock.text || '').slice(0, 260),
+                    })
+                    : JSON.stringify(rawBlocks, null, 2),
+            },
+            {
+                item: 'short_intro_paragraph_not_split_into_raw_blocks',
+                result: rawParagraphBlock && siblingParagraphBlocks.length === 1 ? 'PASS' : 'FAIL',
+                description: 'The saved short-intro blank-line annotation is not split into multiple raw blocks on the same column and font.',
+                detail: JSON.stringify(siblingParagraphBlocks.map((block) => ({
+                    bbox: blockBBox(block),
+                    text: block.text,
+                    block_num: block.block_num,
+                    line_count: block.line_count,
+                }))),
+            },
+            {
+                item: 'short_intro_blank_line_separator_preserved',
+                result: rawParagraphBlock && (String(rawParagraphBlock.text || '').match(/\n\n/g) || []).length >= 2 ? 'PASS' : 'FAIL',
+                description: 'The saved raw block preserves both explicit blank-line separators as double newlines.',
+                detail: rawParagraphBlock ? JSON.stringify(rawParagraphBlock.text) : 'null',
+            },
+        ];
+
+        const status = checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail';
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status,
+            checks,
+            artifacts: [
+                { label: 'Short Intro Blank Line Save', kind: 'image', filename: screenshotName },
+                { label: 'Short Intro Blank Line PDF', kind: 'pdf', filename: pdfName },
+            ],
+            fileSize: fs.existsSync(pdfPath) ? fs.statSync(pdfPath).size : 0,
+            metadata: {
+                document_id: documentId,
+                raw_short_intro_block: rawParagraphBlock,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runEditedParagraphNewlinesPreservedFlow() {
+    const test = TESTS.test_8_edited_paragraph_newlines_preserved;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const screenshotName = buildArtifactName(test.key, runToken, 'edited_paragraph_newlines_save');
+    const pdfName = buildArtifactName(test.key, runToken, 'edited_paragraph_newlines_save', 'pdf');
+    const screenshotPath = path.join(OUTPUT_DIR, screenshotName);
+    const pdfPath = path.join(OUTPUT_DIR, pdfName);
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+
+    try {
+        documentId = await createBlankDocument(page);
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+
+        await createTextAnnotationAt(page, PARAGRAPH_SEED_TEXT, 30, 120);
+        await updateTextAnnotation(page, PARAGRAPH_SEED_TEXT, {
+            text: PARAGRAPH_EDITED_NEWLINES_TEXT,
+            keepBounds: true,
+            left: 30,
+            top: 120,
+            width: 180,
+            height: 260,
+        });
+
+        await clickOutsideFirstPage(page);
+        await waitForAnnotationSave(page);
+        await downloadSavedPdf(page, documentId, pdfPath);
+        await forceRefreshOverlay(page, documentId);
+        const extraction = await fetchExtraction(page, documentId);
+        const rawBlocks = extraction?.extraction_data?.[0]?.blocks || [];
+        const rawParagraphBlock = rawBlocks.find((block) => (
+            normalizeTypographicAscii(block?.text || '') === normalizeTypographicAscii(PARAGRAPH_EDITED_NEWLINES_TEXT)
+        )) || null;
+
+        await capturePageScreenshot(page, screenshotPath);
+
+        const checks = [
+            {
+                item: 'blank_pdf_created',
+                result: documentId ? 'PASS' : 'FAIL',
+                description: 'A fresh blank PDF was created through the frontend blank-PDF flow.',
+                detail: `document=${documentId}`,
+            },
+            {
+                item: 'edited_newlines_saved_as_single_raw_block',
+                result: rawParagraphBlock ? 'PASS' : 'FAIL',
+                description: 'The edited multiline annotation is saved back as one raw extraction block.',
+                detail: rawParagraphBlock
+                    ? JSON.stringify({
+                        bbox: blockBBox(rawParagraphBlock),
+                        line_count: rawParagraphBlock.line_count,
+                        text: rawParagraphBlock.text,
+                    })
+                    : JSON.stringify(rawBlocks, null, 2),
+            },
+            {
+                item: 'edited_newlines_text_exactly_preserved',
+                result: rawParagraphBlock && String(rawParagraphBlock.text || '') === PARAGRAPH_EDITED_NEWLINES_TEXT ? 'PASS' : 'FAIL',
+                description: 'The saved raw block preserves the explicit edited blank lines exactly.',
+                detail: rawParagraphBlock ? JSON.stringify(rawParagraphBlock.text) : 'null',
+            },
+            {
+                item: 'edited_newlines_separator_count_preserved',
+                result: rawParagraphBlock && (String(rawParagraphBlock.text || '').match(/\n\n/g) || []).length === 3 ? 'PASS' : 'FAIL',
+                description: 'The saved raw block still contains the three explicit blank-line separators.',
+                detail: rawParagraphBlock ? String((String(rawParagraphBlock.text || '').match(/\n\n/g) || []).length) : 'null',
+            },
+        ];
+
+        const status = checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail';
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status,
+            checks,
+            artifacts: [
+                { label: 'Edited Paragraph Newlines Save', kind: 'image', filename: screenshotName },
+                { label: 'Edited Paragraph Newlines PDF', kind: 'pdf', filename: pdfName },
+            ],
+            fileSize: fs.existsSync(pdfPath) ? fs.statSync(pdfPath).size : 0,
+            metadata: {
+                document_id: documentId,
+                raw_edited_newlines_block: rawParagraphBlock,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runParagraphPositionAccuracyFlow() {
+    const test = TESTS.test_9_paragraph_position_accuracy;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const screenshotName = buildArtifactName(test.key, runToken, 'paragraph_position_save');
+    const pdfName = buildArtifactName(test.key, runToken, 'paragraph_position_save', 'pdf');
+    const screenshotPath = path.join(OUTPUT_DIR, screenshotName);
+    const pdfPath = path.join(OUTPUT_DIR, pdfName);
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+
+    try {
+        documentId = await createBlankDocument(page, {
+            pageSize: 'Legal',
+            orientation: 'portrait',
+        });
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+
+        for (const positionCase of PARAGRAPH_POSITION_CASES) {
+            await createTextAnnotationAt(page, positionCase.fragment, 30, 120);
+            await updateTextAnnotation(page, positionCase.fragment, {
+                text: positionCase.text,
+                keepBounds: true,
+                left: positionCase.left,
+                top: positionCase.top,
+                width: positionCase.width,
+                height: positionCase.height,
+            });
+        }
+
+        await clickOutsideFirstPage(page);
+        await waitForAnnotationSave(page);
+        await downloadSavedPdf(page, documentId, pdfPath);
+
+        const afterSaveMetrics = {};
+        for (const positionCase of PARAGRAPH_POSITION_CASES) {
+            afterSaveMetrics[positionCase.fragment] = await readTextAnnotationMetrics(page, positionCase.fragment);
+        }
+        await capturePageScreenshot(page, screenshotPath);
+
+        const referenceCase = PARAGRAPH_POSITION_CASES[0];
+        const referenceAfter = afterSaveMetrics[referenceCase.fragment];
+        const referenceOffsetX = (referenceAfter?.left || 0) - referenceCase.left;
+        const referenceOffsetY = (referenceAfter?.top || 0) - referenceCase.top;
+
+        const positionChecks = PARAGRAPH_POSITION_CASES.map((positionCase) => {
+            const after = afterSaveMetrics[positionCase.fragment];
+            const offsetX = (after?.left || 0) - positionCase.left;
+            const offsetY = (after?.top || 0) - positionCase.top;
+            const offsetErrorX = Math.abs(offsetX - referenceOffsetX);
+            const offsetErrorY = Math.abs(offsetY - referenceOffsetY);
+
+            return {
+                item: `${normalize(positionCase.fragment).toLowerCase().replace(/\s+/g, '_')}_anchor_offset_consistent`,
+                result: offsetErrorX <= PARAGRAPH_POSITION_TOLERANCE && offsetErrorY <= PARAGRAPH_POSITION_TOLERANCE ? 'PASS' : 'FAIL',
+                description: `${positionCase.fragment} keeps a consistent placement offset after save and reload.`,
+                detail: `target=(${positionCase.left}, ${positionCase.top}) after=(${after?.left?.toFixed?.(2) ?? after?.left}, ${after?.top?.toFixed?.(2) ?? after?.top}) offset=(${offsetX.toFixed(2)}, ${offsetY.toFixed(2)}) reference_offset=(${referenceOffsetX.toFixed(2)}, ${referenceOffsetY.toFixed(2)}) error=(${offsetErrorX.toFixed(2)}, ${offsetErrorY.toFixed(2)})`,
+            };
+        });
+
+        const relativeChecks = [];
+        for (let index = 1; index < PARAGRAPH_POSITION_CASES.length; index += 1) {
+            const current = PARAGRAPH_POSITION_CASES[index];
+            const previous = PARAGRAPH_POSITION_CASES[index - 1];
+            const afterCurrent = afterSaveMetrics[current.fragment];
+            const afterPrevious = afterSaveMetrics[previous.fragment];
+            const targetDeltaX = current.left - previous.left;
+            const targetDeltaY = current.top - previous.top;
+            const afterDeltaX = (afterCurrent?.left || 0) - (afterPrevious?.left || 0);
+            const afterDeltaY = (afterCurrent?.top || 0) - (afterPrevious?.top || 0);
+            const deltaXError = Math.abs(afterDeltaX - targetDeltaX);
+            const deltaYError = Math.abs(afterDeltaY - targetDeltaY);
+            relativeChecks.push({
+                item: `${normalize(previous.fragment).toLowerCase().replace(/\s+/g, '_')}_to_${normalize(current.fragment).toLowerCase().replace(/\s+/g, '_')}_relative_position_preserved`,
+                result: deltaXError <= PARAGRAPH_POSITION_TOLERANCE && deltaYError <= PARAGRAPH_POSITION_TOLERANCE ? 'PASS' : 'FAIL',
+                description: `${previous.fragment} and ${current.fragment} keep their relative spacing after save and reload.`,
+                detail: `target_delta=(${targetDeltaX.toFixed(2)}, ${targetDeltaY.toFixed(2)}) after_delta=(${afterDeltaX.toFixed(2)}, ${afterDeltaY.toFixed(2)}) error=(${deltaXError.toFixed(2)}, ${deltaYError.toFixed(2)})`,
+            });
+        }
+
+        const checks = [
+            {
+                item: 'blank_pdf_created',
+                result: documentId ? 'PASS' : 'FAIL',
+                description: 'A fresh blank PDF was created through the frontend blank-PDF flow.',
+                detail: `document=${documentId}`,
+            },
+            ...positionChecks,
+            ...relativeChecks,
+        ];
+
+        const status = checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail';
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status,
+            checks,
+            artifacts: [
+                { label: 'Paragraph Position Save', kind: 'image', filename: screenshotName },
+                { label: 'Paragraph Position PDF', kind: 'pdf', filename: pdfName },
+            ],
+            fileSize: fs.existsSync(pdfPath) ? fs.statSync(pdfPath).size : 0,
+            metadata: {
+                document_id: documentId,
+                reference_offset: {
+                    left: referenceOffsetX,
+                    top: referenceOffsetY,
+                },
+                after_save_metrics: afterSaveMetrics,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runDeleteAllPromotedTextSaveFlow() {
+    const test = TESTS.test_10_delete_all_promoted_text_save;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const screenshotName = buildArtifactName(test.key, runToken, 'delete_all_promoted_text_save');
+    const pdfName = buildArtifactName(test.key, runToken, 'delete_all_promoted_text_save', 'pdf');
+    const screenshotPath = path.join(OUTPUT_DIR, screenshotName);
+    const pdfPath = path.join(OUTPUT_DIR, pdfName);
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+
+    try {
+        documentId = await createBlankDocument(page, {
+            pageSize: 'Letter',
+            orientation: 'portrait',
+        });
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+
+        await createTextAnnotationAt(page, PARAGRAPH_SEED_TEXT, 30, 120);
+        await updateTextAnnotation(page, PARAGRAPH_SEED_TEXT, {
+            text: PARAGRAPH_TEXT,
+            keepBounds: true,
+            left: 30,
+            top: 120,
+            width: PARAGRAPH_NARROW_WIDTH,
+            height: PARAGRAPH_NARROW_HEIGHT,
+        });
+        await clickOutsideFirstPage(page);
+        await waitForAnnotationSave(page);
+
+        await page.goto(`${BASE_URL}/documents/${documentId}/edit`, { waitUntil: 'domcontentloaded', timeout: 90000 });
+        await waitForEditorReady(page);
+        await page.waitForFunction(() => (
+            typeof annotations !== 'undefined'
+            && Array.isArray(annotations)
+            && annotations.some((annotation) => annotation?.promotedFromExtraction || annotation?.savedTextOverlay)
+        ), null, { timeout: 60000 });
+
+        const reloadedTextAnnotationState = await page.evaluate(() => ({
+            promotedCount: annotations.filter((annotation) => annotation?.promotedFromExtraction).length,
+            savedOverlayCount: annotations.filter((annotation) => annotation?.savedTextOverlay).length,
+        }));
+
+        await page.evaluate(() => {
+            const originalConfirm = window.confirm;
+            window.confirm = () => true;
+            try {
+                document.getElementById('remove-all-annotations')?.click();
+            } finally {
+                window.confirm = originalConfirm;
+            }
+        });
+        await page.waitForFunction(() => typeof annotations !== 'undefined' && annotations.length === 0, null, { timeout: 30000 });
+
+        await waitForAnnotationSave(page);
+        await downloadSavedPdf(page, documentId, pdfPath);
+        await capturePageScreenshot(page, screenshotPath);
+
+        const extraction = await fetchExtraction(page, documentId);
+        const paragraphBlock = extractMatchingBlock(extraction, PARAGRAPH_TEXT_FRAGMENT);
+
+        const checks = [
+            {
+                item: 'blank_pdf_created',
+                result: documentId ? 'PASS' : 'FAIL',
+                description: 'A fresh blank PDF was created through the frontend blank-PDF flow.',
+                detail: `document=${documentId}`,
+            },
+            {
+                item: 'text_annotations_loaded_before_delete',
+                result: (reloadedTextAnnotationState.promotedCount + reloadedTextAnnotationState.savedOverlayCount) > 0 ? 'PASS' : 'FAIL',
+                description: 'The saved paragraph reloaded as editable text annotations before deletion.',
+                detail: JSON.stringify(reloadedTextAnnotationState),
+            },
+            {
+                item: 'empty_annotation_save_completed',
+                result: 'PASS',
+                description: 'Saving after deleting all promoted annotations completed through the PDF save flow.',
+                detail: 'save button accepted an empty remaining annotation set',
+            },
+            {
+                item: 'deleted_promoted_paragraph_absent_after_save',
+                result: paragraphBlock ? 'FAIL' : 'PASS',
+                description: 'The deleted promoted paragraph is absent from the saved PDF extraction after save.',
+                detail: paragraphBlock ? JSON.stringify(paragraphBlock) : 'paragraph text absent after delete-all save',
+            },
+        ];
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Delete All Promoted Text Save', kind: 'image', filename: screenshotName },
+                { label: 'Delete All Promoted Text PDF', kind: 'pdf', filename: pdfName },
+            ],
+            metadata: {
+                document_id: documentId,
+                reloaded_text_annotation_state: reloadedTextAnnotationState,
+                residual_block: paragraphBlock,
+            },
+        });
+    } catch (error) {
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: 'fail',
+            checks: [],
+            error: error instanceof Error ? error.message : String(error),
+            metadata: {
+                document_id: documentId,
+            },
+        });
+    } finally {
+        await browser.close();
+    }
+}
+
+async function runSeparateLinesNotGroupedFlow() {
+    const test = TESTS.test_11_separate_lines_not_grouped;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const screenshotName = buildArtifactName(test.key, runToken, 'separate_lines_save');
+    const pdfName = buildArtifactName(test.key, runToken, 'separate_lines_save', 'pdf');
+    const screenshotPath = path.join(OUTPUT_DIR, screenshotName);
+    const pdfPath = path.join(OUTPUT_DIR, pdfName);
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+
+    try {
+        documentId = await createBlankDocument(page);
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+
+        for (const lineCase of PARAGRAPH_SEPARATE_LINE_CASES) {
+            await createTextAnnotationAt(page, lineCase.fragment, 30, 120);
+            await updateTextAnnotation(page, lineCase.fragment, {
+                text: lineCase.text,
+                keepBounds: true,
+                left: lineCase.left,
+                top: lineCase.top,
+                width: lineCase.width,
+                height: lineCase.height,
+            });
+        }
+
+        await clickOutsideFirstPage(page);
+        await waitForAnnotationSave(page);
+        await downloadSavedPdf(page, documentId, pdfPath);
+        await forceRefreshOverlay(page, documentId);
+        const extraction = await fetchExtraction(page, documentId);
+        const rawBlocks = extraction?.extraction_data?.[0]?.blocks || [];
+
+        const matchedBlocks = PARAGRAPH_SEPARATE_LINE_CASES.map((lineCase) => {
+            const block = rawBlocks.find((candidate) => normalizeTypographicAscii(candidate?.text || '').includes(normalizeTypographicAscii(lineCase.text)));
+            return {
+                fragment: lineCase.fragment,
+                text: lineCase.text,
+                block,
+            };
+        });
+
+        const uniqueBlockNums = new Set(
+            matchedBlocks
+                .map((entry) => entry.block?.block_num)
+                .filter((value) => value !== undefined && value !== null)
+        );
+        const combinedBlock = rawBlocks.find((block) => PARAGRAPH_SEPARATE_LINE_CASES.every((lineCase) => (
+            normalizeTypographicAscii(block?.text || '').includes(normalizeTypographicAscii(lineCase.text))
+        ))) || null;
+
+        await capturePageScreenshot(page, screenshotPath);
+
+        const checks = [
+            {
+                item: 'blank_pdf_created',
+                result: documentId ? 'PASS' : 'FAIL',
+                description: 'A fresh blank PDF was created through the frontend blank-PDF flow.',
+                detail: `document=${documentId}`,
+            },
+            {
+                item: 'separate_lines_each_saved_as_raw_block',
+                result: matchedBlocks.every((entry) => entry.block) ? 'PASS' : 'FAIL',
+                description: 'Each one-line text box is present in the saved extraction as its own raw block candidate.',
+                detail: JSON.stringify(matchedBlocks.map((entry) => ({
+                    fragment: entry.fragment,
+                    block_num: entry.block?.block_num ?? null,
+                    bbox: entry.block ? blockBBox(entry.block) : null,
+                    text: entry.block?.text ?? null,
+                }))),
+            },
+            {
+                item: 'separate_lines_do_not_share_one_raw_block',
+                result: uniqueBlockNums.size === PARAGRAPH_SEPARATE_LINE_CASES.length ? 'PASS' : 'FAIL',
+                description: 'The three separate one-line text boxes do not collapse into the same raw block after save.',
+                detail: JSON.stringify({
+                    unique_block_count: uniqueBlockNums.size,
+                    block_nums: Array.from(uniqueBlockNums),
+                }),
+            },
+            {
+                item: 'no_combined_paragraph_block_contains_all_three_lines',
+                result: combinedBlock ? 'FAIL' : 'PASS',
+                description: 'The saved extraction does not contain one merged paragraph block holding all three independent lines.',
+                detail: combinedBlock ? JSON.stringify({
+                    block_num: combinedBlock.block_num,
+                    bbox: blockBBox(combinedBlock),
+                    text: combinedBlock.text,
+                }) : 'no combined block',
+            },
+        ];
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Separate Lines Save', kind: 'image', filename: screenshotName },
+                { label: 'Separate Lines PDF', kind: 'pdf', filename: pdfName },
+            ],
+            fileSize: fs.existsSync(pdfPath) ? fs.statSync(pdfPath).size : 0,
+            metadata: {
+                document_id: documentId,
+                matched_blocks: matchedBlocks.map((entry) => ({
+                    fragment: entry.fragment,
+                    block: entry.block,
+                })),
+                combined_block: combinedBlock,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runTinySavedLabelsReloadSeparatelyFlow() {
+    const test = TESTS.test_12_tiny_saved_labels_reload_separately;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const screenshotName = buildArtifactName(test.key, runToken, 'tiny_saved_labels_reload');
+    const pdfName = buildArtifactName(test.key, runToken, 'tiny_saved_labels_reload', 'pdf');
+    const screenshotPath = path.join(OUTPUT_DIR, screenshotName);
+    const pdfPath = path.join(OUTPUT_DIR, pdfName);
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+
+    try {
+        documentId = await createBlankDocument(page);
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+
+        for (const lineCase of PARAGRAPH_TINY_SEPARATE_LINE_CASES) {
+            await createTextAnnotationAt(page, lineCase.seed, 30, 120);
+            await updateTextAnnotation(page, lineCase.seed, {
+                text: lineCase.text,
+                keepBounds: true,
+                left: lineCase.left,
+                top: lineCase.top,
+                width: lineCase.width,
+                height: lineCase.height,
+            });
+        }
+
+        await clickOutsideFirstPage(page);
+        await waitForAnnotationSave(page);
+        await downloadSavedPdf(page, documentId, pdfPath);
+
+        await page.goto(`${BASE_URL}/documents/${documentId}/edit`, { waitUntil: 'domcontentloaded', timeout: 90000 });
+        await waitForEditorReady(page);
+        await page.waitForFunction(() => (
+            typeof annotations !== 'undefined'
+            && Array.isArray(annotations)
+            && annotations.length >= 4
+        ), null, { timeout: 60000 });
+
+        const reloadedAnnotations = await page.evaluate(() => annotations.map((annotation) => ({
+            id: annotation?.id || null,
+            text: annotation?.text || '',
+            left: Number(annotation?.pdfX) || 0,
+            top: Number(annotation?.pdfY) || 0,
+            savedTextOverlay: Boolean(annotation?.savedTextOverlay),
+            promotedFromExtraction: Boolean(annotation?.promotedFromExtraction),
+        })));
+        await capturePageScreenshot(page, screenshotPath);
+
+        const tinyLabels = reloadedAnnotations.filter((annotation) => (
+            annotation.text === 'no' || annotation.text === 'yes'
+        ));
+        const mergedTextAreas = reloadedAnnotations.filter((annotation) => /\n/.test(annotation.text || ''));
+        const savedOverlayCount = tinyLabels.filter((annotation) => annotation.savedTextOverlay).length;
+
+        const checks = [
+            {
+                item: 'blank_pdf_created',
+                result: documentId ? 'PASS' : 'FAIL',
+                description: 'A fresh blank PDF was created through the frontend blank-PDF flow.',
+                detail: `document=${documentId}`,
+            },
+            {
+                item: 'tiny_labels_reload_as_four_annotations',
+                result: tinyLabels.length === 4 ? 'PASS' : 'FAIL',
+                description: 'The four tiny stacked labels reload as four individual annotations.',
+                detail: JSON.stringify(tinyLabels),
+            },
+            {
+                item: 'tiny_labels_reload_from_saved_annotation_state',
+                result: savedOverlayCount === 4 ? 'PASS' : 'FAIL',
+                description: 'The reloaded tiny labels come from saved annotation state rather than promoted extraction grouping.',
+                detail: JSON.stringify(tinyLabels.map((annotation) => ({
+                    text: annotation.text,
+                    savedTextOverlay: annotation.savedTextOverlay,
+                    promotedFromExtraction: annotation.promotedFromExtraction,
+                }))),
+            },
+            {
+                item: 'tiny_labels_not_merged_into_multiline_annotation',
+                result: mergedTextAreas.length === 0 ? 'PASS' : 'FAIL',
+                description: 'Reloading the editor does not merge the tiny labels into one multiline text area.',
+                detail: JSON.stringify(mergedTextAreas),
+            },
+        ];
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Tiny Saved Labels Reload', kind: 'image', filename: screenshotName },
+                { label: 'Tiny Saved Labels PDF', kind: 'pdf', filename: pdfName },
+            ],
+            fileSize: fs.existsSync(pdfPath) ? fs.statSync(pdfPath).size : 0,
+            metadata: {
+                document_id: documentId,
+                reloaded_annotations: reloadedAnnotations,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
             } catch (_error) {
                 // Ignore cleanup failures so the primary test result survives.
             }

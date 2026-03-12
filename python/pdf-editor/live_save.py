@@ -33,6 +33,7 @@ Exit codes:
 import sys
 import os
 import json
+from difflib import SequenceMatcher
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import median
@@ -538,6 +539,112 @@ def _split_normalized_paragraphs(text: str) -> list[str]:
     return [part.strip() for part in value.split("\n\n")]
 
 
+def _recover_paragraph_parts_from_flat_text(text: str, reference_parts: list[str]) -> Optional[list[str]]:
+    if len(reference_parts) <= 1:
+        return None
+
+    normalized_reference_parts = [" ".join(_clean_text(part).split()).strip() for part in reference_parts]
+    if any(not part for part in normalized_reference_parts):
+        return None
+
+    reference_flat = " ".join(normalized_reference_parts).strip()
+    value_flat = " ".join(_clean_text(text).split()).strip()
+    if not reference_flat or not value_flat:
+        return None
+
+    reference_token_count = len(reference_flat.split())
+    value_token_count = len(value_flat.split())
+    if value_token_count < len(normalized_reference_parts):
+        return None
+    if abs(value_token_count - reference_token_count) > max(6, len(normalized_reference_parts) * 4):
+        return None
+
+    boundaries = []
+    cursor = 0
+    for part in normalized_reference_parts[:-1]:
+        cursor += len(part)
+        boundaries.append(cursor)
+        cursor += 1
+
+    opcodes = SequenceMatcher(None, reference_flat, value_flat, autojunk=False).get_opcodes()
+    mapped_boundaries = []
+    opcode_index = 0
+    for boundary in boundaries:
+        while opcode_index < len(opcodes) and opcodes[opcode_index][2] < boundary:
+            opcode_index += 1
+
+        if opcode_index >= len(opcodes):
+            mapped = len(value_flat)
+        else:
+            tag, i1, i2, j1, j2 = opcodes[opcode_index]
+            if boundary <= i1:
+                mapped = j1
+            elif tag == "equal":
+                mapped = j1 + min(boundary - i1, j2 - j1)
+            elif i2 > i1:
+                ratio = (boundary - i1) / max(i2 - i1, 1)
+                mapped = int(round(j1 + ((j2 - j1) * ratio)))
+            else:
+                mapped = j1
+
+        mapped = max(1, min(len(value_flat) - 1, mapped))
+
+        if not (
+            (0 <= mapped < len(value_flat) and value_flat[mapped].isspace())
+            or (0 < mapped <= len(value_flat) and value_flat[mapped - 1].isspace())
+        ):
+            left = mapped
+            while left > 0 and not value_flat[left - 1].isspace():
+                left -= 1
+
+            right = mapped
+            while right < len(value_flat) and not value_flat[right].isspace():
+                right += 1
+
+            if left > 0 and (mapped - left) <= 18:
+                mapped = left
+            elif right < len(value_flat) and (right - mapped) <= 18:
+                mapped = right
+
+        if mapped_boundaries and mapped <= mapped_boundaries[-1]:
+            mapped = min(len(value_flat) - 1, mapped_boundaries[-1] + 1)
+        mapped_boundaries.append(mapped)
+
+    parts = []
+    start = 0
+    for boundary in mapped_boundaries:
+        part = value_flat[start:boundary].strip()
+        if not part:
+            return None
+        parts.append(part)
+        start = boundary
+
+    final_part = value_flat[start:].strip()
+    if not final_part:
+        return None
+    parts.append(final_part)
+
+    if len(parts) != len(normalized_reference_parts):
+        return None
+    return parts
+
+
+def _normalized_paragraph_parts(
+    text: str,
+    line_metrics: list,
+    leading: float,
+    paragraph_groups: Optional[list] = None,
+    reference_parts: Optional[list[str]] = None,
+) -> list[str]:
+    normalized = _normalize_reflow_text(text, line_metrics, leading, paragraph_groups)
+    parts = _split_normalized_paragraphs(normalized)
+    if paragraph_groups and len(paragraph_groups) > 1 and len(parts) != len(paragraph_groups) and reference_parts:
+        recovered = _recover_paragraph_parts_from_flat_text(normalized, reference_parts)
+        if recovered and len(recovered) == len(paragraph_groups):
+            return recovered
+    return parts
+
+
 def _normalized_text_lines(text: str) -> list[str]:
     return [
         " ".join(line.strip().split())
@@ -562,28 +669,38 @@ def _line_range_rect(lines: list) -> fitz.Rect:
     )
 
 
-def _select_changed_paragraph_groups(original_text: str, new_text: str, paragraph: dict) -> tuple[Optional[fitz.Rect], Optional[str]]:
+def _select_changed_paragraph_plan(original_text: str, new_text: str, paragraph: dict) -> Optional[dict]:
     groups = paragraph.get("paragraph_groups") or []
     if len(groups) <= 1:
-        return None, None
+        return None
 
     normalized_original = _normalize_reflow_text(original_text, paragraph["line_metrics"], paragraph["leading"], groups)
-    normalized_new = _normalize_reflow_text(new_text, paragraph["line_metrics"], paragraph["leading"], groups)
     original_parts = _split_normalized_paragraphs(normalized_original)
-    new_parts = _split_normalized_paragraphs(normalized_new)
+    new_parts = _normalized_paragraph_parts(
+        new_text,
+        paragraph["line_metrics"],
+        paragraph["leading"],
+        groups,
+        original_parts,
+    )
     if len(original_parts) != len(groups) or len(new_parts) != len(groups):
-        return None, None
+        return None
 
     changed_indexes = [idx for idx, (orig, new) in enumerate(zip(original_parts, new_parts)) if orig != new]
     if not changed_indexes:
-        return None, None
+        return None
 
     start = min(changed_indexes)
     end = max(changed_indexes)
     selected_groups = groups[start:end + 1]
-    rect = _union_rect(*[_paragraph_group_rect(group) for group in selected_groups])
-    text = "\n\n".join(new_parts[start:end + 1]).strip()
-    return rect, text
+    selected_rects = [_paragraph_group_rect(group) for group in selected_groups]
+    selected_texts = new_parts[start:end + 1]
+    return {
+        "rect": _union_rect(*selected_rects),
+        "text": "\n\n".join(selected_texts).strip(),
+        "group_rects": selected_rects,
+        "group_texts": selected_texts,
+    }
 
 
 def _select_changed_line_range(original_text: str, new_text: str, line_metrics: list) -> tuple[Optional[fitz.Rect], Optional[str], Optional[int], Optional[int]]:
@@ -770,6 +887,33 @@ def _reflow_paragraph(page, rect: fitz.Rect, text: str, font_obj: fitz.Font, fon
     if overflow:
         return False, lineheight, overflow
     writer.write_text(page, color=color, overlay=True)
+    return True, lineheight, []
+
+
+def _reflow_paragraph_groups(page, rects: list[fitz.Rect], texts: list[str], font_obj: fitz.Font, fontsize: float, leading: float, color: tuple, align: int):
+    if not rects or len(rects) != len(texts):
+        return False, 0.0, ["invalid-paragraph-groups"]
+
+    lineheight = max(0.85, min(3.0, leading / max(fontsize, 0.1)))
+    writers = []
+
+    for rect, text in zip(rects, texts):
+        writer = fitz.TextWriter(page.rect)
+        overflow = writer.fill_textbox(
+            rect,
+            text,
+            font=font_obj,
+            fontsize=fontsize,
+            lineheight=lineheight,
+            align=align,
+        )
+        if overflow:
+            return False, lineheight, overflow
+        writers.append(writer)
+
+    for writer in writers:
+        writer.write_text(page, color=color, overlay=True)
+
     return True, lineheight, []
 
 
@@ -1075,7 +1219,27 @@ def live_save_patch(pdf_path: str, edit: dict, preview_dir: Optional[str] = None
     effective_font_size = paragraph["font_size"] or font_size
 
     line_metrics = paragraph["line_metrics"]
-    reflow_text = _normalize_reflow_text(new_text, line_metrics, paragraph["leading"], paragraph.get("paragraph_groups"))
+    paragraph_groups = paragraph.get("paragraph_groups") or []
+    normalized_original = _normalize_reflow_text(
+        edit.get("original_text") or "",
+        line_metrics,
+        paragraph["leading"],
+        paragraph_groups,
+    )
+    original_paragraph_parts = _split_normalized_paragraphs(normalized_original)
+    reflow_paragraph_parts = _normalized_paragraph_parts(
+        new_text,
+        line_metrics,
+        paragraph["leading"],
+        paragraph_groups,
+        original_paragraph_parts,
+    )
+    reflow_text = "\n\n".join(reflow_paragraph_parts).strip() if reflow_paragraph_parts else _normalize_reflow_text(
+        new_text,
+        line_metrics,
+        paragraph["leading"],
+        paragraph_groups,
+    )
     changed_line_rect, changed_line_text, _changed_start, _changed_end = _select_changed_line_range(
         edit.get("original_text") or "",
         new_text,
@@ -1085,11 +1249,21 @@ def live_save_patch(pdf_path: str, edit: dict, preview_dir: Optional[str] = None
         new_text,
         line_metrics,
     )
-    changed_group_rect, changed_group_text = _select_changed_paragraph_groups(
+    changed_paragraph_plan = _select_changed_paragraph_plan(
         edit.get("original_text") or "",
         new_text,
         paragraph,
     )
+    changed_group_rect = changed_paragraph_plan["rect"] if changed_paragraph_plan else None
+    changed_group_text = changed_paragraph_plan["text"] if changed_paragraph_plan else None
+    paragraph_group_rects = None
+    paragraph_group_texts = None
+    if changed_paragraph_plan:
+        paragraph_group_rects = changed_paragraph_plan["group_rects"]
+        paragraph_group_texts = changed_paragraph_plan["group_texts"]
+    elif len(paragraph_groups) > 1 and len(reflow_paragraph_parts) == len(paragraph_groups):
+        paragraph_group_rects = [_paragraph_group_rect(group) for group in paragraph_groups]
+        paragraph_group_texts = reflow_paragraph_parts
 
     single_line_fit_rect = _union_rect(target_pdf_rect, insert_pdf_rect)
     single_line_origin = fitz.Point(origin_x, origin_y)
@@ -1252,34 +1426,59 @@ def live_save_patch(pdf_path: str, edit: dict, preview_dir: Optional[str] = None
                 raise RuntimeError("Atomic line write did not fit target rect")
             print(f"  Inserted line via {mode} fs={used_fs:.2f}", file=sys.stderr)
         else:
-            fitted_rect, _fitted_lineheight, fitted_overflow = _fit_reflow_rect(
-                page.rect,
-                render_rect,
-                render_text,
-                font_obj,
-                effective_font_size,
-                paragraph["leading"],
-                paragraph["align"],
-            )
-            if fitted_rect is None:
-                raise RuntimeError(f"Paragraph reflow overflowed: {fitted_overflow}")
-            render_rect = fitted_rect
-            ok, lineheight, overflow = _reflow_paragraph(
-                page=page,
-                rect=render_rect,
-                text=render_text,
-                font_obj=font_obj,
-                fontsize=effective_font_size,
-                leading=paragraph["leading"],
-                color=color,
-                align=paragraph["align"],
-            )
-            if not ok:
-                raise RuntimeError(f"Paragraph reflow overflowed: {overflow}")
-            print(
-                f"  Reflowed into paragraph_rect={render_rect} fs={effective_font_size:.2f} leading={paragraph['leading']:.2f} lh={lineheight:.3f}",
-                file=sys.stderr,
-            )
+            rendered_grouped_paragraphs = False
+            if (
+                strategy == "atomic_paragraph"
+                and paragraph_group_rects
+                and paragraph_group_texts
+                and len(paragraph_group_rects) == len(paragraph_group_texts)
+            ):
+                ok, lineheight, overflow = _reflow_paragraph_groups(
+                    page=page,
+                    rects=paragraph_group_rects,
+                    texts=paragraph_group_texts,
+                    font_obj=font_obj,
+                    fontsize=effective_font_size,
+                    leading=paragraph["leading"],
+                    color=color,
+                    align=paragraph["align"],
+                )
+                if ok:
+                    rendered_grouped_paragraphs = True
+                    print(
+                        f"  Reflowed {len(paragraph_group_rects)} paragraph group(s) within original group bounds fs={effective_font_size:.2f} leading={paragraph['leading']:.2f} lh={lineheight:.3f}",
+                        file=sys.stderr,
+                    )
+
+            if not rendered_grouped_paragraphs:
+                fitted_rect, _fitted_lineheight, fitted_overflow = _fit_reflow_rect(
+                    page.rect,
+                    render_rect,
+                    render_text,
+                    font_obj,
+                    effective_font_size,
+                    paragraph["leading"],
+                    paragraph["align"],
+                )
+                if fitted_rect is None:
+                    raise RuntimeError(f"Paragraph reflow overflowed: {fitted_overflow}")
+                render_rect = fitted_rect
+                ok, lineheight, overflow = _reflow_paragraph(
+                    page=page,
+                    rect=render_rect,
+                    text=render_text,
+                    font_obj=font_obj,
+                    fontsize=effective_font_size,
+                    leading=paragraph["leading"],
+                    color=color,
+                    align=paragraph["align"],
+                )
+                if not ok:
+                    raise RuntimeError(f"Paragraph reflow overflowed: {overflow}")
+                print(
+                    f"  Reflowed into paragraph_rect={render_rect} fs={effective_font_size:.2f} leading={paragraph['leading']:.2f} lh={lineheight:.3f}",
+                    file=sys.stderr,
+                )
     except Exception as te:
         doc.close()
         return {"success": False, "error": f"Text insertion failed: {te}"}

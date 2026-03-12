@@ -19,6 +19,9 @@ import fitz
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 FONT_DIR = os.path.join(SCRIPT_DIR, "fonts")
+PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
+PUBLIC_DIR = os.path.join(PROJECT_ROOT, "public")
+TEMP_DIR = os.path.join(PROJECT_ROOT, "storage", "app", "temp")
 
 
 PDF_FONT_VARIANTS = {
@@ -43,6 +46,24 @@ PDF_FONT_VARIANTS = {
 }
 
 FONT_FILE_VARIANTS = {
+    "Arimo": {
+        "normal": os.path.join(FONT_DIR, "Arimo-Regular.ttf"),
+        "bold": os.path.join(FONT_DIR, "Arimo-Bold.ttf"),
+        "italic": os.path.join(FONT_DIR, "Arimo-Regular.ttf"),
+        "boldItalic": os.path.join(FONT_DIR, "Arimo-Bold.ttf"),
+    },
+    "Tinos": {
+        "normal": os.path.join(FONT_DIR, "Tinos-Regular.ttf"),
+        "bold": os.path.join(FONT_DIR, "Tinos-Bold.ttf"),
+        "italic": os.path.join(FONT_DIR, "Tinos-Regular.ttf"),
+        "boldItalic": os.path.join(FONT_DIR, "Tinos-Bold.ttf"),
+    },
+    "Cousine": {
+        "normal": os.path.join(FONT_DIR, "Cousine-Regular.ttf"),
+        "bold": os.path.join(FONT_DIR, "Cousine-Bold.ttf"),
+        "italic": os.path.join(FONT_DIR, "Cousine-Regular.ttf"),
+        "boldItalic": os.path.join(FONT_DIR, "Cousine-Bold.ttf"),
+    },
     "Helvetica": {
         "normal": os.path.join(FONT_DIR, "Arimo-Regular.ttf"),
         "bold": os.path.join(FONT_DIR, "Arimo-Bold.ttf"),
@@ -64,6 +85,18 @@ FONT_FILE_VARIANTS = {
 }
 
 HTML_FONT_FAMILY_ALIASES = {
+    "Arimo": [
+        "Arimo",
+        "Arimo-Regular",
+    ],
+    "Tinos": [
+        "Tinos",
+        "Tinos-Regular",
+    ],
+    "Cousine": [
+        "Cousine",
+        "Cousine-Regular",
+    ],
     "Helvetica": [
         "Helvetica",
         "Arial",
@@ -89,6 +122,105 @@ HTML_FONT_FAMILY_ALIASES = {
         "monospace",
     ],
 }
+
+EMBEDDED_FONT_METADATA_CACHE: dict[str, dict[str, Any]] = {}
+
+EMBEDDED_FONT_BYPASS_FAMILIES = {
+    "Arial",
+    "Helvetica",
+    "Verdana",
+    "Tahoma",
+    "TahomaUnicode",
+    "Times",
+    "TimesNewRoman",
+    "Courier",
+    "Calibri",
+    "Roboto",
+    "Lato",
+    "Montserrat",
+    "OpenSans",
+    "Poppins",
+    "Raleway",
+    "Nunito",
+    "Inter",
+    "Oswald",
+    "SourceSansPro",
+    "PlayfairDisplay",
+    "Merriweather",
+}
+
+
+def normalize_exact_font_family(value: Any) -> str:
+    cleaned = str(value or "").strip().replace('"', "").replace("'", "")
+    if not cleaned:
+        return ""
+
+    if "+" in cleaned:
+        prefix, remainder = cleaned.split("+", 1)
+        if len(prefix) == 6:
+            cleaned = remainder
+
+    if len(cleaned) > 7 and cleaned[:6].isalpha() and cleaned[6:7].isupper():
+        maybe = cleaned[6:]
+        if maybe[:1].isupper():
+            cleaned = maybe
+
+    base = cleaned.split("-", 1)[0].split("_", 1)[0].split(",", 1)[0].strip()
+    suffixes = (
+        "Thin", "Hairline", "ExtraLight", "UltraLight", "Light",
+        "Regular", "Medium", "SemiBold", "DemiBold", "Bold",
+        "ExtraBold", "UltraBold", "Black", "Heavy",
+    )
+    family = base
+    for suffix in suffixes:
+        if family.endswith(suffix) and len(family) > len(suffix):
+            family = family[: -len(suffix)]
+            break
+    return family.strip()
+
+
+def should_bypass_embedded_font(value: Any) -> bool:
+    normalized = normalize_exact_font_family(value)
+    return normalized in EMBEDDED_FONT_BYPASS_FAMILIES if normalized else False
+
+
+def load_embedded_font_metadata(document_id: Any) -> dict[str, Any]:
+    key = str(document_id or "").strip()
+    if not key:
+        return {}
+    if key in EMBEDDED_FONT_METADATA_CACHE:
+        return EMBEDDED_FONT_METADATA_CACHE[key]
+
+    path = os.path.join(TEMP_DIR, f"embedded_fonts_{key}.json")
+    if not os.path.exists(path):
+        EMBEDDED_FONT_METADATA_CACHE[key] = {}
+        return {}
+
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    EMBEDDED_FONT_METADATA_CACHE[key] = data
+    return data
+
+
+def embedded_font_public_path_to_absolute(web_path: Any) -> str:
+    text = str(web_path or "").strip()
+    if not text:
+        return ""
+    if os.path.isabs(text) and os.path.exists(text):
+        return text
+    if text.startswith("/"):
+        candidate = os.path.join(PUBLIC_DIR, text.lstrip("/"))
+        if os.path.exists(candidate):
+            return candidate
+    candidate = os.path.join(PUBLIC_DIR, text)
+    if os.path.exists(candidate):
+        return candidate
+    return ""
 
 
 def clamp_page_index(value: Any, page_count: int) -> Optional[int]:
@@ -134,9 +266,18 @@ def to_rect(page: fitz.Page, ann: Dict[str, Any]) -> Optional[fitz.Rect]:
 
 
 def normalize_font_family(value: Any) -> str:
+    exact_family = normalize_exact_font_family(value)
+    if exact_family in FONT_FILE_VARIANTS:
+        return exact_family
     lower = str(value or "").strip().lower().replace('"', "").replace("'", "")
     lower = lower.replace(" ", "").replace("-", "")
 
+    if "arimo" in lower:
+        return "Arimo"
+    if "tinos" in lower:
+        return "Tinos"
+    if "cousine" in lower:
+        return "Cousine"
     if any(token in lower for token in ("courier", "monospace")):
         return "Courier"
     if any(token in lower for token in ("arial", "helvetica", "verdana", "trebuchet", "geneva", "sansserif")):
@@ -156,6 +297,12 @@ def normalize_font_family(value: Any) -> str:
 
 def css_font_family(value: Any) -> str:
     family = normalize_font_family(value)
+    if family == "Arimo":
+        return "Arimo, Helvetica, Arial, sans-serif"
+    if family == "Tinos":
+        return "Tinos, Times New Roman, serif"
+    if family == "Cousine":
+        return "Cousine, Courier New, monospace"
     if family == "TimesRoman":
         return "Times New Roman, serif"
     if family == "Courier":
@@ -203,6 +350,15 @@ def build_annotation_htmlbox_css(ann: Dict[str, Any], font_size: float, opacity:
     text_decoration = "underline" if ann.get("underline") else "none"
     font_family = css_font_family(ann.get("fontFamily"))
     text_color = str(ann.get("textColor") or "#000000").strip() or "#000000"
+    preserve_extracted_lines = bool(ann.get("promotedFromExtraction")) and not bool(ann.get("promotedReflowEnabled"))
+    try:
+        line_height_value = float(ann.get("lineHeight") or 0)
+    except Exception:
+        line_height_value = 0.0
+    line_height_css = f"{line_height_value}pt" if line_height_value > 0 else "normal"
+    white_space = "pre" if preserve_extracted_lines else "pre-wrap"
+    overflow_wrap = "normal" if preserve_extracted_lines else "break-word"
+    word_break = "normal" if preserve_extracted_lines else "break-word"
     return (
         f"{HTML_FONT_FACE_CSS}\n"
         "body { margin: 0; padding: 0; }\n"
@@ -217,11 +373,11 @@ def build_annotation_htmlbox_css(ann: Dict[str, Any], font_size: float, opacity:
         f"  text-align: {text_align};\n"
         f"  text-decoration: {text_decoration};\n"
         f"  opacity: {opacity};\n"
-        "  line-height: normal;\n"
-        "  white-space: pre-wrap;\n"
+        f"  line-height: {line_height_css};\n"
+        f"  white-space: {white_space};\n"
         "  hyphens: none;\n"
-        "  overflow-wrap: break-word;\n"
-        "  word-break: break-word;\n"
+        f"  overflow-wrap: {overflow_wrap};\n"
+        f"  word-break: {word_break};\n"
         "}\n"
         ".annotation-box p, .annotation-box div, .annotation-box span {\n"
         "  margin-top: 0;\n"
@@ -251,7 +407,113 @@ def is_italic_style(value: Any) -> bool:
     return "italic" in lower or "oblique" in lower
 
 
+def resolve_embedded_font_entry(ann: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    document_id = ann.get("__documentId") or ann.get("documentId")
+    metadata = load_embedded_font_metadata(document_id)
+    if not metadata:
+        return None
+
+    raw_exact = str(ann.get("fontSourceName") or ann.get("fontFamily") or "").strip()
+    normalized_exact = normalize_exact_font_family(raw_exact)
+    normalized_family = normalize_exact_font_family(ann.get("fontFamily"))
+    if should_bypass_embedded_font(normalized_exact) or should_bypass_embedded_font(normalized_family):
+        return None
+    wants_bold = is_bold_weight(ann.get("fontWeight"))
+    wants_italic = is_italic_style(ann.get("fontStyle"))
+
+    best_entry = None
+    best_score: tuple[int, int, int] | None = None
+
+    for font_key, font_data in metadata.items():
+        if not isinstance(font_data, dict):
+            continue
+        clean_name = str(font_data.get("clean_name") or font_key or "").strip()
+        family_name = str(font_data.get("family") or clean_name or "").strip()
+        normalized_clean = normalize_exact_font_family(clean_name)
+        normalized_entry_family = normalize_exact_font_family(family_name)
+        weight_text = str(font_data.get("css_weight") or "400").strip()
+        style_text = str(font_data.get("css_style") or "normal").strip().lower()
+        try:
+            weight_value = int(float(weight_text))
+        except Exception:
+            weight_value = 400
+        score = 0
+        if raw_exact and clean_name.lower() == raw_exact.lower():
+            score += 120
+        if normalized_exact and normalized_clean.lower() == normalized_exact.lower():
+            score += 100
+        if normalized_exact and normalized_entry_family.lower() == normalized_exact.lower():
+            score += 80
+        if normalized_family and normalized_entry_family.lower() == normalized_family.lower():
+            score += 60
+
+        if wants_bold:
+            score += 20 if weight_value >= 600 else -10
+        else:
+            score += 20 if weight_value < 600 else -10
+
+        if wants_italic:
+            score += 10 if style_text == "italic" else -5
+        else:
+            score += 10 if style_text != "italic" else -5
+
+        if score <= 0:
+            continue
+
+        weight_distance = abs(weight_value - (700 if wants_bold else 400))
+        style_penalty = 0 if (wants_italic == (style_text == "italic")) else 1
+        candidate_score = (score, -style_penalty, -weight_distance)
+        if best_score is None or candidate_score > best_score:
+            absolute_path = embedded_font_public_path_to_absolute(font_data.get("file_path"))
+            if not absolute_path:
+                continue
+            best_score = candidate_score
+            best_entry = {
+                "clean_name": clean_name,
+                "family": family_name,
+                "css_weight": weight_value,
+                "css_style": style_text,
+                "fontfile": absolute_path,
+            }
+
+    return best_entry
+
+
+def should_use_htmlbox_for_text(ann: Dict[str, Any], embedded_font_entry: Optional[Dict[str, Any]]) -> bool:
+    if not ann.get("promotedFromExtraction"):
+        return True
+    if embedded_font_entry is None:
+        return True
+
+    exact_family = normalize_exact_font_family(ann.get("fontSourceName") or ann.get("fontFamily"))
+    return exact_family in {"Arimo", "Tinos", "Cousine"}
+
+
+def expanded_text_rect(
+    page: fitz.Page,
+    rect: fitz.Rect,
+    line_count: int,
+    line_height: float,
+    padding_top: float = 0.0,
+    padding_bottom: float = 0.0,
+) -> fitz.Rect:
+    if line_count <= 0 or line_height <= 0:
+        return rect
+    required_height = padding_top + (line_count * line_height) + padding_bottom
+    if required_height <= rect.height + 0.5:
+        return rect
+    return fitz.Rect(
+        rect.x0,
+        rect.y0,
+        rect.x1,
+        min(page.rect.y1, rect.y0 + required_height),
+    )
+
+
 def resolve_text_fontname(ann: Dict[str, Any]) -> str:
+    embedded_entry = resolve_embedded_font_entry(ann)
+    if embedded_entry:
+        return resolve_text_font_resource_name(ann)
     family = normalize_font_family(ann.get("fontFamily"))
     variants = PDF_FONT_VARIANTS.get(family, PDF_FONT_VARIANTS["Helvetica"])
     is_bold = is_bold_weight(ann.get("fontWeight"))
@@ -266,6 +528,9 @@ def resolve_text_fontname(ann: Dict[str, Any]) -> str:
 
 
 def resolve_text_fontfile(ann: Dict[str, Any]) -> Optional[str]:
+    embedded_entry = resolve_embedded_font_entry(ann)
+    if embedded_entry:
+        return embedded_entry.get("fontfile")
     family = normalize_font_family(ann.get("fontFamily"))
     variants = FONT_FILE_VARIANTS.get(family, FONT_FILE_VARIANTS["Helvetica"])
     is_bold = is_bold_weight(ann.get("fontWeight"))
@@ -282,6 +547,11 @@ def resolve_text_fontfile(ann: Dict[str, Any]) -> Optional[str]:
 
 
 def resolve_text_font_resource_name(ann: Dict[str, Any]) -> str:
+    embedded_entry = resolve_embedded_font_entry(ann)
+    if embedded_entry:
+        clean_name = str(embedded_entry.get("clean_name") or "Embedded").strip()
+        safe_name = "".join(ch for ch in clean_name if ch.isalnum()) or "Embedded"
+        return f"Annot{safe_name}"
     family = normalize_font_family(ann.get("fontFamily"))
     is_bold = is_bold_weight(ann.get("fontWeight"))
     is_italic = is_italic_style(ann.get("fontStyle"))
@@ -545,6 +815,12 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
     if not text:
         return
     size = float(ann.get("fontSize", 12) or 12)
+    try:
+        line_height = float(ann.get("lineHeight") or 0)
+    except Exception:
+        line_height = 0.0
+    if line_height <= 0:
+        line_height = size * 1.2
     color = hex_to_rgb(ann.get("textColor") or "#000000")
     background = str(ann.get("backgroundColor") or "").strip().lower()
     background_color = None if not background or background == "transparent" else hex_to_rgb(background)
@@ -552,9 +828,11 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
     fontname = resolve_text_fontname(ann)
     fontfile = resolve_text_fontfile(ann)
     align = parse_text_align(ann.get("textAlign"))
+    preserve_extracted_lines = bool(ann.get("promotedFromExtraction")) and not bool(ann.get("promotedReflowEnabled"))
     rect = to_rect(page, ann)
     custom_font = None
     html_archive = None
+    embedded_font_entry = resolve_embedded_font_entry(ann)
     if fontfile:
         try:
             custom_font = fitz.Font(fontfile=fontfile)
@@ -573,16 +851,36 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
                 overlay=True,
                 fill_opacity=opacity,
             )
-        try:
-            html_archive = fitz.Archive(FONT_DIR)
-        except Exception:
-            html_archive = None
+        if should_use_htmlbox_for_text(ann, embedded_font_entry):
+            try:
+                html_archive = fitz.Archive(FONT_DIR)
+            except Exception:
+                html_archive = None
+        preview_font = custom_font or fitz.Font(fontname)
+        preview_padding_x = 0.0 if preserve_extracted_lines else min(6.0, max(1.0, rect.width * 0.03))
+        preview_padding_top = 0.0 if preserve_extracted_lines else min(2.0, max(0.5, rect.height * 0.01))
+        preview_available_width = max(1.0, rect.width - (preview_padding_x * 2.0))
+        preview_lines = (
+            text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+            if preserve_extracted_lines
+            else wrap_text_to_width(preview_font, text, size, preview_available_width)
+        )
+        text_rect = expanded_text_rect(
+            page,
+            rect,
+            len(preview_lines),
+            line_height,
+            preview_padding_top + size,
+            max(1.0, line_height * 0.35),
+        )
         if html_archive is not None:
+            padding_x = 0.0 if preserve_extracted_lines else 6.0
+            padding_y = 0.0 if preserve_extracted_lines else 2.0
             inner_rect = fitz.Rect(
-                rect.x0 + 6.0,
-                rect.y0 + 2.0,
-                rect.x1 - 6.0,
-                rect.y1 - 2.0,
+                text_rect.x0 + padding_x,
+                text_rect.y0 + padding_y,
+                text_rect.x1 - padding_x,
+                text_rect.y1 - padding_y,
             )
             if inner_rect.width > 1 and inner_rect.height > 1:
                 html_box = build_annotation_htmlbox_markup(ann, text)
@@ -601,25 +899,24 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
                         return
                 except Exception:
                     pass
-        draw_font = custom_font or fitz.Font(fontname)
-        padding_x = min(6.0, max(1.0, rect.width * 0.03))
-        padding_top = min(2.0, max(0.5, rect.height * 0.01))
-        available_width = max(1.0, rect.width - (padding_x * 2.0))
-        line_height = size * 1.2
-        lines = wrap_text_to_width(draw_font, text, size, available_width)
-        baseline_y = rect.y0 + size + padding_top
+        draw_font = preview_font
+        padding_x = preview_padding_x
+        padding_top = preview_padding_top
+        available_width = preview_available_width
+        lines = preview_lines
+        baseline_y = text_rect.y0 + size + padding_top
 
         for line_index, line in enumerate(lines):
             line_baseline_y = baseline_y + (line_index * line_height)
-            if line_baseline_y > rect.y1:
+            if line_baseline_y > text_rect.y1:
                 break
 
             text_width = draw_font.text_length(line, fontsize=size) if line else 0.0
-            draw_x = rect.x0 + padding_x
+            draw_x = text_rect.x0 + padding_x
             if align == 1:
-                draw_x = rect.x0 + padding_x + max(0.0, (available_width - text_width) / 2.0)
+                draw_x = text_rect.x0 + padding_x + max(0.0, (available_width - text_width) / 2.0)
             elif align == 2:
-                draw_x = rect.x1 - padding_x - text_width
+                draw_x = text_rect.x1 - padding_x - text_width
 
             page.insert_text(
                 fitz.Point(draw_x, line_baseline_y),
@@ -633,7 +930,7 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
             )
 
             if ann.get("underline") and line:
-                underline_y = min(rect.y1 - max(0.5, size * 0.08), line_baseline_y + max(0.5, size * 0.08))
+                underline_y = min(text_rect.y1 - max(0.5, size * 0.08), line_baseline_y + max(0.5, size * 0.08))
                 page.draw_line(
                     fitz.Point(draw_x, underline_y),
                     fitz.Point(draw_x + text_width, underline_y),

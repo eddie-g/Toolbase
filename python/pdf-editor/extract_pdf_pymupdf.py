@@ -518,10 +518,10 @@ def extract_embedded_fonts(pdf_path, document_id, output_dir=None):
     and CSS metadata (family, weight, style).
     """
     if output_dir is None:
-        # Default: save under public/fonts/extracted/{document_id}/
+        # Default: save under a writable public font folder.
         script_dir = os.path.dirname(os.path.abspath(__file__))
         project_root = os.path.abspath(os.path.join(script_dir, '..', '..'))
-        output_dir = os.path.join(project_root, 'public', 'fonts', 'extracted', str(document_id))
+        output_dir = os.path.join(project_root, 'public', 'fonts', 'runtime-extracted', str(document_id))
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -573,7 +573,9 @@ def extract_embedded_fonts(pdf_path, document_id, output_dir=None):
                 css_weight = '800'
             elif 'semibold' in lower_name or 'demibold' in lower_name:
                 css_weight = '600'
-            elif 'bold' in lower_name or 'black' in lower_name or 'heavy' in lower_name:
+            elif 'black' in lower_name or 'heavy' in lower_name:
+                css_weight = '900'
+            elif 'bold' in lower_name:
                 css_weight = '700'
             elif 'medium' in lower_name:
                 css_weight = '500'
@@ -592,8 +594,8 @@ def extract_embedded_fonts(pdf_path, document_id, output_dir=None):
             with open(filepath, 'wb') as f:
                 f.write(content)
 
-            # Web-relative path (from public/)
-            web_path = f"/fonts/extracted/{document_id}/{filename}"
+            # Web-relative path served directly from public/.
+            web_path = f"/fonts/runtime-extracted/{document_id}/{filename}"
 
             embedded_fonts[clean_name] = {
                 'pdf_font_name': font_name,
@@ -1210,6 +1212,230 @@ def _merge_adjacent_page_blocks(page_blocks, page_width, page_words, page_lines)
             new_bn = resolve_block_num(old_bn)
             if new_bn is not None:
                 line['block_num'] = new_bn
+
+    return page_blocks
+
+
+def _merge_stacked_paragraph_blocks(page_blocks, page_words, page_lines):
+    """
+    Merge vertically stacked synthetic paragraph fragments back into a single block.
+    This targets stamped annotation text that lacks source_content_ops and is emitted
+    as multiple same-column blocks with tiny vertical gaps.
+    """
+    if len(page_blocks) <= 1:
+        return page_blocks
+
+    merge_map = {}
+    changed = True
+
+    def _style_key(block):
+        return (
+            str(block.get('font', '') or '').strip().lower(),
+            round(float(block.get('font_size', 0) or 0), 1),
+            str(block.get('font_weight', '')),
+            bool(block.get('bold')),
+            bool(block.get('italic')),
+            str(block.get('hex_color', '')),
+        )
+
+    while changed:
+        changed = False
+        new_blocks = []
+        used = set()
+
+        sorted_pairs = sorted(enumerate(page_blocks), key=lambda pair: (
+            round(float(pair[1].get('left', 0) or 0), 1),
+            round(float(pair[1].get('top', 0) or 0), 1),
+        ))
+
+        index_lookup = {orig_idx: pos for pos, (orig_idx, _block) in enumerate(sorted_pairs)}
+
+        for original_index, block_a in sorted_pairs:
+            if original_index in used:
+                continue
+
+            a_top = float(block_a.get('top', 0) or 0)
+            a_left = float(block_a.get('left', 0) or 0)
+            a_width = float(block_a.get('width', 0) or 0)
+            a_height = float(block_a.get('height', 0) or 0)
+            a_bottom = a_top + a_height
+            a_line_height = float(block_a.get('avg_line_height') or block_a.get('line_height') or 0) or max(1.0, a_height)
+            a_source_ops = block_a.get('source_content_ops') or []
+
+            merge_target_index = None
+
+            if a_source_ops or block_a.get('_from_xgap_split'):
+                new_blocks.append(block_a)
+                used.add(original_index)
+                continue
+
+            for candidate_pos in range(index_lookup[original_index] + 1, len(sorted_pairs)):
+                candidate_index, block_b = sorted_pairs[candidate_pos]
+                if candidate_index in used:
+                    continue
+
+                b_top = float(block_b.get('top', 0) or 0)
+                b_left = float(block_b.get('left', 0) or 0)
+                b_width = float(block_b.get('width', 0) or 0)
+                b_height = float(block_b.get('height', 0) or 0)
+                b_bottom = b_top + b_height
+                b_line_height = float(block_b.get('avg_line_height') or block_b.get('line_height') or 0) or max(1.0, b_height)
+                b_source_ops = block_b.get('source_content_ops') or []
+
+                if b_source_ops or block_b.get('_from_xgap_split'):
+                    continue
+
+                if _style_key(block_a) != _style_key(block_b):
+                    continue
+
+                if abs(a_left - b_left) > 3:
+                    continue
+
+                horizontal_overlap = min(a_left + a_width, b_left + b_width) - max(a_left, b_left)
+                min_width = min(a_width, b_width)
+                if min_width <= 0 or horizontal_overlap / min_width < 0.6:
+                    continue
+
+                vertical_gap = b_top - a_bottom
+                base_gap = max(8.0, max(a_line_height, b_line_height) * 1.15)
+                right_edge_delta = abs((a_left + a_width) - (b_left + b_width))
+                a_line_count = int(block_a.get('line_count', 0) or 0)
+                b_line_count = int(block_b.get('line_count', 0) or 0)
+                multiline_fragment = (
+                    a_line_count > 1
+                    or b_line_count > 1
+                )
+                similar_column_width = right_edge_delta <= max(24.0, max(a_line_height, b_line_height) * 2.0)
+                shorter_fragment_line_count = min(a_line_count or 1, b_line_count or 1)
+                width_ratio = (min_width / max(a_width, b_width)) if max(a_width, b_width) > 0 else 0.0
+                short_lead_paragraph_pair = (
+                    multiline_fragment
+                    and shorter_fragment_line_count <= 2
+                    and width_ratio <= 0.82
+                )
+                single_line_blank_separator_pair = (
+                    a_line_count == 1
+                    and b_line_count == 1
+                    and similar_column_width
+                )
+                a_text_lines = block_a.get('text_lines') or [block_a.get('text') or '']
+                b_text_lines = block_b.get('text_lines') or [block_b.get('text') or '']
+                a_primary_line = str(a_text_lines[0] if a_text_lines else block_a.get('text') or '').strip()
+                b_primary_line = str(b_text_lines[0] if b_text_lines else block_b.get('text') or '').strip()
+                single_line_text_length = max(len(a_primary_line), len(b_primary_line))
+                single_line_visual_width = max(a_width, b_width)
+                compact_single_line_pair = (
+                    single_line_text_length <= 14
+                    or single_line_visual_width <= max(60.0, max(a_line_height, b_line_height) * 5.5)
+                )
+                single_line_blank_separator_pair = single_line_blank_separator_pair and compact_single_line_pair
+                compatible_column_shape = similar_column_width or short_lead_paragraph_pair
+                max_allowed_gap = base_gap
+                widened_blank_line_pair = (
+                    (multiline_fragment and compatible_column_shape)
+                    or single_line_blank_separator_pair
+                )
+                if widened_blank_line_pair:
+                    # Blank lines inside one saved paragraph produce a larger synthetic
+                    # gap than ordinary wrapped lines, but should still stay in one block.
+                    max_allowed_gap = max(max_allowed_gap, max(a_line_height, b_line_height) * 2.35)
+                if vertical_gap < -1.0 or vertical_gap > max_allowed_gap:
+                    continue
+
+                merge_target_index = candidate_index
+                break
+
+            if merge_target_index is None:
+                new_blocks.append(block_a)
+                used.add(original_index)
+                continue
+
+            block_b = page_blocks[merge_target_index]
+            absorbed_block_num = block_b['block_num']
+            surviving_block_num = block_a['block_num']
+            merge_map[absorbed_block_num] = surviving_block_num
+
+            merged_left = min(block_a['left'], block_b['left'])
+            merged_top = min(block_a['top'], block_b['top'])
+            merged_right = max(block_a['left'] + block_a['width'], block_b['left'] + block_b['width'])
+            merged_bottom = max(block_a['top'] + block_a['height'], block_b['top'] + block_b['height'])
+
+            insert_blank_separator = widened_blank_line_pair and vertical_gap > (max(a_line_height, b_line_height) * 1.4)
+            separator_lines = [''] if insert_blank_separator else []
+            separator_line_bboxes = []
+            if insert_blank_separator:
+                blank_height = max(a_line_height, b_line_height)
+                blank_top = max(a_bottom, b_top - blank_height)
+                blank_bottom = min(b_top, blank_top + blank_height)
+                if blank_bottom <= blank_top:
+                    blank_bottom = blank_top + blank_height
+                separator_line_bboxes.append([merged_left, blank_top, merged_left, blank_bottom])
+
+            merged_block = {
+                **block_a,
+                'block_num': surviving_block_num,
+                'left': merged_left,
+                'top': merged_top,
+                'width': merged_right - merged_left,
+                'height': merged_bottom - merged_top,
+                'text_lines': (block_a.get('text_lines') or []) + separator_lines + (block_b.get('text_lines') or []),
+                'spans': (block_a.get('spans') or []) + (block_b.get('spans') or []),
+                'line_bboxes': (block_a.get('line_bboxes') or []) + separator_line_bboxes + (block_b.get('line_bboxes') or []),
+                'line_count': int(block_a.get('line_count', 0) or 0) + len(separator_lines) + int(block_b.get('line_count', 0) or 0),
+                'source_content_ops': _dedupe_source_content_ops((block_a.get('source_content_ops') or []) + (block_b.get('source_content_ops') or [])),
+                'has_mixed_styles': bool(block_a.get('has_mixed_styles')) or bool(block_b.get('has_mixed_styles')),
+            }
+            merged_block['text'] = '\n'.join(merged_block['text_lines'])
+            merged_block['text_single_line'] = ' '.join(merged_block['text_lines'])
+
+            all_heights = [bbox[3] - bbox[1] for bbox in merged_block.get('line_bboxes', [])]
+            if all_heights:
+                merged_block['avg_line_height'] = sum(all_heights) / len(all_heights)
+                merged_block['line_height'] = merged_block['avg_line_height']
+
+            new_blocks.append(merged_block)
+            used.add(original_index)
+            used.add(merge_target_index)
+            changed = True
+
+        page_blocks = new_blocks
+
+    old_to_new = {}
+    for idx, block in enumerate(page_blocks):
+        old_to_new[block['block_num']] = idx
+        block['block_num'] = idx
+
+    def resolve_block_num(old_num):
+        visited = set()
+        current = old_num
+        while current in merge_map and current not in visited:
+            visited.add(current)
+            current = merge_map[current]
+        return old_to_new.get(current)
+
+    words_to_remove = []
+    for i, word in enumerate(page_words):
+        old_bn = word['block_num']
+        if old_bn in old_to_new:
+            word['block_num'] = old_to_new[old_bn]
+        elif old_bn in merge_map:
+            new_bn = resolve_block_num(old_bn)
+            if new_bn is not None:
+                word['block_num'] = new_bn
+            else:
+                words_to_remove.append(i)
+
+    for line in page_lines:
+        old_bn = line['block_num']
+        if old_bn in old_to_new:
+            line['block_num'] = old_to_new[old_bn]
+        elif old_bn in merge_map:
+            new_bn = resolve_block_num(old_bn)
+            if new_bn is not None:
+                line['block_num'] = new_bn
+
+    for i in reversed(words_to_remove):
+        del page_words[i]
 
     return page_blocks
 
@@ -1885,6 +2111,7 @@ def extract_text_with_pymupdf(pdf_path):
             # Post-process: merge blocks that sit on the same visual line
             # This catches cases where PyMuPDF reports inline text as separate blocks
             page_blocks = _merge_adjacent_page_blocks(page_blocks, page_width, page_words, page_lines)
+            page_blocks = _merge_stacked_paragraph_blocks(page_blocks, page_words, page_lines)
 
             # ── Word-level deduplication ──────────────────────────────
             # PyMuPDF can emit duplicate spans for OCR layers, font

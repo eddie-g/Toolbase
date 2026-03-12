@@ -1,5 +1,8 @@
 @php
     $hasOriginalBackup = filled($document->original_backup_path) && \Illuminate\Support\Facades\Storage::exists($document->original_backup_path);
+    $editorUser = auth()->user() ?? auth('admin')->user();
+    $editorIsAdmin = auth('admin')->check();
+    $editorIsAuthenticated = auth()->check() || $editorIsAdmin;
 @endphp
 <!DOCTYPE html>
 <html lang="en">
@@ -65,6 +68,18 @@
             @font-face {
                 font-family: 'Gelasio';
                 src: url('/fonts/Gelasio-Bold.ttf') format('truetype');
+                font-weight: 700;
+                font-style: normal;
+            }
+            @font-face {
+                font-family: 'Cousine';
+                src: url('/fonts/Cousine-Regular.ttf') format('truetype');
+                font-weight: 400;
+                font-style: normal;
+            }
+            @font-face {
+                font-family: 'Cousine';
+                src: url('/fonts/Cousine-Bold.ttf') format('truetype');
                 font-weight: 700;
                 font-style: normal;
             }
@@ -2178,6 +2193,11 @@
                 overflow-wrap: break-word;
                 user-select: text;
             }
+            .annotation.promoted-extraction .annotation-text {
+                padding: 0;
+                white-space: pre;
+                overflow-wrap: normal;
+            }
             .annotation.has-bounds .annotation-text {
                 display: block;
                 width: 100%;
@@ -3106,18 +3126,18 @@
                             </svg>
                         </button>
                         
-                        @guest
+                        @if(!$editorIsAuthenticated)
                             <a href="{{ route('login') }}" class="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition">
                                 Login
                             </a>
-                        @endguest
+                        @endif
 
-                        @auth
+                        @if($editorIsAuthenticated && $editorUser)
                             <div class="relative ml-2">
                                 <button type="button" class="flex items-center justify-center w-10 h-10 rounded-full bg-gray-700 text-white hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-white transition" id="user-menu-button" aria-expanded="false" aria-haspopup="true" onclick="const menu = document.getElementById('user-menu'); menu.classList.toggle('hidden');">
                                     <span class="sr-only">Open user menu</span>
-                                    @if(Auth::user()->avatar)
-                                        <img class="h-9 w-9 rounded-full object-cover border-2 border-gray-600" src="{{ Auth::user()->avatar }}" alt="">
+                                    @if(!empty($editorUser->avatar ?? null))
+                                        <img class="h-9 w-9 rounded-full object-cover border-2 border-gray-600" src="{{ $editorUser->avatar }}" alt="">
                                     @else
                                         <svg class="h-6 w-6 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
                                     @endif
@@ -3126,14 +3146,14 @@
                                 <div class="hidden absolute right-0 z-50 mt-2 w-48 origin-top-right rounded-xl bg-[#1a2332] py-2 shadow-2xl ring-1 ring-white/10 focus:outline-none border border-gray-700/50 backdrop-blur-xl" role="menu" aria-orientation="vertical" aria-labelledby="user-menu-button" tabindex="-1" id="user-menu">
                                     <div class="px-4 py-3 border-b border-gray-700/50 mb-1">
                                         <p class="text-xs text-gray-400">Signed in as</p>
-                                        <p class="text-sm font-medium text-white truncate">{{ Auth::user()->name }}</p>
+                                        <p class="text-sm font-medium text-white truncate">{{ $editorUser->name ?? $editorUser->email ?? 'User' }}</p>
                                     </div>
-                                    @if(auth()->guard('admin')->check())
+                                    @if($editorIsAdmin)
                                     <a href="/admin" class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-700/50 hover:text-white transition-colors" role="menuitem" tabindex="-1">Admin Dashboard</a>
                                     <a href="{{ route('filament.admin.pages.security') }}" class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-700/50 hover:text-white transition-colors" role="menuitem" tabindex="-1">Security</a>
                                     @endif
                                     <a href="/portal" class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-700/50 hover:text-white transition-colors" role="menuitem" tabindex="-1">My Dashboard</a>
-                                    <form method="POST" action="{{ route('logout') }}">
+                                    <form method="POST" action="{{ $editorIsAdmin ? route('filament.admin.auth.logout') : route('logout') }}">
                                         @csrf
                                         <button type="submit" class="block w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-gray-700/50 hover:text-red-300 transition-colors" role="menuitem" tabindex="-1">Sign out</button>
                                     </form>
@@ -3148,7 +3168,7 @@
                                     }
                                 });
                             </script>
-                        @endauth
+                        @endif
                     </div>
                 </div>
             </div>
@@ -3535,7 +3555,7 @@
         </div>
         </div>
         <div class="tab-content{{ ($activeTab ?? '') === 'extracted-text' ? ' active' : '' }}" id="extracted-text" @if(($activeTab ?? 'pdf-editor') !== 'extracted-text') style="display:none;" @endif>
-            @guest
+            @if(!$editorIsAuthenticated)
                 <div class="absolute inset-0 z-50 flex items-center justify-center backdrop-blur-sm bg-gray-900/50">
                     <div class="p-8 text-center bg-gray-800 border border-gray-700 shadow-2xl rounded-2xl max-w-md mx-4">
                         <div class="mb-4 inline-flex items-center justify-center w-16 h-16 rounded-full bg-emerald-500/10">
@@ -3555,8 +3575,8 @@
                         </div>
                     </div>
                 </div>
-            @endguest
-        <div class="layout" @guest style="pointer-events: none; opacity: 0.5;" @endguest>
+            @endif
+        <div class="layout" @if(!$editorIsAuthenticated) style="pointer-events: none; opacity: 0.5;" @endif>
             <!-- AI Chat Sidebar -->
             <aside class="ai-chat-sidebar">
                 <div class="ai-chat-header">AI Assistant</div>
@@ -5428,6 +5448,7 @@
             const extractionDataUrl = "{{ route('documents.getExtractionData', $document) }}";
             const processFitzUrl = "{{ route('documents.processFitz', $document) }}";
             const fitzExtractionDataUrl = "{{ route('documents.getFitzExtractionData', $document) }}";
+            const prepareOverlayUrl = "{{ route('documents.prepareOverlay', $document) }}";
             const restoreOriginalUrl = "{{ route('documents.restoreOriginal', $document) }}";
             const createWorkingCopySnapshotUrl = "{{ route('documents.createWorkingCopySnapshot', $document) }}";
             const restoreWorkingCopyUrl = "{{ route('documents.restoreWorkingCopy', $document) }}";
@@ -5439,6 +5460,7 @@
             const isImageDocument = documentMimeType && documentMimeType.startsWith('image/');
             const viewer = document.getElementById('viewer');
             const savedEditPreviewBtn = document.getElementById('saved-edit-preview-btn');
+            const promotedTextAnnotationsEnabled = true;
 
             function updateSavedEditPreviewLink(url) {
                 if (!savedEditPreviewBtn) return;
@@ -5817,7 +5839,7 @@
             document.getElementById('remove-all-annotations')?.addEventListener('click', () => {
                 if (annotations.length === 0) return;
                 if (confirm(`Remove all ${annotations.length} annotations?`)) {
-                    annotations.length = 0;
+                    clearAllAnnotationRecords();
                     persistAnnotations();
                     rerenderPdf();
                     updateAnnotationsList();
@@ -5929,6 +5951,10 @@
             let overlayExtractionData = null;
             let overlayEmbeddedFonts = null;  // Embedded font data from PDF extraction
             let overlayPdfDoc = null;  // Track overlay PDF for cleanup
+            let promotedExtractionBootstrapPromise = null;
+            let promotedExtractionHydrated = false;
+            const deletedPromotedSourceKeys = new Set();
+            const deletedSavedTextAnnotationIds = new Set();
             let overlayEditedFields = new Map();
             let overlayPersistedEdits = new Map();
             let overlayLoadToken = 0;
@@ -6078,6 +6104,12 @@
             const _getSystemFallback = (family) => {
                 const lower = family.toLowerCase();
                 const fallbacks = {
+                    'arimo': '"Arimo", Arial, Helvetica, sans-serif',
+                    'tinos': '"Tinos", "Times New Roman", Times, serif',
+                    'cousine': '"Cousine", "Courier New", Courier, monospace',
+                    'gelasio': '"Gelasio", Georgia, serif',
+                    'roboto': '"Roboto", Arial, Helvetica, sans-serif',
+                    'nimbussans': 'Helvetica, Arial, sans-serif',
                     'tahoma': 'Tahoma, Arial, Verdana, sans-serif',
                     'tahomaunicode': 'Tahoma, Arial, Verdana, sans-serif',
                     'timesnewroman': 'Times New Roman, Times, serif',
@@ -6098,6 +6130,203 @@
                 return 'Arial, sans-serif';
             };
 
+            const normalizePdfEditableFontFamily = (fontName) => {
+                if (!fontName) return '';
+                let cleaned = String(fontName).replace(/['"]/g, '').trim();
+
+                if (cleaned.includes('+')) {
+                    const parts = cleaned.split('+', 2);
+                    if (parts[0].length === 6) {
+                        cleaned = parts[1];
+                    }
+                }
+
+                if (/^[A-Za-z]{6}[A-Z]/.test(cleaned) && cleaned.length > 7) {
+                    const withoutPrefix = cleaned.substring(6);
+                    if (/^[A-Z][a-z]/.test(withoutPrefix)) {
+                        cleaned = withoutPrefix;
+                    }
+                }
+
+                const basePart = cleaned.split(/[-_,]/)[0] || cleaned;
+                const weightSuffixes = [
+                    'Thin', 'Hairline', 'ExtraLight', 'UltraLight', 'Light',
+                    'Regular', 'Medium', 'SemiBold', 'DemiBold', 'Bold',
+                    'ExtraBold', 'UltraBold', 'Black', 'Heavy',
+                ];
+                let family = basePart;
+                for (const suffix of weightSuffixes) {
+                    if (family.endsWith(suffix) && family.length > suffix.length) {
+                        family = family.substring(0, family.length - suffix.length);
+                        break;
+                    }
+                }
+
+                return family.replace(/[,\s]+$/g, '').trim();
+            };
+
+            function shouldPreferWebFontFamily(fontName) {
+                const normalized = normalizePdfEditableFontFamily(fontName);
+                if (!normalized) {
+                    return false;
+                }
+                return new Set([
+                    'Roboto',
+                    'OpenSans',
+                    'Lato',
+                    'Montserrat',
+                    'Poppins',
+                    'Raleway',
+                    'Nunito',
+                    'Inter',
+                    'Oswald',
+                    'SourceSansPro',
+                    'PlayfairDisplay',
+                    'Merriweather',
+                ]).has(normalized);
+            }
+
+            function shouldBypassEmbeddedOverlayFont(fontName) {
+                const normalized = normalizePdfEditableFontFamily(fontName);
+                if (!normalized) {
+                    return false;
+                }
+
+                return new Set([
+                    'Arial',
+                    'Helvetica',
+                    'Verdana',
+                    'Tahoma',
+                    'TahomaUnicode',
+                    'Times',
+                    'TimesNewRoman',
+                    'Courier',
+                    'Calibri',
+                    'Roboto',
+                    'Lato',
+                    'Montserrat',
+                    'OpenSans',
+                    'Poppins',
+                    'Raleway',
+                    'Nunito',
+                    'Inter',
+                    'Oswald',
+                    'SourceSansPro',
+                    'PlayfairDisplay',
+                    'Merriweather',
+                ]).has(normalized);
+            }
+
+            function ensureWebFontFamilyLoaded(fontName) {
+                const family = normalizePdfEditableFontFamily(fontName);
+                if (!family || overlayLoadedFonts.has(family)) {
+                    return;
+                }
+                overlayLoadedFonts.add(family);
+                const link = document.createElement('link');
+                link.rel = 'stylesheet';
+                link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap`;
+                document.head.appendChild(link);
+            }
+
+            function preloadExtractionFontFamilies(extractionPages) {
+                (Array.isArray(extractionPages) ? extractionPages : []).forEach((page) => {
+                    (Array.isArray(page?.words) ? page.words : []).forEach((word) => {
+                        if (shouldPreferWebFontFamily(word?.font)) {
+                            ensureWebFontFamilyLoaded(word.font);
+                        }
+                    });
+                    (Array.isArray(page?.blocks) ? page.blocks : []).forEach((block) => {
+                        if (shouldPreferWebFontFamily(block?.font)) {
+                            ensureWebFontFamilyLoaded(block.font);
+                        }
+                    });
+                });
+            }
+
+            const resolveAnnotationCssFontFamily = (fontName, { preferExact = false, exactFontName = '' } = {}) => {
+                if (!fontName) {
+                    return fontMap.Helvetica.css;
+                }
+
+                const rawFamily = String(fontName).replace(/['"]/g, '').trim();
+                const normalizedFamily = normalizePdfEditableFontFamily(rawFamily) || rawFamily;
+                const rawExactName = String(exactFontName || '').replace(/['"]/g, '').trim();
+                const normalizedExactName = normalizePdfEditableFontFamily(rawExactName) || rawExactName;
+                const systemPreferredFamilyMappings = {
+                    Arial: 'Arial, Helvetica, sans-serif',
+                    Helvetica: 'Helvetica, Arial, sans-serif',
+                    Verdana: 'Verdana, Geneva, sans-serif',
+                    Tahoma: 'Tahoma, Arial, Verdana, sans-serif',
+                    TahomaUnicode: 'Tahoma, Arial, Verdana, sans-serif',
+                    TimesNewRoman: '"Times New Roman", Times, serif',
+                    Times: '"Times New Roman", Times, serif',
+                    Courier: '"Courier New", Courier, monospace',
+                    Calibri: 'Calibri, Arial, sans-serif',
+                    Roboto: '"Roboto", Arial, Helvetica, sans-serif',
+                    Lato: '"Lato", Arial, Helvetica, sans-serif',
+                    Montserrat: '"Montserrat", Arial, Helvetica, sans-serif',
+                };
+                for (const [key, value] of Object.entries(systemPreferredFamilyMappings)) {
+                    if (
+                        normalizedFamily.toLowerCase() === key.toLowerCase()
+                        || normalizedExactName.toLowerCase() === key.toLowerCase()
+                    ) {
+                        return value;
+                    }
+                }
+
+                if (preferExact || !fontMap[rawFamily]) {
+                    if (overlayEmbeddedFonts) {
+                        for (const [fontKey, fontData] of Object.entries(overlayEmbeddedFonts)) {
+                            const cleanFontName = String(fontData.clean_name || fontKey || '').trim();
+                            const embeddedFamily = String(fontData.family || fontKey || '').trim();
+                            const normalizedCleanFontName = normalizePdfEditableFontFamily(cleanFontName) || cleanFontName;
+                            const normalizedEmbeddedFamily = normalizePdfEditableFontFamily(embeddedFamily) || embeddedFamily;
+                            if (
+                                rawExactName && (
+                                    cleanFontName.toLowerCase() === rawExactName.toLowerCase()
+                                    || cleanFontName.toLowerCase() === normalizedExactName.toLowerCase()
+                                    || normalizedCleanFontName.toLowerCase() === normalizedExactName.toLowerCase()
+                                )
+                            ) {
+                                return `'PDF_${cleanFontName}', ${_getSystemFallback(normalizedEmbeddedFamily || cleanFontName)}`;
+                            }
+                            if (
+                                embeddedFamily.toLowerCase() === rawFamily.toLowerCase()
+                                || embeddedFamily.toLowerCase() === normalizedFamily.toLowerCase()
+                                || normalizedEmbeddedFamily.toLowerCase() === normalizedFamily.toLowerCase()
+                            ) {
+                                return `'PDF_${embeddedFamily}', ${_getSystemFallback(normalizedFamily || embeddedFamily)}`;
+                            }
+                        }
+                    }
+
+                    const exactFamilyMappings = {
+                        Arimo: '"Arimo", Arial, Helvetica, sans-serif',
+                        Tinos: '"Tinos", "Times New Roman", Times, serif',
+                        Cousine: '"Cousine", "Courier New", Courier, monospace',
+                        Gelasio: '"Gelasio", Georgia, serif',
+                    };
+                    for (const [key, value] of Object.entries(exactFamilyMappings)) {
+                        if (normalizedFamily.toLowerCase() === key.toLowerCase()) {
+                            return value;
+                        }
+                    }
+                }
+
+                if (fontMap[rawFamily]?.css) {
+                    return fontMap[rawFamily].css;
+                }
+
+                const builtinFamily = normalizeBuiltinAnnotationFontFamily(rawFamily);
+                if (!preferExact && fontMap[builtinFamily]?.css) {
+                    return fontMap[builtinFamily].css;
+                }
+
+                return `"${normalizedFamily}", ${_getSystemFallback(normalizedFamily)}`;
+            };
+
             /**
              * Create @font-face CSS rules from embedded PDF fonts.
              * This ensures the overlay uses the exact same fonts as the original PDF.
@@ -6115,10 +6344,20 @@
 
                 for (const [fontKey, fontData] of Object.entries(embeddedFonts)) {
                     const family = fontData.family || fontKey;
+                    const exactFontName = fontData.clean_name || fontKey || family;
+                    if (
+                        shouldBypassEmbeddedOverlayFont(family)
+                        || shouldBypassEmbeddedOverlayFont(exactFontName)
+                    ) {
+                        continue;
+                    }
                     const weight = fontData.css_weight || '400';
                     const fontStyle = fontData.css_style || 'normal';
                     const filePath = fontData.file_path;
                     const ext = fontData.file_ext || 'ttf';
+                    if (!filePath) {
+                        continue;
+                    }
 
                     // Determine format string for @font-face src
                     let format = 'truetype';
@@ -6126,7 +6365,16 @@
                     else if (ext === 'woff') format = 'woff';
                     else if (ext === 'otf' || ext === 'cff') format = 'opentype';
 
+                    const exactEmbeddedFamily = `PDF_${exactFontName}`;
                     const embeddedFamily = `PDF_${family}`;
+
+                    css += `@font-face {\n`;
+                    css += `  font-family: '${exactEmbeddedFamily}';\n`;
+                    css += `  src: url('${filePath}') format('${format}');\n`;
+                    css += `  font-weight: ${weight};\n`;
+                    css += `  font-style: ${fontStyle};\n`;
+                    css += `  font-display: swap;\n`;
+                    css += `}\n\n`;
 
                     css += `@font-face {\n`;
                     css += `  font-family: '${embeddedFamily}';\n`;
@@ -6136,7 +6384,7 @@
                     css += `  font-display: swap;\n`;
                     css += `}\n\n`;
 
-                    console.log(`@font-face: '${embeddedFamily}' weight=${weight} style=${fontStyle} → ${filePath}`);
+                    console.log(`@font-face: '${exactEmbeddedFamily}'/'${embeddedFamily}' weight=${weight} style=${fontStyle} → ${filePath}`);
                 }
 
                 style.textContent = css;
@@ -6239,8 +6487,84 @@
                 return rest;
             }
 
+            function shouldPersistAnnotationLocally(annotation) {
+                if (!annotation || typeof annotation !== 'object') {
+                    return false;
+                }
+                if (annotation.promotedFromExtraction && !annotation.promotedDirty) {
+                    return false;
+                }
+                return true;
+            }
+
+            function trackPromotedAnnotationDeletion(annotation) {
+                if (!annotation || typeof annotation !== 'object') {
+                    return;
+                }
+                if (annotation.promotedFromExtraction && annotation.promotedSourceKey) {
+                    deletedPromotedSourceKeys.add(String(annotation.promotedSourceKey));
+                }
+                if (annotation.savedTextOverlay && annotation.id) {
+                    deletedSavedTextAnnotationIds.add(String(annotation.id));
+                }
+            }
+
+            function clearTrackedPromotedAnnotationDeletion(annotation) {
+                if (!annotation || typeof annotation !== 'object') {
+                    return;
+                }
+                if (annotation.promotedSourceKey) {
+                    deletedPromotedSourceKeys.delete(String(annotation.promotedSourceKey));
+                }
+                if (annotation.id) {
+                    deletedSavedTextAnnotationIds.delete(String(annotation.id));
+                }
+            }
+
+            function hasPendingPromotedAnnotationDeletions() {
+                return deletedPromotedSourceKeys.size > 0 || deletedSavedTextAnnotationIds.size > 0;
+            }
+
+            function removeAnnotationRecord(annotation, { removeElement = true } = {}) {
+                if (!annotation || typeof annotation !== 'object') {
+                    return false;
+                }
+
+                trackPromotedAnnotationDeletion(annotation);
+
+                const index = annotations.indexOf(annotation);
+                if (index >= 0) {
+                    annotations.splice(index, 1);
+                }
+
+                if (removeElement) {
+                    const element = annotation.element;
+                    if (element?.parentNode) {
+                        element.parentNode.removeChild(element);
+                    } else if (typeof element?.remove === 'function') {
+                        element.remove();
+                    }
+                }
+
+                if (selectedAnnotation === annotation) {
+                    selectedAnnotation = null;
+                }
+
+                return index >= 0;
+            }
+
+            function clearAllAnnotationRecords() {
+                annotations.forEach((annotation) => {
+                    trackPromotedAnnotationDeletion(annotation);
+                });
+                annotations.length = 0;
+                selectedAnnotation = null;
+            }
+
             function serializeAnnotations() {
-                return annotations.map((annotation) => stripInternalAnnotationFields(annotation));
+                return annotations
+                    .filter((annotation) => shouldPersistAnnotationLocally(annotation))
+                    .map((annotation) => stripInternalAnnotationFields(annotation));
             }
 
             function persistAnnotations() {
@@ -6285,11 +6609,617 @@
                 }
             }
 
+            function sanitizePromotedExtractionText(value) {
+                return String(value ?? '')
+                    .replace(/\r\n/g, '\n')
+                    .replace(/\r/g, '\n')
+                    .replace(/\u00A0/g, ' ')
+                    .replace(/[ \t]+\n/g, '\n')
+                    .replace(/\n{3,}/g, '\n\n')
+                    .trim();
+            }
+
+            function sanitizePromotedExtractionLine(value) {
+                return String(value ?? '')
+                    .replace(/\r\n/g, '\n')
+                    .replace(/\r/g, '\n')
+                    .replace(/\u00A0/g, ' ')
+                    .replace(/[ \t]+$/g, '');
+            }
+
+            function toPromotedReflowText(value) {
+                const normalized = String(value ?? '')
+                    .replace(/\r\n/g, '\n')
+                    .replace(/\r/g, '\n')
+                    .trim();
+                if (!normalized) {
+                    return '';
+                }
+
+                return normalized
+                    .split(/\n{2,}/)
+                    .map((paragraph) => paragraph.replace(/\s*\n\s*/g, ' ').replace(/\s{2,}/g, ' ').trim())
+                    .filter(Boolean)
+                    .join('\n\n');
+            }
+
+            function normalizePromotedAnnotationColor(block) {
+                if (block?.hex_color) {
+                    return colorToHex(String(block.hex_color));
+                }
+                if (block?.color !== undefined && block?.color !== null) {
+                    if (typeof block.color === 'number') {
+                        return colorToHex('#' + block.color.toString(16).padStart(6, '0'));
+                    }
+                    return colorToHex(String(block.color));
+                }
+                return '#000000';
+            }
+
+            function buildTextAnnotationFromExtractionBlock(block, pageData) {
+                const textLines = Array.isArray(block?.text_lines) && block.text_lines.length
+                    ? block.text_lines.map((line) => sanitizePromotedExtractionLine(line))
+                    : [];
+                while (textLines.length && textLines[0] === '') {
+                    textLines.shift();
+                }
+                while (textLines.length && textLines[textLines.length - 1] === '') {
+                    textLines.pop();
+                }
+                const blockText = textLines.length
+                    ? textLines.join('\n')
+                    : sanitizePromotedExtractionText(block?.text || '');
+
+                if (!blockText) {
+                    return null;
+                }
+
+                const left = Number(block?.left) || 0;
+                const top = Number(block?.top) || 0;
+                const width = Number(block?.width) || 0;
+                const height = Number(block?.height) || 0;
+                const pageHeight = Number(pageData?.height) || 0;
+                if (width <= 1 || height <= 1 || pageHeight <= 0) {
+                    return null;
+                }
+
+                const lineCount = Math.max(
+                    1,
+                    textLines.length || blockText.split('\n').length
+                );
+                const fontWeight = block?.font_weight
+                    ? String(block.font_weight)
+                    : (block?.bold ? '700' : '400');
+                const extractedLineHeight = Number(block?.avg_line_height)
+                    || Number(block?.line_height)
+                    || (height / lineCount);
+
+                const annotation = {
+                    id: `promoted_${pageData.page_number}_${block.block_num}`,
+                    type: 'text',
+                    text: blockText,
+                    originalText: blockText,
+                    pageIndex: Math.max(0, (Number(pageData?.page_number) || 1) - 1),
+                    pdfX: left,
+                    pdfY: pageHeight - (top + height),
+                    pdfWidth: width,
+                    pdfHeight: height,
+                    keepBounds: true,
+                    fontSize: Math.max(6, Number(block?.font_size) || 12),
+                    fontFamily: normalizePdfEditableFontFamily(block?.font || 'Helvetica') || normalizeBuiltinAnnotationFontFamily(block?.font || 'Helvetica'),
+                    fontSourceName: String(block?.font || '').trim(),
+                    lineHeight: extractedLineHeight > 0 ? extractedLineHeight : null,
+                    textColor: normalizePromotedAnnotationColor(block),
+                    backgroundColor: 'transparent',
+                    fontWeight,
+                    fontStyle: block?.italic ? 'italic' : 'normal',
+                    underline: Boolean(block?.underline),
+                    textAlign: 'left',
+                    opacity: 1,
+                    rotation: 0,
+                    promotedFromExtraction: true,
+                    promotedDirty: false,
+                    promotedSourceKey: `block-${pageData.page_number}-${block.block_num}`,
+                    promotedSourceBlockNum: Number(block?.block_num) || 0,
+                    promotedSourcePage: Number(pageData?.page_number) || 1,
+                };
+
+                normalizeTextAnnotation(annotation);
+                return annotation;
+            }
+
+            function buildTextAnnotationFromSavedState(annotationData) {
+                if (!annotationData || typeof annotationData !== 'object') {
+                    return null;
+                }
+
+                const normalized = {
+                    ...annotationData,
+                    pageIndex: Number(annotationData.pageIndex) || 0,
+                    pdfX: Number(annotationData.pdfX) || 0,
+                    pdfY: Number(annotationData.pdfY) || 0,
+                    fontSize: Number(annotationData.fontSize) || 12,
+                    opacity: Number(annotationData.opacity ?? 1),
+                };
+
+                if (!normalized.promotedFromExtraction) {
+                    normalized.savedTextOverlay = true;
+                } else {
+                    delete normalized.savedTextOverlay;
+                }
+
+                if (annotationData.pdfWidth !== undefined && annotationData.pdfWidth !== null) {
+                    normalized.pdfWidth = Number(annotationData.pdfWidth) || 0;
+                }
+                if (annotationData.pdfHeight !== undefined && annotationData.pdfHeight !== null) {
+                    normalized.pdfHeight = Number(annotationData.pdfHeight) || 0;
+                }
+                if (annotationData.lineHeight !== undefined && annotationData.lineHeight !== null) {
+                    normalized.lineHeight = Number(annotationData.lineHeight) || null;
+                }
+
+                normalizeTextAnnotation(normalized);
+                return normalized;
+            }
+
+            function clearPromotedExtractionAnnotations() {
+                for (let index = annotations.length - 1; index >= 0; index -= 1) {
+                    if (annotations[index]?.promotedFromExtraction) {
+                        annotations.splice(index, 1);
+                    }
+                }
+            }
+
+            function clearSavedTextOverlayAnnotations() {
+                for (let index = annotations.length - 1; index >= 0; index -= 1) {
+                    if (annotations[index]?.savedTextOverlay) {
+                        annotations.splice(index, 1);
+                    }
+                }
+            }
+
+            function hydrateSavedTextAnnotations(savedAnnotations) {
+                const hydrated = [];
+                const seenIds = new Set();
+
+                (Array.isArray(savedAnnotations) ? savedAnnotations : []).forEach((annotationData) => {
+                    const annotation = buildTextAnnotationFromSavedState(annotationData);
+                    if (!annotation || deletedSavedTextAnnotationIds.has(String(annotation.id || ''))) {
+                        return;
+                    }
+                    const annotationId = String(annotation.id || '');
+                    if (annotationId && seenIds.has(annotationId)) {
+                        return;
+                    }
+                    if (annotationId) {
+                        seenIds.add(annotationId);
+                    }
+                    hydrated.push(annotation);
+                });
+
+                clearSavedTextOverlayAnnotations();
+                hydrated.forEach((annotation) => annotations.push(annotation));
+                return hydrated.length;
+            }
+
+            async function loadSavedTextAnnotationsFromDatabase() {
+                const sessionId = localStorage.getItem('pdf_session_id') || '';
+                const savedAnnotationsUrl = new URL(`{{ route('documents.getSavedAnnotations', $document) }}`, window.location.origin);
+                if (sessionId) {
+                    savedAnnotationsUrl.searchParams.set('session_id', sessionId);
+                }
+
+                const response = await fetch(savedAnnotationsUrl.toString(), {
+                    credentials: 'same-origin',
+                    headers: {
+                        Accept: 'application/json',
+                    },
+                });
+
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok || !payload?.success || !Array.isArray(payload.annotations)) {
+                    return {
+                        standaloneSavedAnnotations: [],
+                        promotedSavedAnnotations: [],
+                    };
+                }
+
+                if (payload?.session_id && String(payload.session_id).trim() !== '') {
+                    localStorage.setItem('pdf_session_id', String(payload.session_id).trim());
+                }
+
+                const savedTextAnnotations = payload.annotations.filter((annotation) => (
+                    annotation
+                    && (annotation.type === 'text' || !annotation.type)
+                    && annotation.db_state !== 'deleted'
+                ));
+
+                const standaloneSavedAnnotations = [];
+                const promotedSavedAnnotations = [];
+
+                savedTextAnnotations.forEach((annotation) => {
+                    if (!annotation || typeof annotation !== 'object') {
+                        return;
+                    }
+                    if (annotation.promotedFromExtraction && annotation.promotedSourceKey) {
+                        const annotationId = String(annotation.id || '');
+                        const sourceKey = String(annotation.promotedSourceKey || '');
+                        if (
+                            annotationId && deletedSavedTextAnnotationIds.has(annotationId)
+                            || sourceKey && deletedPromotedSourceKeys.has(sourceKey)
+                        ) {
+                            return;
+                        }
+                        promotedSavedAnnotations.push(annotation);
+                        return;
+                    }
+                    standaloneSavedAnnotations.push(annotation);
+                });
+
+                return {
+                    standaloneSavedAnnotations,
+                    promotedSavedAnnotations,
+                };
+            }
+
+            function hydratePromotedAnnotationsFromExtraction(extractionPages, {
+                savedPromotedAnnotations = [],
+                savedStandaloneAnnotations = [],
+            } = {}) {
+                const promotedAnnotations = [];
+                const seenKeys = new Set();
+                const matchedSavedPromotedAnnotationIds = new Set();
+                const savedStandaloneTextAnnotations = (Array.isArray(savedStandaloneAnnotations) ? savedStandaloneAnnotations : [])
+                    .map((annotation) => buildTextAnnotationFromSavedState(annotation))
+                    .filter(Boolean);
+                const hydratedSavedPromotedAnnotations = (Array.isArray(savedPromotedAnnotations) ? savedPromotedAnnotations : [])
+                    .map((annotation) => buildTextAnnotationFromSavedState(annotation))
+                    .filter((annotation) => annotation?.promotedFromExtraction);
+                const hydratedSavedPromotedBySourceKey = new Map(
+                    hydratedSavedPromotedAnnotations
+                        .filter((annotation) => annotation?.promotedSourceKey)
+                        .map((annotation) => [String(annotation.promotedSourceKey), annotation])
+                );
+                const existingDirtyPromotedByKey = new Map(
+                    annotations
+                        .filter((annotation) => annotation?.promotedFromExtraction && annotation?.promotedDirty && annotation?.promotedSourceKey)
+                        .map((annotation) => [annotation.promotedSourceKey, annotation])
+                );
+                const normalizePromotedComparableText = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                const estimateStandaloneTextBounds = (annotation) => {
+                    const fontSize = Math.max(1, Number(annotation?.fontSize) || 12);
+                    const fontFamily = resolveAnnotationCssFontFamily(annotation?.fontFamily || 'Helvetica', {
+                        preferExact: Boolean(annotation?.promotedFromExtraction),
+                        exactFontName: annotation?.fontSourceName || '',
+                    });
+                    const lineHeight = Math.max(1, Number(annotation?.lineHeight) || (fontSize * 1.2));
+                    const lines = String(annotation?.text || '').split('\n');
+                    const widestLine = lines.reduce((maxWidth, line) => (
+                        Math.max(maxWidth, measureAnnotationTextWidth(line, fontSize, fontFamily, annotation?.fontWeight, annotation?.fontStyle))
+                    ), 0);
+
+                    return {
+                        width: widestLine,
+                        height: lineHeight * Math.max(1, lines.length),
+                    };
+                };
+                const getAnnotationRect = (annotation) => {
+                    if (!annotation) {
+                        return null;
+                    }
+                    const left = Number(annotation.pdfX) || 0;
+                    const bottom = Number(annotation.pdfY) || 0;
+                    let width = Number(annotation.pdfWidth) || 0;
+                    let height = Number(annotation.pdfHeight) || 0;
+                    if ((width <= 0 || height <= 0) && annotation.savedTextOverlay) {
+                        const estimatedBounds = estimateStandaloneTextBounds(annotation);
+                        width = width > 0 ? width : estimatedBounds.width;
+                        height = height > 0 ? height : estimatedBounds.height;
+                    }
+                    if (width <= 0 || height <= 0) {
+                        return null;
+                    }
+                    return {
+                        left,
+                        bottom,
+                        right: left + width,
+                        top: bottom + height,
+                        width,
+                        height,
+                    };
+                };
+                const rectIntersectionArea = (rectA, rectB) => {
+                    if (!rectA || !rectB) {
+                        return 0;
+                    }
+                    const overlapWidth = Math.max(0, Math.min(rectA.right, rectB.right) - Math.max(rectA.left, rectB.left));
+                    const overlapHeight = Math.max(0, Math.min(rectA.top, rectB.top) - Math.max(rectA.bottom, rectB.bottom));
+                    return overlapWidth * overlapHeight;
+                };
+                const rectOverlapRatio = (rectA, rectB) => {
+                    const intersectionArea = rectIntersectionArea(rectA, rectB);
+                    if (intersectionArea <= 0) {
+                        return 0;
+                    }
+                    const minArea = Math.max(1, Math.min(rectA.width * rectA.height, rectB.width * rectB.height));
+                    return intersectionArea / minArea;
+                };
+                const isPromotedAnnotationCompatibleWithExtractionBlock = (savedAnnotation, extractedAnnotation, sourceKey = '') => {
+                    if (!savedAnnotation || !extractedAnnotation) {
+                        return false;
+                    }
+                    if ((Number(savedAnnotation.pageIndex) || 0) !== (Number(extractedAnnotation.pageIndex) || 0)) {
+                        return false;
+                    }
+
+                    const savedRect = getAnnotationRect(savedAnnotation);
+                    const extractedRect = getAnnotationRect(extractedAnnotation);
+                    if (!savedRect || !extractedRect) {
+                        return false;
+                    }
+
+                    const overlapRatio = rectOverlapRatio(savedRect, extractedRect);
+                    const savedCenterX = (savedRect.left + savedRect.right) / 2;
+                    const savedCenterY = (savedRect.bottom + savedRect.top) / 2;
+                    const extractedCenterX = (extractedRect.left + extractedRect.right) / 2;
+                    const extractedCenterY = (extractedRect.bottom + extractedRect.top) / 2;
+                    const centerDelta = Math.hypot(savedCenterX - extractedCenterX, savedCenterY - extractedCenterY);
+                    const geometryCompatible = (
+                        overlapRatio >= 0.55
+                        || (
+                            centerDelta <= 14
+                            && Math.abs(savedRect.width - extractedRect.width) <= 18
+                            && Math.abs(savedRect.height - extractedRect.height) <= 18
+                        )
+                    );
+                    if (!geometryCompatible) {
+                        return false;
+                    }
+
+                    const savedOriginalText = normalizePromotedComparableText(savedAnnotation.originalText || '');
+                    const savedCurrentText = normalizePromotedComparableText(savedAnnotation.text || '');
+                    const extractedText = normalizePromotedComparableText(extractedAnnotation.text || '');
+
+                    if (sourceKey && String(savedAnnotation.promotedSourceKey || '') === String(sourceKey)) {
+                        return true;
+                    }
+
+                    return (
+                        (savedOriginalText && savedOriginalText === extractedText)
+                        || (savedCurrentText && savedCurrentText === extractedText)
+                    );
+                };
+                const overlapsSavedStandaloneAnnotation = (annotation) => {
+                    if (!annotation) {
+                        return false;
+                    }
+                    const left = Number(annotation.pdfX) || 0;
+                    const bottom = Number(annotation.pdfY) || 0;
+                    const width = Number(annotation.pdfWidth) || 0;
+                    const height = Number(annotation.pdfHeight) || 0;
+                    const right = left + width;
+                    const top = bottom + height;
+                    if (width <= 0 || height <= 0) {
+                        return false;
+                    }
+
+                    return savedStandaloneTextAnnotations.some((savedAnnotation) => {
+                        if ((Number(savedAnnotation.pageIndex) || 0) !== (Number(annotation.pageIndex) || 0)) {
+                            return false;
+                        }
+                        const savedLeft = Number(savedAnnotation.pdfX) || 0;
+                        const savedBottom = Number(savedAnnotation.pdfY) || 0;
+                        const estimatedBounds = estimateStandaloneTextBounds(savedAnnotation);
+                        const savedWidth = Number(savedAnnotation.pdfWidth) || estimatedBounds.width || 0;
+                        const savedHeight = Number(savedAnnotation.pdfHeight) || estimatedBounds.height || 0;
+                        const savedRight = savedLeft + savedWidth;
+                        const savedTop = savedBottom + savedHeight;
+                        if (savedWidth <= 0 || savedHeight <= 0) {
+                            return false;
+                        }
+
+                        return right > savedLeft
+                            && left < savedRight
+                            && top > savedBottom
+                            && bottom < savedTop;
+                    });
+                };
+
+                (Array.isArray(extractionPages) ? extractionPages : []).forEach((pageData) => {
+                    const pageBlocks = Array.isArray(pageData?.blocks) ? pageData.blocks : [];
+                    pageBlocks.forEach((block) => {
+                        const sourceKey = `block-${pageData.page_number}-${block.block_num}`;
+                        if (deletedPromotedSourceKeys.has(sourceKey)) {
+                            return;
+                        }
+                        const builtAnnotation = buildTextAnnotationFromExtractionBlock(block, pageData);
+                        if (
+                            builtAnnotation
+                            && !existingDirtyPromotedByKey.has(sourceKey)
+                            && !hydratedSavedPromotedBySourceKey.has(sourceKey)
+                            && overlapsSavedStandaloneAnnotation(builtAnnotation)
+                        ) {
+                            return;
+                        }
+                        let savedPromotedMatch = null;
+                        const exactSavedPromotedMatch = hydratedSavedPromotedBySourceKey.get(sourceKey);
+                        if (isPromotedAnnotationCompatibleWithExtractionBlock(exactSavedPromotedMatch, builtAnnotation, sourceKey)) {
+                            savedPromotedMatch = exactSavedPromotedMatch;
+                        }
+                        if (!savedPromotedMatch) {
+                            savedPromotedMatch = hydratedSavedPromotedAnnotations.find((candidate) => {
+                                const candidateId = String(candidate?.id || '');
+                                if (candidateId && matchedSavedPromotedAnnotationIds.has(candidateId)) {
+                                    return false;
+                                }
+                                return isPromotedAnnotationCompatibleWithExtractionBlock(candidate, builtAnnotation);
+                            }) || null;
+                        }
+
+                        const annotation = existingDirtyPromotedByKey.get(sourceKey)
+                            || savedPromotedMatch
+                            || builtAnnotation;
+                        if (!annotation) {
+                            return;
+                        }
+                        if (savedPromotedMatch?.id) {
+                            matchedSavedPromotedAnnotationIds.add(String(savedPromotedMatch.id));
+                        }
+
+                        const dedupeKey = [
+                            annotation.pageIndex,
+                            annotation.promotedSourceBlockNum,
+                            annotation.pdfX.toFixed(2),
+                            annotation.pdfY.toFixed(2),
+                            annotation.pdfWidth.toFixed(2),
+                            annotation.pdfHeight.toFixed(2),
+                            annotation.text.replace(/\s+/g, ' ').trim(),
+                        ].join('|');
+                        if (seenKeys.has(dedupeKey)) {
+                            return;
+                        }
+                        seenKeys.add(dedupeKey);
+                        promotedAnnotations.push(annotation);
+                    });
+                });
+
+                existingDirtyPromotedByKey.forEach((annotation, key) => {
+                    if (!promotedAnnotations.includes(annotation) && !deletedPromotedSourceKeys.has(String(key))) {
+                        promotedAnnotations.push(annotation);
+                    }
+                });
+
+                clearPromotedExtractionAnnotations();
+                promotedAnnotations.forEach((annotation) => annotations.push(annotation));
+                promotedExtractionHydrated = promotedAnnotations.length > 0;
+                return promotedAnnotations.length;
+            }
+
+            function hydrateSavedPromotedAnnotations(savedAnnotations) {
+                const hydrated = [];
+                const seenIds = new Set();
+
+                (Array.isArray(savedAnnotations) ? savedAnnotations : []).forEach((annotationData) => {
+                    const annotation = buildTextAnnotationFromSavedState(annotationData);
+                    if (!annotation || !annotation.promotedFromExtraction) {
+                        return;
+                    }
+                    const annotationId = String(annotation.id || '');
+                    if (annotationId && seenIds.has(annotationId)) {
+                        return;
+                    }
+                    if (annotationId) {
+                        seenIds.add(annotationId);
+                    }
+                    hydrated.push(annotation);
+                });
+
+                clearPromotedExtractionAnnotations();
+                hydrated.forEach((annotation) => annotations.push(annotation));
+                promotedExtractionHydrated = hydrated.length > 0;
+                return hydrated.length;
+            }
+
+            function countPromotedExtractionBlocks(extractionPages) {
+                return (Array.isArray(extractionPages) ? extractionPages : []).reduce((count, pageData) => (
+                    count + (Array.isArray(pageData?.blocks) ? pageData.blocks.reduce((pageCount, block) => (
+                        buildTextAnnotationFromExtractionBlock(block, pageData) ? pageCount + 1 : pageCount
+                    ), 0) : 0)
+                ), 0);
+            }
+
+            function shouldPreferSavedPromotedSnapshot(savedPromotedAnnotations, extractionPages) {
+                const savedCount = Array.isArray(savedPromotedAnnotations) ? savedPromotedAnnotations.length : 0;
+                if (savedCount < 8) {
+                    return false;
+                }
+                const extractedCount = countPromotedExtractionBlocks(extractionPages);
+                if (extractedCount <= 0) {
+                    return savedCount > 0;
+                }
+                return savedCount >= Math.max(8, Math.floor(extractedCount * 0.75));
+            }
+
+            async function bootstrapPromotedTextAnnotations({ force = false } = {}) {
+                if (!promotedTextAnnotationsEnabled || isImageDocument) {
+                    return 0;
+                }
+                if (!force && promotedExtractionHydrated) {
+                    return annotations.filter((annotation) => annotation?.promotedFromExtraction).length;
+                }
+                if (!force && annotations.some((annotation) => !annotation?.promotedFromExtraction && !annotation?.savedTextOverlay)) {
+                    return 0;
+                }
+                if (promotedExtractionBootstrapPromise && !force) {
+                    return promotedExtractionBootstrapPromise;
+                }
+
+                promotedExtractionBootstrapPromise = (async () => {
+                    const prepareResponse = await fetch(`${prepareOverlayUrl}?force_refresh=1&v=${Date.now()}`, {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: {
+                            'X-CSRF-TOKEN': csrfToken,
+                            'X-Requested-With': 'XMLHttpRequest',
+                            'Accept': 'application/json',
+                        },
+                    });
+                    if (!prepareResponse.ok) {
+                        const errorText = await prepareResponse.text().catch(() => '');
+                        throw new Error(`Failed to prepare editable PDF source (${prepareResponse.status}): ${errorText.slice(0, 300)}`);
+                    }
+
+                    const extractionResponse = await fetch(`${fitzExtractionDataUrl}?v=${Date.now()}`, {
+                        credentials: 'same-origin',
+                        headers: { Accept: 'application/json' },
+                    });
+                    const extractionData = await extractionResponse.json().catch(() => ({}));
+                    if (!extractionResponse.ok || !extractionData?.success || !Array.isArray(extractionData.extraction_data)) {
+                        throw new Error(extractionData?.message || `Failed to load extracted text data (${extractionResponse.status})`);
+                    }
+
+                    overlayExtractionData = extractionData.extraction_data;
+                    if (extractionData.embedded_fonts && typeof extractionData.embedded_fonts === 'object') {
+                        overlayEmbeddedFonts = extractionData.embedded_fonts;
+                        loadEmbeddedFontFaces(overlayEmbeddedFonts);
+                    }
+                    preloadExtractionFontFamilies(overlayExtractionData);
+                    basePdfUrl = cleanPdfUrl;
+                    pdfVersion = Date.now();
+
+                    const {
+                        standaloneSavedAnnotations,
+                        promotedSavedAnnotations,
+                    } = await loadSavedTextAnnotationsFromDatabase();
+                    const standaloneSavedAnnotationCount = hydrateSavedTextAnnotations(standaloneSavedAnnotations);
+                    const promotedAnnotationCount = shouldPreferSavedPromotedSnapshot(promotedSavedAnnotations, overlayExtractionData)
+                        ? hydrateSavedPromotedAnnotations(promotedSavedAnnotations)
+                        : hydratePromotedAnnotationsFromExtraction(overlayExtractionData, {
+                            savedPromotedAnnotations: promotedSavedAnnotations,
+                            savedStandaloneAnnotations: standaloneSavedAnnotations,
+                        });
+
+                    return standaloneSavedAnnotationCount + promotedAnnotationCount;
+                })();
+
+                try {
+                    return await promotedExtractionBootstrapPromise;
+                } finally {
+                    promotedExtractionBootstrapPromise = null;
+                }
+            }
+
             async function loadPdf() {
                 try {
                     setStatus(isImageDocument ? 'Loading image...' : 'Loading PDF...', '');
                     loadAnnotationsFromStorage();
+                    if (!isImageDocument && promotedTextAnnotationsEnabled) {
+                        await bootstrapPromotedTextAnnotations();
+                    }
                     await rerenderPdf();
+                    if (!isImageDocument && promotedTextAnnotationsEnabled) {
+                        schedulePromotedAnnotationFontRefit();
+                    }
                     setStatus(isImageDocument ? 'Image loaded successfully.' : 'PDF loaded successfully.', 'ok');
                 } catch (err) {
                     setStatus('Failed to load: ' + err.message, 'err');
@@ -9529,6 +10459,9 @@
                 if (lower.includes('arial')) {
                     return 'Arial';
                 }
+                if (lower.includes('arimo') || lower.includes('helvetica') || lower.includes('nimbussans')) {
+                    return 'Helvetica';
+                }
                 if (lower.includes('verdana') || lower.includes('geneva')) {
                     return 'Verdana';
                 }
@@ -9547,7 +10480,10 @@
                 if (lower.includes('times')) {
                     return 'TimesRoman';
                 }
-                if (lower.includes('courier')) {
+                if (lower.includes('tinos')) {
+                    return 'TimesRoman';
+                }
+                if (lower.includes('courier') || lower.includes('cousine') || lower.includes('mono')) {
                     return 'Courier';
                 }
                 return 'Helvetica';
@@ -9976,20 +10912,30 @@
                     return;
                 }
                 if (annotation.type === 'text' || !annotation.type) {
-                    const fontFamily = fontMap[annotation.fontFamily]?.css || 'inherit';
+                    const fontFamily = resolveAnnotationCssFontFamily(annotation.fontFamily, {
+                        preferExact: Boolean(annotation.promotedFromExtraction),
+                        exactFontName: annotation.fontSourceName || annotation.fontFamily,
+                    });
                     const fontSizePx = annotation.fontSize * currentScale;
                     const hasBounds = annotationHasBounds(annotation);
+                    const promotedExtraction = Boolean(annotation.promotedFromExtraction);
+                    const preservePromotedLines = promotedExtraction && !annotation.promotedReflowEnabled;
                     const textWrapper = annotation.textWrapper || annotation.element.querySelector('.text-content-wrapper');
                     annotation.element.style.fontFamily = fontFamily;
                     annotation.element.style.fontSize = fontSizePx + 'px';
                     annotation.element.style.textAlign = annotation.textAlign || 'left';
                     annotation.element.classList.toggle('has-bounds', hasBounds);
+                    annotation.element.classList.toggle('promoted-extraction', promotedExtraction);
                     annotation.element.style.display = hasBounds ? 'block' : 'inline-flex';
                     annotation.element.style.alignItems = hasBounds ? 'stretch' : 'center';
                     annotation.element.style.padding = hasBounds ? '0' : '2px 6px';
                     annotation.element.style.gap = hasBounds ? '0' : '4px';
                     annotation.element.style.overflow = 'visible';
                     annotation.element.style.wordWrap = '';
+                    const lineHeightPx = Number(annotation.lineHeight) > 0
+                        ? (Number(annotation.lineHeight) * currentScale)
+                        : 0;
+                    annotation.element.style.lineHeight = lineHeightPx > 0 ? `${lineHeightPx}px` : '';
                     const span = annotation.element.querySelector('.annotation-text');
                     if (span) {
                         const nextRichHtml = typeof annotation.richTextHtml === 'string' ? annotation.richTextHtml : '';
@@ -10006,12 +10952,19 @@
                         span.style.fontStyle = annotation.fontStyle || 'normal';
                         span.style.textDecoration = annotation.underline ? 'underline' : 'none';
                         span.style.opacity = annotation.opacity ?? 1;
+                        span.style.padding = promotedExtraction ? '0' : '';
+                        span.style.lineHeight = lineHeightPx > 0 ? `${lineHeightPx}px` : '';
+                        span.style.whiteSpace = promotedExtraction ? (preservePromotedLines ? 'pre' : 'pre-wrap') : '';
+                        span.style.overflowWrap = promotedExtraction ? (preservePromotedLines ? 'normal' : 'break-word') : '';
+                        span.style.wordBreak = promotedExtraction ? (preservePromotedLines ? 'normal' : 'break-word') : '';
                     }
                     if (textWrapper) {
                         textWrapper.style.display = hasBounds ? 'block' : 'inline-block';
                         textWrapper.style.width = hasBounds ? '100%' : 'auto';
                         textWrapper.style.height = hasBounds ? '100%' : 'auto';
-                        textWrapper.style.padding = hasBounds ? '2px 6px' : '0';
+                        textWrapper.style.padding = hasBounds
+                            ? (promotedExtraction ? '0' : '2px 6px')
+                            : '0';
                         textWrapper.style.boxSizing = hasBounds ? 'border-box' : '';
                         textWrapper.style.overflow = hasBounds ? 'hidden' : 'visible';
                     }
@@ -10065,13 +11018,28 @@
                 const resolvedBgColor = colorToHex(spanStyle?.backgroundColor || annotation.backgroundColor || 'transparent');
                 const resolvedWeight = String(spanStyle?.fontWeight || annotation.fontWeight || '400');
                 const resolvedStyle = String(spanStyle?.fontStyle || annotation.fontStyle || 'normal');
+                const resolvedLineHeightPx = parseFloat(spanStyle?.lineHeight || elementStyle.lineHeight || '0');
                 const resolvedDecoration = String(spanStyle?.textDecorationLine || '').toLowerCase();
                 const resolvedAlign = String(spanStyle?.textAlign || elementStyle.textAlign || annotation.textAlign || 'left');
                 const resolvedOpacity = parseFloat(spanStyle?.opacity || elementStyle.opacity || annotation.opacity || '1') || 1;
                 const explicitText = span ? getOverlayExplicitText(span) : annotation.text;
                 const richTextHtml = span ? buildAnnotationRichTextHtml(span) : '';
 
-                annotation.fontFamily = normalizeBuiltinAnnotationFontFamily(resolvedFontFamily);
+                if (annotation.promotedFromExtraction) {
+                    const existingFontFamily = String(annotation.fontFamily || '').trim();
+                    const existingNormalized = normalizePdfEditableFontFamily(existingFontFamily);
+                    const resolvedNormalized = normalizePdfEditableFontFamily(resolvedFontFamily);
+                    annotation.fontFamily = (
+                        existingFontFamily
+                        && existingNormalized
+                        && resolvedNormalized
+                        && existingNormalized.toLowerCase() === resolvedNormalized.toLowerCase()
+                    )
+                        ? existingFontFamily
+                        : (resolvedNormalized || existingFontFamily || normalizeBuiltinAnnotationFontFamily(resolvedFontFamily));
+                } else {
+                    annotation.fontFamily = normalizeBuiltinAnnotationFontFamily(resolvedFontFamily);
+                }
                 if (resolvedFontSizePx > 0 && currentScale > 0) {
                     annotation.fontSize = resolvedFontSizePx / currentScale;
                 }
@@ -10090,6 +11058,9 @@
                 annotation.underline = resolvedDecoration.includes('underline');
                 annotation.textAlign = ['left', 'center', 'right'].includes(resolvedAlign) ? resolvedAlign : 'left';
                 annotation.opacity = resolvedOpacity;
+                if (resolvedLineHeightPx > 0 && currentScale > 0) {
+                    annotation.lineHeight = resolvedLineHeightPx / currentScale;
+                }
                 normalizeTextAnnotation(annotation);
 
                 if (annotation.richTextHtml) {
@@ -10134,7 +11105,12 @@
                     return;
                 }
 
-                input.style.fontFamily = fontMap[selectedAnnotation.fontFamily]?.css || 'inherit';
+                input.style.fontFamily = selectedAnnotation.promotedFromExtraction
+                    ? resolveAnnotationCssFontFamily(selectedAnnotation.fontFamily, {
+                        preferExact: true,
+                        exactFontName: selectedAnnotation.fontSourceName || selectedAnnotation.fontFamily,
+                    })
+                    : (fontMap[selectedAnnotation.fontFamily]?.css || 'inherit');
                 input.style.fontSize = `${Math.round(selectedAnnotation.fontSize * currentScale)}px`;
                 input.style.color = selectedAnnotation.textColor || '#000000';
                 input.style.backgroundColor = selectedAnnotation.backgroundColor || 'transparent';
@@ -10143,6 +11119,12 @@
                 input.style.textDecoration = selectedAnnotation.underline ? 'underline' : 'none';
                 input.style.textAlign = selectedAnnotation.textAlign || 'left';
                 input.style.opacity = String(selectedAnnotation.opacity ?? 1);
+                if (selectedAnnotation.promotedFromExtraction && selectedAnnotation.promotedReflowEnabled) {
+                    input.style.whiteSpace = 'pre-wrap';
+                    input.style.overflowWrap = 'break-word';
+                    input.style.wordBreak = 'break-word';
+                    input.style.padding = '';
+                }
             }
 
             function normalizeTextAnnotation(annotation) {
@@ -10151,6 +11133,9 @@
                 }
                 annotation.type = annotation.type || 'text';
                 annotation.fontFamily = annotation.fontFamily || 'Helvetica';
+                if (typeof annotation.fontSourceName === 'string') {
+                    annotation.fontSourceName = annotation.fontSourceName.trim();
+                }
                 annotation.textColor = annotation.textColor || '#000000';
                 annotation.backgroundColor = annotation.backgroundColor || 'transparent';
                 annotation.fontWeight = annotation.fontWeight || 'normal';
@@ -10160,6 +11145,14 @@
                 annotation.opacity = typeof annotation.opacity === 'number' ? annotation.opacity : 1;
                 annotation.rotation = annotation.rotation || 0;
                 annotation.keepBounds = Boolean(annotation.keepBounds);
+                if (annotation.lineHeight !== null && annotation.lineHeight !== undefined) {
+                    const parsedLineHeight = Number(annotation.lineHeight);
+                    if (parsedLineHeight > 0) {
+                        annotation.lineHeight = parsedLineHeight;
+                    } else {
+                        delete annotation.lineHeight;
+                    }
+                }
                 if (typeof annotation.richTextHtml !== 'string' || !annotation.richTextHtml.trim()) {
                     delete annotation.richTextHtml;
                 }
@@ -10307,6 +11300,114 @@
                     widthPx: Math.max(30, Math.ceil(textRect.width + labelPadX + wrapperPadX + textPadX)),
                     heightPx: Math.max(16, Math.ceil(textRect.height + labelPadY + wrapperPadY + textPadY)),
                 };
+            }
+
+            function fitTextAnnotationBoundsToRenderedContent(annotation, pageInfo) {
+                if (!annotationHasBounds(annotation) || !annotation?.element || !pageInfo || (annotation.type && annotation.type !== 'text')) {
+                    return false;
+                }
+
+                const label = annotation.element;
+                const textWrapper = annotation.textWrapper || label.querySelector('.text-content-wrapper');
+                const textEl = label.querySelector('.annotation-text');
+                if (!textEl) {
+                    return false;
+                }
+
+                const labelStyle = window.getComputedStyle(label);
+                const wrapperStyle = textWrapper ? window.getComputedStyle(textWrapper) : null;
+                const textStyle = window.getComputedStyle(textEl);
+                const labelPadX = (parseFloat(labelStyle.paddingLeft || '0') || 0) + (parseFloat(labelStyle.paddingRight || '0') || 0);
+                const labelPadY = (parseFloat(labelStyle.paddingTop || '0') || 0) + (parseFloat(labelStyle.paddingBottom || '0') || 0);
+                const wrapperPadX = (parseFloat(wrapperStyle?.paddingLeft || '0') || 0) + (parseFloat(wrapperStyle?.paddingRight || '0') || 0);
+                const wrapperPadY = (parseFloat(wrapperStyle?.paddingTop || '0') || 0) + (parseFloat(wrapperStyle?.paddingBottom || '0') || 0);
+                const textPadX = (parseFloat(textStyle.paddingLeft || '0') || 0) + (parseFloat(textStyle.paddingRight || '0') || 0);
+                const textPadY = (parseFloat(textStyle.paddingTop || '0') || 0) + (parseFloat(textStyle.paddingBottom || '0') || 0);
+                const promotedExtraction = Boolean(annotation.promotedFromExtraction);
+                const preservePromotedLines = promotedExtraction && !annotation.promotedReflowEnabled;
+                const fontFamily = resolveAnnotationCssFontFamily(annotation.fontFamily, {
+                    preferExact: promotedExtraction,
+                    exactFontName: annotation.fontSourceName || annotation.fontFamily,
+                });
+                const fontSizePx = annotation.fontSize * currentScale;
+                const widthSafety = promotedExtraction ? 4 : 2;
+                const heightSafety = promotedExtraction ? 3 : 1;
+
+                const requiredWidth = Math.max(
+                    label.offsetWidth || 0,
+                    Math.ceil((textEl.scrollWidth || textEl.getBoundingClientRect().width || 0) + labelPadX + wrapperPadX + textPadX + widthSafety)
+                );
+                const measuredLineWidth = preservePromotedLines
+                    ? Math.max(
+                        ...String(annotation.text || '')
+                            .replace(/\r\n/g, '\n')
+                            .replace(/\r/g, '\n')
+                            .split('\n')
+                            .map((line) => measureAnnotationTextWidth(line || ' ', fontSizePx, fontFamily, annotation.fontWeight, annotation.fontStyle))
+                      )
+                    : 0;
+                const requiredHeight = Math.max(
+                    label.offsetHeight || 0,
+                    Math.ceil((textEl.scrollHeight || textEl.getBoundingClientRect().height || 0) + labelPadY + wrapperPadY + textPadY + heightSafety)
+                );
+                const exactRequiredWidth = measuredLineWidth > 0
+                    ? Math.ceil(measuredLineWidth + labelPadX + wrapperPadX + textPadX + widthSafety)
+                    : 0;
+
+                const currentWidth = label.offsetWidth || 0;
+                const currentHeight = label.offsetHeight || 0;
+                const nextRequiredWidth = Math.max(requiredWidth, exactRequiredWidth);
+                const widthNeedsGrowth = nextRequiredWidth > (currentWidth + 1);
+                const heightNeedsGrowth = requiredHeight > (currentHeight + 1);
+
+                if (!widthNeedsGrowth && !heightNeedsGrowth) {
+                    return false;
+                }
+
+                setTextAnnotationBounds(
+                    annotation,
+                    pageInfo,
+                    label.offsetLeft,
+                    label.offsetTop,
+                    Math.max(currentWidth, nextRequiredWidth),
+                    Math.max(currentHeight, requiredHeight)
+                );
+                applyAnnotationStyle(annotation);
+                return true;
+            }
+
+            let promotedAnnotationFontRefitToken = 0;
+
+            function schedulePromotedAnnotationFontRefit() {
+                if (!document.fonts || !document.fonts.ready) {
+                    return;
+                }
+
+                const refitToken = ++promotedAnnotationFontRefitToken;
+                const runRefit = () => {
+                    if (refitToken !== promotedAnnotationFontRefitToken) {
+                        return;
+                    }
+
+                    annotations.forEach((annotation) => {
+                        if (!annotation?.promotedFromExtraction || !annotation?.element) {
+                            return;
+                        }
+                        const pageContext = resolveAnnotationPageContext(annotation);
+                        if (!pageContext?.pageInfo) {
+                            return;
+                        }
+                        applyAnnotationStyle(annotation);
+                        fitTextAnnotationBoundsToRenderedContent(annotation, pageContext.pageInfo);
+                    });
+                };
+
+                window.setTimeout(() => {
+                    document.fonts.ready.then(() => {
+                        requestAnimationFrame(runRefit);
+                        window.setTimeout(runRefit, 180);
+                    });
+                }, 0);
             }
 
             function buildCopiedAnnotationSnapshot(annotation) {
@@ -11161,6 +12262,10 @@
 
             async function saveAnnotationToDatabase(annotation) {
                 try {
+                    clearTrackedPromotedAnnotationDeletion(annotation);
+                    if (annotation?.promotedFromExtraction) {
+                        annotation.promotedDirty = true;
+                    }
                     const sessionId = localStorage.getItem('pdf_session_id') || generateSessionId();
                     localStorage.setItem('pdf_session_id', sessionId);
                     const annotationPayload = stripInternalAnnotationFields(annotation);
@@ -11422,6 +12527,10 @@
 
             function createTextBoxCreator(overlay, x, y, pageIndex, canvas, wrapper, pageInfo, opts, dragW, dragH, editAnnotation) {
                 const { fontFamily, fontSizePx, textColor, bgColor, opacityVal, fontWeight, fontStyle, underline, textAlign } = opts;
+                const editingPromotedExtraction = Boolean(editAnnotation?.promotedFromExtraction);
+                const editLineHeightPx = Number(editAnnotation?.lineHeight) > 0
+                    ? Number(editAnnotation.lineHeight) * currentScale
+                    : 0;
                 
                 // Remove any existing text-box-creator
                 document.querySelectorAll('.text-box-creator').forEach(el => el.remove());
@@ -11438,6 +12547,9 @@
                     box.style.width = Math.max(60, dragW) + 'px';
                     box.style.height = Math.max(28, dragH) + 'px';
                     box.style.minWidth = '0';
+                    if (editingPromotedExtraction) {
+                        box.style.minHeight = '0';
+                    }
                 }
                 
                 // Input area – contenteditable for partial word styling
@@ -11448,7 +12560,13 @@
                 input.setAttribute('aria-multiline', 'true');
                 input.setAttribute('data-placeholder', 'Type text here...');
                 input.style.fontSize = fontSizePx + 'px';
-                input.style.fontFamily = fontMap[fontFamily]?.css || 'inherit';
+                const preservePromotedLinesInEditor = Boolean(editAnnotation?.promotedFromExtraction && !editAnnotation?.promotedReflowEnabled);
+                input.style.fontFamily = editAnnotation?.promotedFromExtraction
+                    ? resolveAnnotationCssFontFamily(fontFamily, {
+                        preferExact: true,
+                        exactFontName: editAnnotation?.fontSourceName || fontFamily,
+                    })
+                    : (fontMap[fontFamily]?.css || 'inherit');
                 input.style.color = textColor;
                 input.style.fontWeight = fontWeight;
                 input.style.fontStyle = fontStyle;
@@ -11456,6 +12574,18 @@
                 input.style.textAlign = textAlign;
                 input.style.opacity = opacityVal;
                 if (dragH) input.style.minHeight = Math.max(28, dragH - 8) + 'px';
+                if (editingPromotedExtraction && preservePromotedLinesInEditor) {
+                    input.style.padding = '0';
+                    input.style.whiteSpace = 'pre';
+                    input.style.overflowWrap = 'normal';
+                    input.style.wordBreak = 'normal';
+                    if (dragH) {
+                        input.style.minHeight = Math.max(1, dragH) + 'px';
+                    }
+                }
+                if (editLineHeightPx > 0) {
+                    input.style.lineHeight = editLineHeightPx + 'px';
+                }
                 // Pre-fill text when editing an existing annotation
                 if (editAnnotation) {
                     setRichEditableContent(input, editAnnotation.text, editAnnotation.richTextHtml || '');
@@ -11577,10 +12707,12 @@
                 const commitText = () => {
                     if (finished) return;
                     finished = true;
-                    const text = getOverlayExplicitText(input).trim();
+                    const rawText = getOverlayExplicitText(input);
+                    const text = editingPromotedExtraction ? rawText : rawText.trim();
+                    const hasTextContent = editingPromotedExtraction ? rawText.trim() : text;
                     const richTextHtml = buildAnnotationRichTextHtml(input);
                     const hasRichText = annotationRichTextHasFormatting(richTextHtml);
-                    if (text) {
+                    if (hasTextContent) {
                         const boxLeft = parseFloat(box.style.left);
                         const boxTop = parseFloat(box.style.top);
                         const boxW = box.offsetWidth;
@@ -11698,6 +12830,8 @@
                     activeEditorSelectionRange = null;
                     document.removeEventListener('pointerdown', outsideClickHandler, true);
                 };
+                box._commitText = commitText;
+                box._cancelText = cancelBox;
 
                 // Click outside to confirm (request #2)
                 const outsideClickHandler = (e) => {
@@ -11793,6 +12927,7 @@
             function addAnnotationElement(wrapper, annotation, pageInfo) {
                 const label = document.createElement('div');
                 label.className = 'annotation';
+                label.classList.toggle('promoted-extraction', Boolean(annotation.promotedFromExtraction));
                 
                 // Set z-index based on position in annotations array for proper layering
                 const zIndex = annotations.indexOf(annotation);
@@ -11997,18 +13132,11 @@
                 deleteBtn.style.cssText = 'position: absolute; top: -8px; right: -8px; width: 24px; height: 24px; border-radius: 50%; background: var(--danger); color: white; border: 2px solid var(--bg); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: bold; line-height: 1; z-index: 10; opacity: 0; transition: opacity 0.2s;';
                 deleteBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    wrapper.querySelector('.overlay').removeChild(label);
-                    const idx = annotations.indexOf(annotation);
-                    if (idx >= 0) {
-                        annotations.splice(idx, 1);
-                        if (selectedAnnotation === annotation) {
-                            selectedAnnotation = null;
-                        }
-                        updateSelectionBar();
-                        persistAnnotations();
-                        updateAnnotationsList();
-                        setStatus('Text deleted. Click Save to keep changes.', 'ok');
-                    }
+                    removeAnnotationRecord(annotation);
+                    updateSelectionBar();
+                    persistAnnotations();
+                    updateAnnotationsList();
+                    setStatus('Text deleted. Click Save to keep changes.', 'ok');
                 });
 
                 if (textSpan) {
@@ -12383,7 +13511,12 @@
                 }
                 label.appendChild(deleteBtn);
                 if (annotation.type !== 'signature' && annotation.type !== 'shape' && annotation.type !== 'eraser' && annotation.type !== 'table') {
-                    label.style.fontFamily = fontMap[annotation.fontFamily]?.css || 'inherit';
+                    label.style.fontFamily = annotation.promotedFromExtraction
+                        ? resolveAnnotationCssFontFamily(annotation.fontFamily, {
+                            preferExact: true,
+                            exactFontName: annotation.fontSourceName || annotation.fontFamily,
+                        })
+                        : (fontMap[annotation.fontFamily]?.css || 'inherit');
                     // Hide old delete button (we use tbc-menu instead)
                     deleteBtn.style.display = 'none';
                     
@@ -12459,11 +13592,7 @@
                     tbcDel.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
                     tbcDel.addEventListener('click', (e) => {
                         e.stopPropagation();
-                        const ov = wrapper.querySelector('.overlay');
-                        if (ov) ov.removeChild(label);
-                        const idx = annotations.indexOf(annotation);
-                        if (idx >= 0) annotations.splice(idx, 1);
-                        if (selectedAnnotation === annotation) selectedAnnotation = null;
+                        removeAnnotationRecord(annotation);
                         updateSelectionBar();
                         updateEditTextBanner();
                         persistAnnotations();
@@ -12585,6 +13714,12 @@
                             e.stopPropagation();
                             e.preventDefault();
                             label.dataset.resizing = 'true';
+                            if (annotation.promotedFromExtraction && !annotation.promotedReflowEnabled) {
+                                annotation.promotedReflowEnabled = true;
+                                annotation.text = toPromotedReflowText(annotation.text);
+                                delete annotation.richTextHtml;
+                                applyAnnotationStyle(annotation);
+                            }
                             const startX = e.clientX;
                             const startY = e.clientY;
                             const startW = label.offsetWidth;
@@ -12734,7 +13869,12 @@
                             label.style.height = '';
                         }
                         // Alignment translateX on label (rotation goes on textWrapper)
-                        const fontFamily = fontMap[annotation.fontFamily]?.css || 'inherit';
+                        const fontFamily = annotation.promotedFromExtraction
+                            ? resolveAnnotationCssFontFamily(annotation.fontFamily, {
+                                preferExact: true,
+                                exactFontName: annotation.fontSourceName || annotation.fontFamily,
+                            })
+                            : (fontMap[annotation.fontFamily]?.css || 'inherit');
                         const fontSizePx = annotation.fontSize * pageInfo.scale;
                         const textWidth = annotationHasBounds(annotation) ? (annotation.pdfWidth * pageInfo.scale) : measureAnnotationTextWidth(annotation.text, fontSizePx, fontFamily, annotation.fontWeight, annotation.fontStyle);
                         let translateX = 0;
@@ -12880,6 +14020,20 @@
                     label.classList.add('selected');
                 }
                 overlay.appendChild(label);
+                if (annotationHasBounds(annotation) && (annotation.type === 'text' || !annotation.type)) {
+                    requestAnimationFrame(() => {
+                        if (!annotation.element || !annotation.element.isConnected) {
+                            return;
+                        }
+                        fitTextAnnotationBoundsToRenderedContent(annotation, pageInfo);
+                        setTimeout(() => {
+                            if (!annotation.element || !annotation.element.isConnected) {
+                                return;
+                            }
+                            fitTextAnnotationBoundsToRenderedContent(annotation, pageInfo);
+                        }, 120);
+                    });
+                }
             }
 
             function rerenderAnnotations() {
@@ -13897,15 +15051,23 @@
                 return gsName;
             }
 
+            function shouldUseCleanPdfForAnnotationSave() {
+                return annotations.some((annotation) => annotation?.promotedFromExtraction || annotation?.savedTextOverlay) || hasPendingPromotedAnnotationDeletions();
+            }
+
             async function savePdf() {
+                if (activeEditor && typeof activeEditor._commitText === 'function') {
+                    activeEditor._commitText();
+                }
                 syncAnnotationsForSave();
                 const hasTextEdits = pdfTextItems.some((item) => item.modified);
                 const hasRotations = Object.keys(pageRotations).some(pageIndex => pageRotations[pageIndex] !== 0);
                 const hasDeletedPages = pendingDeletedPages.length > 0;
                 const hasNewPages = pendingNewPages.length > 0;
                 const hasAnnotations = annotations.length > 0;
+                const hasPromotedExtractionDeletions = hasPendingPromotedAnnotationDeletions();
                 
-                if (!hasAnnotations && !hasTextEdits && !hasRotations && !hasDeletedPages && !hasNewPages) {
+                if (!hasAnnotations && !hasPromotedExtractionDeletions && !hasTextEdits && !hasRotations && !hasDeletedPages && !hasNewPages) {
                     setStatus('No changes to save.', 'err');
                     return;
                 }
@@ -13996,7 +15158,7 @@
                 // keeps shapes/text stamps independent from overlay/text rewrite pipeline.
                 const directAnnotationTypes = new Set(['shape', 'eraser', 'signature', 'text', 'table']);
                 const canApplyAnnotationsDirect =
-                    hasAnnotations &&
+                    (hasAnnotations || hasPromotedExtractionDeletions) &&
                     !hasTextEdits &&
                     !hasRotations &&
                     !hasDeletedPages &&
@@ -14006,6 +15168,7 @@
                 console.log('=== SAVE PATH DECISION ===', {
                     canApplyAnnotationsDirect,
                     hasAnnotations,
+                    hasPromotedExtractionDeletions,
                     hasTextEdits,
                     hasRotations,
                     hasDeletedPages,
@@ -14015,6 +15178,7 @@
 
                 if (canApplyAnnotationsDirect) {
                     console.log('>>> USING DIRECT PATH (PyMuPDF)');
+                    const sessionId = localStorage.getItem('pdf_session_id') || null;
                     const directResponse = await fetch('{{ route("documents.applyAnnotationsDirect", $document) }}', {
                         method: 'POST',
                         headers: {
@@ -14022,7 +15186,11 @@
                             'Content-Type': 'application/json',
                             'Accept': 'application/json',
                         },
-                        body: JSON.stringify({ annotations }),
+                        body: JSON.stringify({
+                            annotations,
+                            use_clean_pdf: shouldUseCleanPdfForAnnotationSave(),
+                            session_id: sessionId,
+                        }),
                     });
 
                     if (!directResponse.ok) {
@@ -14039,6 +15207,8 @@
                     // annotation is visible without relying on a redirect race.
                     setStatus('Saved! Reloading PDF...', 'ok');
                     setSelection(null);
+                    deletedPromotedSourceKeys.clear();
+                    deletedSavedTextAnnotationIds.clear();
                     annotations.length = 0;
                     persistAnnotations();
                     updateAnnotationsList();
@@ -14068,7 +15238,7 @@
 
                 // Load the CURRENT version of the PDF (not the original), so we keep previous stamps
                 // IMPORTANT: Always use the original PDF URL, not cleanPdfUrl, to preserve text content
-                const saveFromUrl = pdfUrl; // Use original PDF, not basePdfUrl which might be cleanPdfUrl
+                const saveFromUrl = shouldUseCleanPdfForAnnotationSave() ? cleanPdfUrl : pdfUrl;
                 const joiner = saveFromUrl.includes('?') ? '&' : '?';
                 const currentPdfUrl = `${saveFromUrl}${joiner}v=${pdfVersion}`;
                 const currentPdfResponse = await fetch(currentPdfUrl);
@@ -15042,6 +16212,7 @@
                     }
                     
                     // Clear all annotations data and DOM elements since they're permanently stamped
+                    deletedPromotedSourceKeys.clear();
                     annotations.length = 0;
                     persistAnnotations();
                     updateAnnotationsList(); // Clear annotations menu sidebar
@@ -15182,7 +16353,8 @@
                 const hasDeletedPages = pendingDeletedPages.length > 0;
                 const hasNewPages = pendingNewPages.length > 0;
                 const hasAnnotations = annotations.length > 0;
-                const hasPdfChanges = hasAnnotations || hasTextEdits || hasRotations || hasDeletedPages || hasNewPages;
+                const hasPromotedExtractionDeletions = hasPendingPromotedAnnotationDeletions();
+                const hasPdfChanges = hasAnnotations || hasPromotedExtractionDeletions || hasTextEdits || hasRotations || hasDeletedPages || hasNewPages;
 
                 console.groupCollapsed('[Save Debug] Save button pressed');
                 console.log('meta', {
@@ -15193,6 +16365,7 @@
                     hasDeletedPages,
                     hasNewPages,
                     hasAnnotations,
+                    hasPromotedExtractionDeletions,
                     hasPdfChanges,
                     overlayEditedFieldsCount: overlayEditedFields.size,
                     annotationsCount: annotations.length,
@@ -15770,15 +16943,7 @@
             if (selectedDelete) {
                 selectedDelete.addEventListener('click', () => {
                     if (selectedAnnotation) {
-                        const element = selectedAnnotation.element;
-                        const idx = annotations.indexOf(selectedAnnotation);
-                        if (idx >= 0) {
-                            annotations.splice(idx, 1);
-                        }
-                        if (element && element.parentNode) {
-                            element.parentNode.removeChild(element);
-                        }
-                        selectedAnnotation = null;
+                        removeAnnotationRecord(selectedAnnotation);
                         updateSelectionBar();
                         persistAnnotations();
                         updateAnnotationsList();
@@ -15981,7 +17146,14 @@
                     if (!activeEditor || !activeEditor.classList.contains('text-box-creator')) return;
                     const inp = activeEditor._tbcInput || activeEditor.querySelector('.tbc-input');
                     if (!inp) return;
-                    if (etbFont) inp.style.fontFamily = fontMap[etbFont.value]?.css || 'inherit';
+                    if (etbFont) {
+                        inp.style.fontFamily = selectedAnnotation?.promotedFromExtraction
+                            ? resolveAnnotationCssFontFamily(selectedAnnotation.fontFamily || etbFont.value, {
+                                preferExact: true,
+                                exactFontName: selectedAnnotation.fontSourceName || selectedAnnotation.fontFamily || etbFont.value,
+                            })
+                            : (fontMap[etbFont.value]?.css || 'inherit');
+                    }
                     if (etbSize) inp.style.fontSize = Math.max(8, Math.min(144, parseInt(etbSize.value || '16', 10))) + 'px';
                     if (etbTextColor) inp.style.color = etbTextColor.value;
                     if (etbBold) inp.style.fontWeight = etbBold.classList.contains('active') ? '700' : 'normal';
@@ -16174,11 +17346,7 @@
                 
                 if (etbDelete) etbDelete.addEventListener('click', () => {
                     if (!selectedAnnotation) return;
-                    const element = selectedAnnotation.element;
-                    const idx = annotations.indexOf(selectedAnnotation);
-                    if (idx >= 0) annotations.splice(idx, 1);
-                    if (element && element.parentNode) element.parentNode.removeChild(element);
-                    selectedAnnotation = null;
+                    removeAnnotationRecord(selectedAnnotation);
                     updateSelectionBar();
                     updateEditTextBanner();
                     persistAnnotations();
@@ -16509,7 +17677,7 @@
             let pdfaDownloadUrl = null;
 
             // Auth status for gating features
-            const isAuthenticated = @json(Auth::check());
+            const isAuthenticated = @json($editorIsAuthenticated);
             const loginUrl = "{{ route('login') }}";
 
             // PDF base name for filenames
@@ -19845,7 +21013,7 @@
                 if (modeOverlay) {
                     modeOverlay.checked = false;
                 }
-                if (basePdfUrl === cleanPdfUrl && overlayExtractionData) {
+                if (overlayEditorActive && basePdfUrl === cleanPdfUrl && overlayExtractionData) {
                     viewer.classList.add('overlay-view-mode');
                     viewer.classList.remove('overlay-hidden');
                     renderPdfWithOverlay(true);
@@ -20406,15 +21574,11 @@
                                 const hasEmbedded = overlayEmbeddedFonts && Object.values(overlayEmbeddedFonts).some(
                                     fd => (fd.family || '').toLowerCase() === family.toLowerCase()
                                 );
-                                if (hasEmbedded) {
+                                if (hasEmbedded && !shouldPreferWebFontFamily(family)) {
                                     overlayLoadedFonts.add(family);
                                     return;  // Already loaded via @font-face from embedded fonts
                                 }
-                                overlayLoadedFonts.add(family);
-                                const link = document.createElement('link');
-                                link.rel = 'stylesheet';
-                                link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap`;
-                                document.head.appendChild(link);
+                                ensureWebFontFamilyLoaded(family);
                             }
                         });
                     }
@@ -21333,15 +22497,11 @@
                         const hasEmbedded = overlayEmbeddedFonts && Object.values(overlayEmbeddedFonts).some(
                             fd => (fd.family || '').toLowerCase() === family.toLowerCase()
                         );
-                        if (hasEmbedded) {
+                        if (hasEmbedded && !shouldPreferWebFontFamily(family)) {
                             overlayLoadedFonts.add(family);
                             return;
                         }
-                        overlayLoadedFonts.add(family);
-                        const link = document.createElement('link');
-                        link.rel = 'stylesheet';
-                        link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap`;
-                        document.head.appendChild(link);
+                        ensureWebFontFamilyLoaded(family);
                     });
                 };
 
@@ -21366,15 +22526,11 @@
                             const hasEmbedded = overlayEmbeddedFonts && Object.values(overlayEmbeddedFonts).some(
                                 fd => (fd.family || '').toLowerCase() === family.toLowerCase()
                             );
-                            if (hasEmbedded) {
+                            if (hasEmbedded && !shouldPreferWebFontFamily(family)) {
                                 overlayLoadedFonts.add(family);
                                 return;
                             }
-                            overlayLoadedFonts.add(family);
-                            const link = document.createElement('link');
-                            link.rel = 'stylesheet';
-                            link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap`;
-                            document.head.appendChild(link);
+                            ensureWebFontFamilyLoaded(family);
                         }
                     });
                 }
@@ -22835,6 +23991,68 @@
                         field.style.top = rect.top + 'px';
                         field.style.width = rect.width + 'px';
                         field.style.height = rect.height + 'px';
+                    };
+                    const fitOverlayFieldToRenderedContent = (field, textSpan) => {
+                        if (!field || !textSpan) return false;
+
+                        const fieldLeft = parseFloat(field.style.left) || 0;
+                        const fieldTop = parseFloat(field.style.top) || 0;
+                        const fieldWidth = parseFloat(field.style.width) || field.offsetWidth || 0;
+                        const fieldHeight = parseFloat(field.style.height) || field.offsetHeight || 0;
+                        if (fieldWidth <= 0 || fieldHeight <= 0) {
+                            return false;
+                        }
+
+                        const fieldStyle = window.getComputedStyle(field);
+                        const borderX = (parseFloat(fieldStyle.borderLeftWidth || '0') || 0)
+                            + (parseFloat(fieldStyle.borderRightWidth || '0') || 0);
+                        const borderY = (parseFloat(fieldStyle.borderTopWidth || '0') || 0)
+                            + (parseFloat(fieldStyle.borderBottomWidth || '0') || 0);
+                        const padX = (parseFloat(fieldStyle.paddingLeft || '0') || 0)
+                            + (parseFloat(fieldStyle.paddingRight || '0') || 0);
+                        const padY = (parseFloat(fieldStyle.paddingTop || '0') || 0)
+                            + (parseFloat(fieldStyle.paddingBottom || '0') || 0);
+
+                        let contentWidth = Math.max(
+                            textSpan.scrollWidth || 0,
+                            textSpan.getBoundingClientRect().width || 0
+                        );
+                        let contentHeight = Math.max(
+                            textSpan.scrollHeight || 0,
+                            textSpan.getBoundingClientRect().height || 0
+                        );
+
+                        const positionedChildren = Array.from(textSpan.querySelectorAll('span')).filter((span) => {
+                            const style = span.style || {};
+                            return style.position === 'absolute';
+                        });
+                        if (positionedChildren.length > 0) {
+                            let maxRight = 0;
+                            let maxBottom = 0;
+                            positionedChildren.forEach((span) => {
+                                const left = parseFloat(span.style.left || '0') || 0;
+                                const top = parseFloat(span.style.top || '0') || 0;
+                                const rect = span.getBoundingClientRect();
+                                const width = rect.width || span.offsetWidth || 0;
+                                const height = rect.height || span.offsetHeight || 0;
+                                maxRight = Math.max(maxRight, left + width);
+                                maxBottom = Math.max(maxBottom, top + height);
+                            });
+                            contentWidth = Math.max(contentWidth, maxRight);
+                            contentHeight = Math.max(contentHeight, maxBottom);
+                        }
+
+                        const desiredWidth = Math.ceil(contentWidth + padX + borderX);
+                        const desiredHeight = Math.ceil(contentHeight + padY + borderY);
+                        const nextWidth = Math.max(fieldWidth, desiredWidth);
+                        const nextHeight = Math.max(fieldHeight, desiredHeight);
+
+                        if ((nextWidth - fieldWidth) < 1 && (nextHeight - fieldHeight) < 1) {
+                            return false;
+                        }
+
+                        applyClampedRect(field, fieldLeft, fieldTop, nextWidth, nextHeight);
+                        return true;
                     };
 
                     // ── Gap-based block splitting ──────────────────────────────
@@ -25618,6 +26836,7 @@
                         });
 
                         overlay.appendChild(field);
+                        fitOverlayFieldToRenderedContent(field, textSpan);
                     });
                 };
 
@@ -25643,12 +26862,16 @@
                             // Only re-render fields that still use absolutely-positioned
                             // word spans (not user-edited plain text).
                             const textSpan = field.querySelector('[contenteditable]');
-                            if (!textSpan || textSpan.textContent !== '') {
-                                // If textContent is set (user-edited or fallback text), skip
-                                // Only re-render if the container holds word spans
-                                const hasAbsoluteSpans = textSpan.querySelector('span[style*="position: absolute"]') ||
-                                    textSpan.querySelector('span[style*="position:absolute"]');
-                                if (!hasAbsoluteSpans) return;
+                            if (!textSpan) return;
+                            const hasAbsoluteSpans = textSpan.querySelector('span[style*="position: absolute"]') ||
+                                textSpan.querySelector('span[style*="position:absolute"]');
+                            if (textSpan.textContent !== '') {
+                                // Flow-text blocks are already rendered; just refit them after
+                                // the real font metrics become available.
+                                if (!hasAbsoluteSpans) {
+                                    fitOverlayFieldToRenderedContent(field, textSpan);
+                                    return;
+                                }
                             }
                             const blockLeft = parseFloat(field.dataset.originalLeft) || 0;
                             const blockTop = parseFloat(field.dataset.originalTop) || 0;
@@ -25664,6 +26887,7 @@
                                 field._overlaySourceBlock || null,
                                 field.dataset.originalText || ''
                             );
+                            fitOverlayFieldToRenderedContent(field, textSpan);
                         });
                     });
                 }
@@ -26607,7 +27831,7 @@
                     return;
                 }
 
-                if (basePdfUrl === cleanPdfUrl && overlayExtractionData) {
+                if (overlayEditorActive && basePdfUrl === cleanPdfUrl && overlayExtractionData) {
                     renderPdfWithOverlay(true);
                 } else {
                     rerenderPdf();
@@ -26677,6 +27901,19 @@
 
             (async () => {
                 loadAnnotationsFromStorage();
+                const overlayChipEl = document.getElementById('mode-overlay-chip');
+                if (overlayChipEl && promotedTextAnnotationsEnabled) {
+                    overlayChipEl.style.display = 'none';
+                }
+                if (!isImageDocument && promotedTextAnnotationsEnabled) {
+                    try {
+                        setStatus('Preparing editable text boxes...', 'loading');
+                        await bootstrapPromotedTextAnnotations();
+                    } catch (error) {
+                        console.warn('Failed to promote extracted text into annotations', error);
+                        basePdfUrl = pdfUrl;
+                    }
+                }
                 updateAnnotationsList(); // Populate annotations panel with loaded annotations
                 if (!isImageDocument) {
                     loadOriginalPdfBytes().catch((err) => {
