@@ -1328,7 +1328,20 @@ def _merge_stacked_paragraph_blocks(page_blocks, page_words, page_lines):
                     single_line_text_length <= 14
                     or single_line_visual_width <= max(60.0, max(a_line_height, b_line_height) * 5.5)
                 )
-                single_line_blank_separator_pair = single_line_blank_separator_pair and compact_single_line_pair
+                sentence_like_single_line_pair = (
+                    min(len(a_primary_line), len(b_primary_line)) >= 24
+                    and a_primary_line.count(' ') >= 3
+                    and b_primary_line.count(' ') >= 3
+                    and (
+                        any(a_primary_line.endswith(mark) for mark in ('.', ':', ';', '!', '?'))
+                        or any(b_primary_line.endswith(mark) for mark in ('.', ':', ';', '!', '?'))
+                    )
+                )
+                single_line_blank_separator_pair = (
+                    single_line_blank_separator_pair
+                    and compact_single_line_pair
+                    and sentence_like_single_line_pair
+                )
                 compatible_column_shape = similar_column_width or short_lead_paragraph_pair
                 max_allowed_gap = base_gap
                 widened_blank_line_pair = (

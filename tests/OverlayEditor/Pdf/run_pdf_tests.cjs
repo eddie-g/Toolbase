@@ -18,6 +18,40 @@ const VIEWPORT = { width: 1600, height: 1800 };
 const POSITION_TEXT = 'This is a test PDF example 1';
 const FIRST_MOVE_Y = -250;
 const SECOND_MOVE_Y = 250;
+const TEXT_POSITION_GROUPING_SCENARIOS = [
+    {
+        key: 'mixed_long_short_stack',
+        label: 'Long / short / short / long-right stack',
+        cases: [
+            { text: 'Stack Long Alpha lorem ipsum dolor sit amet 01', left: 72, top: 96 },
+            { text: 'Stack Short Bravo 02', left: 72, top: 144 },
+            { text: 'Stack Short Charlie 03', left: 72, top: 192 },
+            { text: 'Stack Long Delta aligned right directly below 04', left: 246, top: 240 },
+        ],
+    },
+    {
+        key: 'five_short_lines',
+        label: 'Five short lines',
+        cases: [
+            { text: 'Short Line 01', left: 72, top: 110 },
+            { text: 'Short Line 02', left: 72, top: 154 },
+            { text: 'Short Line 03', left: 72, top: 198 },
+            { text: 'Short Line 04', left: 72, top: 242 },
+            { text: 'Short Line 05', left: 72, top: 286 },
+        ],
+    },
+    {
+        key: 'five_long_lines',
+        label: 'Five long lines',
+        cases: [
+            { text: 'Long Line 01 lorem ipsum dolor sit amet for grouping isolation', left: 72, top: 110 },
+            { text: 'Long Line 02 ut enim ad minim veniam for grouping isolation', left: 72, top: 158 },
+            { text: 'Long Line 03 quis nostrud exercitation for grouping isolation', left: 72, top: 206 },
+            { text: 'Long Line 04 duis aute irure dolor for grouping isolation', left: 72, top: 254 },
+            { text: 'Long Line 05 excepteur sint occaecat for grouping isolation', left: 72, top: 302 },
+        ],
+    },
+];
 
 const STYLE_TEXT = 'RedWord SerifWord BoldWord UnderlineWord';
 const STYLE_SEGMENTS = {
@@ -193,12 +227,104 @@ const PARAGRAPH_COLUMN_FRAGMENTS = [
     'Column Three',
 ];
 const PARAGRAPH_COLUMN_LEFTS = [6, 206, 406];
+const DRYLAB_LOAD_FIXTURE_PATH = path.resolve(__dirname, '..', '..', '..', 'public', 'drylab_full.pdf');
+const DRYLAB_LOAD_POSITION_TOLERANCE = 4;
+const DRYLAB_LOAD_SIZE_TOLERANCE = 6;
+const DRYLAB_LOAD_LINE_HEIGHT_TOLERANCE = 4;
+const DRYLAB_LOAD_FONT_SIZE_TOLERANCE = 3;
+const DRYLAB_LOAD_TARGETS = [
+    {
+        key: 'title',
+        lineText: 'Drylab News',
+        sampleWords: ['Drylab', 'News'],
+        styleWord: 'Drylab',
+        fontFamilyRegex: /montserrat/i,
+        minFontWeight: 600,
+        expectedColor: '#ffa93a',
+    },
+    {
+        key: 'subtitle',
+        lineText: 'for investors & friends · May 2017',
+        sampleWords: ['investors', 'friends', 'May'],
+        styleWord: 'investors',
+        fontFamilyRegex: /montserrat/i,
+        maxFontWeight: 450,
+        expectedColor: '#ffa93a',
+    },
+    {
+        key: 'intro',
+        lineText: 'Welcome to our first newsletter of 2017! It\'s',
+        sampleWords: ['Welcome', 'newsletter', '2017!'],
+        styleWord: 'Welcome',
+        fontFamilyRegex: /lato/i,
+        minFontWeight: 300,
+        maxFontWeight: 500,
+        expectedColor: '#000000',
+    },
+    {
+        key: 'section_heading',
+        lineText: 'New capital: The investment round was',
+        sampleWords: ['New', 'capital:', 'round'],
+        styleWord: 'New',
+        fontFamilyRegex: /montserrat/i,
+        minFontWeight: 600,
+        expectedColor: '#000000',
+    },
+];
+const INVOICE_TEST_FIXTURE_PATH = path.resolve(__dirname, '..', '..', '..', 'public', 'invoice_test.pdf');
+const INVOICE_EXPECTED_CODE_FIELDS_BY_PAGE = {
+    1: [
+        'BPXPN-00057',
+        'BPXPN-00012',
+        'BPXPN-00002',
+        'BPXPN-00027',
+        'BPXPN-00066',
+        'BPXPN-00017',
+        'BPXPN-00044',
+        'BPXPN-00023',
+        'BPXPN-00067',
+        'BPXPN-00045',
+        'BPXPN-00018',
+        'BPXPN-00022',
+        'BPXPN-00068',
+        'BPXPN-00005',
+    ],
+    2: [
+        'BPXPN-00052',
+        'BPXPN-00046',
+        'BPXPN-00069',
+        'BPXPN-00070',
+        'BPXPN-00047',
+        'BPXPN-00051',
+        'BPXPN-00071',
+        'BPXPN-00019',
+        'BPXPN-00048',
+        'BPXPN-00021',
+        'BPXPN-00049',
+        'BPXPN-00050',
+        'BPXPN-00004',
+        'BPXPN-00020',
+    ],
+};
+const PARAGRAPH_TEST_KEYS = [
+    'test_3_paragraphs',
+    'test_4_three_paragraph_columns',
+    'test_5_paragraph_block_integrity',
+    'test_6_paragraph_blank_line_integrity',
+    'test_7_short_intro_blank_line_integrity',
+    'test_8_edited_paragraph_newlines_preserved',
+    'test_9_paragraph_position_accuracy',
+    'test_10_delete_all_promoted_text_save',
+    'test_11_separate_lines_not_grouped',
+    'test_12_tiny_saved_labels_reload_separately',
+    'test_13_paragraph_indent_preserved',
+];
 
 const TESTS = {
     test_1_text_position: {
         key: 'test_1_text_position',
         label: 'Test 1 : Text Position',
-        description: 'Create blank PDFs, save one centered text annotation after moving it 250px up, save a second after moving it back down, and confirm the annotation save path preserves the position difference.',
+        description: 'Create blank PDFs, save one centered text annotation after moving it 250px up, save a second after moving it back down, and verify mixed long/short line stacks plus five short lines and five long lines all remain in separate saved extraction groups.',
         run: runTextPositionFlow,
     },
     test_2_text_styling: {
@@ -206,6 +332,18 @@ const TESTS = {
         label: 'Test 2 : Text Styling',
         description: 'Create one combined text box, style individual words with different color, font, boldness, and underline, save, and confirm the mixed styling survives in the saved PDF.',
         run: runTextStylingFlow,
+    },
+    test_4_load_tests: {
+        key: 'test_4_load_tests',
+        label: 'Test 4 : Load Tests',
+        description: 'Upload drylab_full.pdf, load page 1 in the overlay editor, and verify key text retains original word positions, line heights, and styles on initial load.',
+        run: runDrylabLoadFlow,
+    },
+    test_14_invoice_code_column_separated: {
+        key: 'test_14_invoice_code_column_separated',
+        label: 'Test 14 : Invoice Code Column Separation',
+        description: 'Upload invoice_test.pdf, load it in the overlay editor, and verify each BPXPN invoice code row is rendered as its own overlay field instead of one grouped stack.',
+        run: runInvoiceCodeColumnSeparatedFlow,
     },
     test_3_paragraphs: {
         key: 'test_3_paragraphs',
@@ -275,6 +413,15 @@ const TESTS = {
     },
 };
 
+const TEST_SUITES = {
+    paragraph_suite: {
+        key: 'paragraph_suite',
+        label: 'Paragraph Suite',
+        description: 'Run all paragraph-related PDF tests as one suite, including paragraph resizing, save/reload integrity, grouping boundaries, position accuracy, delete-save behavior, and indentation preservation.',
+        testKeys: PARAGRAPH_TEST_KEYS,
+    },
+};
+
 function ensureOutputDir() {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 }
@@ -299,6 +446,27 @@ function normalizeHex(value, fallback = '#000000') {
     return fallback;
 }
 
+function colorToHex(value, fallback = '#000000') {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) {
+        return fallback;
+    }
+    if (/^#[0-9a-f]{6}$/.test(raw)) {
+        return raw;
+    }
+    const rgbMatch = raw.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+    if (!rgbMatch) {
+        return fallback;
+    }
+    const [r, g, b] = rgbMatch.slice(1, 4).map((entry) => Math.max(0, Math.min(255, Number(entry) || 0)));
+    return `#${[r, g, b].map((entry) => entry.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function parseCssPixels(value) {
+    const match = String(value || '').match(/-?\d+(\.\d+)?/);
+    return match ? Number(match[0]) : null;
+}
+
 function approxEqual(a, b, tolerance = 1) {
     return Math.abs(Number(a || 0) - Number(b || 0)) <= tolerance;
 }
@@ -313,6 +481,15 @@ function buildArtifactName(testKey, runToken, suffix, ext = 'png') {
 
 function outputJson(payload) {
     process.stdout.write(`${JSON.stringify(payload)}\n`);
+}
+
+function scaleBox(box, scaleX, scaleY) {
+    return {
+        left: (Number(box?.left) || 0) * scaleX,
+        top: (Number(box?.top) || 0) * scaleY,
+        width: (Number(box?.width) || 0) * scaleX,
+        height: (Number(box?.height) || 0) * scaleY,
+    };
 }
 
 function lineBBox(line) {
@@ -559,6 +736,28 @@ echo $document->id;
     return Number(match[1]);
 }
 
+async function createFixtureDocument(page, fixturePath) {
+    const resolvedFixturePath = path.isAbsolute(fixturePath)
+        ? fixturePath
+        : path.resolve(process.cwd(), fixturePath);
+    if (!fs.existsSync(resolvedFixturePath)) {
+        throw new Error(`fixture PDF not found: ${resolvedFixturePath}`);
+    }
+    await page.goto(`${BASE_URL}/pdf-editor`, { waitUntil: 'domcontentloaded', timeout: 90000 });
+    await page.setInputFiles('#document-input', resolvedFixturePath);
+    await page.click('#upload-submit');
+    await page.waitForFunction(() => /\/documents\/\d+\/edit\b/.test(window.location.pathname), null, {
+        timeout: 120000,
+    });
+
+    const match = page.url().match(/\/documents\/(\d+)\/edit/);
+    if (!match) {
+        throw new Error(`could not determine fixture document id from URL: ${page.url()}`);
+    }
+
+    return Number(match[1]);
+}
+
 
 async function createBlankDocumentViaBrowser(page, bootstrapErrors, options = {}) {
     const pageSize = options.pageSize || 'Letter';
@@ -600,7 +799,7 @@ async function forceRefreshOverlay(page, documentId) {
 }
 
 async function waitForEditorReady(page) {
-    await page.waitForSelector('.page[data-page-index="0"] canvas, .page-wrapper[data-page-number="1"] canvas', { timeout: 30000 });
+    await page.waitForSelector('.page[data-page-index="0"] canvas, .page-wrapper[data-page-number="1"] canvas', { timeout: 90000 });
     await page.waitForTimeout(1500);
 }
 
@@ -901,10 +1100,16 @@ async function clickOutsideFirstPage(page) {
 }
 
 async function activateOverlay(page) {
-    const overlayToggle = page.locator('#mode-overlay-toggle');
-    if (!(await overlayToggle.isChecked())) {
-        await page.getByText('Overlay Editor', { exact: true }).click();
-    }
+    await page.evaluate(() => {
+        const toggle = document.getElementById('mode-overlay-toggle');
+        if (!toggle) {
+            throw new Error('missing mode-overlay-toggle');
+        }
+        if (!toggle.checked) {
+            toggle.checked = true;
+            toggle.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+    });
     await page.waitForFunction(() => typeof overlayEditorActive !== 'undefined' && overlayEditorActive === true, null, { timeout: 30000 });
     await page.waitForFunction(() => document.querySelectorAll('.overlay-field').length > 0, null, { timeout: 30000 });
     await page.waitForTimeout(1500);
@@ -944,6 +1149,104 @@ async function fetchExtraction(page, documentId) {
     }
 
     return extraction;
+}
+
+function loadPdfExtractionPage(pdfPath, pageNumber = 1) {
+    const pythonCode = `
+import importlib.util
+import json
+import sys
+import io
+import contextlib
+from pathlib import Path
+
+pdf_path = Path(sys.argv[1])
+page_number = int(sys.argv[2])
+module_path = Path('python/pdf-editor/extract_pdf_pymupdf.py')
+spec = importlib.util.spec_from_file_location('extract_pdf_pymupdf', module_path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+with contextlib.redirect_stdout(io.StringIO()):
+    result = module.extract_text_with_pymupdf(str(pdf_path))
+pages = result.get('extraction_data', [])
+page = next((entry for entry in pages if int(entry.get('page_number', 0) or 0) == page_number), None)
+print(json.dumps(page or {}))
+`;
+
+    const raw = execFileSync('python3', ['-c', pythonCode, pdfPath, String(pageNumber)], {
+        cwd: path.resolve(__dirname, '..', '..', '..'),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return JSON.parse(raw);
+}
+
+function loadPdfTargetWordBoxes(pdfPath, pageNumber, targetConfigs) {
+    const pythonCode = `
+import importlib.util
+import json
+import sys
+import io
+import contextlib
+from pathlib import Path
+import fitz
+
+pdf_path = Path(sys.argv[1])
+page_number = int(sys.argv[2])
+targets = json.loads(sys.argv[3])
+module_path = Path('python/pdf-editor/extract_pdf_pymupdf.py')
+spec = importlib.util.spec_from_file_location('extract_pdf_pymupdf', module_path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+with contextlib.redirect_stdout(io.StringIO()):
+    result = module.extract_text_with_pymupdf(str(pdf_path))
+page_data = next((entry for entry in result.get('extraction_data', []) if int(entry.get('page_number', 0) or 0) == page_number), {}) or {}
+doc = fitz.open(str(pdf_path))
+page = doc[page_number - 1]
+output = {}
+
+for target in targets:
+    line_text = ' '.join(str(target.get('lineText', '')).split())
+    line = next((entry for entry in page_data.get('lines', []) if ' '.join(str(entry.get('text', '')).split()) == line_text), None)
+    line_rect = None
+    if line:
+        line_rect = fitz.Rect(
+            float(line.get('left', 0) or 0),
+            float(line.get('top', 0) or 0),
+            float((line.get('left', 0) or 0) + (line.get('width', 0) or 0)),
+            float((line.get('top', 0) or 0) + (line.get('height', 0) or 0)),
+        )
+    word_boxes = {}
+    for word in target.get('sampleWords', []):
+        matches = []
+        for rect in page.search_for(str(word), quads=False):
+            candidate = {
+                'left': rect.x0,
+                'top': rect.y0,
+                'width': rect.x1 - rect.x0,
+                'height': rect.y1 - rect.y0,
+            }
+            if line_rect is not None:
+                vertical_overlap = min(rect.y1, line_rect.y1) - max(rect.y0, line_rect.y0)
+                horizontal_overlap = min(rect.x1, line_rect.x1) - max(rect.x0, line_rect.x0)
+                if vertical_overlap < max(1, min(rect.y1 - rect.y0, line_rect.y1 - line_rect.y0) * 0.35):
+                    continue
+                if horizontal_overlap <= 0:
+                    continue
+            matches.append(candidate)
+        word_boxes[word] = matches[0] if matches else None
+    output[target.get('key')] = word_boxes
+
+doc.close()
+print(json.dumps(output))
+`;
+
+    const raw = execFileSync('python3', ['-c', pythonCode, pdfPath, String(pageNumber), JSON.stringify(targetConfigs)], {
+        cwd: path.resolve(__dirname, '..', '..', '..'),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return JSON.parse(raw);
 }
 
 function extractMatchingBBoxes(extraction, targetText) {
@@ -1042,6 +1345,60 @@ function extractMatchingBlock(extraction, targetTextFragment) {
         .sort((a, b) => normalize(b?.text).length - normalize(a?.text).length)[0] || null;
 }
 
+function analyzeIndependentTextGrouping(extraction, scenarioCases) {
+    const pageData = extraction?.extraction_data?.[0] || {};
+    const blocks = (pageData.blocks || []).map((block) => {
+        const normalizedText = normalize(
+            Array.isArray(block?.text_lines) && block.text_lines.length
+                ? block.text_lines.join(' ')
+                : block?.text
+        );
+        return {
+            block_num: block?.block_num,
+            text: normalizedText,
+            left: Number(block?.left) || 0,
+            top: Number(block?.top) || 0,
+            width: Number(block?.width) || 0,
+            height: Number(block?.height) || 0,
+        };
+    }).filter((block) => block.text.length > 0);
+
+    const cases = (scenarioCases || []).map((scenarioCase) => ({
+        ...scenarioCase,
+        normalizedText: normalize(scenarioCase?.text),
+    }));
+
+    const matchesByCase = cases.map((scenarioCase) => {
+        const matches = blocks.filter((block) => block.text.includes(scenarioCase.normalizedText));
+        return {
+            text: scenarioCase.text,
+            matchCount: matches.length,
+            matches,
+        };
+    });
+
+    const groupedBlocks = blocks.map((block) => {
+        const hits = cases.filter((scenarioCase) => block.text.includes(scenarioCase.normalizedText));
+        if (hits.length <= 1) {
+            return null;
+        }
+        return {
+            block_num: block.block_num,
+            text: block.text,
+            matchedTexts: hits.map((scenarioCase) => scenarioCase.text),
+            left: block.left,
+            top: block.top,
+            width: block.width,
+            height: block.height,
+        };
+    }).filter(Boolean);
+
+    return {
+        matchesByCase,
+        groupedBlocks,
+    };
+}
+
 function extractBlockLines(extraction, block) {
     if (!block) {
         return [];
@@ -1067,15 +1424,244 @@ function extractWordsForLine(extraction, line) {
         return [];
     }
     const pageData = extraction?.extraction_data?.[0] || {};
-    return (pageData.words || []).filter((word) => (
+    const directMatches = (pageData.words || []).filter((word) => (
         String(word?.block_num) === String(line?.block_num)
         && String(word?.line_num) === String(line?.line_num)
     ));
+    if (directMatches.length > 0) {
+        return directMatches;
+    }
+
+    const targetBBox = lineBBox(line);
+    return (pageData.words || []).filter((word) => {
+        const wordBBox = lineBBox(word);
+        const verticalOverlap = Math.min(targetBBox[3], wordBBox[3]) - Math.max(targetBBox[1], wordBBox[1]);
+        const horizontalOverlap = Math.min(targetBBox[2], wordBBox[2]) - Math.max(targetBBox[0], wordBBox[0]);
+        return verticalOverlap >= Math.min(targetBBox[3] - targetBBox[1], wordBBox[3] - wordBBox[1]) * 0.5
+            && horizontalOverlap > 0;
+    });
 }
 
 function extractMatchingWord(words, targetText) {
     const expected = normalize(targetText);
     return (Array.isArray(words) ? words : []).find((word) => normalize(word?.text) === expected) || null;
+}
+
+async function collectOverlayLoadTargets(page, targetConfigs) {
+    return page.evaluate((configs) => {
+        const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const toNumber = (value) => Number(value) || 0;
+
+        const mergeRects = (rects) => {
+            if (!rects.length) {
+                return null;
+            }
+            const left = Math.min(...rects.map((rect) => rect.left));
+            const top = Math.min(...rects.map((rect) => rect.top));
+            const right = Math.max(...rects.map((rect) => rect.right));
+            const bottom = Math.max(...rects.map((rect) => rect.bottom));
+            return {
+                left,
+                top,
+                width: right - left,
+                height: bottom - top,
+            };
+        };
+
+        const groupLineRects = (root, fieldRect, fieldLeft, fieldTop) => {
+            const range = document.createRange();
+            range.selectNodeContents(root);
+            const rects = Array.from(range.getClientRects())
+                .filter((rect) => rect.width > 1 && rect.height > 1)
+                .map((rect) => ({
+                    left: fieldLeft + (rect.left - fieldRect.left),
+                    top: fieldTop + (rect.top - fieldRect.top),
+                    right: fieldLeft + (rect.right - fieldRect.left),
+                    bottom: fieldTop + (rect.bottom - fieldRect.top),
+                }))
+                .sort((a, b) => {
+                    if (Math.abs(a.top - b.top) > 2) {
+                        return a.top - b.top;
+                    }
+                    return a.left - b.left;
+                });
+
+            const groups = [];
+            for (const rect of rects) {
+                let group = groups.find((candidate) => {
+                    const overlap = Math.min(candidate.bottom, rect.bottom) - Math.max(candidate.top, rect.top);
+                    return overlap >= Math.min(candidate.bottom - candidate.top, rect.bottom - rect.top) * 0.45
+                        || Math.abs(candidate.top - rect.top) <= 3;
+                });
+                if (!group) {
+                    groups.push({ ...rect });
+                    continue;
+                }
+                group.left = Math.min(group.left, rect.left);
+                group.top = Math.min(group.top, rect.top);
+                group.right = Math.max(group.right, rect.right);
+                group.bottom = Math.max(group.bottom, rect.bottom);
+            }
+
+            return groups.map((group) => ({
+                left: group.left,
+                top: group.top,
+                width: group.right - group.left,
+                height: group.bottom - group.top,
+            }));
+        };
+
+        const getTextNodes = (root) => {
+            const nodes = [];
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            let cursor = 0;
+            let current = walker.nextNode();
+            while (current) {
+                const text = current.textContent || '';
+                if (text.length > 0) {
+                    nodes.push({
+                        node: current,
+                        start: cursor,
+                        end: cursor + text.length,
+                        text,
+                    });
+                    cursor += text.length;
+                }
+                current = walker.nextNode();
+            }
+            return nodes;
+        };
+
+        const resolvePosition = (nodes, offset) => {
+            for (const entry of nodes) {
+                if (offset >= entry.start && offset < entry.end) {
+                    return {
+                        node: entry.node,
+                        offset: offset - entry.start,
+                    };
+                }
+            }
+            const last = nodes[nodes.length - 1];
+            return last ? { node: last.node, offset: last.text.length } : null;
+        };
+
+        const getWordEntry = (root, fieldRect, fieldLeft, fieldTop, word) => {
+            const rawText = root.textContent || '';
+            const start = rawText.indexOf(word);
+            if (start < 0) {
+                return null;
+            }
+            const end = start + word.length;
+            const nodes = getTextNodes(root);
+            const startPos = resolvePosition(nodes, start);
+            const endPos = resolvePosition(nodes, end);
+            if (!startPos || !endPos) {
+                return null;
+            }
+            const range = document.createRange();
+            range.setStart(startPos.node, startPos.offset);
+            range.setEnd(endPos.node, endPos.offset);
+            const rects = Array.from(range.getClientRects()).filter((rect) => rect.width > 0.5 && rect.height > 0.5);
+            const merged = mergeRects(rects);
+            if (!merged) {
+                return null;
+            }
+            const styleElement = startPos.node.parentElement || root;
+            const style = getComputedStyle(styleElement);
+            return {
+                box: {
+                    left: fieldLeft + (merged.left - fieldRect.left),
+                    top: fieldTop + (merged.top - fieldRect.top),
+                    width: merged.width,
+                    height: merged.height,
+                },
+                style: {
+                    fontFamily: style.fontFamily,
+                    fontSize: style.fontSize,
+                    fontWeight: style.fontWeight,
+                    color: style.color,
+                    lineHeight: style.lineHeight,
+                },
+            };
+        };
+
+        const pageEl = document.querySelector('.page[data-page-index="0"]') || document.querySelector('.page-wrapper[data-page-number="1"]');
+        const overlay = pageEl?.querySelector('.overlay');
+        const overlayWidth = overlay?.clientWidth || 0;
+        const overlayHeight = overlay?.clientHeight || 0;
+        const fields = Array.from(document.querySelectorAll('.overlay-field')).map((field) => {
+            const root = field.querySelector('[contenteditable]') || field;
+            const text = normalizeText(root.innerText || root.textContent || '');
+            const fieldRect = field.getBoundingClientRect();
+            const style = getComputedStyle(root);
+            return {
+                text,
+                field,
+                root,
+                fieldRect,
+                left: toNumber(field.offsetLeft),
+                top: toNumber(field.offsetTop),
+                width: fieldRect.width,
+                height: fieldRect.height,
+                style: {
+                    fontFamily: style.fontFamily,
+                    fontSize: style.fontSize,
+                    fontWeight: style.fontWeight,
+                    color: style.color,
+                    lineHeight: style.lineHeight,
+                },
+            };
+        }).filter((entry) => entry.text);
+
+        const targets = {};
+        for (const config of configs) {
+            const fieldEntry = fields.find((entry) => entry.text.startsWith(config.lineText) || entry.text.includes(config.lineText));
+            if (!fieldEntry) {
+                targets[config.key] = null;
+                continue;
+            }
+
+            targets[config.key] = {
+                text: fieldEntry.text,
+                left: fieldEntry.left,
+                top: fieldEntry.top,
+                width: fieldEntry.width,
+                height: fieldEntry.height,
+                style: fieldEntry.style,
+                line_boxes: groupLineRects(fieldEntry.root, fieldEntry.fieldRect, fieldEntry.left, fieldEntry.top),
+                word_entries: Object.fromEntries((config.sampleWords || []).map((word) => [word, getWordEntry(fieldEntry.root, fieldEntry.fieldRect, fieldEntry.left, fieldEntry.top, word)])),
+            };
+        }
+
+        return {
+            overlayWidth,
+            overlayHeight,
+            targets,
+        };
+    }, targetConfigs.map((config) => ({
+        key: config.key,
+        lineText: config.lineText,
+        sampleWords: config.sampleWords,
+    })));
+}
+
+async function collectOverlayFieldTexts(page) {
+    return page.evaluate(() => {
+        const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        return Array.from(document.querySelectorAll('.overlay-field')).map((field) => {
+            const root = field.querySelector('[contenteditable]') || field;
+            const pageHost = field.closest('.page-wrapper[data-page-number], .page[data-page-index]');
+            return {
+                key: field.dataset.wordIndex || '',
+                text: normalizeText(root.innerText || root.textContent || ''),
+                pageNumber: Number(pageHost?.dataset.pageNumber || ((Number(pageHost?.dataset.pageIndex) || 0) + 1) || 0),
+                left: Number(field.offsetLeft) || 0,
+                top: Number(field.offsetTop) || 0,
+                width: Number(field.offsetWidth) || 0,
+                height: Number(field.offsetHeight) || 0,
+            };
+        }).filter((entry) => entry.text.length > 0);
+    });
 }
 
 async function waitForSelectionToolbarSelection(page, selectionType) {
@@ -1489,6 +2075,8 @@ async function runTextPositionFlow() {
     const page = await browser.newPage({ viewport: VIEWPORT });
     let firstDocumentId = null;
     let secondDocumentId = null;
+    const groupingDocumentIds = [];
+    const groupingScenarioResults = [];
 
     try {
         firstDocumentId = await createBlankDocument(page);
@@ -1540,6 +2128,27 @@ async function runTextPositionFlow() {
         const savedDelta = secondCenter.y - firstCenter.y;
         const browserDelta = SECOND_MOVE_Y;
 
+        for (const scenario of TEXT_POSITION_GROUPING_SCENARIOS) {
+            const scenarioDocumentId = await createBlankDocument(page);
+            groupingDocumentIds.push(scenarioDocumentId);
+            await waitForEditorReady(page);
+            await clearAnnotationSessionState(page, scenarioDocumentId);
+
+            for (const scenarioCase of scenario.cases) {
+                await createTextAnnotationAt(page, scenarioCase.text, scenarioCase.left, scenarioCase.top);
+            }
+
+            await waitForAnnotationSave(page);
+            await forceRefreshOverlay(page, scenarioDocumentId);
+            const scenarioExtraction = await fetchExtraction(page, scenarioDocumentId);
+            groupingScenarioResults.push({
+                key: scenario.key,
+                label: scenario.label,
+                documentId: scenarioDocumentId,
+                analysis: analyzeIndependentTextGrouping(scenarioExtraction, scenario.cases),
+            });
+        }
+
         const checks = [
             {
                 item: 'blank_pdf_created',
@@ -1571,6 +2180,20 @@ async function runTextPositionFlow() {
                 description: 'The saved PDF moved the line materially downward between the two annotation-only saves.',
                 detail: `saved_delta_y=${savedDelta.toFixed(2)} first_center=${firstCenter.y.toFixed(2)} second_center=${secondCenter.y.toFixed(2)}`,
             },
+            ...groupingScenarioResults.map((scenarioResult) => {
+                const caseFailures = scenarioResult.analysis.matchesByCase.filter((entry) => entry.matchCount !== 1);
+                const groupedBlocks = scenarioResult.analysis.groupedBlocks;
+                return {
+                    item: `text_grouping_${scenarioResult.key}`,
+                    result: caseFailures.length === 0 && groupedBlocks.length === 0 ? 'PASS' : 'FAIL',
+                    description: `${scenarioResult.label} saves as one raw extraction group per line, with no grouped multi-line block.`,
+                    detail: JSON.stringify({
+                        document_id: scenarioResult.documentId,
+                        case_failures: caseFailures,
+                        grouped_blocks: groupedBlocks,
+                    }),
+                };
+            }),
         ];
 
         const hasFailure = checks.some((check) => check.result !== 'PASS');
@@ -1601,12 +2224,13 @@ async function runTextPositionFlow() {
                 },
             ],
             metadata: {
-                document_ids: [firstDocumentId, secondDocumentId],
+                document_ids: [firstDocumentId, secondDocumentId, ...groupingDocumentIds],
                 target_text: POSITION_TEXT,
                 first_bbox: firstBBox,
                 second_bbox: secondBBox,
                 browser_second_move_delta_y: browserDelta,
                 second_move_delta_y: savedDelta,
+                grouping_scenarios: groupingScenarioResults,
             },
         });
     } finally {
@@ -1620,6 +2244,13 @@ async function runTextPositionFlow() {
         if (secondDocumentId) {
             try {
                 await deleteDocument(page, secondDocumentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        for (const documentId of groupingDocumentIds) {
+            try {
+                await deleteDocument(page, documentId);
             } catch (_error) {
                 // Ignore cleanup failures so the primary test result survives.
             }
@@ -1838,6 +2469,424 @@ async function runTextStylingFlow() {
                 await deleteDocument(page, documentId);
             } catch (_error) {
                 // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runDrylabLoadFlow() {
+    const test = TESTS.test_4_load_tests;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const screenshotName = buildArtifactName(test.key, runToken, 'drylab_page1_overlay_load');
+    const screenshotPath = path.join(OUTPUT_DIR, screenshotName);
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+
+    try {
+        const sourcePage = loadPdfExtractionPage(DRYLAB_LOAD_FIXTURE_PATH, 1);
+        const sourceTargetWordBoxes = loadPdfTargetWordBoxes(DRYLAB_LOAD_FIXTURE_PATH, 1, DRYLAB_LOAD_TARGETS);
+        if (!sourcePage?.width || !sourcePage?.height) {
+            throw new Error(`missing source extraction for ${DRYLAB_LOAD_FIXTURE_PATH}`);
+        }
+
+        documentId = await createFixtureDocument(page, DRYLAB_LOAD_FIXTURE_PATH);
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+        await forceRefreshOverlay(page, documentId);
+        await activateOverlay(page);
+
+        const overlayData = await collectOverlayLoadTargets(page, DRYLAB_LOAD_TARGETS);
+        await capturePageScreenshot(page, screenshotPath);
+
+        const scaleX = (Number(overlayData?.overlayWidth) || 0) / (Number(sourcePage.width) || 1);
+        const scaleY = (Number(overlayData?.overlayHeight) || 0) / (Number(sourcePage.height) || 1);
+        const sourceExtraction = { extraction_data: [sourcePage] };
+        const checks = [
+            {
+                item: 'fixture_document_loaded',
+                result: documentId ? 'PASS' : 'FAIL',
+                description: 'The drylab fixture document was loaded into the editor.',
+                detail: `document=${documentId}`,
+            },
+        ];
+        const metadata = {
+            document_id: documentId,
+            source_page_size: {
+                width: sourcePage.width,
+                height: sourcePage.height,
+            },
+            overlay_size: {
+                width: overlayData?.overlayWidth || 0,
+                height: overlayData?.overlayHeight || 0,
+            },
+            scale: { x: scaleX, y: scaleY },
+            targets: {},
+        };
+
+        for (const config of DRYLAB_LOAD_TARGETS) {
+            const sourceLine = extractMatchingLine(sourceExtraction, config.lineText);
+            const overlayTarget = overlayData?.targets?.[config.key] || null;
+            const expectedLineBox = sourceLine ? scaleBox(sourceLine, scaleX, scaleY) : null;
+            const expectedWordBoxes = Object.fromEntries((config.sampleWords || []).map((word) => {
+                const sourceWord = sourceTargetWordBoxes?.[config.key]?.[word] || null;
+                return [word, sourceWord ? scaleBox(sourceWord, scaleX, scaleY) : null];
+            }));
+            const actualWordEntries = overlayTarget?.word_entries || {};
+            const actualWordBoxes = Object.fromEntries(Object.entries(actualWordEntries).map(([word, entry]) => [word, entry?.box || null]));
+            const styleEntry = actualWordEntries[config.styleWord || config.sampleWords?.[0]] || null;
+            const actualStyle = styleEntry?.style || overlayTarget?.style || {};
+            const sampleWordBox = actualWordBoxes[config.sampleWords?.[0]] || null;
+            const actualLineBox = overlayTarget?.line_boxes?.find((entry) => (
+                sampleWordBox && approxEqual(entry.top, sampleWordBox.top, DRYLAB_LOAD_LINE_HEIGHT_TOLERANCE * 2)
+            )) || overlayTarget?.line_boxes?.[0] || null;
+            const actualFontSize = parseCssPixels(actualStyle.fontSize);
+            const expectedFontSize = sourceLine ? ((Number(sourceLine.font_size) || 0) * scaleY) : null;
+            const actualFontWeight = Number(actualStyle.fontWeight) || 0;
+            const actualColor = colorToHex(actualStyle.color);
+            const actualFontFamily = String(actualStyle.fontFamily || '');
+            const expectedLineHeight = expectedLineBox?.height || null;
+            const actualLineHeight = actualLineBox?.height || null;
+
+            const wordPositionFailures = (config.sampleWords || []).map((word) => {
+                const expected = expectedWordBoxes[word];
+                const actual = actualWordBoxes[word];
+                if (!expected || !actual) {
+                    return { word, pass: false, expected, actual };
+                }
+                return {
+                    word,
+                    pass: (
+                        approxEqual(actual.left, expected.left, DRYLAB_LOAD_POSITION_TOLERANCE)
+                        && approxEqual(actual.top, expected.top, DRYLAB_LOAD_POSITION_TOLERANCE)
+                    ),
+                    expected,
+                    actual,
+                };
+            });
+
+            const styleMatchesFontFamily = config.fontFamilyRegex.test(actualFontFamily);
+            const styleMatchesWeight = (
+                (config.minFontWeight === undefined || actualFontWeight >= config.minFontWeight)
+                && (config.maxFontWeight === undefined || actualFontWeight <= config.maxFontWeight)
+            );
+            const styleMatchesColor = actualColor === normalizeHex(config.expectedColor);
+            const styleMatchesFontSize = expectedFontSize !== null && actualFontSize !== null
+                ? approxEqual(actualFontSize, expectedFontSize, DRYLAB_LOAD_FONT_SIZE_TOLERANCE)
+                : false;
+
+            checks.push({
+                item: `${config.key}_line_box_matches`,
+                result: sourceLine && actualLineBox
+                    && approxEqual(actualLineBox.left, expectedLineBox.left, DRYLAB_LOAD_POSITION_TOLERANCE)
+                    && approxEqual(actualLineBox.top, expectedLineBox.top, DRYLAB_LOAD_POSITION_TOLERANCE)
+                    && approxEqual(actualLineBox.width, expectedLineBox.width, DRYLAB_LOAD_SIZE_TOLERANCE)
+                    ? 'PASS' : 'FAIL',
+                description: `${config.key} loads with the original line position and width on page 1.`,
+                detail: JSON.stringify({
+                    expected: expectedLineBox,
+                    actual: actualLineBox,
+                }),
+            });
+            checks.push({
+                item: `${config.key}_word_positions_match`,
+                result: wordPositionFailures.every((entry) => entry.pass) ? 'PASS' : 'FAIL',
+                description: `${config.key} keeps key word positions aligned with the source PDF on initial load.`,
+                detail: JSON.stringify(wordPositionFailures),
+            });
+            checks.push({
+                item: `${config.key}_line_height_matches`,
+                result: expectedLineHeight !== null && actualLineHeight !== null
+                    && approxEqual(actualLineHeight, expectedLineHeight, DRYLAB_LOAD_LINE_HEIGHT_TOLERANCE)
+                    ? 'PASS' : 'FAIL',
+                description: `${config.key} keeps the original rendered line height on initial load.`,
+                detail: JSON.stringify({
+                    expected_line_height: expectedLineHeight,
+                    actual_line_height: actualLineHeight,
+                }),
+            });
+            checks.push({
+                item: `${config.key}_styles_match`,
+                result: styleMatchesFontFamily && styleMatchesWeight && styleMatchesColor && styleMatchesFontSize ? 'PASS' : 'FAIL',
+                description: `${config.key} keeps the original font family, weight, size, and color on initial load.`,
+                detail: JSON.stringify({
+                    expected: {
+                        font_family_regex: String(config.fontFamilyRegex),
+                        min_font_weight: config.minFontWeight ?? null,
+                        max_font_weight: config.maxFontWeight ?? null,
+                        color: normalizeHex(config.expectedColor),
+                        font_size: expectedFontSize,
+                    },
+                    actual: {
+                        font_family: actualFontFamily,
+                        font_weight: actualFontWeight,
+                        color: actualColor,
+                        font_size: actualFontSize,
+                    },
+                }),
+            });
+
+            metadata.targets[config.key] = {
+                source_line: sourceLine,
+                expected_line_box: expectedLineBox,
+                expected_word_boxes: expectedWordBoxes,
+                actual_word_entries: actualWordEntries,
+                overlay_target: overlayTarget,
+            };
+        }
+
+        const hasFailure = checks.some((check) => check.result !== 'PASS');
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: hasFailure ? 'fail' : 'pass',
+            checks,
+            artifacts: [
+                { label: 'Drylab Page 1 Overlay Load', kind: 'image', filename: screenshotName },
+            ],
+            fileSize: fs.existsSync(DRYLAB_LOAD_FIXTURE_PATH) ? fs.statSync(DRYLAB_LOAD_FIXTURE_PATH).size : 0,
+            metadata,
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runInvoiceCodeColumnSeparatedFlow() {
+    const test = TESTS.test_14_invoice_code_column_separated;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const screenshotName = buildArtifactName(test.key, runToken, 'invoice_code_column_load');
+    const screenshotPath = path.join(OUTPUT_DIR, screenshotName);
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+
+    try {
+        documentId = await createFixtureDocument(page, INVOICE_TEST_FIXTURE_PATH);
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+        await forceRefreshOverlay(page, documentId);
+        await activateOverlay(page);
+
+        const overlayFields = await collectOverlayFieldTexts(page);
+        await capturePageScreenshot(page, screenshotPath);
+
+        const codeFields = overlayFields
+            .filter((entry) => /BPXPN-\d{5}/.test(entry.text))
+            .map((entry) => ({
+                ...entry,
+                codeMatches: entry.text.match(/BPXPN-\d{5}/g) || [],
+            }));
+        const firstCodeField = page.locator('.overlay-field[data-word-index="block-1-79"]').first();
+        const secondCodeField = page.locator('.overlay-field[data-word-index="block-1-80"]').first();
+        const firstCodeBox = await firstCodeField.boundingBox();
+        const secondCodeBox = await secondCodeField.boundingBox();
+        let invoiceInteraction;
+        if (!firstCodeBox || !secondCodeBox) {
+            invoiceInteraction = {
+                error: 'missing expected invoice code fields for interaction check',
+            };
+        } else {
+            const readActiveCodeFields = async () => page.evaluate(() => {
+                const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+                return Array.from(document.querySelectorAll('.overlay-field.active, .overlay-field.selected, .overlay-field.editing'))
+                    .map((field) => ({
+                        key: field.dataset.wordIndex || '',
+                        text: normalize(field.innerText || field.textContent || ''),
+                    }));
+            });
+
+            await page.mouse.click(firstCodeBox.x + (firstCodeBox.width / 2), firstCodeBox.y + (firstCodeBox.height / 2));
+            await page.waitForTimeout(200);
+            const afterClick = await readActiveCodeFields();
+
+            await page.mouse.dblclick(firstCodeBox.x + (firstCodeBox.width / 2), firstCodeBox.y + (firstCodeBox.height / 2));
+            await page.waitForTimeout(300);
+            const afterDblclick = await readActiveCodeFields();
+
+            const editingState = await page.evaluate(() => {
+                const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+                const editing = document.querySelector('.overlay-field.editing');
+                return editing ? {
+                    key: editing.dataset.wordIndex || '',
+                    text: normalize(editing.innerText || editing.textContent || ''),
+                } : null;
+            });
+
+            invoiceInteraction = {
+                firstCodeBox,
+                secondCodeBox,
+                verticalGap: secondCodeBox.y - (firstCodeBox.y + firstCodeBox.height),
+                afterClick,
+                afterDblclick,
+                editingKey: editingState?.key || null,
+                editingText: editingState?.text || null,
+                secondFieldKey: 'block-1-80',
+            };
+        }
+        const invoiceVisualState = await page.evaluate(() => {
+            const firstField = document.querySelector('.overlay-field[data-word-index="block-1-79"]');
+            const secondField = document.querySelector('.overlay-field[data-word-index="block-1-80"]');
+            if (!firstField || !secondField) {
+                return { error: 'missing expected invoice code fields for visual check' };
+            }
+            const firstStyle = getComputedStyle(firstField);
+            const secondStyle = getComputedStyle(secondField);
+            return {
+                first: {
+                    background: firstStyle.backgroundColor,
+                    borderColor: firstStyle.borderColor,
+                    boxShadow: firstStyle.boxShadow,
+                    borderRadius: firstStyle.borderRadius,
+                },
+                second: {
+                    background: secondStyle.backgroundColor,
+                    borderColor: secondStyle.borderColor,
+                    boxShadow: secondStyle.boxShadow,
+                    borderRadius: secondStyle.borderRadius,
+                },
+            };
+        });
+
+        const groupedFields = codeFields.filter((entry) => entry.codeMatches.length !== 1 || entry.text !== entry.codeMatches[0]);
+        const codeFieldsByPage = Object.fromEntries(
+            Object.entries(INVOICE_EXPECTED_CODE_FIELDS_BY_PAGE).map(([pageNumber, expectedCodes]) => {
+                const numericPage = Number(pageNumber);
+                return [
+                    numericPage,
+                    {
+                        expectedCodes,
+                        fields: codeFields.filter((entry) => entry.pageNumber === numericPage),
+                    },
+                ];
+            })
+        );
+        const pageSummaries = Object.fromEntries(
+            Object.entries(codeFieldsByPage).map(([pageNumber, summary]) => {
+                const fieldTexts = summary.fields.map((entry) => entry.text);
+                const extractedCodes = summary.fields.flatMap((entry) => entry.codeMatches);
+                const uniqueCodes = Array.from(new Set(extractedCodes));
+                return [
+                    pageNumber,
+                    {
+                        expectedCount: summary.expectedCodes.length,
+                        actualCount: summary.fields.length,
+                        fieldTexts,
+                        missingCodes: summary.expectedCodes.filter((code) => !uniqueCodes.includes(code)),
+                        unexpectedCodes: uniqueCodes.filter((code) => !summary.expectedCodes.includes(code)),
+                        uniqueCodes,
+                    },
+                ];
+            })
+        );
+        const totalExpectedCodes = Object.values(INVOICE_EXPECTED_CODE_FIELDS_BY_PAGE).reduce((sum, codes) => sum + codes.length, 0);
+        const pageCountMatches = Object.values(pageSummaries).every((summary) => summary.actualCount === summary.expectedCount);
+        const pageCodesMatch = Object.values(pageSummaries).every((summary) => summary.missingCodes.length === 0 && summary.unexpectedCodes.length === 0);
+
+        const checks = [
+            {
+                item: 'expected_code_field_count',
+                result: codeFields.length === totalExpectedCodes && pageCountMatches ? 'PASS' : 'FAIL',
+                description: 'Each invoice page loads one BPXPN overlay field per expected code row.',
+                detail: JSON.stringify({
+                    expected_total_count: totalExpectedCodes,
+                    actual_total_count: codeFields.length,
+                    per_page: pageSummaries,
+                }),
+            },
+            {
+                item: 'each_code_field_contains_single_code',
+                result: groupedFields.length === 0 ? 'PASS' : 'FAIL',
+                description: 'Each BPXPN overlay field contains exactly one code and no grouped multiline stack.',
+                detail: JSON.stringify(groupedFields),
+            },
+            {
+                item: 'invoice_code_fields_edit_independently',
+                result: invoiceInteraction.error
+                    ? 'FAIL'
+                    : (
+                        invoiceInteraction.editingKey === 'block-1-79'
+                        && Array.isArray(invoiceInteraction.afterClick)
+                        && invoiceInteraction.afterClick.length <= 1
+                        && Array.isArray(invoiceInteraction.afterDblclick)
+                        && invoiceInteraction.afterDblclick.every((entry) => entry.key === 'block-1-79')
+                    ) ? 'PASS' : 'FAIL',
+                description: 'Clicking or editing one invoice code row does not activate a grouped neighboring stack.',
+                detail: JSON.stringify(invoiceInteraction),
+            },
+            {
+                item: 'invoice_code_fields_visually_separated',
+                result: invoiceVisualState.error
+                    ? 'FAIL'
+                    : (
+                        /rgba\(255,\s*255,\s*255,\s*0\.(9|98)/.test(invoiceVisualState.first.background)
+                        && !/none/i.test(invoiceVisualState.first.boxShadow)
+                        && invoiceInteraction
+                        && Number(invoiceInteraction.verticalGap) >= 10
+                    ) ? 'PASS' : 'FAIL',
+                description: 'Invoice code rows render with visible box styling and a real vertical gap instead of reading as one continuous column.',
+                detail: JSON.stringify({
+                    interaction: invoiceInteraction,
+                    visual: invoiceVisualState,
+                }),
+            },
+            {
+                item: 'all_expected_codes_present',
+                result: pageCodesMatch ? 'PASS' : 'FAIL',
+                description: 'The loaded BPXPN overlay fields match the expected invoice code set on each page.',
+                detail: JSON.stringify(pageSummaries),
+            },
+        ];
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Invoice Code Column Load', kind: 'image', filename: screenshotName },
+            ],
+            fileSize: fs.existsSync(INVOICE_TEST_FIXTURE_PATH) ? fs.statSync(INVOICE_TEST_FIXTURE_PATH).size : 0,
+            metadata: {
+                document_id: documentId,
+                code_fields: codeFields,
+            },
+        });
+    } catch (error) {
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: 'fail',
+            checks: [],
+            error: error instanceof Error ? error.message : String(error),
+            metadata: {
+                document_id: documentId,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures.
             }
         }
         await browser.close();
@@ -3380,13 +4429,24 @@ async function runTinySavedLabelsReloadSeparatelyFlow() {
 }
 
 function listFiles() {
-    const files = Object.values(TESTS).map((test) => ({
-        filename: `${test.key}.pdf`,
-        path: test.key,
-        description: test.description,
-        test_category: 'PDF Tests',
-        section_name: test.label,
-    }));
+    const files = [
+        ...Object.values(TESTS)
+            .filter((test) => !PARAGRAPH_TEST_KEYS.includes(test.key))
+            .map((test) => ({
+                filename: `${test.key}.pdf`,
+                path: test.key,
+                description: test.description,
+                test_category: 'PDF Tests',
+                section_name: test.label,
+            })),
+        ...Object.values(TEST_SUITES).map((suite) => ({
+            filename: `${suite.key}.pdf`,
+            path: suite.key,
+            description: suite.description,
+            test_category: 'PDF Tests',
+            section_name: suite.label,
+        })),
+    ];
 
     return {
         total: files.length,
@@ -3394,7 +4454,117 @@ function listFiles() {
     };
 }
 
+async function runSuite(key) {
+    const suite = TEST_SUITES[key];
+    if (!suite) {
+        outputJson(buildResult({
+            testKey: key || 'unknown',
+            label: 'Unknown PDF Suite',
+            description: '',
+            status: 'error',
+            error: `Unknown PDF suite: ${key || '(missing)'}`,
+        }));
+        process.exit(1);
+    }
+
+    const checks = [];
+    const artifacts = [];
+    const warnings = [];
+    const metadata = {
+        suite_key: suite.key,
+        suite_label: suite.label,
+        tests: [],
+    };
+    let totalFileSize = 0;
+    let suiteFailed = false;
+
+    for (const testKey of suite.testKeys) {
+        const test = TESTS[testKey];
+        if (!test) {
+            suiteFailed = true;
+            warnings.push(`Missing suite test: ${testKey}`);
+            checks.push({
+                item: `${testKey}:missing`,
+                result: 'FAIL',
+                description: `Suite member ${testKey} exists in the suite definition.`,
+                detail: 'Test key not found in TESTS.',
+            });
+            continue;
+        }
+
+        try {
+            const result = await test.run();
+            totalFileSize += Number(result?.file_size) || 0;
+            metadata.tests.push({
+                key: test.key,
+                label: test.label,
+                status: result.status,
+                checks_passed: result.checks_passed,
+                checks_total: result.checks_total,
+            });
+
+            for (const check of result.checks || []) {
+                checks.push({
+                    ...check,
+                    item: `${test.key}:${check.item}`,
+                    description: `${test.label} - ${check.description}`,
+                });
+            }
+
+            for (const artifact of result.artifacts || []) {
+                artifacts.push({
+                    ...artifact,
+                    label: `${test.label} - ${artifact.label}`,
+                });
+            }
+
+            if (result.status !== 'pass') {
+                suiteFailed = true;
+                if (result.error) {
+                    warnings.push(`${test.key}: ${result.error}`);
+                }
+            }
+        } catch (error) {
+            suiteFailed = true;
+            const errorText = error.stack || String(error);
+            metadata.tests.push({
+                key: test.key,
+                label: test.label,
+                status: 'error',
+                checks_passed: 0,
+                checks_total: 0,
+            });
+            checks.push({
+                item: `${test.key}:runner_error`,
+                result: 'FAIL',
+                description: `${test.label} completed without throwing.`,
+                detail: errorText,
+            });
+            warnings.push(`${test.key}: ${errorText}`);
+        }
+    }
+
+    outputJson(buildResult({
+        testKey: suite.key,
+        label: suite.label,
+        description: suite.description,
+        status: suiteFailed ? 'fail' : 'pass',
+        checks,
+        warnings,
+        artifacts,
+        fileSize: totalFileSize,
+        metadata,
+    }));
+    process.exit(suiteFailed ? 1 : 0);
+}
+
 async function runSingleTest(key) {
+    const suite = TEST_SUITES[key];
+    if (suite) {
+        await runSuite(key);
+        return;
+    }
+
     const test = TESTS[key];
     if (!test) {
         outputJson(buildResult({
@@ -3438,9 +4608,15 @@ async function main() {
         return;
     }
 
+    // Backward compatibility: accept a bare positional test key.
+    if (args.length === 1 && !args[0].startsWith('--')) {
+        await runSingleTest(args[0]);
+        return;
+    }
+
     outputJson({
         success: false,
-        message: 'Usage: --list-files | --single-test <key>',
+        message: 'Usage: --list-files | --single-test <key> | <key>',
     });
     process.exit(1);
 }

@@ -1976,6 +1976,18 @@
                 box-shadow: none !important;
                 overflow: hidden !important;
             }
+            .viewer.overlay-view-mode .overlay-field[data-code-line-split="1"] {
+                border-color: rgba(66, 133, 244, 0.24) !important;
+                background: rgba(255, 255, 255, 0.72) !important;
+                box-shadow: 0 0 0 1px rgba(66, 133, 244, 0.08) !important;
+                border-radius: 2px !important;
+            }
+            .viewer.overlay-editor-active .overlay-field[data-code-line-split="1"] {
+                border-color: rgba(27, 99, 181, 0.78) !important;
+                background: rgba(255, 255, 255, 0.98) !important;
+                box-shadow: 0 0 0 1px rgba(27, 99, 181, 0.24), 0 1px 2px rgba(0, 0, 0, 0.08) !important;
+                border-radius: 4px !important;
+            }
             .viewer.overlay-view-mode .overlay-field [contenteditable] {
                 cursor: default !important;
             }
@@ -3388,6 +3400,10 @@
                                     <span class="hidden sm:inline">Save PDF</span>
                                     <span class="sm:hidden">Save</span>
                                 </button>
+                                <button id="load-saved-pdf-btn" class="px-4 py-2 bg-sky-100 hover:bg-sky-200 text-sky-900 font-semibold rounded-lg text-sm transition flex items-center gap-1.5 border border-sky-300" type="button" title="Rebuild this document from the latest saved annotations">
+                                    <span class="hidden sm:inline">Load Saved PDF</span>
+                                    <span class="sm:hidden">Load</span>
+                                </button>
                                 <a id="saved-edit-preview-btn" href="{{ $savedEditPreviewUrl ?? route('documents.savedEdit', $document) }}" target="_blank" rel="noopener" class="px-4 py-2 bg-amber-100 hover:bg-amber-200 text-amber-900 font-semibold rounded-lg text-sm transition flex items-center gap-1.5 border border-amber-300">
                                     <span class="hidden sm:inline">Last Redaction</span>
                                     <span class="sm:hidden">Preview</span>
@@ -4335,6 +4351,25 @@
                 <div class="modal-actions">
                     <button id="organize-cancel" class="ghost" type="button">Cancel</button>
                     <button id="organize-apply" class="primary" type="button" style="background: #10b981; color: white;">Apply</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal" id="load-saved-pdf-modal" aria-hidden="true">
+            <div class="modal-card" style="width:min(720px, 94vw); background:#ffffff; color:#111827; border:1px solid rgba(15,23,42,0.12); box-shadow:0 24px 80px rgba(15,23,42,0.24);">
+                <div class="modal-header">
+                    <span>Load Saved PDF</span>
+                    <button class="modal-close" type="button" id="load-saved-pdf-close">×</button>
+                </div>
+                <div style="padding: 0 24px 18px;">
+                    <p style="margin:0 0 14px; font-size:13px; color:#475569;">
+                        Choose a saved PDF by document ID and PDF name. Loading one discards the PDF currently open in the editor and switches to the selected document.
+                    </p>
+                    <div id="load-saved-pdf-status" style="display:none; margin-bottom:12px; font-size:13px;"></div>
+                    <div id="load-saved-pdf-list" style="display:flex; flex-direction:column; gap:10px; max-height:min(60vh, 540px); overflow:auto;"></div>
+                </div>
+                <div class="modal-actions">
+                    <button id="load-saved-pdf-cancel" class="ghost" type="button">Cancel</button>
                 </div>
             </div>
         </div>
@@ -5450,11 +5485,16 @@
             const fitzExtractionDataUrl = "{{ route('documents.getFitzExtractionData', $document) }}";
             const prepareOverlayUrl = "{{ route('documents.prepareOverlay', $document) }}";
             const restoreOriginalUrl = "{{ route('documents.restoreOriginal', $document) }}";
+            const savedPdfOptionsUrl = "{{ route('documents.savedPdfOptions') }}";
             const createWorkingCopySnapshotUrl = "{{ route('documents.createWorkingCopySnapshot', $document) }}";
             const restoreWorkingCopyUrl = "{{ route('documents.restoreWorkingCopy', $document) }}";
             const discardWorkingCopySnapshotUrl = "{{ route('documents.discardWorkingCopySnapshot', $document) }}";
             const addBlankPageUrl = "{{ route('documents.addBlankPage', $document) }}";
             const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
+            const currentDocumentId = {{ (int) $document->id }};
+            const initialUrlParams = new URLSearchParams(window.location.search);
+            const loadedSavedPdfMode = initialUrlParams.has('loadedSavedPdf');
+            const savedSessionFromUrl = (initialUrlParams.get('savedSession') || '').trim();
             let pdfVersion = Date.now();
             const documentMimeType = @json($document->mime_type);
             const isImageDocument = documentMimeType && documentMimeType.startsWith('image/');
@@ -5462,9 +5502,49 @@
             const savedEditPreviewBtn = document.getElementById('saved-edit-preview-btn');
             const promotedTextAnnotationsEnabled = true;
 
+            if (savedSessionFromUrl) {
+                localStorage.setItem('pdf_session_id', savedSessionFromUrl);
+            }
+
             function updateSavedEditPreviewLink(url) {
                 if (!savedEditPreviewBtn) return;
                 savedEditPreviewBtn.href = url || savedEditPreviewUrl;
+            }
+
+            function setLoadSavedPdfStatus(message = '', tone = '') {
+                if (!loadSavedPdfStatus) {
+                    return;
+                }
+                if (!message) {
+                    loadSavedPdfStatus.style.display = 'none';
+                    loadSavedPdfStatus.textContent = '';
+                    loadSavedPdfStatus.style.color = '';
+                    return;
+                }
+                loadSavedPdfStatus.style.display = 'block';
+                loadSavedPdfStatus.textContent = message;
+                loadSavedPdfStatus.style.color = tone === 'err' ? '#b91c1c' : (tone === 'ok' ? '#166534' : '#334155');
+                loadSavedPdfStatus.style.background = tone === 'err' ? '#fef2f2' : (tone === 'ok' ? '#f0fdf4' : '#f8fafc');
+                loadSavedPdfStatus.style.border = '1px solid ' + (tone === 'err' ? '#fecaca' : (tone === 'ok' ? '#bbf7d0' : '#e2e8f0'));
+                loadSavedPdfStatus.style.borderRadius = '10px';
+                loadSavedPdfStatus.style.padding = '10px 12px';
+            }
+
+            function openLoadSavedPdfModal() {
+                if (!loadSavedPdfModal) {
+                    return;
+                }
+                loadSavedPdfModal.classList.add('active');
+                loadSavedPdfModal.setAttribute('aria-hidden', 'false');
+            }
+
+            function closeLoadSavedPdfModal() {
+                if (!loadSavedPdfModal) {
+                    return;
+                }
+                loadSavedPdfModal.classList.remove('active');
+                loadSavedPdfModal.setAttribute('aria-hidden', 'true');
+                setLoadSavedPdfStatus('');
             }
 
             // Theme switcher
@@ -5676,6 +5756,12 @@
             const viewOriginalPdfBtn = document.getElementById('view-original-pdf');
             const viewCleanPdfBtn = document.getElementById('view-clean-pdf');
             const revertOriginalPdfBtn = document.getElementById('revert-original-pdf');
+            const loadSavedPdfBtn = document.getElementById('load-saved-pdf-btn');
+            const loadSavedPdfModal = document.getElementById('load-saved-pdf-modal');
+            const loadSavedPdfClose = document.getElementById('load-saved-pdf-close');
+            const loadSavedPdfCancel = document.getElementById('load-saved-pdf-cancel');
+            const loadSavedPdfList = document.getElementById('load-saved-pdf-list');
+            const loadSavedPdfStatus = document.getElementById('load-saved-pdf-status');
             const saveSpinner = document.getElementById('save-spinner');
             const saveSpinnerText = document.getElementById('save-spinner-text');
             const organizePagesBtn = document.getElementById('organize-pages-btn');
@@ -21098,12 +21184,261 @@
                         }
 
                         setStatus(result.message || 'Original PDF restored.', 'ok');
-                        setTimeout(() => { window.location.reload(); }, 250);
+                        pdfVersion = Date.now();
+                        const restoreVersion = encodeURIComponent(result.restored_at || String(pdfVersion));
+                        setTimeout(() => {
+                            window.location.replace(`${window.location.pathname}?restored=${restoreVersion}`);
+                        }, 250);
                     } catch (error) {
                         console.error('Restore original error:', error);
                         setStatus('Restore failed: ' + error.message, 'err');
                         revertOriginalPdfBtn.disabled = false;
                         setSaveSpinner(false);
+                    }
+                });
+            }
+
+            async function fetchSavedPdfOptions() {
+                const url = new URL(savedPdfOptionsUrl, window.location.origin);
+                const sessionId = localStorage.getItem('pdf_session_id') || '';
+                if (sessionId) {
+                    url.searchParams.set('session_id', sessionId);
+                }
+
+                const response = await fetch(url.toString(), {
+                    credentials: 'same-origin',
+                    headers: {
+                        Accept: 'application/json',
+                    },
+                });
+
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok || !result?.success || !Array.isArray(result.pdfs)) {
+                    throw new Error(result.message || `Failed to load saved PDFs (${response.status})`);
+                }
+
+                return result.pdfs;
+            }
+
+            function renderSavedPdfOptions(pdfs) {
+                if (!loadSavedPdfList) {
+                    return;
+                }
+
+                loadSavedPdfList.innerHTML = '';
+
+                if (!Array.isArray(pdfs) || pdfs.length === 0) {
+                    const empty = document.createElement('div');
+                    empty.style.padding = '16px';
+                    empty.style.border = '1px solid rgba(148,163,184,0.2)';
+                    empty.style.borderRadius = '10px';
+                    empty.style.color = '#94a3b8';
+                    empty.style.fontSize = '13px';
+                    empty.textContent = 'No saved PDFs were found for your current account/session.';
+                    loadSavedPdfList.appendChild(empty);
+                    return;
+                }
+
+                const loadSavedPdfEntry = async (pdf, loadButton) => {
+                    const targetName = pdf.pdf_name || `Document ${pdf.document_id}`;
+                    if (!confirm(`Load saved PDF "${targetName}" (doc ${pdf.document_id})? The PDF currently open in the editor will be discarded.`)) {
+                        return;
+                    }
+
+                    setLoadSavedPdfStatus(`Loading ${targetName}...`);
+                    loadSavedPdfBtn.disabled = true;
+                    loadButton.disabled = true;
+
+                    try {
+                        const targetSessionId = String(pdf.session_id || '').trim();
+                        if (targetSessionId) {
+                            localStorage.setItem('pdf_session_id', targetSessionId);
+                        }
+
+                        try {
+                            sessionStorage.removeItem(overlayEditsStorageKey);
+                            sessionStorage.removeItem(annotationsStorageKey);
+                        } catch (storageError) {
+                            console.warn('Failed to clear session storage before switching documents', storageError);
+                        }
+
+                        const editUrl = pdf.edit_url || `/documents/${pdf.document_id}/edit`;
+                        const destination = new URL(editUrl, window.location.origin);
+                        destination.searchParams.set('loadedSavedPdf', String(Date.now()));
+                        if (targetSessionId) {
+                            destination.searchParams.set('savedSession', targetSessionId);
+                        }
+                        window.location.assign(destination.toString());
+                    } catch (error) {
+                        console.error('Load saved PDF error:', error);
+                        setLoadSavedPdfStatus(`Load failed: ${error.message}`, 'err');
+                        loadSavedPdfBtn.disabled = false;
+                        loadButton.disabled = false;
+                    }
+                };
+
+                const deleteSavedPdfEntry = async (pdf, rowElement, deleteButton) => {
+                    const targetName = pdf.pdf_name || `Document ${pdf.document_id}`;
+                    if (!confirm(`Delete saved PDF "${targetName}" (doc ${pdf.document_id}) from the saved list?`)) {
+                        return;
+                    }
+
+                    setLoadSavedPdfStatus(`Deleting ${targetName}...`);
+                    deleteButton.disabled = true;
+
+                    try {
+                        const response = await fetch(pdf.delete_url, {
+                            method: 'DELETE',
+                            credentials: 'same-origin',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-TOKEN': csrfToken,
+                                'Accept': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                session_id: pdf.session_id || '',
+                            }),
+                        });
+
+                        const result = await response.json().catch(() => ({}));
+                        if (!response.ok || !result.success) {
+                            throw new Error(result.message || `Delete failed (${response.status})`);
+                        }
+
+                        rowElement.remove();
+                        if (!loadSavedPdfList.children.length) {
+                            renderSavedPdfOptions([]);
+                        }
+                        setLoadSavedPdfStatus(result.message || 'Saved PDF deleted.', 'ok');
+                    } catch (error) {
+                        console.error('Delete saved PDF error:', error);
+                        setLoadSavedPdfStatus(`Delete failed: ${error.message}`, 'err');
+                        deleteButton.disabled = false;
+                    }
+                };
+
+                pdfs.forEach((pdf) => {
+                    const item = document.createElement('div');
+                    item.style.display = 'flex';
+                    item.style.alignItems = 'center';
+                    item.style.justifyContent = 'space-between';
+                    item.style.gap = '16px';
+                    item.style.width = '100%';
+                    item.style.padding = '16px 18px';
+                    item.style.borderRadius = '14px';
+                    item.style.border = Number(pdf.document_id) === currentDocumentId
+                        ? '1px solid #7dd3fc'
+                        : '1px solid #dbe4ee';
+                    item.style.background = Number(pdf.document_id) === currentDocumentId ? '#f0f9ff' : '#ffffff';
+                    item.style.boxShadow = '0 8px 24px rgba(15,23,42,0.06)';
+
+                    const info = document.createElement('div');
+                    info.style.display = 'flex';
+                    info.style.flexDirection = 'column';
+                    info.style.alignItems = 'flex-start';
+                    info.style.gap = '6px';
+                    info.style.flex = '1';
+
+                    const title = document.createElement('div');
+                    title.style.fontSize = '14px';
+                    title.style.fontWeight = '700';
+                    title.style.color = '#0f172a';
+                    title.textContent = pdf.pdf_name || `Document ${pdf.document_id}`;
+
+                    const meta = document.createElement('div');
+                    meta.style.fontSize = '12px';
+                    meta.style.color = '#475569';
+                    meta.textContent = `Doc ID ${pdf.document_id} • ${Number(pdf.annotation_count) || 0} saved annotation${Number(pdf.annotation_count) === 1 ? '' : 's'}`;
+
+                    const sub = document.createElement('div');
+                    sub.style.fontSize = '12px';
+                    sub.style.color = '#64748b';
+                    sub.textContent = Number(pdf.document_id) === currentDocumentId
+                        ? 'Currently open document'
+                        : 'Loads this saved PDF and switches the editor to it';
+
+                    info.appendChild(title);
+                    info.appendChild(meta);
+                    info.appendChild(sub);
+
+                    const actions = document.createElement('div');
+                    actions.style.display = 'flex';
+                    actions.style.alignItems = 'center';
+                    actions.style.gap = '10px';
+                    actions.style.flexShrink = '0';
+
+                    const loadAction = document.createElement('button');
+                    loadAction.type = 'button';
+                    loadAction.textContent = 'Load';
+                    loadAction.style.padding = '10px 16px';
+                    loadAction.style.borderRadius = '10px';
+                    loadAction.style.border = '1px solid #cbd5e1';
+                    loadAction.style.background = '#111827';
+                    loadAction.style.color = '#ffffff';
+                    loadAction.style.fontSize = '13px';
+                    loadAction.style.fontWeight = '700';
+                    loadAction.style.cursor = 'pointer';
+                    loadAction.addEventListener('click', () => loadSavedPdfEntry(pdf, loadAction));
+
+                    const deleteAction = document.createElement('button');
+                    deleteAction.type = 'button';
+                    deleteAction.textContent = 'Delete';
+                    deleteAction.style.padding = '10px 16px';
+                    deleteAction.style.borderRadius = '10px';
+                    deleteAction.style.border = '1px solid #fecaca';
+                    deleteAction.style.background = '#ffffff';
+                    deleteAction.style.color = '#b91c1c';
+                    deleteAction.style.fontSize = '13px';
+                    deleteAction.style.fontWeight = '700';
+                    deleteAction.style.cursor = 'pointer';
+                    deleteAction.addEventListener('click', () => deleteSavedPdfEntry(pdf, item, deleteAction));
+
+                    actions.appendChild(loadAction);
+                    actions.appendChild(deleteAction);
+
+                    item.appendChild(info);
+                    item.appendChild(actions);
+
+                    loadSavedPdfList.appendChild(item);
+                });
+            }
+
+            if (loadSavedPdfBtn) {
+                loadSavedPdfBtn.addEventListener('click', async () => {
+                    if (loadSavedPdfBtn.disabled) {
+                        return;
+                    }
+
+                    openLoadSavedPdfModal();
+                    loadSavedPdfBtn.disabled = true;
+                    if (loadSavedPdfList) {
+                        loadSavedPdfList.innerHTML = '';
+                    }
+                    setLoadSavedPdfStatus('Loading saved PDF options...');
+
+                    try {
+                        const pdfs = await fetchSavedPdfOptions();
+                        renderSavedPdfOptions(pdfs);
+                        setLoadSavedPdfStatus('');
+                    } catch (error) {
+                        console.error('Load saved PDF options error:', error);
+                        setLoadSavedPdfStatus(`Failed to load options: ${error.message}`, 'err');
+                    } finally {
+                        loadSavedPdfBtn.disabled = false;
+                    }
+                });
+            }
+
+            if (loadSavedPdfClose) {
+                loadSavedPdfClose.addEventListener('click', closeLoadSavedPdfModal);
+            }
+            if (loadSavedPdfCancel) {
+                loadSavedPdfCancel.addEventListener('click', closeLoadSavedPdfModal);
+            }
+            if (loadSavedPdfModal) {
+                loadSavedPdfModal.addEventListener('click', (event) => {
+                    if (event.target === loadSavedPdfModal) {
+                        closeLoadSavedPdfModal();
                     }
                 });
             }
@@ -24690,15 +25025,28 @@
                     const finalNormalizeLineText = (value) => sanitizeOverlayText(String(value || ''))
                         .replace(/\s+/g, ' ')
                         .trim();
+                    const looksLikeStandaloneCodeLine = (value) => {
+                        const text = finalNormalizeLineText(value);
+                        if (!text || text.length < 6 || text.length > 24) return false;
+                        return /^[A-Z]{3,}-\d{4,}$/i.test(text);
+                    };
 
                     (expandedBlocks || []).forEach((block) => {
                         const blockWords = (pageData.words || []).filter((w) => w.block_num === block.block_num);
-                        const textLines = Array.isArray(block?.text_lines)
-                            ? block.text_lines.map((line) => finalNormalizeLineText(line)).filter((line) => line.length > 0)
+                        const rawTextLines = Array.isArray(block?.text_lines)
+                            ? block.text_lines.map((line) => finalNormalizeLineText(line))
                             : [];
-                        const lineBBoxes = Array.isArray(block?.line_bboxes) ? block.line_bboxes : [];
+                        const rawLineBBoxes = Array.isArray(block?.line_bboxes) ? block.line_bboxes : [];
+                        const meaningfulLineEntries = rawTextLines
+                            .map((line, index) => ({
+                                text: line,
+                                bbox: rawLineBBoxes[index],
+                            }))
+                            .filter((entry) => entry.text.length > 0 && Array.isArray(entry.bbox) && entry.bbox.length >= 4);
+                        const textLines = meaningfulLineEntries.map((entry) => entry.text);
+                        const lineBBoxes = meaningfulLineEntries.map((entry) => entry.bbox);
                         const blockWidth = Number(block?.width) || 0;
-                        const shouldSplitFinal = !!block
+                        const shouldSplitNarrowValues = !!block
                             && blockWords.length >= 2
                             && textLines.length >= 2
                             && textLines.length <= 3
@@ -24706,6 +25054,14 @@
                             && blockWidth > 0
                             && blockWidth <= 24
                             && textLines.every((line) => line.length > 0 && line.length <= 8);
+                        const shouldSplitStandaloneCodeColumn = !!block
+                            && blockWords.length >= 2
+                            && textLines.length >= 2
+                            && lineBBoxes.length === textLines.length
+                            && blockWidth > 0
+                            && blockWidth <= 140
+                            && textLines.every((line) => looksLikeStandaloneCodeLine(line));
+                        const shouldSplitFinal = shouldSplitNarrowValues || shouldSplitStandaloneCodeColumn;
 
                         if (!shouldSplitFinal) {
                             finalSplitNarrowStackedBlocks.push(block);
@@ -24724,7 +25080,10 @@
                                 .sort((a, b) => (Number(a.left) || 0) - (Number(b.left) || 0));
                         });
 
-                        if (!groupedLineWords.every((lineWords) => lineWords.length >= 1 && lineWords.length <= 2)) {
+                        const validLineWordGroups = shouldSplitStandaloneCodeColumn
+                            ? groupedLineWords.every((lineWords) => lineWords.length >= 1)
+                            : groupedLineWords.every((lineWords) => lineWords.length >= 1 && lineWords.length <= 2);
+                        if (!validLineWordGroups) {
                             finalSplitNarrowStackedBlocks.push(block);
                             return;
                         }
@@ -25029,6 +25388,17 @@
                             const minW = Math.max(1, Math.min(rightA - leftA, rightB - leftB));
                             return inter / minW;
                         };
+                        const looksLikeStandaloneStackedCode = (textValue, widthValue) => {
+                            const text = sanitizeOverlayText(String(textValue || ''))
+                                .replace(/\s+/g, '')
+                                .trim();
+                            const width = Number(widthValue) || 0;
+                            if (!text || text.length < 6 || text.length > 24) return false;
+                            if (width <= 0 || width > 140) return false;
+                            if (!/[A-Za-z]/.test(text) || !/\d/.test(text)) return false;
+                            if (!/^[A-Za-z0-9-]+$/.test(text)) return false;
+                            return text.includes('-') || /^[A-Za-z]{3,}\d{2,}$/.test(text);
+                        };
                         const isDifferentColumn = (block, colLeft, colRight) => {
                             const bLeft = Number(block?.left) || 0;
                             const bRight = bLeft + (Number(block?.width) || 0);
@@ -25169,6 +25539,9 @@
                                 && /^[A-Za-z0-9 ]+$/.test(textA)
                                 && /^[A-Za-z0-9 ]+$/.test(textB);
                             if (shortStackedValues) return false;
+                            if (looksLikeStandaloneStackedCode(textA, aW) && looksLikeStandaloneStackedCode(textB, bW)) {
+                                return false;
+                            }
 
                             const hasIntervening = (allBlocks || []).some((other) => {
                                 if (!other || other === topBlock || other === bottomBlock) return false;
@@ -26001,6 +26374,9 @@
                         field.dataset.font = block.font;
                         field.dataset.fontSize = block.font_size;
                         field.dataset.lineHeight = lineHeightValue || '';
+                        if (block._client_line_split && /^[A-Z]{3,}-\d{4,}$/i.test(normalizeStableFlowText(preferredFlowText || safeBlockText || ''))) {
+                            field.dataset.codeLineSplit = '1';
+                        }
                         if (block.font_xref !== undefined && block.font_xref !== null) {
                             field.dataset.fontXref = block.font_xref;
                         }

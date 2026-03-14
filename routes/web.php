@@ -58,6 +58,9 @@ Route::get('/documents/{document}/apply-rotations', function () {
 });
 Route::post('/documents/{document}/save-annotations', [DocumentController::class, 'saveAnnotations'])->name('documents.saveAnnotations');
 Route::get('/documents/{document}/saved-annotations', [DocumentController::class, 'getSavedAnnotations'])->name('documents.getSavedAnnotations');
+Route::get('/documents/saved-pdf-options', [DocumentController::class, 'listSavedPdfOptions'])->name('documents.savedPdfOptions');
+Route::delete('/documents/{document}/saved-pdf-option', [DocumentController::class, 'deleteSavedPdfOption'])->name('documents.deleteSavedPdfOption');
+Route::post('/documents/{document}/load-saved-pdf', [DocumentController::class, 'loadSavedPdf'])->name('documents.loadSavedPdf');
 Route::post('/documents/{document}/mark-annotations-saved', [DocumentController::class, 'markAnnotationsSaved'])->name('documents.markAnnotationsSaved');
 Route::post('/documents/{document}/apply-annotations-direct', [DocumentController::class, 'applyAnnotationsDirect'])->name('documents.applyAnnotationsDirect');
 Route::post('documents/{document}/process-ocr', [DocumentController::class, 'processOcr'])->name('documents.processOcr');
