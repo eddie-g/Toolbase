@@ -2188,7 +2188,7 @@ def extract_text_with_pymupdf(pdf_path):
 
 def save_to_database(connection, document_id, pdf_filename, extraction_result, user_email=None, session_id=None):
     """Save extraction results to database"""
-    cursor = connection.cursor()
+    cursor = connection.cursor(buffered=True)
     
     try:
         # Check if table exists, use the correct table name
@@ -2199,7 +2199,7 @@ def save_to_database(connection, document_id, pdf_filename, extraction_result, u
         if user_email and user_email != 'guest':
             # For authenticated users, match by document_id and user_email
             cursor.execute(
-                f"SELECT id FROM {table_name} WHERE document_id = %s AND user_email = %s",
+                f"SELECT id FROM {table_name} WHERE document_id = %s AND user_email = %s ORDER BY id DESC LIMIT 1",
                 (document_id, user_email)
             )
             existing = cursor.fetchone()
@@ -2232,7 +2232,7 @@ def save_to_database(connection, document_id, pdf_filename, extraction_result, u
         elif session_id:
             # For guest users, match by document_id and session_id
             cursor.execute(
-                f"SELECT id FROM {table_name} WHERE document_id = %s AND session_id = %s",
+                f"SELECT id FROM {table_name} WHERE document_id = %s AND session_id = %s ORDER BY id DESC LIMIT 1",
                 (document_id, session_id)
             )
             existing = cursor.fetchone()

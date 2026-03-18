@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Document;
 use App\Models\GuidedTemplate;
 use App\Models\PdfState;
+use App\Services\PdfAnnotationAssetService;
 use App\Models\User;
 use App\Models\UserActivity;
 use App\Models\UserPdfMonthlyUsage;
@@ -42,9 +43,9 @@ class DocumentController extends Controller
     private function resolvePythonBinaryForPdfEditor(?string $requiredModule = null): string
     {
         $candidates = array_values(array_unique([
-            base_path('python/venv/bin/python'),
-            'python3',
             '/usr/bin/python3',
+            'python3',
+            base_path('python/venv/bin/python'),
         ]));
 
         foreach ($candidates as $candidate) {
@@ -75,6 +76,71 @@ class DocumentController extends Controller
         }
 
         return 'python3';
+    }
+
+    private function annotationAssets(): PdfAnnotationAssetService
+    {
+        return app(PdfAnnotationAssetService::class);
+    }
+
+    private function normalizeDocumentOriginalName(Document $document, string $value): string
+    {
+        $fallbackName = (string) ($document->original_name ?: basename((string) $document->path));
+        $fallbackBase = trim((string) pathinfo($fallbackName, PATHINFO_FILENAME));
+
+        $name = preg_replace('/[<>:"\/\\|?*\x00-\x1F]+/u', ' ', trim($value));
+        $name = preg_replace('/\s+/u', ' ', (string) $name);
+        $name = trim((string) $name);
+
+        if ($name === '') {
+            $name = $fallbackBase !== '' ? $fallbackBase : 'document';
+        }
+
+        $extension = strtolower((string) pathinfo($fallbackName, PATHINFO_EXTENSION));
+        if ($extension === '') {
+            $extension = match (strtolower((string) $document->mime_type)) {
+                'application/pdf' => 'pdf',
+                'image/png' => 'png',
+                'image/jpeg' => 'jpg',
+                'image/webp' => 'webp',
+                default => '',
+            };
+        }
+
+        if ($extension !== '') {
+            $currentExtension = strtolower((string) pathinfo($name, PATHINFO_EXTENSION));
+            if ($currentExtension !== '' && $currentExtension !== $extension) {
+                $name = trim((string) pathinfo($name, PATHINFO_FILENAME));
+            }
+
+            if (!str_ends_with(strtolower($name), '.' . $extension)) {
+                $name = rtrim($name, ". \t\n\r\0\x0B") . '.' . $extension;
+            }
+        }
+
+        return $name;
+    }
+
+    private function normalizeAnnotationsForPersistence(Document $document, array $annotations): array
+    {
+        $annotationAssets = $this->annotationAssets();
+
+        return array_map(static function ($annotation) use ($annotationAssets, $document) {
+            return is_array($annotation)
+                ? $annotationAssets->normalizeForPersistence($document, $annotation)
+                : $annotation;
+        }, $annotations);
+    }
+
+    private function prepareAnnotationsForPython(array $annotations): array
+    {
+        $annotationAssets = $this->annotationAssets();
+
+        return array_map(static function ($annotation) use ($annotationAssets) {
+            return is_array($annotation)
+                ? $annotationAssets->enrichForPython($annotation)
+                : $annotation;
+        }, $annotations);
     }
 
     private function createOriginalBackup(string $storedPath): ?string
@@ -405,67 +471,6 @@ class DocumentController extends Controller
                 @unlink($extractionFile);
             }
         }
-    }
-
-    private function shouldUseCleanBaseForSavedAnnotations(
-        Document $document,
-        array $annotationsPayload,
-        ?string $userEmail = null,
-        ?string $sessionId = null
-    ): bool {
-        $promotedSourceKeys = [];
-        foreach ($annotationsPayload as $annotation) {
-            if (!is_array($annotation) || empty($annotation['promotedFromExtraction'])) {
-                continue;
-            }
-            $sourceKey = trim((string) ($annotation['promotedSourceKey'] ?? ''));
-            if ($sourceKey !== '') {
-                $promotedSourceKeys[$sourceKey] = true;
-            }
-        }
-
-        $promotedCount = count($promotedSourceKeys);
-        if ($promotedCount === 0) {
-            return false;
-        }
-
-        $latestExtraction = $this->findLatestFitzExtraction($document->id, $userEmail, $sessionId);
-        if (!$latestExtraction || !isset($latestExtraction->extraction_data)) {
-            return false;
-        }
-
-        $extractionPages = is_string($latestExtraction->extraction_data)
-            ? json_decode($latestExtraction->extraction_data, true)
-            : $latestExtraction->extraction_data;
-        if (!is_array($extractionPages)) {
-            return false;
-        }
-
-        $totalBlocks = 0;
-        foreach ($extractionPages as $page) {
-            if (!is_array($page) || !isset($page['blocks']) || !is_array($page['blocks'])) {
-                continue;
-            }
-            foreach ($page['blocks'] as $block) {
-                if (!is_array($block)) {
-                    continue;
-                }
-                $width = (float) ($block['width'] ?? 0);
-                $height = (float) ($block['height'] ?? 0);
-                if ($width <= 1 || $height <= 1) {
-                    continue;
-                }
-                $totalBlocks++;
-            }
-        }
-
-        if ($totalBlocks <= 0) {
-            return false;
-        }
-
-        $coverageRatio = $promotedCount / $totalBlocks;
-
-        return $coverageRatio >= 0.6;
     }
 
     private function refreshOverlayExtractionArtifacts(Document $document, string $pythonBinary, bool $skipRefresh = false): void
@@ -1119,7 +1124,10 @@ class DocumentController extends Controller
         );
         exec($fontCommand);
 
-        return response()->json(['success' => true]);
+        return response()->json([
+            'success' => true,
+            'python_binary' => $pythonBinary,
+        ]);
     }
 
     /**
@@ -1523,6 +1531,55 @@ class DocumentController extends Controller
         ]);
     }
 
+    public function annotationAsset(Document $document, string $filename)
+    {
+        abort_unless($filename !== '' && basename($filename) === $filename, 404);
+
+        $relativePath = sprintf('annotation-assets/documents/%d/%s', $document->id, $filename);
+        $absolutePath = $this->annotationAssets()->assetAbsolutePath($relativePath);
+
+        if ($absolutePath === null) {
+            abort(404);
+        }
+
+        $mimeType = Storage::disk('public')->mimeType($relativePath) ?: 'application/octet-stream';
+        $lastModified = @filemtime($absolutePath) ?: time();
+        $etag = md5($relativePath . '|' . $lastModified . '|' . (@filesize($absolutePath) ?: 0));
+
+        return response()->file($absolutePath, [
+            'Content-Type' => $mimeType,
+            'Content-Disposition' => 'inline; filename="' . $filename . '"',
+            'Cache-Control' => 'public, max-age=31536000, immutable',
+            'ETag' => $etag,
+            'Last-Modified' => gmdate('D, d M Y H:i:s', $lastModified) . ' GMT',
+        ]);
+    }
+
+    public function originalFile(Document $document)
+    {
+        if (!$document->original_backup_path || !Storage::exists($document->original_backup_path)) {
+            abort(404);
+        }
+
+        $fullPath = Storage::path($document->original_backup_path);
+        if (!file_exists($fullPath)) {
+            abort(404);
+        }
+
+        $lastModified = filemtime($fullPath);
+        $etag = md5($lastModified . filesize($fullPath));
+
+        return response()->file($fullPath, [
+            'Content-Type' => $document->mime_type,
+            'Content-Disposition' => 'inline; filename="' . $document->original_name . '"',
+            'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0, post-check=0, pre-check=0',
+            'Pragma' => 'no-cache',
+            'Expires' => 'Thu, 01 Jan 1970 00:00:00 GMT',
+            'ETag' => $etag,
+            'Last-Modified' => gmdate('D, d M Y H:i:s', $lastModified) . ' GMT',
+        ]);
+    }
+
     public function flattenRotations(Request $request, Document $document)
     {
         $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
@@ -1790,6 +1847,38 @@ class DocumentController extends Controller
         return response()->json([
             'ok' => true,
             'message' => 'Document saved.',
+        ]);
+    }
+
+    public function rename(Request $request, Document $document)
+    {
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'max:240'],
+        ]);
+
+        $normalizedName = $this->normalizeDocumentOriginalName($document, (string) $validated['name']);
+        if ($normalizedName === '') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Document name cannot be empty.',
+            ], 422);
+        }
+
+        if ($document->original_name !== $normalizedName) {
+            $timestamps = $document->timestamps;
+            try {
+                $document->timestamps = false;
+                $document->original_name = $normalizedName;
+                $document->saveQuietly();
+            } finally {
+                $document->timestamps = $timestamps;
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'original_name' => $document->original_name,
+            'base_name' => pathinfo((string) $document->original_name, PATHINFO_FILENAME),
         ]);
     }
 
@@ -2206,13 +2295,20 @@ class DocumentController extends Controller
         $fontWeight = strtolower(trim((string) ($edit['font_weight'] ?? '')));
         $fontStyle = strtolower(trim((string) ($edit['font_style'] ?? 'normal')));
         $color = strtolower(trim((string) ($edit['color'] ?? '#000000')));
+        $backgroundColor = strtolower(trim((string) ($edit['background_color'] ?? '')));
+        $richHtml = strtolower((string) ($edit['rich_html'] ?? ''));
         if ($color !== '' && !str_starts_with($color, '#')) {
             $color = '#' . $color;
+        }
+        if ($backgroundColor !== '' && !str_starts_with($backgroundColor, '#') && $backgroundColor !== 'transparent') {
+            $backgroundColor = '#' . $backgroundColor;
         }
 
         return !in_array($fontWeight, ['', '400', 'normal'], true)
             || $fontStyle !== 'normal'
             || !in_array($color, ['', '#000000'], true)
+            || !in_array($backgroundColor, ['', 'transparent'], true)
+            || str_contains($richHtml, 'background-color:')
             || !empty($edit['underline']);
     }
 
@@ -2253,6 +2349,7 @@ class DocumentController extends Controller
             'edits.*.underline' => ['nullable', 'boolean'],
             'edits.*.line_height' => ['nullable', 'numeric'],
             'edits.*.color' => ['nullable', 'string'],
+            'edits.*.background_color' => ['nullable', 'string'],
             'edits.*.rich_html' => ['nullable', 'string'],
             'edits.*.cleanup_group_bbox' => ['nullable', 'array'],
             'edits.*.line_metrics' => ['nullable', 'array'],
@@ -3002,6 +3099,7 @@ class DocumentController extends Controller
             'underline'     => ['nullable', 'boolean'],
             'line_height'   => ['nullable', 'numeric'],
             'color'         => ['nullable', 'string'],
+            'background_color' => ['nullable', 'string'],
             'word_styles'   => ['nullable', 'array'],
             'line_metrics'  => ['nullable', 'array'],
             'source_content_ops' => ['nullable', 'array'],
@@ -3671,6 +3769,8 @@ class DocumentController extends Controller
             ], 422);
         }
 
+        $annotationsPayload = $this->normalizeAnnotationsForPersistence($document, $annotationsPayload);
+
         $sessionId = $validated['session_id'];
         $userEmail = $validated['user_email'] ?? null;
         $annotationId = $validated['annotation_id'] ?? null;
@@ -3704,6 +3804,7 @@ class DocumentController extends Controller
                     'success' => true,
                     'message' => 'Annotation updated',
                     'updated' => true,
+                    'annotation' => $this->annotationAssets()->enrichForClient($annotation),
                 ]);
             } else {
                 // Create new annotation
@@ -3720,6 +3821,7 @@ class DocumentController extends Controller
                     'success' => true,
                     'message' => 'Annotation created',
                     'created' => true,
+                    'annotation' => $this->annotationAssets()->enrichForClient($annotation),
                 ]);
             }
         }
@@ -3846,9 +3948,12 @@ class DocumentController extends Controller
             ? trim((string) $validated['session_id'])
             : '';
         [$resolvedSessionId, $records] = $this->resolveSavedAnnotationRecords($document, $requestedSessionId, true);
+        $annotationAssets = $this->annotationAssets();
 
-        $annotations = $records->map(function (PdfState $record) {
-            $annotation = is_array($record->annotation_data) ? $record->annotation_data : [];
+        $annotations = $records->map(function (PdfState $record) use ($annotationAssets) {
+            $annotation = is_array($record->annotation_data)
+                ? $annotationAssets->enrichForClient($record->annotation_data)
+                : [];
             $annotation['db_state'] = $record->state;
             $annotation['db_updated_at'] = optional($record->updated_at)?->toIso8601String();
             return $annotation;
@@ -3874,7 +3979,8 @@ class DocumentController extends Controller
         $editorEmail = $this->resolveEditorEmail('');
 
         $query = PdfState::query()
-            ->with('document')
+            ->with(['document:id,original_name,path'])
+            ->select(['id', 'document_id', 'user_email', 'session_id', 'state', 'updated_at'])
             ->where('state', '!=', 'deleted');
 
         if ($editorEmail !== '' && $requestedSessionId !== '') {
@@ -3991,6 +4097,8 @@ class DocumentController extends Controller
             ->values()
             ->all();
 
+        $annotationsForPython = $this->prepareAnnotationsForPython($annotationsPayload);
+
         if (empty($annotationsPayload)) {
             return response()->json([
                 'success' => false,
@@ -4015,12 +4123,7 @@ class DocumentController extends Controller
         }
 
         $editorEmail = $this->resolveEditorEmail();
-        $containsPromotedExtractionSnapshot = $this->shouldUseCleanBaseForSavedAnnotations(
-            $document,
-            $annotationsPayload,
-            $editorEmail,
-            $resolvedSessionId !== '' ? $resolvedSessionId : null
-        );
+        $containsPromotedExtractionSnapshot = !empty($annotationsPayload);
         $sourceTempCleanPdfPath = null;
         if ($containsPromotedExtractionSnapshot) {
             $sourceTempCleanPdfPath = $this->createCleanPdfFromExtractionSource(
@@ -4050,7 +4153,7 @@ class DocumentController extends Controller
             ], 500);
         }
 
-        $annotationsJson = json_encode($annotationsPayload, JSON_INVALID_UTF8_SUBSTITUTE);
+        $annotationsJson = json_encode($annotationsForPython, JSON_INVALID_UTF8_SUBSTITUTE);
         if ($annotationsJson === false || @file_put_contents($annotationsFile, $annotationsJson) === false) {
             if (file_exists($tempPdfPath)) {
                 @unlink($tempPdfPath);
@@ -4151,6 +4254,7 @@ class DocumentController extends Controller
             'annotations.*.type' => 'required|string',
             'annotations.*.pageIndex' => 'required',
             'use_clean_pdf' => 'nullable|boolean',
+            'use_original_pdf' => 'nullable|boolean',
             'session_id' => 'nullable|string',
         ]);
         // IMPORTANT:
@@ -4164,6 +4268,9 @@ class DocumentController extends Controller
                 'message' => 'Invalid annotations payload.',
             ], 422);
         }
+
+        $annotationsPayload = $this->normalizeAnnotationsForPersistence($document, $annotationsPayload);
+
         $annotationsPayload = array_map(function ($annotation) use ($document) {
             if (!is_array($annotation)) {
                 return $annotation;
@@ -4184,10 +4291,39 @@ class DocumentController extends Controller
 
         $pdfPath = Storage::path($document->path);
         $useCleanPdf = $request->boolean('use_clean_pdf');
+        $useOriginalPdf = $request->boolean('use_original_pdf');
         $workingPdfPath = $pdfPath;
         $tempWorkingPdfPath = null;
 
-        if ($useCleanPdf) {
+        if ($useOriginalPdf) {
+            if (!$document->original_backup_path || !Storage::exists($document->original_backup_path)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Original PDF source not found.',
+                ], 404);
+            }
+
+            $originalPath = Storage::path($document->original_backup_path);
+            if (!file_exists($originalPath)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Original PDF source not found.',
+                ], 404);
+            }
+
+            $tempWorkingPdfPath = Storage::path('temp/apply_annotations_original_' . $document->id . '_' . Str::uuid() . '.pdf');
+            $tempWorkingDir = dirname($tempWorkingPdfPath);
+            if (!is_dir($tempWorkingDir)) {
+                @mkdir($tempWorkingDir, 0775, true);
+            }
+            if (!@copy($originalPath, $tempWorkingPdfPath)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to prepare original PDF working copy.',
+                ], 500);
+            }
+            $workingPdfPath = $tempWorkingPdfPath;
+        } elseif ($useCleanPdf) {
             $cleanPath = Storage::path('temp/clean_' . $document->id . '.pdf');
             if (!file_exists($cleanPath)) {
                 return response()->json([
@@ -4255,7 +4391,7 @@ class DocumentController extends Controller
             ], 500);
         }
 
-        $annotationsJson = json_encode($annotationsPayload, JSON_INVALID_UTF8_SUBSTITUTE);
+        $annotationsJson = json_encode($this->prepareAnnotationsForPython($persistableAnnotationsPayload), JSON_INVALID_UTF8_SUBSTITUTE);
         if ($annotationsJson === false || @file_put_contents($annotationsFile, $annotationsJson) === false) {
             if (isset($annotationsFile) && file_exists($annotationsFile)) {
                 @unlink($annotationsFile);
@@ -4294,6 +4430,7 @@ class DocumentController extends Controller
                 'return_code' => $returnCode,
                 'output' => implode("\n", $output),
                 'use_clean_pdf' => $useCleanPdf,
+                'use_original_pdf' => $useOriginalPdf,
             ]);
             return response()->json([
                 'success' => false,
@@ -4302,14 +4439,14 @@ class DocumentController extends Controller
             ], 500);
         }
 
-        if ($useCleanPdf) {
+        if ($useCleanPdf || $useOriginalPdf) {
             if (!@copy($workingPdfPath, $pdfPath)) {
                 if ($tempWorkingPdfPath && file_exists($tempWorkingPdfPath)) {
                     @unlink($tempWorkingPdfPath);
                 }
                 return response()->json([
                     'success' => false,
-                    'message' => 'Failed to promote clean PDF save back to the document file.',
+                    'message' => 'Failed to promote working PDF save back to the document file.',
                 ], 500);
             }
             if ($tempWorkingPdfPath && file_exists($tempWorkingPdfPath)) {
@@ -4317,6 +4454,10 @@ class DocumentController extends Controller
             }
             $this->invalidateCleanPdf($document);
         }
+
+        // Always invalidate the clean PDF cache after any successful annotation save
+        // so stale cached copies can't be used as a base for future saves.
+        $this->invalidateCleanPdf($document);
 
         $size = @filesize($pdfPath) ?: $document->size_bytes;
         $document->size_bytes = $size;
@@ -4329,17 +4470,10 @@ class DocumentController extends Controller
             'first_annotation' => $annotationsPayload[0] ?? null,
             'new_size' => $size,
             'use_clean_pdf' => $useCleanPdf,
+            'use_original_pdf' => $useOriginalPdf,
         ]);
 
         if ($sessionId !== '') {
-            $currentAnnotationIds = array_values(array_filter(array_map(
-                static fn ($annotation) => is_array($annotation) && is_string($annotation['id'] ?? null)
-                    ? trim((string) $annotation['id'])
-                    : '',
-                $persistableAnnotationsPayload
-            )));
-            $currentAnnotationIdSet = array_fill_keys($currentAnnotationIds, true);
-
             foreach ($persistableAnnotationsPayload as $annotation) {
                 if (!is_array($annotation)) {
                     continue;
@@ -4376,19 +4510,28 @@ class DocumentController extends Controller
                 ]);
             }
 
-            PdfState::query()
+            // Purge any annotations in this session that were NOT included in this
+            // save (i.e. the user deleted them). Mark them as deleted so they never
+            // come back on the next page load.
+            $savedIds = array_values(array_filter(array_map(
+                static fn ($a) => is_string($a['id'] ?? null) ? trim((string) $a['id']) : null,
+                $persistableAnnotationsPayload
+            )));
+
+            $purgeQuery = PdfState::query()
                 ->where('document_id', $document->id)
                 ->where('session_id', $sessionId)
-                ->get()
-                ->each(function (PdfState $record) use ($currentAnnotationIdSet) {
-                    $recordAnnotationId = is_array($record->annotation_data)
-                        ? trim((string) ($record->annotation_data['id'] ?? ''))
-                        : '';
-                    $record->state = ($recordAnnotationId !== '' && isset($currentAnnotationIdSet[$recordAnnotationId]))
-                        ? 'saved'
-                        : 'deleted';
-                    $record->save();
-                });
+                ->whereNotIn('state', ['deleted', 'materialized']);
+
+            if (!empty($savedIds)) {
+                $purgeQuery->whereRaw(
+                    "JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.id')) NOT IN (" .
+                    implode(',', array_fill(0, count($savedIds), '?')) . ')',
+                    $savedIds
+                );
+            }
+
+            $purgeQuery->update(['state' => 'deleted']);
         }
 
         return response()->json([
@@ -4428,6 +4571,266 @@ class DocumentController extends Controller
             'success' => true,
             'message' => 'Annotations marked as saved',
         ]);
+    }
+
+    public function deleteAnnotations(Request $request, Document $document)
+    {
+        $validated = $request->validate([
+            'session_id' => 'required|string',
+            'annotation_ids' => 'required|array',
+            'annotation_ids.*' => 'string',
+        ]);
+
+        $sessionId = trim((string) $validated['session_id']);
+        $annotationIds = array_values(array_filter(array_map(
+            static fn ($v) => is_string($v) ? trim($v) : '',
+            $validated['annotation_ids']
+        )));
+
+        foreach ($annotationIds as $annotationId) {
+            PdfState::where('document_id', $document->id)
+                ->where('session_id', $sessionId)
+                ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.id')) = ?", [$annotationId])
+                ->update(['state' => 'deleted']);
+        }
+
+        return response()->json(['success' => true, 'deleted' => count($annotationIds)]);
+    }
+
+    /**
+     * Upsert all current annotations to PdfState DB without stamping the PDF.
+     * Called by the "Save" button — shapes stay editable in the editor.
+     */
+    public function saveAnnotationState(Request $request, Document $document)
+    {
+        $validated = $request->validate([
+            'annotations' => 'present|array',
+            'annotations.*.type' => 'required|string',
+            'annotations.*.pageIndex' => 'required',
+            'session_id' => 'nullable|string',
+        ]);
+
+        $annotationsPayload = $request->input('annotations', []);
+        if (!is_array($annotationsPayload)) {
+            return response()->json(['success' => false, 'message' => 'Invalid annotations payload.'], 422);
+        }
+
+        $annotationsPayload = $this->normalizeAnnotationsForPersistence($document, $annotationsPayload);
+
+        $sessionId = is_string($validated['session_id'] ?? null)
+            ? trim((string) $validated['session_id'])
+            : '';
+
+        if ($sessionId !== '') {
+            foreach ($annotationsPayload as $annotation) {
+                if (!is_array($annotation)) {
+                    continue;
+                }
+                $annotationId = is_string($annotation['id'] ?? null)
+                    ? trim((string) $annotation['id'])
+                    : '';
+                if ($annotationId === '') {
+                    continue;
+                }
+
+                $existing = PdfState::query()
+                    ->where('document_id', $document->id)
+                    ->where('session_id', $sessionId)
+                    ->whereRaw("JSON_EXTRACT(annotation_data, '$.id') = ?", [$annotationId])
+                    ->first();
+
+                if ($existing) {
+                    $existing->update([
+                        'annotation_data' => $annotation,
+                        'page_number' => $annotation['pageIndex'] ?? null,
+                        'state' => 'saved',
+                    ]);
+                } else {
+                    PdfState::create([
+                        'document_id' => $document->id,
+                        'user_email' => null,
+                        'session_id' => $sessionId,
+                        'page_number' => $annotation['pageIndex'] ?? null,
+                        'annotation_data' => $annotation,
+                        'state' => 'saved',
+                    ]);
+                }
+            }
+
+            // Purge orphans (annotations that were deleted by the user).
+            $savedIds = array_values(array_filter(array_map(
+                static fn ($a) => is_string($a['id'] ?? null) ? trim((string) $a['id']) : null,
+                $annotationsPayload
+            )));
+
+            $purgeQuery = PdfState::query()
+                ->where('document_id', $document->id)
+                ->where('session_id', $sessionId)
+                ->whereNotIn('state', ['deleted', 'materialized']);
+
+            if (!empty($savedIds)) {
+                $purgeQuery->whereRaw(
+                    "JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.id')) NOT IN (" .
+                    implode(',', array_fill(0, count($savedIds), '?')) . ')',
+                    $savedIds
+                );
+            }
+
+            $purgeQuery->update(['state' => 'deleted']);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Annotation state saved.',
+            'session_id' => $sessionId !== '' ? $sessionId : null,
+        ]);
+    }
+
+    /**
+     * Stamp annotations onto a temporary copy of the PDF and serve it as a
+     * file download. Never overwrites document.path. Also saves annotation state to DB.
+     */
+    public function downloadAnnotatedPdf(Request $request, Document $document)
+    {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
+        $validated = $request->validate([
+            'annotations' => 'present|array',
+            'annotations.*.type' => 'required|string',
+            'annotations.*.pageIndex' => 'required',
+            'use_clean_pdf' => 'nullable|boolean',
+            'use_original_pdf' => 'nullable|boolean',
+            'session_id' => 'nullable|string',
+        ]);
+
+        $annotationsPayload = $request->input('annotations', []);
+        if (!is_array($annotationsPayload)) {
+            return response()->json(['success' => false, 'message' => 'Invalid annotations payload.'], 422);
+        }
+
+        $annotationsPayload = $this->normalizeAnnotationsForPersistence($document, $annotationsPayload);
+
+        $sessionId = is_string($validated['session_id'] ?? null)
+            ? trim((string) $validated['session_id'])
+            : '';
+
+        $pdfPath = Storage::path($document->path);
+        $useCleanPdf = $request->boolean('use_clean_pdf');
+        $useOriginalPdf = $request->boolean('use_original_pdf');
+
+        // Select the source PDF (original, clean, or current document).
+        $sourcePdfPath = $pdfPath;
+        if ($useOriginalPdf && $document->original_backup_path && Storage::exists($document->original_backup_path)) {
+            $originalPath = Storage::path($document->original_backup_path);
+            if (file_exists($originalPath)) {
+                $sourcePdfPath = $originalPath;
+            }
+        } elseif ($useCleanPdf) {
+            $cleanPath = Storage::path('temp/clean_' . $document->id . '.pdf');
+            if (file_exists($cleanPath)) {
+                $sourcePdfPath = $cleanPath;
+            }
+        }
+
+        if (!file_exists($sourcePdfPath)) {
+            return response()->json(['success' => false, 'message' => 'Source PDF not found.'], 404);
+        }
+
+        $tempDir = storage_path('app/temp');
+        if (!is_dir($tempDir)) {
+            @mkdir($tempDir, 0775, true);
+        }
+
+        // Copy source to a temp file — we never touch document.path.
+        $tempPdfPath = $tempDir . '/download_annotated_' . $document->id . '_' . Str::uuid() . '.pdf';
+        if (!@copy($sourcePdfPath, $tempPdfPath)) {
+            return response()->json(['success' => false, 'message' => 'Failed to prepare PDF working copy.'], 500);
+        }
+
+        // Write annotations payload to a temp JSON file for the Python script.
+        $annotationsFile = $tempDir . '/download_ann_' . $document->id . '_' . uniqid('', true) . '.json';
+        $annotationsJson = json_encode($this->prepareAnnotationsForPython($annotationsPayload), JSON_INVALID_UTF8_SUBSTITUTE);
+        if ($annotationsJson === false || @file_put_contents($annotationsFile, $annotationsJson) === false) {
+            @unlink($tempPdfPath);
+            return response()->json(['success' => false, 'message' => 'Failed to prepare annotations payload.'], 500);
+        }
+
+        $script = base_path('python/pdf-editor/apply_annotations_direct.py');
+        $command = sprintf(
+            '%s %s %s %s 2>&1',
+            escapeshellarg($pythonBinary),
+            escapeshellarg($script),
+            escapeshellarg($tempPdfPath),
+            escapeshellarg($annotationsFile)
+        );
+
+        $output = [];
+        $returnCode = 0;
+        exec($command, $output, $returnCode);
+
+        if (file_exists($annotationsFile)) {
+            @unlink($annotationsFile);
+        }
+
+        if ($returnCode !== 0) {
+            @unlink($tempPdfPath);
+            \Log::error('Download annotated PDF failed', [
+                'document_id' => $document->id,
+                'return_code' => $returnCode,
+                'output' => implode("\n", $output),
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to generate annotated PDF.',
+                'error' => implode("\n", $output),
+            ], 500);
+        }
+
+        // Save annotation state to DB (same as saveAnnotationState).
+        if ($sessionId !== '') {
+            foreach ($annotationsPayload as $annotation) {
+                if (!is_array($annotation)) {
+                    continue;
+                }
+                $annotationId = is_string($annotation['id'] ?? null) ? trim((string) $annotation['id']) : '';
+                if ($annotationId === '') {
+                    continue;
+                }
+                $existing = PdfState::query()
+                    ->where('document_id', $document->id)
+                    ->where('session_id', $sessionId)
+                    ->whereRaw("JSON_EXTRACT(annotation_data, '$.id') = ?", [$annotationId])
+                    ->first();
+                if ($existing) {
+                    $existing->update(['annotation_data' => $annotation, 'page_number' => $annotation['pageIndex'] ?? null, 'state' => 'saved']);
+                } else {
+                    PdfState::create(['document_id' => $document->id, 'user_email' => null, 'session_id' => $sessionId, 'page_number' => $annotation['pageIndex'] ?? null, 'annotation_data' => $annotation, 'state' => 'saved']);
+                }
+            }
+
+            $savedIds = array_values(array_filter(array_map(
+                static fn ($a) => is_string($a['id'] ?? null) ? trim((string) $a['id']) : null,
+                $annotationsPayload
+            )));
+            $purgeQuery = PdfState::query()
+                ->where('document_id', $document->id)
+                ->where('session_id', $sessionId)
+                ->whereNotIn('state', ['deleted', 'materialized']);
+            if (!empty($savedIds)) {
+                $purgeQuery->whereRaw(
+                    "JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.id')) NOT IN (" .
+                    implode(',', array_fill(0, count($savedIds), '?')) . ')',
+                    $savedIds
+                );
+            }
+            $purgeQuery->update(['state' => 'deleted']);
+        }
+
+        $downloadName = pathinfo($document->original_name ?? basename((string) $document->path), PATHINFO_FILENAME) . '_annotated.pdf';
+
+        return response()->download($tempPdfPath, $downloadName, [
+            'Content-Type' => 'application/pdf',
+        ])->deleteFileAfterSend(true);
     }
 
     public function convertToPdfA(Request $request, Document $document)

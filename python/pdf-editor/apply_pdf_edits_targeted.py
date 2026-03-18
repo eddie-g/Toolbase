@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 import fitz
 
 from apply_pdf_edits import (
+    _draw_edit_background,
     _inflate_rect,
     _insert_styled_runs,
     _insert_text_by_line_metrics,
@@ -88,18 +89,22 @@ def _normalize_style_runs(runs: Any) -> List[Dict[str, Any]]:
 def _styles_changed(edit: Dict[str, Any]) -> bool:
     word_styles = _normalize_style_runs(edit.get("word_styles"))
     line_metrics = _normalize_style_runs(edit.get("line_metrics"))
-    if word_styles and line_metrics:
-        return word_styles != line_metrics
+    style_runs_changed = bool(word_styles and line_metrics and word_styles != line_metrics)
 
     font_weight = str(edit.get("font_weight") or "").strip().lower()
     font_style = str(edit.get("font_style") or "normal").strip().lower()
     color = str(edit.get("color") or "#000000").strip().lower()
+    background_color = str(edit.get("background_color") or "").strip().lower()
+    rich_html = str(edit.get("rich_html") or "").strip().lower()
     if color and not color.startswith("#"):
         color = f"#{color}"
     return (
-        font_weight not in ("", "400", "normal")
+        style_runs_changed
+        or font_weight not in ("", "400", "normal")
         or font_style != "normal"
         or color not in ("", "#000000")
+        or background_color not in ("", "transparent")
+        or "background-color:" in rich_html
         or bool(edit.get("underline"))
     )
 
@@ -344,6 +349,8 @@ def apply_targeted_edits_to_pdf(pdf_path: str, edits_data: List[Dict[str, Any]])
                     font_obj=measure_font_obj,
                 )
                 synthetic_textbox = bool(edit.get("synthetic_textbox"))
+
+                _draw_edit_background(page, edit, rect)
 
                 if not synthetic_textbox and _insert_styled_runs(page, edit, rgb):
                     print(f"  Inserted styled run '{new_text[:40]}'")

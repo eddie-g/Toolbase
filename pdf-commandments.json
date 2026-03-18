@@ -1,0 +1,29 @@
+{
+  "title": "pdf commandments",
+  "commandments": [
+    {
+      "id": 1,
+      "text": "When a new PDF is uploaded, redaction is run. Then Fitz extracts the text layer into annotations, and the annotations are placed onto the document."
+    },
+    {
+      "id": 2,
+      "text": "Each annotation shall be a row in the pdf_state table."
+    },
+    {
+      "id": 3,
+      "text": "When a blank PDF is created, all text and shapes are annotations, and save shall persist the annotations into the database."
+    },
+    {
+      "id": 4,
+      "text": "When an annotation layer is loaded, the redacted PDF is used as the background and all annotations are placed on top of it."
+    },
+    {
+      "id": 5,
+      "text": "The redacted PDF shall always be the one that is loaded into the editor."
+    },
+    {
+      "id": 6,
+      "text": "When Download PDF is pressed, the annotations are merged into the redacted PDF. Until then, they are kept separate."
+    }
+  ]
+}

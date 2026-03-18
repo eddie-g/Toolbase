@@ -84,6 +84,45 @@ def _inflate_rect(rect: fitz.Rect, delta: float = 0.5) -> fitz.Rect:
     return fitz.Rect(rect.x0 - delta, rect.y0 - delta, rect.x1 + delta, rect.y1 + delta)
 
 
+def _parse_optional_rgb(color_value: Optional[Any]) -> Optional[tuple[float, float, float]]:
+    color = str(color_value or "").strip().lower()
+    if not color or color == "transparent":
+        return None
+
+    if color.startswith("#"):
+        color = color[1:]
+    if len(color) == 3:
+        color = "".join(channel * 2 for channel in color)
+    if len(color) == 6 and re.fullmatch(r"[0-9a-f]{6}", color):
+        return tuple(int(color[idx:idx + 2], 16) / 255.0 for idx in (0, 2, 4))
+
+    rgb_match = re.match(r"rgba?\(([^)]+)\)", color)
+    if not rgb_match:
+        return None
+
+    parts = [segment.strip() for segment in rgb_match.group(1).split(",")]
+    if len(parts) < 3:
+        return None
+
+    try:
+        return tuple(max(0.0, min(255.0, float(parts[idx]))) / 255.0 for idx in range(3))
+    except Exception:
+        return None
+
+
+def _draw_edit_background(page: fitz.Page, edit: Dict[str, Any], rect: fitz.Rect) -> bool:
+    background_rgb = _parse_optional_rgb(edit.get("background_color"))
+    if background_rgb is None:
+        return False
+
+    safe_rect = fitz.Rect(rect) & page.rect
+    if safe_rect.is_empty or safe_rect.width <= 0 or safe_rect.height <= 0:
+        return False
+
+    page.draw_rect(safe_rect, color=None, fill=background_rgb, width=0, overlay=True)
+    return True
+
+
 def _point_hits_any_rect(page_height: float, x_pdf: float, y_pdf: float, rects) -> bool:
     y_page = page_height - y_pdf
     for rect in rects:
@@ -2022,6 +2061,8 @@ def apply_edits_to_pdf(pdf_path, edits_data):
                     font_obj=measure_font_obj,
                 )
                 synthetic_textbox = bool(edit.get('synthetic_textbox'))
+
+                _draw_edit_background(page, edit, rect)
 
                 if not synthetic_textbox and _insert_styled_runs(page, edit, rgb):
                     continue

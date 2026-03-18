@@ -20,7 +20,7 @@
 <header
     x-data="{ mobileMenuOpen: false }"
     @keydown.escape.window="mobileMenuOpen = false"
-    class="fixed top-0 left-0 right-0 z-50 bg-white/80 dark:bg-gray-900/80 backdrop-blur-lg border-b border-gray-200 dark:border-gray-800"
+    class="fixed top-0 left-0 right-0 z-[200] bg-white/80 dark:bg-gray-900/80 backdrop-blur-lg border-b border-gray-200 dark:border-gray-800"
 >
     <div class="container mx-auto px-4 sm:px-6 lg:px-8">
         <div class="flex items-center justify-between {{ $heightClass }}">
@@ -85,7 +85,7 @@
                                 @endif
                             </button>
 
-                            <div x-show="open" @click.away="open = false" x-transition:enter="transition ease-out duration-100" x-transition:enter-start="transform opacity-0 scale-95" x-transition:enter-end="transform opacity-100 scale-100" x-transition:leave="transition ease-in duration-75" x-transition:leave-start="transform opacity-100 scale-100" x-transition:leave-end="transform opacity-0 scale-95" class="absolute right-0 z-50 mt-2 w-48 origin-top-right rounded-xl bg-white dark:bg-[#1a2332] py-2 shadow-2xl ring-1 ring-black/5 dark:ring-white/10 focus:outline-none border border-gray-200 dark:border-gray-700/50 dark:backdrop-blur-xl" role="menu" aria-orientation="vertical" aria-labelledby="user-menu-button" tabindex="-1">
+                            <div x-show="open" @click.away="open = false" x-transition:enter="transition ease-out duration-100" x-transition:enter-start="transform opacity-0 scale-95" x-transition:enter-end="transform opacity-100 scale-100" x-transition:leave="transition ease-in duration-75" x-transition:leave-start="transform opacity-100 scale-100" x-transition:leave-end="transform opacity-0 scale-95" class="absolute right-0 z-[210] mt-2 w-48 origin-top-right rounded-xl bg-white dark:bg-[#1a2332] py-2 shadow-2xl ring-1 ring-black/5 dark:ring-white/10 focus:outline-none border border-gray-200 dark:border-gray-700/50 dark:backdrop-blur-xl" role="menu" aria-orientation="vertical" aria-labelledby="user-menu-button" tabindex="-1">
                                 <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700/50 mb-1">
                                     <p class="text-xs text-gray-500 dark:text-gray-400">Signed in as</p>
                                     <p class="text-sm font-medium text-gray-900 dark:text-white truncate">{{ $headerUser->name }}</p>

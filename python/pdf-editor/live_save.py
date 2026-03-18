@@ -33,6 +33,7 @@ Exit codes:
 import sys
 import os
 import json
+import re
 from difflib import SequenceMatcher
 from datetime import datetime, timezone
 from pathlib import Path
@@ -89,6 +90,36 @@ def _parse_color(color_str: str) -> tuple:
     if len(c) != 6:
         return (0.0, 0.0, 0.0)
     return (int(c[0:2], 16) / 255, int(c[2:4], 16) / 255, int(c[4:6], 16) / 255)
+
+
+def _parse_optional_color(color_str: Optional[str]) -> Optional[tuple]:
+    raw = str(color_str or "").strip().lower()
+    if not raw or raw == "transparent":
+        return None
+
+    if raw.startswith("rgba") or raw.startswith("rgb"):
+        rgb_match = re.match(r"rgba?\(([^)]+)\)", raw)
+        if not rgb_match:
+            return None
+        parts = [segment.strip() for segment in rgb_match.group(1).split(",")]
+        if len(parts) < 3:
+            return None
+        try:
+            return tuple(max(0.0, min(255.0, float(parts[idx]))) / 255.0 for idx in range(3))
+        except Exception:
+            return None
+
+    if raw.startswith("#"):
+        raw = raw[1:]
+    if len(raw) == 3:
+        raw = "".join(channel * 2 for channel in raw)
+    if len(raw) != 6:
+        return None
+
+    try:
+        return (int(raw[0:2], 16) / 255, int(raw[2:4], 16) / 255, int(raw[4:6], 16) / 255)
+    except Exception:
+        return None
 
 
 def _is_same_rect(a: fitz.Rect, b: fitz.Rect, tol: float = 2.0) -> bool:
@@ -167,6 +198,19 @@ def _inflate_rect(rect: fitz.Rect, x_pad: float, y_pad: Optional[float] = None) 
         rect.x1 + x_pad,
         rect.y1 + y_pad,
     )
+
+
+def _draw_background_rect(page: fitz.Page, rect: fitz.Rect, color_value: Optional[str]) -> bool:
+    color = _parse_optional_color(color_value)
+    if color is None:
+        return False
+
+    safe_rect = fitz.Rect(rect) & page.rect
+    if safe_rect.is_empty or safe_rect.width <= 0 or safe_rect.height <= 0:
+        return False
+
+    page.draw_rect(safe_rect, color=None, fill=color, width=0, overlay=True)
+    return True
 
 
 def _rect_to_dict(rect: fitz.Rect) -> dict:
@@ -729,6 +773,13 @@ def _select_changed_line_range(original_text: str, new_text: str, line_metrics: 
     if start > end:
         return None, None, None, None
 
+    # When the edit replaces the whole multiline block, line-range replay is
+    # too aggressive: it uses the compact atomic writer and collapses the
+    # paragraph vertically. Force these cases through paragraph reflow so the
+    # original leading is preserved.
+    if start == 0 and end == (len(line_metrics) - 1):
+        return None, None, None, None
+
     changed_lines = line_metrics[start:end + 1]
     render_text = "\n".join(_clean_text(new_text).split("\n")[start:end + 1]).strip()
     if not render_text:
@@ -871,6 +922,55 @@ def _insert_precise_coordinate_text(page, origin: fitz.Point, rect: fitz.Rect, t
         fs -= 0.25
 
     return False, min_fs, "precise-origin"
+
+
+def _insert_multiline_with_line_metrics(
+    page,
+    text: str,
+    line_metrics: list,
+    font_obj: fitz.Font,
+    fontsize: float,
+    color: tuple,
+    original_rect: fitz.Rect,
+    insert_rect: fitz.Rect,
+):
+    raw_lines = _clean_text(text).split("\n")
+    if len(raw_lines) != len(line_metrics):
+        return False, 0.0, "line-mismatch"
+
+    delta_x = insert_rect.x0 - original_rect.x0
+    delta_y = insert_rect.y0 - original_rect.y0
+    min_used_fs = None
+
+    for idx, (raw_line, metric) in enumerate(zip(raw_lines, line_metrics)):
+        line_text = _clean_text(raw_line).strip()
+        if not line_text:
+            continue
+
+        metric_font_size = max(float(metric.get("font_size") or fontsize or 12.0), 1.0)
+        metric_left = float(metric.get("left") or 0.0) + delta_x
+        metric_top = float(metric.get("top") or 0.0) + delta_y
+        metric_width = max(float(metric.get("width") or 0.0), 1.0)
+        metric_height = max(float(metric.get("height") or 0.0), metric_font_size)
+        metric_origin_x = float(metric.get("origin_x") or metric_left) + delta_x
+        metric_origin_y = float(metric.get("origin_y") or (metric_top + metric_height)) + delta_y
+        line_rect = fitz.Rect(metric_left, metric_top, metric_left + metric_width, metric_top + metric_height)
+
+        ok, used_fs, _mode = _insert_single_line_text(
+            page=page,
+            origin=fitz.Point(metric_origin_x, metric_origin_y),
+            text=line_text,
+            font_obj=font_obj,
+            fontsize=metric_font_size,
+            color=color,
+            max_width=metric_width,
+        )
+        if not ok:
+            return False, float(min_used_fs or metric_font_size), f"line-{idx}-overflow"
+        if min_used_fs is None or used_fs < min_used_fs:
+            min_used_fs = used_fs
+
+    return True, float(min_used_fs or fontsize or 12.0), "explicit-multiline"
 
 
 def _reflow_paragraph(page, rect: fitz.Rect, text: str, font_obj: fitz.Font, fontsize: float, leading: float, color: tuple, align: int):
@@ -1165,8 +1265,11 @@ def live_save_patch(pdf_path: str, edit: dict, preview_dir: Optional[str] = None
     #    On first attempt (empty retry_mode) AND on explicit span_search retry,
     #    try to diff old→new text, find the exact changed substring on the PDF
     #    page, and redact only that tiny rect.  Skipped when the retry system
-    #    is requesting a specific broader strategy.
-    if retry_mode in ("", "span_search"):
+    #    is requesting a specific broader strategy, or when a background fill
+    #    is required (span_search only touches the changed substring rect and
+    #    would silently skip painting the full-field background).
+    _has_background = _parse_optional_color(edit.get("background_color")) is not None
+    if retry_mode in ("", "span_search") and "\n" not in new_text and not _has_background:
         result = _try_span_search_replace(doc, page, edit, preview_dir, save_id)
         if result and result.get("success"):
             try:
@@ -1274,6 +1377,9 @@ def live_save_patch(pdf_path: str, edit: dict, preview_dir: Optional[str] = None
             float(line_metrics[0].get("origin_x") or origin_x) + delta_x,
             float(line_metrics[0].get("origin_y") or origin_y) + delta_y,
         )
+    explicit_multiline_lines = _clean_text(new_text).split("\n")
+    use_explicit_multiline = len(line_metrics) > 1 and len(explicit_multiline_lines) == len(line_metrics)
+    prefer_paragraph_reflow = len(line_metrics) > 1 and "\n" in new_text
     use_atomic_line = len(line_metrics) <= 1 and _fits_single_line(new_text, single_line_fit_rect, font_obj, effective_font_size)
     if move_only:
         redaction_rect = _build_redaction_rect(target_pdf_rect, target_pdf_rect) & page.rect
@@ -1308,6 +1414,18 @@ def live_save_patch(pdf_path: str, edit: dict, preview_dir: Optional[str] = None
         render_rect = insert_pdf_rect
         render_text = new_text
         strategy = "atomic_line"
+    elif use_explicit_multiline:
+        paragraph_pdf_rect = paragraph["paragraph_rect"] & page.rect
+        redaction_rect = _build_redaction_rect(paragraph_pdf_rect, paragraph_pdf_rect) & page.rect
+        render_rect = paragraph_pdf_rect
+        render_text = new_text
+        strategy = "explicit_multiline"
+    elif prefer_paragraph_reflow:
+        paragraph_pdf_rect = (changed_group_rect or paragraph["paragraph_rect"]) & page.rect
+        redaction_rect = _build_redaction_rect(paragraph_pdf_rect, paragraph_pdf_rect) & page.rect
+        render_rect = paragraph_pdf_rect
+        render_text = changed_group_text or reflow_text
+        strategy = "atomic_paragraph"
     elif changed_line_rect is not None and changed_line_text is not None:
         redaction_rect = _build_redaction_rect(changed_line_rect, changed_line_rect) & page.rect
         render_rect = changed_line_rect & page.rect
@@ -1349,7 +1467,7 @@ def live_save_patch(pdf_path: str, edit: dict, preview_dir: Optional[str] = None
             print(f"  ⚠ before preview failed: {preview_err}", file=sys.stderr)
 
     source_op_removed = 0
-    if _strip_using_source_content_ops is not None and edit.get("source_content_ops"):
+    if _strip_using_source_content_ops is not None and edit.get("source_content_ops") and "\n" not in new_text:
         try:
             source_op_removed = int(_strip_using_source_content_ops(doc, page, edit) or 0)
         except Exception as strip_err:
@@ -1388,10 +1506,30 @@ def live_save_patch(pdf_path: str, edit: dict, preview_dir: Optional[str] = None
             return {"success": False, "error": f"saveIncr failed: {e}"}
 
     # ── 3. Reinsert text into the atomic target ────────────────────────────────
+    _draw_background_rect(
+        page,
+        exact_insert_pdf_rect if not exact_insert_pdf_rect.is_empty else render_rect,
+        edit.get("background_color"),
+    )
+
     color = _parse_color(color_str)
 
     try:
-        if strategy in ("atomic_line", "atomic_line_range", "locked_suffix_range", "precise_coords_line"):
+        if strategy == "explicit_multiline":
+            ok, used_fs, mode = _insert_multiline_with_line_metrics(
+                page=page,
+                text=render_text,
+                line_metrics=line_metrics,
+                font_obj=font_obj,
+                fontsize=effective_font_size,
+                color=color,
+                original_rect=target_pdf_rect,
+                insert_rect=insert_pdf_rect,
+            )
+            if not ok:
+                raise RuntimeError(f"Explicit multiline write failed: {mode}")
+            print(f"  Inserted multiline via {mode} fs={used_fs:.2f}", file=sys.stderr)
+        elif strategy in ("atomic_line", "atomic_line_range", "locked_suffix_range", "precise_coords_line"):
             if strategy == "precise_coords_line" and "\n" not in render_text:
                 ok, used_fs, mode = _insert_precise_coordinate_text(
                     page=page,
