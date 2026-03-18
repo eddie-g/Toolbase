@@ -49,7 +49,10 @@ Route::get('/documents/{document}/guided', [DocumentController::class, 'guided']
 Route::get('/documents/{document}/fullscreen', [DocumentController::class, 'fullscreen'])->name('documents.fullscreen');
 Route::get('/documents/{document}/edit-extracted', [DocumentController::class, 'editExtractedText'])->name('documents.editExtracted');
 Route::get('/documents/{document}/file', [DocumentController::class, 'file'])->name('documents.file');
+Route::get('/documents/{document}/annotation-assets/{filename}', [DocumentController::class, 'annotationAsset'])->name('documents.annotationAsset');
+Route::get('/documents/{document}/original-file', [DocumentController::class, 'originalFile'])->name('documents.originalFile');
 Route::post('/documents/{document}/save', [DocumentController::class, 'save'])->name('documents.save');
+Route::post('/documents/{document}/rename', [DocumentController::class, 'rename'])->name('documents.rename');
 Route::post('/documents/{document}/restore-original', [DocumentController::class, 'restoreOriginal'])->name('documents.restoreOriginal');
 Route::post('/documents/{document}/flatten-rotations', [DocumentController::class, 'flattenRotations'])->name('documents.flattenRotations');
 Route::post('/documents/{document}/apply-rotations', [DocumentController::class, 'applyRotations'])->name('documents.applyRotations');
@@ -62,7 +65,10 @@ Route::get('/documents/saved-pdf-options', [DocumentController::class, 'listSave
 Route::delete('/documents/{document}/saved-pdf-option', [DocumentController::class, 'deleteSavedPdfOption'])->name('documents.deleteSavedPdfOption');
 Route::post('/documents/{document}/load-saved-pdf', [DocumentController::class, 'loadSavedPdf'])->name('documents.loadSavedPdf');
 Route::post('/documents/{document}/mark-annotations-saved', [DocumentController::class, 'markAnnotationsSaved'])->name('documents.markAnnotationsSaved');
+Route::post('/documents/{document}/delete-annotations', [DocumentController::class, 'deleteAnnotations'])->name('documents.deleteAnnotations');
 Route::post('/documents/{document}/apply-annotations-direct', [DocumentController::class, 'applyAnnotationsDirect'])->name('documents.applyAnnotationsDirect');
+Route::post('/documents/{document}/save-annotation-state', [DocumentController::class, 'saveAnnotationState'])->name('documents.saveAnnotationState');
+Route::post('/documents/{document}/download-annotated-pdf', [DocumentController::class, 'downloadAnnotatedPdf'])->name('documents.downloadAnnotatedPdf');
 Route::post('documents/{document}/process-ocr', [DocumentController::class, 'processOcr'])->name('documents.processOcr');
 Route::get('documents/{document}/extraction-data', [DocumentController::class, 'getExtractionData'])->name('documents.getExtractionData');
 Route::post('documents/{document}/process-fitz', [DocumentController::class, 'processFitz'])->name('documents.processFitz');

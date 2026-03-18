@@ -69,6 +69,27 @@ def parse_color(value: Any) -> Tuple[float, float, float]:
     return (0.0, 0.0, 0.0)
 
 
+def parse_optional_color(value: Any) -> Optional[Tuple[float, float, float]]:
+    raw = str(value or "").strip().lower()
+    if not raw or raw == "transparent":
+        return None
+    return parse_color(raw)
+
+
+def draw_edit_background(page: fitz.Page, edit: Dict[str, Any]) -> bool:
+    background = parse_optional_color(edit.get("background_color"))
+    bbox = edit.get("bbox") or edit.get("original_bbox")
+    if background is None or not isinstance(bbox, list) or len(bbox) < 4:
+        return False
+
+    rect = fitz.Rect(float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])) & page.rect
+    if rect.is_empty or rect.width <= 0 or rect.height <= 0:
+        return False
+
+    page.draw_rect(rect, color=None, fill=background, width=0, overlay=True)
+    return True
+
+
 def block_rect(block: Dict[str, Any]) -> Optional[fitz.Rect]:
     if isinstance(block.get("bbox"), list) and len(block["bbox"]) >= 4:
         return fitz.Rect(block["bbox"][0], block["bbox"][1], block["bbox"][2], block["bbox"][3])
@@ -412,6 +433,8 @@ def render_edited_block(
         line_height = None
     if not line_height or line_height <= 0:
         line_height = font_size * 1.2
+
+    draw_edit_background(page, edit)
 
     # Prefer absolute per-word placement only when token count still matches.
     ws = edit.get("word_styles")

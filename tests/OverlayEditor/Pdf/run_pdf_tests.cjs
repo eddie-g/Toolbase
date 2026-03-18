@@ -73,6 +73,23 @@ const STYLE_SEGMENTS = {
         underline: true,
     },
 };
+const HELVETICA_FONT_REGEX = /(helvetica|arimo)/i;
+const FONT_SIZE_DUPLICATE_SENTENCES = {
+    regular: 'Base sentence.',
+    large: 'Bigger sentence.',
+    small: 'Smaller sentence.',
+};
+const FONT_SIZE_DUPLICATE_TEXT = [
+    FONT_SIZE_DUPLICATE_SENTENCES.regular,
+    FONT_SIZE_DUPLICATE_SENTENCES.large,
+    FONT_SIZE_DUPLICATE_SENTENCES.small,
+].join(' ');
+const FONT_SIZE_DUPLICATE_LARGE_PX = 30;
+const FONT_SIZE_DUPLICATE_SMALL_PX = 10;
+const LOADED_SAVED_STANDALONE_TEXT = 'Loaded saved standalone regression text';
+const LOADED_SAVED_STANDALONE_SECOND_TEXT = 'Loaded saved standalone second save';
+const LOADED_SAVED_PROMOTED_UPDATED_TEXT = 'Loaded saved promoted regression line';
+const LOADED_SAVED_PROMOTED_SECOND_TEXT = 'Loaded saved promoted second save';
 
 const PARAGRAPH_SEED_TEXT = 'Paragraph seed';
 const PARAGRAPH_TEXT = [
@@ -122,6 +139,21 @@ const PARAGRAPH_INDENTED_TEXT = [
     'going collaborations; ARRI and Teradek/',
 ].join('\n');
 const PARAGRAPH_INDENTED_START = 'Andreas was able to secure us an';
+const PARAGRAPH_STYLE_TEXT = [
+    'There are many variations of passages of Lorem Ipsum available, but the majority have suffered alteration in some form, by injected humour, or randomised words which don\'t look even slightly believable.',
+    'If you are going to use a passage of Lorem Ipsum, you need to be sure there isn\'t anything embarrassing hidden in the middle of text.',
+    'All the Lorem Ipsum generators on the Internet tend to repeat predefined chunks as necessary, making this the first true generator on the Internet.',
+    'It uses a dictionary of over 200 Latin words, combined with a handful of model sentence structures, to generate Lorem Ipsum which looks reasonable.',
+    'The generated Lorem Ipsum is therefore always free from repetition, injected humour, or non-characteristic words etc.',
+].join(' ');
+const PARAGRAPH_STYLE_FRAGMENT = 'There are many variations of passages of Lorem Ipsum available, but the majority have suffered alteration in some form, by injected humour, or randomised words which don\'t look even slightly believable.';
+const PARAGRAPH_STYLE_WORD_TARGETS = {
+    first: 'There',
+    middle: 'dictionary',
+    last: 'therefore',
+};
+const PARAGRAPH_STYLE_WIDTH = 360;
+const PARAGRAPH_STYLE_HEIGHT = 800;
 const PARAGRAPH_SEPARATE_LINE_CASES = [
     {
         fragment: 'Separate Alpha',
@@ -227,6 +259,11 @@ const PARAGRAPH_COLUMN_FRAGMENTS = [
     'Column Three',
 ];
 const PARAGRAPH_COLUMN_LEFTS = [6, 206, 406];
+const DOWNLOAD_TOP_RIGHT_TEXT = 'Wolfchenez News';
+const DOWNLOAD_TOP_RIGHT_FONT_SIZE_PX = 57;
+const DOWNLOAD_TOP_RIGHT_MARGIN_PX = 20;
+const DOWNLOAD_TOP_RIGHT_POSITION_TOLERANCE = 18;
+const DOWNLOAD_TOP_RIGHT_FONT_SIZE_TOLERANCE = 0.001;
 const DRYLAB_LOAD_FIXTURE_PATH = path.resolve(__dirname, '..', '..', '..', 'public', 'drylab_full.pdf');
 const DRYLAB_LOAD_POSITION_TOLERANCE = 4;
 const DRYLAB_LOAD_SIZE_TOLERANCE = 6;
@@ -271,6 +308,56 @@ const DRYLAB_LOAD_TARGETS = [
         expectedColor: '#000000',
     },
 ];
+const NDA_FIXTURE_PATH = path.resolve(__dirname, '..', '..', '..', 'public', 'nda_test_1.pdf');
+const NDA_PARAGRAPH_ONE_FRAGMENT = 'THIS AGREEMENT (“Agreement”) is made between';
+const NDA_PARAGRAPH_ONE_FIRST_LINE = 'THIS AGREEMENT (“Agreement”) is made between ___________________________, (“Company”)';
+const NDA_PARAGRAPH_ONE_BOLD_TOKEN = '___________________________';
+const NDA_PARAGRAPH_ONE_WORDS = ['THIS', 'AGREEMENT', NDA_PARAGRAPH_ONE_BOLD_TOKEN];
+const NDA_LEADIN_LINE = '1. Confidential and Proprietary Information. (a) Company acknowledges and agrees that in';
+const NDA_LEADIN_WORDS = ['1.', 'Confidential', 'Company'];
+const NDA_LOAD_POSITION_TOLERANCE = 4;
+const NDA_LOAD_SIZE_TOLERANCE = 6;
+const NDA_LOAD_LINE_SPACING_TOLERANCE = 4;
+const NDA_LOAD_FONT_SIZE_TOLERANCE = 2;
+const NDA_TIMES_FONT_REGEX = /(times|roman|nimbusroman|tinos|charis)/i;
+const NDA_RANDOM_EDIT_SEED = 1544;
+const NDA_RANDOM_EDIT_TARGET_COUNT = 2;
+const MIXED_LAYER_PARAGRAPH_CASES = [
+    {
+        key: 'alpha',
+        fragment: 'Mixed Paragraph Alpha',
+        text: 'Mixed Paragraph Alpha Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.',
+        left: 42,
+        top: 96,
+        width: 228,
+        height: 156,
+    },
+    {
+        key: 'beta',
+        fragment: 'Mixed Paragraph Beta',
+        text: 'Mixed Paragraph Beta Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.',
+        left: 298,
+        top: 332,
+        width: 228,
+        height: 156,
+    },
+];
+const MIXED_LAYER_STAR_CASES = [
+    {
+        key: 'gold_star',
+        fill: '#ffd700',
+        stroke: '#996600',
+        region: { xStart: 0.14, yStart: 0.70, xEnd: 0.26, yEnd: 0.83 },
+    },
+    {
+        key: 'blue_star',
+        fill: '#0000ff',
+        stroke: '#003399',
+        region: { xStart: 0.68, yStart: 0.16, xEnd: 0.82, yEnd: 0.30 },
+    },
+];
+const MIXED_LAYER_POSITION_TOLERANCE = 6;
+const MIXED_LAYER_LINE_COUNT_TOLERANCE = 1;
 const INVOICE_TEST_FIXTURE_PATH = path.resolve(__dirname, '..', '..', '..', 'public', 'invoice_test.pdf');
 const INVOICE_EXPECTED_CODE_FIELDS_BY_PAGE = {
     1: [
@@ -306,6 +393,9 @@ const INVOICE_EXPECTED_CODE_FIELDS_BY_PAGE = {
         'BPXPN-00020',
     ],
 };
+const OVERLAY_BACKGROUND_TEST_TARGET_TEXT = NDA_LEADIN_LINE;
+const OVERLAY_BACKGROUND_TEST_COLOR = '#ffd54f';
+const OVERLAY_BACKGROUND_MATCH_TOLERANCE = 8;
 const PARAGRAPH_TEST_KEYS = [
     'test_3_paragraphs',
     'test_4_three_paragraph_columns',
@@ -318,6 +408,7 @@ const PARAGRAPH_TEST_KEYS = [
     'test_11_separate_lines_not_grouped',
     'test_12_tiny_saved_labels_reload_separately',
     'test_13_paragraph_indent_preserved',
+    'test_21_promoted_noop_edit_keeps_exact_layout',
 ];
 
 const TESTS = {
@@ -333,11 +424,83 @@ const TESTS = {
         description: 'Create one combined text box, style individual words with different color, font, boldness, and underline, save, and confirm the mixed styling survives in the saved PDF.',
         run: runTextStylingFlow,
     },
+    test_18_text_font_size_reload_no_duplicates: {
+        key: 'test_18_text_font_size_reload_no_duplicates',
+        label: 'Test 18 : Text Font Size Reload No Duplicates',
+        description: 'Create one text box with three sentences, increase the middle sentence font size, decrease the last sentence font size, save, reload the editor, and verify the editor does not duplicate the saved text.',
+        run: runTextFontSizeReloadNoDuplicatesFlow,
+    },
+    test_19_loaded_saved_standalone_no_duplicate: {
+        key: 'test_19_loaded_saved_standalone_no_duplicate',
+        label: 'Test 19 : Loaded Saved Standalone No Duplicate',
+        description: 'Create and save a standalone text annotation, reopen the document in loaded-saved-PDF mode, save again, and verify the editor uses the clean PDF base with one live annotation per saved text.',
+        run: runLoadedSavedStandaloneNoDuplicateFlow,
+    },
+    test_20_loaded_saved_promoted_no_duplicate: {
+        key: 'test_20_loaded_saved_promoted_no_duplicate',
+        label: 'Test 20 : Loaded Saved Promoted No Duplicate',
+        description: 'Edit a promoted overlay field, reopen the document in loaded-saved-PDF mode, save again, and verify the editor uses the clean PDF base with one live annotation per saved text.',
+        run: runLoadedSavedPromotedNoDuplicateFlow,
+    },
+    test_21_promoted_noop_edit_keeps_exact_layout: {
+        key: 'test_21_promoted_noop_edit_keeps_exact_layout',
+        label: 'Test 21 : Promoted No-Op Edit Keeps Exact Layout',
+        description: 'Edit a promoted annotation without changing any content, exit edit mode, and verify the editor restores exact promoted geometry instead of persisting a fake dirty state.',
+        run: runPromotedNoopEditKeepsExactLayoutFlow,
+    },
+    test_22_nda_random_page_one_save_no_duplicates: {
+        key: 'test_22_nda_random_page_one_save_no_duplicates',
+        label: 'Test 22 : NDA Random Page-One Save No Duplicates',
+        description: 'Upload nda_test_1.pdf, edit deterministic random multiline page-1 overlay blocks, save, and verify the saved PDF has one copy of each edited block, the reloaded editor has no duplicate saved annotations, and multiline spacing matches the source NDA layout.',
+        run: runNdaRandomPageOneSaveNoDuplicatesFlow,
+    },
+    test_23_mixed_annotation_layer_stars_no_duplicates: {
+        key: 'test_23_mixed_annotation_layer_stars_no_duplicates',
+        label: 'Test 23 : Mixed Annotation Layer Stars No Duplicates',
+        description: 'Create two paragraph annotations and two star annotations on a blank PDF, make one star blue, save, and verify the saved PDF keeps exactly two stars at the expected positions while the reloaded editor keeps two editable star annotations and the paragraph boxes intact.',
+        run: runMixedAnnotationLayerStarsNoDuplicatesFlow,
+    },
+    test_24_download_pdf_top_right_text_position: {
+        key: 'test_24_download_pdf_top_right_text_position',
+        label: 'Test 24 : Download PDF Top Right Text Position',
+        description: 'Create a blank PDF, add "Wolfchenez News", set the editor banner font size to 57px, drag the committed text annotation to the top-right corner, save, export via Download PDF, and verify the downloaded PDF keeps that top-right placement.',
+        run: runDownloadPdfTopRightTextPositionFlow,
+    },
+    test_25_overlay_text_background_persists_after_save: {
+        key: 'test_25_overlay_text_background_persists_after_save',
+        label: 'Test 25 : Overlay Text Background Persists After Save',
+        description: 'Upload nda_test_1.pdf, apply a visible background fill to the lead-in overlay field, save, and verify both the reloaded overlay field and the saved PDF preserve that background.',
+        run: runOverlayTextBackgroundPersistsAfterSaveFlow,
+    },
+    test_26_overlay_background_persists_in_loaded_saved_pdf_mode: {
+        key: 'test_26_overlay_background_persists_in_loaded_saved_pdf_mode',
+        label: 'Test 26 : Overlay Background Persists in loadedSavedPdf Mode',
+        description: 'Upload nda_test_1.pdf, make a first save, then reload in loadedSavedPdf mode, apply a background fill to an overlay field without changing the text, save again, and verify the saved PDF contains the background fill.',
+        run: runOverlayBackgroundInLoadedSavedPdfModeFlow,
+    },
     test_4_load_tests: {
         key: 'test_4_load_tests',
         label: 'Test 4 : Load Tests',
         description: 'Upload drylab_full.pdf, load page 1 in the overlay editor, and verify key text retains original word positions, line heights, and styles on initial load.',
         run: runDrylabLoadFlow,
+    },
+    test_15_paragraph_helvetica_bold_italic_underline: {
+        key: 'test_15_paragraph_helvetica_bold_italic_underline',
+        label: 'Test 15 : Paragraph Helvetica Bold Italic Underline',
+        description: 'Create one lorem ipsum paragraph on a blank PDF, apply Helvetica plus bold, italic, and underline styling to the full paragraph, save, and verify the saved PDF keeps those styles across the wrapped paragraph.',
+        run: runParagraphHelveticaBoldItalicUnderlineFlow,
+    },
+    test_16_nda_paragraph_one_bold_items: {
+        key: 'test_16_nda_paragraph_one_bold_items',
+        label: 'Test 16 : NDA Paragraph One Bold Items',
+        description: 'Upload nda_test_1.pdf, load page 1 in the editor, and verify the bold placeholder span in paragraph one keeps its original bold styling on initial load.',
+        run: runNdaParagraphOneBoldItemsFlow,
+    },
+    test_17_nda_leadin_alignment: {
+        key: 'test_17_nda_leadin_alignment',
+        label: 'Test 17 : NDA Lead-In Alignment',
+        description: 'Upload nda_test_1.pdf, load page 1 in the editor, and verify the "1. Confidential and Proprietary Information..." lead-in keeps its original alignment.',
+        run: runNdaLeadinAlignmentFlow,
     },
     test_14_invoice_code_column_separated: {
         key: 'test_14_invoice_code_column_separated',
@@ -438,6 +601,26 @@ function normalizeTypographicAscii(text) {
         .replace(/[\u2013\u2014]/g, '-'));
 }
 
+function countNormalizedOccurrences(text, fragment) {
+    const haystack = normalizeTypographicAscii(text);
+    const needle = normalizeTypographicAscii(fragment);
+    if (!needle) {
+        return 0;
+    }
+
+    let count = 0;
+    let cursor = 0;
+    while (cursor <= haystack.length) {
+        const nextIndex = haystack.indexOf(needle, cursor);
+        if (nextIndex === -1) {
+            break;
+        }
+        count += 1;
+        cursor = nextIndex + needle.length;
+    }
+    return count;
+}
+
 function normalizeHex(value, fallback = '#000000') {
     const hex = String(value || fallback).trim().toLowerCase();
     if (/^#[0-9a-f]{6}$/.test(hex)) {
@@ -508,6 +691,29 @@ function bboxCenter(bbox) {
         x: (bbox[0] + bbox[2]) / 2,
         y: (bbox[1] + bbox[3]) / 2,
     };
+}
+
+function rectArea(rect) {
+    if (!Array.isArray(rect) || rect.length < 4) {
+        return 0;
+    }
+    return Math.max(0, (Number(rect[2]) || 0) - (Number(rect[0]) || 0))
+        * Math.max(0, (Number(rect[3]) || 0) - (Number(rect[1]) || 0));
+}
+
+function rectOverlapRatio(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length < 4 || b.length < 4) {
+        return 0;
+    }
+
+    const interWidth = Math.max(0, Math.min(Number(a[2]) || 0, Number(b[2]) || 0) - Math.max(Number(a[0]) || 0, Number(b[0]) || 0));
+    const interHeight = Math.max(0, Math.min(Number(a[3]) || 0, Number(b[3]) || 0) - Math.max(Number(a[1]) || 0, Number(b[1]) || 0));
+    const interArea = interWidth * interHeight;
+    if (interArea <= 0) {
+        return 0;
+    }
+
+    return interArea / Math.max(1, Math.min(rectArea(a), rectArea(b)));
 }
 
 function blockBBox(block) {
@@ -809,6 +1015,78 @@ async function clearAnnotationSessionState(page, documentId) {
     }, documentId);
 }
 
+async function clearPdfSessionId(page) {
+    await page.evaluate(() => {
+        localStorage.removeItem('pdf_session_id');
+    });
+}
+
+async function getPdfSessionId(page) {
+    return page.evaluate(() => localStorage.getItem('pdf_session_id') || '');
+}
+
+async function ensurePdfSessionId(page, prefix) {
+    return page.evaluate((nextPrefix) => {
+        const existing = localStorage.getItem('pdf_session_id');
+        if (existing) {
+            return existing;
+        }
+        const sessionId = `${nextPrefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+        localStorage.setItem('pdf_session_id', sessionId);
+        return sessionId;
+    }, prefix);
+}
+
+async function fetchSavedAnnotations(page, documentId, sessionId) {
+    return page.evaluate(async ({ id, requestedSessionId }) => {
+        const response = await fetch(`/documents/${id}/saved-annotations?session_id=${encodeURIComponent(requestedSessionId)}`, {
+            credentials: 'same-origin',
+            headers: { Accept: 'application/json' },
+        });
+        return {
+            ok: response.ok,
+            status: response.status,
+            body: await response.json(),
+        };
+    }, {
+        id: documentId,
+        requestedSessionId: sessionId,
+    });
+}
+
+async function openLoadedSavedPdfEditor(page, documentId, sessionId) {
+    await page.evaluate((nextSessionId) => {
+        if (nextSessionId) {
+            localStorage.setItem('pdf_session_id', nextSessionId);
+        }
+    }, sessionId);
+    await page.goto(`${BASE_URL}/documents/${documentId}/edit?loadedSavedPdf=${Date.now()}&savedSession=${encodeURIComponent(sessionId)}`, {
+        waitUntil: 'domcontentloaded',
+        timeout: 90000,
+    });
+    await waitForEditorReady(page);
+}
+
+async function waitForLoadedSavedAnnotationSave(page) {
+    const saveResponsePromise = page.waitForResponse((response) => (
+        response.request().method() === 'POST'
+        && (
+            response.url().includes('/apply-annotations-direct')
+            || response.url().includes('/save-annotations')
+        )
+    ), { timeout: 60000 });
+    const loadPromise = page.waitForEvent('load', { timeout: 90000 });
+
+    await page.click('#save-btn');
+    const response = await saveResponsePromise;
+    if (!response.ok()) {
+        throw new Error(`loaded-saved annotation save failed with ${response.status()}`);
+    }
+
+    await loadPromise;
+    await waitForEditorReady(page);
+}
+
 async function getBasePageGeometry(page) {
     return page.evaluate(() => {
         const wrapper = document.querySelector('.page[data-page-index="0"]');
@@ -871,6 +1149,31 @@ async function createTextAnnotationAt(page, text, offsetX, offsetY) {
     const annotation = page.locator('.annotation').filter({ hasText: text }).first();
     await annotation.waitFor({ timeout: 10000 });
 
+    return annotation;
+}
+
+async function createTextAnnotationAtWithStyles(page, text, offsetX, offsetY, styles = {}) {
+    await page.click('#mode-text');
+    await page.waitForTimeout(300);
+
+    const overlay = page.locator('.page[data-page-index="0"] .overlay').first();
+    const overlayBox = await overlay.boundingBox();
+    if (!overlayBox) {
+        throw new Error('missing overlay box for Add Text');
+    }
+
+    await page.mouse.click(overlayBox.x + offsetX, overlayBox.y + offsetY);
+    await page.waitForSelector('.text-box-creator .tbc-input', { timeout: 10000 });
+
+    const input = page.locator('.text-box-creator .tbc-input').first();
+    await input.fill(text);
+    if (styles && Object.keys(styles).length > 0) {
+        await applyEditTextBannerStyles(page, styles);
+    }
+    await commitActiveTextBox(page);
+
+    const annotation = page.locator('.annotation').filter({ hasText: text }).first();
+    await annotation.waitFor({ timeout: 10000 });
     return annotation;
 }
 
@@ -1012,6 +1315,99 @@ async function readTextAnnotationMetrics(page, textFragment) {
     }, textFragment);
 }
 
+async function readTextAnnotationState(page, textFragment) {
+    return page.evaluate((targetTextFragment) => {
+        const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const fragment = normalizeText(targetTextFragment);
+        const records = (typeof annotations !== 'undefined' && Array.isArray(annotations)) ? annotations : [];
+        const record = records.find((item) => {
+            const candidates = [
+                item?.text,
+                item?.element?.innerText,
+                item?.element?.textContent,
+                item?.element?.querySelector?.('.annotation-text')?.textContent,
+            ];
+            return candidates.some((candidate) => normalizeText(candidate).includes(fragment));
+        });
+
+        if (!record?.element) {
+            throw new Error(`missing text annotation state target for "${targetTextFragment}"`);
+        }
+
+        const textElement = record.element.querySelector('.annotation-text') || record.element;
+        const style = window.getComputedStyle(textElement);
+
+        return {
+            left: Number(record.element.offsetLeft) || 0,
+            top: Number(record.element.offsetTop) || 0,
+            width: record.element.getBoundingClientRect().width || 0,
+            height: record.element.getBoundingClientRect().height || 0,
+            fontSizePx: parseFloat(style.fontSize || '0') || 0,
+            requestedFontSize: Number(record.requestedFontSize) || null,
+            currentScale: Number(window.currentScale) || 1,
+            pdfX: Number(record.pdfX) || 0,
+            pdfY: Number(record.pdfY) || 0,
+            pdfWidth: Number(record.pdfWidth) || 0,
+            pdfHeight: Number(record.pdfHeight) || 0,
+            overlayWidth: record.element.parentElement?.clientWidth || 0,
+            overlayHeight: record.element.parentElement?.clientHeight || 0,
+        };
+    }, textFragment);
+}
+
+async function moveTextAnnotationTo(page, textFragment, targetLeft, targetTop) {
+    const annotation = page.locator('.annotation').filter({ hasText: textFragment }).first();
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        await annotation.click();
+        await page.waitForTimeout(200);
+
+        const before = await readTextAnnotationMetrics(page, textFragment);
+        const moveHandle = page.locator('.annotation.selected .annotation-tbc-menu [title="Move"]').first();
+        const handleBox = await moveHandle.boundingBox();
+        if (!handleBox) {
+            throw new Error(`missing text annotation move handle for "${textFragment}"`);
+        }
+
+        const deltaX = targetLeft - before.left;
+        const deltaY = targetTop - before.top;
+        if (Math.abs(deltaX) <= 2 && Math.abs(deltaY) <= 2) {
+            return {
+                before,
+                after: before,
+                deltaX: 0,
+                deltaY: 0,
+            };
+        }
+
+        const fromX = handleBox.x + (handleBox.width / 2);
+        const fromY = handleBox.y + (handleBox.height / 2);
+        await page.mouse.move(fromX, fromY);
+        await page.mouse.down();
+        await page.mouse.move(fromX + deltaX, fromY + deltaY, { steps: 24 });
+        await page.mouse.up();
+        await page.waitForTimeout(400);
+
+        const after = await readTextAnnotationMetrics(page, textFragment);
+        if (Math.abs(after.left - targetLeft) <= 4 && Math.abs(after.top - targetTop) <= 4) {
+            return {
+                before,
+                after,
+                deltaX: after.left - before.left,
+                deltaY: after.top - before.top,
+            };
+        }
+    }
+
+    const finalState = await readTextAnnotationMetrics(page, textFragment);
+    return {
+        before: null,
+        after: finalState,
+        deltaX: null,
+        deltaY: null,
+    };
+}
+
 async function deleteTextAnnotation(page, textFragment) {
     const result = await page.evaluate((targetTextFragment) => {
         const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
@@ -1052,6 +1448,50 @@ async function deleteTextAnnotation(page, textFragment) {
     return result;
 }
 
+async function readFirstPromotedAnnotationState(page) {
+    return page.evaluate(() => {
+        const record = (typeof annotations !== 'undefined' && Array.isArray(annotations))
+            ? annotations.find((item) => item?.promotedFromExtraction)
+            : null;
+        const element = record?.element || document.querySelector('.annotation.promoted-extraction');
+        const textElement = element?.querySelector('.annotation-text');
+
+        return {
+            id: record?.id || null,
+            text: record?.text || textElement?.innerText || '',
+            promotedDirty: Boolean(record?.promotedDirty),
+            promotedReflowEnabled: Boolean(record?.promotedReflowEnabled),
+            exactGeometry: textElement?.dataset?.exactPromotedGeometry || null,
+            annotationLineHeight: Number(record?.lineHeight || 0),
+            width: element?.offsetWidth || 0,
+            height: element?.offsetHeight || 0,
+        };
+    });
+}
+
+async function noOpEditFirstPromotedAnnotation(page) {
+    const annotation = page.locator('.annotation.promoted-extraction').first();
+    await annotation.waitFor({ timeout: 10000 });
+    await annotation.dispatchEvent('dblclick');
+    await page.waitForSelector('.text-box-creator .tbc-input', { timeout: 10000 });
+    await page.mouse.click(20, 20);
+    await page.waitForTimeout(1200);
+}
+
+async function readLoadedSavedPromotedExtractionFallbackDecision(page) {
+    return page.evaluate(async () => {
+        const extractionPages = await ensureOverlayExtractionDataLoaded();
+
+        return {
+            loadedSavedPdfMode,
+            cleanPdfUrl,
+            originalPdfUrl,
+            extractionBlockCount: countPromotedExtractionBlocks(extractionPages),
+            cleanBaseRequired: shouldUseCleanBaseForLoadedSavedPdf([], extractionPages),
+        };
+    });
+}
+
 async function dragLocator(page, locator, deltaX, deltaY) {
     const box = await locator.boundingBox();
     if (!box) {
@@ -1086,6 +1526,194 @@ async function waitForAnnotationSave(page) {
     await waitForEditorReady(page);
 }
 
+async function saveAnnotationsOnly(page) {
+    const saveResponsePromise = page.waitForResponse((response) => (
+        response.request().method() === 'POST'
+        && response.url().includes('/save-annotation-state')
+    ), { timeout: 60000 });
+
+    await page.click('#save-btn');
+    const response = await saveResponsePromise;
+    if (!response.ok()) {
+        throw new Error(`annotation-only save failed with ${response.status()}`);
+    }
+
+    await page.waitForTimeout(1500);
+}
+
+async function setColorInput(page, colorId, hexId, hexValue) {
+    await page.evaluate(({ colorId: nextColorId, hexId: nextHexId, hexValue: nextHexValue }) => {
+        const colorEl = document.getElementById(nextColorId);
+        const hexEl = document.getElementById(nextHexId);
+        if (colorEl) {
+            colorEl.value = nextHexValue;
+            colorEl.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        if (hexEl) {
+            hexEl.value = nextHexValue;
+            hexEl.dispatchEvent(new Event('input', { bubbles: true }));
+            hexEl.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+    }, {
+        colorId,
+        hexId,
+        hexValue,
+    });
+}
+
+async function setRangeInput(page, inputId, value) {
+    await page.evaluate(({ inputId: nextInputId, value: nextValue }) => {
+        const el = document.getElementById(nextInputId);
+        if (!el) {
+            return;
+        }
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+        if (typeof setter === 'function') {
+            setter.call(el, String(nextValue));
+        } else {
+            el.value = String(nextValue);
+        }
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+    }, {
+        inputId,
+        value,
+    });
+}
+
+async function drawShapeAtRegion(page, shapeType, region, options = {}) {
+    await page.click('#mode-shape');
+    await page.waitForSelector('#shape-modal', { timeout: 10000 });
+    await page.waitForTimeout(200);
+
+    await page.click(`#shape-type-grid .shape-type-btn[data-shape="${shapeType}"]`);
+    await setColorInput(page, 'shape-stroke-color', 'shape-stroke-hex', options.stroke || '#000000');
+
+    const strokeTransparent = Boolean(options.strokeTransparent);
+    const strokeTransparentChecked = await page.isChecked('#shape-stroke-transparent');
+    if (strokeTransparentChecked !== strokeTransparent) {
+        await page.click('#shape-stroke-transparent');
+    }
+
+    const fillTransparent = Boolean(options.fillTransparent);
+    const fillTransparentChecked = await page.isChecked('#shape-fill-transparent');
+    if (fillTransparentChecked !== fillTransparent) {
+        await page.click('#shape-fill-transparent');
+    }
+
+    if (!fillTransparent) {
+        await setColorInput(page, 'shape-fill-color', 'shape-fill-hex', options.fill || '#000000');
+    }
+
+    if (Number.isFinite(Number(options.strokeWidth))) {
+        await setRangeInput(page, 'shape-stroke-width', Number(options.strokeWidth));
+    }
+    if (Number.isFinite(Number(options.opacity))) {
+        await setRangeInput(page, 'shape-opacity', Number(options.opacity));
+    }
+
+    await page.click('#shape-apply');
+    await page.waitForTimeout(250);
+
+    const overlay = page.locator('#viewer .page[data-page-index="0"] .overlay, #viewer .page-wrapper[data-page-number="1"] .overlay').first();
+    const box = await overlay.boundingBox();
+    if (!box) {
+        throw new Error('missing overlay bounding box for shape draw');
+    }
+
+    const startX = box.x + (box.width * Number(region.xStart));
+    const startY = box.y + (box.height * Number(region.yStart));
+    const endX = box.x + (box.width * Number(region.xEnd));
+    const endY = box.y + (box.height * Number(region.yEnd));
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(endX, endY, { steps: 16 });
+    await page.mouse.up();
+    await page.waitForTimeout(600);
+}
+
+async function readShapeAnnotationSummaries(page, shapeType = null) {
+    return page.evaluate((requestedShapeType) => {
+        const normalizeShapeHex = (value, fallback = '#000000') => {
+            const hex = String(value || fallback).trim().toLowerCase();
+            return /^#[0-9a-f]{6}$/.test(hex) ? hex : fallback;
+        };
+        const items = Array.isArray(annotations) ? annotations : [];
+        return items
+            .filter((annotation) => annotation?.type === 'shape' && (!requestedShapeType || annotation?.shapeType === requestedShapeType))
+            .map((annotation) => {
+                const element = annotation.element || null;
+                const rect = element?.getBoundingClientRect?.() || null;
+                const actionBar = element?.querySelector?.('.shape-action-bar') || null;
+                return {
+                    id: annotation.id || null,
+                    shapeType: annotation.shapeType || null,
+                    fillColor: normalizeShapeHex(annotation.fillColor || '#000000'),
+                    strokeColor: normalizeShapeHex(annotation.strokeColor || '#000000'),
+                    fillTransparent: Boolean(annotation.fillTransparent),
+                    strokeTransparent: Boolean(annotation.strokeTransparent),
+                    pdfX: Number(annotation.pdfX) || 0,
+                    pdfY: Number(annotation.pdfY) || 0,
+                    pdfWidth: Number(annotation.pdfWidth) || 0,
+                    pdfHeight: Number(annotation.pdfHeight) || 0,
+                    left: element ? (Number(element.offsetLeft) || 0) : 0,
+                    top: element ? (Number(element.offsetTop) || 0) : 0,
+                    width: rect ? rect.width : 0,
+                    height: rect ? rect.height : 0,
+                    actionBarVisible: actionBar ? getComputedStyle(actionBar).display !== 'none' : false,
+                };
+            })
+            .sort((a, b) => a.pdfX - b.pdfX || a.pdfY - b.pdfY || String(a.id).localeCompare(String(b.id)));
+    }, shapeType);
+}
+
+async function fetchPdfDrawingSummaries(pdfPath) {
+    const pythonCode = `
+import fitz, json, sys
+
+doc = fitz.open(sys.argv[1])
+page = doc[0]
+
+def to_hex(color):
+    if color is None:
+        return None
+    values = list(color) if hasattr(color, '__iter__') else [color]
+    if len(values) < 3:
+        return None
+    rgb = []
+    for value in values[:3]:
+        number = float(value)
+        if number <= 1.0:
+            number *= 255.0
+        rgb.append(max(0, min(255, int(round(number)))))
+    return '#%02x%02x%02x' % tuple(rgb)
+
+drawings = []
+for drawing in page.get_drawings():
+    rect = drawing.get('rect')
+    drawings.append({
+        'rect': [rect.x0, rect.y0, rect.x1, rect.y1] if rect is not None else None,
+        'fill': to_hex(drawing.get('fill')),
+        'stroke': to_hex(drawing.get('color')),
+        'width': float(drawing.get('width', 0) or 0),
+        'items': [item[0] for item in drawing.get('items', [])],
+    })
+
+print(json.dumps({
+    'page_width': float(page.rect.width),
+    'page_height': float(page.rect.height),
+    'drawings': drawings,
+}))
+`;
+
+    const raw = execFileSync('python3', ['-c', pythonCode, pdfPath], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return JSON.parse(raw);
+}
+
 async function clickOutsideFirstPage(page) {
     const pageLocator = page.locator('.page-wrapper[data-page-number="1"], .page[data-page-index="0"]').first();
     const box = await pageLocator.boundingBox();
@@ -1115,6 +1743,21 @@ async function activateOverlay(page) {
     await page.waitForTimeout(1500);
 }
 
+async function deactivateOverlay(page) {
+    await page.evaluate(() => {
+        const toggle = document.getElementById('mode-overlay-toggle');
+        if (!toggle) {
+            throw new Error('missing mode-overlay-toggle');
+        }
+        if (toggle.checked) {
+            toggle.checked = false;
+            toggle.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+    });
+    await page.waitForFunction(() => typeof overlayEditorActive !== 'undefined' && overlayEditorActive === false, null, { timeout: 30000 });
+    await page.waitForTimeout(500);
+}
+
 async function waitForOverlaySaveComplete(page) {
     await page.click('#save-btn');
     await page.waitForFunction(() => typeof overlayEditedFields !== 'undefined' && overlayEditedFields.size === 0, null, { timeout: 90000 });
@@ -1135,6 +1778,24 @@ async function downloadSavedPdf(page, documentId, outputPath) {
     fs.writeFileSync(outputPath, buffer);
 }
 
+async function downloadPdfViaToolbar(page, outputPath) {
+    const responsePromise = page.waitForResponse((response) => (
+        response.request().method() === 'POST'
+        && response.url().includes('/download-annotated-pdf')
+    ), { timeout: 60000 });
+    const downloadPromise = page.waitForEvent('download', { timeout: 60000 });
+
+    await page.click('#download-pdf-btn');
+    const response = await responsePromise;
+    if (!response.ok()) {
+        throw new Error(`download pdf failed with ${response.status()}`);
+    }
+
+    const download = await downloadPromise;
+    await download.saveAs(outputPath);
+    await page.waitForTimeout(1000);
+}
+
 async function fetchExtraction(page, documentId) {
     const extraction = await page.evaluate(async (id) => {
         const response = await fetch(`/documents/${id}/fitz-extraction-data`, {
@@ -1149,6 +1810,80 @@ async function fetchExtraction(page, documentId) {
     }
 
     return extraction;
+}
+
+async function collectLoadedSavedAnnotationSummary(page, targetTexts) {
+    return page.evaluate((texts) => {
+        const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const normalizedTargets = texts.map((text) => normalizeText(text));
+        const annotationElements = Array.from(document.querySelectorAll('.annotation')).map((annotationEl) => {
+            const textEl = annotationEl.querySelector('.annotation-text') || annotationEl;
+            const text = normalizeText(textEl?.innerText || textEl?.textContent || '');
+            const textWrapper = annotationEl.querySelector('.text-content-wrapper');
+            return {
+                className: annotationEl.className,
+                text,
+                backgroundColor: getComputedStyle(textEl).backgroundColor,
+                wrapperBackgroundColor: textWrapper ? getComputedStyle(textWrapper).backgroundColor : '',
+            };
+        }).filter((annotation) => annotation.text);
+        const annotationRecords = Array.isArray(annotations)
+            ? annotations.map((annotation) => ({
+                id: annotation?.id || '',
+                type: annotation?.type || '',
+                text: normalizeText(annotation?.text || annotation?.element?.innerText || annotation?.element?.textContent || ''),
+                promotedFromExtraction: Boolean(annotation?.promotedFromExtraction),
+                savedTextOverlay: Boolean(annotation?.savedTextOverlay),
+                pageIndex: Number.isFinite(Number(annotation?.pageIndex)) ? Number(annotation.pageIndex) : null,
+                promotedSourcePage: Number.isFinite(Number(annotation?.promotedSourcePage)) ? Number(annotation.promotedSourcePage) : null,
+            }))
+            : [];
+        const overlayFields = Array.from(document.querySelectorAll('.overlay-field')).map((field) => ({
+            key: field.dataset.wordIndex || '',
+            text: normalizeText(field.innerText || field.textContent || ''),
+        })).filter((field) => field.text);
+
+        const textMatches = Object.fromEntries(normalizedTargets.map((target) => {
+            const domMatches = annotationElements.filter((annotation) => annotation.text === target);
+            const recordMatches = annotationRecords.filter((annotation) => annotation.text === target);
+            return [target, {
+                domCount: domMatches.length,
+                recordCount: recordMatches.length,
+                domMatches,
+                recordMatches,
+            }];
+        }));
+        const overlayTextMatches = Object.fromEntries(normalizedTargets.map((target) => {
+            const matches = overlayFields.filter((field) => field.text === target);
+            return [target, {
+                count: matches.length,
+                matches,
+            }];
+        }));
+        const promotedTextSet = new Set(annotationRecords
+            .filter((annotation) => annotation.promotedFromExtraction && annotation.text)
+            .map((annotation) => annotation.text));
+        const crossLayerPromotedDuplicates = overlayFields.filter((field) => promotedTextSet.has(field.text));
+
+        return {
+            loadedSavedPdfMode,
+            basePdfUrl,
+            cleanPdfUrl,
+            originalPdfUrl,
+            annotationElements,
+            annotationRecords,
+            overlayFields,
+            textMatches,
+            overlayTextMatches,
+            crossLayerPromotedDuplicates,
+            uniqueRecordIds: Array.from(new Set(annotationRecords.map((annotation) => annotation.id).filter(Boolean))),
+            promotedPageMismatches: annotationRecords.filter((annotation) => (
+                annotation.promotedFromExtraction
+                && annotation.promotedSourcePage !== null
+                && annotation.pageIndex !== (annotation.promotedSourcePage - 1)
+            )),
+        };
+    }, targetTexts);
 }
 
 function loadPdfExtractionPage(pdfPath, pageNumber = 1) {
@@ -1242,6 +1977,38 @@ print(json.dumps(output))
 `;
 
     const raw = execFileSync('python3', ['-c', pythonCode, pdfPath, String(pageNumber), JSON.stringify(targetConfigs)], {
+        cwd: path.resolve(__dirname, '..', '..', '..'),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return JSON.parse(raw);
+}
+
+function loadPdfSearchRects(pdfPath, pageNumber, targetText) {
+    const pythonCode = `
+import fitz
+import json
+import sys
+
+pdf_path = sys.argv[1]
+page_number = int(sys.argv[2])
+target_text = sys.argv[3]
+
+doc = fitz.open(pdf_path)
+page = doc[page_number - 1]
+rects = page.search_for(target_text, quads=False)
+print(json.dumps({
+    'page_width': float(page.rect.width),
+    'page_height': float(page.rect.height),
+    'rects': [
+        [float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)]
+        for rect in rects
+    ],
+}))
+doc.close()
+`;
+
+    const raw = execFileSync('python3', ['-c', pythonCode, pdfPath, String(pageNumber), targetText], {
         cwd: path.resolve(__dirname, '..', '..', '..'),
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -1447,6 +2214,190 @@ function extractMatchingWord(words, targetText) {
     return (Array.isArray(words) ? words : []).find((word) => normalize(word?.text) === expected) || null;
 }
 
+function extractBlockLineEntries(extraction, block) {
+    if (!block) {
+        return [];
+    }
+
+    const pageData = extraction?.extraction_data?.[0] || {};
+    const blockNums = new Set(
+        (Array.isArray(block?.merged_block_nums) && block.merged_block_nums.length
+            ? block.merged_block_nums
+            : [block?.block_num]
+        ).map((value) => String(value))
+    );
+
+    return (pageData.lines || [])
+        .filter((line) => blockNums.has(String(line?.block_num)))
+        .sort((a, b) => {
+            const topDelta = (Number(a?.top) || 0) - (Number(b?.top) || 0);
+            if (Math.abs(topDelta) > 1) {
+                return topDelta;
+            }
+            return (Number(a?.left) || 0) - (Number(b?.left) || 0);
+        });
+}
+
+function extractLineSpacing(lineBoxes) {
+    const sorted = (Array.isArray(lineBoxes) ? lineBoxes : [])
+        .map((line) => {
+            if (Array.isArray(line) && line.length >= 4) {
+                const left = Number(line[0]) || 0;
+                const top = Number(line[1]) || 0;
+                const right = Number(line[2]) || left;
+                const bottom = Number(line[3]) || top;
+                return {
+                    left,
+                    top,
+                    width: Math.max(0, right - left),
+                    height: Math.max(0, bottom - top),
+                };
+            }
+            return {
+                left: Number(line?.left) || 0,
+                top: Number(line?.top) || 0,
+                width: Number(line?.width) || 0,
+                height: Number(line?.height) || 0,
+            };
+        })
+        .filter((line) => line.width > 0 && line.height > 0)
+        .sort((a, b) => {
+            const topDelta = a.top - b.top;
+            if (Math.abs(topDelta) > 1) {
+                return topDelta;
+            }
+            return a.left - b.left;
+        });
+
+    return sorted.slice(1).map((line, index) => ({
+        from: index,
+        to: index + 1,
+        delta: line.top - sorted[index].top,
+    }));
+}
+
+function createSeededRng(seed) {
+    let state = (Number(seed) || 1) >>> 0;
+    if (state === 0) {
+        state = 1;
+    }
+    return () => {
+        state = (state * 1664525 + 1013904223) >>> 0;
+        return state / 0x100000000;
+    };
+}
+
+function buildNdaRandomEditTargets(overlayFields, count = NDA_RANDOM_EDIT_TARGET_COUNT, seed = NDA_RANDOM_EDIT_SEED) {
+    const eligibleBlocks = (Array.isArray(overlayFields) ? overlayFields : [])
+        .filter((field) => (
+            Number(field?.pageNumber) === 1
+            && normalize(field?.text || '').length > 20
+            && Array.isArray(field?.source_line_boxes)
+            && field.source_line_boxes.length >= 2
+        ))
+        .map((field) => ({
+            key: String(field.key || ''),
+            originalText: String(field.originalText || field.text || ''),
+            originalTextFlat: normalize(field.originalText || field.text || ''),
+            left: Number(field.left) || 0,
+            top: Number(field.top) || 0,
+            width: Number(field.width) || 0,
+            height: Number(field.height) || 0,
+            sourceLineBoxes: Array.isArray(field.source_line_boxes) ? field.source_line_boxes : [],
+            sourceLineCount: Array.isArray(field.source_line_boxes) ? field.source_line_boxes.length : 0,
+            sourceSpacing: extractLineSpacing(field.source_line_boxes),
+            editedLines: Array.from({ length: Array.isArray(field.source_line_boxes) ? field.source_line_boxes.length : 0 }, (_unused, lineIndex) => (
+                `NDA22 ${String(field.key || 'field').replace(/[^A-Za-z0-9]+/g, '').slice(-8) || 'F'} L${String(lineIndex + 1).padStart(2, '0')}`
+            )),
+        }));
+
+    if (eligibleBlocks.length < count) {
+        throw new Error(`expected at least ${count} eligible NDA page-1 overlay fields, found ${eligibleBlocks.length}`);
+    }
+
+    const rng = createSeededRng(seed);
+    const shuffled = [...eligibleBlocks];
+    for (let index = shuffled.length - 1; index > 0; index -= 1) {
+        const swapIndex = Math.floor(rng() * (index + 1));
+        [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
+    }
+
+    return shuffled
+        .slice(0, count)
+        .sort((a, b) => {
+            const topDelta = a.top - b.top;
+            if (Math.abs(topDelta) > 1) {
+                return topDelta;
+            }
+            return a.left - b.left;
+        })
+        .map((block, index) => ({
+            ...block,
+            editedText: block.editedLines.join('\n'),
+            editedTextFlat: normalize(block.editedLines.join(' ')),
+            selectionKey: `target_${index + 1}`,
+        }));
+}
+
+function lineSpacingMatches(expected, actual, tolerance) {
+    if (!expected.length || expected.length !== actual.length) {
+        return false;
+    }
+    return expected.every((entry, index) => approxEqual(actual[index]?.delta, entry.delta, tolerance));
+}
+
+function loadPdfTargetLineSpans(pdfPath, pageNumber, targetLineTexts) {
+    const pythonCode = `
+import fitz
+import json
+import sys
+
+pdf_path = sys.argv[1]
+page_number = int(sys.argv[2])
+targets = json.loads(sys.argv[3])
+
+def normalize_text(value):
+    return ' '.join(str(value or '').split())
+
+doc = fitz.open(pdf_path)
+page = doc[page_number - 1]
+raw = page.get_text('dict')
+output = {target: [] for target in targets}
+
+for block in raw.get('blocks', []):
+    if int(block.get('type', 0) or 0) != 0:
+        continue
+    for line in block.get('lines', []):
+        spans = line.get('spans', []) or []
+        line_text = normalize_text(''.join(str(span.get('text', '')) for span in spans))
+        if line_text not in output:
+            continue
+        output[line_text] = [
+            {
+                'text': span.get('text', ''),
+                'font': span.get('font', ''),
+                'size': span.get('size', 0),
+                'flags': span.get('flags', 0),
+                'color': span.get('color', 0),
+                'bbox': span.get('bbox', []),
+                'bold': bool(('bold' in str(span.get('font', '')).lower()) or (int(span.get('flags', 0) or 0) & 16)),
+                'italic': bool(('italic' in str(span.get('font', '')).lower()) or ('oblique' in str(span.get('font', '')).lower()) or (int(span.get('flags', 0) or 0) & 2)),
+            }
+            for span in spans
+        ]
+
+doc.close()
+print(json.dumps(output))
+`;
+
+    const raw = execFileSync('python3', ['-c', pythonCode, pdfPath, String(pageNumber), JSON.stringify(targetLineTexts)], {
+        cwd: path.resolve(__dirname, '..', '..', '..'),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return JSON.parse(raw);
+}
+
 async function collectOverlayLoadTargets(page, targetConfigs) {
     return page.evaluate((configs) => {
         const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
@@ -1469,10 +2420,29 @@ async function collectOverlayLoadTargets(page, targetConfigs) {
         };
 
         const groupLineRects = (root, fieldRect, fieldLeft, fieldTop) => {
+            const blockChildren = Array.from(root.children || [])
+                .filter((child) => ['DIV', 'P', 'LI'].includes(child.tagName))
+                .map((child) => child.getBoundingClientRect())
+                .filter((rect) => rect.width > 1 && rect.height > 1)
+                .map((rect) => ({
+                    left: fieldLeft + (rect.left - fieldRect.left),
+                    top: fieldTop + (rect.top - fieldRect.top),
+                    width: rect.width,
+                    height: rect.height,
+                }));
+            if (blockChildren.length > 1) {
+                return blockChildren;
+            }
+
             const range = document.createRange();
             range.selectNodeContents(root);
             const rects = Array.from(range.getClientRects())
                 .filter((rect) => rect.width > 1 && rect.height > 1)
+                .filter((rect) => {
+                    const overlapWidth = Math.max(0, Math.min(rect.right, fieldRect.right) - Math.max(rect.left, fieldRect.left));
+                    const overlapHeight = Math.max(0, Math.min(rect.bottom, fieldRect.bottom) - Math.max(rect.top, fieldRect.top));
+                    return overlapWidth > 0.5 && overlapHeight > 0.5;
+                })
                 .map((rect) => ({
                     left: fieldLeft + (rect.left - fieldRect.left),
                     top: fieldTop + (rect.top - fieldRect.top),
@@ -1594,8 +2564,12 @@ async function collectOverlayLoadTargets(page, targetConfigs) {
             const text = normalizeText(root.innerText || root.textContent || '');
             const fieldRect = field.getBoundingClientRect();
             const style = getComputedStyle(root);
+            const originalText = normalizeText(field.dataset.originalText || '');
+            const stableFlowText = normalizeText(field.dataset.stableFlowText || '');
             return {
                 text,
+                originalText,
+                stableFlowText,
                 field,
                 root,
                 fieldRect,
@@ -1615,7 +2589,43 @@ async function collectOverlayLoadTargets(page, targetConfigs) {
 
         const targets = {};
         for (const config of configs) {
-            const fieldEntry = fields.find((entry) => entry.text.startsWith(config.lineText) || entry.text.includes(config.lineText));
+            const matchText = normalizeText(config.matchText || config.lineText);
+            const fieldEntry = fields
+                .map((entry) => {
+                    const candidates = [
+                        entry.originalText,
+                        entry.stableFlowText,
+                        entry.text,
+                    ].filter(Boolean);
+                    let bestScore = -1;
+                    for (const candidate of candidates) {
+                        if (candidate === matchText) {
+                            bestScore = Math.max(bestScore, 4000 - candidate.length);
+                            continue;
+                        }
+                        if (candidate.startsWith(matchText)) {
+                            bestScore = Math.max(bestScore, 3000 - Math.abs(candidate.length - matchText.length));
+                            continue;
+                        }
+                        if (candidate.includes(matchText)) {
+                            bestScore = Math.max(bestScore, 2000 - Math.abs(candidate.length - matchText.length));
+                        }
+                    }
+                    return {
+                        ...entry,
+                        _matchScore: bestScore,
+                    };
+                })
+                .filter((entry) => entry._matchScore >= 0)
+                .sort((a, b) => {
+                    if (b._matchScore !== a._matchScore) {
+                        return b._matchScore - a._matchScore;
+                    }
+                    if (Math.abs(a.top - b.top) > 1) {
+                        return a.top - b.top;
+                    }
+                    return a.left - b.left;
+                })[0] || null;
             if (!fieldEntry) {
                 targets[config.key] = null;
                 continue;
@@ -1640,6 +2650,7 @@ async function collectOverlayLoadTargets(page, targetConfigs) {
         };
     }, targetConfigs.map((config) => ({
         key: config.key,
+        matchText: config.matchText,
         lineText: config.lineText,
         sampleWords: config.sampleWords,
     })));
@@ -1659,6 +2670,83 @@ async function collectOverlayFieldTexts(page) {
                 top: Number(field.offsetTop) || 0,
                 width: Number(field.offsetWidth) || 0,
                 height: Number(field.offsetHeight) || 0,
+            };
+        }).filter((entry) => entry.text.length > 0);
+    });
+}
+
+async function collectOverlayFieldDescriptors(page) {
+    return page.evaluate(() => {
+        const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+
+        const groupLineRects = (root, fieldRect, fieldLeft, fieldTop) => {
+            const range = document.createRange();
+            range.selectNodeContents(root);
+            const rects = Array.from(range.getClientRects())
+                .filter((rect) => rect.width > 1 && rect.height > 1)
+                .filter((rect) => {
+                    const overlapWidth = Math.max(0, Math.min(rect.right, fieldRect.right) - Math.max(rect.left, fieldRect.left));
+                    const overlapHeight = Math.max(0, Math.min(rect.bottom, fieldRect.bottom) - Math.max(rect.top, fieldRect.top));
+                    return overlapWidth > 0.5 && overlapHeight > 0.5;
+                })
+                .map((rect) => ({
+                    left: fieldLeft + (rect.left - fieldRect.left),
+                    top: fieldTop + (rect.top - fieldRect.top),
+                    right: fieldLeft + (rect.right - fieldRect.left),
+                    bottom: fieldTop + (rect.bottom - fieldRect.top),
+                }))
+                .sort((a, b) => {
+                    if (Math.abs(a.top - b.top) > 2) {
+                        return a.top - b.top;
+                    }
+                    return a.left - b.left;
+                });
+
+            const groups = [];
+            for (const rect of rects) {
+                let group = groups.find((candidate) => {
+                    const overlap = Math.min(candidate.bottom, rect.bottom) - Math.max(candidate.top, rect.top);
+                    return overlap >= Math.min(candidate.bottom - candidate.top, rect.bottom - rect.top) * 0.45
+                        || Math.abs(candidate.top - rect.top) <= 3;
+                });
+                if (!group) {
+                    groups.push({ ...rect });
+                    continue;
+                }
+                group.left = Math.min(group.left, rect.left);
+                group.top = Math.min(group.top, rect.top);
+                group.right = Math.max(group.right, rect.right);
+                group.bottom = Math.max(group.bottom, rect.bottom);
+            }
+
+            return groups.map((group) => ({
+                left: group.left,
+                top: group.top,
+                width: group.right - group.left,
+                height: group.bottom - group.top,
+            }));
+        };
+
+        return Array.from(document.querySelectorAll('.overlay-field')).map((field) => {
+            const root = field.querySelector('[contenteditable]') || field;
+            const fieldRect = field.getBoundingClientRect();
+            const pageHost = field.closest('.page-wrapper[data-page-number], .page[data-page-index]');
+            const sourceBlock = field._overlaySourceBlock || null;
+            return {
+                key: field.dataset.wordIndex || '',
+                text: normalizeText(root.innerText || root.textContent || ''),
+                originalText: normalizeText(field.dataset.originalText || ''),
+                pageNumber: Number(pageHost?.dataset.pageNumber || ((Number(pageHost?.dataset.pageIndex) || 0) + 1) || 0),
+                left: Number(field.offsetLeft) || 0,
+                top: Number(field.offsetTop) || 0,
+                width: fieldRect.width,
+                height: fieldRect.height,
+                line_boxes: groupLineRects(root, fieldRect, Number(field.offsetLeft) || 0, Number(field.offsetTop) || 0),
+                source_line_boxes: Array.isArray(sourceBlock?.line_bboxes)
+                    ? sourceBlock.line_bboxes
+                        .filter((bbox) => Array.isArray(bbox) && bbox.length >= 4)
+                        .map((bbox) => bbox.map((value) => Number(value) || 0))
+                    : [],
             };
         }).filter((entry) => entry.text.length > 0);
     });
@@ -1782,12 +2870,38 @@ async function selectActiveEditorText(page, targetText) {
 
 async function applyEditTextBannerStyles(page, styles) {
     return page.evaluate((inputStyles) => {
+        const sliderMin = 0;
+        const sliderMid = 50;
+        const sliderMax = 100;
+        const minFontSize = 8;
+        const midFontSize = 16;
+        const maxFontSize = 144;
+
         const dispatchValue = (element, value, eventName) => {
             if (!element) {
                 throw new Error(`missing edit text banner control for ${eventName}`);
             }
             element.value = value;
             element.dispatchEvent(new Event(eventName, { bubbles: true }));
+        };
+
+        const clampFontSize = (value) => {
+            const numericValue = Number(value);
+            if (!Number.isFinite(numericValue)) {
+                return minFontSize;
+            }
+            return Math.max(minFontSize, Math.min(maxFontSize, Math.round(numericValue)));
+        };
+
+        const fontSizeToSliderValue = (value) => {
+            const sizePx = clampFontSize(value);
+            if (sizePx <= midFontSize) {
+                const ratio = (sizePx - minFontSize) / Math.max(1, midFontSize - minFontSize);
+                return Math.round(sliderMin + ((sliderMid - sliderMin) * ratio));
+            }
+
+            const ratio = (sizePx - midFontSize) / Math.max(1, maxFontSize - midFontSize);
+            return Math.round(sliderMid + ((sliderMax - sliderMid) * ratio));
         };
 
         const setToggle = (element, desiredState) => {
@@ -1803,11 +2917,26 @@ async function applyEditTextBannerStyles(page, styles) {
         if (inputStyles.fontFamily) {
             dispatchValue(document.getElementById('etb-font'), inputStyles.fontFamily, 'change');
         }
+        if (inputStyles.fontSize !== undefined) {
+            const sizeInput = document.getElementById('etb-size');
+            if (!sizeInput) {
+                throw new Error('missing edit text banner control for font size');
+            }
+            sizeInput.value = String(fontSizeToSliderValue(inputStyles.fontSize));
+            sizeInput.dispatchEvent(new Event('input', { bubbles: true }));
+            sizeInput.dispatchEvent(new Event('change', { bubbles: true }));
+        }
         if (inputStyles.textColor) {
             dispatchValue(document.getElementById('etb-text-color'), inputStyles.textColor, 'input');
         }
+        if (inputStyles.backgroundColor) {
+            dispatchValue(document.getElementById('etb-bg-color'), inputStyles.backgroundColor, 'input');
+        }
         if (inputStyles.bold !== undefined) {
             setToggle(document.getElementById('etb-bold'), inputStyles.bold);
+        }
+        if (inputStyles.italic !== undefined) {
+            setToggle(document.getElementById('etb-italic'), inputStyles.italic);
         }
         if (inputStyles.underline !== undefined) {
             setToggle(document.getElementById('etb-underline'), inputStyles.underline);
@@ -1908,6 +3037,68 @@ async function replaceOverlayFieldText(page, fieldSelector, newText) {
     await page.waitForTimeout(250);
     await field.click();
     await page.waitForTimeout(250);
+}
+
+async function setOverlayFieldBackgroundColor(page, fieldSelector, backgroundColor) {
+    return page.evaluate(({ selector, color }) => {
+        const field = document.querySelector(selector);
+        const textElement = field?.querySelector('[contenteditable]') || field;
+        if (!field || !textElement) {
+            throw new Error(`missing overlay field for selector ${selector}`);
+        }
+        if (!(typeof overlayEditedFields !== 'undefined' && overlayEditedFields instanceof Map)) {
+            throw new Error('overlayEditedFields is unavailable');
+        }
+        if (typeof buildOverlayEditRecordFromField !== 'function') {
+            throw new Error('buildOverlayEditRecordFromField is unavailable');
+        }
+
+        const nextColor = String(color || '').trim().toLowerCase();
+        field.classList.add('active', 'selected');
+        field.dataset.backgroundColor = nextColor;
+        textElement.style.backgroundColor = nextColor;
+
+        const built = buildOverlayEditRecordFromField(field, { forceReinsert: true });
+        if (!built?.key || !built?.value) {
+            throw new Error(`failed to build overlay edit for selector ${selector}`);
+        }
+
+        overlayEditedFields.set(built.key, {
+            ...built.value,
+            background_color: built.value.background_color || nextColor,
+            force_reinsert: true,
+        });
+
+        return {
+            key: built.key,
+            page_number: built.value.page_number,
+            text: built.value.new_text,
+            bbox: built.value.bbox,
+            backgroundColor: built.value.background_color || nextColor,
+            richHtml: built.value.rich_html || '',
+            computedBackground: getComputedStyle(textElement).backgroundColor,
+        };
+    }, { selector: fieldSelector, color: backgroundColor });
+}
+
+async function readOverlayFieldBackgroundState(page, fieldSelector) {
+    return page.evaluate((selector) => {
+        const field = document.querySelector(selector);
+        const textElement = field?.querySelector('[contenteditable]') || field;
+        const wrapper = textElement && textElement.parentElement && textElement.parentElement !== field
+            ? textElement.parentElement
+            : null;
+        if (!field || !textElement) {
+            throw new Error(`missing overlay field for selector ${selector}`);
+        }
+
+        return {
+            fieldBackground: getComputedStyle(field).backgroundColor,
+            textBackground: getComputedStyle(textElement).backgroundColor,
+            wrapperBackground: wrapper ? getComputedStyle(wrapper).backgroundColor : '',
+            datasetBackground: field.dataset.backgroundColor || '',
+        };
+    }, fieldSelector);
 }
 
 async function readOverlayFieldMetrics(page, fieldSelector) {
@@ -2072,7 +3263,11 @@ async function runTextPositionFlow() {
     const secondPdfPath = path.join(OUTPUT_DIR, secondPdfName);
 
     const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage({ viewport: VIEWPORT });
+    const context = await browser.newContext({
+        viewport: VIEWPORT,
+        acceptDownloads: true,
+    });
+    const page = await context.newPage();
     let firstDocumentId = null;
     let secondDocumentId = null;
     const groupingDocumentIds = [];
@@ -2475,6 +3670,666 @@ async function runTextStylingFlow() {
     }
 }
 
+async function runTextFontSizeReloadNoDuplicatesFlow() {
+    const test = TESTS.test_18_text_font_size_reload_no_duplicates;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const beforeSaveName = buildArtifactName(test.key, runToken, 'before_save');
+    const reloadName = buildArtifactName(test.key, runToken, 'after_reload');
+    const finalPdfName = buildArtifactName(test.key, runToken, 'final', 'pdf');
+    const beforeSavePath = path.join(OUTPUT_DIR, beforeSaveName);
+    const reloadPath = path.join(OUTPUT_DIR, reloadName);
+    const finalPdfPath = path.join(OUTPUT_DIR, finalPdfName);
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+
+    try {
+        documentId = await createBlankDocument(page);
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+
+        const editor = await openCenterTextCreator(page);
+        await editor.fill(FONT_SIZE_DUPLICATE_TEXT);
+
+        const largeSelection = await selectActiveEditorText(page, FONT_SIZE_DUPLICATE_SENTENCES.large);
+        const largeEditorState = await applyEditTextBannerStyles(page, {
+            fontSize: FONT_SIZE_DUPLICATE_LARGE_PX,
+        });
+
+        const smallSelection = await selectActiveEditorText(page, FONT_SIZE_DUPLICATE_SENTENCES.small);
+        const smallEditorState = await applyEditTextBannerStyles(page, {
+            fontSize: FONT_SIZE_DUPLICATE_SMALL_PX,
+        });
+
+        await commitActiveTextBox(page);
+        const annotation = page.locator('.annotation').filter({ hasText: FONT_SIZE_DUPLICATE_SENTENCES.regular }).first();
+        await annotation.waitFor({ timeout: 10000 });
+        await annotation.click();
+        await waitForSelectionToolbarSelection(page, 'annotation');
+
+        const beforeSaveAnnotationState = await readCommittedAnnotationRichState(page, FONT_SIZE_DUPLICATE_TEXT);
+        const beforeSaveToolbarState = await readSelectionToolbarState(page);
+        await capturePageScreenshot(page, beforeSavePath);
+
+        await waitForAnnotationSave(page);
+        await downloadSavedPdf(page, documentId, finalPdfPath);
+
+        const savedExtraction = await fetchExtraction(page, documentId);
+        const savedBlock = extractMatchingBlock(savedExtraction, FONT_SIZE_DUPLICATE_SENTENCES.regular);
+
+        await clearAnnotationSessionState(page, documentId);
+        await page.goto(`${BASE_URL}/documents/${documentId}/edit`, { waitUntil: 'domcontentloaded', timeout: 90000 });
+        await waitForEditorReady(page);
+        await page.waitForFunction((fragments) => {
+            const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+            const annotationEls = Array.from(document.querySelectorAll('.annotation'));
+            return annotationEls.some((annotationEl) => {
+                const textEl = annotationEl.querySelector('.annotation-text') || annotationEl;
+                const text = normalizeText(textEl?.innerText || textEl?.textContent || '');
+                return fragments.every((fragment) => text.includes(normalizeText(fragment)));
+            });
+        }, Object.values(FONT_SIZE_DUPLICATE_SENTENCES), { timeout: 60000 });
+
+        const reloadedAnnotations = await page.evaluate((fragments) => {
+            const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+            return Array.from(document.querySelectorAll('.annotation')).map((annotationEl) => {
+                const textEl = annotationEl.querySelector('.annotation-text') || annotationEl;
+                const text = normalizeText(textEl?.innerText || textEl?.textContent || '');
+                return {
+                    className: annotationEl.className,
+                    text,
+                    left: annotationEl.offsetLeft,
+                    top: annotationEl.offsetTop,
+                    width: annotationEl.offsetWidth,
+                    height: annotationEl.offsetHeight,
+                    matchingFragments: fragments.filter((fragment) => text.includes(normalizeText(fragment))),
+                };
+            }).filter((annotation) => annotation.text);
+        }, Object.values(FONT_SIZE_DUPLICATE_SENTENCES));
+        await capturePageScreenshot(page, reloadPath);
+
+        const matchingAnnotations = reloadedAnnotations.filter((annotationEntry) => normalize(annotationEntry.text) === normalize(FONT_SIZE_DUPLICATE_TEXT));
+        const fragmentCarriers = reloadedAnnotations.filter((annotationEntry) => (
+            Object.values(FONT_SIZE_DUPLICATE_SENTENCES).some((sentence) => normalize(annotationEntry.text).includes(normalize(sentence)))
+        ));
+        const promotedDuplicates = fragmentCarriers.filter((annotationEntry) => annotationEntry.className.includes('promoted-extraction'));
+        const primaryAnnotation = matchingAnnotations[0] || null;
+        const fragmentOccurrences = Object.fromEntries(
+            Object.entries(FONT_SIZE_DUPLICATE_SENTENCES).map(([key, sentence]) => [
+                key,
+                countNormalizedOccurrences(primaryAnnotation?.text || '', sentence),
+            ])
+        );
+        const savedBlockOccurrences = Object.fromEntries(
+            Object.entries(FONT_SIZE_DUPLICATE_SENTENCES).map(([key, sentence]) => [
+                key,
+                countNormalizedOccurrences(savedBlock?.text || '', sentence),
+            ])
+        );
+        const serializedAnnotationHtml = String(beforeSaveAnnotationState.richTextHtml || beforeSaveAnnotationState.html || '');
+
+        const checks = [
+            {
+                item: 'blank_pdf_created',
+                result: documentId ? 'PASS' : 'FAIL',
+                description: 'A fresh blank PDF was created through the frontend blank-PDF flow.',
+                detail: `document=${documentId}`,
+            },
+            {
+                item: 'editor_font_sizes_applied_before_save',
+                result: serializedAnnotationHtml.includes(`font-size:${FONT_SIZE_DUPLICATE_LARGE_PX}px`)
+                    && serializedAnnotationHtml.includes(`font-size:${FONT_SIZE_DUPLICATE_SMALL_PX}px`)
+                    ? 'PASS' : 'FAIL',
+                description: 'The text box contained explicit larger and smaller font-size spans before save.',
+                detail: JSON.stringify({
+                    selections: {
+                        large: largeSelection,
+                        small: smallSelection,
+                    },
+                    editor_states: {
+                        large: largeEditorState,
+                        small: smallEditorState,
+                    },
+                    annotation_state: beforeSaveAnnotationState,
+                    toolbar_state: beforeSaveToolbarState,
+                }),
+            },
+            {
+                item: 'saved_pdf_contains_each_sentence_once',
+                result: savedBlock
+                    && Object.values(savedBlockOccurrences).every((count) => count === 1)
+                    ? 'PASS' : 'FAIL',
+                description: 'The saved PDF extraction still contains each sentence exactly once.',
+                detail: JSON.stringify({
+                    saved_block: savedBlock,
+                    sentence_occurrences: savedBlockOccurrences,
+                }),
+            },
+            {
+                item: 'reloaded_editor_has_single_matching_annotation',
+                result: matchingAnnotations.length === 1 ? 'PASS' : 'FAIL',
+                description: 'Reloading the editor produces exactly one visible annotation for the saved mixed-size text box.',
+                detail: JSON.stringify({
+                    matching_annotation_count: matchingAnnotations.length,
+                    matching_annotations: matchingAnnotations,
+                }),
+            },
+            {
+                item: 'reloaded_editor_has_no_promoted_duplicate',
+                result: promotedDuplicates.length === 0 ? 'PASS' : 'FAIL',
+                description: 'Reloading the editor does not add a promoted-extraction duplicate on top of the saved annotation.',
+                detail: JSON.stringify({
+                    promoted_duplicates: promotedDuplicates,
+                    fragment_carriers: fragmentCarriers,
+                }),
+            },
+            {
+                item: 'reloaded_editor_text_not_duplicated',
+                result: primaryAnnotation
+                    && Object.values(fragmentOccurrences).every((count) => count === 1)
+                    && fragmentCarriers.length === 1
+                    ? 'PASS' : 'FAIL',
+                description: 'After reload, the editor text contains one copy of each sentence instead of duplicated content.',
+                detail: JSON.stringify({
+                    primary_annotation: primaryAnnotation,
+                    fragment_occurrences: fragmentOccurrences,
+                    fragment_carriers: fragmentCarriers,
+                }),
+            },
+        ];
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Before Save', kind: 'image', filename: beforeSaveName },
+                { label: 'After Reload', kind: 'image', filename: reloadName },
+                { label: 'Final PDF', kind: 'pdf', filename: finalPdfName },
+            ],
+            fileSize: fs.existsSync(finalPdfPath) ? fs.statSync(finalPdfPath).size : 0,
+            metadata: {
+                document_id: documentId,
+                target_text: FONT_SIZE_DUPLICATE_TEXT,
+                before_save_annotation_state: beforeSaveAnnotationState,
+                before_save_toolbar_state: beforeSaveToolbarState,
+                saved_block: savedBlock,
+                reloaded_annotations: reloadedAnnotations,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runLoadedSavedStandaloneNoDuplicateFlow() {
+    const test = TESTS.test_19_loaded_saved_standalone_no_duplicate;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const loadedName = buildArtifactName(test.key, runToken, 'loaded_saved');
+    const reloadName = buildArtifactName(test.key, runToken, 'after_second_save');
+    const finalPdfName = buildArtifactName(test.key, runToken, 'final', 'pdf');
+    const loadedPath = path.join(OUTPUT_DIR, loadedName);
+    const reloadPath = path.join(OUTPUT_DIR, reloadName);
+    const finalPdfPath = path.join(OUTPUT_DIR, finalPdfName);
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+
+    try {
+        await page.goto(`${BASE_URL}/pdf-editor`, { waitUntil: 'domcontentloaded', timeout: 90000 });
+        await clearPdfSessionId(page);
+
+        documentId = await createBlankDocument(page);
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+        const sessionId = await ensurePdfSessionId(page, 'test19');
+
+        await createTextAnnotationAt(page, LOADED_SAVED_STANDALONE_TEXT, 120, 140);
+        await clickOutsideFirstPage(page);
+        await waitForAnnotationSave(page);
+
+        const savedAnnotations = await fetchSavedAnnotations(page, documentId, sessionId);
+        if (!savedAnnotations.ok || !savedAnnotations.body?.success) {
+            throw new Error(`saved-annotations failed: ${JSON.stringify(savedAnnotations)}`);
+        }
+
+        await openLoadedSavedPdfEditor(page, documentId, sessionId);
+        await page.waitForFunction((targetText) => (
+            typeof annotations !== 'undefined'
+            && Array.isArray(annotations)
+            && annotations.some((annotation) => String(annotation?.text || '').includes(targetText))
+        ), LOADED_SAVED_STANDALONE_TEXT, { timeout: 60000 });
+
+        const loadedSummary = await collectLoadedSavedAnnotationSummary(page, [LOADED_SAVED_STANDALONE_TEXT]);
+        await capturePageScreenshot(page, loadedPath);
+
+        await createTextAnnotationAt(page, LOADED_SAVED_STANDALONE_SECOND_TEXT, 120, 230);
+        await clickOutsideFirstPage(page);
+        await waitForLoadedSavedAnnotationSave(page);
+
+        const reloadedSummary = await collectLoadedSavedAnnotationSummary(page, [
+            LOADED_SAVED_STANDALONE_TEXT,
+            LOADED_SAVED_STANDALONE_SECOND_TEXT,
+        ]);
+        await capturePageScreenshot(page, reloadPath);
+        await downloadSavedPdf(page, documentId, finalPdfPath);
+
+        const firstTextSummary = loadedSummary.textMatches[normalize(LOADED_SAVED_STANDALONE_TEXT)] || { domCount: 0, recordCount: 0 };
+        const reloadedFirstTextSummary = reloadedSummary.textMatches[normalize(LOADED_SAVED_STANDALONE_TEXT)] || { domCount: 0, recordCount: 0 };
+        const reloadedSecondTextSummary = reloadedSummary.textMatches[normalize(LOADED_SAVED_STANDALONE_SECOND_TEXT)] || { domCount: 0, recordCount: 0 };
+        const savedPayload = savedAnnotations.body || {};
+
+        const checks = [
+            {
+                item: 'standalone_saved_annotation_session_created',
+                result: savedPayload.session_id === sessionId && Number(savedPayload.count) >= 1 ? 'PASS' : 'FAIL',
+                description: 'Saving the standalone text annotation created a reusable saved-annotation session.',
+                detail: JSON.stringify({
+                    requested_session_id: sessionId,
+                    saved_annotations: savedPayload,
+                }),
+            },
+            {
+                item: 'standalone_saved_session_has_no_promoted_rows',
+                result: Array.isArray(savedPayload.annotations)
+                    && savedPayload.annotations.every((annotation) => !annotation?.promotedFromExtraction)
+                    ? 'PASS' : 'FAIL',
+                description: 'The standalone saved session contains only standalone text annotations, not promoted extraction rows.',
+                detail: JSON.stringify(savedPayload.annotations || []),
+            },
+            {
+                item: 'loaded_saved_mode_uses_clean_base',
+                result: loadedSummary.loadedSavedPdfMode
+                    && loadedSummary.basePdfUrl === loadedSummary.cleanPdfUrl
+                    && loadedSummary.basePdfUrl !== loadedSummary.originalPdfUrl
+                    ? 'PASS' : 'FAIL',
+                description: 'Loaded-saved-PDF mode reopens standalone sessions against the clean PDF base.',
+                detail: JSON.stringify({
+                    loadedSavedPdfMode: loadedSummary.loadedSavedPdfMode,
+                    basePdfUrl: loadedSummary.basePdfUrl,
+                    originalPdfUrl: loadedSummary.originalPdfUrl,
+                    cleanPdfUrl: loadedSummary.cleanPdfUrl,
+                }),
+            },
+            {
+                item: 'loaded_saved_mode_has_single_live_standalone_annotation',
+                result: firstTextSummary.domCount === 1 && firstTextSummary.recordCount === 1 ? 'PASS' : 'FAIL',
+                description: 'Loaded-saved-PDF mode renders exactly one live standalone annotation for the saved text.',
+                detail: JSON.stringify(firstTextSummary),
+            },
+            {
+                item: 'second_loaded_saved_save_keeps_one_copy_per_text',
+                result: reloadedFirstTextSummary.domCount === 1
+                    && reloadedFirstTextSummary.recordCount === 1
+                    && reloadedSecondTextSummary.domCount === 1
+                    && reloadedSecondTextSummary.recordCount === 1
+                    ? 'PASS' : 'FAIL',
+                description: 'Saving again from loaded-saved-PDF mode keeps one live annotation per saved standalone text.',
+                detail: JSON.stringify({
+                    first_text: reloadedFirstTextSummary,
+                    second_text: reloadedSecondTextSummary,
+                    unique_record_ids: reloadedSummary.uniqueRecordIds,
+                    annotation_records: reloadedSummary.annotationRecords,
+                }),
+            },
+        ];
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Loaded Saved Standalone', kind: 'image', filename: loadedName },
+                { label: 'Loaded Saved Standalone After Second Save', kind: 'image', filename: reloadName },
+                { label: 'Loaded Saved Standalone Final PDF', kind: 'pdf', filename: finalPdfName },
+            ],
+            fileSize: fs.existsSync(finalPdfPath) ? fs.statSync(finalPdfPath).size : 0,
+            metadata: {
+                document_id: documentId,
+                session_id: sessionId,
+                initial_saved_annotations: savedPayload.annotations || [],
+                loaded_summary: loadedSummary,
+                reloaded_summary: reloadedSummary,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runLoadedSavedPromotedNoDuplicateFlow() {
+    const test = TESTS.test_20_loaded_saved_promoted_no_duplicate;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const loadedName = buildArtifactName(test.key, runToken, 'loaded_saved');
+    const reloadName = buildArtifactName(test.key, runToken, 'after_second_save');
+    const finalPdfName = buildArtifactName(test.key, runToken, 'final', 'pdf');
+    const loadedPath = path.join(OUTPUT_DIR, loadedName);
+    const reloadPath = path.join(OUTPUT_DIR, reloadName);
+    const finalPdfPath = path.join(OUTPUT_DIR, finalPdfName);
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+
+    try {
+        await page.goto(`${BASE_URL}/pdf-editor`, { waitUntil: 'domcontentloaded', timeout: 90000 });
+        await clearPdfSessionId(page);
+
+        documentId = await createFixtureDocument(page, NDA_FIXTURE_PATH);
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+        const sessionId = await ensurePdfSessionId(page, 'test20');
+        await forceRefreshOverlay(page, documentId);
+        await activateOverlay(page);
+
+        const targetFieldSelector = await getOverlayFieldSelector(page, NDA_LEADIN_LINE);
+        await replaceOverlayFieldText(page, targetFieldSelector, LOADED_SAVED_PROMOTED_UPDATED_TEXT);
+        await waitForOverlaySaveComplete(page);
+        await page.waitForLoadState('domcontentloaded', { timeout: 90000 }).catch(() => {});
+        await waitForEditorReady(page);
+
+        const savedAnnotations = await fetchSavedAnnotations(page, documentId, sessionId);
+        if (!savedAnnotations.ok || !savedAnnotations.body?.success) {
+            throw new Error(`saved-annotations failed: ${JSON.stringify(savedAnnotations)}`);
+        }
+        const savedPayload = savedAnnotations.body || {};
+        const primaryPromotedText = normalize(((savedPayload.annotations || []).find((annotation) => annotation?.promotedFromExtraction)?.text) || '');
+
+        await openLoadedSavedPdfEditor(page, documentId, sessionId);
+        await forceRefreshOverlay(page, documentId);
+        await activateOverlay(page);
+        const loadedSummary = await collectLoadedSavedAnnotationSummary(page, [LOADED_SAVED_PROMOTED_SECOND_TEXT]);
+        await capturePageScreenshot(page, loadedPath);
+        const forcedFallbackSummary = await readLoadedSavedPromotedExtractionFallbackDecision(page);
+
+        await deactivateOverlay(page);
+        await createTextAnnotationAt(page, LOADED_SAVED_PROMOTED_SECOND_TEXT, 120, 120);
+        await clickOutsideFirstPage(page);
+        await waitForLoadedSavedAnnotationSave(page);
+        await forceRefreshOverlay(page, documentId);
+        await activateOverlay(page);
+
+        const reloadedSummary = await collectLoadedSavedAnnotationSummary(page, [
+            LOADED_SAVED_PROMOTED_SECOND_TEXT,
+        ]);
+        await capturePageScreenshot(page, reloadPath);
+        await downloadSavedPdf(page, documentId, finalPdfPath);
+
+        const reloadedSecondTextSummary = reloadedSummary.textMatches[normalize(LOADED_SAVED_PROMOTED_SECOND_TEXT)] || { domCount: 0, recordCount: 0 };
+        const loadedPromotedRecords = loadedSummary.annotationRecords.filter((annotation) => annotation.promotedFromExtraction);
+        const reloadedPromotedRecords = reloadedSummary.annotationRecords.filter((annotation) => annotation.promotedFromExtraction);
+        const loadedUniquePromotedIds = new Set(loadedPromotedRecords.map((annotation) => annotation.id).filter(Boolean));
+        const reloadedUniquePromotedIds = new Set(reloadedPromotedRecords.map((annotation) => annotation.id).filter(Boolean));
+
+        const checks = [
+            {
+                item: 'promoted_saved_annotation_session_created',
+                result: savedPayload.session_id === sessionId && Number(savedPayload.count) >= 1 ? 'PASS' : 'FAIL',
+                description: 'Saving the promoted overlay edit created a reusable saved-annotation session.',
+                detail: JSON.stringify({
+                    requested_session_id: sessionId,
+                    saved_annotations: savedPayload,
+                }),
+            },
+            {
+                item: 'promoted_saved_session_contains_promoted_rows',
+                result: Array.isArray(savedPayload.annotations)
+                    && savedPayload.annotations.some((annotation) => annotation?.promotedFromExtraction)
+                    ? 'PASS' : 'FAIL',
+                description: 'The saved promoted session contains promoted extraction annotations.',
+                detail: JSON.stringify(savedPayload.annotations || []),
+            },
+            {
+                item: 'loaded_saved_mode_uses_clean_base',
+                result: loadedSummary.loadedSavedPdfMode
+                    && loadedSummary.basePdfUrl === loadedSummary.cleanPdfUrl
+                    && loadedSummary.basePdfUrl !== loadedSummary.originalPdfUrl
+                    ? 'PASS' : 'FAIL',
+                description: 'Loaded-saved-PDF mode reopens promoted sessions against the clean PDF base.',
+                detail: JSON.stringify({
+                    loadedSavedPdfMode: loadedSummary.loadedSavedPdfMode,
+                    basePdfUrl: loadedSummary.basePdfUrl,
+                    originalPdfUrl: loadedSummary.originalPdfUrl,
+                    cleanPdfUrl: loadedSummary.cleanPdfUrl,
+                }),
+            },
+            {
+                item: 'loaded_saved_extraction_fallback_uses_clean_base',
+                result: forcedFallbackSummary.loadedSavedPdfMode
+                    && forcedFallbackSummary.extractionBlockCount > 0
+                    && forcedFallbackSummary.cleanBaseRequired === true
+                    ? 'PASS'
+                    : 'FAIL',
+                description: 'Loaded-saved-PDF mode keeps the clean base when it rebuilds promoted text from extraction instead of using a saved snapshot.',
+                detail: JSON.stringify(forcedFallbackSummary),
+            },
+            {
+                item: 'loaded_saved_mode_rehydrates_promoted_overlay_once',
+                result: loadedPromotedRecords.length > 0
+                    && loadedSummary.overlayFields.length > 0
+                    && loadedUniquePromotedIds.size === loadedPromotedRecords.length
+                    && loadedSummary.crossLayerPromotedDuplicates.length === 0
+                    ? 'PASS' : 'FAIL',
+                description: 'Loaded-saved-PDF mode rehydrates promoted editor content once instead of duplicating saved promoted rows.',
+                detail: JSON.stringify({
+                    primary_promoted_text: primaryPromotedText,
+                    promoted_record_count: loadedPromotedRecords.length,
+                    unique_promoted_ids: Array.from(loadedUniquePromotedIds),
+                    overlay_field_count: loadedSummary.overlayFields.length,
+                    cross_layer_promoted_duplicates: loadedSummary.crossLayerPromotedDuplicates,
+                }),
+            },
+            {
+                item: 'promoted_annotations_keep_source_page_mapping',
+                result: loadedSummary.promotedPageMismatches.length === 0 && reloadedSummary.promotedPageMismatches.length === 0 ? 'PASS' : 'FAIL',
+                description: 'Promoted annotations in loaded-saved-PDF mode stay on their source pages instead of collapsing onto page 1.',
+                detail: JSON.stringify({
+                    loaded_mismatches: loadedSummary.promotedPageMismatches,
+                    reloaded_mismatches: reloadedSummary.promotedPageMismatches,
+                }),
+            },
+            {
+                item: 'second_loaded_saved_save_keeps_one_copy_per_text',
+                result: reloadedPromotedRecords.length > 0
+                    && reloadedSummary.overlayFields.length > 0
+                    && reloadedUniquePromotedIds.size === reloadedPromotedRecords.length
+                    && reloadedSummary.crossLayerPromotedDuplicates.length === 0
+                    && reloadedSecondTextSummary.domCount === 1
+                    && reloadedSecondTextSummary.recordCount === 1
+                    ? 'PASS' : 'FAIL',
+                description: 'Saving again from loaded-saved-PDF mode keeps one set of promoted editor content and one live annotation for the newly added text.',
+                detail: JSON.stringify({
+                    primary_promoted_text: primaryPromotedText,
+                    promoted_record_count: reloadedPromotedRecords.length,
+                    unique_promoted_ids: Array.from(reloadedUniquePromotedIds),
+                    overlay_field_count: reloadedSummary.overlayFields.length,
+                    cross_layer_promoted_duplicates: reloadedSummary.crossLayerPromotedDuplicates,
+                    second_text: reloadedSecondTextSummary,
+                    unique_record_ids: reloadedSummary.uniqueRecordIds,
+                    annotation_records: reloadedSummary.annotationRecords,
+                }),
+            },
+        ];
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Loaded Saved Promoted', kind: 'image', filename: loadedName },
+                { label: 'Loaded Saved Promoted After Second Save', kind: 'image', filename: reloadName },
+                { label: 'Loaded Saved Promoted Final PDF', kind: 'pdf', filename: finalPdfName },
+            ],
+            fileSize: fs.existsSync(finalPdfPath) ? fs.statSync(finalPdfPath).size : 0,
+            metadata: {
+                document_id: documentId,
+                session_id: sessionId,
+                primary_promoted_text: primaryPromotedText,
+                initial_saved_annotations: savedPayload.annotations || [],
+                loaded_summary: loadedSummary,
+                forced_fallback_summary: forcedFallbackSummary,
+                reloaded_summary: reloadedSummary,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runPromotedNoopEditKeepsExactLayoutFlow() {
+    const test = TESTS.test_21_promoted_noop_edit_keeps_exact_layout;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const screenshotName = buildArtifactName(test.key, runToken, 'after_noop_edit');
+    const screenshotPath = path.join(OUTPUT_DIR, screenshotName);
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+
+    try {
+        await page.goto(`${BASE_URL}/pdf-editor`, { waitUntil: 'domcontentloaded', timeout: 90000 });
+        await clearPdfSessionId(page);
+
+        documentId = await createFixtureDocument(page, NDA_FIXTURE_PATH);
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+        const sessionId = await ensurePdfSessionId(page, 'test21');
+        await forceRefreshOverlay(page, documentId);
+        await activateOverlay(page);
+
+        const targetFieldSelector = await getOverlayFieldSelector(page, NDA_LEADIN_LINE);
+        await replaceOverlayFieldText(page, targetFieldSelector, LOADED_SAVED_PROMOTED_UPDATED_TEXT);
+        await waitForOverlaySaveComplete(page);
+        await page.waitForLoadState('domcontentloaded', { timeout: 90000 }).catch(() => {});
+        await waitForEditorReady(page);
+
+        const beforeState = await readFirstPromotedAnnotationState(page);
+        await noOpEditFirstPromotedAnnotation(page);
+        const afterState = await readFirstPromotedAnnotationState(page);
+        const savedAnnotations = await fetchSavedAnnotations(page, documentId, sessionId);
+        if (!savedAnnotations.ok || !savedAnnotations.body?.success) {
+            throw new Error(`saved-annotations failed: ${JSON.stringify(savedAnnotations)}`);
+        }
+        const savedPromoted = (savedAnnotations.body.annotations || []).find((annotation) => annotation?.promotedFromExtraction) || null;
+        await capturePageScreenshot(page, screenshotPath);
+
+        const checks = [
+            {
+                item: 'promoted_annotation_exists_before_noop_edit',
+                result: Boolean(beforeState.id) ? 'PASS' : 'FAIL',
+                description: 'The promoted annotation exists after the initial overlay edit save.',
+                detail: JSON.stringify(beforeState),
+            },
+            {
+                item: 'noop_edit_restores_exact_promoted_geometry',
+                result: afterState.exactGeometry === '1' ? 'PASS' : 'FAIL',
+                description: 'A no-op edit exits back to exact promoted geometry instead of leaving the annotation reflowed.',
+                detail: JSON.stringify({
+                    before: beforeState,
+                    after: afterState,
+                }),
+            },
+            {
+                item: 'noop_edit_clears_fake_promoted_dirty',
+                result: afterState.promotedDirty === false && (!savedPromoted || savedPromoted.promotedDirty === false) ? 'PASS' : 'FAIL',
+                description: 'A no-op edit clears the fake promotedDirty flag in the live annotation and in any saved promoted session state.',
+                detail: JSON.stringify({
+                    before: beforeState,
+                    after: afterState,
+                    saved_promoted: savedPromoted,
+                }),
+            },
+            {
+                item: 'noop_edit_keeps_promoted_line_height_stable',
+                result: approxEqual(beforeState.annotationLineHeight, afterState.annotationLineHeight, 0.01)
+                    && (!savedPromoted || approxEqual(beforeState.annotationLineHeight, savedPromoted?.lineHeight, 0.01))
+                    ? 'PASS'
+                    : 'FAIL',
+                description: 'A no-op edit preserves the promoted annotation line height instead of inflating paragraph leading.',
+                detail: JSON.stringify({
+                    before: beforeState,
+                    after: afterState,
+                    saved_promoted: savedPromoted,
+                }),
+            },
+            {
+                item: 'noop_edit_keeps_promoted_bounds_stable',
+                result: beforeState.width === afterState.width && beforeState.height === afterState.height ? 'PASS' : 'FAIL',
+                description: 'The promoted annotation keeps the same bounds across a no-op edit cycle.',
+                detail: JSON.stringify({
+                    before: beforeState,
+                    after: afterState,
+                }),
+            },
+        ];
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Promoted No-Op Edit', kind: 'image', filename: screenshotName },
+            ],
+            fileSize: fs.existsSync(NDA_FIXTURE_PATH) ? fs.statSync(NDA_FIXTURE_PATH).size : 0,
+            metadata: {
+                document_id: documentId,
+                session_id: sessionId,
+                before_state: beforeState,
+                after_state: afterState,
+                saved_promoted: savedPromoted,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
 async function runDrylabLoadFlow() {
     const test = TESTS.test_4_load_tests;
     ensureOutputDir();
@@ -2652,6 +4507,1187 @@ async function runDrylabLoadFlow() {
             ],
             fileSize: fs.existsSync(DRYLAB_LOAD_FIXTURE_PATH) ? fs.statSync(DRYLAB_LOAD_FIXTURE_PATH).size : 0,
             metadata,
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runParagraphHelveticaBoldItalicUnderlineFlow() {
+    const test = TESTS.test_15_paragraph_helvetica_bold_italic_underline;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const beforeSaveName = buildArtifactName(test.key, runToken, 'before_save');
+    const afterSaveName = buildArtifactName(test.key, runToken, 'after_save');
+    const pdfName = buildArtifactName(test.key, runToken, 'paragraph_style_save', 'pdf');
+    const beforeSavePath = path.join(OUTPUT_DIR, beforeSaveName);
+    const afterSavePath = path.join(OUTPUT_DIR, afterSaveName);
+    const pdfPath = path.join(OUTPUT_DIR, pdfName);
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+
+    try {
+        documentId = await createBlankDocument(page, {
+            pageSize: 'Legal',
+            orientation: 'portrait',
+        });
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+
+        const editor = await openCenterTextCreator(page);
+        await editor.fill(PARAGRAPH_STYLE_TEXT);
+        const paragraphSelections = {};
+        const paragraphEditorStates = {};
+
+        paragraphSelections.font = await selectActiveEditorText(page, PARAGRAPH_STYLE_TEXT);
+        paragraphEditorStates.font = await applyEditTextBannerStyles(page, {
+            fontFamily: 'Helvetica',
+        });
+        paragraphSelections.bold = await selectActiveEditorText(page, PARAGRAPH_STYLE_TEXT);
+        paragraphEditorStates.bold = await applyEditTextBannerStyles(page, {
+            bold: true,
+        });
+        paragraphSelections.italic = await selectActiveEditorText(page, PARAGRAPH_STYLE_TEXT);
+        paragraphEditorStates.italic = await applyEditTextBannerStyles(page, {
+            italic: true,
+        });
+        paragraphSelections.underline = await selectActiveEditorText(page, PARAGRAPH_STYLE_TEXT);
+        paragraphEditorStates.underline = await applyEditTextBannerStyles(page, {
+            underline: true,
+        });
+
+        await commitActiveTextBox(page);
+        await updateTextAnnotation(page, PARAGRAPH_STYLE_WORD_TARGETS.first, {
+            keepBounds: true,
+            left: 30,
+            top: 80,
+            width: PARAGRAPH_STYLE_WIDTH,
+            height: PARAGRAPH_STYLE_HEIGHT,
+        });
+
+        const beforeSaveAnnotationState = await readCommittedAnnotationRichState(page, PARAGRAPH_STYLE_TEXT);
+        const serializedAnnotationHtml = String(beforeSaveAnnotationState.richTextHtml || beforeSaveAnnotationState.html || '');
+        await capturePageScreenshot(page, beforeSavePath);
+
+        await clickOutsideFirstPage(page);
+        await saveAnnotationsOnly(page);
+        await capturePageScreenshot(page, afterSavePath);
+        await downloadPdfViaToolbar(page, pdfPath);
+
+        const extractionPage = loadPdfExtractionPage(pdfPath, 1);
+        const extraction = { extraction_data: [extractionPage] };
+        const savedBlock = extractMatchingBlock(extraction, PARAGRAPH_STYLE_FRAGMENT);
+        const savedBlockLines = savedBlock ? extractBlockLines(extraction, savedBlock) : [];
+        const savedReferenceLineTexts = savedBlockLines.length > 1
+            ? [savedBlockLines[0], savedBlockLines[savedBlockLines.length - 1]]
+            : savedBlockLines.slice(0, 1);
+        const savedLineSpansByText = savedReferenceLineTexts.length > 0
+            ? loadPdfTargetLineSpans(pdfPath, 1, savedReferenceLineTexts)
+            : {};
+        const savedReferenceLines = savedReferenceLineTexts.map((text) => {
+            const spans = Array.isArray(savedLineSpansByText?.[text]) ? savedLineSpansByText[text] : [];
+            return {
+                text,
+                spans,
+                primarySpan: spans.find((span) => normalize(span?.text) === normalize(text)) || spans[0] || null,
+            };
+        });
+        const savedFontMatches = savedReferenceLines.every((entry) => entry.primarySpan && HELVETICA_FONT_REGEX.test(String(entry.primarySpan?.font || '')));
+        const savedBoldMatches = savedReferenceLines.every((entry) => entry.primarySpan && Boolean(entry.primarySpan?.bold));
+        const savedItalicMatches = savedReferenceLines.every((entry) => entry.primarySpan && Boolean(entry.primarySpan?.italic));
+        const savedUnderlineMatches = Boolean(savedBlock?.spans?.[0]?.has_drawn_underline);
+        const normalizedSavedTail = normalizeTypographicAscii(savedBlock?.text || '');
+        const savedParagraphTailPresent = normalizedSavedTail.includes(normalizeTypographicAscii('repetition, injected humour'))
+            && normalizedSavedTail.includes(normalizeTypographicAscii('characteristic words etc.'));
+
+        const checks = [
+            {
+                item: 'blank_pdf_created',
+                result: documentId ? 'PASS' : 'FAIL',
+                description: 'A fresh blank PDF was created through the frontend blank-PDF flow.',
+                detail: `document=${documentId}`,
+            },
+            {
+                item: 'paragraph_styles_applied_before_save',
+                result: /font-family:[^;]*helvetica/i.test(serializedAnnotationHtml)
+                    && serializedAnnotationHtml.includes('font-weight:700')
+                    && serializedAnnotationHtml.includes('font-style:italic')
+                    && serializedAnnotationHtml.includes('text-decoration:underline')
+                    ? 'PASS' : 'FAIL',
+                description: 'The committed paragraph annotation contains Helvetica, bold, italic, and underline styling before save.',
+                detail: JSON.stringify({
+                    selections: paragraphSelections,
+                    editor_states: paragraphEditorStates,
+                    annotation_state: beforeSaveAnnotationState,
+                }),
+            },
+            {
+                item: 'saved_paragraph_block_found',
+                result: savedBlock ? 'PASS' : 'FAIL',
+                description: 'The saved PDF extraction contains the styled lorem ipsum paragraph.',
+                detail: JSON.stringify({
+                    block: savedBlock,
+                    line_count: savedBlockLines.length,
+                }),
+            },
+            {
+                item: 'saved_paragraph_is_wrapped',
+                result: savedBlockLines.length > 1 ? 'PASS' : 'FAIL',
+                description: 'The saved paragraph remains a wrapped multiline paragraph after save.',
+                detail: JSON.stringify({ lines: savedBlockLines }),
+            },
+            {
+                item: 'saved_paragraph_reference_lines_found',
+                result: savedReferenceLines.length > 0 && savedReferenceLines.every((entry) => Boolean(entry.primarySpan)) ? 'PASS' : 'FAIL',
+                description: 'The exported PDF exposes representative wrapped lines from the styled paragraph for direct span inspection.',
+                detail: JSON.stringify(savedReferenceLines),
+            },
+            {
+                item: 'saved_paragraph_font_matches',
+                result: savedFontMatches ? 'PASS' : 'FAIL',
+                description: 'Representative exported paragraph lines keep the requested Helvetica-family font.',
+                detail: JSON.stringify(savedReferenceLines.map((entry) => ({
+                    line_text: entry.text,
+                    saved_font: entry.primarySpan?.font || null,
+                    expected_regex: String(HELVETICA_FONT_REGEX),
+                }))),
+            },
+            {
+                item: 'saved_paragraph_bold_matches',
+                result: savedBoldMatches ? 'PASS' : 'FAIL',
+                description: 'Representative exported paragraph lines keep bold styling after save.',
+                detail: JSON.stringify(savedReferenceLines.map((entry) => ({
+                    line_text: entry.text,
+                    saved_bold: Boolean(entry.primarySpan?.bold),
+                    saved_flags: entry.primarySpan?.flags || null,
+                }))),
+            },
+            {
+                item: 'saved_paragraph_italic_matches',
+                result: savedItalicMatches ? 'PASS' : 'FAIL',
+                description: 'Representative exported paragraph lines keep italic styling after save.',
+                detail: JSON.stringify(savedReferenceLines.map((entry) => ({
+                    line_text: entry.text,
+                    saved_italic: Boolean(entry.primarySpan?.italic),
+                    saved_font: entry.primarySpan?.font || null,
+                }))),
+            },
+            {
+                item: 'saved_paragraph_underline_matches',
+                result: savedUnderlineMatches ? 'PASS' : 'FAIL',
+                description: 'The exported paragraph keeps a drawn underline in the extracted PDF content.',
+                detail: JSON.stringify(savedBlock?.spans || []),
+            },
+            {
+                item: 'saved_paragraph_tail_present',
+                result: savedParagraphTailPresent ? 'PASS' : 'FAIL',
+                description: 'The exported PDF keeps the end of the requested paragraph instead of clipping after the earlier lines.',
+                detail: savedBlock ? JSON.stringify(savedBlock.text) : 'null',
+            },
+        ];
+
+        const hasFailure = checks.some((check) => check.result !== 'PASS');
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: hasFailure ? 'fail' : 'pass',
+            checks,
+            artifacts: [
+                { label: 'Before Save', kind: 'image', filename: beforeSaveName },
+                { label: 'After Save', kind: 'image', filename: afterSaveName },
+                { label: 'Paragraph Style PDF', kind: 'pdf', filename: pdfName },
+            ],
+            fileSize: fs.existsSync(pdfPath) ? fs.statSync(pdfPath).size : 0,
+            metadata: {
+                document_id: documentId,
+                paragraph_text: PARAGRAPH_STYLE_TEXT,
+                before_save_annotation_state: beforeSaveAnnotationState,
+                saved_block: savedBlock,
+                saved_block_lines: savedBlockLines,
+                saved_reference_lines: savedReferenceLines,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runNdaParagraphOneBoldItemsFlow() {
+    const test = TESTS.test_16_nda_paragraph_one_bold_items;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const screenshotName = buildArtifactName(test.key, runToken, 'nda_paragraph_one_bold_load');
+    const screenshotPath = path.join(OUTPUT_DIR, screenshotName);
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+
+    try {
+        const sourceSpanData = loadPdfTargetLineSpans(NDA_FIXTURE_PATH, 1, [NDA_PARAGRAPH_ONE_FIRST_LINE]);
+        const sourceLineSpans = sourceSpanData?.[NDA_PARAGRAPH_ONE_FIRST_LINE] || [];
+        const sourceBoldSpan = sourceLineSpans.find((span) => normalize(span?.text) === normalize(NDA_PARAGRAPH_ONE_BOLD_TOKEN) && span?.bold) || null;
+        if (!sourceBoldSpan) {
+            throw new Error(`missing NDA bold placeholder span for ${NDA_FIXTURE_PATH}`);
+        }
+
+        documentId = await createFixtureDocument(page, NDA_FIXTURE_PATH);
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+        await forceRefreshOverlay(page, documentId);
+        await activateOverlay(page);
+
+        const overlayData = await collectOverlayLoadTargets(page, [{
+            key: 'paragraph_one',
+            matchText: NDA_PARAGRAPH_ONE_FRAGMENT,
+            lineText: NDA_PARAGRAPH_ONE_FIRST_LINE,
+            sampleWords: NDA_PARAGRAPH_ONE_WORDS,
+        }]);
+        await capturePageScreenshot(page, screenshotPath);
+
+        const overlayTarget = overlayData?.targets?.paragraph_one || null;
+        const scaleY = (Number(overlayData?.overlayHeight) || 0) / 792;
+        const boldEntry = overlayTarget?.word_entries?.[NDA_PARAGRAPH_ONE_BOLD_TOKEN] || null;
+        const regularEntry = overlayTarget?.word_entries?.THIS || null;
+        const boldStyle = boldEntry?.style || {};
+        const regularStyle = regularEntry?.style || {};
+        const boldWeight = Number(boldStyle.fontWeight) || 0;
+        const regularWeight = Number(regularStyle.fontWeight) || 0;
+        const boldFontFamily = String(boldStyle.fontFamily || '');
+        const regularFontFamily = String(regularStyle.fontFamily || '');
+        const expectedFontSize = Number(sourceBoldSpan?.size) || null;
+        const expectedScaledFontSize = expectedFontSize !== null ? expectedFontSize * scaleY : null;
+        const actualFontSize = parseCssPixels(boldStyle.fontSize);
+
+        const checks = [
+            {
+                item: 'fixture_document_loaded',
+                result: documentId ? 'PASS' : 'FAIL',
+                description: 'The NDA fixture document was loaded into the editor.',
+                detail: `document=${documentId}`,
+            },
+            {
+                item: 'paragraph_one_bold_placeholder_detected',
+                result: boldEntry ? 'PASS' : 'FAIL',
+                description: 'The paragraph-one placeholder span is independently selectable in the overlay field.',
+                detail: JSON.stringify({
+                    source_bold_span: sourceBoldSpan,
+                    actual_bold_entry: boldEntry,
+                }),
+            },
+            {
+                item: 'paragraph_one_bold_placeholder_style_matches',
+                result: boldEntry
+                    && boldWeight >= 600
+                    && NDA_TIMES_FONT_REGEX.test(boldFontFamily)
+                    && expectedScaledFontSize !== null
+                    && actualFontSize !== null
+                    && approxEqual(actualFontSize, expectedScaledFontSize, NDA_LOAD_FONT_SIZE_TOLERANCE)
+                    ? 'PASS' : 'FAIL',
+                description: 'The paragraph-one placeholder span keeps the original bold Times styling on initial load.',
+                detail: JSON.stringify({
+                    expected: {
+                        font: sourceBoldSpan?.font || null,
+                        font_size: expectedFontSize,
+                        scaled_font_size: expectedScaledFontSize,
+                        bold: sourceBoldSpan?.bold || false,
+                    },
+                    actual: {
+                        font_family: boldFontFamily,
+                        font_weight: boldWeight,
+                        font_size: actualFontSize,
+                    },
+                }),
+            },
+            {
+                item: 'paragraph_one_regular_prefix_not_bold',
+                result: regularEntry
+                    && regularWeight > 0
+                    && regularWeight < 600
+                    && NDA_TIMES_FONT_REGEX.test(regularFontFamily)
+                    ? 'PASS' : 'FAIL',
+                description: 'The regular opening words in paragraph one stay separate from the bold placeholder styling.',
+                detail: JSON.stringify({
+                    actual_regular_entry: regularEntry,
+                    regular_font_family: regularFontFamily,
+                    regular_font_weight: regularWeight,
+                }),
+            },
+        ];
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'NDA Paragraph One Bold Items', kind: 'image', filename: screenshotName },
+            ],
+            fileSize: fs.existsSync(NDA_FIXTURE_PATH) ? fs.statSync(NDA_FIXTURE_PATH).size : 0,
+            metadata: {
+                document_id: documentId,
+                source_line_spans: sourceLineSpans,
+                actual_target: overlayTarget,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runNdaLeadinAlignmentFlow() {
+    const test = TESTS.test_17_nda_leadin_alignment;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const screenshotName = buildArtifactName(test.key, runToken, 'nda_leadin_overlay_load');
+    const screenshotPath = path.join(OUTPUT_DIR, screenshotName);
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+
+    try {
+        const sourcePage = loadPdfExtractionPage(NDA_FIXTURE_PATH, 1);
+        const sourceExtraction = { extraction_data: [sourcePage] };
+        const sourceLine = extractMatchingLine(sourceExtraction, NDA_LEADIN_LINE);
+        const sourceWordBoxes = loadPdfTargetWordBoxes(NDA_FIXTURE_PATH, 1, [{
+            key: 'leadin',
+            lineText: NDA_LEADIN_LINE,
+            sampleWords: NDA_LEADIN_WORDS,
+        }])?.leadin || {};
+        if (!sourcePage?.width || !sourcePage?.height || !sourceLine) {
+            throw new Error(`missing NDA lead-in source extraction for ${NDA_FIXTURE_PATH}`);
+        }
+
+        documentId = await createFixtureDocument(page, NDA_FIXTURE_PATH);
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+        await forceRefreshOverlay(page, documentId);
+        await activateOverlay(page);
+
+        const overlayData = await collectOverlayLoadTargets(page, [{
+            key: 'leadin',
+            lineText: NDA_LEADIN_LINE,
+            sampleWords: NDA_LEADIN_WORDS,
+        }]);
+        await capturePageScreenshot(page, screenshotPath);
+
+        const overlayTarget = overlayData?.targets?.leadin || null;
+        const scaleX = (Number(overlayData?.overlayWidth) || 0) / (Number(sourcePage.width) || 1);
+        const scaleY = (Number(overlayData?.overlayHeight) || 0) / (Number(sourcePage.height) || 1);
+        const expectedLineBox = scaleBox(sourceLine, scaleX, scaleY);
+        const expectedWordBoxes = Object.fromEntries(Object.entries(sourceWordBoxes).map(([word, box]) => [word, box ? scaleBox(box, scaleX, scaleY) : null]));
+        const actualWordEntries = overlayTarget?.word_entries || {};
+        const actualWordBoxes = Object.fromEntries(Object.entries(actualWordEntries).map(([word, entry]) => [word, entry?.box || null]));
+        const actualLineBox = overlayTarget?.line_boxes?.[0] || null;
+        const expectedGap = expectedWordBoxes['Confidential'] && expectedWordBoxes['1.']
+            ? expectedWordBoxes['Confidential'].left - (expectedWordBoxes['1.'].left + expectedWordBoxes['1.'].width)
+            : null;
+        const actualGap = actualWordBoxes['Confidential'] && actualWordBoxes['1.']
+            ? actualWordBoxes['Confidential'].left - (actualWordBoxes['1.'].left + actualWordBoxes['1.'].width)
+            : null;
+        const wordPositionResults = NDA_LEADIN_WORDS.map((word) => {
+            const expected = expectedWordBoxes[word];
+            const actual = actualWordBoxes[word];
+            return {
+                word,
+                expected,
+                actual,
+                pass: Boolean(
+                    expected
+                    && actual
+                    && approxEqual(actual.left, expected.left, NDA_LOAD_POSITION_TOLERANCE)
+                    && approxEqual(actual.top, expected.top, NDA_LOAD_POSITION_TOLERANCE)
+                ),
+            };
+        });
+
+        const checks = [
+            {
+                item: 'fixture_document_loaded',
+                result: documentId ? 'PASS' : 'FAIL',
+                description: 'The NDA fixture document was loaded into the editor.',
+                detail: `document=${documentId}`,
+            },
+            {
+                item: 'nda_leadin_line_box_matches',
+                result: actualLineBox
+                    && approxEqual(actualLineBox.left, expectedLineBox.left, NDA_LOAD_POSITION_TOLERANCE)
+                    && approxEqual(actualLineBox.top, expectedLineBox.top, NDA_LOAD_POSITION_TOLERANCE)
+                    && approxEqual(actualLineBox.width, expectedLineBox.width, NDA_LOAD_SIZE_TOLERANCE)
+                    ? 'PASS' : 'FAIL',
+                description: 'The NDA lead-in line keeps its original left/top alignment and width on initial load.',
+                detail: JSON.stringify({
+                    expected: expectedLineBox,
+                    actual: actualLineBox,
+                }),
+            },
+            {
+                item: 'nda_leadin_word_positions_match',
+                result: wordPositionResults.every((entry) => entry.pass) ? 'PASS' : 'FAIL',
+                description: 'The NDA lead-in keeps the marker, heading word, and Company word aligned with the source PDF on initial load.',
+                detail: JSON.stringify(wordPositionResults),
+            },
+            {
+                item: 'nda_leadin_indent_gap_matches',
+                result: expectedGap !== null && actualGap !== null && approxEqual(actualGap, expectedGap, NDA_LOAD_POSITION_TOLERANCE)
+                    ? 'PASS' : 'FAIL',
+                description: 'The gap between the "1." marker and the lead-in body text stays aligned with the source PDF.',
+                detail: JSON.stringify({
+                    expected_gap: expectedGap,
+                    actual_gap: actualGap,
+                }),
+            },
+        ];
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'NDA Lead-In Load', kind: 'image', filename: screenshotName },
+            ],
+            fileSize: fs.existsSync(NDA_FIXTURE_PATH) ? fs.statSync(NDA_FIXTURE_PATH).size : 0,
+            metadata: {
+                document_id: documentId,
+                source_line: sourceLine,
+                expected_line_box: expectedLineBox,
+                expected_word_boxes: expectedWordBoxes,
+                actual_target: overlayTarget,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runNdaRandomPageOneSaveNoDuplicatesFlow() {
+    const test = TESTS.test_22_nda_random_page_one_save_no_duplicates;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const reloadScreenshotName = buildArtifactName(test.key, runToken, 'nda_random_page_one_reload_overlay');
+    const finalPdfName = buildArtifactName(test.key, runToken, 'nda_random_page_one_final', 'pdf');
+    const reloadScreenshotPath = path.join(OUTPUT_DIR, reloadScreenshotName);
+    const finalPdfPath = path.join(OUTPUT_DIR, finalPdfName);
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+
+    try {
+        documentId = await createFixtureDocument(page, NDA_FIXTURE_PATH);
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+        await forceRefreshOverlay(page, documentId);
+        await activateOverlay(page);
+        const initialOverlayFields = await collectOverlayFieldDescriptors(page);
+        const editTargets = buildNdaRandomEditTargets(initialOverlayFields);
+
+        for (const target of editTargets) {
+            const selector = `.overlay-field[data-word-index="${target.key}"]`;
+            await replaceOverlayFieldText(page, selector, target.editedText);
+        }
+
+        const editedOverlayFields = await collectOverlayFieldDescriptors(page);
+        const editedMetricsByKey = Object.fromEntries(editedOverlayFields.map((field) => [field.key, field]));
+        editTargets.forEach((target) => {
+            const editedField = editedMetricsByKey[target.key];
+            target.expectedLineCount = Array.isArray(editedField?.line_boxes) ? editedField.line_boxes.length : 0;
+            target.expectedLineBoxes = Array.isArray(editedField?.line_boxes) ? editedField.line_boxes : [];
+            target.expectedSpacing = extractLineSpacing(target.expectedLineBoxes);
+        });
+
+        const overlaySaveRequests = [];
+        const overlaySaveRequestHandler = (request) => {
+            if (request.method() !== 'POST') {
+                return;
+            }
+            const url = request.url();
+            if (!url.includes(`/documents/${documentId}/`)) {
+                return;
+            }
+            if (!url.includes('/live-save') && !url.includes('/save-edits')) {
+                return;
+            }
+            let body = null;
+            try {
+                body = request.postDataJSON();
+            } catch (_error) {
+                body = request.postData() || null;
+            }
+            overlaySaveRequests.push({ url, body });
+        };
+        page.on('request', overlaySaveRequestHandler);
+
+        await waitForOverlaySaveComplete(page);
+        page.off('request', overlaySaveRequestHandler);
+        const overlaySaveRequestSummary = overlaySaveRequests.map((entry) => {
+            const body = entry.body;
+            const edits = Array.isArray(body?.edits)
+                ? body.edits
+                : (body && !Array.isArray(body) ? [body] : []);
+            return {
+                url: entry.url,
+                edits: edits.map((edit) => ({
+                    page_number: edit?.page_number ?? null,
+                    original_text_preview: String(edit?.original_text || '').slice(0, 80),
+                    new_text_preview: String(edit?.new_text || '').slice(0, 80),
+                    new_text_line_count: String(edit?.new_text || '').split('\n').length,
+                    line_metrics_count: Array.isArray(edit?.line_metrics) ? edit.line_metrics.length : 0,
+                    word_styles_count: Array.isArray(edit?.word_styles) ? edit.word_styles.length : 0,
+                    synthetic_textbox: Boolean(edit?.synthetic_textbox),
+                    bbox: Array.isArray(edit?.bbox) ? edit.bbox : null,
+                })),
+            };
+        });
+        const liveSaveEditSummaries = overlaySaveRequestSummary
+            .filter((entry) => entry.url.includes('/live-save'))
+            .flatMap((entry) => entry.edits || []);
+
+        await page.waitForLoadState('domcontentloaded', { timeout: 10000 }).catch(() => {});
+        await page.waitForTimeout(1500);
+        await downloadSavedPdf(page, documentId, finalPdfPath);
+
+        const savedExtraction = await fetchExtraction(page, documentId);
+        const savedPage = savedExtraction?.extraction_data?.[0] || {};
+        const savedPageText = normalize(
+            String(savedPage?.text || (
+                Array.isArray(savedPage?.blocks)
+                    ? savedPage.blocks.map((block) => block?.text || '').join('\n')
+                    : ''
+            ))
+        );
+        const savedLineEntries = Array.isArray(savedPage?.blocks)
+            ? savedPage.blocks.flatMap((block) => {
+                const textLines = Array.isArray(block?.text_lines) && block.text_lines.length
+                    ? block.text_lines
+                    : [block?.text || ''];
+                const lineBBoxes = Array.isArray(block?.line_bboxes) ? block.line_bboxes : [];
+                return textLines.map((lineText, index) => {
+                    const bbox = Array.isArray(lineBBoxes[index]) ? lineBBoxes[index] : null;
+                    return {
+                        text: normalize(lineText),
+                        top: bbox && bbox.length >= 4 ? Number(bbox[1]) || 0 : Number(block?.top) || 0,
+                        left: bbox && bbox.length >= 4 ? Number(bbox[0]) || 0 : Number(block?.left) || 0,
+                        width: bbox && bbox.length >= 4 ? Math.max(1, (Number(bbox[2]) || 0) - (Number(bbox[0]) || 0)) : Math.max(1, Number(block?.width) || 1),
+                        height: bbox && bbox.length >= 4 ? Math.max(1, (Number(bbox[3]) || 0) - (Number(bbox[1]) || 0)) : Math.max(1, Number(block?.height) || 1),
+                        block,
+                    };
+                });
+            }).filter((entry) => entry.text.length > 0)
+            : [];
+
+        await clearAnnotationSessionState(page, documentId);
+        await page.goto(`${BASE_URL}/documents/${documentId}/edit`, { waitUntil: 'domcontentloaded', timeout: 90000 });
+        await waitForEditorReady(page);
+
+        const visibleAnnotationSummary = await page.evaluate((targets) => {
+            const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+            const annotationTexts = Array.from(document.querySelectorAll('.annotation')).map((annotationEl) => {
+                const textEl = annotationEl.querySelector('.annotation-text') || annotationEl;
+                return normalizeText(textEl?.innerText || textEl?.textContent || '');
+            }).filter(Boolean);
+
+            return Object.fromEntries(targets.map((target) => {
+                const edited = normalizeText(target.editedText);
+                const original = normalizeText(target.originalText);
+                const editedFirstLine = normalizeText((target.editedLines || [])[0] || '');
+                return [target.key, {
+                    editedVisibleCount: annotationTexts.filter((text) => text === edited).length,
+                    originalVisibleCount: annotationTexts.filter((text) => text === original).length,
+                    editedFragmentVisibleCount: editedFirstLine
+                        ? annotationTexts.filter((text) => text.includes(editedFirstLine)).length
+                        : 0,
+                    annotationTexts,
+                }];
+            }));
+        }, editTargets);
+
+        await forceRefreshOverlay(page, documentId);
+        await activateOverlay(page);
+        const reloadedOverlayFields = await collectOverlayFieldDescriptors(page);
+        const overlaySummary = await page.evaluate((targets) => {
+            const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+            const overlayFields = Array.from(document.querySelectorAll('.overlay-field')).map((field) => {
+                const root = field.querySelector('[contenteditable]') || field;
+                return normalizeText(root.innerText || root.textContent || '');
+            }).filter(Boolean);
+            const overlayTexts = overlayFields;
+            const records = Array.isArray(annotations)
+                ? annotations.map((annotation) => ({
+                    text: normalizeText(annotation?.text || annotation?.element?.innerText || annotation?.element?.textContent || ''),
+                    promotedFromExtraction: Boolean(annotation?.promotedFromExtraction),
+                    savedTextOverlay: Boolean(annotation?.savedTextOverlay),
+                }))
+                : [];
+
+            return Object.fromEntries(targets.map((target) => {
+                const edited = normalizeText(target.editedText);
+                const original = normalizeText(target.originalText);
+                const editedFirstLine = normalizeText((target.editedLines || [])[0] || '');
+                return [target.key, {
+                    overlayFieldCount: overlayFields.filter((text) => text === edited).length,
+                    overlayOriginalCount: overlayFields.filter((text) => text === original).length,
+                    overlayFragmentCount: editedFirstLine
+                        ? overlayFields.filter((text) => text.includes(editedFirstLine)).length
+                        : 0,
+                    promotedRecordCount: records.filter((record) => record.promotedFromExtraction && record.text === edited).length,
+                    savedOverlayRecordCount: records.filter((record) => record.savedTextOverlay && record.text === edited).length,
+                    overlayTexts,
+                }];
+            }));
+        }, editTargets);
+        await capturePageScreenshot(page, reloadScreenshotPath);
+
+        const targetDetails = editTargets.map((target, targetIndex) => {
+            const overlayTarget = reloadedOverlayFields.find((field) => normalize(field.text) === normalize(target.editedText)) || null;
+            const matchingSavedBlock = extractMatchingBlock(savedExtraction, target.editedLines[0]);
+            const matchingOverlayFields = reloadedOverlayFields.filter((entry) => normalize(entry.text) === normalize(target.editedText));
+            const savedLineMatches = target.editedLines.map((editedLine) => (
+                savedLineEntries.filter((entry) => entry.text.includes(normalize(editedLine)))
+            ));
+            const matchedSavedLines = savedLineMatches
+                .map((matches) => matches[0] || null)
+                .filter(Boolean)
+                .sort((a, b) => a.top - b.top || a.left - b.left);
+            const savedLineCount = matchedSavedLines.length;
+            const savedSpacing = extractLineSpacing(matchedSavedLines);
+            const visibleTexts = Array.isArray(visibleAnnotationSummary[target.key]?.annotationTexts)
+                ? visibleAnnotationSummary[target.key].annotationTexts
+                : [];
+            const overlayTexts = Array.isArray(overlaySummary[target.key]?.overlayTexts)
+                ? overlaySummary[target.key].overlayTexts
+                : [];
+            const visibleEditedLineCounts = target.editedLines.map((editedLine) => (
+                visibleTexts.filter((text) => text.includes(normalize(editedLine))).length
+            ));
+            const overlayEditedLineCounts = target.editedLines.map((editedLine) => (
+                overlayTexts.filter((text) => text.includes(normalize(editedLine))).length
+            ));
+            const visibleEditedCount = Number(visibleAnnotationSummary[target.key]?.editedFragmentVisibleCount || 0);
+            const visibleOriginalCount = Number(visibleAnnotationSummary[target.key]?.originalVisibleCount || 0);
+            const overlayEditedCount = Number(overlaySummary[target.key]?.overlayFragmentCount || 0);
+            const overlayOriginalCount = Number(overlaySummary[target.key]?.overlayOriginalCount || 0);
+            const liveSaveSummary = liveSaveEditSummaries[targetIndex] || null;
+
+            return {
+                ...target,
+                savedBlock: matchingSavedBlock,
+                expectedLineCount: target.expectedLineCount || 0,
+                actualLineCount: (overlayTarget?.line_boxes || []).length,
+                expectedSpacing: target.expectedSpacing || [],
+                overlayTarget,
+                overlayFieldMatches: matchingOverlayFields,
+                overlaySummary: overlaySummary[target.key] || null,
+                visibleAnnotationSummary: visibleAnnotationSummary[target.key] || null,
+                savedEditedOccurrences: countNormalizedOccurrences(savedPageText, target.editedTextFlat),
+                savedOriginalOccurrences: countNormalizedOccurrences(savedPageText, target.originalTextFlat),
+                sourceLineCount: Number(target.sourceLineCount) || 0,
+                sourceSpacing: Array.isArray(target.sourceSpacing) ? target.sourceSpacing : [],
+                savedLineCount,
+                savedSpacing,
+                savedLineMatches,
+                visibleEditedLineCounts,
+                overlayEditedLineCounts,
+                liveSaveSummary,
+                visibleRepresentationCount: visibleEditedCount + overlayEditedCount,
+                visibleOriginalRepresentationCount: visibleOriginalCount + overlayOriginalCount,
+            };
+        });
+
+        const spacingChecksPass = targetDetails.every((detail) => (
+            detail.sourceLineCount >= 2
+            && detail.savedLineCount === detail.sourceLineCount
+            && lineSpacingMatches(detail.sourceSpacing, detail.savedSpacing, NDA_LOAD_LINE_SPACING_TOLERANCE)
+        ));
+        const pdfDuplicateChecksPass = targetDetails.every((detail) => (
+            detail.savedLineMatches.every((matches) => matches.length === 1)
+            && detail.savedOriginalOccurrences === 0
+        ));
+        const editorDuplicateChecksPass = targetDetails.every((detail) => (
+            detail.visibleEditedLineCounts.every((count) => count === 1)
+            && detail.overlayEditedLineCounts.every((count) => count <= 1)
+            && detail.visibleOriginalRepresentationCount === 0
+        ));
+        const preSaveMultilineChecksPass = targetDetails.every((detail) => {
+            return detail.sourceLineCount >= 2
+                && Number(detail.liveSaveSummary?.new_text_line_count || 0) === detail.sourceLineCount
+                && Number(detail.liveSaveSummary?.line_metrics_count || 0) === detail.sourceLineCount;
+        });
+
+        const checks = [
+            {
+                item: 'fixture_document_loaded',
+                result: documentId ? 'PASS' : 'FAIL',
+                description: 'The NDA fixture document was loaded into the editor.',
+                detail: JSON.stringify({
+                    document_id: documentId,
+                    selected_targets: editTargets.map((target) => ({
+                        key: target.key,
+                        top: target.top,
+                        left: target.left,
+                        line_count: target.expectedLineCount,
+                    })),
+                    seed: NDA_RANDOM_EDIT_SEED,
+                }),
+            },
+            {
+                item: 'edited_overlay_fields_are_multiline_before_save',
+                result: preSaveMultilineChecksPass ? 'PASS' : 'FAIL',
+                description: 'Each selected NDA edit target is visibly converted into a multiline paragraph before save, so the regression checks paragraph save behavior rather than a one-line edit.',
+                detail: JSON.stringify(targetDetails.map((detail) => ({
+                    key: detail.key,
+                    source_line_count: detail.sourceLineCount,
+                    expected_line_count: detail.expectedLineCount,
+                    expected_line_boxes: detail.expectedLineBoxes,
+                    original_field_height: detail.height,
+                    edited_text: detail.editedText,
+                }))),
+            },
+            {
+                item: 'saved_pdf_has_one_copy_of_each_edited_block',
+                result: pdfDuplicateChecksPass ? 'PASS' : 'FAIL',
+                description: 'After save, page 1 of the PDF contains one copy of each edited NDA block and no retained original block text for those edits.',
+                detail: JSON.stringify(targetDetails.map((detail) => ({
+                    key: detail.key,
+                    edited_text: detail.editedText,
+                    edited_occurrences: detail.savedEditedOccurrences,
+                    original_occurrences: detail.savedOriginalOccurrences,
+                    saved_block: detail.savedBlock,
+                }))),
+            },
+            {
+                item: 'reloaded_editor_has_no_duplicate_saved_annotations',
+                result: editorDuplicateChecksPass ? 'PASS' : 'FAIL',
+                description: 'Reloading the editor shows exactly one visible representation of each edited NDA block and no surviving original text copy.',
+                detail: JSON.stringify(targetDetails.map((detail) => ({
+                    key: detail.key,
+                    edited_text: detail.editedText,
+                    visible_annotation_summary: detail.visibleAnnotationSummary,
+                    overlay_summary: detail.overlaySummary,
+                    overlay_field_matches: detail.overlayFieldMatches,
+                    visible_line_counts: detail.visibleEditedLineCounts,
+                    overlay_line_counts: detail.overlayEditedLineCounts,
+                    visible_original_representation_count: detail.visibleOriginalRepresentationCount,
+                }))),
+            },
+            {
+                item: 'reloaded_overlay_preserves_paragraph_line_spacing',
+                result: spacingChecksPass ? 'PASS' : 'FAIL',
+                description: 'The saved PDF preserves the original paragraph line count and inter-line spacing for the edited multiline NDA blocks.',
+                detail: JSON.stringify(targetDetails.map((detail) => ({
+                    key: detail.key,
+                    source_line_count: detail.sourceLineCount,
+                    saved_line_count: detail.savedLineCount,
+                    source_spacing: detail.sourceSpacing,
+                    saved_spacing: detail.savedSpacing,
+                    saved_line_matches: detail.savedLineMatches,
+                }))),
+            },
+        ];
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'NDA Random Page-One Reload Overlay', kind: 'image', filename: reloadScreenshotName },
+                { label: 'NDA Random Page-One Final PDF', kind: 'pdf', filename: finalPdfName },
+            ],
+            fileSize: fs.existsSync(finalPdfPath) ? fs.statSync(finalPdfPath).size : 0,
+            metadata: {
+                document_id: documentId,
+                seed: NDA_RANDOM_EDIT_SEED,
+                overlay_save_request_summary: overlaySaveRequestSummary,
+                selected_targets: targetDetails,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runMixedAnnotationLayerStarsNoDuplicatesFlow() {
+    const test = TESTS.test_23_mixed_annotation_layer_stars_no_duplicates;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const reloadScreenshotName = buildArtifactName(test.key, runToken, 'mixed_annotation_reload');
+    const finalPdfName = buildArtifactName(test.key, runToken, 'mixed_annotation_final', 'pdf');
+    const movedReloadScreenshotName = buildArtifactName(test.key, runToken, 'mixed_annotation_moved_reload');
+    const movedFinalPdfName = buildArtifactName(test.key, runToken, 'mixed_annotation_moved_final', 'pdf');
+    const reloadScreenshotPath = path.join(OUTPUT_DIR, reloadScreenshotName);
+    const finalPdfPath = path.join(OUTPUT_DIR, finalPdfName);
+    const movedReloadScreenshotPath = path.join(OUTPUT_DIR, movedReloadScreenshotName);
+    const movedFinalPdfPath = path.join(OUTPUT_DIR, movedFinalPdfName);
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+
+    try {
+        documentId = await createBlankDocument(page);
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+        const sessionId = await ensurePdfSessionId(page, 'pdf_test_mixed_layer');
+
+        const initialParagraphMetrics = [];
+        for (const paragraph of MIXED_LAYER_PARAGRAPH_CASES) {
+            await createTextAnnotationAt(page, paragraph.fragment, paragraph.left + 8, paragraph.top + 20);
+            await updateTextAnnotation(page, paragraph.fragment, {
+                text: paragraph.text,
+                keepBounds: true,
+                left: paragraph.left,
+                top: paragraph.top,
+                width: paragraph.width,
+                height: paragraph.height,
+            });
+            const metrics = await readTextAnnotationMetrics(page, paragraph.fragment);
+            initialParagraphMetrics.push({
+                ...paragraph,
+                metrics,
+            });
+        }
+
+        for (const star of MIXED_LAYER_STAR_CASES) {
+            await drawShapeAtRegion(page, 'star', star.region, {
+                fill: star.fill,
+                stroke: star.stroke,
+                fillTransparent: false,
+                strokeTransparent: false,
+                strokeWidth: 2,
+                opacity: 100,
+            });
+        }
+
+        const preSaveStars = await readShapeAnnotationSummaries(page, 'star');
+        await clickOutsideFirstPage(page);
+        await waitForAnnotationSave(page);
+        await downloadSavedPdf(page, documentId, finalPdfPath);
+
+        const savedAnnotationsResponse = await fetchSavedAnnotations(page, documentId, sessionId);
+        await clearAnnotationSessionState(page, documentId);
+        await page.goto(`${BASE_URL}/documents/${documentId}/edit`, { waitUntil: 'domcontentloaded', timeout: 90000 });
+        await waitForEditorReady(page);
+        await capturePageScreenshot(page, reloadScreenshotPath);
+        const reloadBaseState = await page.evaluate(() => ({
+            basePdfUrl: typeof basePdfUrl === 'string' ? basePdfUrl : '',
+            originalPdfUrl: typeof originalPdfUrl === 'string' ? originalPdfUrl : '',
+            cleanPdfUrl: typeof cleanPdfUrl === 'string' ? cleanPdfUrl : '',
+            pdfUrl: typeof pdfUrl === 'string' ? pdfUrl : '',
+        }));
+
+        const reloadedStars = await readShapeAnnotationSummaries(page, 'star');
+        const reloadedParagraphMetrics = [];
+        for (const paragraph of MIXED_LAYER_PARAGRAPH_CASES) {
+            reloadedParagraphMetrics.push({
+                key: paragraph.key,
+                fragment: paragraph.fragment,
+                metrics: await readTextAnnotationMetrics(page, paragraph.fragment),
+            });
+        }
+
+        const starLocator = page.locator('.annotation').filter({
+            has: page.locator('svg polygon[points="50,5 61,38 95,38 68,58 79,91 50,71 21,91 32,58 5,38 39,38"]'),
+        });
+        const editableChecks = [];
+        const starCount = await starLocator.count();
+        for (let index = 0; index < starCount; index += 1) {
+            await starLocator.nth(index).click({ force: true });
+            await page.waitForTimeout(200);
+            editableChecks.push(await page.evaluate(() => ({
+                selectedType: selectedAnnotation?.type || null,
+                selectedShapeType: selectedAnnotation?.shapeType || null,
+                actionBarVisible: selectedAnnotation?.element
+                    ? getComputedStyle(selectedAnnotation.element.querySelector('.shape-action-bar')).display !== 'none'
+                    : false,
+            })));
+        }
+
+        const pdfDrawings = await fetchPdfDrawingSummaries(finalPdfPath);
+        const filledDrawings = (Array.isArray(pdfDrawings.drawings) ? pdfDrawings.drawings : [])
+            .filter((drawing) => Array.isArray(drawing.rect) && drawing.rect.length === 4 && drawing.fill)
+            .sort((a, b) => a.rect[0] - b.rect[0] || a.rect[1] - b.rect[1]);
+
+        const expectedPdfRects = preSaveStars
+            .map((star) => ({
+                ...star,
+                rect: [
+                    star.pdfX,
+                    Number(pdfDrawings.page_height || 0) - (star.pdfY + star.pdfHeight),
+                    star.pdfX + star.pdfWidth,
+                    Number(pdfDrawings.page_height || 0) - star.pdfY,
+                ],
+            }))
+            .sort((a, b) => a.rect[0] - b.rect[0] || a.rect[1] - b.rect[1]);
+
+        const matchedDrawingDetails = expectedPdfRects.map((expectedStar, index) => {
+            const drawing = filledDrawings[index] || null;
+            return {
+                key: expectedStar.fillColor === '#0000ff' ? 'blue_star' : `star_${index + 1}`,
+                expected_rect: expectedStar.rect,
+                actual_rect: drawing?.rect || null,
+                expected_fill: expectedStar.fillColor,
+                actual_fill: drawing?.fill || null,
+                center_delta_x: drawing ? Math.abs(bboxCenter(expectedStar.rect).x - bboxCenter(drawing.rect).x) : null,
+                center_delta_y: drawing ? Math.abs(bboxCenter(expectedStar.rect).y - bboxCenter(drawing.rect).y) : null,
+            };
+        });
+
+        const savedAnnotationCounts = Array.isArray(savedAnnotationsResponse?.body?.annotations)
+            ? savedAnnotationsResponse.body.annotations.reduce((acc, annotation) => {
+                const key = annotation?.type === 'shape'
+                    ? `${annotation.type}:${annotation.shapeType || 'unknown'}`
+                    : (annotation?.type || 'text');
+                acc[key] = (acc[key] || 0) + 1;
+                return acc;
+            }, {})
+            : {};
+
+        const paragraphChecks = initialParagraphMetrics.map((initialParagraph) => {
+            const reloadedParagraph = reloadedParagraphMetrics.find((entry) => entry.key === initialParagraph.key);
+            return {
+                key: initialParagraph.key,
+                targetLeft: initialParagraph.left,
+                targetTop: initialParagraph.top,
+                targetWidth: initialParagraph.width,
+                targetHeight: initialParagraph.height,
+                before: initialParagraph.metrics,
+                after: reloadedParagraph?.metrics || null,
+                leftDelta: reloadedParagraph ? Math.abs(reloadedParagraph.metrics.left - initialParagraph.left) : null,
+                topDelta: reloadedParagraph ? Math.abs(reloadedParagraph.metrics.top - initialParagraph.top) : null,
+                widthDelta: reloadedParagraph ? Math.abs(reloadedParagraph.metrics.width - initialParagraph.width) : null,
+                heightDelta: reloadedParagraph ? Math.abs(reloadedParagraph.metrics.height - initialParagraph.height) : null,
+                lineCountDelta: reloadedParagraph ? Math.abs(reloadedParagraph.metrics.lineCount - initialParagraph.metrics.lineCount) : null,
+            };
+        });
+
+        const pdfStarCountPass = filledDrawings.length === MIXED_LAYER_STAR_CASES.length;
+        const pdfStarPositionPass = matchedDrawingDetails.every((detail) => (
+            detail.actual_rect
+            && Number(detail.center_delta_x) <= MIXED_LAYER_POSITION_TOLERANCE
+            && Number(detail.center_delta_y) <= MIXED_LAYER_POSITION_TOLERANCE
+        ));
+        const pdfBlueStarPass = filledDrawings.some((drawing) => normalizeHex(drawing.fill) === '#0000ff');
+        const editorBasePass = reloadBaseState.basePdfUrl === reloadBaseState.originalPdfUrl;
+        const editorStarCountPass = reloadedStars.length === MIXED_LAYER_STAR_CASES.length;
+        const editorStarPositionPass = preSaveStars.length === reloadedStars.length && preSaveStars.every((star, index) => {
+            const reloadedStar = reloadedStars[index];
+            return reloadedStar
+                && approxEqual(reloadedStar.pdfX, star.pdfX, 1)
+                && approxEqual(reloadedStar.pdfY, star.pdfY, 1)
+                && approxEqual(reloadedStar.pdfWidth, star.pdfWidth, 1)
+                && approxEqual(reloadedStar.pdfHeight, star.pdfHeight, 1);
+        });
+        const editorStarEditablePass = editableChecks.length === MIXED_LAYER_STAR_CASES.length && editableChecks.every((detail) => (
+            detail.selectedType === 'shape'
+            && detail.selectedShapeType === 'star'
+            && detail.actionBarVisible === true
+        ));
+        const paragraphLayoutPass = paragraphChecks.every((detail) => (
+            detail.after
+            && Number(detail.leftDelta) <= MIXED_LAYER_POSITION_TOLERANCE
+            && Number(detail.topDelta) <= MIXED_LAYER_POSITION_TOLERANCE
+            && Number(detail.widthDelta) <= 10
+            && Number(detail.heightDelta) <= MIXED_LAYER_POSITION_TOLERANCE
+            && Number(detail.lineCountDelta) <= MIXED_LAYER_LINE_COUNT_TOLERANCE
+        ));
+
+        await starLocator.first().click({ force: true });
+        await page.waitForTimeout(150);
+        await dragLocator(page, starLocator.first(), 96, -54);
+        const movedStarBeforeSave = (await readShapeAnnotationSummaries(page, 'star'))[0] || null;
+        await waitForAnnotationSave(page);
+        await downloadSavedPdf(page, documentId, movedFinalPdfPath);
+        await clearAnnotationSessionState(page, documentId);
+        await page.goto(`${BASE_URL}/documents/${documentId}/edit`, { waitUntil: 'domcontentloaded', timeout: 90000 });
+        await waitForEditorReady(page);
+        await capturePageScreenshot(page, movedReloadScreenshotPath);
+        const movedReloadState = await page.evaluate(() => ({
+            basePdfUrl: typeof basePdfUrl === 'string' ? basePdfUrl : '',
+            originalPdfUrl: typeof originalPdfUrl === 'string' ? originalPdfUrl : '',
+        }));
+        const movedReloadStars = await readShapeAnnotationSummaries(page, 'star');
+        const movedPdfDrawings = await fetchPdfDrawingSummaries(movedFinalPdfPath);
+        const movedFilledDrawings = (Array.isArray(movedPdfDrawings.drawings) ? movedPdfDrawings.drawings : [])
+            .filter((drawing) => Array.isArray(drawing.rect) && drawing.rect.length === 4 && drawing.fill)
+            .sort((a, b) => a.rect[0] - b.rect[0] || a.rect[1] - b.rect[1]);
+        const movedExpectedRect = movedStarBeforeSave ? [
+            movedStarBeforeSave.pdfX,
+            Number(movedPdfDrawings.page_height || 0) - (movedStarBeforeSave.pdfY + movedStarBeforeSave.pdfHeight),
+            movedStarBeforeSave.pdfX + movedStarBeforeSave.pdfWidth,
+            Number(movedPdfDrawings.page_height || 0) - movedStarBeforeSave.pdfY,
+        ] : null;
+        const movedMatchingDrawing = movedExpectedRect
+            ? movedFilledDrawings.find((drawing) => {
+                const expectedCenter = bboxCenter(movedExpectedRect);
+                const actualCenter = bboxCenter(drawing.rect);
+                return Math.abs(expectedCenter.x - actualCenter.x) <= MIXED_LAYER_POSITION_TOLERANCE
+                    && Math.abs(expectedCenter.y - actualCenter.y) <= MIXED_LAYER_POSITION_TOLERANCE;
+            }) || null
+            : null;
+        const movedSavePass = movedFilledDrawings.length === MIXED_LAYER_STAR_CASES.length
+            && movedReloadStars.length === MIXED_LAYER_STAR_CASES.length
+            && movedReloadState.basePdfUrl === movedReloadState.originalPdfUrl
+            && Boolean(movedMatchingDrawing);
+
+        const checks = [
+            {
+                item: 'blank_pdf_created',
+                result: documentId ? 'PASS' : 'FAIL',
+                description: 'A fresh blank PDF was created and used for the mixed paragraph and star annotation-layer save.',
+                detail: JSON.stringify({ document_id: documentId, session_id: sessionId }),
+            },
+            {
+                item: 'saved_db_keeps_two_paragraphs_and_two_stars',
+                result: savedAnnotationsResponse?.ok
+                    && Number(savedAnnotationCounts.text || 0) === MIXED_LAYER_PARAGRAPH_CASES.length
+                    && Number(savedAnnotationCounts['shape:star'] || 0) === MIXED_LAYER_STAR_CASES.length ? 'PASS' : 'FAIL',
+                description: 'The saved annotation session contains exactly the two paragraph annotations and two star annotations.',
+                detail: JSON.stringify({
+                    ok: savedAnnotationsResponse?.ok || false,
+                    status: savedAnnotationsResponse?.status || null,
+                    counts: savedAnnotationCounts,
+                }),
+            },
+            {
+                item: 'saved_pdf_has_exactly_two_star_drawings',
+                result: pdfStarCountPass ? 'PASS' : 'FAIL',
+                description: 'The saved PDF contains exactly two filled star drawings, so the stars were not duplicated on save.',
+                detail: JSON.stringify(filledDrawings),
+            },
+            {
+                item: 'saved_pdf_star_positions_match_annotations',
+                result: pdfStarPositionPass ? 'PASS' : 'FAIL',
+                description: 'The saved PDF star drawing positions match the original annotation geometry.',
+                detail: JSON.stringify(matchedDrawingDetails),
+            },
+            {
+                item: 'saved_pdf_blue_star_persists',
+                result: pdfBlueStarPass ? 'PASS' : 'FAIL',
+                description: 'One of the saved PDF stars keeps the requested blue fill color.',
+                detail: JSON.stringify(filledDrawings.map((drawing) => ({ rect: drawing.rect, fill: drawing.fill, stroke: drawing.stroke }))),
+            },
+            {
+                item: 'reloaded_editor_uses_original_base',
+                result: editorBasePass ? 'PASS' : 'FAIL',
+                description: 'The reloaded editor uses the pristine original PDF base for annotation-only reloads instead of the already-stamped working file.',
+                detail: JSON.stringify(reloadBaseState),
+            },
+            {
+                item: 'reloaded_editor_has_two_star_annotations_only',
+                result: editorStarCountPass ? 'PASS' : 'FAIL',
+                description: 'Reloading the editor shows exactly two star annotations instead of duplicated saved stars.',
+                detail: JSON.stringify(reloadedStars),
+            },
+            {
+                item: 'reloaded_editor_keeps_star_positions',
+                result: editorStarPositionPass ? 'PASS' : 'FAIL',
+                description: 'The reloaded editable star annotations keep the same saved geometry.',
+                detail: JSON.stringify({
+                    before_save: preSaveStars,
+                    after_reload: reloadedStars,
+                }),
+            },
+            {
+                item: 'reloaded_stars_are_editable',
+                result: editorStarEditablePass ? 'PASS' : 'FAIL',
+                description: 'After reload, each star can still be selected as an editable annotation with the shape action bar visible.',
+                detail: JSON.stringify(editableChecks),
+            },
+            {
+                item: 'reloaded_paragraph_boxes_stay_intact',
+                result: paragraphLayoutPass ? 'PASS' : 'FAIL',
+                description: 'The two paragraph annotations keep their saved positions, box sizes, and wrapped line counts after reload.',
+                detail: JSON.stringify(paragraphChecks),
+            },
+            {
+                item: 'moved_reloaded_star_overwrites_instead_of_duplicates',
+                result: movedSavePass ? 'PASS' : 'FAIL',
+                description: 'Moving a reloaded editable star and saving again overwrites that saved shape instead of stamping a duplicate copy.',
+                detail: JSON.stringify({
+                    moved_star_before_save: movedStarBeforeSave,
+                    moved_reload_state: movedReloadState,
+                    moved_reload_stars: movedReloadStars,
+                    moved_pdf_drawings: movedFilledDrawings,
+                    matched_moved_drawing: movedMatchingDrawing,
+                }),
+            },
+        ];
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Mixed Annotation Reload', kind: 'image', filename: reloadScreenshotName },
+                { label: 'Mixed Annotation Final PDF', kind: 'pdf', filename: finalPdfName },
+                { label: 'Mixed Annotation Moved Reload', kind: 'image', filename: movedReloadScreenshotName },
+                { label: 'Mixed Annotation Moved Final PDF', kind: 'pdf', filename: movedFinalPdfName },
+            ],
+            fileSize: fs.existsSync(finalPdfPath) ? fs.statSync(finalPdfPath).size : 0,
+            metadata: {
+                document_id: documentId,
+                session_id: sessionId,
+                saved_annotation_counts: savedAnnotationCounts,
+                reload_base_state: reloadBaseState,
+                pre_save_stars: preSaveStars,
+                reloaded_stars: reloadedStars,
+                moved_reload_state: movedReloadState,
+                moved_reload_stars: movedReloadStars,
+                moved_pdf_drawings: movedFilledDrawings,
+                paragraph_checks: paragraphChecks,
+                pdf_drawings: filledDrawings,
+            },
         });
     } finally {
         if (documentId) {
@@ -2887,6 +5923,280 @@ async function runInvoiceCodeColumnSeparatedFlow() {
                 await deleteDocument(page, documentId);
             } catch (_error) {
                 // Ignore cleanup failures.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runOverlayTextBackgroundPersistsAfterSaveFlow() {
+    const test = TESTS.test_25_overlay_text_background_persists_after_save;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const beforeSaveName = buildArtifactName(test.key, runToken, 'before_save');
+    const afterSaveName = buildArtifactName(test.key, runToken, 'after_save');
+    const finalPdfName = buildArtifactName(test.key, runToken, 'final', 'pdf');
+    const beforeSavePath = path.join(OUTPUT_DIR, beforeSaveName);
+    const afterSavePath = path.join(OUTPUT_DIR, afterSaveName);
+    const finalPdfPath = path.join(OUTPUT_DIR, finalPdfName);
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+
+    try {
+        await page.goto(`${BASE_URL}/pdf-editor`, { waitUntil: 'domcontentloaded', timeout: 90000 });
+        await clearPdfSessionId(page);
+
+        documentId = await createFixtureDocument(page, NDA_FIXTURE_PATH);
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+        await forceRefreshOverlay(page, documentId);
+        await activateOverlay(page);
+
+        const targetSelector = await getOverlayFieldSelector(page, OVERLAY_BACKGROUND_TEST_TARGET_TEXT);
+        const initialVisual = await readOverlayFieldBackgroundState(page, targetSelector);
+        const appliedBackground = await setOverlayFieldBackgroundColor(page, targetSelector, OVERLAY_BACKGROUND_TEST_COLOR);
+        await capturePageScreenshot(page, beforeSavePath);
+
+        await waitForOverlaySaveComplete(page);
+        await page.waitForLoadState('domcontentloaded', { timeout: 90000 }).catch(() => {});
+        await waitForEditorReady(page);
+        await forceRefreshOverlay(page, documentId);
+        await activateOverlay(page);
+
+        const reloadedSelector = await getOverlayFieldSelector(page, OVERLAY_BACKGROUND_TEST_TARGET_TEXT);
+        const savedVisual = await readOverlayFieldBackgroundState(page, reloadedSelector);
+        await capturePageScreenshot(page, afterSavePath);
+
+        await downloadSavedPdf(page, documentId, finalPdfPath);
+        const pdfDrawings = await fetchPdfDrawingSummaries(finalPdfPath);
+        const targetCenter = bboxCenter(appliedBackground.bbox || [0, 0, 0, 0]);
+        const matchingDrawings = (Array.isArray(pdfDrawings.drawings) ? pdfDrawings.drawings : [])
+            .filter((drawing) => Array.isArray(drawing.rect) && drawing.rect.length === 4)
+            .filter((drawing) => normalizeHex(drawing.fill, '') === OVERLAY_BACKGROUND_TEST_COLOR)
+            .map((drawing) => {
+                const drawingCenter = bboxCenter(drawing.rect);
+                return {
+                    rect: drawing.rect,
+                    fill: drawing.fill,
+                    overlap: rectOverlapRatio(appliedBackground.bbox, drawing.rect),
+                    centerDeltaX: Math.abs(targetCenter.x - drawingCenter.x),
+                    centerDeltaY: Math.abs(targetCenter.y - drawingCenter.y),
+                };
+            })
+            .sort((left, right) => {
+                if (right.overlap !== left.overlap) {
+                    return right.overlap - left.overlap;
+                }
+                return (left.centerDeltaX + left.centerDeltaY) - (right.centerDeltaX + right.centerDeltaY);
+            });
+        const matchedDrawing = matchingDrawings[0] || null;
+
+        const savedVisualHexes = [
+            savedVisual.textBackground,
+            savedVisual.wrapperBackground,
+            savedVisual.fieldBackground,
+            savedVisual.datasetBackground,
+        ].map((value) => colorToHex(value, '')).filter(Boolean);
+        const editorBackgroundPass = savedVisualHexes.includes(OVERLAY_BACKGROUND_TEST_COLOR);
+        const savedPdfBackgroundPass = Boolean(
+            matchedDrawing
+            && matchedDrawing.overlap >= 0.6
+            && matchedDrawing.centerDeltaX <= OVERLAY_BACKGROUND_MATCH_TOLERANCE
+            && matchedDrawing.centerDeltaY <= OVERLAY_BACKGROUND_MATCH_TOLERANCE
+        );
+
+        const checks = [
+            {
+                item: 'overlay_background_edit_record_created',
+                result: normalizeHex(appliedBackground.backgroundColor, '') === OVERLAY_BACKGROUND_TEST_COLOR ? 'PASS' : 'FAIL',
+                description: 'Applying the overlay background produces a persisted edit record with the requested background color before save.',
+                detail: JSON.stringify({
+                    applied_background: appliedBackground,
+                    initial_visual: initialVisual,
+                }),
+            },
+            {
+                item: 'overlay_background_reloads_after_save',
+                result: editorBackgroundPass ? 'PASS' : 'FAIL',
+                description: 'After save and overlay reload, the target invoice field still renders with the requested background color in the editor.',
+                detail: JSON.stringify({
+                    target_text: OVERLAY_BACKGROUND_TEST_TARGET_TEXT,
+                    expected_background: OVERLAY_BACKGROUND_TEST_COLOR,
+                    saved_visual: savedVisual,
+                    saved_visual_hexes: savedVisualHexes,
+                }),
+            },
+            {
+                item: 'saved_pdf_contains_overlay_background_fill',
+                result: savedPdfBackgroundPass ? 'PASS' : 'FAIL',
+                description: 'The saved PDF contains a filled drawing near the edited overlay field bbox with the requested background color.',
+                detail: JSON.stringify({
+                    expected_bbox: appliedBackground.bbox,
+                    expected_fill: OVERLAY_BACKGROUND_TEST_COLOR,
+                    matched_drawing: matchedDrawing,
+                    candidate_drawings: matchingDrawings,
+                }),
+            },
+        ];
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Overlay Background Before Save', kind: 'image', filename: beforeSaveName },
+                { label: 'Overlay Background After Save', kind: 'image', filename: afterSaveName },
+                { label: 'Overlay Background Final PDF', kind: 'pdf', filename: finalPdfName },
+            ],
+            fileSize: fs.existsSync(finalPdfPath) ? fs.statSync(finalPdfPath).size : 0,
+            metadata: {
+                document_id: documentId,
+                target_text: OVERLAY_BACKGROUND_TEST_TARGET_TEXT,
+                expected_background: OVERLAY_BACKGROUND_TEST_COLOR,
+                applied_background: appliedBackground,
+                initial_visual: initialVisual,
+                saved_visual: savedVisual,
+                matched_drawing: matchedDrawing,
+                candidate_drawings: matchingDrawings,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runOverlayBackgroundInLoadedSavedPdfModeFlow() {
+    const test = TESTS.test_26_overlay_background_persists_in_loaded_saved_pdf_mode;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const beforeSaveName = buildArtifactName(test.key, runToken, 'before_save');
+    const afterSaveName = buildArtifactName(test.key, runToken, 'after_save');
+    const finalPdfName = buildArtifactName(test.key, runToken, 'final', 'pdf');
+    const beforeSavePath = path.join(OUTPUT_DIR, beforeSaveName);
+    const afterSavePath = path.join(OUTPUT_DIR, afterSaveName);
+    const finalPdfPath = path.join(OUTPUT_DIR, finalPdfName);
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+
+    try {
+        await page.goto(`${BASE_URL}/pdf-editor`, { waitUntil: 'domcontentloaded', timeout: 90000 });
+        await clearPdfSessionId(page);
+
+        // Create a fresh document and generate a session ID.
+        documentId = await createFixtureDocument(page, NDA_FIXTURE_PATH);
+        await waitForEditorReady(page);
+        const sessionId = await ensurePdfSessionId(page, 'test26');
+
+        // Navigate directly into loadedSavedPdf mode — the session has no prior saves
+        // so the overlay will be rebuilt from extraction (same as the real user scenario
+        // where the user loads a previously saved session).
+        await openLoadedSavedPdfEditor(page, documentId, sessionId);
+        await activateOverlay(page);
+
+        // Apply a background color to the lead-in overlay field WITHOUT changing the text.
+        const targetSelector = await getOverlayFieldSelector(page, OVERLAY_BACKGROUND_TEST_TARGET_TEXT);
+        const appliedBackground = await setOverlayFieldBackgroundColor(page, targetSelector, OVERLAY_BACKGROUND_TEST_COLOR);
+        await capturePageScreenshot(page, beforeSavePath);
+
+        // Save in loadedSavedPdf mode.
+        await waitForOverlaySaveComplete(page);
+        await page.waitForLoadState('domcontentloaded', { timeout: 90000 }).catch(() => {});
+        await waitForEditorReady(page);
+        await capturePageScreenshot(page, afterSavePath);
+
+        // Download the PDF and verify the background fill is present.
+        await downloadSavedPdf(page, documentId, finalPdfPath);
+        const pdfDrawings = await fetchPdfDrawingSummaries(finalPdfPath);
+        const targetCenter = bboxCenter(appliedBackground.bbox || [0, 0, 0, 0]);
+        const matchingDrawings = (Array.isArray(pdfDrawings.drawings) ? pdfDrawings.drawings : [])
+            .filter((drawing) => Array.isArray(drawing.rect) && drawing.rect.length === 4)
+            .filter((drawing) => normalizeHex(drawing.fill, '') === OVERLAY_BACKGROUND_TEST_COLOR)
+            .map((drawing) => {
+                const drawingCenter = bboxCenter(drawing.rect);
+                return {
+                    rect: drawing.rect,
+                    fill: drawing.fill,
+                    overlap: rectOverlapRatio(appliedBackground.bbox, drawing.rect),
+                    centerDeltaX: Math.abs(targetCenter.x - drawingCenter.x),
+                    centerDeltaY: Math.abs(targetCenter.y - drawingCenter.y),
+                };
+            })
+            .sort((left, right) => {
+                if (right.overlap !== left.overlap) return right.overlap - left.overlap;
+                return (left.centerDeltaX + left.centerDeltaY) - (right.centerDeltaX + right.centerDeltaY);
+            });
+        const matchedDrawing = matchingDrawings[0] || null;
+
+        const savedPdfBackgroundPass = Boolean(
+            matchedDrawing
+            && matchedDrawing.overlap >= 0.5
+            && matchedDrawing.centerDeltaX <= OVERLAY_BACKGROUND_MATCH_TOLERANCE * 2
+            && matchedDrawing.centerDeltaY <= OVERLAY_BACKGROUND_MATCH_TOLERANCE * 2
+        );
+
+        const checks = [
+            {
+                item: 'background_edit_record_created_in_loaded_saved_mode',
+                result: normalizeHex(appliedBackground.backgroundColor, '') === OVERLAY_BACKGROUND_TEST_COLOR ? 'PASS' : 'FAIL',
+                description: 'Applying a background in loadedSavedPdf mode produces an edit record with the requested background color.',
+                detail: JSON.stringify({ applied_background: appliedBackground }),
+            },
+            {
+                item: 'saved_pdf_contains_background_fill_after_loaded_save',
+                result: savedPdfBackgroundPass ? 'PASS' : 'FAIL',
+                description: 'After saving in loadedSavedPdf mode with a background-only change, the saved PDF contains a filled drawing at the overlay field position.',
+                detail: JSON.stringify({
+                    expected_bbox: appliedBackground.bbox,
+                    expected_fill: OVERLAY_BACKGROUND_TEST_COLOR,
+                    matched_drawing: matchedDrawing,
+                    candidate_drawings: matchingDrawings,
+                }),
+            },
+        ];
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Before Save (loadedSavedPdf mode)', kind: 'image', filename: beforeSaveName },
+                { label: 'After Save (loadedSavedPdf mode)', kind: 'image', filename: afterSaveName },
+                { label: 'Final PDF', kind: 'pdf', filename: finalPdfName },
+            ],
+            fileSize: fs.existsSync(finalPdfPath) ? fs.statSync(finalPdfPath).size : 0,
+            metadata: {
+                document_id: documentId,
+                session_id: sessionId,
+                target_text: OVERLAY_BACKGROUND_TEST_TARGET_TEXT,
+                expected_background: OVERLAY_BACKGROUND_TEST_COLOR,
+                applied_background: appliedBackground,
+                matched_drawing: matchedDrawing,
+                candidate_drawings: matchingDrawings,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
             }
         }
         await browser.close();
@@ -4177,6 +7487,154 @@ async function runDeleteAllPromotedTextSaveFlow() {
             },
         });
     } finally {
+        await browser.close();
+    }
+}
+
+async function runDownloadPdfTopRightTextPositionFlow() {
+    const test = TESTS.test_24_download_pdf_top_right_text_position;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const screenshotName = buildArtifactName(test.key, runToken, 'top_right_before_save');
+    const downloadPdfName = buildArtifactName(test.key, runToken, 'download_pdf', 'pdf');
+    const screenshotPath = path.join(OUTPUT_DIR, screenshotName);
+    const downloadPdfPath = path.join(OUTPUT_DIR, downloadPdfName);
+
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({
+        viewport: VIEWPORT,
+        acceptDownloads: true,
+    });
+    const page = await context.newPage();
+    let documentId = null;
+
+    try {
+        documentId = await createBlankDocument(page, {
+            pageSize: 'Letter',
+            orientation: 'portrait',
+        });
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+
+        await createTextAnnotationAtWithStyles(page, DOWNLOAD_TOP_RIGHT_TEXT, 120, 140, {
+            fontSize: DOWNLOAD_TOP_RIGHT_FONT_SIZE_PX,
+        });
+
+        const initialState = await readTextAnnotationState(page, DOWNLOAD_TOP_RIGHT_TEXT);
+        const targetLeft = Math.max(0, Math.round(initialState.overlayWidth - initialState.width - DOWNLOAD_TOP_RIGHT_MARGIN_PX));
+        const targetTop = DOWNLOAD_TOP_RIGHT_MARGIN_PX;
+        const moveState = await moveTextAnnotationTo(page, DOWNLOAD_TOP_RIGHT_TEXT, targetLeft, targetTop);
+        const movedState = await readTextAnnotationState(page, DOWNLOAD_TOP_RIGHT_TEXT);
+
+        await capturePageScreenshot(page, screenshotPath);
+        await saveAnnotationsOnly(page);
+        await downloadPdfViaToolbar(page, downloadPdfPath);
+
+        const downloadSearch = loadPdfSearchRects(downloadPdfPath, 1, DOWNLOAD_TOP_RIGHT_TEXT);
+        const downloadRect = Array.isArray(downloadSearch.rects) && downloadSearch.rects.length > 0
+            ? downloadSearch.rects[0]
+            : null;
+        const downloadSpansByLine = loadPdfTargetLineSpans(downloadPdfPath, 1, [DOWNLOAD_TOP_RIGHT_TEXT]);
+        const downloadLineSpans = Array.isArray(downloadSpansByLine?.[DOWNLOAD_TOP_RIGHT_TEXT])
+            ? downloadSpansByLine[DOWNLOAD_TOP_RIGHT_TEXT]
+            : [];
+        const downloadPrimarySpan = downloadLineSpans.find((span) => normalize(span?.text) === normalize(DOWNLOAD_TOP_RIGHT_TEXT))
+            || downloadLineSpans[0]
+            || null;
+
+        const currentScale = movedState.currentScale || initialState.currentScale || 1;
+        const expectedTopPdf = movedState.top / currentScale;
+        const expectedRightGapPdf = (movedState.overlayWidth - (movedState.left + movedState.width)) / currentScale;
+        const actualTopPdf = downloadRect ? downloadRect[1] : null;
+        const actualRightGapPdf = downloadRect ? (downloadSearch.page_width - downloadRect[2]) : null;
+        const topError = downloadRect ? Math.abs(actualTopPdf - expectedTopPdf) : Infinity;
+        const rightGapError = downloadRect ? Math.abs(actualRightGapPdf - expectedRightGapPdf) : Infinity;
+        const actualDownloadFontSize = Number(downloadPrimarySpan?.size) || null;
+        const fontSizeError = actualDownloadFontSize === null
+            ? Infinity
+            : Math.abs(actualDownloadFontSize - DOWNLOAD_TOP_RIGHT_FONT_SIZE_PX);
+
+        const checks = [
+            {
+                item: 'browser_font_size_is_57px',
+                result: Math.abs((Number(movedState.requestedFontSize) || 0) - DOWNLOAD_TOP_RIGHT_FONT_SIZE_PX) <= 0.5 ? 'PASS' : 'FAIL',
+                description: `The text annotation kept the requested editor font size of ${DOWNLOAD_TOP_RIGHT_FONT_SIZE_PX}px before save.`,
+                detail: `requested_font_size=${movedState.requestedFontSize} rendered_font_size_px=${movedState.fontSizePx.toFixed(2)}`,
+            },
+            {
+                item: 'browser_drag_reaches_top_right_corner',
+                result: Math.abs(movedState.left - targetLeft) <= 6 && Math.abs(movedState.top - targetTop) <= 6 ? 'PASS' : 'FAIL',
+                description: 'The committed text annotation was dragged into the top-right corner before save.',
+                detail: `target=(${targetLeft}, ${targetTop}) actual=(${movedState.left}, ${movedState.top}) move_state=${JSON.stringify(moveState)}`,
+            },
+            {
+                item: 'download_pdf_contains_text',
+                result: downloadRect ? 'PASS' : 'FAIL',
+                description: 'The Download PDF export contains the stamped "Wolfchenez News" text.',
+                detail: `download_rect=${JSON.stringify(downloadRect)}`,
+            },
+            {
+                item: 'download_pdf_font_size_is_exactly_57px',
+                result: fontSizeError <= DOWNLOAD_TOP_RIGHT_FONT_SIZE_TOLERANCE ? 'PASS' : 'FAIL',
+                description: 'The Download PDF export keeps the stamped text at exactly 57pt in the PDF content stream.',
+                detail: JSON.stringify({
+                    expected_font_size: DOWNLOAD_TOP_RIGHT_FONT_SIZE_PX,
+                    actual_font_size: actualDownloadFontSize,
+                    font_size_error: fontSizeError,
+                    spans: downloadLineSpans,
+                }),
+            },
+            {
+                item: 'download_pdf_top_gap_matches_editor',
+                result: topError <= DOWNLOAD_TOP_RIGHT_POSITION_TOLERANCE ? 'PASS' : 'FAIL',
+                description: 'The downloaded PDF keeps the text near the same top offset seen in the editor after drag.',
+                detail: `expected_top_pdf=${expectedTopPdf.toFixed(2)} actual_top_pdf=${actualTopPdf?.toFixed?.(2) ?? actualTopPdf} error=${topError.toFixed(2)}`,
+            },
+            {
+                item: 'download_pdf_right_gap_matches_editor',
+                result: rightGapError <= DOWNLOAD_TOP_RIGHT_POSITION_TOLERANCE ? 'PASS' : 'FAIL',
+                description: 'The downloaded PDF keeps the text near the same right-edge offset seen in the editor after drag.',
+                detail: `expected_right_gap_pdf=${expectedRightGapPdf.toFixed(2)} actual_right_gap_pdf=${actualRightGapPdf?.toFixed?.(2) ?? actualRightGapPdf} error=${rightGapError.toFixed(2)}`,
+            },
+        ];
+
+        const status = checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail';
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status,
+            checks,
+            artifacts: [
+                { label: 'Top Right Before Save', kind: 'image', filename: screenshotName },
+                { label: 'Download PDF Export', kind: 'pdf', filename: downloadPdfName },
+            ],
+            fileSize: fs.existsSync(downloadPdfPath) ? fs.statSync(downloadPdfPath).size : 0,
+            metadata: {
+                document_id: documentId,
+                initial_state: initialState,
+                moved_state: movedState,
+                target_left: targetLeft,
+                target_top: targetTop,
+                download_rect: downloadRect,
+                download_line_spans: downloadLineSpans,
+                expected_top_pdf: expectedTopPdf,
+                expected_right_gap_pdf: expectedRightGapPdf,
+                actual_top_pdf: actualTopPdf,
+                actual_right_gap_pdf: actualRightGapPdf,
+                actual_download_font_size: actualDownloadFontSize,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await context.close();
         await browser.close();
     }
 }
