@@ -1557,10 +1557,22 @@
                 min-width: 140px;
                 min-height: 36px;
                 cursor: text;
+                box-sizing: border-box;
             }
             .text-box-creator:focus-within {
                 border-color: rgba(110, 231, 183, 0.9);
                 background: rgba(255,255,255,0.95);
+            }
+            .text-box-creator.promoted-inline-editor {
+                border: none;
+                background: transparent;
+                border-radius: 0;
+                min-width: 0;
+                min-height: 0;
+            }
+            .text-box-creator.promoted-inline-editor:focus-within {
+                border-color: transparent;
+                background: transparent;
             }
             .text-box-creator .tbc-input {
                 width: 100%;
@@ -1579,6 +1591,13 @@
                 word-break: break-word;
                 user-select: text;
                 cursor: text;
+            }
+            .text-box-creator.promoted-inline-editor .tbc-input {
+                min-height: 100%;
+                height: 100%;
+                padding: 0;
+                background: transparent;
+                box-sizing: border-box;
             }
             .text-box-creator .tbc-input:empty::before {
                 content: attr(data-placeholder);
@@ -2125,6 +2144,44 @@
                 z-index: 100000 !important;
                 overflow: visible;
             }
+            .annotation.selected.shape-fill-only-outline {
+                outline: 2px dashed rgba(77, 208, 168, 0.85);
+                outline-offset: 2px;
+                box-shadow: 0 0 0 4px rgba(77, 208, 168, 0.18);
+            }
+            .annotation.line-annotation {
+                overflow: visible;
+            }
+            .annotation.line-annotation::before {
+                content: '';
+                position: absolute;
+                inset: -8px;
+                border: 2px dashed transparent;
+                border-radius: 8px;
+                pointer-events: none;
+                transition: border-color 0.15s ease, box-shadow 0.15s ease;
+            }
+            .annotation.line-annotation.selected::before {
+                border-color: rgba(77, 208, 168, 0.85);
+                box-shadow: 0 0 0 4px rgba(77, 208, 168, 0.18);
+            }
+            .annotation .line-hit-target {
+                position: absolute;
+                inset: -10px;
+                background: transparent;
+                pointer-events: auto;
+                z-index: 0;
+                cursor: pointer;
+            }
+            .annotation.line-annotation > svg {
+                position: relative;
+                z-index: 1;
+                pointer-events: none;
+            }
+            .annotation.shape-draw-preview {
+                outline: 2px dashed rgba(77, 208, 168, 0.8);
+                outline-offset: 1px;
+            }
             .annotation:hover {
                 background: rgba(255,255,255,0.95);
             }
@@ -2153,6 +2210,15 @@
             .annotation.annotation-menu-below .annotation-tbc-menu {
                 top: calc(100% + 18px);
                 bottom: auto;
+            }
+            .annotation.annotation-menu-below .shape-action-bar {
+                top: calc(100% + 12px) !important;
+                bottom: auto !important;
+            }
+            .annotation.line-annotation .shape-action-bar,
+            .annotation.line-annotation.annotation-menu-below .shape-action-bar {
+                top: -46px !important;
+                bottom: auto !important;
             }
             .annotation .annotation-tbc-menu .tbc-menu-btn {
                 width: 30px;
@@ -4818,12 +4884,12 @@
                             <div style="font-weight: 600; font-size: 13px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px;">Fill</div>
                             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
                                 <div style="position: relative; width: 36px; height: 36px; border-radius: 8px; overflow: hidden; border: 2px solid #e5e7eb; flex-shrink: 0;">
-                                    <input type="color" id="shape-fill-color" value="#000000" style="position: absolute; width: 200%; height: 200%; top: -50%; left: -50%; border: none; cursor: pointer;">
+                                    <input type="color" id="shape-fill-color" value="#ffffff" style="position: absolute; width: 200%; height: 200%; top: -50%; left: -50%; border: none; cursor: pointer;">
                                 </div>
-                                <input type="text" id="shape-fill-hex" value="#000000" style="flex: 1; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 7px 10px; color: #111827; font-size: 13px; font-family: monospace;">
+                                <input type="text" id="shape-fill-hex" value="#ffffff" style="flex: 1; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 7px 10px; color: #111827; font-size: 13px; font-family: monospace;">
                             </div>
                             <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; color: #374151;">
-                                <input type="checkbox" id="shape-fill-transparent" checked style="width: 16px; height: 16px; accent-color: #3b82f6; cursor: pointer;">
+                                <input type="checkbox" id="shape-fill-transparent" style="width: 16px; height: 16px; accent-color: #3b82f6; cursor: pointer;">
                                 Transparent
                             </label>
                         </div>
@@ -5802,6 +5868,7 @@
             const liveSaveUrl = "{{ route('documents.liveSave', $document) }}";
             const savedEditPreviewUrl = "{{ $savedEditPreviewUrl ?? route('documents.savedEdit', $document) }}";
             const overlaySaveMode = @json($pdfSaveMode ?? strtolower((string) config('pdf_editor.save_mode', 'full_page_save')));
+            const splitParagraphFullyEnabled = @json((bool) config('pdf_editor.split_paragraph_fully', false));
             const liveSaveVerifyMaxAttempts = 5;
             const liveSaveVerifyMismatchThreshold = 0.18;
             const liveSaveVerifyPixelDelta = 32;
@@ -6170,6 +6237,7 @@
             const duplicatePageBtn = document.getElementById('duplicate-page-btn');
 
             const annotations = [];
+            const promotedAnnotationSourceMeta = new Map();
             const pageRotations = {}; // Track page rotations: {pageIndex: rotation}
             const pendingNewPages = []; // Track pages to add: [{insertAfter: pageIndex, width, height}]
             const pendingDeletedPages = []; // Track pages to delete (0-based indices)
@@ -6197,6 +6265,165 @@
             const editTextBannerMinFontSize = 8;
             const editTextBannerMidFontSize = 16;
             const editTextBannerMaxFontSize = 144;
+
+            function getPromotedAnnotationMetaKey(annotationLike) {
+                if (!annotationLike || typeof annotationLike !== 'object') {
+                    return '';
+                }
+
+                const annotationId = String(annotationLike.id || '').trim();
+                if (annotationId !== '') {
+                    return `id:${annotationId}`;
+                }
+
+                const sourceKey = String(annotationLike.promotedSourceKey || '').trim();
+                if (sourceKey !== '') {
+                    return `source:${sourceKey}`;
+                }
+
+                return '';
+            }
+
+            function sanitizePromotedAnnotationSourceMeta(meta) {
+                if (!meta || typeof meta !== 'object') {
+                    return null;
+                }
+
+                const sourceLineBBoxes = Array.isArray(meta.sourceLineBBoxes)
+                    ? meta.sourceLineBBoxes
+                        .filter((bbox) => Array.isArray(bbox) && bbox.length >= 4)
+                        .map((bbox) => bbox.map((value) => Number(value) || 0))
+                    : [];
+
+                const sourceTextLines = Array.isArray(meta.sourceTextLines)
+                    ? meta.sourceTextLines
+                        .map((line) => sanitizePromotedExtractionLine(line))
+                        .filter((line, index, lines) => !(line && index > 0 && lines[index - 1] === line))
+                    : [];
+
+                const sourceSpans = Array.isArray(meta.sourceSpans)
+                    ? meta.sourceSpans
+                        .filter((span) => span && Array.isArray(span.bbox) && span.bbox.length >= 4)
+                        .map((span) => ({
+                            text: sanitizePromotedExtractionLine(span.text ?? ''),
+                            font: String(span.font ?? '').trim(),
+                            fontSize: Number(span.fontSize) || 0,
+                            fontWeight: String(span.fontWeight ?? '400'),
+                            fontStyle: String(span.fontStyle ?? 'normal'),
+                            underline: Boolean(span.underline),
+                            color: String(span.color ?? '').trim(),
+                            origin: Array.isArray(span.origin) && span.origin.length >= 2
+                                ? [Number(span.origin[0]) || 0, Number(span.origin[1]) || 0]
+                                : null,
+                            bbox: span.bbox.map((value) => Number(value) || 0),
+                        }))
+                        .reduce((deduped, span) => {
+                            const duplicateIndex = deduped.findIndex((kept) => {
+                                const sameLeft = Math.abs((kept.bbox[0] || 0) - (span.bbox[0] || 0)) <= 1.5;
+                                const sameTop = Math.abs((kept.bbox[1] || 0) - (span.bbox[1] || 0)) <= 1.5;
+                                const sameRight = Math.abs((kept.bbox[2] || 0) - (span.bbox[2] || 0)) <= 1.5;
+                                const sameBottom = Math.abs((kept.bbox[3] || 0) - (span.bbox[3] || 0)) <= 1.5;
+                                if (!(sameLeft && sameTop && sameRight && sameBottom)) {
+                                    return false;
+                                }
+
+                                return normalizePromotedDuplicateText(kept.text, span.text) !== null;
+                            });
+
+                            if (duplicateIndex === -1) {
+                                deduped.push(span);
+                                return deduped;
+                            }
+
+                            const kept = deduped[duplicateIndex];
+                            const mergedText = normalizePromotedDuplicateText(kept.text, span.text);
+                            if (mergedText) {
+                                kept.text = mergedText;
+                            }
+                            if (!kept.font && span.font) {
+                                kept.font = span.font;
+                            }
+                            if (!(kept.fontSize > 0) && span.fontSize > 0) {
+                                kept.fontSize = span.fontSize;
+                            }
+                            return deduped;
+                        }, [])
+                    : [];
+
+                return {
+                    sourceBlockLeft: Number(meta.sourceBlockLeft) || 0,
+                    sourceBlockTop: Number(meta.sourceBlockTop) || 0,
+                    sourceBlockWidth: Number(meta.sourceBlockWidth) || 0,
+                    sourceBlockHeight: Number(meta.sourceBlockHeight) || 0,
+                    sourcePageHeight: Number(meta.sourcePageHeight) || 0,
+                    sourceTextLines,
+                    sourceLineBBoxes,
+                    sourceSpans,
+                };
+            }
+
+            function setPromotedAnnotationSourceMeta(annotationLike, meta) {
+                const key = getPromotedAnnotationMetaKey(annotationLike);
+                if (!key) {
+                    return null;
+                }
+
+                const sanitized = sanitizePromotedAnnotationSourceMeta(meta);
+                if (!sanitized) {
+                    promotedAnnotationSourceMeta.delete(key);
+                    return null;
+                }
+
+                promotedAnnotationSourceMeta.set(key, sanitized);
+                return sanitized;
+            }
+
+            function getPromotedAnnotationSourceMeta(annotationLike) {
+                const key = getPromotedAnnotationMetaKey(annotationLike);
+                if (!key) {
+                    return null;
+                }
+
+                return promotedAnnotationSourceMeta.get(key) || null;
+            }
+
+            function clearPromotedAnnotationSourceMeta(annotationLike) {
+                const key = getPromotedAnnotationMetaKey(annotationLike);
+                if (!key) {
+                    return;
+                }
+
+                promotedAnnotationSourceMeta.delete(key);
+            }
+
+            function extractLegacyPromotedAnnotationSourceMeta(annotationData) {
+                if (!annotationData || typeof annotationData !== 'object') {
+                    return null;
+                }
+
+                const hasLegacySourceFields = (
+                    annotationData.sourceBlockLeft !== undefined
+                    || annotationData.sourceBlockTop !== undefined
+                    || Array.isArray(annotationData.sourceTextLines)
+                    || Array.isArray(annotationData.sourceLineBBoxes)
+                    || Array.isArray(annotationData.sourceSpans)
+                );
+
+                if (!hasLegacySourceFields) {
+                    return null;
+                }
+
+                return sanitizePromotedAnnotationSourceMeta({
+                    sourceBlockLeft: annotationData.sourceBlockLeft,
+                    sourceBlockTop: annotationData.sourceBlockTop,
+                    sourceBlockWidth: annotationData.sourceBlockWidth,
+                    sourceBlockHeight: annotationData.sourceBlockHeight,
+                    sourcePageHeight: annotationData.sourcePageHeight,
+                    sourceTextLines: annotationData.sourceTextLines,
+                    sourceLineBBoxes: annotationData.sourceLineBBoxes,
+                    sourceSpans: annotationData.sourceSpans,
+                });
+            }
 
             function clampTextFontSizePx(value, min = editTextBannerMinFontSize, max = editTextBannerMaxFontSize) {
                 const numericValue = Number(value);
@@ -6480,8 +6707,8 @@
             let shapeStroke = '#000000';
             let shapeStrokeWidth = 2;
             let shapeStrokeTransparentState = false;
-            let shapeFill = '#000000';
-            let shapeFillTransparentState = true;
+            let shapeFill = '#ffffff';
+            let shapeFillTransparentState = false;
             let shapeOpacityValue = 1;
             let tableRows = 3;
             let tableCols = 3;
@@ -6493,6 +6720,323 @@
             let drawToolType = 'eraser'; // 'brush' | 'highlighter' | 'eraser'
             let drawBrushSize = 20;
             const gridlinesSettingsStorageKey = 'pdf-editor-gridlines-settings-v1';
+
+            function normalizeShapeOpacity(value) {
+                const numericValue = Number(value);
+                if (!Number.isFinite(numericValue)) {
+                    return 1;
+                }
+                const normalized = numericValue > 1 ? (numericValue / 100) : numericValue;
+                return Math.max(0, Math.min(1, normalized));
+            }
+
+            function shapeHasVisibleStroke(shapeLike) {
+                if (!shapeLike || shapeLike.strokeTransparent) {
+                    return false;
+                }
+                const strokeWidth = Number(shapeLike.strokeWidth) || 0;
+                const strokeColor = String(shapeLike.strokeColor || '').trim().toLowerCase();
+                return strokeWidth > 0 && strokeColor !== '' && strokeColor !== 'transparent';
+            }
+
+            function syncShapeAnnotationOutlineState(label, shapeLike, { preview = false } = {}) {
+                if (!label) {
+                    return;
+                }
+                const needsOutline = !!shapeLike && String(shapeLike.type || 'shape') === 'shape' && !shapeHasVisibleStroke(shapeLike);
+                label.classList.toggle('shape-fill-only-outline', needsOutline);
+                label.classList.toggle('shape-draw-preview', needsOutline && preview);
+            }
+
+            function createShapeSvgElement(tagName) {
+                return document.createElementNS('http://www.w3.org/2000/svg', tagName);
+            }
+
+            function mapShapeCoordinate(value, inset) {
+                const safeInset = Math.max(0, Math.min(45, Number(inset) || 0));
+                const clampedValue = Math.max(0, Math.min(100, Number(value) || 0));
+                return Number((safeInset + ((100 - (safeInset * 2)) * (clampedValue / 100))).toFixed(3));
+            }
+
+            function clampShapeUnitInterval(value, fallback) {
+                const numericValue = Number(value);
+                if (!Number.isFinite(numericValue)) {
+                    return fallback;
+                }
+                return Math.max(0, Math.min(1, numericValue));
+            }
+
+            function isLineShapeType(shapeTypeValue) {
+                return String(shapeTypeValue || '') === 'line';
+            }
+
+            function ensureLineShapeGeometry(shapeLike) {
+                const geometry = {
+                    lineStartX: clampShapeUnitInterval(shapeLike?.lineStartX, 0),
+                    lineStartY: clampShapeUnitInterval(shapeLike?.lineStartY, 1),
+                    lineEndX: clampShapeUnitInterval(shapeLike?.lineEndX, 1),
+                    lineEndY: clampShapeUnitInterval(shapeLike?.lineEndY, 0),
+                };
+
+                if (shapeLike && isLineShapeType(shapeLike.shapeType)) {
+                    shapeLike.lineStartX = geometry.lineStartX;
+                    shapeLike.lineStartY = geometry.lineStartY;
+                    shapeLike.lineEndX = geometry.lineEndX;
+                    shapeLike.lineEndY = geometry.lineEndY;
+                }
+
+                return geometry;
+            }
+
+            function computeLineBoxGeometry(startX, startY, endX, endY) {
+                const safeStartX = Number(startX) || 0;
+                const safeStartY = Number(startY) || 0;
+                const safeEndX = Number(endX) || 0;
+                const safeEndY = Number(endY) || 0;
+                const left = Math.min(safeStartX, safeEndX);
+                const top = Math.min(safeStartY, safeEndY);
+                const width = Math.max(1, Math.abs(safeEndX - safeStartX));
+                const height = Math.max(1, Math.abs(safeEndY - safeStartY));
+
+                return {
+                    left,
+                    top,
+                    width,
+                    height,
+                    lineStartX: clampShapeUnitInterval((safeStartX - left) / width, 0),
+                    lineStartY: clampShapeUnitInterval((safeStartY - top) / height, 0),
+                    lineEndX: clampShapeUnitInterval((safeEndX - left) / width, 1),
+                    lineEndY: clampShapeUnitInterval((safeEndY - top) / height, 1),
+                };
+            }
+
+            function snapLineEndpoint(startX, startY, endX, endY) {
+                const dx = (Number(endX) || 0) - (Number(startX) || 0);
+                const dy = (Number(endY) || 0) - (Number(startY) || 0);
+                const distance = Math.hypot(dx, dy);
+                if (distance < 1) {
+                    return {
+                        x: Number(endX) || 0,
+                        y: Number(endY) || 0,
+                    };
+                }
+
+                const angle = Math.atan2(dy, dx);
+                const snapStep = Math.PI / 4;
+                const snapThreshold = (8 * Math.PI) / 180;
+                const snappedAngle = Math.round(angle / snapStep) * snapStep;
+                let angleDelta = angle - snappedAngle;
+                while (angleDelta > Math.PI) angleDelta -= Math.PI * 2;
+                while (angleDelta < -Math.PI) angleDelta += Math.PI * 2;
+
+                if (Math.abs(angleDelta) > snapThreshold) {
+                    return {
+                        x: Number(endX) || 0,
+                        y: Number(endY) || 0,
+                    };
+                }
+
+                return {
+                    x: (Number(startX) || 0) + (Math.cos(snappedAngle) * distance),
+                    y: (Number(startY) || 0) + (Math.sin(snappedAngle) * distance),
+                };
+            }
+
+            function syncLineShapeSvgGeometry(svg, shapeLike) {
+                if (!svg || !isLineShapeType(shapeLike?.shapeType)) {
+                    return;
+                }
+                const line = svg.querySelector('line');
+                if (!line) {
+                    return;
+                }
+                const geometry = ensureLineShapeGeometry(shapeLike);
+                line.setAttribute('x1', String(Number((geometry.lineStartX * 100).toFixed(3))));
+                line.setAttribute('y1', String(Number((geometry.lineStartY * 100).toFixed(3))));
+                line.setAttribute('x2', String(Number((geometry.lineEndX * 100).toFixed(3))));
+                line.setAttribute('y2', String(Number((geometry.lineEndY * 100).toFixed(3))));
+            }
+
+            function buildShapeSvg(shapeLike) {
+                const svg = createShapeSvgElement('svg');
+                const strokeWidth = Math.max(0, Number(shapeLike?.strokeWidth) || 0);
+                const visibleStroke = shapeHasVisibleStroke(shapeLike);
+                const inset = visibleStroke ? Math.min(45, strokeWidth / 2) : 0;
+                const opacity = normalizeShapeOpacity(shapeLike?.opacity);
+                const strokeColor = visibleStroke ? String(shapeLike.strokeColor || '#000000') : 'transparent';
+                const fillColor = shapeLike?.fillTransparent ? 'transparent' : String(shapeLike?.fillColor || '#000000');
+                const preserveStrokeWidth = ['line', 'x', 'checkmark', 'arrow'].includes(String(shapeLike?.shapeType || ''));
+                const innerSize = Math.max(0, 100 - (inset * 2));
+                const minEdge = inset;
+                const maxEdge = 100 - inset;
+
+                svg.setAttribute('width', '100%');
+                svg.setAttribute('height', '100%');
+                svg.setAttribute('viewBox', `${-inset} ${-inset} ${100 + (inset * 2)} ${100 + (inset * 2)}`);
+                svg.setAttribute('preserveAspectRatio', 'none');
+                svg.style.display = 'block';
+                svg.style.overflow = 'visible';
+
+                const setBaseShapeStyle = (element) => {
+                    element.setAttribute('fill', fillColor);
+                    element.setAttribute('stroke', strokeColor);
+                    if (strokeWidth > 0) {
+                        element.setAttribute('stroke-width', String(strokeWidth));
+                    }
+                    if (preserveStrokeWidth) {
+                        element.setAttribute('vector-effect', 'non-scaling-stroke');
+                    }
+                    element.setAttribute('opacity', String(opacity));
+                    return element;
+                };
+
+                if (shapeLike?.shapeType === 'circle' || shapeLike?.shapeType === 'ellipse') {
+                    const ellipse = setBaseShapeStyle(createShapeSvgElement('ellipse'));
+                    ellipse.setAttribute('cx', '50');
+                    ellipse.setAttribute('cy', '50');
+                    ellipse.setAttribute('rx', String(Math.max(0, 50 - inset)));
+                    ellipse.setAttribute('ry', String(Math.max(0, 50 - inset)));
+                    svg.appendChild(ellipse);
+                    return svg;
+                }
+
+                if (shapeLike?.shapeType === 'triangle') {
+                    const triangle = setBaseShapeStyle(createShapeSvgElement('polygon'));
+                    triangle.setAttribute('points', `50 ${minEdge}, ${maxEdge} ${maxEdge}, ${minEdge} ${maxEdge}`);
+                    triangle.setAttribute('stroke-linejoin', 'round');
+                    svg.appendChild(triangle);
+                    return svg;
+                }
+
+                if (shapeLike?.shapeType === 'x') {
+                    const group = createShapeSvgElement('g');
+                    [
+                        [minEdge, minEdge, maxEdge, maxEdge],
+                        [maxEdge, minEdge, minEdge, maxEdge],
+                    ].forEach(([x1, y1, x2, y2]) => {
+                        const line = setBaseShapeStyle(createShapeSvgElement('line'));
+                        line.setAttribute('fill', 'none');
+                        line.setAttribute('x1', String(x1));
+                        line.setAttribute('y1', String(y1));
+                        line.setAttribute('x2', String(x2));
+                        line.setAttribute('y2', String(y2));
+                        line.setAttribute('stroke-linecap', 'round');
+                        group.appendChild(line);
+                    });
+                    svg.appendChild(group);
+                    return svg;
+                }
+
+                if (shapeLike?.shapeType === 'line') {
+                    const line = setBaseShapeStyle(createShapeSvgElement('line'));
+                    line.setAttribute('fill', 'none');
+                    line.setAttribute('stroke-linecap', 'round');
+                    svg.appendChild(line);
+                    syncLineShapeSvgGeometry(svg, shapeLike);
+                    return svg;
+                }
+
+                if (shapeLike?.shapeType === 'checkmark') {
+                    const polyline = setBaseShapeStyle(createShapeSvgElement('polyline'));
+                    polyline.setAttribute('fill', 'none');
+                    polyline.setAttribute('points', [
+                        `${mapShapeCoordinate(15, inset)} ${mapShapeCoordinate(50, inset)}`,
+                        `${mapShapeCoordinate(40, inset)} ${mapShapeCoordinate(75, inset)}`,
+                        `${mapShapeCoordinate(85, inset)} ${mapShapeCoordinate(15, inset)}`,
+                    ].join(', '));
+                    polyline.setAttribute('stroke-linecap', 'round');
+                    polyline.setAttribute('stroke-linejoin', 'round');
+                    svg.appendChild(polyline);
+                    return svg;
+                }
+
+                if (shapeLike?.shapeType === 'star') {
+                    const star = setBaseShapeStyle(createShapeSvgElement('polygon'));
+                    star.setAttribute('points', [
+                        '50,5', '61,38', '95,38', '68,58', '79,91',
+                        '50,71', '21,91', '32,58', '5,38', '39,38',
+                    ].map((point) => {
+                        const [x, y] = point.split(',').map(Number);
+                        return `${mapShapeCoordinate(x, inset)} ${mapShapeCoordinate(y, inset)}`;
+                    }).join(', '));
+                    star.setAttribute('stroke-linejoin', 'round');
+                    svg.appendChild(star);
+                    return svg;
+                }
+
+                if (shapeLike?.shapeType === 'polygon') {
+                    const polygon = setBaseShapeStyle(createShapeSvgElement('polygon'));
+                    polygon.setAttribute('points', [
+                        '50,5', '90,27', '90,73', '50,95', '10,73', '10,27',
+                    ].map((point) => {
+                        const [x, y] = point.split(',').map(Number);
+                        return `${mapShapeCoordinate(x, inset)} ${mapShapeCoordinate(y, inset)}`;
+                    }).join(', '));
+                    polygon.setAttribute('stroke-linejoin', 'round');
+                    svg.appendChild(polygon);
+                    return svg;
+                }
+
+                if (shapeLike?.shapeType === 'arrow') {
+                    const group = createShapeSvgElement('g');
+                    const line = setBaseShapeStyle(createShapeSvgElement('line'));
+                    line.setAttribute('fill', 'none');
+                    line.setAttribute('x1', String(minEdge));
+                    line.setAttribute('y1', '50');
+                    line.setAttribute('x2', String(mapShapeCoordinate(82, inset)));
+                    line.setAttribute('y2', '50');
+                    line.setAttribute('stroke-linecap', 'round');
+                    const arrowHead = setBaseShapeStyle(createShapeSvgElement('polyline'));
+                    arrowHead.setAttribute('fill', 'none');
+                    arrowHead.setAttribute('points', [
+                        `${mapShapeCoordinate(64, inset)} ${mapShapeCoordinate(32, inset)}`,
+                        `${maxEdge} 50`,
+                        `${mapShapeCoordinate(64, inset)} ${mapShapeCoordinate(68, inset)}`,
+                    ].join(', '));
+                    arrowHead.setAttribute('stroke-linecap', 'round');
+                    arrowHead.setAttribute('stroke-linejoin', 'round');
+                    group.appendChild(line);
+                    group.appendChild(arrowHead);
+                    svg.appendChild(group);
+                    return svg;
+                }
+
+                const rect = setBaseShapeStyle(createShapeSvgElement('rect'));
+                rect.setAttribute('x', String(minEdge));
+                rect.setAttribute('y', String(minEdge));
+                rect.setAttribute('width', String(innerSize));
+                rect.setAttribute('height', String(innerSize));
+                svg.appendChild(rect);
+                return svg;
+            }
+
+            function getCurrentShapeStyleConfig() {
+                const strokeTransparent = Boolean(shapeStrokeTransparentInput?.checked ?? shapeStrokeTransparentState);
+                const fillTransparent = Boolean(shapeFillTransparentInput?.checked ?? shapeFillTransparentState);
+                const strokeColorValue = String(shapeStrokeColorInput?.value || shapeStrokeHexInput?.value || shapeStroke || '#000000').trim() || '#000000';
+                const fillColorValue = String(shapeFillColorInput?.value || shapeFillHexInput?.value || shapeFill || '#ffffff').trim() || '#ffffff';
+                const strokeWidth = Math.max(0, parseFloat(shapeStrokeWidthInput?.value) || shapeStrokeWidth || 0);
+                const opacityPercent = parseFloat(shapeOpacityInput?.value);
+                const opacity = Number.isFinite(opacityPercent)
+                    ? Math.max(0, Math.min(1, opacityPercent / 100))
+                    : normalizeShapeOpacity(shapeOpacityValue);
+
+                shapeStroke = strokeColorValue;
+                shapeFill = fillColorValue;
+                shapeStrokeTransparentState = strokeTransparent;
+                shapeFillTransparentState = fillTransparent;
+                shapeStrokeWidth = strokeWidth;
+                shapeOpacityValue = opacity;
+
+                return {
+                    strokeTransparent,
+                    fillTransparent,
+                    strokeColor: strokeTransparent ? 'transparent' : strokeColorValue,
+                    fillColor: fillTransparent ? 'transparent' : fillColorValue,
+                    strokeWidth,
+                    opacity,
+                };
+            }
 
             function loadGridlinesSettings() {
                 try {
@@ -6584,6 +7128,23 @@
                     || normalized === 'table'
                     || normalized === 'image'
                     || normalized === 'signature';
+            }
+
+            function shouldStartOverlayShapeDraw(event, overlay) {
+                if (!event || !overlay) {
+                    return false;
+                }
+
+                const target = event.target;
+                if (target === overlay) {
+                    return true;
+                }
+
+                if (!(target instanceof Element) || !overlay.contains(target)) {
+                    return false;
+                }
+
+                return !target.closest('.annotation, .overlay-field, .text-box-creator');
             }
 
             let gridlinesSpacing = Number.isFinite(Number(storedGridlinesSettings?.spacing))
@@ -7219,6 +7780,8 @@
                     return annotation;
                 }
 
+                const sourceMeta = getPromotedAnnotationSourceMeta(annotation);
+
                 const {
                     element,
                     textWrapper,
@@ -7226,8 +7789,32 @@
                     db_state,
                     db_updated_at,
                     savedDatabaseAnnotation,
+                    promotedSourceBlockNum,
+                    promotedSourcePage,
+                    sourceBlockLeft,
+                    sourceBlockTop,
+                    sourceBlockWidth,
+                    sourceBlockHeight,
+                    sourcePageHeight,
+                    sourceTextLines,
+                    sourceLineBBoxes,
+                    sourceSpans,
                     ...rest
                 } = annotation;
+
+                if (annotation.promotedFromExtraction && sourceMeta) {
+                    return {
+                        ...rest,
+                        sourceBlockLeft: sourceBlockLeft ?? sourceMeta.sourceBlockLeft,
+                        sourceBlockTop: sourceBlockTop ?? sourceMeta.sourceBlockTop,
+                        sourceBlockWidth: sourceBlockWidth ?? sourceMeta.sourceBlockWidth,
+                        sourceBlockHeight: sourceBlockHeight ?? sourceMeta.sourceBlockHeight,
+                        sourcePageHeight: sourcePageHeight ?? sourceMeta.sourcePageHeight,
+                        sourceTextLines: Array.isArray(sourceTextLines) ? sourceTextLines : sourceMeta.sourceTextLines,
+                        sourceLineBBoxes: Array.isArray(sourceLineBBoxes) ? sourceLineBBoxes : sourceMeta.sourceLineBBoxes,
+                        sourceSpans: Array.isArray(sourceSpans) ? sourceSpans : sourceMeta.sourceSpans,
+                    };
+                }
 
                 return rest;
             }
@@ -7294,6 +7881,7 @@
 
                 trackPromotedAnnotationDeletion(annotation);
                 deleteAnnotationFromDatabase(annotation);
+                clearPromotedAnnotationSourceMeta(annotation);
 
                 const index = annotations.indexOf(annotation);
                 if (index >= 0) {
@@ -7319,6 +7907,7 @@
             function clearAllAnnotationRecords() {
                 annotations.forEach((annotation) => {
                     trackPromotedAnnotationDeletion(annotation);
+                    clearPromotedAnnotationSourceMeta(annotation);
                 });
                 annotations.length = 0;
                 selectedAnnotation = null;
@@ -7362,6 +7951,18 @@
                             pdfWidth: Number(annotation.pdfWidth) || 0,
                             pdfHeight: Number(annotation.pdfHeight) || 0,
                         };
+                        const legacySourceMeta = extractLegacyPromotedAnnotationSourceMeta(annotation);
+                        if (legacySourceMeta) {
+                            setPromotedAnnotationSourceMeta(normalized, legacySourceMeta);
+                            delete normalized.sourceBlockLeft;
+                            delete normalized.sourceBlockTop;
+                            delete normalized.sourceTextLines;
+                            delete normalized.sourceLineBBoxes;
+                            delete normalized.sourceSpans;
+                        }
+                        if (normalized.shapeType === 'line') {
+                            ensureLineShapeGeometry(normalized);
+                        }
                         normalizeTextAnnotation(normalized);
                         registerAnnotationId(normalized);
                         annotations.push(normalized);
@@ -7380,15 +7981,287 @@
                     .replace(/\u00A0/g, ' ')
                     .replace(/[ \t]+\n/g, '\n')
                     .replace(/\n{3,}/g, '\n\n')
+                    .split('\n')
+                    .map((line) => sanitizePromotedExtractionLine(line))
+                    .filter((line, index, lines) => !(line && index > 0 && lines[index - 1] === line))
+                    .join('\n')
                     .trim();
             }
 
+            function normalizePromotedDuplicateText(leftValue, rightValue) {
+                const left = String(leftValue ?? '').trim();
+                const right = String(rightValue ?? '').trim();
+                if (!left) return right;
+                if (!right) return left;
+                if (left === right) return left;
+
+                const shorter = left.length <= right.length ? left : right;
+                const longer = shorter === left ? right : left;
+
+                if (longer.startsWith(shorter)) {
+                    const suffix = longer.slice(shorter.length);
+                    if (suffix.length > 0 && suffix.length <= 2 && /^([A-Za-z0-9])\1*$/.test(suffix)) {
+                        return shorter + suffix[0];
+                    }
+                }
+
+                if (left.includes(right) || right.includes(left)) {
+                    return left.length >= right.length ? left : right;
+                }
+
+                return null;
+            }
+
+            function collapseAdjacentDuplicatePromotedTokenRuns(value) {
+                const normalized = String(value ?? '')
+                    .replace(/\u00A0/g, ' ')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                if (!normalized) {
+                    return '';
+                }
+
+                const tokens = normalized.split(' ').filter(Boolean);
+                if (tokens.length < 2) {
+                    return normalized;
+                }
+
+                const shouldCollapseSegment = (segment) => {
+                    const wordTokens = segment.filter((token) => /[A-Za-z0-9]/.test(token));
+                    if (!wordTokens.length) {
+                        return false;
+                    }
+                    if (wordTokens.length > 1) {
+                        return true;
+                    }
+                    return wordTokens[0].length >= 5;
+                };
+
+                const collapsed = tokens.slice();
+                let changed = false;
+                do {
+                    changed = false;
+                    outer:
+                    for (let segmentLength = Math.min(8, Math.floor(collapsed.length / 2)); segmentLength >= 1; segmentLength -= 1) {
+                        for (let index = 0; index + (segmentLength * 2) <= collapsed.length; index += 1) {
+                            const leftSegment = collapsed.slice(index, index + segmentLength);
+                            const rightSegment = collapsed.slice(index + segmentLength, index + (segmentLength * 2));
+                            const duplicateSegment = leftSegment.every((token, offset) => (
+                                token.toLowerCase() === String(rightSegment[offset] || '').toLowerCase()
+                            ));
+                            if (!duplicateSegment || !shouldCollapseSegment(leftSegment)) {
+                                continue;
+                            }
+
+                            collapsed.splice(index + segmentLength, segmentLength);
+                            changed = true;
+                            break outer;
+                        }
+                    }
+                } while (changed);
+
+                return collapsed.join(' ');
+            }
+
             function sanitizePromotedExtractionLine(value) {
-                return String(value ?? '')
+                const normalized = String(value ?? '')
                     .replace(/\r\n/g, '\n')
                     .replace(/\r/g, '\n')
                     .replace(/\u00A0/g, ' ')
                     .replace(/[ \t]+$/g, '');
+                return collapseAdjacentDuplicatePromotedTokenRuns(normalized);
+            }
+
+            function assignPromotedSpansToLineEntries(lineEntries, sourceSpans) {
+                if (!Array.isArray(lineEntries) || !Array.isArray(sourceSpans) || !lineEntries.length || !sourceSpans.length) {
+                    return;
+                }
+
+                const overlapAmount = (aTop, aBottom, bTop, bBottom) =>
+                    Math.max(0, Math.min(aBottom, bBottom) - Math.max(aTop, bTop));
+
+                sourceSpans.forEach((sourceSpan) => {
+                    const spanBBox = Array.isArray(sourceSpan?.bbox) && sourceSpan.bbox.length >= 4
+                        ? sourceSpan.bbox.map((value) => Number(value) || 0)
+                        : null;
+                    if (!spanBBox) {
+                        return;
+                    }
+
+                    const spanTop = spanBBox[1];
+                    const spanBottom = spanBBox[3];
+                    const spanCenter = (spanTop + spanBottom) / 2;
+                    let bestLine = null;
+                    let bestScore = -1;
+                    let bestCenterDistance = Number.POSITIVE_INFINITY;
+                    let bestIndex = Number.POSITIVE_INFINITY;
+
+                    lineEntries.forEach((entry, entryIndex) => {
+                        const lineTop = Number(entry?.bbox?.[1]) || 0;
+                        const lineBottom = Number(entry?.bbox?.[3]) || lineTop;
+                        const intersection = overlapAmount(spanTop, spanBottom, lineTop, lineBottom);
+                        const minHeight = Math.max(1, Math.min(spanBottom - spanTop, lineBottom - lineTop));
+                        const score = intersection / minHeight;
+                        const lineCenter = (lineTop + lineBottom) / 2;
+                        const centerDistance = Math.abs(spanCenter - lineCenter);
+                        const betterScore = score > (bestScore + 1e-6);
+                        const tiedScore = Math.abs(score - bestScore) <= 1e-6;
+                        const betterCenter = centerDistance < (bestCenterDistance - 1e-6);
+                        const tiedCenter = Math.abs(centerDistance - bestCenterDistance) <= 1e-6;
+
+                        if (
+                            betterScore
+                            || (tiedScore && betterCenter)
+                            || (tiedScore && tiedCenter && entryIndex < bestIndex)
+                        ) {
+                            bestScore = score;
+                            bestCenterDistance = centerDistance;
+                            bestIndex = entryIndex;
+                            bestLine = entry;
+                        }
+                    });
+
+                    if (bestLine && bestScore >= 0.15) {
+                        bestLine.spans.push({
+                            ...sourceSpan,
+                            bbox: spanBBox,
+                        });
+                    }
+                });
+            }
+
+            function comparePromotedLineEntryVisualPosition(leftEntry, rightEntry) {
+                const leftTop = Number(leftEntry?.bbox?.[1]) || 0;
+                const rightTop = Number(rightEntry?.bbox?.[1]) || 0;
+                if (Math.abs(leftTop - rightTop) > 0.25) {
+                    return leftTop - rightTop;
+                }
+
+                const leftX = Number(leftEntry?.bbox?.[0]) || 0;
+                const rightX = Number(rightEntry?.bbox?.[0]) || 0;
+                if (Math.abs(leftX - rightX) > 0.25) {
+                    return leftX - rightX;
+                }
+
+                return (Number(leftEntry?.index) || 0) - (Number(rightEntry?.index) || 0);
+            }
+
+            function buildPromotedSplitLayoutArtifactTexts(sourceMeta) {
+                const sourceTextLines = Array.isArray(sourceMeta?.sourceTextLines)
+                    ? sourceMeta.sourceTextLines.map((line) => sanitizePromotedExtractionLine(line)).filter((line) => line.length > 0)
+                    : [];
+                const sourceLineBBoxes = Array.isArray(sourceMeta?.sourceLineBBoxes)
+                    ? sourceMeta.sourceLineBBoxes
+                        .filter((bbox) => Array.isArray(bbox) && bbox.length >= 4)
+                        .map((bbox) => bbox.map((value) => Number(value) || 0))
+                    : [];
+
+                if (sourceTextLines.length < 2 || sourceTextLines.length !== sourceLineBBoxes.length) {
+                    return [];
+                }
+
+                const clusters = [];
+                let index = 0;
+                while (index < sourceTextLines.length) {
+                    const cluster = [{
+                        index,
+                        text: sourceTextLines[index],
+                        bbox: sourceLineBBoxes[index],
+                    }];
+
+                    let nextIndex = index + 1;
+                    while (nextIndex < sourceTextLines.length) {
+                        const previousBox = cluster[cluster.length - 1].bbox;
+                        const nextBox = sourceLineBBoxes[nextIndex];
+                        const prevTop = Number(previousBox?.[1]) || 0;
+                        const prevBottom = Number(previousBox?.[3]) || prevTop;
+                        const nextTop = Number(nextBox?.[1]) || 0;
+                        const nextBottom = Number(nextBox?.[3]) || nextTop;
+                        const verticalIntersection = Math.max(0, Math.min(prevBottom, nextBottom) - Math.max(prevTop, nextTop));
+                        const minHeight = Math.max(1, Math.min(prevBottom - prevTop, nextBottom - nextTop));
+                        const overlapRatio = verticalIntersection / minHeight;
+                        const sameVisualRow = overlapRatio >= 0.45
+                            || Math.abs(prevTop - nextTop) <= Math.max(2, Math.min(6, minHeight * 0.45));
+
+                        if (!sameVisualRow) {
+                            break;
+                        }
+
+                        cluster.push({
+                            index: nextIndex,
+                            text: sourceTextLines[nextIndex],
+                            bbox: nextBox,
+                        });
+                        nextIndex += 1;
+                    }
+
+                    clusters.push(cluster);
+                    index = nextIndex;
+                }
+
+                const artifactTexts = new Set();
+
+                const sourceOrderArtifactLines = [];
+                clusters.forEach((cluster) => {
+                    if (cluster.length > 1) {
+                        sourceOrderArtifactLines.push(cluster.map((entry) => entry.text).join(''));
+                        cluster.slice(1).forEach((entry) => sourceOrderArtifactLines.push(entry.text));
+                    } else {
+                        sourceOrderArtifactLines.push(cluster[0].text);
+                    }
+                });
+                artifactTexts.add(sanitizePromotedExtractionText(sourceOrderArtifactLines.join('\n')));
+
+                const visualOrderArtifactLines = [];
+                clusters.forEach((cluster) => {
+                    if (cluster.length > 1) {
+                        const renderedEntries = cluster.map((entry, clusterIndex) => ({
+                            ...entry,
+                            renderedText: clusterIndex === 0
+                                ? cluster.map((item) => item.text).join('')
+                                : entry.text,
+                        }));
+                        renderedEntries
+                            .sort(comparePromotedLineEntryVisualPosition)
+                            .forEach((entry) => visualOrderArtifactLines.push(entry.renderedText));
+                    } else {
+                        visualOrderArtifactLines.push(cluster[0].text);
+                    }
+                });
+                artifactTexts.add(sanitizePromotedExtractionText(visualOrderArtifactLines.join('\n')));
+
+                return Array.from(artifactTexts).filter(Boolean);
+            }
+
+            function buildPromotedSplitLayoutArtifactText(sourceMeta) {
+                return buildPromotedSplitLayoutArtifactTexts(sourceMeta)[0] || '';
+            }
+
+            function repairSavedPromotedAnnotationCorruption(annotationLike, sourceMeta) {
+                if (!annotationLike?.promotedFromExtraction || !sourceMeta) {
+                    return;
+                }
+
+                const sourceTextLines = Array.isArray(sourceMeta.sourceTextLines)
+                    ? sourceMeta.sourceTextLines.map((line) => sanitizePromotedExtractionLine(line)).filter((line) => line.length > 0)
+                    : [];
+                if (!sourceTextLines.length) {
+                    return;
+                }
+
+                const canonicalSourceText = sanitizePromotedExtractionText(sourceTextLines.join('\n'));
+                const duplicatedArtifactTexts = buildPromotedSplitLayoutArtifactTexts(sourceMeta);
+                const currentText = sanitizePromotedExtractionText(annotationLike.text || '');
+
+                if (!duplicatedArtifactTexts.length || !duplicatedArtifactTexts.includes(currentText)) {
+                    return;
+                }
+
+                annotationLike.text = canonicalSourceText;
+                annotationLike.originalText = canonicalSourceText;
+                annotationLike.promotedDirty = false;
+                delete annotationLike.promotedReflowEnabled;
+                delete annotationLike.richTextHtml;
             }
 
             function toPromotedReflowText(value) {
@@ -7486,33 +8359,34 @@
                     promotedSourceKey: `block-${pageData.page_number}-${block.block_num}`,
                     promotedSourceBlockNum: Number(block?.block_num) || 0,
                     promotedSourcePage: Number(pageData?.page_number) || 1,
+                };
+
+                setPromotedAnnotationSourceMeta(annotation, {
                     sourceBlockLeft: left,
                     sourceBlockTop: top,
+                    sourceBlockWidth: width,
+                    sourceBlockHeight: height,
+                    sourcePageHeight: pageHeight,
                     sourceTextLines: textLines.length
                         ? [...textLines]
                         : blockText.split('\n').map((line) => sanitizePromotedExtractionLine(line)),
-                    sourceLineBBoxes: Array.isArray(block?.line_bboxes)
-                        ? block.line_bboxes
-                            .filter((bbox) => Array.isArray(bbox) && bbox.length >= 4)
-                            .map((bbox) => bbox.map((value) => Number(value) || 0))
-                        : [],
+                    sourceLineBBoxes: Array.isArray(block?.line_bboxes) ? block.line_bboxes : [],
                     sourceSpans: Array.isArray(block?.spans)
-                        ? block.spans
-                            .filter((span) => span && Array.isArray(span.bbox) && span.bbox.length >= 4)
-                            .map((span) => ({
-                                text: String(span.render_text ?? span.text ?? ''),
-                                font: String(span.font || block?.font || '').trim(),
-                                fontSize: Number(span.font_size ?? span.size ?? block?.font_size) || Math.max(6, Number(block?.font_size) || 12),
-                                fontWeight: span.font_weight
-                                    ? String(span.font_weight)
-                                    : (span.bold ? '700' : (block?.font_weight ? String(block.font_weight) : '400')),
-                                fontStyle: span.italic ? 'italic' : 'normal',
-                                underline: Boolean(span.underline),
-                                color: String(span.hex_color || '').trim() || normalizePromotedAnnotationColor(span) || normalizePromotedAnnotationColor(block),
-                                bbox: span.bbox.map((value) => Number(value) || 0),
-                            }))
+                        ? block.spans.map((span) => ({
+                            text: String(span?.render_text ?? span?.text ?? ''),
+                            font: String(span?.font || block?.font || '').trim(),
+                            fontSize: Number(span?.font_size ?? span?.size ?? block?.font_size) || Math.max(6, Number(block?.font_size) || 12),
+                            fontWeight: span?.font_weight
+                                ? String(span.font_weight)
+                                : (span?.bold ? '700' : (block?.font_weight ? String(block.font_weight) : '400')),
+                            fontStyle: span?.italic ? 'italic' : 'normal',
+                            underline: Boolean(span?.underline),
+                            color: String(span?.hex_color || '').trim() || normalizePromotedAnnotationColor(span) || normalizePromotedAnnotationColor(block),
+                            origin: Array.isArray(span?.origin) ? span.origin : null,
+                            bbox: Array.isArray(span?.bbox) ? span.bbox : [],
+                        }))
                         : [],
-                };
+                });
 
                 normalizeTextAnnotation(annotation);
                 return annotation;
@@ -7537,6 +8411,7 @@
                     fontSize: Number(annotationData.fontSize) || 12,
                     opacity: Number(annotationData.opacity ?? 1),
                 };
+                const legacySourceMeta = extractLegacyPromotedAnnotationSourceMeta(annotationData);
                 if (annotationData.requestedFontSize !== undefined && annotationData.requestedFontSize !== null) {
                     normalized.requestedFontSize = Number(annotationData.requestedFontSize) || null;
                 }
@@ -7557,8 +8432,32 @@
                 if (annotationData.lineHeight !== undefined && annotationData.lineHeight !== null) {
                     normalized.lineHeight = Number(annotationData.lineHeight) || null;
                 }
+                if (normalized.promotedFromExtraction) {
+                    normalized.text = sanitizePromotedExtractionText(normalized.text || '');
+                    normalized.originalText = sanitizePromotedExtractionText(normalized.originalText || normalized.text || '');
+                }
+                if (shouldEnablePromotedAnnotationReflow(normalized)) {
+                    normalized.promotedReflowEnabled = true;
+                }
+
+                if (legacySourceMeta) {
+                    setPromotedAnnotationSourceMeta(normalized, legacySourceMeta);
+                    delete normalized.sourceBlockLeft;
+                    delete normalized.sourceBlockTop;
+                    delete normalized.sourceBlockWidth;
+                    delete normalized.sourceBlockHeight;
+                    delete normalized.sourcePageHeight;
+                    delete normalized.sourceTextLines;
+                    delete normalized.sourceLineBBoxes;
+                    delete normalized.sourceSpans;
+                }
+
+                repairSavedPromotedAnnotationCorruption(normalized, legacySourceMeta || getPromotedAnnotationSourceMeta(normalized));
 
                 normalizeTextAnnotation(normalized);
+                if (shouldResetPromotedAnnotationReflow(normalized)) {
+                    delete normalized.promotedReflowEnabled;
+                }
                 return normalized;
             }
 
@@ -7937,6 +8836,28 @@
                         if (!annotation) {
                             return;
                         }
+                        if (annotation?.promotedFromExtraction && String(annotation.promotedSourceKey || '') === String(sourceKey) && builtAnnotation) {
+                            const extractedSourceMeta = getPromotedAnnotationSourceMeta(builtAnnotation);
+                            if (extractedSourceMeta) {
+                                const savedSourceMeta = getPromotedAnnotationSourceMeta(annotation);
+                                setPromotedAnnotationSourceMeta(annotation, {
+                                    ...extractedSourceMeta,
+                                    ...(savedSourceMeta || {}),
+                                    sourceBlockWidth: Number(savedSourceMeta?.sourceBlockWidth) > 0
+                                        ? Number(savedSourceMeta.sourceBlockWidth)
+                                        : extractedSourceMeta.sourceBlockWidth,
+                                    sourceBlockHeight: Number(savedSourceMeta?.sourceBlockHeight) > 0
+                                        ? Number(savedSourceMeta.sourceBlockHeight)
+                                        : extractedSourceMeta.sourceBlockHeight,
+                                    sourcePageHeight: Number(savedSourceMeta?.sourcePageHeight) > 0
+                                        ? Number(savedSourceMeta.sourcePageHeight)
+                                        : extractedSourceMeta.sourcePageHeight,
+                                });
+                            }
+                        }
+                        if (shouldResetPromotedAnnotationReflow(annotation)) {
+                            delete annotation.promotedReflowEnabled;
+                        }
                         if (savedPromotedMatch?.id) {
                             matchedSavedPromotedAnnotationIds.add(String(savedPromotedMatch.id));
                         }
@@ -8188,17 +9109,20 @@
             }
 
             function updateSelectedAnnotationMenuPlacement() {
-                if (!selectedAnnotation || (selectedAnnotation.type && selectedAnnotation.type !== 'text') || !selectedAnnotation.element) {
+                if (!selectedAnnotation?.element) {
                     return;
                 }
 
                 const label = selectedAnnotation.element;
-                const menu = label.querySelector('.annotation-tbc-menu');
+                const menu = label.querySelector('.annotation-tbc-menu, .shape-action-bar');
                 if (!menu) {
                     return;
                 }
 
                 label.classList.remove('annotation-menu-below');
+                if (label.classList.contains('line-annotation')) {
+                    return;
+                }
 
                 const labelRect = label.getBoundingClientRect();
                 const menuRect = menu.getBoundingClientRect();
@@ -8472,12 +9396,13 @@
             function deactivateOverlayField(field, options = {}) {
                 if (!field) return;
                 const keepSelected = options.keepSelected === true;
-                field.classList.remove('active', 'editing');
+                field.classList.remove('active', 'editing', 'editable');
                 if (!keepSelected) {
                     field.classList.remove('selected');
                 }
                 const ce = field.querySelector('[contenteditable]');
                 if (ce) {
+                    ce.classList.remove('editable');
                     ce.contentEditable = false;
                     const fieldKey = String(field.dataset.wordIndex || '');
                     if (field.dataset.exactGeometry === '1' && !overlayEditedFields.has(fieldKey)) {
@@ -8776,8 +9701,238 @@
                 return field.querySelector('[contenteditable]') || field;
             }
 
+            function collectSplitParagraphCharacterLines(textEl) {
+                if (!textEl) {
+                    return [];
+                }
+
+                const characterSpans = Array.from(
+                    textEl.querySelectorAll('span._iceni_text-sel, span[data-line-num][data-xpos], span[data-lineNum][data-xpos]')
+                ).filter((span) => {
+                    if (!(span instanceof HTMLElement)) {
+                        return false;
+                    }
+                    return span.style.position === 'absolute'
+                        || span.dataset.lineNum !== undefined
+                        || span.dataset.linenum !== undefined;
+                });
+
+                if (!characterSpans.length) {
+                    return [];
+                }
+
+                const lineMap = new Map();
+                characterSpans.forEach((span) => {
+                    const rawLineNum = span.dataset.lineNum ?? span.dataset.linenum ?? '';
+                    const parsedLineNum = Number(rawLineNum);
+                    const lineKey = Number.isFinite(parsedLineNum)
+                        ? `line:${parsedLineNum}`
+                        : `y:${Number(span.dataset.originY ?? span.style.top ?? 0).toFixed(2)}`;
+
+                    if (!lineMap.has(lineKey)) {
+                        lineMap.set(lineKey, {
+                            key: lineKey,
+                            lineNum: Number.isFinite(parsedLineNum) ? parsedLineNum : null,
+                            baseline: Number(span.dataset.originY ?? span.style.top ?? 0) || 0,
+                            items: [],
+                        });
+                    }
+
+                    const entry = lineMap.get(lineKey);
+                    entry.items.push(span);
+                    entry.baseline = Number.isFinite(parsedLineNum)
+                        ? entry.baseline
+                        : ((entry.baseline * (entry.items.length - 1)) + (Number(span.dataset.originY ?? span.style.top ?? 0) || 0)) / entry.items.length;
+                });
+
+                return Array.from(lineMap.values())
+                    .sort((a, b) => {
+                        if (Number.isFinite(a.lineNum) && Number.isFinite(b.lineNum)) {
+                            return a.lineNum - b.lineNum;
+                        }
+                        return a.baseline - b.baseline;
+                    })
+                    .map((line) => ({
+                        ...line,
+                        items: line.items.slice().sort((a, b) => {
+                            const leftA = Number(a.dataset.xpos ?? a.style.left ?? 0) || 0;
+                            const leftB = Number(b.dataset.xpos ?? b.style.left ?? 0) || 0;
+                            return leftA - leftB;
+                        }),
+                    }));
+            }
+
+            function clusterPositionedSplitParagraphRows(lineNodes) {
+                const clusteredRows = [];
+
+                (Array.isArray(lineNodes) ? lineNodes : [])
+                    .filter((node) => node instanceof HTMLElement)
+                    .slice()
+                    .sort((a, b) => (
+                        (parseFloat(a.style.top) || 0) - (parseFloat(b.style.top) || 0)
+                        || (parseFloat(a.style.left) || 0) - (parseFloat(b.style.left) || 0)
+                    ))
+                    .forEach((lineNode) => {
+                        const lineTop = parseFloat(lineNode.style.top) || 0;
+                        const lineLeft = parseFloat(lineNode.style.left) || 0;
+                        const lineWidth = parseFloat(lineNode.style.width)
+                            || lineNode.getBoundingClientRect().width
+                            || 0;
+                        const lineHeight = Math.max(
+                            1,
+                            parseFloat(lineNode.style.height)
+                                || parseFloat(lineNode.style.lineHeight)
+                                || lineNode.getBoundingClientRect().height
+                                || 0
+                        );
+                        const lineBottom = lineTop + lineHeight;
+                        const mergeTolerance = Math.max(2, Math.min(6, lineHeight * 0.45));
+
+                        let row = clusteredRows.find((candidate) => {
+                            const rowBottom = candidate.top + candidate.height;
+                            const verticalOverlap = Math.max(0, Math.min(lineBottom, rowBottom) - Math.max(lineTop, candidate.top));
+                            const minHeight = Math.max(1, Math.min(lineHeight, candidate.height));
+                            const overlapRatio = verticalOverlap / minHeight;
+                            return overlapRatio >= 0.45 || Math.abs(candidate.top - lineTop) <= Math.max(candidate.mergeTolerance, mergeTolerance);
+                        });
+
+                        if (!row) {
+                            row = {
+                                top: lineTop,
+                                height: lineHeight,
+                                mergeTolerance,
+                                nodes: [],
+                            };
+                            clusteredRows.push(row);
+                        } else {
+                            row.top = Math.min(row.top, lineTop);
+                            row.height = Math.max(row.height, lineHeight);
+                            row.mergeTolerance = Math.max(row.mergeTolerance, mergeTolerance);
+                        }
+
+                        row.nodes.push({
+                            lineNode,
+                            left: lineLeft,
+                            top: lineTop,
+                            width: lineWidth,
+                            height: lineHeight,
+                        });
+                    });
+
+                return clusteredRows
+                    .sort((a, b) => a.top - b.top)
+                    .map((row) => ({
+                        ...row,
+                        nodes: row.nodes.slice().sort((a, b) => a.left - b.left),
+                    }));
+            }
+
+            function getSplitParagraphExplicitText(textEl) {
+                const lines = collectSplitParagraphCharacterLines(textEl);
+                if (!lines.length) {
+                    return '';
+                }
+
+                return lines.map((line) => (
+                    line.items
+                        .map((span) => (span.textContent || '').replace(/\u00A0/g, ' '))
+                        .join('')
+                )).join('\n').replace(/\n+$/g, '');
+            }
+
+            function buildSplitParagraphRichTextHtml(textEl) {
+                const lines = collectSplitParagraphCharacterLines(textEl);
+                if (!lines.length) {
+                    return '';
+                }
+
+                const serializeStyles = (span) => {
+                    const styles = [];
+                    const rawColor = String(span.style.color || '').trim();
+                    const rawBackgroundColor = String(span.style.backgroundColor || '').trim();
+                    const color = rawColor ? colorToHex(rawColor) : '';
+                    const backgroundColor = rawBackgroundColor ? colorToHex(rawBackgroundColor) : '';
+                    const fontSize = String(span.style.fontSize || '').trim();
+                    const fontWeight = String(span.style.fontWeight || '').trim();
+                    const fontStyle = String(span.style.fontStyle || '').trim();
+                    const textDecoration = String(span.style.textDecoration || span.style.textDecorationLine || '').trim();
+                    const fontFamily = String(span.style.fontFamily || '').trim();
+
+                    if (color && color !== '#000000' && color !== 'transparent') styles.push(`color:${color}`);
+                    if (backgroundColor && backgroundColor !== 'transparent') styles.push(`background-color:${backgroundColor}`);
+                    if (fontSize) styles.push(`font-size:${fontSize}`);
+                    if (fontWeight && fontWeight !== '400' && fontWeight !== 'normal') styles.push(`font-weight:${fontWeight}`);
+                    if (fontStyle && fontStyle !== 'normal') styles.push(`font-style:${fontStyle}`);
+                    if (textDecoration && textDecoration !== 'none') styles.push(`text-decoration:${textDecoration}`);
+                    if (fontFamily) styles.push(`font-family:${fontFamily}`);
+
+                    return styles.join(';');
+                };
+
+                const buildStyledRunHtml = (text, styleText) => {
+                    const safeText = escapeAnnotationHtml(text.replace(/\u00A0/g, ' '));
+                    if (!styleText) {
+                        return safeText;
+                    }
+                    return `<span style="${escapeAnnotationHtmlAttribute(styleText)}">${safeText}</span>`;
+                };
+
+                let html = '';
+                lines.forEach((line, lineIndex) => {
+                    let currentStyle = null;
+                    let currentText = '';
+
+                    const flush = () => {
+                        if (!currentText) {
+                            return;
+                        }
+                        html += buildStyledRunHtml(currentText, currentStyle);
+                        currentText = '';
+                    };
+
+                    line.items.forEach((span) => {
+                        const text = (span.textContent || '').replace(/\u00A0/g, ' ');
+                        const styleText = serializeStyles(span);
+                        if (currentStyle === null) {
+                            currentStyle = styleText;
+                            currentText = text;
+                            return;
+                        }
+                        if (styleText === currentStyle) {
+                            currentText += text;
+                            return;
+                        }
+                        flush();
+                        currentStyle = styleText;
+                        currentText = text;
+                    });
+
+                    flush();
+                    currentStyle = null;
+
+                    if (lineIndex < lines.length - 1) {
+                        html += '<br>';
+                    }
+                });
+
+                return html.replace(/(?:<br>)+$/g, '');
+            }
+
             function getOverlayExplicitText(textEl) {
                 if (!textEl) return '';
+                if (
+                    textEl.nodeType === Node.ELEMENT_NODE
+                    && (
+                        textEl.dataset?.splitParagraphFullyActive === '1'
+                        || textEl.dataset?.annotationSplitParagraphFully === '1'
+                        || textEl.dataset?.editLayout === 'split-paragraph-fully'
+                    )
+                ) {
+                    const splitText = getSplitParagraphExplicitText(textEl);
+                    if (splitText !== '') {
+                        return splitText;
+                    }
+                }
                 if (textEl.nodeType === Node.ELEMENT_NODE) {
                     const hasAbsoluteSpans = Array.from(textEl.querySelectorAll?.('span') || [])
                         .some((span) => span.style.position === 'absolute');
@@ -11823,6 +12978,16 @@
                 if (!textEl) {
                     return '';
                 }
+                if (
+                    textEl.dataset?.splitParagraphFullyActive === '1'
+                    || textEl.dataset?.annotationSplitParagraphFully === '1'
+                    || textEl.dataset?.editLayout === 'split-paragraph-fully'
+                ) {
+                    const splitHtml = buildSplitParagraphRichTextHtml(textEl);
+                    if (splitHtml !== '') {
+                        return splitHtml;
+                    }
+                }
                 let html = '';
                 textEl.childNodes.forEach((child) => {
                     html += serializeAnnotationRichTextNode(child);
@@ -12229,36 +13394,30 @@
                 }
                 if (annotation.type === 'text' || !annotation.type) {
                     const canUseExactPromotedGeometry = () => {
-                        if (!annotation?.promotedFromExtraction || annotation?.promotedDirty || annotation?.promotedReflowEnabled) {
-                            return false;
-                        }
-                        if (!annotationHasBounds(annotation)) {
-                            return false;
-                        }
-                        const lineBoxes = Array.isArray(annotation?.sourceLineBBoxes) ? annotation.sourceLineBBoxes : [];
-                        return lineBoxes.length > 0;
+                        return canRenderPromotedAnnotationWithExactGeometry(annotation);
                     };
                     const renderExactPromotedGeometry = (target) => {
                         if (!target || !canUseExactPromotedGeometry()) {
                             return false;
                         }
 
-                        const sourceLineBoxes = Array.isArray(annotation.sourceLineBBoxes)
-                            ? annotation.sourceLineBBoxes
+                        const sourceMeta = getPromotedAnnotationSourceMeta(annotation);
+                        const sourceLineBoxes = Array.isArray(sourceMeta?.sourceLineBBoxes)
+                            ? sourceMeta.sourceLineBBoxes
                                 .filter((bbox) => Array.isArray(bbox) && bbox.length >= 4)
                                 .map((bbox) => bbox.map((value) => Number(value) || 0))
                             : [];
-                        const sourceTextLines = Array.isArray(annotation.sourceTextLines)
-                            ? annotation.sourceTextLines.map((line) => String(line ?? ''))
+                        const sourceTextLines = Array.isArray(sourceMeta?.sourceTextLines)
+                            ? sourceMeta.sourceTextLines.map((line) => String(line ?? ''))
                             : [];
                         if (!sourceLineBoxes.length) {
                             return false;
                         }
 
-                        const sourceBlockLeft = Number(annotation.sourceBlockLeft ?? annotation.pdfX) || 0;
-                        const sourceBlockTop = Number(annotation.sourceBlockTop ?? 0) || 0;
-                        const sourceSpans = Array.isArray(annotation.sourceSpans)
-                            ? annotation.sourceSpans
+                        const sourceBlockLeft = Number(sourceMeta?.sourceBlockLeft ?? annotation.pdfX) || 0;
+                        const sourceBlockTop = Number(sourceMeta?.sourceBlockTop ?? 0) || 0;
+                        const sourceSpans = Array.isArray(sourceMeta?.sourceSpans)
+                            ? sourceMeta.sourceSpans
                                 .filter((span) => span && Array.isArray(span.bbox) && span.bbox.length >= 4)
                                 .map((span) => ({
                                     ...span,
@@ -12273,31 +13432,7 @@
                             spans: [],
                         }));
 
-                        const overlapAmount = (aTop, aBottom, bTop, bBottom) =>
-                            Math.max(0, Math.min(aBottom, bBottom) - Math.max(aTop, bTop));
-
-                        sourceSpans.forEach((span) => {
-                            const spanTop = Number(span.bbox?.[1]) || 0;
-                            const spanBottom = Number(span.bbox?.[3]) || spanTop;
-                            let bestLine = null;
-                            let bestScore = -1;
-
-                            lineEntries.forEach((entry) => {
-                                const lineTop = Number(entry.bbox?.[1]) || 0;
-                                const lineBottom = Number(entry.bbox?.[3]) || lineTop;
-                                const intersection = overlapAmount(spanTop, spanBottom, lineTop, lineBottom);
-                                const minHeight = Math.max(1, Math.min(spanBottom - spanTop, lineBottom - lineTop));
-                                const score = intersection / minHeight;
-                                if (score > bestScore) {
-                                    bestScore = score;
-                                    bestLine = entry;
-                                }
-                            });
-
-                            if (bestLine && bestScore >= 0.15) {
-                                bestLine.spans.push(span);
-                            }
-                        });
+                        assignPromotedSpansToLineEntries(lineEntries, sourceSpans);
 
                         target.innerHTML = '';
                         target.style.position = 'relative';
@@ -12673,7 +13808,12 @@
                 annotation.opacity = typeof annotation.opacity === 'number' ? annotation.opacity : 1;
                 annotation.rotation = annotation.rotation || 0;
                 annotation.keepBounds = Boolean(annotation.keepBounds);
-                if (annotation.requestedFontSize !== null && annotation.requestedFontSize !== undefined) {
+                if (annotation.promotedFromExtraction) {
+                    // Promoted/imported text stores fontSize in PDF-space units. A persisted
+                    // requestedFontSize is only a display-pixel cache from a prior zoom level,
+                    // and reusing it on load causes font size to be scaled twice.
+                    delete annotation.requestedFontSize;
+                } else if (annotation.requestedFontSize !== null && annotation.requestedFontSize !== undefined) {
                     const parsedRequestedFontSize = Number(annotation.requestedFontSize);
                     if (parsedRequestedFontSize > 0) {
                         annotation.requestedFontSize = parsedRequestedFontSize;
@@ -12866,11 +14006,7 @@
                     return false;
                 }
                 if (
-                    annotation?.promotedFromExtraction
-                    && !annotation?.promotedDirty
-                    && !annotation?.promotedReflowEnabled
-                    && Array.isArray(annotation?.sourceLineBBoxes)
-                    && annotation.sourceLineBBoxes.length > 0
+                    canRenderPromotedAnnotationWithExactGeometry(annotation)
                 ) {
                     return false;
                 }
@@ -13399,12 +14535,26 @@
                             const rect = overlay.getBoundingClientRect();
                             const currentX = event.clientX - rect.left;
                             const currentY = event.clientY - rect.top;
-                            
+
+                            if (isLineShapeType(shapeType)) {
+                                const snappedPoint = snapLineEndpoint(pendingDrawingShape.startX, pendingDrawingShape.startY, currentX, currentY);
+                                const geometry = computeLineBoxGeometry(pendingDrawingShape.startX, pendingDrawingShape.startY, snappedPoint.x, snappedPoint.y);
+                                pendingDrawingShape.lineStartX = geometry.lineStartX;
+                                pendingDrawingShape.lineStartY = geometry.lineStartY;
+                                pendingDrawingShape.lineEndX = geometry.lineEndX;
+                                pendingDrawingShape.lineEndY = geometry.lineEndY;
+                                pendingDrawingShape.element.style.left = geometry.left + 'px';
+                                pendingDrawingShape.element.style.top = geometry.top + 'px';
+                                pendingDrawingShape.element.style.width = geometry.width + 'px';
+                                pendingDrawingShape.element.style.height = geometry.height + 'px';
+                                return;
+                            }
+
                             const left = Math.min(currentX, pendingDrawingShape.startX);
                             const top = Math.min(currentY, pendingDrawingShape.startY);
                             const width = Math.max(1, Math.abs(currentX - pendingDrawingShape.startX));
                             const height = Math.max(1, Math.abs(currentY - pendingDrawingShape.startY));
-                            
+
                             pendingDrawingShape.element.style.left = left + 'px';
                             pendingDrawingShape.element.style.top = top + 'px';
                             pendingDrawingShape.element.style.width = width + 'px';
@@ -13413,20 +14563,28 @@
                         
                         overlay.addEventListener('pointerup', (event) => {
                             if (!pendingDrawingShape || toolMode !== 'shape') return;
-                            
-                            const shapeRect = pendingDrawingShape.element.getBoundingClientRect();
                             const overlayRect = overlay.getBoundingClientRect();
-                            const width = shapeRect.width;
-                            const height = shapeRect.height;
-                            
-                            if (width < 6 || height < 6) {
+                            const currentX = event.clientX - overlayRect.left;
+                            const currentY = event.clientY - overlayRect.top;
+                            const finalLineGeometry = isLineShapeType(shapeType)
+                                ? (() => {
+                                    const snappedPoint = snapLineEndpoint(pendingDrawingShape.startX, pendingDrawingShape.startY, currentX, currentY);
+                                    return computeLineBoxGeometry(pendingDrawingShape.startX, pendingDrawingShape.startY, snappedPoint.x, snappedPoint.y);
+                                })()
+                                : null;
+                            const shapeRect = pendingDrawingShape.element.getBoundingClientRect();
+                            const width = finalLineGeometry ? finalLineGeometry.width : shapeRect.width;
+                            const height = finalLineGeometry ? finalLineGeometry.height : shapeRect.height;
+                            const lineLength = Math.hypot(currentX - pendingDrawingShape.startX, currentY - pendingDrawingShape.startY);
+
+                            if ((isLineShapeType(shapeType) && lineLength < 10) || (!isLineShapeType(shapeType) && (width < 6 || height < 6))) {
                                 pendingDrawingShape.element.remove();
                                 pendingDrawingShape = null;
                                 return;
                             }
                             
-                            const left = shapeRect.left - overlayRect.left;
-                            const top = shapeRect.top - overlayRect.top;
+                            const left = finalLineGeometry ? finalLineGeometry.left : (shapeRect.left - overlayRect.left);
+                            const top = finalLineGeometry ? finalLineGeometry.top : (shapeRect.top - overlayRect.top);
                             const pdfX = left / currentScale;
                             const pdfWidth = width / currentScale;
                             const pdfHeight = height / currentScale;
@@ -13448,6 +14606,12 @@
                                 pdfWidth,
                                 pdfHeight
                             };
+                            if (isLineShapeType(shapeType)) {
+                                annotation.lineStartX = finalLineGeometry?.lineStartX ?? pendingDrawingShape.lineStartX ?? 0;
+                                annotation.lineStartY = finalLineGeometry?.lineStartY ?? pendingDrawingShape.lineStartY ?? 0;
+                                annotation.lineEndX = finalLineGeometry?.lineEndX ?? pendingDrawingShape.lineEndX ?? 1;
+                                annotation.lineEndY = finalLineGeometry?.lineEndY ?? pendingDrawingShape.lineEndY ?? 0;
+                            }
                             
                             annotations.push(annotation);
                             persistAnnotations();
@@ -13455,8 +14619,10 @@
                             addAnnotationElement(blankPageEl, annotation, pageInfo);
                             pendingDrawingShape.element.remove();
                             pendingDrawingShape = null;
-                            setSelection(annotation);
-                            setStatus('Shape added to new page. Click Save to keep changes.', 'ok');
+                            setTimeout(() => {
+                                setSelection(annotation);
+                                setStatus('Shape added to new page. Click Save to keep changes.', 'ok');
+                            }, 10);
                         });
 
                         // ─── Table drawing on pending page ───
@@ -13902,6 +15068,22 @@
                 }
             }
 
+            function shouldEnablePromotedAnnotationReflow(annotationLike) {
+                if (!annotationLike?.promotedFromExtraction || !annotationLike?.promotedDirty) {
+                    return false;
+                }
+                if (!(Number(annotationLike?.pdfWidth) > 0) || !(Number(annotationLike?.pdfHeight) > 0)) {
+                    return false;
+                }
+
+                const originalText = String(annotationLike?.originalText || '');
+                if (originalText === '') {
+                    return false;
+                }
+
+                return String(annotationLike?.text || '') !== originalText;
+            }
+
             function normalizeComparableAnnotationNumber(value) {
                 const numericValue = Number(value);
                 if (!Number.isFinite(numericValue)) {
@@ -13948,8 +15130,34 @@
                 if (annotationRichTextHasFormatting(annotation.richTextHtml || '')) {
                     return false;
                 }
-                if (!Array.isArray(annotation.sourceLineBBoxes) || annotation.sourceLineBBoxes.length === 0) {
+                const sourceMeta = getPromotedAnnotationSourceMeta(annotation);
+                if (!Array.isArray(sourceMeta?.sourceLineBBoxes) || sourceMeta.sourceLineBBoxes.length === 0) {
                     return false;
+                }
+                if (annotationHasBounds(annotation)) {
+                    const sourceBlockLeft = Number(sourceMeta?.sourceBlockLeft);
+                    const sourceBlockTop = Number(sourceMeta?.sourceBlockTop);
+                    const sourceBlockWidth = Number(sourceMeta?.sourceBlockWidth);
+                    const sourceBlockHeight = Number(sourceMeta?.sourceBlockHeight);
+                    const sourcePageHeight = Number(sourceMeta?.sourcePageHeight);
+                    if (
+                        Number.isFinite(sourceBlockLeft)
+                        && Number.isFinite(sourceBlockTop)
+                        && Number.isFinite(sourceBlockWidth)
+                        && Number.isFinite(sourceBlockHeight)
+                        && sourcePageHeight > 0
+                    ) {
+                        const currentTop = sourcePageHeight - ((Number(annotation.pdfY) || 0) + (Number(annotation.pdfHeight) || 0));
+                        const geometryTolerance = 0.75;
+                        if (
+                            Math.abs((Number(annotation.pdfX) || 0) - sourceBlockLeft) > geometryTolerance
+                            || Math.abs(currentTop - sourceBlockTop) > geometryTolerance
+                            || Math.abs((Number(annotation.pdfWidth) || 0) - sourceBlockWidth) > geometryTolerance
+                            || Math.abs((Number(annotation.pdfHeight) || 0) - sourceBlockHeight) > geometryTolerance
+                        ) {
+                            return false;
+                        }
+                    }
                 }
                 if (String(annotation.backgroundColor || 'transparent') !== 'transparent') {
                     return false;
@@ -13970,7 +15178,7 @@
                     return false;
                 }
 
-                const sourceLineHeights = annotation.sourceLineBBoxes
+                const sourceLineHeights = sourceMeta.sourceLineBBoxes
                     .map((bbox) => Array.isArray(bbox) && bbox.length >= 4 ? (Number(bbox[3]) - Number(bbox[1])) : 0)
                     .filter((height) => Number.isFinite(height) && height > 0);
                 const savedLineHeight = Number(annotation.lineHeight);
@@ -13981,6 +15189,40 @@
                     }
                 }
 
+                return true;
+            }
+
+            function shouldResetPromotedAnnotationReflow(annotation) {
+                if (!annotation?.promotedFromExtraction || !annotation?.promotedReflowEnabled) {
+                    return false;
+                }
+                if (String(annotation.text || '') !== String(annotation.originalText || '')) {
+                    return false;
+                }
+                if (annotationRichTextHasFormatting(annotation.richTextHtml || '')) {
+                    return false;
+                }
+                const sourceMeta = getPromotedAnnotationSourceMeta(annotation);
+                return Array.isArray(sourceMeta?.sourceLineBBoxes) && sourceMeta.sourceLineBBoxes.length > 0;
+            }
+
+            function canRenderPromotedAnnotationWithExactGeometry(annotation) {
+                if (!annotation?.promotedFromExtraction || annotation?.promotedReflowEnabled) {
+                    return false;
+                }
+                if (!annotationHasBounds(annotation)) {
+                    return false;
+                }
+                const sourceMeta = getPromotedAnnotationSourceMeta(annotation);
+                if (!Array.isArray(sourceMeta?.sourceLineBBoxes) || sourceMeta.sourceLineBBoxes.length === 0) {
+                    return false;
+                }
+                if (String(annotation.text || '') !== String(annotation.originalText || '')) {
+                    return false;
+                }
+                if (annotationRichTextHasFormatting(annotation.richTextHtml || '')) {
+                    return false;
+                }
                 return true;
             }
 
@@ -14013,6 +15255,7 @@
                     if (response.ok) {
                         if (result?.annotation && typeof result.annotation === 'object') {
                             Object.assign(annotation, result.annotation);
+                            normalizeTextAnnotation(annotation);
                             const annotationImage = annotation.element?.querySelector?.('img');
                             if (annotationImage) {
                                 annotationImage.src = getAnnotationImageDataUrl(annotation);
@@ -14285,7 +15528,9 @@
             function createTextBoxCreator(overlay, x, y, pageIndex, canvas, wrapper, pageInfo, opts, dragW, dragH, editAnnotation) {
                 const { fontFamily, fontSizePx, textColor, bgColor, opacityVal, fontWeight, fontStyle, underline, textAlign } = opts;
                 const editingPromotedExtraction = Boolean(editAnnotation?.promotedFromExtraction);
+                const editingRichTextAnnotation = Boolean(annotationRichTextHasFormatting(editAnnotation?.richTextHtml || ''));
                 const preservePromotedLinesInEditor = Boolean(editingPromotedExtraction && !editAnnotation?.promotedReflowEnabled);
+                const preservePromotedEntryLayout = Boolean(editingPromotedExtraction && annotationHasBounds(editAnnotation));
                 const editorPageScale = Math.max(0.0001, Number(pageInfo?.scale || currentScale || 1) || 1);
                 const editLineHeightPx = Number(editAnnotation?.lineHeight) > 0
                     ? Number(editAnnotation.lineHeight) * currentScale
@@ -14305,6 +15550,15 @@
                 
                 const box = document.createElement('div');
                 box.className = 'text-box-creator';
+                if (preservePromotedEntryLayout) {
+                    box.classList.add('promoted-inline-editor');
+                    box.style.border = 'none';
+                    box.style.background = 'transparent';
+                    box.style.borderRadius = '0';
+                    box.style.minWidth = '0';
+                    box.style.minHeight = '0';
+                    box.style.boxSizing = 'border-box';
+                }
                 box.style.left = x + 'px';
                 box.style.top = y + 'px';
                 if (dragW && dragH) {
@@ -14323,7 +15577,11 @@
                 input.setAttribute('role', 'textbox');
                 input.setAttribute('aria-multiline', 'true');
                 input.setAttribute('data-placeholder', 'Type text here...');
-                const useRequestedFontSizeScale = !editingPromotedExtraction && (!editAnnotation || Number(editAnnotation?.requestedFontSize) > 0);
+                // Rich-text saved annotations already render from their normalized on-canvas font size.
+                // Re-scaling requestedFontSize here inflates the edit-mode paragraph and changes wraps.
+                const useRequestedFontSizeScale = !editingPromotedExtraction
+                    && !editingRichTextAnnotation
+                    && (!editAnnotation || Number(editAnnotation?.requestedFontSize) > 0);
                 input.dataset.fontSizeScaleMode = useRequestedFontSizeScale ? 'requested' : 'display';
                 input.dataset.requestedFontSize = String(fontSizePx);
                 input.dataset.builtinFontFamily = fontFamily;
@@ -14344,6 +15602,18 @@
                 input.style.textAlign = textAlign;
                 input.style.opacity = opacityVal;
                 if (dragH) input.style.minHeight = Math.max(28, dragH - 8) + 'px';
+                if (preservePromotedEntryLayout) {
+                    input.style.padding = '0';
+                    input.style.background = 'transparent';
+                    input.style.boxSizing = 'border-box';
+                    if (dragH) {
+                        input.style.minHeight = `${Math.max(1, dragH)}px`;
+                        input.style.height = `${Math.max(1, dragH)}px`;
+                    } else {
+                        input.style.minHeight = '100%';
+                        input.style.height = '100%';
+                    }
+                }
                 if (editingPromotedExtraction && preservePromotedLinesInEditor) {
                     input.style.padding = '0';
                     input.style.whiteSpace = 'pre';
@@ -14358,9 +15628,304 @@
                 } else if (!editingPromotedExtraction) {
                     input.style.lineHeight = `${getEditorDefaultLineHeightPx(input, fontSizePx, editorPageScale)}px`;
                 }
+                const buildSplitPromotedAnnotationEditorLayout = () => {
+                    if (
+                        !splitParagraphFullyEnabled
+                        || !editingPromotedExtraction
+                        || !editAnnotation
+                        || editAnnotation.promotedReflowEnabled
+                        || annotationRichTextHasFormatting(editAnnotation.richTextHtml || '')
+                    ) {
+                        return false;
+                    }
+
+                    const sourceMeta = getPromotedAnnotationSourceMeta(editAnnotation);
+                    if (!sourceMeta) {
+                        return false;
+                    }
+
+                    const sourceLineBoxes = Array.isArray(sourceMeta?.sourceLineBBoxes)
+                        ? sourceMeta.sourceLineBBoxes
+                            .filter((bbox) => Array.isArray(bbox) && bbox.length >= 4)
+                            .map((bbox) => bbox.map((value) => Number(value) || 0))
+                        : [];
+                    const sourceTextLines = Array.isArray(sourceMeta?.sourceTextLines)
+                        ? sourceMeta.sourceTextLines
+                            .map((line) => String(line ?? ''))
+                            .filter((line) => line.length > 0)
+                        : [];
+                    const sourceLineCount = sourceLineBoxes.length > 0 ? sourceLineBoxes.length : sourceTextLines.length;
+                    if (sourceLineCount <= 1) {
+                        return false;
+                    }
+
+                    const sourceBlockLeft = Number(sourceMeta?.sourceBlockLeft ?? editAnnotation.pdfX) || 0;
+                    const sourceBlockTop = Number(sourceMeta?.sourceBlockTop ?? 0) || 0;
+                    const sourceSpans = Array.isArray(sourceMeta?.sourceSpans)
+                        ? sourceMeta.sourceSpans
+                            .filter((span) => span && Array.isArray(span.bbox) && span.bbox.length >= 4)
+                            .map((span) => ({
+                                ...span,
+                                bbox: span.bbox.map((value) => Number(value) || 0),
+                            }))
+                        : [];
+                    if (!sourceLineBoxes.length) {
+                        return false;
+                    }
+
+                    const lineEntries = sourceLineBoxes.map((bbox, index) => ({
+                        index,
+                        bbox,
+                        text: sourceTextLines[index] ?? '',
+                        spans: [],
+                    }));
+                    assignPromotedSpansToLineEntries(lineEntries, sourceSpans);
+
+                    const formatSplitMetric = (value) => {
+                        const numericValue = Math.round((Number(value) || 0) * 100) / 100;
+                        if (!Number.isFinite(numericValue)) {
+                            return '0';
+                        }
+                        return String(numericValue)
+                            .replace(/\.0+$/g, '')
+                            .replace(/(\.\d*?[1-9])0+$/g, '$1');
+                    };
+
+                    const measurementCanvas = document.createElement('canvas');
+                    const measurementContext = measurementCanvas.getContext('2d');
+                    const measureInlineTextWidth = (text, fontSizePx, fontFamilyValue, fontWeightValue, fontStyleValue) => {
+                        if (!measurementContext) {
+                            return Math.max(1, (Number(fontSizePx) || 12) * 0.6);
+                        }
+                        const safeFontSizePx = Math.max(1, Number(fontSizePx) || 12);
+                        measurementContext.font = `${fontStyleValue || 'normal'} ${fontWeightValue || '400'} ${safeFontSizePx}px ${fontFamilyValue || 'sans-serif'}`;
+                        return measurementContext.measureText(text || ' ').width;
+                    };
+
+                    const sourceContainer = document.createElement('div');
+                    sourceContainer.style.position = 'relative';
+                    sourceContainer.style.display = 'block';
+                    sourceContainer.style.width = '100%';
+                    sourceContainer.style.height = '100%';
+                    sourceContainer.style.padding = '0';
+                    sourceContainer.style.margin = '0';
+                    sourceContainer.style.whiteSpace = 'normal';
+                    sourceContainer.style.overflow = 'visible';
+
+                    const fragment = document.createDocumentFragment();
+                    lineEntries.forEach((entry) => {
+                        const [lineLeft, lineTop, lineRight, lineBottom] = entry.bbox;
+                        const lineEl = document.createElement('span');
+                        lineEl.style.position = 'absolute';
+                        lineEl.style.display = 'block';
+                        lineEl.style.left = `${(lineLeft - sourceBlockLeft) * editorPageScale}px`;
+                        lineEl.style.top = `${(lineTop - sourceBlockTop) * editorPageScale}px`;
+                        lineEl.style.width = `${Math.max(1, (lineRight - lineLeft) * editorPageScale)}px`;
+                        lineEl.style.height = `${Math.max(1, (lineBottom - lineTop) * editorPageScale)}px`;
+                        lineEl.style.whiteSpace = 'pre';
+                        lineEl.style.lineHeight = `${Math.max(1, (lineBottom - lineTop) * editorPageScale)}px`;
+                        lineEl.style.padding = '0';
+                        lineEl.style.margin = '0';
+
+                        const sortedSpans = entry.spans.slice().sort((a, b) => (
+                            (Number(a.bbox?.[0]) || 0) - (Number(b.bbox?.[0]) || 0)
+                        ));
+
+                        if (sortedSpans.length) {
+                            sortedSpans.forEach((sourceSpan) => {
+                                const seg = document.createElement('span');
+                                seg.textContent = String(sourceSpan.text || '');
+                                seg.style.whiteSpace = 'pre';
+                                seg.style.padding = '0';
+                                seg.style.margin = '0';
+                                seg.style.fontFamily = resolveAnnotationCssFontFamily(
+                                    normalizePdfEditableFontFamily(sourceSpan.font || editAnnotation.fontFamily) || editAnnotation.fontFamily,
+                                    {
+                                        preferExact: true,
+                                        exactFontName: sourceSpan.font || editAnnotation.fontSourceName || editAnnotation.fontFamily,
+                                    }
+                                );
+                                seg.style.fontSize = `${Math.max(1, Number(sourceSpan.fontSize) || editAnnotation.fontSize) * editorPageScale}px`;
+                                seg.style.fontWeight = sourceSpan.fontWeight || editAnnotation.fontWeight || '400';
+                                seg.style.fontStyle = sourceSpan.fontStyle || editAnnotation.fontStyle || 'normal';
+                                seg.style.color = sourceSpan.color || editAnnotation.textColor || '#000000';
+                                seg.style.textDecoration = sourceSpan.underline ? 'underline' : 'none';
+                                lineEl.appendChild(seg);
+                            });
+                        } else {
+                            lineEl.textContent = entry.text;
+                            lineEl.style.fontFamily = resolveAnnotationCssFontFamily(editAnnotation.fontFamily, {
+                                preferExact: true,
+                                exactFontName: editAnnotation.fontSourceName || editAnnotation.fontFamily,
+                            });
+                            lineEl.style.fontSize = `${editAnnotation.fontSize * editorPageScale}px`;
+                            lineEl.style.fontWeight = editAnnotation.fontWeight || '400';
+                            lineEl.style.fontStyle = editAnnotation.fontStyle || 'normal';
+                            lineEl.style.color = editAnnotation.textColor || '#000000';
+                        }
+
+                        fragment.appendChild(lineEl);
+                    });
+
+                    sourceContainer.appendChild(fragment);
+                    input.dataset.font = editAnnotation.fontFamily || input.dataset.builtinFontFamily || '';
+
+                    const lineNodes = Array.from(sourceContainer.children)
+                        .filter((node) => node instanceof HTMLElement && node.tagName === 'SPAN' && node.style.position === 'absolute');
+                    if (!lineNodes.length) {
+                        return false;
+                    }
+
+                    const splitFragment = document.createDocumentFragment();
+                    let previousLineBottom = 0;
+                    let maxBottom = 0;
+                    let builtCharacterCount = 0;
+
+                    clusterPositionedSplitParagraphRows(lineNodes)
+                        .forEach((row, lineIndex) => {
+                            const rowNodes = row.nodes;
+                            const rowLeftPx = rowNodes.reduce((minLeft, node) => Math.min(minLeft, node.left), Infinity);
+                            const rowRightPx = rowNodes.reduce((maxRight, node) => Math.max(maxRight, node.left + node.width), 0);
+                            const lineTopPx = row.top;
+                            const lineHeightPx = Math.max(1, row.height);
+                            const paraEl = document.createElement('p');
+                            const marginTopPx = Math.max(0, lineIndex === 0 ? lineTopPx : (lineTopPx - previousLineBottom));
+                            paraEl.className = 'para-sel';
+                            paraEl.dataset.ypos = formatSplitMetric(lineTopPx);
+                            paraEl.style.margin = `${formatSplitMetric(marginTopPx)}px 0 0`;
+                            paraEl.style.padding = '0';
+                            paraEl.style.width = `${Math.max(1, rowRightPx - rowLeftPx)}px`;
+                            paraEl.style.minHeight = `${lineHeightPx}px`;
+                            paraEl.style.lineHeight = `${lineHeightPx}px`;
+                            paraEl.style.position = 'static';
+                            paraEl.style.whiteSpace = 'pre';
+
+                            rowNodes.forEach(({ lineNode, left: nodeLeft }) => {
+                                const segments = Array.from(lineNode.childNodes)
+                                    .map((node) => {
+                                        if (node.nodeType === Node.TEXT_NODE) {
+                                            return {
+                                                text: String(node.textContent || ''),
+                                                styleSource: lineNode,
+                                            };
+                                        }
+                                        if (node.nodeType === Node.ELEMENT_NODE) {
+                                            return {
+                                                text: String(node.textContent || ''),
+                                                styleSource: node,
+                                            };
+                                        }
+                                        return null;
+                                    })
+                                    .filter((segment) => segment && segment.text.length > 0);
+
+                                if (!segments.length) {
+                                    segments.push({
+                                        text: String(lineNode.textContent || ''),
+                                        styleSource: lineNode,
+                                    });
+                                }
+
+                                let currentLeftPx = Math.max(0, nodeLeft - rowLeftPx);
+                                segments.forEach(({ text, styleSource }) => {
+                                    const computedStyle = window.getComputedStyle(styleSource);
+                                    const fontFamilyValue = styleSource.style.fontFamily || computedStyle.fontFamily || input.style.fontFamily || 'sans-serif';
+                                    const fontWeightValue = styleSource.style.fontWeight || computedStyle.fontWeight || '400';
+                                    const fontStyleValue = styleSource.style.fontStyle || computedStyle.fontStyle || 'normal';
+                                    const fontSizePx = parseFloat(styleSource.style.fontSize)
+                                        || parseFloat(computedStyle.fontSize)
+                                        || parseFloat(lineNode.style.fontSize)
+                                        || parseFloat(window.getComputedStyle(lineNode).fontSize)
+                                        || parseFloat(input.style.fontSize)
+                                        || 12;
+                                    const colorValue = styleSource.style.color || computedStyle.color || input.style.color || '#000000';
+                                    const textDecorationValue = styleSource.style.textDecoration || computedStyle.textDecoration || 'none';
+
+                                    Array.from(text).forEach((character) => {
+                                        const measuredCharacter = character === '\u00A0' ? ' ' : character;
+                                        const measuredWidth = Math.max(
+                                            measureInlineTextWidth(measuredCharacter, fontSizePx, fontFamilyValue, fontWeightValue, fontStyleValue),
+                                            /\S/.test(measuredCharacter) ? fontSizePx * 0.08 : fontSizePx * 0.22
+                                        );
+                                        const charEl = document.createElement('span');
+                                        charEl.className = '_iceni_text-sel';
+                                        charEl.textContent = character === ' ' ? '\u00A0' : character;
+                                        charEl.dataset.lineNum = String(lineIndex);
+                                        charEl.dataset.originY = formatSplitMetric(lineTopPx);
+                                        charEl.dataset.xpos = formatSplitMetric(rowLeftPx + currentLeftPx);
+                                        charEl.dataset.width = formatSplitMetric(measuredWidth);
+                                        charEl.style.position = 'absolute';
+                                        charEl.style.left = `${rowLeftPx + currentLeftPx}px`;
+                                        charEl.style.top = `${lineTopPx}px`;
+                                        charEl.style.padding = '0';
+                                        charEl.style.margin = '0';
+                                        charEl.style.whiteSpace = 'pre';
+                                        charEl.style.fontFamily = fontFamilyValue;
+                                        charEl.style.fontSize = `${fontSizePx}px`;
+                                        charEl.style.fontWeight = String(fontWeightValue);
+                                        charEl.style.fontStyle = fontStyleValue;
+                                        charEl.style.color = colorValue;
+                                        charEl.style.textDecoration = textDecorationValue;
+                                        charEl.style.lineHeight = `${lineHeightPx}px`;
+                                        charEl.style.verticalAlign = 'middle';
+                                        paraEl.appendChild(charEl);
+                                        currentLeftPx += measuredWidth;
+                                        builtCharacterCount += 1;
+                                    });
+                                });
+                            });
+
+                            previousLineBottom = lineTopPx + lineHeightPx;
+                            maxBottom = Math.max(maxBottom, previousLineBottom);
+                            splitFragment.appendChild(paraEl);
+                        });
+
+                    if (!builtCharacterCount) {
+                        return false;
+                    }
+
+                    input.innerHTML = '';
+                    input.appendChild(splitFragment);
+                    input.style.position = 'relative';
+                    input.style.display = 'block';
+                    input.style.width = '100%';
+                    input.style.whiteSpace = 'normal';
+                    input.style.wordBreak = 'normal';
+                    input.style.overflow = 'visible';
+                    input.style.minHeight = maxBottom > 0 ? `${maxBottom}px` : '';
+                    input.style.overflowWrap = 'normal';
+                    input.dataset.splitParagraphFullyActive = '1';
+                    input.dataset.annotationSplitParagraphFully = '1';
+                    input.dataset.editLayout = 'split-paragraph-fully';
+                    return true;
+                };
+                const deactivateSplitPromotedAnnotationEditorLayout = () => {
+                    if (input.dataset.annotationSplitParagraphFully !== '1') {
+                        return;
+                    }
+                    const currentText = getOverlayExplicitText(input);
+                    setRichEditableContent(input, currentText);
+                    delete input.dataset.annotationSplitParagraphFully;
+                    delete input.dataset.splitParagraphFullyActive;
+                    delete input.dataset.editLayout;
+                    input.style.position = '';
+                    input.style.display = '';
+                    input.style.width = '';
+                    input.style.minHeight = dragH ? `${Math.max(1, dragH)}px` : '';
+                    input.style.overflow = '';
+                    input.style.whiteSpace = 'pre-wrap';
+                    input.style.overflowWrap = 'break-word';
+                    input.style.wordBreak = 'break-word';
+                    if (editorLineHeightPx > 0) {
+                        input.style.lineHeight = `${editorLineHeightPx}px`;
+                    }
+                };
                 // Pre-fill text when editing an existing annotation
                 if (editAnnotation) {
-                    setRichEditableContent(input, editAnnotation.text, editAnnotation.richTextHtml || '');
+                    const appliedSplitLayout = buildSplitPromotedAnnotationEditorLayout();
+                    if (!appliedSplitLayout) {
+                        setRichEditableContent(input, editAnnotation.text, editAnnotation.richTextHtml || '');
+                    }
                 }
                 
                 // Hover menu bar
@@ -14620,6 +16185,9 @@
                             const annotationChanged = previousComparableState !== nextComparableState;
                             if (annotationChanged) {
                                 markPromotedAnnotationDirty(editAnnotation);
+                                if (shouldEnablePromotedAnnotationReflow(editAnnotation)) {
+                                    editAnnotation.promotedReflowEnabled = true;
+                                }
                             }
                             applyAnnotationStyle(editAnnotation);
                             updateAnnotationsList();
@@ -14751,6 +16319,20 @@
                 
                 input.addEventListener('keydown', (e) => {
                     e.stopPropagation();
+                    if (
+                        input.dataset.annotationSplitParagraphFully === '1'
+                        && (
+                            e.key === 'Enter'
+                            || (
+                                !e.metaKey
+                                && !e.ctrlKey
+                                && !e.altKey
+                                && (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete')
+                            )
+                        )
+                    ) {
+                        deactivateSplitPromotedAnnotationEditorLayout();
+                    }
                     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
                         e.preventDefault();
                         commitText();
@@ -14769,10 +16351,25 @@
                         cancelBox();
                     }
                 });
+                input.addEventListener('beforeinput', (e) => {
+                    if (input.dataset.annotationSplitParagraphFully !== '1') {
+                        return;
+                    }
+                    const inputType = String(e.inputType || '');
+                    if (
+                        inputType.startsWith('insert')
+                        || inputType.startsWith('delete')
+                        || inputType === 'historyUndo'
+                        || inputType === 'historyRedo'
+                    ) {
+                        deactivateSplitPromotedAnnotationEditorLayout();
+                    }
+                });
 
                 input.addEventListener('paste', (e) => {
                     e.preventDefault();
                     e.stopPropagation();
+                    deactivateSplitPromotedAnnotationEditorLayout();
                     const pastedText = e.clipboardData?.getData('text/plain')
                         || window.clipboardData?.getData('Text')
                         || '';
@@ -14812,6 +16409,11 @@
                 const label = document.createElement('div');
                 label.className = 'annotation';
                 label.classList.toggle('promoted-extraction', Boolean(annotation.promotedFromExtraction));
+                const overlay = wrapper.querySelector('.overlay');
+                if (!overlay) {
+                    console.error('addAnnotationElement: No .overlay found in wrapper', wrapper);
+                    return;
+                }
                 
                 // Set z-index based on position in annotations array for proper layering
                 const zIndex = annotations.indexOf(annotation);
@@ -14822,6 +16424,7 @@
                 let textSpan = null;
                 let annotationImage = null;
                 let shapeSvg = null;
+                let lineHitTarget = null;
                 if (isImageBackedAnnotationType(annotation.type)) {
                     annotationImage = document.createElement('img');
                     annotationImage.src = getAnnotationImageDataUrl(annotation);
@@ -14832,129 +16435,7 @@
                     annotationImage.style.userSelect = 'none';
                     annotationImage.style.webkitUserDrag = 'none';
                 } else if (annotation.type === 'shape') {
-                    shapeSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-                    shapeSvg.setAttribute('width', '100%');
-                    shapeSvg.setAttribute('height', '100%');
-                    shapeSvg.setAttribute('viewBox', '0 0 100 100');
-                    shapeSvg.setAttribute('preserveAspectRatio', 'none');
-                    shapeSvg.style.display = 'block';
-                    const strokeColor = annotation.strokeTransparent ? 'transparent' : annotation.strokeColor;
-                    const fillColor = annotation.fillTransparent ? 'transparent' : annotation.fillColor;
-                    if (annotation.shapeType === 'circle' || annotation.shapeType === 'ellipse') {
-                        const ellipse = document.createElementNS('http://www.w3.org/2000/svg', 'ellipse');
-                        ellipse.setAttribute('cx', '50');
-                        ellipse.setAttribute('cy', '50');
-                        ellipse.setAttribute('rx', '48');
-                        ellipse.setAttribute('ry', '48');
-                        ellipse.setAttribute('fill', fillColor);
-                        ellipse.setAttribute('stroke', strokeColor);
-                        ellipse.setAttribute('stroke-width', String(annotation.strokeWidth));
-                        ellipse.setAttribute('opacity', String(annotation.opacity));
-                        shapeSvg.appendChild(ellipse);
-                    } else if (annotation.shapeType === 'triangle') {
-                        const triangle = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-                        triangle.setAttribute('points', '50 5, 95 95, 5 95');
-                        triangle.setAttribute('fill', fillColor);
-                        triangle.setAttribute('stroke', strokeColor);
-                        triangle.setAttribute('stroke-width', String(annotation.strokeWidth));
-                        triangle.setAttribute('opacity', String(annotation.opacity));
-                        shapeSvg.appendChild(triangle);
-                    } else if (annotation.shapeType === 'x') {
-                        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-                        const line1 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                        line1.setAttribute('x1', '15');
-                        line1.setAttribute('y1', '15');
-                        line1.setAttribute('x2', '85');
-                        line1.setAttribute('y2', '85');
-                        line1.setAttribute('stroke', strokeColor);
-                        line1.setAttribute('stroke-width', String(annotation.strokeWidth));
-                        line1.setAttribute('stroke-linecap', 'round');
-                        line1.setAttribute('opacity', String(annotation.opacity));
-                        const line2 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                        line2.setAttribute('x1', '85');
-                        line2.setAttribute('y1', '15');
-                        line2.setAttribute('x2', '15');
-                        line2.setAttribute('y2', '85');
-                        line2.setAttribute('stroke', strokeColor);
-                        line2.setAttribute('stroke-width', String(annotation.strokeWidth));
-                        line2.setAttribute('stroke-linecap', 'round');
-                        line2.setAttribute('opacity', String(annotation.opacity));
-                        g.appendChild(line1);
-                        g.appendChild(line2);
-                        shapeSvg.appendChild(g);
-                    } else if (annotation.shapeType === 'line') {
-                        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                        line.setAttribute('x1', '10');
-                        line.setAttribute('y1', '90');
-                        line.setAttribute('x2', '90');
-                        line.setAttribute('y2', '10');
-                        line.setAttribute('stroke', strokeColor);
-                        line.setAttribute('stroke-width', String(annotation.strokeWidth));
-                        line.setAttribute('stroke-linecap', 'round');
-                        line.setAttribute('opacity', String(annotation.opacity));
-                        shapeSvg.appendChild(line);
-                    } else if (annotation.shapeType === 'checkmark') {
-                        const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-                        polyline.setAttribute('points', '15 50, 40 75, 85 15');
-                        polyline.setAttribute('fill', 'none');
-                        polyline.setAttribute('stroke', strokeColor);
-                        polyline.setAttribute('stroke-width', String(annotation.strokeWidth));
-                        polyline.setAttribute('stroke-linecap', 'round');
-                        polyline.setAttribute('stroke-linejoin', 'round');
-                        polyline.setAttribute('opacity', String(annotation.opacity));
-                        shapeSvg.appendChild(polyline);
-                    } else if (annotation.shapeType === 'star') {
-                        const star = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-                        star.setAttribute('points', '50,5 61,38 95,38 68,58 79,91 50,71 21,91 32,58 5,38 39,38');
-                        star.setAttribute('fill', fillColor);
-                        star.setAttribute('stroke', strokeColor);
-                        star.setAttribute('stroke-width', String(annotation.strokeWidth));
-                        star.setAttribute('stroke-linejoin', 'round');
-                        star.setAttribute('opacity', String(annotation.opacity));
-                        shapeSvg.appendChild(star);
-                    } else if (annotation.shapeType === 'polygon') {
-                        const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-                        polygon.setAttribute('points', '50,5 90,27 90,73 50,95 10,73 10,27');
-                        polygon.setAttribute('fill', fillColor);
-                        polygon.setAttribute('stroke', strokeColor);
-                        polygon.setAttribute('stroke-width', String(annotation.strokeWidth));
-                        polygon.setAttribute('stroke-linejoin', 'round');
-                        polygon.setAttribute('opacity', String(annotation.opacity));
-                        shapeSvg.appendChild(polygon);
-                    } else if (annotation.shapeType === 'arrow') {
-                        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-                        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                        line.setAttribute('x1', '10');
-                        line.setAttribute('y1', '50');
-                        line.setAttribute('x2', '80');
-                        line.setAttribute('y2', '50');
-                        line.setAttribute('stroke', strokeColor);
-                        line.setAttribute('stroke-width', String(annotation.strokeWidth));
-                        line.setAttribute('stroke-linecap', 'round');
-                        line.setAttribute('opacity', String(annotation.opacity));
-                        const arrowHead = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-                        arrowHead.setAttribute('points', '65,35 80,50 65,65');
-                        arrowHead.setAttribute('fill', 'none');
-                        arrowHead.setAttribute('stroke', strokeColor);
-                        arrowHead.setAttribute('stroke-width', String(annotation.strokeWidth));
-                        arrowHead.setAttribute('stroke-linecap', 'round');
-                        arrowHead.setAttribute('stroke-linejoin', 'round');
-                        arrowHead.setAttribute('opacity', String(annotation.opacity));
-                        g.appendChild(line);
-                        g.appendChild(arrowHead);
-                        shapeSvg.appendChild(g);
-                    } else {
-                        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-                        rect.setAttribute('x', '5');
-                        rect.setAttribute('y', '5');
-                        rect.setAttribute('width', '90');
-                        rect.setAttribute('height', '90');
-                        rect.setAttribute('fill', fillColor);
-                        rect.setAttribute('stroke', strokeColor);
-                        rect.setAttribute('stroke-width', String(annotation.strokeWidth));
-                        rect.setAttribute('opacity', String(annotation.opacity));
-                        shapeSvg.appendChild(rect);
-                    }
+                    shapeSvg = buildShapeSvg(annotation);
                 } else if (annotation.type === 'eraser') {
                     // Eraser: render as a white filled box covering the erased area
                     label.style.background = 'white';
@@ -15051,8 +16532,11 @@
                 if (annotationImage) {
                     label.appendChild(annotationImage);
                 }
+                let updateLineHandlePositions = () => {};
+                let updateShapeRotateHandlePosition = () => {};
                 const hasShapeLikeControls = shapeSvg || isImageBackedAnnotationType(annotation.type);
                 if (hasShapeLikeControls) {
+                    const isLineShape = annotation.type === 'shape' && annotation.shapeType === 'line';
                     if (shapeSvg) {
                         label.appendChild(shapeSvg);
                         annotation.shapeSvg = shapeSvg;
@@ -15061,21 +16545,62 @@
                     label.style.border = 'none';
                     label.style.background = 'transparent';
                     label.style.cursor = 'pointer';
+                    syncShapeAnnotationOutlineState(label, annotation);
+                    if (isLineShape) {
+                        label.classList.add('line-annotation');
+                        ensureLineShapeGeometry(annotation);
+                        lineHitTarget = document.createElement('div');
+                        lineHitTarget.className = 'line-hit-target';
+                        label.appendChild(lineHitTarget);
+                    }
+                    const minShapeDimension = isLineShape ? 1 : 12;
+                    const handleSizePx = isLineShape ? 10 : 10;
+                    const handleOffsetPx = Math.round(handleSizePx / 2);
                     
-                    // Add 6 resize handles around the shape
-                    const handlePositions = [
-                        { class: 'nw', cursor: 'nw-resize', top: '-6px', left: '-6px' },
-                        { class: 'n', cursor: 'n-resize', top: '-6px', left: '50%', transform: 'translateX(-50%)' },
-                        { class: 'ne', cursor: 'ne-resize', top: '-6px', right: '-6px' },
-                        { class: 'sw', cursor: 'sw-resize', bottom: '-6px', left: '-6px' },
-                        { class: 's', cursor: 's-resize', bottom: '-6px', left: '50%', transform: 'translateX(-50%)' },
-                        { class: 'se', cursor: 'se-resize', bottom: '-6px', right: '-6px' }
-                    ];
+                    // Lines resize from endpoints only. Other shapes keep the
+                    // full box handles, but with a smaller control footprint.
+                    const handlePositions = isLineShape
+                        ? [
+                            { class: 'line-start', cursor: 'move', bottom: `-${handleOffsetPx}px`, left: `-${handleOffsetPx}px` },
+                            { class: 'line-end', cursor: 'move', top: `-${handleOffsetPx}px`, right: `-${handleOffsetPx}px` },
+                        ]
+                        : [
+                            { class: 'nw', cursor: 'nw-resize', top: `-${handleOffsetPx}px`, left: `-${handleOffsetPx}px` },
+                            { class: 'n', cursor: 'n-resize', top: `-${handleOffsetPx}px`, left: '50%', transform: 'translateX(-50%)' },
+                            { class: 'ne', cursor: 'ne-resize', top: `-${handleOffsetPx}px`, right: `-${handleOffsetPx}px` },
+                            { class: 'w', cursor: 'w-resize', top: '50%', left: `-${handleOffsetPx}px`, transform: 'translateY(-50%)' },
+                            { class: 'e', cursor: 'e-resize', top: '50%', right: `-${handleOffsetPx}px`, transform: 'translateY(-50%)' },
+                            { class: 'sw', cursor: 'sw-resize', bottom: `-${handleOffsetPx}px`, left: `-${handleOffsetPx}px` },
+                            { class: 's', cursor: 's-resize', bottom: `-${handleOffsetPx}px`, left: '50%', transform: 'translateX(-50%)' },
+                            { class: 'se', cursor: 'se-resize', bottom: `-${handleOffsetPx}px`, right: `-${handleOffsetPx}px` }
+                        ];
+
+                    updateLineHandlePositions = () => {
+                        if (!isLineShape) {
+                            return;
+                        }
+                        const geometry = ensureLineShapeGeometry(annotation);
+                        const startHandle = label.querySelector('.shape-resize-handle.line-start');
+                        const endHandle = label.querySelector('.shape-resize-handle.line-end');
+                        [
+                            [startHandle, geometry.lineStartX, geometry.lineStartY],
+                            [endHandle, geometry.lineEndX, geometry.lineEndY],
+                        ].forEach(([handleEl, xPos, yPos]) => {
+                            if (!handleEl) {
+                                return;
+                            }
+                            handleEl.style.left = `${Number((xPos * 100).toFixed(3))}%`;
+                            handleEl.style.top = `${Number((yPos * 100).toFixed(3))}%`;
+                            handleEl.style.right = '';
+                            handleEl.style.bottom = '';
+                            handleEl.style.transform = 'translate(-50%, -50%)';
+                        });
+                    };
                     
                     handlePositions.forEach(pos => {
                         const handle = document.createElement('div');
                         handle.className = `shape-resize-handle ${pos.class}`;
-                        handle.style.cssText = `position: absolute; width: 12px; height: 12px; background: #4dd0a8; border: 2px solid #0b1320; border-radius: 50%; cursor: ${pos.cursor}; display: none; z-index: 15;`;
+                        handle.style.cssText = `position: absolute; width: ${handleSizePx}px; height: ${handleSizePx}px; background: #4dd0a8; border: 2px solid #0b1320; border-radius: 50%; cursor: ${pos.cursor}; display: none; z-index: 15;`;
                         if (pos.top) handle.style.top = pos.top;
                         if (pos.bottom) handle.style.bottom = pos.bottom;
                         if (pos.left) handle.style.left = pos.left;
@@ -15106,21 +16631,65 @@
                                 let newTop = startTop;
                                 
                                 // Calculate based on handle direction
-                                if (direction.includes('e')) {
-                                    newWidth = Math.max(30, startWidth + deltaX);
-                                }
-                                if (direction.includes('w')) {
-                                    newWidth = Math.max(30, startWidth - deltaX);
-                                    newLeft = startLeft + deltaX;
-                                    if (newWidth === 30) newLeft = startLeft + startWidth - 30;
-                                }
-                                if (direction.includes('s')) {
-                                    newHeight = Math.max(30, startHeight + deltaY);
-                                }
-                                if (direction.includes('n')) {
-                                    newHeight = Math.max(30, startHeight - deltaY);
-                                    newTop = startTop + deltaY;
-                                    if (newHeight === 30) newTop = startTop + startHeight - 30;
+                                if (isLineShape && direction === 'line-start') {
+                                    const overlayRect = overlay.getBoundingClientRect();
+                                    const geometry = ensureLineShapeGeometry(annotation);
+                                    const endPoint = {
+                                        x: startLeft + (geometry.lineEndX * startWidth),
+                                        y: startTop + (geometry.lineEndY * startHeight),
+                                    };
+                                    const nextStart = {
+                                        x: Math.max(0, Math.min(overlay.clientWidth, moveEvent.clientX - overlayRect.left)),
+                                        y: Math.max(0, Math.min(overlay.clientHeight, moveEvent.clientY - overlayRect.top)),
+                                    };
+                                    const snappedStart = snapLineEndpoint(endPoint.x, endPoint.y, nextStart.x, nextStart.y);
+                                    const nextGeometry = computeLineBoxGeometry(snappedStart.x, snappedStart.y, endPoint.x, endPoint.y);
+                                    newWidth = nextGeometry.width;
+                                    newHeight = nextGeometry.height;
+                                    newLeft = nextGeometry.left;
+                                    newTop = nextGeometry.top;
+                                    annotation.lineStartX = nextGeometry.lineStartX;
+                                    annotation.lineStartY = nextGeometry.lineStartY;
+                                    annotation.lineEndX = nextGeometry.lineEndX;
+                                    annotation.lineEndY = nextGeometry.lineEndY;
+                                } else if (isLineShape && direction === 'line-end') {
+                                    const overlayRect = overlay.getBoundingClientRect();
+                                    const geometry = ensureLineShapeGeometry(annotation);
+                                    const startPoint = {
+                                        x: startLeft + (geometry.lineStartX * startWidth),
+                                        y: startTop + (geometry.lineStartY * startHeight),
+                                    };
+                                    const nextEnd = {
+                                        x: Math.max(0, Math.min(overlay.clientWidth, moveEvent.clientX - overlayRect.left)),
+                                        y: Math.max(0, Math.min(overlay.clientHeight, moveEvent.clientY - overlayRect.top)),
+                                    };
+                                    const snappedEnd = snapLineEndpoint(startPoint.x, startPoint.y, nextEnd.x, nextEnd.y);
+                                    const nextGeometry = computeLineBoxGeometry(startPoint.x, startPoint.y, snappedEnd.x, snappedEnd.y);
+                                    newWidth = nextGeometry.width;
+                                    newHeight = nextGeometry.height;
+                                    newLeft = nextGeometry.left;
+                                    newTop = nextGeometry.top;
+                                    annotation.lineStartX = nextGeometry.lineStartX;
+                                    annotation.lineStartY = nextGeometry.lineStartY;
+                                    annotation.lineEndX = nextGeometry.lineEndX;
+                                    annotation.lineEndY = nextGeometry.lineEndY;
+                                } else {
+                                    if (direction.includes('e')) {
+                                        newWidth = Math.max(minShapeDimension, startWidth + deltaX);
+                                    }
+                                    if (direction.includes('w')) {
+                                        newWidth = Math.max(minShapeDimension, startWidth - deltaX);
+                                        newLeft = startLeft + deltaX;
+                                        if (newWidth === minShapeDimension) newLeft = startLeft + startWidth - minShapeDimension;
+                                    }
+                                    if (direction.includes('s')) {
+                                        newHeight = Math.max(minShapeDimension, startHeight + deltaY);
+                                    }
+                                    if (direction.includes('n')) {
+                                        newHeight = Math.max(minShapeDimension, startHeight - deltaY);
+                                        newTop = startTop + deltaY;
+                                        if (newHeight === minShapeDimension) newTop = startTop + startHeight - minShapeDimension;
+                                    }
                                 }
 
                                 // Keep shape bounds fully inside page overlay.
@@ -15148,8 +16717,8 @@
                                         newHeight = maxH - newTop;
                                     }
                                 }
-                                newWidth = Math.max(30, Math.min(newWidth, maxW));
-                                newHeight = Math.max(30, Math.min(newHeight, maxH));
+                                newWidth = Math.max(minShapeDimension, Math.min(newWidth, maxW));
+                                newHeight = Math.max(minShapeDimension, Math.min(newHeight, maxH));
                                 if (newLeft + newWidth > maxW) {
                                     newLeft = Math.max(0, maxW - newWidth);
                                 }
@@ -15168,6 +16737,14 @@
                                 annotation.pdfHeight = newHeight / pageInfo.scale;
                                 annotation.pdfX = newLeft / pageInfo.scale;
                                 annotation.pdfY = (pageInfo.canvasHeight - newTop) / pageInfo.scale - annotation.pdfHeight;
+                                if (isLineShape) {
+                                    syncLineShapeSvgGeometry(annotation.shapeSvg, annotation);
+                                    updateLineHandlePositions();
+                                }
+                                updateShapeRotateHandlePosition();
+                                if (selectedAnnotation === annotation) {
+                                    queueSelectedAnnotationMenuPlacement();
+                                }
                             };
                             
                             const onResizeUp = () => {
@@ -15186,17 +16763,18 @@
                         
                         label.appendChild(handle);
                     });
+                    updateLineHandlePositions();
                     
                     // Create action bar with 4 buttons
                     const actionBar = document.createElement('div');
                     actionBar.className = 'shape-action-bar';
-                    actionBar.style.cssText = 'position: absolute; top: -40px; left: 50%; transform: translateX(-50%); background: rgba(11, 19, 32, 0.95); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; padding: 6px; display: none; gap: 6px; z-index: 20; box-shadow: 0 4px 12px rgba(0,0,0,0.4);';
+                    actionBar.style.cssText = 'position: absolute; top: -34px; left: 50%; transform: translateX(-50%); background: rgba(11, 19, 32, 0.95); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; padding: 4px; display: none; gap: 4px; z-index: 20; box-shadow: 0 4px 12px rgba(0,0,0,0.4);';
                     
                     const createActionButton = (icon, title, color) => {
                         const btn = document.createElement('button');
                         btn.innerHTML = icon;
                         btn.title = title;
-                        btn.style.cssText = `width: 32px; height: 32px; background: rgba(77, 208, 168, 0.15); border: 1px solid rgba(77, 208, 168, 0.3); color: ${color || 'var(--accent)'}; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; transition: all 0.2s;`;
+                        btn.style.cssText = `width: 28px; height: 28px; background: rgba(77, 208, 168, 0.15); border: 1px solid rgba(77, 208, 168, 0.3); color: ${color || 'var(--accent)'}; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px; transition: all 0.2s;`;
                         btn.addEventListener('mouseenter', () => {
                             btn.style.background = 'rgba(77, 208, 168, 0.25)';
                             btn.style.transform = 'scale(1.05)';
@@ -15283,15 +16861,18 @@
                     // Hide by default, show when selected
                     actionBar.style.display = 'none';
                     
-                    if (shapeSvg) {
+                    if (shapeSvg && !isLineShape) {
                         // Create rotate handle (separate from action bar)
+                        const rotateHandleSizePx = 20;
+                        const rotateHandleHalfPx = rotateHandleSizePx / 2;
+                        const rotateHandleBaseAngle = 90;
                         const rotateHandle = document.createElement('div');
                         rotateHandle.className = 'rotate-handle';
                         rotateHandle.innerHTML = '🔄';
                         rotateHandle.style.cssText = `
                             position: absolute;
-                            width: 24px;
-                            height: 24px;
+                            width: ${rotateHandleSizePx}px;
+                            height: ${rotateHandleSizePx}px;
                             background: rgba(59, 130, 246, 0.9);
                             border: 2px solid #0b1320;
                             border-radius: 50%;
@@ -15299,109 +16880,126 @@
                             display: none;
                             align-items: center;
                             justify-content: center;
-                            font-size: 14px;
+                            font-size: 12px;
                             z-index: 20;
                             user-select: none;
                         `;
-                        
-                        const updateRotateHandlePosition = () => {
+
+                        const normalizePositiveAngle = (angle) => {
+                            let normalized = angle % 360;
+                            if (normalized < 0) {
+                                normalized += 360;
+                            }
+                            return normalized;
+                        };
+                        const normalizeSignedAngle = (angle) => {
+                            let normalized = normalizePositiveAngle(angle);
+                            if (normalized > 180) {
+                                normalized -= 360;
+                            }
+                            return normalized;
+                        };
+                        const getShapeRotateGeometry = () => {
                             const width = label.offsetWidth;
                             const height = label.offsetHeight;
-                            const handleMargin = 12;
-                            const boundingHeight = height + (handleMargin * 2);
-                            const distance = (boundingHeight / 2) * 1.15;
-                            rotateHandle.style.top = `${height / 2 + distance}px`;
-                            rotateHandle.style.left = `${width / 2 - 12}px`;
+                            const overlayRect = overlay.getBoundingClientRect();
+                            const centerLocalX = width / 2;
+                            const centerLocalY = height / 2;
+                            const centerClientX = overlayRect.left + label.offsetLeft + centerLocalX;
+                            const centerClientY = overlayRect.top + label.offsetTop + centerLocalY;
+                            const orbitRadius = (Math.max(width, height) / 2) + 28;
+                            return {
+                                centerClientX,
+                                centerClientY,
+                                centerLocalX,
+                                centerLocalY,
+                                orbitRadius,
+                            };
                         };
-                        updateRotateHandlePosition();
-                        
+                        const getPointerAngle = (clientX, clientY, geometry) => (
+                            Math.atan2(clientY - geometry.centerClientY, clientX - geometry.centerClientX) * (180 / Math.PI)
+                        );
+                        const getShapeRotateHandleAngle = () => (
+                            normalizePositiveAngle((annotation.rotation || 0) + rotateHandleBaseAngle)
+                        );
+                        updateShapeRotateHandlePosition = (handleAngle = getShapeRotateHandleAngle()) => {
+                            const geometry = getShapeRotateGeometry();
+                            const orbitAngle = normalizePositiveAngle(handleAngle);
+                            const radians = orbitAngle * (Math.PI / 180);
+                            const handleX = geometry.centerLocalX + (Math.cos(radians) * geometry.orbitRadius);
+                            const handleY = geometry.centerLocalY + (Math.sin(radians) * geometry.orbitRadius);
+                            rotateHandle.style.left = `${handleX - rotateHandleHalfPx}px`;
+                            rotateHandle.style.top = `${handleY - rotateHandleHalfPx}px`;
+                            rotateHandle.style.bottom = 'auto';
+                            rotateHandle.style.transform = 'none';
+                        };
+                        updateShapeRotateHandlePosition();
+
                         let isRotating = false;
-                        let rotateStartAngle = 0;
-                        let rotateStartRotation = 0;
-                        let rotateStartX = 0;
-                        let rotateStartY = 0;
-                        
-                        rotateHandle.addEventListener('mousedown', (e) => {
+                        let rotateGrabAngleOffset = 0;
+                        let rotatePointerId = null;
+
+                        rotateHandle.addEventListener('pointerdown', (e) => {
                             e.stopPropagation();
                             e.preventDefault();
                             isRotating = true;
+                            rotatePointerId = e.pointerId;
                             label.dataset.rotating = 'true';
                             rotateHandle.style.cursor = 'grabbing';
                             rotateHandle.style.background = 'rgba(59, 130, 246, 1)';
-                            
-                            rotateStartX = annotation.pdfX;
-                            rotateStartY = annotation.pdfY;
-                            
-                            const shapeWidth = label.offsetWidth;
-                            const shapeHeight = label.offsetHeight;
-                            const shapeLeft = label.offsetLeft;
-                            const shapeTop = label.offsetTop;
-                            const centerX = shapeLeft + shapeWidth / 2;
-                            const centerY = shapeTop + shapeHeight / 2;
-                            
-                            const dx = e.pageX - centerX;
-                            const dy = e.pageY - centerY;
-                            rotateStartAngle = Math.atan2(dy, dx) * (180 / Math.PI);
-                            rotateStartRotation = annotation.rotation || 0;
-                            
+                            if (typeof rotateHandle.setPointerCapture === 'function') {
+                                rotateHandle.setPointerCapture(e.pointerId);
+                            }
+
+                            const geometry = getShapeRotateGeometry();
+                            const pointerAngle = getPointerAngle(e.clientX, e.clientY, geometry);
+                            rotateGrabAngleOffset = normalizeSignedAngle(pointerAngle - getShapeRotateHandleAngle());
+
                             setStatus('Drag to rotate shape...', 'ok');
                         });
-                        
+
                         const handleRotateMove = (e) => {
                             if (!isRotating) return;
-                            
-                            annotation.pdfX = rotateStartX;
-                            annotation.pdfY = rotateStartY;
-                            
-                            const shapeWidth = label.offsetWidth;
-                            const shapeHeight = label.offsetHeight;
-                            const shapeLeft = label.offsetLeft;
-                            const shapeTop = label.offsetTop;
-                            const centerX = shapeLeft + shapeWidth / 2;
-                            const centerY = shapeTop + shapeHeight / 2;
-                            
-                            const dx = e.pageX - centerX;
-                            const dy = e.pageY - centerY;
-                            const currentAngle = Math.atan2(dy, dx) * (180 / Math.PI);
-                            
-                            let newRotation = rotateStartRotation + (currentAngle - rotateStartAngle);
-                            while (newRotation < 0) newRotation += 360;
-                            while (newRotation >= 360) newRotation -= 360;
-                            
-                            annotation.rotation = newRotation;
+                            if (rotatePointerId !== null && e.pointerId !== rotatePointerId) return;
+
+                            const geometry = getShapeRotateGeometry();
+                            const pointerAngle = getPointerAngle(e.clientX, e.clientY, geometry);
+                            const nextHandleAngle = normalizePositiveAngle(pointerAngle - rotateGrabAngleOffset);
+                            annotation.rotation = normalizePositiveAngle(nextHandleAngle - rotateHandleBaseAngle);
                             if (annotation.shapeSvg) {
                                 annotation.shapeSvg.style.transform = `rotate(${annotation.rotation}deg)`;
                                 annotation.shapeSvg.style.transformOrigin = 'center';
                             }
-                            
-                            const width = label.offsetWidth;
-                            const height = label.offsetHeight;
-                            const handleMargin = 12;
-                            const boundingWidth = width + (handleMargin * 2);
-                            const boundingHeight = height + (handleMargin * 2);
-                            const maxDimension = Math.max(boundingWidth, boundingHeight);
-                            const distance = (maxDimension / 2) * 1.15;
-                            const angleRad = currentAngle * (Math.PI / 180);
-                            const handleX = Math.cos(angleRad) * distance;
-                            const handleY = Math.sin(angleRad) * distance;
-                            rotateHandle.style.left = `${width / 2 + handleX - 12}px`;
-                            rotateHandle.style.top = `${height / 2 + handleY - 12}px`;
+                            updateShapeRotateHandlePosition(nextHandleAngle);
                         };
-                        
-                        const handleRotateEnd = () => {
+
+                        const handleRotateEnd = (e) => {
                             if (!isRotating) return;
+                            if (rotatePointerId !== null && e?.pointerId !== undefined && e.pointerId !== rotatePointerId) return;
                             isRotating = false;
+                            if (
+                                typeof rotateHandle.releasePointerCapture === 'function'
+                                && rotatePointerId !== null
+                                && (
+                                    typeof rotateHandle.hasPointerCapture !== 'function'
+                                    || rotateHandle.hasPointerCapture(rotatePointerId)
+                                )
+                            ) {
+                                rotateHandle.releasePointerCapture(rotatePointerId);
+                            }
+                            rotatePointerId = null;
                             delete label.dataset.rotating;
                             rotateHandle.style.cursor = 'grab';
                             rotateHandle.style.background = 'rgba(59, 130, 246, 0.9)';
-                            updateRotateHandlePosition();
+                            updateShapeRotateHandlePosition();
                             persistAnnotations();
                             saveAnnotationToDatabase(annotation);
                             setStatus('Shape rotated. Click Save to keep changes.', 'ok');
                         };
-                        
-                        document.addEventListener('mousemove', handleRotateMove);
-                        document.addEventListener('mouseup', handleRotateEnd);
+
+                        window.addEventListener('pointermove', handleRotateMove);
+                        window.addEventListener('pointerup', handleRotateEnd);
+                        window.addEventListener('pointercancel', handleRotateEnd);
                         
                         label.appendChild(rotateHandle);
                     }
@@ -15714,11 +17312,6 @@
                     deleteBtn.style.display = 'none';
                 }
 
-                const overlay = wrapper.querySelector('.overlay');
-                if (!overlay) {
-                    console.error('addAnnotationElement: No .overlay found in wrapper', wrapper);
-                    return;
-                }
                 const updatePosition = () => {
                     const x = annotation.pdfX * pageInfo.scale;
                     if (isImageBackedAnnotationType(annotation.type)) {
@@ -15741,9 +17334,14 @@
                         label.style.width = width + 'px';
                         label.style.height = height + 'px';
                         // Apply rotation to SVG only, not the label
-                        if (annotation.rotation && annotation.shapeSvg) {
-                            annotation.shapeSvg.style.transform = `rotate(${annotation.rotation}deg)`;
+                        if (annotation.shapeSvg) {
+                            annotation.shapeSvg.style.transform = annotation.rotation ? `rotate(${annotation.rotation}deg)` : '';
                             annotation.shapeSvg.style.transformOrigin = 'center';
+                        }
+                        updateShapeRotateHandlePosition();
+                        if (annotation.shapeType === 'line') {
+                            syncLineShapeSvgGeometry(annotation.shapeSvg, annotation);
+                            updateLineHandlePositions();
                         }
                     } else if (annotation.type === 'table') {
                         const width = annotation.pdfWidth * pageInfo.scale;
@@ -15827,6 +17425,9 @@
                     }
                     label.style.left = clampedX + 'px';
                     label.style.top = clampedY + 'px';
+                    if (selectedAnnotation === annotation) {
+                        queueSelectedAnnotationMenuPlacement();
+                    }
                 };
 
                 const onPointerUp = () => {
@@ -15840,10 +17441,13 @@
                     dragStart = null;
                     window.removeEventListener('pointermove', onPointerMove);
                     window.removeEventListener('pointerup', onPointerUp);
+                    window.removeEventListener('mousemove', onPointerMove);
+                    window.removeEventListener('mouseup', onPointerUp);
                     if (dragMoved) {
                         persistAnnotations();
                         // Save updated annotation to database
                         saveAnnotationToDatabase(annotation);
+                        setSelection(annotation);
                         setStatus(`${getAnnotationTypeLabel(annotation)} moved. Click Save to keep changes.`, 'ok');
                     } else {
                         // Single click without drag selects the annotation.
@@ -15851,6 +17455,25 @@
                         setSelection(annotation);
                     }
                     queueSelectedAnnotationMenuPlacement();
+                };
+
+                const startAnnotationDrag = (event) => {
+                    event.preventDefault();
+                    dragMoved = false;
+                    dragFromMenu = !!event.target.closest('.annotation-tbc-menu');
+                    const rect = label.getBoundingClientRect();
+                    dragStart = {
+                        offsetX: event.clientX - rect.left,
+                        offsetY: event.clientY - rect.top,
+                    };
+                    label.classList.add('dragging');
+                    if (annotation.type === 'shape' || annotation.type === 'eraser' || isImageBackedAnnotationType(annotation.type)) {
+                        label.style.cursor = 'move';
+                    }
+                    window.addEventListener('pointermove', onPointerMove);
+                    window.addEventListener('pointerup', onPointerUp);
+                    window.addEventListener('mousemove', onPointerMove);
+                    window.addEventListener('mouseup', onPointerUp);
                 };
 
                 label.addEventListener('dblclick', (event) => {
@@ -15912,21 +17535,82 @@
                         // Annotation is ACTIVE - allow dragging to proceed
                     }
                     
-                    event.preventDefault();
-                    dragMoved = false;
-                    dragFromMenu = !!event.target.closest('.annotation-tbc-menu');
-                    const rect = label.getBoundingClientRect();
-                    dragStart = {
-                        offsetX: event.clientX - rect.left,
-                        offsetY: event.clientY - rect.top,
-                    };
-                    label.classList.add('dragging');
-                    if (annotation.type === 'shape' || annotation.type === 'eraser' || isImageBackedAnnotationType(annotation.type)) {
-                        label.style.cursor = 'move';
-                    }
-                    window.addEventListener('pointermove', onPointerMove);
-                    window.addEventListener('pointerup', onPointerUp);
+                    startAnnotationDrag(event);
                 });
+
+                if (lineHitTarget) {
+                    const startLineDrag = (event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        let moved = false;
+                        const startClientX = event.clientX;
+                        const startClientY = event.clientY;
+                        const startLeft = label.offsetLeft;
+                        const startTop = label.offsetTop;
+                        label.classList.add('dragging');
+                        label.style.cursor = 'move';
+                        if (typeof lineHitTarget.setPointerCapture === 'function' && event.pointerId !== undefined) {
+                            try {
+                                lineHitTarget.setPointerCapture(event.pointerId);
+                            } catch (_err) {}
+                        }
+
+                        const onMove = (moveEvent) => {
+                            moved = true;
+                            const maxX = overlay.clientWidth - label.offsetWidth;
+                            const maxY = overlay.clientHeight - label.offsetHeight;
+                            const nextLeft = Math.max(0, Math.min(maxX, startLeft + (moveEvent.clientX - startClientX)));
+                            const nextTop = Math.max(0, Math.min(maxY, startTop + (moveEvent.clientY - startClientY)));
+                            annotation.pdfX = nextLeft / pageInfo.scale;
+                            annotation.pdfY = (pageInfo.canvasHeight - nextTop) / pageInfo.scale - annotation.pdfHeight;
+                            label.style.left = nextLeft + 'px';
+                            label.style.top = nextTop + 'px';
+                            queueSelectedAnnotationMenuPlacement();
+                        };
+
+                        const onUp = (upEvent) => {
+                            label.classList.remove('dragging');
+                            label.style.cursor = 'pointer';
+                            window.removeEventListener('pointermove', onMove);
+                            window.removeEventListener('pointerup', onUp);
+                            window.removeEventListener('mousemove', onMove);
+                            window.removeEventListener('mouseup', onUp);
+                            if (typeof lineHitTarget.releasePointerCapture === 'function' && upEvent.pointerId !== undefined) {
+                                try {
+                                    lineHitTarget.releasePointerCapture(upEvent.pointerId);
+                                } catch (_err) {}
+                            }
+                            if (moved) {
+                                persistAnnotations();
+                                saveAnnotationToDatabase(annotation);
+                            }
+                            setSelection(annotation);
+                            if (moved) {
+                                setStatus(`${getAnnotationTypeLabel(annotation)} moved. Click Save to keep changes.`, 'ok');
+                            }
+                        };
+
+                        window.addEventListener('pointermove', onMove);
+                        window.addEventListener('pointerup', onUp);
+                        window.addEventListener('mousemove', onMove);
+                        window.addEventListener('mouseup', onUp);
+                    };
+
+                    lineHitTarget.addEventListener('pointerdown', (event) => {
+                        event.stopPropagation();
+                        if (label.dataset.rotating || label.dataset.resizing) {
+                            return;
+                        }
+                        const actionBar = label.querySelector('.shape-action-bar');
+                        const isActive = actionBar && actionBar.style.display === 'flex';
+                        if (!isActive || selectedAnnotation !== annotation) {
+                            event.preventDefault();
+                            setSelection(annotation);
+                            return;
+                        }
+                        startLineDrag(event);
+                    });
+                }
 
                 annotation.element = label;
                 normalizeTextAnnotation(annotation);
@@ -16172,7 +17856,7 @@
                 let drawingShape = null;
                 overlay.addEventListener('pointerdown', (event) => {
                     if (toolMode !== 'shape') return;
-                    if (event.target !== overlay) return;
+                    if (!shouldStartOverlayShapeDraw(event, overlay)) return;
                     const rect = overlay.getBoundingClientRect();
                     const startX = event.clientX - rect.left;
                     const startY = event.clientY - rect.top;
@@ -16189,48 +17873,55 @@
                     shapeWrapper.style.background = 'transparent';
                     shapeWrapper.style.cursor = 'move';
 
-                    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-                    svg.setAttribute('width', '100%');
-                    svg.setAttribute('height', '100%');
-                    svg.setAttribute('viewBox', '0 0 100 100');
-                    svg.setAttribute('preserveAspectRatio', 'none');
-
-                    const strokeColor = shapeStrokeTransparentState ? 'transparent' : shapeStroke;
-                    const fillColor = shapeFillTransparentState ? 'transparent' : shapeFill;
-                    let shapeEl;
-                    if (shapeType === 'circle' || shapeType === 'ellipse') {
-                        shapeEl = document.createElementNS('http://www.w3.org/2000/svg', 'ellipse');
-                        shapeEl.setAttribute('cx', '50');
-                        shapeEl.setAttribute('cy', '50');
-                        shapeEl.setAttribute('rx', '48');
-                        shapeEl.setAttribute('ry', '48');
-                        shapeEl.setAttribute('fill', fillColor);
-                        shapeEl.setAttribute('stroke', strokeColor);
-                        shapeEl.setAttribute('stroke-width', String(shapeStrokeWidth));
-                        shapeEl.setAttribute('opacity', String(shapeOpacityValue));
-                        svg.appendChild(shapeEl);
-                    } else {
-                        shapeEl = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-                        shapeEl.setAttribute('x', '2');
-                        shapeEl.setAttribute('y', '2');
-                        shapeEl.setAttribute('width', '96');
-                        shapeEl.setAttribute('height', '96');
-                        shapeEl.setAttribute('fill', fillColor);
-                        shapeEl.setAttribute('stroke', strokeColor);
-                        shapeEl.setAttribute('stroke-width', String(shapeStrokeWidth));
-                        shapeEl.setAttribute('opacity', String(shapeOpacityValue));
-                        svg.appendChild(shapeEl);
-                    }
+                    const shapeStyle = getCurrentShapeStyleConfig();
+                    const strokeColor = shapeStyle.strokeColor;
+                    const fillColor = shapeStyle.fillColor;
+                    syncShapeAnnotationOutlineState(shapeWrapper, {
+                        type: 'shape',
+                        strokeColor,
+                        strokeWidth: shapeStyle.strokeWidth,
+                        strokeTransparent: shapeStyle.strokeTransparent,
+                    }, { preview: true });
+                    const svg = buildShapeSvg({
+                        type: 'shape',
+                        shapeType,
+                        strokeColor,
+                        strokeWidth: shapeStyle.strokeWidth,
+                        strokeTransparent: shapeStyle.strokeTransparent,
+                        fillColor,
+                        fillTransparent: shapeStyle.fillTransparent,
+                        opacity: shapeStyle.opacity,
+                    });
 
                     shapeWrapper.appendChild(svg);
                     overlay.appendChild(shapeWrapper);
 
-                    drawingShape = { wrapper: shapeWrapper, startX, startY, rect };
+                    drawingShape = { wrapper: shapeWrapper, startX, startY, rect, svg };
 
                     const onMove = (me) => {
                         if (!drawingShape) return;
                         const curX = me.clientX - drawingShape.rect.left;
                         const curY = me.clientY - drawingShape.rect.top;
+                        if (isLineShapeType(shapeType)) {
+                            const snappedPoint = snapLineEndpoint(drawingShape.startX, drawingShape.startY, curX, curY);
+                            const geometry = computeLineBoxGeometry(drawingShape.startX, drawingShape.startY, snappedPoint.x, snappedPoint.y);
+                            drawingShape.lineStartX = geometry.lineStartX;
+                            drawingShape.lineStartY = geometry.lineStartY;
+                            drawingShape.lineEndX = geometry.lineEndX;
+                            drawingShape.lineEndY = geometry.lineEndY;
+                            drawingShape.wrapper.style.left = geometry.left + 'px';
+                            drawingShape.wrapper.style.top = geometry.top + 'px';
+                            drawingShape.wrapper.style.width = geometry.width + 'px';
+                            drawingShape.wrapper.style.height = geometry.height + 'px';
+                            syncLineShapeSvgGeometry(drawingShape.svg, {
+                                shapeType: 'line',
+                                lineStartX: geometry.lineStartX,
+                                lineStartY: geometry.lineStartY,
+                                lineEndX: geometry.lineEndX,
+                                lineEndY: geometry.lineEndY,
+                            });
+                            return;
+                        }
                         const x = Math.min(drawingShape.startX, curX);
                         const y = Math.min(drawingShape.startY, curY);
                         const w = Math.max(Math.abs(curX - drawingShape.startX), 5);
@@ -16245,33 +17936,58 @@
                         document.removeEventListener('pointermove', onMove);
                         document.removeEventListener('pointerup', onUp);
                         if (!drawingShape) return;
-                        const finalW = parseInt(drawingShape.wrapper.style.width);
-                        const finalH = parseInt(drawingShape.wrapper.style.height);
-                        if (finalW < 10 || finalH < 10) {
+                        const endX = ue.clientX - drawingShape.rect.left;
+                        const endY = ue.clientY - drawingShape.rect.top;
+                        const finalLineGeometry = isLineShapeType(shapeType)
+                            ? (() => {
+                                const snappedPoint = snapLineEndpoint(drawingShape.startX, drawingShape.startY, endX, endY);
+                                return computeLineBoxGeometry(drawingShape.startX, drawingShape.startY, snappedPoint.x, snappedPoint.y);
+                            })()
+                            : null;
+                        const finalW = finalLineGeometry ? finalLineGeometry.width : parseInt(drawingShape.wrapper.style.width);
+                        const finalH = finalLineGeometry ? finalLineGeometry.height : parseInt(drawingShape.wrapper.style.height);
+                        const lineLength = Math.hypot(endX - drawingShape.startX, endY - drawingShape.startY);
+                        if ((isLineShapeType(shapeType) && lineLength < 10) || (!isLineShapeType(shapeType) && (finalW < 10 || finalH < 10))) {
                             drawingShape.wrapper.remove();
                             drawingShape = null;
                             return;
                         }
+                        const left = finalLineGeometry ? finalLineGeometry.left : parseFloat(drawingShape.wrapper.style.left);
+                        const top = finalLineGeometry ? finalLineGeometry.top : parseFloat(drawingShape.wrapper.style.top);
+                        const pdfWidth = finalW / currentScale;
+                        const pdfHeight = finalH / currentScale;
                         const ann = {
                             id: generateAnnotationId(),
                             type: 'shape',
                             shapeType: shapeType,
                             pageIndex: 0,
-                            x: parseFloat(drawingShape.wrapper.style.left),
-                            y: parseFloat(drawingShape.wrapper.style.top),
-                            width: finalW,
-                            height: finalH,
-                            fill: fillColor,
-                            stroke: strokeColor,
-                            strokeWidth: shapeStrokeWidth,
-                            opacity: shapeOpacityValue,
+                            pdfX: left / currentScale,
+                            pdfY: (overlay.clientHeight - top) / currentScale - pdfHeight,
+                            pdfWidth,
+                            pdfHeight,
+                            fillColor,
+                            strokeColor,
+                            strokeWidth: shapeStyle.strokeWidth,
+                            strokeTransparent: shapeStyle.strokeTransparent,
+                            fillTransparent: shapeStyle.fillTransparent,
+                            opacity: shapeStyle.opacity,
                             rotation: 0,
-                            element: drawingShape.wrapper,
                         };
+                        if (isLineShapeType(shapeType)) {
+                            ann.lineStartX = finalLineGeometry?.lineStartX ?? drawingShape.lineStartX ?? 0;
+                            ann.lineStartY = finalLineGeometry?.lineStartY ?? drawingShape.lineStartY ?? 0;
+                            ann.lineEndX = finalLineGeometry?.lineEndX ?? drawingShape.lineEndX ?? 1;
+                            ann.lineEndY = finalLineGeometry?.lineEndY ?? drawingShape.lineEndY ?? 0;
+                        }
                         annotations.push(ann);
-                        setupAnnotationInteraction(drawingShape.wrapper, ann, pageInfo);
-                        setSelection(ann);
                         persistAnnotations();
+                        updateAnnotationsList();
+                        drawingShape.wrapper.remove();
+                        addAnnotationElement(wrapper, ann, pageInfo);
+                        setTimeout(() => {
+                            setSelection(ann);
+                            setStatus('Shape added. Click Save to keep changes.', 'ok');
+                        }, 10);
                         drawingShape = null;
                     };
 
@@ -16453,7 +18169,7 @@
                         if (toolMode !== 'shape') {
                             return;
                         }
-                        if (event.target !== overlay) {
+                        if (!shouldStartOverlayShapeDraw(event, overlay)) {
                             return;
                         }
                         const rect = overlay.getBoundingClientRect();
@@ -16472,129 +18188,25 @@
                         shapeWrapper.style.background = 'transparent';
                         shapeWrapper.style.cursor = 'move';
 
-                        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-                        svg.setAttribute('width', '100%');
-                        svg.setAttribute('height', '100%');
-                        svg.setAttribute('viewBox', '0 0 100 100');
-                        svg.setAttribute('preserveAspectRatio', 'none');
-
-                        const strokeColor = shapeStrokeTransparentState ? 'transparent' : shapeStroke;
-                        const fillColor = shapeFillTransparentState ? 'transparent' : shapeFill;
-                        if (shapeType === 'circle' || shapeType === 'ellipse') {
-                            const ellipse = document.createElementNS('http://www.w3.org/2000/svg', 'ellipse');
-                            ellipse.setAttribute('cx', '50');
-                            ellipse.setAttribute('cy', '50');
-                            ellipse.setAttribute('rx', '48');
-                            ellipse.setAttribute('ry', '48');
-                            ellipse.setAttribute('fill', fillColor);
-                            ellipse.setAttribute('stroke', strokeColor);
-                            ellipse.setAttribute('stroke-width', String(shapeStrokeWidth));
-                            ellipse.setAttribute('opacity', String(shapeOpacityValue));
-                            svg.appendChild(ellipse);
-                        } else if (shapeType === 'triangle') {
-                            const triangle = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-                            triangle.setAttribute('points', '50 5, 95 95, 5 95');
-                            triangle.setAttribute('fill', fillColor);
-                            triangle.setAttribute('stroke', strokeColor);
-                            triangle.setAttribute('stroke-width', String(shapeStrokeWidth));
-                            triangle.setAttribute('opacity', String(shapeOpacityValue));
-                            svg.appendChild(triangle);
-                        } else if (shapeType === 'x') {
-                            const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-                            const line1 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                            line1.setAttribute('x1', '15');
-                            line1.setAttribute('y1', '15');
-                            line1.setAttribute('x2', '85');
-                            line1.setAttribute('y2', '85');
-                            line1.setAttribute('stroke', strokeColor);
-                            line1.setAttribute('stroke-width', String(shapeStrokeWidth));
-                            line1.setAttribute('stroke-linecap', 'round');
-                            line1.setAttribute('opacity', String(shapeOpacityValue));
-                            const line2 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                            line2.setAttribute('x1', '85');
-                            line2.setAttribute('y1', '15');
-                            line2.setAttribute('x2', '15');
-                            line2.setAttribute('y2', '85');
-                            line2.setAttribute('stroke', strokeColor);
-                            line2.setAttribute('stroke-width', String(shapeStrokeWidth));
-                            line2.setAttribute('stroke-linecap', 'round');
-                            line2.setAttribute('opacity', String(shapeOpacityValue));
-                            g.appendChild(line1);
-                            g.appendChild(line2);
-                            svg.appendChild(g);
-                        } else if (shapeType === 'line') {
-                            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                            line.setAttribute('x1', '10');
-                            line.setAttribute('y1', '90');
-                            line.setAttribute('x2', '90');
-                            line.setAttribute('y2', '10');
-                            line.setAttribute('stroke', strokeColor);
-                            line.setAttribute('stroke-width', String(shapeStrokeWidth));
-                            line.setAttribute('stroke-linecap', 'round');
-                            line.setAttribute('opacity', String(shapeOpacityValue));
-                            svg.appendChild(line);
-                        } else if (shapeType === 'checkmark') {
-                            const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-                            polyline.setAttribute('points', '15 50, 40 75, 85 15');
-                            polyline.setAttribute('fill', 'none');
-                            polyline.setAttribute('stroke', strokeColor);
-                            polyline.setAttribute('stroke-width', String(shapeStrokeWidth));
-                            polyline.setAttribute('stroke-linecap', 'round');
-                            polyline.setAttribute('stroke-linejoin', 'round');
-                            polyline.setAttribute('opacity', String(shapeOpacityValue));
-                            svg.appendChild(polyline);
-                        } else if (shapeType === 'star') {
-                            const star = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-                            star.setAttribute('points', '50,5 61,38 95,38 68,58 79,91 50,71 21,91 32,58 5,38 39,38');
-                            star.setAttribute('fill', fillColor);
-                            star.setAttribute('stroke', strokeColor);
-                            star.setAttribute('stroke-width', String(shapeStrokeWidth));
-                            star.setAttribute('stroke-linejoin', 'round');
-                            star.setAttribute('opacity', String(shapeOpacityValue));
-                            svg.appendChild(star);
-                        } else if (shapeType === 'polygon') {
-                            const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-                            polygon.setAttribute('points', '50,5 90,27 90,73 50,95 10,73 10,27');
-                            polygon.setAttribute('fill', fillColor);
-                            polygon.setAttribute('stroke', strokeColor);
-                            polygon.setAttribute('stroke-width', String(shapeStrokeWidth));
-                            polygon.setAttribute('stroke-linejoin', 'round');
-                            polygon.setAttribute('opacity', String(shapeOpacityValue));
-                            svg.appendChild(polygon);
-                        } else if (shapeType === 'arrow') {
-                            const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-                            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                            line.setAttribute('x1', '10');
-                            line.setAttribute('y1', '50');
-                            line.setAttribute('x2', '80');
-                            line.setAttribute('y2', '50');
-                            line.setAttribute('stroke', strokeColor);
-                            line.setAttribute('stroke-width', String(shapeStrokeWidth));
-                            line.setAttribute('stroke-linecap', 'round');
-                            line.setAttribute('opacity', String(shapeOpacityValue));
-                            const arrowHead = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-                            arrowHead.setAttribute('points', '65,35 80,50 65,65');
-                            arrowHead.setAttribute('fill', 'none');
-                            arrowHead.setAttribute('stroke', strokeColor);
-                            arrowHead.setAttribute('stroke-width', String(shapeStrokeWidth));
-                            arrowHead.setAttribute('stroke-linecap', 'round');
-                            arrowHead.setAttribute('stroke-linejoin', 'round');
-                            arrowHead.setAttribute('opacity', String(shapeOpacityValue));
-                            g.appendChild(line);
-                            g.appendChild(arrowHead);
-                            svg.appendChild(g);
-                        } else {
-                            const rectShape = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-                            rectShape.setAttribute('x', '5');
-                            rectShape.setAttribute('y', '5');
-                            rectShape.setAttribute('width', '90');
-                            rectShape.setAttribute('height', '90');
-                            rectShape.setAttribute('fill', fillColor);
-                            rectShape.setAttribute('stroke', strokeColor);
-                            rectShape.setAttribute('stroke-width', String(shapeStrokeWidth));
-                            rectShape.setAttribute('opacity', String(shapeOpacityValue));
-                            svg.appendChild(rectShape);
-                        }
+                        const shapeStyle = getCurrentShapeStyleConfig();
+                        const strokeColor = shapeStyle.strokeColor;
+                        const fillColor = shapeStyle.fillColor;
+                        syncShapeAnnotationOutlineState(shapeWrapper, {
+                            type: 'shape',
+                            strokeColor,
+                            strokeWidth: shapeStyle.strokeWidth,
+                            strokeTransparent: shapeStyle.strokeTransparent,
+                        }, { preview: true });
+                        const svg = buildShapeSvg({
+                            type: 'shape',
+                            shapeType,
+                            strokeColor,
+                            strokeWidth: shapeStyle.strokeWidth,
+                            strokeTransparent: shapeStyle.strokeTransparent,
+                            fillColor,
+                            fillTransparent: shapeStyle.fillTransparent,
+                            opacity: shapeStyle.opacity,
+                        });
 
                         shapeWrapper.appendChild(svg);
                         overlay.appendChild(shapeWrapper);
@@ -16615,6 +18227,26 @@
                         const rect = overlay.getBoundingClientRect();
                         const currentX = event.clientX - rect.left;
                         const currentY = event.clientY - rect.top;
+                        if (isLineShapeType(shapeType)) {
+                            const snappedPoint = snapLineEndpoint(drawingShape.startX, drawingShape.startY, currentX, currentY);
+                            const geometry = computeLineBoxGeometry(drawingShape.startX, drawingShape.startY, snappedPoint.x, snappedPoint.y);
+                            drawingShape.lineStartX = geometry.lineStartX;
+                            drawingShape.lineStartY = geometry.lineStartY;
+                            drawingShape.lineEndX = geometry.lineEndX;
+                            drawingShape.lineEndY = geometry.lineEndY;
+                            drawingShape.element.style.left = geometry.left + 'px';
+                            drawingShape.element.style.top = geometry.top + 'px';
+                            drawingShape.element.style.width = geometry.width + 'px';
+                            drawingShape.element.style.height = geometry.height + 'px';
+                            syncLineShapeSvgGeometry(drawingShape.svg, {
+                                shapeType: 'line',
+                                lineStartX: geometry.lineStartX,
+                                lineStartY: geometry.lineStartY,
+                                lineEndX: geometry.lineEndX,
+                                lineEndY: geometry.lineEndY,
+                            });
+                            return;
+                        }
                         const left = Math.min(drawingShape.startX, currentX);
                         const top = Math.min(drawingShape.startY, currentY);
                         const width = Math.max(1, Math.abs(currentX - drawingShape.startX));
@@ -16629,18 +18261,28 @@
                         if (!drawingShape) {
                             return;
                         }
+                        const currentRect = overlay.getBoundingClientRect();
+                        const currentX = Math.max(0, Math.min(overlay.clientWidth, event.clientX - currentRect.left));
+                    const currentY = Math.max(0, Math.min(overlay.clientHeight, event.clientY - currentRect.top));
+                    const finalLineGeometry = isLineShapeType(shapeType)
+                            ? (() => {
+                                const snappedPoint = snapLineEndpoint(drawingShape.startX, drawingShape.startY, currentX, currentY);
+                                return computeLineBoxGeometry(drawingShape.startX, drawingShape.startY, snappedPoint.x, snappedPoint.y);
+                            })()
+                            : null;
                         const rect = drawingShape.element.getBoundingClientRect();
                         const overlayRect = overlay.getBoundingClientRect();
-                        const width = rect.width;
-                        const height = rect.height;
-                        if (width < 6 || height < 6) {
+                        const width = finalLineGeometry ? finalLineGeometry.width : rect.width;
+                        const height = finalLineGeometry ? finalLineGeometry.height : rect.height;
+                        const lineLength = Math.hypot(currentX - drawingShape.startX, currentY - drawingShape.startY);
+                        if ((isLineShapeType(shapeType) && lineLength < 10) || (!isLineShapeType(shapeType) && (width < 6 || height < 6))) {
                             drawingShape.element.remove();
                             drawingShape = null;
                             return;
                         }
 
-                        const left = rect.left - overlayRect.left;
-                        const top = rect.top - overlayRect.top;
+                        const left = finalLineGeometry ? finalLineGeometry.left : (rect.left - overlayRect.left);
+                        const top = finalLineGeometry ? finalLineGeometry.top : (rect.top - overlayRect.top);
                         const pdfX = left / currentScale;
                         const pdfWidth = width / currentScale;
                         const pdfHeight = height / currentScale;
@@ -16662,6 +18304,12 @@
                             pdfWidth,
                             pdfHeight
                         };
+                        if (isLineShapeType(shapeType)) {
+                            annotation.lineStartX = finalLineGeometry?.lineStartX ?? drawingShape.lineStartX ?? 0;
+                            annotation.lineStartY = finalLineGeometry?.lineStartY ?? drawingShape.lineStartY ?? 0;
+                            annotation.lineEndX = finalLineGeometry?.lineEndX ?? drawingShape.lineEndX ?? 1;
+                            annotation.lineEndY = finalLineGeometry?.lineEndY ?? drawingShape.lineEndY ?? 0;
+                        }
                         annotations.push(annotation);
                         persistAnnotations();
                         updateAnnotationsList();
@@ -17026,6 +18674,30 @@
                 return annotations.filter((annotation) => isMaterialAnnotationForSave(annotation));
             }
 
+            function buildDirectSaveAnnotationPayload(annotation) {
+                if (!annotation || typeof annotation !== 'object') {
+                    return annotation;
+                }
+
+                const payload = stripInternalAnnotationFields(annotation);
+                const sourceMeta = getPromotedAnnotationSourceMeta(annotation);
+                if (!annotation.promotedFromExtraction || !sourceMeta) {
+                    return payload;
+                }
+
+                return {
+                    ...payload,
+                    sourceBlockLeft: sourceMeta.sourceBlockLeft,
+                    sourceBlockTop: sourceMeta.sourceBlockTop,
+                    sourceBlockWidth: sourceMeta.sourceBlockWidth,
+                    sourceBlockHeight: sourceMeta.sourceBlockHeight,
+                    sourcePageHeight: sourceMeta.sourcePageHeight,
+                    sourceTextLines: sourceMeta.sourceTextLines,
+                    sourceLineBBoxes: sourceMeta.sourceLineBBoxes,
+                    sourceSpans: sourceMeta.sourceSpans,
+                };
+            }
+
             function shouldUseCleanPdfForAnnotationSave() {
                 return hasPendingPromotedAnnotationDeletions()
                     || annotations.some((annotation) => isMaterialPromotedTextAnnotationForSave(annotation));
@@ -17046,13 +18718,16 @@
                 // that represents page text) to the stamping script would write that text
                 // on top of itself → doubled text in the output. Only stamp material
                 // changes: new/standalone text boxes, shapes, and dirty promoted text.
+                let annotationsToSave = [];
                 if (loadedSavedPdfMode && basePdfUrl === originalPdfUrl) {
-                    return getMaterialAnnotationsForSave();
+                    annotationsToSave = getMaterialAnnotationsForSave();
+                } else if (shouldUseCleanPdfForAnnotationSave() || shouldUseOriginalPdfForAnnotationSave()) {
+                    annotationsToSave = annotations.filter(Boolean);
+                } else {
+                    annotationsToSave = getMaterialAnnotationsForSave();
                 }
-                if (shouldUseCleanPdfForAnnotationSave() || shouldUseOriginalPdfForAnnotationSave()) {
-                    return annotations.filter(Boolean);
-                }
-                return getMaterialAnnotationsForSave();
+
+                return annotationsToSave.map((annotation) => buildDirectSaveAnnotationPayload(annotation));
             }
 
             async function saveAnnotationStateToDb() {
@@ -18157,6 +19832,7 @@
                             const y = annotation.pdfY;
                             const w = annotation.pdfWidth;
                             const h = annotation.pdfHeight;
+                            const lineGeometry = ensureLineShapeGeometry(annotation);
 
                             const gsName = `GS${Date.now()}`;
                             const extGState = pdfDoc.context.obj({
@@ -18185,12 +19861,16 @@
                             }
 
                             if (strokeColor && annotation.strokeWidth > 0) {
-                                const lineWidth = pdfStrokeWidth;
+                                const lineWidth = Math.max(0.5, Number(annotation.strokeWidth) || 2);
                                 ops += `${strokeColor.red} ${strokeColor.green} ${strokeColor.blue} RG\n`;
                                 ops += `${lineWidth} w\n`;
                                 ops += `1 J\n`;
-                                ops += `${x + w * 0.1} ${y + h * 0.1} m\n`;
-                                ops += `${x + w * 0.9} ${y + h * 0.9} l\nS\n`;
+                                const startX = x + (w * lineGeometry.lineStartX);
+                                const startY = y + (h * (1 - lineGeometry.lineStartY));
+                                const endX = x + (w * lineGeometry.lineEndX);
+                                const endY = y + (h * (1 - lineGeometry.lineEndY));
+                                ops += `${startX} ${startY} m\n`;
+                                ops += `${endX} ${endY} l\nS\n`;
                             }
 
                             ops += 'Q';
@@ -22139,6 +23819,7 @@
                         }
                         shape.setAttribute('opacity', String(annotation.opacity));
                     }
+                    syncShapeAnnotationOutlineState(label, annotation);
                     
                     persistAnnotations();
                     // Save updated annotation to database
@@ -22169,11 +23850,19 @@
             shapeStrokeColorInput.addEventListener('input', () => {
                 shapeStrokeHexInput.value = shapeStrokeColorInput.value;
                 shapeStroke = shapeStrokeColorInput.value;
+                if (shapeStrokeTransparentInput?.checked) {
+                    shapeStrokeTransparentInput.checked = false;
+                    shapeStrokeTransparentState = false;
+                }
             });
             shapeStrokeHexInput.addEventListener('input', () => {
                 if (/^#[0-9A-F]{6}$/i.test(shapeStrokeHexInput.value)) {
                     shapeStrokeColorInput.value = shapeStrokeHexInput.value;
                     shapeStroke = shapeStrokeHexInput.value;
+                    if (shapeStrokeTransparentInput?.checked) {
+                        shapeStrokeTransparentInput.checked = false;
+                        shapeStrokeTransparentState = false;
+                    }
                 }
             });
 
@@ -22193,11 +23882,19 @@
             shapeFillColorInput.addEventListener('input', () => {
                 shapeFillHexInput.value = shapeFillColorInput.value;
                 shapeFill = shapeFillColorInput.value;
+                if (shapeFillTransparentInput?.checked) {
+                    shapeFillTransparentInput.checked = false;
+                    shapeFillTransparentState = false;
+                }
             });
             shapeFillHexInput.addEventListener('input', () => {
                 if (/^#[0-9A-F]{6}$/i.test(shapeFillHexInput.value)) {
                     shapeFillColorInput.value = shapeFillHexInput.value;
                     shapeFill = shapeFillHexInput.value;
+                    if (shapeFillTransparentInput?.checked) {
+                        shapeFillTransparentInput.checked = false;
+                        shapeFillTransparentState = false;
+                    }
                 }
             });
 
@@ -23111,7 +24808,21 @@
                                 const rect = overlay.getBoundingClientRect();
                                 const currentX = event.clientX - rect.left;
                                 const currentY = event.clientY - rect.top;
-                                
+
+                                if (isLineShapeType(shapeType)) {
+                                    const snappedPoint = snapLineEndpoint(organizeDrawingShape.startX, organizeDrawingShape.startY, currentX, currentY);
+                                    const geometry = computeLineBoxGeometry(organizeDrawingShape.startX, organizeDrawingShape.startY, snappedPoint.x, snappedPoint.y);
+                                    organizeDrawingShape.lineStartX = geometry.lineStartX;
+                                    organizeDrawingShape.lineStartY = geometry.lineStartY;
+                                    organizeDrawingShape.lineEndX = geometry.lineEndX;
+                                    organizeDrawingShape.lineEndY = geometry.lineEndY;
+                                    organizeDrawingShape.element.style.left = geometry.left + 'px';
+                                    organizeDrawingShape.element.style.top = geometry.top + 'px';
+                                    organizeDrawingShape.element.style.width = geometry.width + 'px';
+                                    organizeDrawingShape.element.style.height = geometry.height + 'px';
+                                    return;
+                                }
+
                                 const left = Math.min(currentX, organizeDrawingShape.startX);
                                 const top = Math.min(currentY, organizeDrawingShape.startY);
                                 const width = Math.max(1, Math.abs(currentX - organizeDrawingShape.startX));
@@ -23126,19 +24837,28 @@
                             overlay.addEventListener('pointerup', (event) => {
                                 if (!organizeDrawingShape || toolMode !== 'shape') return;
                                 
-                                const shapeRect = organizeDrawingShape.element.getBoundingClientRect();
                                 const overlayRect = overlay.getBoundingClientRect();
-                                const width = shapeRect.width;
-                                const height = shapeRect.height;
+                                const currentX = event.clientX - overlayRect.left;
+                                const currentY = event.clientY - overlayRect.top;
+                                const finalLineGeometry = isLineShapeType(shapeType)
+                                    ? (() => {
+                                        const snappedPoint = snapLineEndpoint(organizeDrawingShape.startX, organizeDrawingShape.startY, currentX, currentY);
+                                        return computeLineBoxGeometry(organizeDrawingShape.startX, organizeDrawingShape.startY, snappedPoint.x, snappedPoint.y);
+                                    })()
+                                    : null;
+                                const shapeRect = organizeDrawingShape.element.getBoundingClientRect();
+                                const width = finalLineGeometry ? finalLineGeometry.width : shapeRect.width;
+                                const height = finalLineGeometry ? finalLineGeometry.height : shapeRect.height;
+                                const lineLength = Math.hypot(currentX - organizeDrawingShape.startX, currentY - organizeDrawingShape.startY);
                                 
-                                if (width < 6 || height < 6) {
+                                if ((isLineShapeType(shapeType) && lineLength < 10) || (!isLineShapeType(shapeType) && (width < 6 || height < 6))) {
                                     organizeDrawingShape.element.remove();
                                     organizeDrawingShape = null;
                                     return;
                                 }
                                 
-                                const left = shapeRect.left - overlayRect.left;
-                                const top = shapeRect.top - overlayRect.top;
+                                const left = finalLineGeometry ? finalLineGeometry.left : (shapeRect.left - overlayRect.left);
+                                const top = finalLineGeometry ? finalLineGeometry.top : (shapeRect.top - overlayRect.top);
                                 const pdfX = left / currentScale;
                                 const pdfWidth = width / currentScale;
                                 const pdfHeight = height / currentScale;
@@ -23160,6 +24880,12 @@
                                     pdfWidth,
                                     pdfHeight
                                 };
+                                if (isLineShapeType(shapeType)) {
+                                    annotation.lineStartX = finalLineGeometry?.lineStartX ?? organizeDrawingShape.lineStartX ?? 0;
+                                    annotation.lineStartY = finalLineGeometry?.lineStartY ?? organizeDrawingShape.lineStartY ?? 0;
+                                    annotation.lineEndX = finalLineGeometry?.lineEndX ?? organizeDrawingShape.lineEndX ?? 1;
+                                    annotation.lineEndY = finalLineGeometry?.lineEndY ?? organizeDrawingShape.lineEndY ?? 0;
+                                }
                                 
                                 annotations.push(annotation);
                                 persistAnnotations();
@@ -23167,8 +24893,10 @@
                                 addAnnotationElement(blankPageEl, annotation, pageInfo);
                                 organizeDrawingShape.element.remove();
                                 organizeDrawingShape = null;
-                                setSelection(annotation);
-                                setStatus('Shape added to new page. Click Save to keep changes.', 'ok');
+                                setTimeout(() => {
+                                    setSelection(annotation);
+                                    setStatus('Shape added to new page. Click Save to keep changes.', 'ok');
+                                }, 10);
                             });
                             
                             // Insert into main viewer
@@ -24531,7 +26259,11 @@
                 });
                 // Reset any editing state
                 document.querySelectorAll('.overlay-field.editing').forEach(f => {
-                    f.classList.remove('editing');
+                    f.classList.remove('editing', 'editable');
+                    const ce = f.querySelector('[contenteditable]');
+                    if (ce) {
+                        ce.classList.remove('editable');
+                    }
                 });
 
                 updateOverlayShowOriginalToggle();
@@ -25116,7 +26848,7 @@
                     if (toolMode !== 'shape') {
                         return;
                     }
-                    if (event.target !== overlay) {
+                    if (!shouldStartOverlayShapeDraw(event, overlay)) {
                         return;
                     }
                     const rect = overlay.getBoundingClientRect();
@@ -25135,136 +26867,25 @@
                     shapeWrapper.style.background = 'transparent';
                     shapeWrapper.style.cursor = 'move';
 
-                    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-                    svg.setAttribute('width', '100%');
-                    svg.setAttribute('height', '100%');
-                    svg.setAttribute('viewBox', '0 0 100 100');
-                    svg.setAttribute('preserveAspectRatio', 'none');
-                    svg.style.display = 'block';
-
-                    const shapeStrokeWidth = parseFloat(document.getElementById('shape-stroke-width')?.value) || 2;
-                    const shapeOpacityValue = (parseFloat(document.getElementById('shape-opacity')?.value) || 100) / 100;
-                    const strokeTransparent = document.getElementById('shape-stroke-transparent')?.checked || false;
-                    const fillTransparent = document.getElementById('shape-fill-transparent')?.checked || false;
-                    const strokeColor = strokeTransparent ? 'transparent' : (document.getElementById('shape-stroke-color-display')?.dataset.color || shapeStroke);
-                    const fillColor = fillTransparent ? 'transparent' : (document.getElementById('shape-fill-color-display')?.dataset.color || shapeFill);
-
-                    if (shapeType === 'circle' || shapeType === 'ellipse') {
-                        const ellipse = document.createElementNS('http://www.w3.org/2000/svg', 'ellipse');
-                        ellipse.setAttribute('cx', '50');
-                        ellipse.setAttribute('cy', '50');
-                        ellipse.setAttribute('rx', '48');
-                        ellipse.setAttribute('ry', '48');
-                        ellipse.setAttribute('fill', fillColor);
-                        ellipse.setAttribute('stroke', strokeColor);
-                        ellipse.setAttribute('stroke-width', String(shapeStrokeWidth));
-                        ellipse.setAttribute('opacity', String(shapeOpacityValue));
-                        svg.appendChild(ellipse);
-                    } else if (shapeType === 'triangle') {
-                        const triangle = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-                        triangle.setAttribute('points', '50,5 95,95 5,95');
-                        triangle.setAttribute('fill', fillColor);
-                        triangle.setAttribute('stroke', strokeColor);
-                        triangle.setAttribute('stroke-width', String(shapeStrokeWidth));
-                        triangle.setAttribute('stroke-linejoin', 'round');
-                        triangle.setAttribute('opacity', String(shapeOpacityValue));
-                        svg.appendChild(triangle);
-                    } else if (shapeType === 'x') {
-                        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-                        const line1 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                        line1.setAttribute('x1', '15');
-                        line1.setAttribute('y1', '15');
-                        line1.setAttribute('x2', '85');
-                        line1.setAttribute('y2', '85');
-                        line1.setAttribute('stroke', strokeColor);
-                        line1.setAttribute('stroke-width', String(shapeStrokeWidth));
-                        line1.setAttribute('stroke-linecap', 'round');
-                        line1.setAttribute('opacity', String(shapeOpacityValue));
-                        const line2 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                        line2.setAttribute('x1', '85');
-                        line2.setAttribute('y1', '15');
-                        line2.setAttribute('x2', '15');
-                        line2.setAttribute('y2', '85');
-                        line2.setAttribute('stroke', strokeColor);
-                        line2.setAttribute('stroke-width', String(shapeStrokeWidth));
-                        line2.setAttribute('stroke-linecap', 'round');
-                        line2.setAttribute('opacity', String(shapeOpacityValue));
-                        g.appendChild(line1);
-                        g.appendChild(line2);
-                        svg.appendChild(g);
-                    } else if (shapeType === 'line') {
-                        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                        line.setAttribute('x1', '10');
-                        line.setAttribute('y1', '90');
-                        line.setAttribute('x2', '90');
-                        line.setAttribute('y2', '10');
-                        line.setAttribute('stroke', strokeColor);
-                        line.setAttribute('stroke-width', String(shapeStrokeWidth));
-                        line.setAttribute('stroke-linecap', 'round');
-                        line.setAttribute('opacity', String(shapeOpacityValue));
-                        svg.appendChild(line);
-                    } else if (shapeType === 'checkmark') {
-                        const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-                        polyline.setAttribute('points', '15 50, 40 75, 85 15');
-                        polyline.setAttribute('fill', 'none');
-                        polyline.setAttribute('stroke', strokeColor);
-                        polyline.setAttribute('stroke-width', String(shapeStrokeWidth));
-                        polyline.setAttribute('stroke-linecap', 'round');
-                        polyline.setAttribute('stroke-linejoin', 'round');
-                        polyline.setAttribute('opacity', String(shapeOpacityValue));
-                        svg.appendChild(polyline);
-                    } else if (shapeType === 'star') {
-                        const star = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-                        star.setAttribute('points', '50,5 61,38 95,38 68,58 79,91 50,71 21,91 32,58 5,38 39,38');
-                        star.setAttribute('fill', fillColor);
-                        star.setAttribute('stroke', strokeColor);
-                        star.setAttribute('stroke-width', String(shapeStrokeWidth));
-                        star.setAttribute('stroke-linejoin', 'round');
-                        star.setAttribute('opacity', String(shapeOpacityValue));
-                        svg.appendChild(star);
-                    } else if (shapeType === 'polygon') {
-                        const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-                        polygon.setAttribute('points', '50,5 90,27 90,73 50,95 10,73 10,27');
-                        polygon.setAttribute('fill', fillColor);
-                        polygon.setAttribute('stroke', strokeColor);
-                        polygon.setAttribute('stroke-width', String(shapeStrokeWidth));
-                        polygon.setAttribute('stroke-linejoin', 'round');
-                        polygon.setAttribute('opacity', String(shapeOpacityValue));
-                        svg.appendChild(polygon);
-                    } else if (shapeType === 'arrow') {
-                        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-                        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                        line.setAttribute('x1', '10');
-                        line.setAttribute('y1', '50');
-                        line.setAttribute('x2', '80');
-                        line.setAttribute('y2', '50');
-                        line.setAttribute('stroke', strokeColor);
-                        line.setAttribute('stroke-width', String(shapeStrokeWidth));
-                        line.setAttribute('stroke-linecap', 'round');
-                        line.setAttribute('opacity', String(shapeOpacityValue));
-                        const arrowHead = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-                        arrowHead.setAttribute('points', '65,35 80,50 65,65');
-                        arrowHead.setAttribute('fill', 'none');
-                        arrowHead.setAttribute('stroke', strokeColor);
-                        arrowHead.setAttribute('stroke-width', String(shapeStrokeWidth));
-                        arrowHead.setAttribute('stroke-linecap', 'round');
-                        arrowHead.setAttribute('stroke-linejoin', 'round');
-                        arrowHead.setAttribute('opacity', String(shapeOpacityValue));
-                        g.appendChild(line);
-                        g.appendChild(arrowHead);
-                        svg.appendChild(g);
-                    } else {
-                        const rectShape = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-                        rectShape.setAttribute('x', '5');
-                        rectShape.setAttribute('y', '5');
-                        rectShape.setAttribute('width', '90');
-                        rectShape.setAttribute('height', '90');
-                        rectShape.setAttribute('fill', fillColor);
-                        rectShape.setAttribute('stroke', strokeColor);
-                        rectShape.setAttribute('stroke-width', String(shapeStrokeWidth));
-                        rectShape.setAttribute('opacity', String(shapeOpacityValue));
-                        svg.appendChild(rectShape);
-                    }
+                    const shapeStyle = getCurrentShapeStyleConfig();
+                    const strokeColor = shapeStyle.strokeColor;
+                    const fillColor = shapeStyle.fillColor;
+                    syncShapeAnnotationOutlineState(shapeWrapper, {
+                        type: 'shape',
+                        strokeColor,
+                        strokeWidth: shapeStyle.strokeWidth,
+                        strokeTransparent: shapeStyle.strokeTransparent,
+                    }, { preview: true });
+                    const svg = buildShapeSvg({
+                        type: 'shape',
+                        shapeType,
+                        strokeColor,
+                        strokeWidth: shapeStyle.strokeWidth,
+                        strokeTransparent: shapeStyle.strokeTransparent,
+                        fillColor,
+                        fillTransparent: shapeStyle.fillTransparent,
+                        opacity: shapeStyle.opacity,
+                    });
 
                     shapeWrapper.appendChild(svg);
                     overlay.appendChild(shapeWrapper);
@@ -25290,6 +26911,26 @@
                     const rect = overlay.getBoundingClientRect();
                     const currentX = event.clientX - rect.left;
                     const currentY = event.clientY - rect.top;
+                    if (isLineShapeType(shapeType)) {
+                        const snappedPoint = snapLineEndpoint(drawingShape.startX, drawingShape.startY, currentX, currentY);
+                        const geometry = computeLineBoxGeometry(drawingShape.startX, drawingShape.startY, snappedPoint.x, snappedPoint.y);
+                        drawingShape.lineStartX = geometry.lineStartX;
+                        drawingShape.lineStartY = geometry.lineStartY;
+                        drawingShape.lineEndX = geometry.lineEndX;
+                        drawingShape.lineEndY = geometry.lineEndY;
+                        drawingShape.element.style.left = geometry.left + 'px';
+                        drawingShape.element.style.top = geometry.top + 'px';
+                        drawingShape.element.style.width = geometry.width + 'px';
+                        drawingShape.element.style.height = geometry.height + 'px';
+                        syncLineShapeSvgGeometry(drawingShape.svg, {
+                            shapeType: 'line',
+                            lineStartX: geometry.lineStartX,
+                            lineStartY: geometry.lineStartY,
+                            lineEndX: geometry.lineEndX,
+                            lineEndY: geometry.lineEndY,
+                        });
+                        return;
+                    }
                     const width = Math.abs(currentX - drawingShape.startX);
                     const height = Math.abs(currentY - drawingShape.startY);
                     const left = Math.min(currentX, drawingShape.startX);
@@ -25301,20 +26942,30 @@
                     drawingShape.element.style.height = height + 'px';
                 });
 
-                overlay.addEventListener('pointerup', () => {
+                overlay.addEventListener('pointerup', (event) => {
                     if (!drawingShape) {
                         return;
                     }
-                    const width = parseInt(drawingShape.element.style.width);
-                    const height = parseInt(drawingShape.element.style.height);
-                    if (width < 5 || height < 5) {
+                    const overlayRect = overlay.getBoundingClientRect();
+                    const currentX = Math.max(0, Math.min(overlay.clientWidth, event.clientX - overlayRect.left));
+                    const currentY = Math.max(0, Math.min(overlay.clientHeight, event.clientY - overlayRect.top));
+                    const finalLineGeometry = isLineShapeType(shapeType)
+                        ? (() => {
+                            const snappedPoint = snapLineEndpoint(drawingShape.startX, drawingShape.startY, currentX, currentY);
+                            return computeLineBoxGeometry(drawingShape.startX, drawingShape.startY, snappedPoint.x, snappedPoint.y);
+                        })()
+                        : null;
+                    const width = finalLineGeometry ? finalLineGeometry.width : parseInt(drawingShape.element.style.width);
+                    const height = finalLineGeometry ? finalLineGeometry.height : parseInt(drawingShape.element.style.height);
+                    const lineLength = Math.hypot(currentX - drawingShape.startX, currentY - drawingShape.startY);
+                    if ((isLineShapeType(shapeType) && lineLength < 10) || (!isLineShapeType(shapeType) && (width < 5 || height < 5))) {
                         drawingShape.element.remove();
                         drawingShape = null;
                         return;
                     }
 
-                    const left = parseInt(drawingShape.element.style.left);
-                    const top = parseInt(drawingShape.element.style.top);
+                    const left = finalLineGeometry ? finalLineGeometry.left : parseInt(drawingShape.element.style.left);
+                    const top = finalLineGeometry ? finalLineGeometry.top : parseInt(drawingShape.element.style.top);
 
                     // Use overlay.clientHeight (CSS pixels) instead of canvas.height
                     // (which includes devicePixelRatio and would produce wrong coords on HiDPI)
@@ -25323,12 +26974,7 @@
                     const pdfWidth = width / currentScale;
                     const pdfHeight = height / currentScale;
 
-                    const shapeStrokeWidth = parseFloat(document.getElementById('shape-stroke-width')?.value) || 2;
-                    const shapeOpacityValue = (parseFloat(document.getElementById('shape-opacity')?.value) || 100) / 100;
-                    const strokeTransparent = document.getElementById('shape-stroke-transparent')?.checked || false;
-                    const fillTransparent = document.getElementById('shape-fill-transparent')?.checked || false;
-                    const strokeColor = strokeTransparent ? 'transparent' : (document.getElementById('shape-stroke-color-display')?.dataset.color || shapeStroke);
-                    const fillColor = fillTransparent ? 'transparent' : (document.getElementById('shape-fill-color-display')?.dataset.color || shapeFill);
+                    const shapeStyle = getCurrentShapeStyleConfig();
 
                     const annotation = {
                         id: generateAnnotationId(),
@@ -25339,14 +26985,20 @@
                         pdfY: pdfY,
                         pdfWidth: pdfWidth,
                         pdfHeight: pdfHeight,
-                        strokeColor: strokeColor,
-                        strokeWidth: shapeStrokeWidth,
-                        strokeTransparent: strokeTransparent,
-                        fillColor: fillColor,
-                        fillTransparent: fillTransparent,
-                        opacity: shapeOpacityValue,
+                        strokeColor: shapeStyle.strokeColor,
+                        strokeWidth: shapeStyle.strokeWidth,
+                        strokeTransparent: shapeStyle.strokeTransparent,
+                        fillColor: shapeStyle.fillColor,
+                        fillTransparent: shapeStyle.fillTransparent,
+                        opacity: shapeStyle.opacity,
                         rotation: 0
                     };
+                    if (isLineShapeType(shapeType)) {
+                        annotation.lineStartX = finalLineGeometry?.lineStartX ?? drawingShape.lineStartX ?? 0;
+                        annotation.lineStartY = finalLineGeometry?.lineStartY ?? drawingShape.lineStartY ?? 0;
+                        annotation.lineEndX = finalLineGeometry?.lineEndX ?? drawingShape.lineEndX ?? 1;
+                        annotation.lineEndY = finalLineGeometry?.lineEndY ?? drawingShape.lineEndY ?? 0;
+                    }
 
                     annotations.push(annotation);
                     persistAnnotations();
@@ -25360,8 +27012,10 @@
                     addAnnotationElement(wrapper, annotation, pageInfo);
                     // Save to database immediately
                     saveAnnotationToDatabase(annotation);
-                    setSelection(annotation);
-                    setStatus('Shape added. Click Save to keep changes.', 'ok');
+                    setTimeout(() => {
+                        setSelection(annotation);
+                        setStatus('Shape added. Click Save to keep changes.', 'ok');
+                    }, 10);
 
                     drawingShape = null;
                 });
@@ -26667,41 +28321,13 @@
                         return false;
                     }
 
-                    const overlapAmount = (aTop, aBottom, bTop, bBottom) =>
-                        Math.max(0, Math.min(aBottom, bBottom) - Math.max(aTop, bTop));
                     const lineEntries = lineBBoxes.map((bbox, index) => ({
                         index,
                         bbox: bbox.map((value) => Number(value) || 0),
                         text: textLines[index] || '',
                         spans: [],
                     }));
-
-                    spans.forEach((span) => {
-                        const spanBBox = span.bbox.map((value) => Number(value) || 0);
-                        const spanTop = spanBBox[1];
-                        const spanBottom = spanBBox[3];
-                        let bestLine = null;
-                        let bestScore = -1;
-
-                        lineEntries.forEach((entry) => {
-                            const lineTop = Number(entry.bbox[1]) || 0;
-                            const lineBottom = Number(entry.bbox[3]) || lineTop;
-                            const intersection = overlapAmount(spanTop, spanBottom, lineTop, lineBottom);
-                            const minHeight = Math.max(1, Math.min(spanBottom - spanTop, lineBottom - lineTop));
-                            const score = intersection / minHeight;
-                            if (score > bestScore) {
-                                bestScore = score;
-                                bestLine = entry;
-                            }
-                        });
-
-                        if (bestLine && bestScore >= 0.15) {
-                            bestLine.spans.push({
-                                ...span,
-                                bbox: spanBBox,
-                            });
-                        }
-                    });
+                    assignPromotedSpansToLineEntries(lineEntries, spans);
 
                     container.innerHTML = '';
                     container.style.position = 'relative';
@@ -27047,13 +28673,244 @@
                     return true;
                 };
 
+                const formatSplitParagraphMetric = (value) => {
+                    const numericValue = Math.round((Number(value) || 0) * 100) / 100;
+                    if (!Number.isFinite(numericValue)) {
+                        return '0';
+                    }
+                    return String(numericValue)
+                        .replace(/\.0+$/g, '')
+                        .replace(/(\.\d*?[1-9])0+$/g, '$1');
+                };
+
+                const splitPositionedSpansToAbsolutelyPositionedCharacters = (field, textSpan) => {
+                    if (!field || !textSpan) return false;
+
+                    const lineNodes = Array.from(textSpan.children)
+                        .filter((node) => node instanceof HTMLElement && node.tagName === 'SPAN' && node.style.position === 'absolute');
+                    if (!lineNodes.length) {
+                        return false;
+                    }
+
+                    const fallbackCssFamily = getEditableFallbackCssFamily(field);
+                    const fragment = document.createDocumentFragment();
+                    let previousLineBottom = 0;
+                    let maxBottom = 0;
+                    let builtCharacterCount = 0;
+
+                    const collectLineSegments = (lineNode) => {
+                        const segments = Array.from(lineNode.childNodes)
+                            .map((node) => {
+                                if (node.nodeType === Node.TEXT_NODE) {
+                                    return {
+                                        text: String(node.textContent || ''),
+                                        styleSource: lineNode,
+                                    };
+                                }
+                                if (node.nodeType === Node.ELEMENT_NODE) {
+                                    return {
+                                        text: String(node.textContent || ''),
+                                        styleSource: node,
+                                    };
+                                }
+                                return null;
+                            })
+                            .filter((segment) => segment && segment.text.length > 0);
+
+                        if (!segments.length) {
+                            segments.push({
+                                text: String(lineNode.textContent || ''),
+                                styleSource: lineNode,
+                            });
+                        }
+
+                        return segments;
+                    };
+
+                    clusterPositionedSplitParagraphRows(lineNodes)
+                        .forEach((row, lineIndex) => {
+                            const rowNodes = row.nodes;
+                            const rowLeft = rowNodes.reduce((minLeft, node) => Math.min(minLeft, node.left), Infinity);
+                            const rowRight = rowNodes.reduce((maxRight, node) => Math.max(maxRight, node.left + node.width), 0);
+                            const lineTop = row.top;
+                            const lineHeight = Math.max(1, row.height);
+                            const marginTop = Math.max(0, lineIndex === 0 ? lineTop : (lineTop - previousLineBottom));
+                            const paraEl = document.createElement('p');
+                            paraEl.className = 'para-sel';
+                            paraEl.dataset.ypos = formatSplitParagraphMetric(lineTop);
+                            paraEl.style.margin = `${formatSplitParagraphMetric(marginTop)}px 0 0`;
+                            paraEl.style.padding = '0';
+                            paraEl.style.width = `${Math.max(1, rowRight - rowLeft)}px`;
+                            paraEl.style.minHeight = `${lineHeight}px`;
+                            paraEl.style.lineHeight = `${lineHeight}px`;
+                            paraEl.style.position = 'static';
+                            paraEl.style.whiteSpace = 'pre';
+
+                            rowNodes.forEach(({ lineNode, left: nodeLeft }) => {
+                                const segments = collectLineSegments(lineNode);
+                                let currentLeft = Math.max(0, nodeLeft - rowLeft);
+                                segments.forEach(({ text, styleSource }) => {
+                                    const computedStyle = window.getComputedStyle(styleSource);
+                                    let fontFamilyValue = styleSource.style.fontFamily || computedStyle.fontFamily || fallbackCssFamily;
+                                    const fontWeightValue = styleSource.style.fontWeight || computedStyle.fontWeight || '400';
+                                    const fontStyleValue = styleSource.style.fontStyle || computedStyle.fontStyle || 'normal';
+                                    const fontSizePx = parseFloat(styleSource.style.fontSize)
+                                        || parseFloat(computedStyle.fontSize)
+                                        || parseFloat(lineNode.style.fontSize)
+                                        || parseFloat(window.getComputedStyle(lineNode).fontSize)
+                                        || 12;
+                                    const colorValue = styleSource.style.color || computedStyle.color || '#000000';
+                                    const textDecorationValue = styleSource.style.textDecoration || computedStyle.textDecoration || 'none';
+
+                                    if (!isExactEditableFontAvailable(fontFamilyValue, fontWeightValue, fontStyleValue, text)) {
+                                        fontFamilyValue = getFallbackCssFontFamily(fontFamilyValue, fallbackCssFamily);
+                                    }
+
+                                    Array.from(text).forEach((character) => {
+                                        const measuredCharacter = character === '\u00A0' ? ' ' : character;
+                                        const measuredWidth = Math.max(
+                                            measureTextWidth(measuredCharacter, fontSizePx, fontFamilyValue, fontWeightValue, fontStyleValue),
+                                            /\S/.test(measuredCharacter) ? fontSizePx * 0.08 : fontSizePx * 0.22
+                                        );
+                                        const charEl = document.createElement('span');
+                                        charEl.className = '_iceni_text-sel';
+                                        charEl.textContent = character === ' ' ? '\u00A0' : character;
+                                        charEl.dataset.lineNum = String(lineIndex);
+                                        charEl.dataset.originY = formatSplitParagraphMetric(lineTop);
+                                        charEl.dataset.xpos = formatSplitParagraphMetric(rowLeft + currentLeft);
+                                        charEl.dataset.width = formatSplitParagraphMetric(measuredWidth);
+                                        charEl.style.position = 'absolute';
+                                        charEl.style.left = `${rowLeft + currentLeft}px`;
+                                        charEl.style.top = `${lineTop}px`;
+                                        charEl.style.padding = '0';
+                                        charEl.style.margin = '0';
+                                        charEl.style.whiteSpace = 'pre';
+                                        charEl.style.fontFamily = fontFamilyValue;
+                                        charEl.style.fontSize = `${fontSizePx}px`;
+                                        charEl.style.fontWeight = String(fontWeightValue);
+                                        charEl.style.fontStyle = fontStyleValue;
+                                        charEl.style.color = colorValue;
+                                        charEl.style.textDecoration = textDecorationValue;
+                                        charEl.style.lineHeight = `${lineHeight}px`;
+                                        charEl.style.verticalAlign = 'middle';
+                                        paraEl.appendChild(charEl);
+                                        currentLeft += measuredWidth;
+                                        builtCharacterCount += 1;
+                                    });
+                                });
+                            });
+
+                            previousLineBottom = lineTop + lineHeight;
+                            maxBottom = Math.max(maxBottom, previousLineBottom);
+                            fragment.appendChild(paraEl);
+                        });
+
+                    if (!builtCharacterCount) {
+                        return false;
+                    }
+
+                    textSpan.innerHTML = '';
+                    textSpan.appendChild(fragment);
+                    textSpan.style.position = 'relative';
+                    textSpan.style.display = 'block';
+                    textSpan.style.width = '100%';
+                    textSpan.style.whiteSpace = 'normal';
+                    textSpan.style.wordBreak = 'normal';
+                    textSpan.style.overflow = 'visible';
+                    if (maxBottom > 0) {
+                        textSpan.style.minHeight = `${maxBottom}px`;
+                    }
+                    field.dataset.splitParagraphFullyActive = '1';
+                    textSpan.dataset.editLayout = 'split-paragraph-fully';
+                    return true;
+                };
+
+                const buildSplitParagraphCharactersFromSource = (field, textSpan) => {
+                    if (!field || !textSpan) return false;
+
+                    const sourceBlock = field._overlaySourceBlock || null;
+                    const sourceWords = Array.isArray(field?._blockWords) ? field._blockWords : [];
+                    if (!sourceBlock && sourceWords.length === 0) {
+                        return false;
+                    }
+
+                    const pageWidth = parseFloat(field.dataset.pageWidth || '0');
+                    const pageHeight = parseFloat(field.dataset.pageHeight || '0');
+                    const canvasWidth = parseFloat(field.dataset.canvasWidth || '0');
+                    const canvasHeight = parseFloat(field.dataset.canvasHeight || '0');
+                    const scaleX = pageWidth > 0 ? (canvasWidth / pageWidth) : 1;
+                    const scaleY = pageHeight > 0 ? (canvasHeight / pageHeight) : 1;
+                    const blockLeft = parseFloat(field.dataset.originalLeft || '0') || Number(sourceBlock?.left) || 0;
+                    const blockTop = parseFloat(field.dataset.originalTop || '0') || Number(sourceBlock?.top) || 0;
+                    const sourceContainer = document.createElement('div');
+                    sourceContainer.style.fontFamily = textSpan.style.fontFamily || field.style.fontFamily || '';
+                    sourceContainer.style.fontWeight = textSpan.style.fontWeight || field.style.fontWeight || '';
+                    sourceContainer.style.fontStyle = textSpan.style.fontStyle || field.style.fontStyle || '';
+                    sourceContainer.style.fontSize = textSpan.style.fontSize || field.style.fontSize || '';
+                    sourceContainer.style.color = textSpan.style.color || field.style.color || '';
+
+                    let builtPositionedSource = false;
+                    if (
+                        Array.isArray(sourceBlock?.line_bboxes)
+                        && sourceBlock.line_bboxes.length > 1
+                        && Array.isArray(sourceBlock?.spans)
+                        && sourceBlock.spans.length > 0
+                    ) {
+                        builtPositionedSource = buildExactBlockLineSpans(
+                            sourceContainer,
+                            sourceBlock,
+                            scaleX,
+                            scaleY,
+                            blockLeft,
+                            blockTop
+                        );
+                    }
+
+                    if (!builtPositionedSource && sourceWords.length > 0) {
+                        buildStyledWordSpans(
+                            sourceContainer,
+                            sourceWords,
+                            scaleX,
+                            scaleY,
+                            blockLeft,
+                            blockTop,
+                            sourceBlock,
+                            field.dataset.originalText || ''
+                        );
+                        builtPositionedSource = Array.from(sourceContainer.querySelectorAll('span'))
+                            .some((span) => span.style.position === 'absolute');
+                    }
+
+                    if (!builtPositionedSource) {
+                        return false;
+                    }
+
+                    const splitBuiltSource = splitPositionedSpansToAbsolutelyPositionedCharacters(field, sourceContainer);
+                    if (!splitBuiltSource) {
+                        return false;
+                    }
+
+                    textSpan.innerHTML = sourceContainer.innerHTML;
+                    textSpan.style.position = sourceContainer.style.position;
+                    textSpan.style.display = sourceContainer.style.display;
+                    textSpan.style.width = sourceContainer.style.width;
+                    textSpan.style.whiteSpace = sourceContainer.style.whiteSpace;
+                    textSpan.style.wordBreak = sourceContainer.style.wordBreak;
+                    textSpan.style.overflow = sourceContainer.style.overflow;
+                    textSpan.style.minHeight = sourceContainer.style.minHeight;
+                    textSpan.dataset.editLayout = sourceContainer.dataset.editLayout || 'split-paragraph-fully';
+                    return true;
+                };
+
                 const normalizePositionedSpansForEditing = (field, textSpan) => {
                     if (!field || !textSpan) return;
                     if (field.dataset.flowNormalized === '1') return;
+                    const forceFlowText = field.dataset.forceFlowText === '1';
                     const preserveUnderscores = field.dataset.preserveUnderscores === '1';
                     if (preserveUnderscores) {
                         // Keep absolute word-span layout for underscore form fields.
                         // Converting to plain flowing text causes value drift to the right.
+                        delete field.dataset.splitParagraphFullyActive;
                         field.dataset.flowNormalized = '1';
                         return;
                     }
@@ -27068,6 +28925,25 @@
                             .filter((bbox) => Array.isArray(bbox) && bbox.length >= 4)
                             .map((bbox) => bbox.map((value) => Number(value) || 0))
                         : [];
+                    const sourceLineCount = sourceLineBBoxes.length > 0
+                        ? sourceLineBBoxes.length
+                        : (() => {
+                            const sourceTextLines = Array.isArray(field?._overlaySourceBlock?.text_lines)
+                                ? field._overlaySourceBlock.text_lines
+                                    .map((line) => sanitizeOverlayText(line))
+                                    .filter((line) => line.length > 0)
+                                : [];
+                            if (sourceTextLines.length > 0) {
+                                return sourceTextLines.length;
+                            }
+                            const blockWords = Array.isArray(field?._blockWords) ? field._blockWords : [];
+                            const lineNums = new Set(
+                                blockWords
+                                    .map((word) => word?.line_num)
+                                    .filter((lineNum) => lineNum !== undefined && lineNum !== null)
+                            );
+                            return lineNums.size;
+                        })();
                     const lineStepCandidates = [];
                     for (let index = 1; index < sourceLineBBoxes.length; index += 1) {
                         const previousTop = Number(sourceLineBBoxes[index - 1]?.[1]) || 0;
@@ -27090,14 +28966,30 @@
                         if (flowedLineHeightPx) {
                             textSpan.style.lineHeight = flowedLineHeightPx;
                         }
+                        delete field.dataset.splitParagraphFullyActive;
                         field.dataset.flowNormalized = '1';
                         return;
+                    }
+                    if (splitParagraphFullyEnabled && !forceFlowText && sourceLineCount > 1) {
+                        const splitFully = hasPositionedSpans
+                            ? splitPositionedSpansToAbsolutelyPositionedCharacters(field, textSpan)
+                            : buildSplitParagraphCharactersFromSource(field, textSpan);
+                        if (splitFully) {
+                            if (flowedLineHeightPx) {
+                                textSpan.style.lineHeight = flowedLineHeightPx;
+                            }
+                            field.dataset.flowNormalized = '1';
+                            return;
+                        }
                     }
                     if (!hasPositionedSpans) {
+                        delete field.dataset.splitParagraphFullyActive;
                         field.dataset.flowNormalized = '1';
                         return;
                     }
-                    if (fieldHasMultipleExtractedStyles(field) || sourceLineBBoxes.length > 1) {
+                    delete field.dataset.splitParagraphFullyActive;
+                    delete textSpan.dataset.editLayout;
+                    if (fieldHasMultipleExtractedStyles(field) || sourceLineCount > 1) {
                         const converted = convertPositionedSpansToStyledFlow(field, textSpan);
                         if (converted) {
                             if (flowedLineHeightPx) {
@@ -27163,8 +29055,21 @@
                     }
 
                     delete field.dataset.flowNormalized;
+                    delete field.dataset.splitParagraphFullyActive;
+                    delete field.dataset.forceFlowText;
+                    delete textSpan.dataset.editLayout;
                     return true;
                 }
+
+                const convertSplitParagraphLayoutToFlowText = (field, textSpan) => {
+                    if (!field || !textSpan || field.dataset.splitParagraphFullyActive !== '1') {
+                        return;
+                    }
+                    field.dataset.forceFlowText = '1';
+                    field.dataset.flowNormalized = '0';
+                    normalizePositionedSpansForEditing(field, textSpan);
+                    delete field.dataset.forceFlowText;
+                };
 
                 // buildBlockRichHtml is defined in the outer scope so
                 // markOverlayFieldDirty() can also use it.
@@ -28899,100 +30804,141 @@
                         .trim()
                         .toLowerCase();
                     const hasEquivalentPromotedAnnotation = (block, blockTextValue, blockLeftValue, blockTopValue, blockWidthValue, blockHeightValue, blockFontSizeValue) => {
-                        const comparableText = normalizeSavedOverlayText(blockTextValue);
-                        if (!comparableText) {
-                            return false;
-                        }
-
                         const blockPageIndex = (Number(pageData.page_number) || 1) - 1;
                         const pageHeightPdf = Number(pageData.height || pageData.page_height || 0);
-                        const expectedSourceKey = `block-${pageData.page_number}-${block.block_num}`;
-                        const samePagePromotedTextMatches = annotations.filter((annotation) => (
+                        const promotedAnnotationsOnPage = annotations.filter((annotation) => (
                             annotation
                             && annotation.type === 'text'
                             && annotation.promotedFromExtraction
                             && (Number(annotation.pageIndex) || 0) === blockPageIndex
-                            && normalizeSavedOverlayText(annotation.text) === comparableText
                         ));
-
-                        return annotations.some((annotation) => {
-                            if (!annotation || annotation.type !== 'text' || !annotation.promotedFromExtraction) {
-                                return false;
-                            }
-                            if ((Number(annotation.pageIndex) || 0) !== blockPageIndex) {
-                                return false;
-                            }
-
-                            const annotationSourceKey = String(annotation.promotedSourceKey || '').trim();
-                            if (annotationSourceKey && annotationSourceKey === expectedSourceKey) {
-                                return true;
-                            }
-
-                            const annotationText = normalizeSavedOverlayText(annotation.text);
-                            if (annotationText !== comparableText) {
-                                return false;
-                            }
-                            if (samePagePromotedTextMatches.length === 1) {
-                                return true;
-                            }
-
-                            const blockLeftNumber = Number(blockLeftValue) || 0;
-                            const blockTopNumber = Number(blockTopValue) || 0;
-                            const blockWidthNumber = Number(blockWidthValue) || 0;
-                            const blockHeightNumber = Number(blockHeightValue) || 0;
-                            const annotationX = Number(annotation.pdfX) || 0;
-                            const annotationY = Number(annotation.pdfY) || 0;
-                            const annotationHeight = Number(annotation.pdfHeight) || 0;
-                            const annotationTopPdf = pageHeightPdf > 0
-                                ? (pageHeightPdf - annotationY - annotationHeight)
-                                : null;
-
-                            if (
-                                annotationTopPdf !== null
-                                && Math.abs(annotationTopPdf - blockTopNumber) <= Math.max(8, blockHeightNumber * 0.6)
-                            ) {
-                                return true;
-                            }
-
-                            if (Math.abs(annotationX - blockLeftNumber) > Math.max(3, blockWidthNumber * 0.08)) {
+                        const matchesPromotedAnnotation = ({
+                            textValue,
+                            leftValue,
+                            topValue,
+                            widthValue,
+                            heightValue,
+                            fontSizeValue,
+                            expectedSourceKey,
+                        }) => {
+                            const comparableText = normalizeSavedOverlayText(textValue);
+                            if (!comparableText) {
                                 return false;
                             }
 
-                            const blockFontSizeNumber = Number(blockFontSizeValue) || 0;
-                            const annotationFontSize = Number(annotation.fontSize) || 0;
-                            if (
-                                annotationFontSize > 0
-                                && blockFontSizeNumber > 0
-                                && Math.abs(annotationFontSize - blockFontSizeNumber) > Math.max(0.75, blockFontSizeNumber * 0.08)
-                            ) {
-                                return false;
-                            }
+                            const samePagePromotedTextMatches = promotedAnnotationsOnPage.filter((annotation) => (
+                                normalizeSavedOverlayText(annotation.text) === comparableText
+                            ));
 
-                            let annotationWidthPdf = Number(annotation.pdfWidth) || 0;
-                            if (!(annotationWidthPdf > 0)) {
-                                const annotationFontFamily = fontMap[annotation.fontFamily]?.css
-                                    || annotation.fontFamily
-                                    || 'Arial, sans-serif';
-                                const annotationWidthPx = measureTextWidth(
-                                    annotation.text || '',
-                                    Math.max(1, annotationFontSize * scaleY),
-                                    annotationFontFamily,
-                                    annotation.fontWeight,
-                                    annotation.fontStyle
-                                );
-                                annotationWidthPdf = annotationWidthPx / Math.max(scaleX, 0.0001);
-                            }
+                            return promotedAnnotationsOnPage.some((annotation) => {
+                                const annotationSourceKey = String(annotation.promotedSourceKey || '').trim();
+                                if (expectedSourceKey && annotationSourceKey && annotationSourceKey === expectedSourceKey) {
+                                    return true;
+                                }
 
-                            if (annotationWidthPdf > 0 && blockWidthNumber > 0) {
-                                const widthDelta = Math.abs(annotationWidthPdf - blockWidthNumber);
-                                if (widthDelta > Math.max(12, blockWidthNumber * 0.2)) {
+                                const annotationText = normalizeSavedOverlayText(annotation.text);
+                                if (annotationText !== comparableText) {
                                     return false;
                                 }
-                            }
+                                if (samePagePromotedTextMatches.length === 1) {
+                                    return true;
+                                }
 
-                            return true;
+                                const blockLeftNumber = Number(leftValue) || 0;
+                                const blockTopNumber = Number(topValue) || 0;
+                                const blockWidthNumber = Number(widthValue) || 0;
+                                const blockHeightNumber = Number(heightValue) || 0;
+                                const annotationX = Number(annotation.pdfX) || 0;
+                                const annotationY = Number(annotation.pdfY) || 0;
+                                const annotationHeight = Number(annotation.pdfHeight) || 0;
+                                const annotationTopPdf = pageHeightPdf > 0
+                                    ? (pageHeightPdf - annotationY - annotationHeight)
+                                    : null;
+
+                                if (
+                                    annotationTopPdf !== null
+                                    && Math.abs(annotationTopPdf - blockTopNumber) <= Math.max(8, blockHeightNumber * 0.6)
+                                ) {
+                                    return true;
+                                }
+
+                                if (Math.abs(annotationX - blockLeftNumber) > Math.max(3, blockWidthNumber * 0.08)) {
+                                    return false;
+                                }
+
+                                const blockFontSizeNumber = Number(fontSizeValue) || 0;
+                                const annotationFontSize = Number(annotation.fontSize) || 0;
+                                if (
+                                    annotationFontSize > 0
+                                    && blockFontSizeNumber > 0
+                                    && Math.abs(annotationFontSize - blockFontSizeNumber) > Math.max(0.75, blockFontSizeNumber * 0.08)
+                                ) {
+                                    return false;
+                                }
+
+                                let annotationWidthPdf = Number(annotation.pdfWidth) || 0;
+                                if (!(annotationWidthPdf > 0)) {
+                                    const annotationFontFamily = fontMap[annotation.fontFamily]?.css
+                                        || annotation.fontFamily
+                                        || 'Arial, sans-serif';
+                                    const annotationWidthPx = measureTextWidth(
+                                        annotation.text || '',
+                                        Math.max(1, annotationFontSize * scaleY),
+                                        annotationFontFamily,
+                                        annotation.fontWeight,
+                                        annotation.fontStyle
+                                    );
+                                    annotationWidthPdf = annotationWidthPx / Math.max(scaleX, 0.0001);
+                                }
+
+                                if (annotationWidthPdf > 0 && blockWidthNumber > 0) {
+                                    const widthDelta = Math.abs(annotationWidthPdf - blockWidthNumber);
+                                    if (widthDelta > Math.max(12, blockWidthNumber * 0.2)) {
+                                        return false;
+                                    }
+                                }
+
+                                return true;
+                            });
+                        };
+
+                        const mergedSourceSegments = Array.isArray(block?._overlay_source_segments)
+                            ? block._overlay_source_segments.filter((segment) => segment && Array.isArray(segment.bbox) && segment.bbox.length >= 4)
+                            : [];
+                        if (mergedSourceSegments.length > 1) {
+                            const allSegmentsCovered = mergedSourceSegments.every((segment) => {
+                                const segmentText = String(segment.text || (
+                                    Array.isArray(segment.text_lines) ? segment.text_lines.join('\n') : ''
+                                ));
+                                const segmentBbox = segment.bbox;
+                                return matchesPromotedAnnotation({
+                                    textValue: segmentText,
+                                    leftValue: segmentBbox[0],
+                                    topValue: segmentBbox[1],
+                                    widthValue: (Number(segmentBbox[2]) || 0) - (Number(segmentBbox[0]) || 0),
+                                    heightValue: (Number(segmentBbox[3]) || 0) - (Number(segmentBbox[1]) || 0),
+                                    fontSizeValue: segment.font_size ?? blockFontSizeValue,
+                                    expectedSourceKey: segment.block_num !== undefined && segment.block_num !== null
+                                        ? `block-${pageData.page_number}-${segment.block_num}`
+                                        : '',
+                                });
+                            });
+                            if (allSegmentsCovered) {
+                                return true;
+                            }
+                        }
+
+                        return matchesPromotedAnnotation({
+                            textValue: blockTextValue,
+                            leftValue: blockLeftValue,
+                            topValue: blockTopValue,
+                            widthValue: blockWidthValue,
+                            heightValue: blockHeightValue,
+                            fontSizeValue: blockFontSizeValue,
+                            expectedSourceKey: `block-${pageData.page_number}-${block.block_num}`,
                         });
                     };
+
                     const hasEquivalentSavedStandaloneTextAnnotation = (blockTextValue, blockLeftValue, blockWidthValue, blockFontSizeValue) => {
                         const comparableText = normalizeSavedOverlayText(blockTextValue);
                         if (!comparableText) {
@@ -29781,7 +31727,37 @@
                         textSpan.addEventListener('mouseup', function() {
                             setOverlaySelection(field);
                         });
+                        textSpan.addEventListener('beforeinput', function(e) {
+                            if (!field.classList.contains('editing')) {
+                                return;
+                            }
+                            if (field.dataset.splitParagraphFullyActive !== '1') {
+                                return;
+                            }
+                            const inputType = String(e.inputType || '');
+                            if (
+                                inputType.startsWith('insert')
+                                || inputType.startsWith('delete')
+                                || inputType === 'historyUndo'
+                                || inputType === 'historyRedo'
+                            ) {
+                                convertSplitParagraphLayoutToFlowText(field, textSpan);
+                            }
+                        });
                         textSpan.addEventListener('keydown', function(e) {
+                            if (field.classList.contains('editing') && field.dataset.splitParagraphFullyActive === '1') {
+                                if (
+                                    e.key === 'Enter'
+                                    || (
+                                        !e.metaKey
+                                        && !e.ctrlKey
+                                        && !e.altKey
+                                        && (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete')
+                                    )
+                                ) {
+                                    convertSplitParagraphLayoutToFlowText(field, textSpan);
+                                }
+                            }
                             if (field.classList.contains('editing')) {
                                 // Keyboard edits should operate on flowing text, not
                                 // absolutely-positioned span fragments.
@@ -29805,7 +31781,8 @@
                             // Escape exits edit mode back to selected mode
                             if (e.key === 'Escape' && field.classList.contains('editing')) {
                                 e.preventDefault();
-                                field.classList.remove('editing');
+                                field.classList.remove('editing', 'editable');
+                                textSpan.classList.remove('editable');
                                 textSpan.contentEditable = false;
                                 textSpan.blur();
                                 window.getSelection()?.removeAllRanges();
@@ -29833,7 +31810,8 @@
                             if (getSelectedOverlayFields().length > 1) {
                                 setOverlaySelection(field);
                             }
-                            field.classList.add('active', 'editing');
+                            field.classList.add('active', 'editing', 'editable');
+                            textSpan.classList.add('editable');
 
                             // Normalize immediately on edit-entry so caret and typing
                             // behave predictably and preserve line ordering.
@@ -29867,7 +31845,8 @@
                             // Delay to allow button clicks to register
                             setTimeout(() => {
                                 if (!field.contains(document.activeElement) && !field.matches(':hover')) {
-                                    field.classList.remove('editing');
+                                    field.classList.remove('editing', 'editable');
+                                    textSpan.classList.remove('editable');
                                     textSpan.contentEditable = false;
                                     const fieldKey = String(field.dataset.wordIndex || '');
                                     if (selectedOverlayField === field && field.dataset.exactGeometry === '1' && !overlayEditedFields.has(fieldKey)) {
@@ -30510,8 +32489,15 @@
                 const scaleX = canvas.width / pageData.width;
                 const scaleY = canvas.height / pageData.height;
                 
-                // Always use block mode
-                renderOverlayBlocks();
+                // Once promoted extraction has been hydrated into live annotations,
+                // raw fitz blocks become a fallback only. Rendering both layers in
+                // loaded-saved mode creates visible duplicate text when the fallback
+                // block text is not an exact geometry/text match for the promoted
+                // annotation (for example truncated extraction fragments).
+                const shouldRenderOverlayBlocks = !promotedExtractionHydrated;
+                if (shouldRenderOverlayBlocks) {
+                    renderOverlayBlocks();
+                }
 
                 // ── Font-ready re-render ──────────────────────────────────
                 // Google Fonts are loaded asynchronously via <link> tags.

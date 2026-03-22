@@ -264,6 +264,12 @@ const DOWNLOAD_TOP_RIGHT_FONT_SIZE_PX = 57;
 const DOWNLOAD_TOP_RIGHT_MARGIN_PX = 20;
 const DOWNLOAD_TOP_RIGHT_POSITION_TOLERANCE = 18;
 const DOWNLOAD_TOP_RIGHT_FONT_SIZE_TOLERANCE = 0.001;
+const BLANK_TEXT_ROTATION_TEST_TEXT = 'Blank PDF rotation regression';
+const BLANK_TEXT_ROTATION_DEGREES = 33;
+const BLANK_TEXT_ROTATION_ANGLE_TOLERANCE = 8;
+const BLANK_TEXT_BACKGROUND_TEST_TEXT = 'Blank PDF background regression';
+const BLANK_TEXT_BACKGROUND_COLOR = '#1f0909';
+const BLANK_TEXT_DRAWING_MATCH_TOLERANCE = 18;
 const DRYLAB_LOAD_FIXTURE_PATH = path.resolve(__dirname, '..', '..', '..', 'public', 'drylab_full.pdf');
 const DRYLAB_LOAD_POSITION_TOLERANCE = 4;
 const DRYLAB_LOAD_SIZE_TOLERANCE = 6;
@@ -478,6 +484,24 @@ const TESTS = {
         description: 'Upload nda_test_1.pdf, make a first save, then reload in loadedSavedPdf mode, apply a background fill to an overlay field without changing the text, save again, and verify the saved PDF contains the background fill.',
         run: runOverlayBackgroundInLoadedSavedPdfModeFlow,
     },
+    test_27_blank_text_rotation_persists_after_save: {
+        key: 'test_27_blank_text_rotation_persists_after_save',
+        label: 'Test 27 : Blank Text Rotation Persists After Save',
+        description: 'Create a blank PDF, add one text annotation, rotate it, export via Download PDF, and verify the downloaded PDF keeps the rotated text geometry.',
+        run: runBlankTextRotationPersistsAfterSaveFlow,
+    },
+    test_28_blank_text_background_persists_after_save: {
+        key: 'test_28_blank_text_background_persists_after_save',
+        label: 'Test 28 : Blank Text Background Persists After Save',
+        description: 'Create a blank PDF, add one text annotation with a visible background fill, export via Download PDF, and verify the downloaded PDF keeps the text background drawing.',
+        run: runBlankTextBackgroundPersistsAfterSaveFlow,
+    },
+    test_29_image_resize_persists_after_download: {
+        key: 'test_29_image_resize_persists_after_download',
+        label: 'Test 29 : Image Resize Persists After Download',
+        description: 'Create a blank PDF, import an image annotation, resize it to a non-original aspect ratio, export via Download PDF, and verify the stamped image rect matches the resized annotation box.',
+        run: runImageResizePersistsAfterDownloadFlow,
+    },
     test_4_load_tests: {
         key: 'test_4_load_tests',
         label: 'Test 4 : Load Tests',
@@ -652,6 +676,14 @@ function parseCssPixels(value) {
 
 function approxEqual(a, b, tolerance = 1) {
     return Math.abs(Number(a || 0) - Number(b || 0)) <= tolerance;
+}
+
+function normalizeRotationAngleDegrees(value) {
+    let angle = Math.abs(Number(value) || 0) % 180;
+    if (angle > 90) {
+        angle = 180 - angle;
+    }
+    return angle;
 }
 
 function buildRunToken() {
@@ -1246,6 +1278,89 @@ async function updateTextAnnotation(page, textFragment, options = {}) {
     return result;
 }
 
+async function setTextAnnotationVisualProperties(page, textFragment, options = {}) {
+    const result = await page.evaluate(async ({ targetTextFragment, nextOptions }) => {
+        const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const fragment = normalizeText(targetTextFragment);
+        const records = (typeof annotations !== 'undefined' && Array.isArray(annotations)) ? annotations : [];
+        const record = records.find((item) => {
+            const candidates = [
+                item?.text,
+                item?.element?.innerText,
+                item?.element?.textContent,
+                item?.element?.querySelector?.('.annotation-text')?.textContent,
+            ];
+            return candidates.some((candidate) => normalizeText(candidate).includes(fragment));
+        });
+
+        if (!record || !record.element) {
+            throw new Error(`missing text annotation containing "${targetTextFragment}"`);
+        }
+
+        const pageContext = resolveAnnotationPageContext(record);
+        if (!pageContext) {
+            throw new Error('missing annotation page context');
+        }
+
+        const leftPx = Number.isFinite(Number(nextOptions.left)) ? Number(nextOptions.left) : record.element.offsetLeft;
+        const topPx = Number.isFinite(Number(nextOptions.top)) ? Number(nextOptions.top) : record.element.offsetTop;
+        const widthPx = Number.isFinite(Number(nextOptions.width)) ? Number(nextOptions.width) : null;
+        const heightPx = Number.isFinite(Number(nextOptions.height)) ? Number(nextOptions.height) : null;
+
+        if (Object.prototype.hasOwnProperty.call(nextOptions, 'backgroundColor')) {
+            record.backgroundColor = nextOptions.backgroundColor;
+        }
+        if (Object.prototype.hasOwnProperty.call(nextOptions, 'rotation')) {
+            record.rotation = Number(nextOptions.rotation) || 0;
+        }
+        if (Object.prototype.hasOwnProperty.call(nextOptions, 'fontSize')) {
+            record.fontSize = Number(nextOptions.fontSize) || record.fontSize || 12;
+        }
+        if (Object.prototype.hasOwnProperty.call(nextOptions, 'requestedFontSize')) {
+            record.requestedFontSize = Number(nextOptions.requestedFontSize) || null;
+        }
+        if (Object.prototype.hasOwnProperty.call(nextOptions, 'keepBounds')) {
+            record.keepBounds = Boolean(nextOptions.keepBounds);
+        }
+
+        if (widthPx !== null && heightPx !== null) {
+            setTextAnnotationBounds(record, pageContext.pageInfo, leftPx, topPx, widthPx, heightPx);
+        } else if (Object.prototype.hasOwnProperty.call(nextOptions, 'left') || Object.prototype.hasOwnProperty.call(nextOptions, 'top')) {
+            setTextAnnotationPosition(record, pageContext.pageInfo, leftPx, topPx);
+        }
+
+        applyAnnotationStyle(record);
+        persistAnnotations();
+        if (typeof saveAnnotationToDatabase === 'function') {
+            await saveAnnotationToDatabase(record);
+        }
+
+        const textElement = record.element.querySelector('.annotation-text') || record.element;
+        const wrapper = record.textWrapper || record.element.querySelector('.text-content-wrapper');
+        return {
+            id: record.id,
+            text: record.text,
+            rotation: Number(record.rotation) || 0,
+            backgroundColor: String(record.backgroundColor || ''),
+            pdfX: Number(record.pdfX) || 0,
+            pdfY: Number(record.pdfY) || 0,
+            pdfWidth: Number(record.pdfWidth) || 0,
+            pdfHeight: Number(record.pdfHeight) || 0,
+            left: Number(record.element.offsetLeft) || 0,
+            top: Number(record.element.offsetTop) || 0,
+            width: record.element.getBoundingClientRect().width || 0,
+            height: record.element.getBoundingClientRect().height || 0,
+            fieldBackground: getComputedStyle(record.element).backgroundColor,
+            textBackground: getComputedStyle(textElement).backgroundColor,
+            wrapperBackground: wrapper ? getComputedStyle(wrapper).backgroundColor : '',
+            wrapperTransform: wrapper ? getComputedStyle(wrapper).transform : '',
+        };
+    }, { targetTextFragment: textFragment, nextOptions: options });
+
+    await page.waitForTimeout(250);
+    return result;
+}
+
 async function readTextAnnotationMetrics(page, textFragment) {
     return page.evaluate((targetTextFragment) => {
         const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
@@ -1448,13 +1563,20 @@ async function deleteTextAnnotation(page, textFragment) {
     return result;
 }
 
-async function readFirstPromotedAnnotationState(page) {
-    return page.evaluate(() => {
+async function readPromotedAnnotationState(page, targetTextFragment = '') {
+    return page.evaluate((targetText) => {
+        const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
         const record = (typeof annotations !== 'undefined' && Array.isArray(annotations))
-            ? annotations.find((item) => item?.promotedFromExtraction)
+            ? annotations.find((item) => (
+                item?.promotedFromExtraction
+                && (!targetText || normalizeText(item?.text || '').includes(normalizeText(targetText)))
+            ))
             : null;
-        const element = record?.element || document.querySelector('.annotation.promoted-extraction');
+        const element = record?.element || Array.from(document.querySelectorAll('.annotation.promoted-extraction')).find((candidate) => (
+            !targetText || normalizeText(candidate?.innerText || candidate?.textContent || '').includes(normalizeText(targetText))
+        ));
         const textElement = element?.querySelector('.annotation-text');
+        const textStyle = textElement ? getComputedStyle(textElement) : null;
 
         return {
             id: record?.id || null,
@@ -1463,20 +1585,45 @@ async function readFirstPromotedAnnotationState(page) {
             promotedReflowEnabled: Boolean(record?.promotedReflowEnabled),
             exactGeometry: textElement?.dataset?.exactPromotedGeometry || null,
             annotationLineHeight: Number(record?.lineHeight || 0),
+            fontFamily: textStyle?.fontFamily || '',
+            fontSizePx: parseFloat(textStyle?.fontSize || '0') || 0,
+            lineHeightPx: parseFloat(textStyle?.lineHeight || '0') || 0,
+            whiteSpace: textStyle?.whiteSpace || '',
+            wordBreak: textStyle?.wordBreak || '',
+            overflowWrap: textStyle?.overflowWrap || '',
+            padding: textStyle?.padding || '',
+            left: element?.offsetLeft || 0,
+            top: element?.offsetTop || 0,
             width: element?.offsetWidth || 0,
             height: element?.offsetHeight || 0,
         };
-    });
+    }, targetTextFragment);
 }
 
-async function noOpEditFirstPromotedAnnotation(page) {
-    const annotation = page.locator('.annotation.promoted-extraction').first();
+async function readFirstPromotedAnnotationState(page) {
+    return readPromotedAnnotationState(page);
+}
+
+async function openPromotedAnnotationEditor(page, targetTextFragment = '') {
+    const annotation = targetTextFragment
+        ? page.locator('.annotation.promoted-extraction').filter({ hasText: targetTextFragment }).first()
+        : page.locator('.annotation.promoted-extraction').first();
     await annotation.waitFor({ timeout: 10000 });
     await annotation.dispatchEvent('dblclick');
     await page.waitForSelector('.text-box-creator .tbc-input', { timeout: 10000 });
+    await page.waitForTimeout(250);
+}
+
+async function closeActiveTextBoxNoop(page) {
     await page.mouse.click(20, 20);
     await page.waitForTimeout(1200);
 }
+
+async function noOpEditFirstPromotedAnnotation(page) {
+    await openPromotedAnnotationEditor(page);
+    await closeActiveTextBoxNoop(page);
+}
+
 
 async function readLoadedSavedPromotedExtractionFallbackDecision(page) {
     return page.evaluate(async () => {
@@ -1668,6 +1815,58 @@ async function readShapeAnnotationSummaries(page, shapeType = null) {
     }, shapeType);
 }
 
+async function readFirstImageAnnotationState(page) {
+    return page.evaluate(() => {
+        const records = Array.isArray(annotations) ? annotations : [];
+        const annotation = records.find((item) => item?.type === 'image') || null;
+        const element = annotation?.element || document.querySelector('.annotation img[alt*="Imported image"]')?.closest('.annotation') || null;
+        const imageEl = element?.querySelector('img') || null;
+        const rect = element?.getBoundingClientRect?.() || null;
+        return {
+            id: annotation?.id || null,
+            type: annotation?.type || null,
+            fileName: annotation?.fileName || null,
+            pdfX: Number(annotation?.pdfX) || 0,
+            pdfY: Number(annotation?.pdfY) || 0,
+            pdfWidth: Number(annotation?.pdfWidth) || 0,
+            pdfHeight: Number(annotation?.pdfHeight) || 0,
+            left: element ? Number(element.offsetLeft) || 0 : 0,
+            top: element ? Number(element.offsetTop) || 0 : 0,
+            width: rect ? rect.width : 0,
+            height: rect ? rect.height : 0,
+            imageNaturalWidth: imageEl?.naturalWidth || 0,
+            imageNaturalHeight: imageEl?.naturalHeight || 0,
+        };
+    });
+}
+
+async function resizeFirstImageAnnotation(page, targetWidth, targetHeight) {
+    const imageAnnotation = page.locator('.annotation').filter({ has: page.locator('img') }).first();
+    await imageAnnotation.waitFor({ timeout: 10000 });
+    await imageAnnotation.click();
+    await page.waitForTimeout(250);
+
+    const fieldBox = await imageAnnotation.boundingBox();
+    const handle = imageAnnotation.locator('.shape-resize-handle.se').first();
+    const handleBox = await handle.boundingBox();
+    if (!fieldBox || !handleBox) {
+        throw new Error('missing image resize handle');
+    }
+
+    const deltaX = targetWidth - fieldBox.width;
+    const deltaY = targetHeight - fieldBox.height;
+    const fromX = handleBox.x + (handleBox.width / 2);
+    const fromY = handleBox.y + (handleBox.height / 2);
+
+    await page.mouse.move(fromX, fromY);
+    await page.mouse.down();
+    await page.mouse.move(fromX + deltaX, fromY + deltaY, { steps: 18 });
+    await page.mouse.up();
+    await page.waitForTimeout(1000);
+
+    return readFirstImageAnnotationState(page);
+}
+
 async function fetchPdfDrawingSummaries(pdfPath) {
     const pythonCode = `
 import fitz, json, sys
@@ -1714,6 +1913,43 @@ print(json.dumps({
     return JSON.parse(raw);
 }
 
+async function fetchPdfRenderedForegroundBBox(pdfPath) {
+    const pythonCode = `
+import fitz, json, sys
+
+doc = fitz.open(sys.argv[1])
+page = doc[0]
+pix = page.get_pixmap(matrix=fitz.Matrix(1, 1), alpha=False)
+samples = pix.samples
+n = pix.n
+bbox = [9999, 9999, -1, -1]
+for y in range(pix.height):
+    for x in range(pix.width):
+        i = (y * pix.width + x) * n
+        if samples[i:i+3] != b'\\xff\\xff\\xff':
+            if x < bbox[0]:
+                bbox[0] = x
+            if y < bbox[1]:
+                bbox[1] = y
+            if x > bbox[2]:
+                bbox[2] = x
+            if y > bbox[3]:
+                bbox[3] = y
+
+print(json.dumps({
+    'page_width': float(page.rect.width),
+    'page_height': float(page.rect.height),
+    'bbox': None if bbox[2] < 0 else bbox,
+}))
+`;
+
+    const raw = execFileSync('python3', ['-c', pythonCode, pdfPath], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return JSON.parse(raw);
+}
+
 async function clickOutsideFirstPage(page) {
     const pageLocator = page.locator('.page-wrapper[data-page-number="1"], .page[data-page-index="0"]').first();
     const box = await pageLocator.boundingBox();
@@ -1738,8 +1974,12 @@ async function activateOverlay(page) {
             toggle.dispatchEvent(new Event('change', { bubbles: true }));
         }
     });
-    await page.waitForFunction(() => typeof overlayEditorActive !== 'undefined' && overlayEditorActive === true, null, { timeout: 30000 });
-    await page.waitForFunction(() => document.querySelectorAll('.overlay-field').length > 0, null, { timeout: 30000 });
+    await page.waitForFunction(() => typeof overlayEditorActive !== 'undefined' && overlayEditorActive === true, null, { timeout: 90000 });
+    await page.waitForFunction(() => {
+        const overlayFieldCount = document.querySelectorAll('.overlay-field').length;
+        const promotedAnnotationCount = document.querySelectorAll('.annotation.promoted-extraction').length;
+        return overlayFieldCount > 0 || promotedAnnotationCount > 0;
+    }, null, { timeout: 90000 });
     await page.waitForTimeout(1500);
 }
 
@@ -2004,6 +2244,86 @@ print(json.dumps({
         [float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)]
         for rect in rects
     ],
+}))
+doc.close()
+`;
+
+    const raw = execFileSync('python3', ['-c', pythonCode, pdfPath, String(pageNumber), targetText], {
+        cwd: path.resolve(__dirname, '..', '..', '..'),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return JSON.parse(raw);
+}
+
+function loadPdfTextGeometry(pdfPath, pageNumber, targetText) {
+    const pythonCode = `
+import fitz
+import json
+import math
+import sys
+
+pdf_path = sys.argv[1]
+page_number = int(sys.argv[2])
+target_text = sys.argv[3]
+
+def normalize_text(value):
+    return ' '.join(str(value or '').split())
+
+def quad_points(quad):
+    return [
+        [float(quad.ul.x), float(quad.ul.y)],
+        [float(quad.ur.x), float(quad.ur.y)],
+        [float(quad.ll.x), float(quad.ll.y)],
+        [float(quad.lr.x), float(quad.lr.y)],
+    ]
+
+def quad_angle(quad):
+    return math.degrees(math.atan2(float(quad.ur.y - quad.ul.y), float(quad.ur.x - quad.ul.x)))
+
+doc = fitz.open(pdf_path)
+page = doc[page_number - 1]
+normalized_target = normalize_text(target_text)
+quads = page.search_for(target_text, quads=True)
+raw = page.get_text('dict')
+lines = []
+
+for block in raw.get('blocks', []):
+    if int(block.get('type', 0) or 0) != 0:
+        continue
+    for line in block.get('lines', []):
+        spans = line.get('spans', []) or []
+        line_text = normalize_text(''.join(str(span.get('text', '')) for span in spans))
+        if line_text != normalized_target:
+            continue
+        direction = line.get('dir') or [1, 0]
+        lines.append({
+            'text': line_text,
+            'bbox': [float(value) for value in (line.get('bbox') or [])],
+            'dir': [float(direction[0]), float(direction[1])],
+            'angle': math.degrees(math.atan2(float(direction[1]), float(direction[0]))),
+            'spans': [
+                {
+                    'text': span.get('text', ''),
+                    'font': span.get('font', ''),
+                    'size': float(span.get('size', 0) or 0),
+                    'bbox': [float(value) for value in (span.get('bbox') or [])],
+                }
+                for span in spans
+            ],
+        })
+
+print(json.dumps({
+    'page_width': float(page.rect.width),
+    'page_height': float(page.rect.height),
+    'quads': [
+        {
+            'points': quad_points(quad),
+            'angle': quad_angle(quad),
+        }
+        for quad in quads
+    ],
+    'lines': lines,
 }))
 doc.close()
 `;
@@ -2559,33 +2879,60 @@ async function collectOverlayLoadTargets(page, targetConfigs) {
         const overlay = pageEl?.querySelector('.overlay');
         const overlayWidth = overlay?.clientWidth || 0;
         const overlayHeight = overlay?.clientHeight || 0;
-        const fields = Array.from(document.querySelectorAll('.overlay-field')).map((field) => {
-            const root = field.querySelector('[contenteditable]') || field;
-            const text = normalizeText(root.innerText || root.textContent || '');
-            const fieldRect = field.getBoundingClientRect();
-            const style = getComputedStyle(root);
-            const originalText = normalizeText(field.dataset.originalText || '');
-            const stableFlowText = normalizeText(field.dataset.stableFlowText || '');
-            return {
-                text,
-                originalText,
-                stableFlowText,
-                field,
-                root,
-                fieldRect,
-                left: toNumber(field.offsetLeft),
-                top: toNumber(field.offsetTop),
-                width: fieldRect.width,
-                height: fieldRect.height,
-                style: {
-                    fontFamily: style.fontFamily,
-                    fontSize: style.fontSize,
-                    fontWeight: style.fontWeight,
-                    color: style.color,
-                    lineHeight: style.lineHeight,
-                },
-            };
-        }).filter((entry) => entry.text);
+        const fields = [
+            ...Array.from(document.querySelectorAll('.overlay-field')).map((field) => {
+                const root = field.querySelector('[contenteditable]') || field;
+                const text = normalizeText(root.innerText || root.textContent || '');
+                const fieldRect = field.getBoundingClientRect();
+                const style = getComputedStyle(root);
+                const originalText = normalizeText(field.dataset.originalText || '');
+                const stableFlowText = normalizeText(field.dataset.stableFlowText || '');
+                return {
+                    text,
+                    originalText,
+                    stableFlowText,
+                    field,
+                    root,
+                    fieldRect,
+                    left: toNumber(field.offsetLeft),
+                    top: toNumber(field.offsetTop),
+                    width: fieldRect.width,
+                    height: fieldRect.height,
+                    style: {
+                        fontFamily: style.fontFamily,
+                        fontSize: style.fontSize,
+                        fontWeight: style.fontWeight,
+                        color: style.color,
+                        lineHeight: style.lineHeight,
+                    },
+                };
+            }),
+            ...Array.from(document.querySelectorAll('.annotation.promoted-extraction')).map((field) => {
+                const root = field.querySelector('.annotation-text') || field;
+                const text = normalizeText(root.innerText || root.textContent || '');
+                const fieldRect = field.getBoundingClientRect();
+                const style = getComputedStyle(root);
+                return {
+                    text,
+                    originalText: text,
+                    stableFlowText: text,
+                    field,
+                    root,
+                    fieldRect,
+                    left: toNumber(field.offsetLeft),
+                    top: toNumber(field.offsetTop),
+                    width: fieldRect.width,
+                    height: fieldRect.height,
+                    style: {
+                        fontFamily: style.fontFamily,
+                        fontSize: style.fontSize,
+                        fontWeight: style.fontWeight,
+                        color: style.color,
+                        lineHeight: style.lineHeight,
+                    },
+                };
+            }),
+        ].filter((entry) => entry.text);
 
         const targets = {};
         for (const config of configs) {
@@ -4329,6 +4676,7 @@ async function runPromotedNoopEditKeepsExactLayoutFlow() {
         await browser.close();
     }
 }
+
 
 async function runDrylabLoadFlow() {
     const test = TESTS.test_4_load_tests;
@@ -6189,6 +6537,412 @@ async function runOverlayBackgroundInLoadedSavedPdfModeFlow() {
                 applied_background: appliedBackground,
                 matched_drawing: matchedDrawing,
                 candidate_drawings: matchingDrawings,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runBlankTextRotationPersistsAfterSaveFlow() {
+    const test = TESTS.test_27_blank_text_rotation_persists_after_save;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const screenshotName = buildArtifactName(test.key, runToken, 'before_download');
+    const pdfName = buildArtifactName(test.key, runToken, 'download_pdf', 'pdf');
+    const screenshotPath = path.join(OUTPUT_DIR, screenshotName);
+    const pdfPath = path.join(OUTPUT_DIR, pdfName);
+
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({
+        viewport: VIEWPORT,
+        acceptDownloads: true,
+    });
+    const page = await context.newPage();
+    let documentId = null;
+
+    try {
+        documentId = await createBlankDocument(page, {
+            pageSize: 'Letter',
+            orientation: 'portrait',
+        });
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+
+        await createTextAnnotationAt(page, BLANK_TEXT_ROTATION_TEST_TEXT, 120, 140);
+        const configuredState = await setTextAnnotationVisualProperties(page, BLANK_TEXT_ROTATION_TEST_TEXT, {
+            keepBounds: true,
+            left: 124,
+            top: 112,
+            width: 260,
+            height: 56,
+            rotation: BLANK_TEXT_ROTATION_DEGREES,
+        });
+
+        await capturePageScreenshot(page, screenshotPath);
+        await clickOutsideFirstPage(page);
+        await page.waitForTimeout(1200);
+        await downloadPdfViaToolbar(page, pdfPath);
+
+        const pdfGeometry = loadPdfTextGeometry(pdfPath, 1, BLANK_TEXT_ROTATION_TEST_TEXT);
+        const quadAngles = Array.isArray(pdfGeometry?.quads)
+            ? pdfGeometry.quads.map((entry) => normalizeRotationAngleDegrees(entry?.angle))
+            : [];
+        const lineAngles = Array.isArray(pdfGeometry?.lines)
+            ? pdfGeometry.lines.map((entry) => normalizeRotationAngleDegrees(entry?.angle))
+            : [];
+        const observedAngle = quadAngles.find((angle) => angle > 0.5)
+            ?? lineAngles.find((angle) => angle > 0.5)
+            ?? 0;
+        const rotationPass = Math.abs(observedAngle - BLANK_TEXT_ROTATION_DEGREES) <= BLANK_TEXT_ROTATION_ANGLE_TOLERANCE;
+
+        const checks = [
+            {
+                item: 'blank_pdf_created',
+                result: documentId ? 'PASS' : 'FAIL',
+                description: 'A fresh blank PDF was created through the frontend blank-PDF flow.',
+                detail: `document=${documentId}`,
+            },
+            {
+                item: 'text_rotation_applied_before_export',
+                result: Math.abs((Number(configuredState.rotation) || 0) - BLANK_TEXT_ROTATION_DEGREES) <= 0.1 ? 'PASS' : 'FAIL',
+                description: 'The text annotation carried the requested rotation in editor state before export.',
+                detail: JSON.stringify(configuredState),
+            },
+            {
+                item: 'download_pdf_contains_rotated_text_geometry',
+                result: rotationPass ? 'PASS' : 'FAIL',
+                description: 'The Download PDF export keeps the stamped text rotated rather than returning it to horizontal.',
+                detail: JSON.stringify({
+                    expected_angle: BLANK_TEXT_ROTATION_DEGREES,
+                    observed_angle: observedAngle,
+                    quad_angles: quadAngles,
+                    line_angles: lineAngles,
+                    geometry: pdfGeometry,
+                }),
+            },
+        ];
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Before Download', kind: 'image', filename: screenshotName },
+                { label: 'Downloaded PDF', kind: 'pdf', filename: pdfName },
+            ],
+            fileSize: fs.existsSync(pdfPath) ? fs.statSync(pdfPath).size : 0,
+            metadata: {
+                document_id: documentId,
+                configured_state: configuredState,
+                pdf_geometry: pdfGeometry,
+                observed_angle: observedAngle,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runBlankTextBackgroundPersistsAfterSaveFlow() {
+    const test = TESTS.test_28_blank_text_background_persists_after_save;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const screenshotName = buildArtifactName(test.key, runToken, 'before_download');
+    const pdfName = buildArtifactName(test.key, runToken, 'download_pdf', 'pdf');
+    const screenshotPath = path.join(OUTPUT_DIR, screenshotName);
+    const pdfPath = path.join(OUTPUT_DIR, pdfName);
+
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({
+        viewport: VIEWPORT,
+        acceptDownloads: true,
+    });
+    const page = await context.newPage();
+    let documentId = null;
+
+    try {
+        documentId = await createBlankDocument(page, {
+            pageSize: 'Letter',
+            orientation: 'portrait',
+        });
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+
+        await createTextAnnotationAt(page, BLANK_TEXT_BACKGROUND_TEST_TEXT, 120, 140);
+        const configuredState = await setTextAnnotationVisualProperties(page, BLANK_TEXT_BACKGROUND_TEST_TEXT, {
+            keepBounds: true,
+            left: 96,
+            top: 164,
+            width: 280,
+            height: 58,
+            backgroundColor: BLANK_TEXT_BACKGROUND_COLOR,
+        });
+
+        await capturePageScreenshot(page, screenshotPath);
+        await clickOutsideFirstPage(page);
+        await page.waitForTimeout(1200);
+        await downloadPdfViaToolbar(page, pdfPath);
+
+        const textSearch = loadPdfSearchRects(pdfPath, 1, BLANK_TEXT_BACKGROUND_TEST_TEXT);
+        const textRect = Array.isArray(textSearch?.rects) && textSearch.rects.length > 0
+            ? textSearch.rects[0]
+            : null;
+        const pdfDrawings = await fetchPdfDrawingSummaries(pdfPath);
+        const pdfPageHeight = Number(pdfDrawings?.page_height || textSearch?.page_height || 0) || 0;
+        const expectedBackgroundRect = (
+            pdfPageHeight > 0
+            && Number.isFinite(Number(configuredState?.pdfX))
+            && Number.isFinite(Number(configuredState?.pdfY))
+            && Number.isFinite(Number(configuredState?.pdfWidth))
+            && Number.isFinite(Number(configuredState?.pdfHeight))
+        ) ? [
+            Number(configuredState.pdfX),
+            pdfPageHeight - (Number(configuredState.pdfY) + Number(configuredState.pdfHeight)),
+            Number(configuredState.pdfX) + Number(configuredState.pdfWidth),
+            pdfPageHeight - Number(configuredState.pdfY),
+        ] : null;
+        const targetCenter = expectedBackgroundRect ? bboxCenter(expectedBackgroundRect) : null;
+        const matchingDrawings = (Array.isArray(pdfDrawings?.drawings) ? pdfDrawings.drawings : [])
+            .filter((drawing) => Array.isArray(drawing?.rect) && drawing.rect.length === 4)
+            .filter((drawing) => normalizeHex(drawing.fill, '') === BLANK_TEXT_BACKGROUND_COLOR)
+            .map((drawing) => {
+                const drawingCenter = bboxCenter(drawing.rect);
+                return {
+                    rect: drawing.rect,
+                    fill: drawing.fill,
+                    overlap: expectedBackgroundRect ? rectOverlapRatio(expectedBackgroundRect, drawing.rect) : 0,
+                    centerDeltaX: targetCenter ? Math.abs(targetCenter.x - drawingCenter.x) : null,
+                    centerDeltaY: targetCenter ? Math.abs(targetCenter.y - drawingCenter.y) : null,
+                };
+            })
+            .sort((left, right) => {
+                if (right.overlap !== left.overlap) {
+                    return right.overlap - left.overlap;
+                }
+                return ((left.centerDeltaX || 0) + (left.centerDeltaY || 0)) - ((right.centerDeltaX || 0) + (right.centerDeltaY || 0));
+            });
+        const matchedDrawing = matchingDrawings[0] || null;
+        const backgroundPass = Boolean(
+            textRect
+            && expectedBackgroundRect
+            && matchedDrawing
+            && matchedDrawing.overlap >= 0.95
+            && matchedDrawing.centerDeltaX <= BLANK_TEXT_DRAWING_MATCH_TOLERANCE
+            && matchedDrawing.centerDeltaY <= BLANK_TEXT_DRAWING_MATCH_TOLERANCE
+        );
+        const configuredBackgroundHexes = [
+            configuredState.backgroundColor,
+            configuredState.fieldBackground,
+            configuredState.textBackground,
+            configuredState.wrapperBackground,
+        ].map((value) => colorToHex(value, '')).filter(Boolean);
+
+        const checks = [
+            {
+                item: 'blank_pdf_created',
+                result: documentId ? 'PASS' : 'FAIL',
+                description: 'A fresh blank PDF was created through the frontend blank-PDF flow.',
+                detail: `document=${documentId}`,
+            },
+            {
+                item: 'text_background_applied_before_export',
+                result: configuredBackgroundHexes.includes(BLANK_TEXT_BACKGROUND_COLOR) ? 'PASS' : 'FAIL',
+                description: 'The text annotation showed the requested background color in the editor before export.',
+                detail: JSON.stringify({
+                    configured_state: configuredState,
+                    configured_background_hexes: configuredBackgroundHexes,
+                }),
+            },
+            {
+                item: 'download_pdf_contains_text_background_fill',
+                result: backgroundPass ? 'PASS' : 'FAIL',
+                description: 'The Download PDF export contains a filled rectangle matching the annotation background color at the saved annotation bounds.',
+                detail: JSON.stringify({
+                    expected_background: BLANK_TEXT_BACKGROUND_COLOR,
+                    expected_background_rect: expectedBackgroundRect,
+                    text_rect: textRect,
+                    matched_drawing: matchedDrawing,
+                    candidate_drawings: matchingDrawings,
+                    drawing_summary: pdfDrawings,
+                }),
+            },
+        ];
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Before Download', kind: 'image', filename: screenshotName },
+                { label: 'Downloaded PDF', kind: 'pdf', filename: pdfName },
+            ],
+            fileSize: fs.existsSync(pdfPath) ? fs.statSync(pdfPath).size : 0,
+            metadata: {
+                document_id: documentId,
+                configured_state: configuredState,
+                text_rect: textRect,
+                matched_drawing: matchedDrawing,
+                candidate_drawings: matchingDrawings,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runImageResizePersistsAfterDownloadFlow() {
+    const test = TESTS.test_29_image_resize_persists_after_download;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const screenshotName = buildArtifactName(test.key, runToken, 'before_download');
+    const pdfName = buildArtifactName(test.key, runToken, 'download_pdf', 'pdf');
+    const screenshotPath = path.join(OUTPUT_DIR, screenshotName);
+    const pdfPath = path.join(OUTPUT_DIR, pdfName);
+
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({
+        viewport: VIEWPORT,
+        acceptDownloads: true,
+    });
+    const page = await context.newPage();
+    let documentId = null;
+
+    try {
+        documentId = await createBlankDocument(page, {
+            pageSize: 'Letter',
+            orientation: 'portrait',
+        });
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+
+        const imageDataUrl = await page.evaluate(() => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 300;
+            canvas.height = 100;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#1d4ed8';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(20, 20, 260, 60);
+            ctx.fillStyle = '#dc2626';
+            ctx.fillRect(110, 30, 80, 40);
+            return canvas.toDataURL('image/png');
+        });
+
+        await page.evaluate(() => {
+            openSignatureModal('image');
+        });
+        await page.waitForSelector('#signature-modal.active', { timeout: 10000 });
+        await page.setInputFiles('#signature-image-input', [{
+            name: 'resize-regression.png',
+            mimeType: 'image/png',
+            buffer: Buffer.from(imageDataUrl.split(',')[1], 'base64'),
+        }]);
+        await page.waitForFunction(() => {
+            const saveBtn = document.getElementById('signature-save');
+            return saveBtn && saveBtn.disabled === false;
+        }, null, { timeout: 10000 });
+        await page.click('#signature-save');
+        await page.waitForFunction(() => Array.isArray(annotations) && annotations.some((item) => item?.type === 'image'), null, { timeout: 30000 });
+        await page.waitForTimeout(500);
+
+        const initialState = await readFirstImageAnnotationState(page);
+        const targetWidth = 360;
+        const targetHeight = 220;
+        const resizedState = await resizeFirstImageAnnotation(page, targetWidth, targetHeight);
+
+        await capturePageScreenshot(page, screenshotPath);
+        await clickOutsideFirstPage(page);
+        await page.waitForTimeout(1200);
+        await downloadPdfViaToolbar(page, pdfPath);
+
+        const renderSummary = await fetchPdfRenderedForegroundBBox(pdfPath);
+        const renderBBox = Array.isArray(renderSummary?.bbox) ? renderSummary.bbox : null;
+        const renderWidth = renderBBox ? Math.abs(Number(renderBBox[2]) - Number(renderBBox[0])) + 1 : 0;
+        const renderHeight = renderBBox ? Math.abs(Number(renderBBox[3]) - Number(renderBBox[1])) + 1 : 0;
+        const widthMatches = renderBBox && Math.abs(renderWidth - resizedState.pdfWidth) <= 2;
+        const heightMatches = renderBBox && Math.abs(renderHeight - resizedState.pdfHeight) <= 2;
+        const resizedBoxPass = Math.abs(resizedState.width - targetWidth) <= 4 && Math.abs(resizedState.height - targetHeight) <= 4;
+
+        const checks = [
+            {
+                item: 'blank_pdf_created',
+                result: documentId ? 'PASS' : 'FAIL',
+                description: 'A fresh blank PDF was created through the frontend blank-PDF flow.',
+                detail: `document=${documentId}`,
+            },
+            {
+                item: 'image_imported',
+                result: initialState?.id ? 'PASS' : 'FAIL',
+                description: 'The image annotation was created in the editor before resize.',
+                detail: JSON.stringify(initialState),
+            },
+            {
+                item: 'image_resized_in_editor',
+                result: resizedBoxPass ? 'PASS' : 'FAIL',
+                description: 'The editor-side image annotation was resized to the requested box before export.',
+                detail: JSON.stringify(resizedState),
+            },
+            {
+                item: 'download_pdf_contains_resized_image_rect',
+                result: widthMatches && heightMatches ? 'PASS' : 'FAIL',
+                description: 'The Download PDF export keeps the stamped image at the resized annotation dimensions instead of restoring the source aspect ratio.',
+                detail: JSON.stringify({
+                    expected_pdf_width: resizedState.pdfWidth,
+                    expected_pdf_height: resizedState.pdfHeight,
+                    observed_render_bbox: renderBBox,
+                    observed_render_width: renderWidth,
+                    observed_render_height: renderHeight,
+                    render_summary: renderSummary,
+                }),
+            },
+        ];
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Before Download', kind: 'image', filename: screenshotName },
+                { label: 'Downloaded PDF', kind: 'pdf', filename: pdfName },
+            ],
+            fileSize: fs.existsSync(pdfPath) ? fs.statSync(pdfPath).size : 0,
+            metadata: {
+                document_id: documentId,
+                initial_state: initialState,
+                resized_state: resizedState,
+                render_summary: renderSummary,
             },
         });
     } finally {

@@ -14,4 +14,16 @@ return [
     |
     */
     'save_mode' => env('PDF_SAVE_MODE', 'full_page_save'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Split Paragraph Fully In Edit Mode
+    |--------------------------------------------------------------------------
+    |
+    | When enabled, multi-line positioned overlay paragraphs keep their layout
+    | locked on edit entry and are expanded into individually-positioned
+    | character spans instead of being normalized into flowing text.
+    |
+    */
+    'split_paragraph_fully' => env('SPLIT_PARAGRAPH_FULLY', false),
 ];
