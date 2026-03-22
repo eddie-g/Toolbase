@@ -365,6 +365,25 @@ def build_html_font_face_css() -> str:
 HTML_FONT_FACE_CSS = build_html_font_face_css()
 
 
+def should_preserve_promoted_source_lines(ann: Dict[str, Any], text: str) -> bool:
+    if not bool(ann.get("promotedFromExtraction")):
+        return False
+
+    raw_boxes = ann.get("sourceLineBBoxes")
+    if not isinstance(raw_boxes, list) or not raw_boxes:
+        return not bool(ann.get("promotedReflowEnabled"))
+
+    normalized_text_lines = str(text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    if len(normalized_text_lines) == len(raw_boxes):
+        return True
+
+    raw_source_lines = ann.get("sourceTextLines")
+    if isinstance(raw_source_lines, list) and len(raw_source_lines) == len(raw_boxes):
+        return not bool(ann.get("promotedReflowEnabled"))
+
+    return False
+
+
 def build_annotation_htmlbox_css(ann: Dict[str, Any], font_size: float, opacity: float) -> str:
     font_weight = resolve_annotation_font_weight(ann)
     font_style = resolve_annotation_font_style(ann)
@@ -372,7 +391,7 @@ def build_annotation_htmlbox_css(ann: Dict[str, Any], font_size: float, opacity:
     text_decoration = "underline" if resolve_annotation_underline(ann) else "none"
     font_family = css_font_family(ann.get("fontFamily"))
     text_color = str(ann.get("textColor") or "#000000").strip() or "#000000"
-    preserve_extracted_lines = bool(ann.get("promotedFromExtraction")) and not bool(ann.get("promotedReflowEnabled"))
+    preserve_extracted_lines = should_preserve_promoted_source_lines(ann, ann.get("text") or "")
     try:
         line_height_value = float(ann.get("lineHeight") or 0)
     except Exception:
@@ -553,7 +572,15 @@ def resolve_embedded_font_entry(ann: Dict[str, Any]) -> Optional[Dict[str, Any]]
     raw_exact = str(ann.get("fontSourceName") or ann.get("fontFamily") or "").strip()
     normalized_exact = normalize_exact_font_family(raw_exact)
     normalized_family = normalize_exact_font_family(ann.get("fontFamily"))
-    if should_bypass_embedded_font(normalized_exact) or should_bypass_embedded_font(normalized_family):
+    prefer_exact_promoted_embedded_face = (
+        bool(ann.get("promotedFromExtraction"))
+        and bool(raw_exact)
+        and raw_exact.lower() not in {normalized_exact.lower(), normalized_family.lower()}
+    )
+    if (
+        not prefer_exact_promoted_embedded_face
+        and (should_bypass_embedded_font(normalized_exact) or should_bypass_embedded_font(normalized_family))
+    ):
         return None
     wants_bold = is_bold_weight(resolve_annotation_font_weight(ann))
     wants_italic = is_italic_style(resolve_annotation_font_style(ann))
@@ -705,7 +732,8 @@ def normalize_exact_source_line_layout(
     text: str,
     font: fitz.Font,
     font_size: float,
-) -> list[tuple[fitz.Rect, str]]:
+    current_rect: Optional[fitz.Rect] = None,
+) -> list[Dict[str, Any]]:
     raw_boxes = ann.get("sourceLineBBoxes")
     if not isinstance(raw_boxes, list) or not raw_boxes:
         return []
@@ -721,7 +749,106 @@ def normalize_exact_source_line_layout(
     else:
         return []
 
-    layout: list[tuple[fitz.Rect, str]] = []
+    source_anchor_x = None
+    source_anchor_y = None
+    try:
+        raw_source_left = ann.get("sourceBlockLeft")
+        if raw_source_left is not None:
+            source_anchor_x = float(raw_source_left)
+    except Exception:
+        source_anchor_x = None
+    try:
+        raw_source_top = ann.get("sourceBlockTop")
+        if raw_source_top is not None:
+            source_anchor_y = float(raw_source_top)
+    except Exception:
+        source_anchor_y = None
+    if source_anchor_x is None:
+        try:
+            source_anchor_x = min(
+                min(float(raw_box[0]), float(raw_box[2]))
+                for raw_box in raw_boxes
+                if isinstance(raw_box, (list, tuple)) and len(raw_box) >= 4
+            )
+        except Exception:
+            source_anchor_x = None
+    if source_anchor_y is None:
+        try:
+            source_anchor_y = min(
+                min(float(raw_box[1]), float(raw_box[3]))
+                for raw_box in raw_boxes
+                if isinstance(raw_box, (list, tuple)) and len(raw_box) >= 4
+            )
+        except Exception:
+            source_anchor_y = None
+
+    translate_x = 0.0
+    translate_y = 0.0
+    if (
+        current_rect is not None
+        and isinstance(current_rect, fitz.Rect)
+        and source_anchor_x is not None
+        and source_anchor_y is not None
+    ):
+        translate_x = current_rect.x0 - source_anchor_x
+        translate_y = current_rect.y0 - source_anchor_y
+
+    source_spans = ann.get("sourceSpans")
+    normalized_source_spans = []
+    if isinstance(source_spans, list):
+        for span in source_spans:
+            if not isinstance(span, dict):
+                continue
+            bbox = span.get("bbox")
+            if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
+                continue
+            try:
+                span_bbox = [
+                    float(bbox[0]),
+                    float(bbox[1]),
+                    float(bbox[2]),
+                    float(bbox[3]),
+                ]
+            except Exception:
+                continue
+            origin = span.get("origin")
+            try:
+                span_origin = (
+                    [float(origin[0]), float(origin[1])]
+                    if isinstance(origin, (list, tuple)) and len(origin) >= 2
+                    else None
+                )
+            except Exception:
+                span_origin = None
+            normalized_source_spans.append({
+                "bbox": span_bbox,
+                "origin": span_origin,
+            })
+
+    def _overlap_amount(a_top: float, a_bottom: float, b_top: float, b_bottom: float) -> float:
+        return max(0.0, min(a_bottom, b_bottom) - max(a_top, b_top))
+
+    spans_by_line: list[list[Dict[str, Any]]] = [[] for _ in raw_boxes]
+    for span in normalized_source_spans:
+        span_top = float(span["bbox"][1])
+        span_bottom = float(span["bbox"][3])
+        best_index = -1
+        best_score = -1.0
+        for index, raw_box in enumerate(raw_boxes):
+            if not isinstance(raw_box, (list, tuple)) or len(raw_box) < 4:
+                continue
+            line_top = float(raw_box[1])
+            line_bottom = float(raw_box[3])
+            overlap = _overlap_amount(span_top, span_bottom, line_top, line_bottom)
+            min_height = max(1.0, min(span_bottom - span_top, line_bottom - line_top))
+            score = overlap / min_height
+            if score > best_score:
+                best_score = score
+                best_index = index
+        if best_index >= 0 and best_score >= 0.15:
+            spans_by_line[best_index].append(span)
+
+    layout: list[Dict[str, Any]] = []
     for index, raw_box in enumerate(raw_boxes):
         if not isinstance(raw_box, (list, tuple)) or len(raw_box) < 4:
             return []
@@ -738,13 +865,32 @@ def normalize_exact_source_line_layout(
             return []
 
         line_text = line_texts[index]
-        if line_text:
-            text_width = font.text_length(line_text, fontsize=font_size)
-            # Allow up to half an em of extra width due to font-metric differences
-            # between the original PDF font and the substituted render font.
-            if text_width > rect.width + max(2.0, font_size * 0.5):
-                return []
-        layout.append((rect, line_text))
+        line_spans = spans_by_line[index] if index < len(spans_by_line) else []
+        baseline_y = None
+        if line_spans:
+            min_x = min(float(span["bbox"][0]) for span in line_spans)
+            min_y = min(float(span["bbox"][1]) for span in line_spans)
+            max_x = max(float(span["bbox"][2]) for span in line_spans)
+            max_y = max(float(span["bbox"][3]) for span in line_spans)
+            if max_x > min_x and max_y > min_y:
+                rect = fitz.Rect(min_x, min_y, max_x, max_y)
+            origins = [span["origin"][1] for span in line_spans if span.get("origin")]
+            if origins:
+                baseline_y = float(sum(origins) / len(origins))
+        if translate_x != 0.0 or translate_y != 0.0:
+            rect = fitz.Rect(
+                rect.x0 + translate_x,
+                rect.y0 + translate_y,
+                rect.x1 + translate_x,
+                rect.y1 + translate_y,
+            )
+            if baseline_y is not None:
+                baseline_y += translate_y
+        layout.append({
+            "rect": rect,
+            "text": line_text,
+            "baseline_y": baseline_y,
+        })
 
     return layout
 
@@ -752,13 +898,14 @@ def normalize_exact_source_line_layout(
 def draw_text_using_exact_source_lines(
     page: fitz.Page,
     ann: Dict[str, Any],
-    lines: list[tuple[fitz.Rect, str]],
+    lines: list[Dict[str, Any]],
     font: fitz.Font,
     fontname: str,
     font_size: float,
     color: tuple[float, float, float],
     opacity: float,
     align: int,
+    morph: Optional[Tuple[fitz.Point, fitz.Matrix]] = None,
 ) -> bool:
     if not lines:
         return False
@@ -767,7 +914,13 @@ def draw_text_using_exact_source_lines(
     if font_ascender <= 0:
         font_ascender = 0.8
 
-    for line_rect, line_text in lines:
+    for line_entry in lines:
+        if not isinstance(line_entry, dict):
+            continue
+        line_rect = line_entry.get("rect")
+        line_text = line_entry.get("text")
+        if not isinstance(line_rect, fitz.Rect):
+            continue
         if not line_text:
             continue
 
@@ -778,7 +931,11 @@ def draw_text_using_exact_source_lines(
         # metrics differ even slightly from the original, the tops of capital letters
         # get silently shaved off at line_rect.y0.  insert_text places text at a
         # point and never clips vertically.
-        baseline_y = line_rect.y0 + font_ascender * font_size
+        baseline_y = (
+            float(line_entry.get("baseline_y"))
+            if line_entry.get("baseline_y") is not None
+            else (line_rect.y0 + font_ascender * font_size)
+        )
         draw_x = line_rect.x0
         if align == 1:
             draw_x = line_rect.x0 + max(0.0, (line_rect.width - text_width) / 2.0)
@@ -794,17 +951,19 @@ def draw_text_using_exact_source_lines(
             overlay=True,
             fill_opacity=opacity,
             stroke_opacity=opacity,
+            morph=morph,
         )
 
         if resolve_annotation_underline(ann):
             underline_y = line_rect.y1 - max(0.5, font_size * 0.08)
-            page.draw_line(
+            draw_rotated_line(
+                page,
                 fitz.Point(draw_x, underline_y),
                 fitz.Point(draw_x + text_width, underline_y),
                 color=color,
                 width=max(0.5, font_size * 0.06),
-                overlay=True,
-                stroke_opacity=opacity,
+                opacity=opacity,
+                morph=morph,
             )
 
     return True
@@ -928,6 +1087,81 @@ def wrap_text_to_width(font: fitz.Font, text: str, font_size: float, max_width: 
     return lines or [""]
 
 
+def normalize_rotation_degrees(value: Any) -> float:
+    try:
+        rotation = float(value or 0.0)
+    except Exception:
+        return 0.0
+    rotation %= 360.0
+    return 0.0 if abs(rotation) < 1e-6 else rotation
+
+
+def build_rotation_morph(
+    rotation: float,
+    pivot: Optional[fitz.Point],
+) -> Optional[Tuple[fitz.Point, fitz.Matrix]]:
+    if pivot is None or abs(rotation) < 1e-6:
+        return None
+    rad = math.radians(rotation)
+    cos_r = math.cos(rad)
+    sin_r = math.sin(rad)
+    return (
+        pivot,
+        fitz.Matrix(cos_r, -sin_r, sin_r, cos_r, 0.0, 0.0),
+    )
+
+
+def draw_rotated_rect(
+    page: fitz.Page,
+    rect: fitz.Rect,
+    *,
+    fill: Optional[tuple[float, float, float]] = None,
+    color: Optional[tuple[float, float, float]] = None,
+    width: float = 0.0,
+    opacity: float = 1.0,
+    morph: Optional[Tuple[fitz.Point, fitz.Matrix]] = None,
+) -> None:
+    shape = page.new_shape()
+    shape.draw_rect(rect)
+    finish_kwargs = {
+        "color": color,
+        "fill": fill,
+        "width": width,
+    }
+    if color is not None:
+        finish_kwargs["stroke_opacity"] = opacity
+    if fill is not None:
+        finish_kwargs["fill_opacity"] = opacity
+    if morph is not None:
+        finish_kwargs["morph"] = morph
+    shape.finish(**finish_kwargs)
+    shape.commit(overlay=True)
+
+
+def draw_rotated_line(
+    page: fitz.Page,
+    start: fitz.Point,
+    end: fitz.Point,
+    *,
+    color: tuple[float, float, float],
+    width: float,
+    opacity: float,
+    morph: Optional[Tuple[fitz.Point, fitz.Matrix]] = None,
+) -> None:
+    shape = page.new_shape()
+    shape.draw_line(start, end)
+    finish_kwargs = {
+        "color": color,
+        "width": width,
+        "lineCap": 1,
+        "stroke_opacity": opacity,
+    }
+    if morph is not None:
+        finish_kwargs["morph"] = morph
+    shape.finish(**finish_kwargs)
+    shape.commit(overlay=True)
+
+
 def draw_shape(page: fitz.Page, ann: Dict[str, Any]) -> None:
     rect = to_rect(page, ann)
     if rect is None:
@@ -985,6 +1219,13 @@ def draw_shape(page: fitz.Page, ann: Dict[str, Any]) -> None:
             fill_opacity=opacity,
         )
         s.commit(overlay=True)
+
+    def clamp_line_unit_interval(value: Any, fallback: float) -> float:
+        try:
+            numeric = float(value)
+        except Exception:
+            numeric = fallback
+        return max(0.0, min(1.0, numeric))
 
     if shape_type in ("circle", "ellipse"):
         # Draw as a rotated polygon approximation so rotation persists in direct-save mode.
@@ -1044,8 +1285,11 @@ def draw_shape(page: fitz.Page, ann: Dict[str, Any]) -> None:
         return
 
     if shape_type == "line":
-        # Diagonal line from bottom-left to top-right, matching the SVG preview
-        draw_open_lines([(rp(0.05, 0.95), rp(0.95, 0.05))])
+        line_start_x = clamp_line_unit_interval(ann.get("lineStartX"), 0.0)
+        line_start_y = clamp_line_unit_interval(ann.get("lineStartY"), 1.0)
+        line_end_x = clamp_line_unit_interval(ann.get("lineEndX"), 1.0)
+        line_end_y = clamp_line_unit_interval(ann.get("lineEndY"), 0.0)
+        draw_open_lines([(rp(line_start_x, line_start_y), rp(line_end_x, line_end_y))])
         return
 
     # Default rectangle
@@ -1130,9 +1374,10 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
     background = str(ann.get("backgroundColor") or "").strip().lower()
     background_color = None if not background or background == "transparent" else hex_to_rgb(background)
     opacity = normalized_opacity(ann.get("opacity", 1.0) or 1.0)
+    rotation = normalize_rotation_degrees(ann.get("rotation", 0.0))
     fontname = resolve_text_fontname(ann)
     align = parse_text_align(ann.get("textAlign"))
-    preserve_extracted_lines = bool(ann.get("promotedFromExtraction")) and not bool(ann.get("promotedReflowEnabled"))
+    preserve_extracted_lines = should_preserve_promoted_source_lines(ann, text)
     rect = to_rect(page, ann)
     custom_font = None
     html_archive = None
@@ -1148,14 +1393,17 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
             custom_font = None
             fontname = resolve_text_fontname(ann)
     if rect is not None and not rect.is_empty:
+        pivot = fitz.Point((rect.x0 + rect.x1) / 2.0, (rect.y0 + rect.y1) / 2.0)
+        morph = build_rotation_morph(rotation, pivot)
         if background_color is not None:
-            page.draw_rect(
+            draw_rotated_rect(
+                page,
                 rect,
                 color=None,
                 fill=background_color,
                 width=0,
-                overlay=True,
-                fill_opacity=opacity,
+                opacity=opacity,
+                morph=morph,
             )
         draw_font = custom_font or fitz.Font(fontname)
         exact_source_line_layout = normalize_exact_source_line_layout(
@@ -1163,6 +1411,7 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
             text,
             draw_font,
             size,
+            current_rect=rect,
         ) if preserve_extracted_lines else []
         if exact_source_line_layout and draw_text_using_exact_source_lines(
             page,
@@ -1174,9 +1423,14 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
             color,
             opacity,
             align,
+            morph,
         ):
             return
-        if should_use_htmlbox_for_text(ann, embedded_font_entry) and not prefer_pdf_font_text_rendering:
+        if (
+            abs(rotation) < 1e-6
+            and should_use_htmlbox_for_text(ann, embedded_font_entry)
+            and not prefer_pdf_font_text_rendering
+        ):
             try:
                 html_archive = fitz.Archive(FONT_DIR)
             except Exception:
@@ -1267,17 +1521,19 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
                 overlay=True,
                 fill_opacity=opacity,
                 stroke_opacity=opacity,
+                morph=morph,
             )
 
             if resolve_annotation_underline(ann) and line:
                 underline_y = min(text_rect.y1 - max(0.5, size * 0.08), line_baseline_y + max(0.5, size * 0.08))
-                page.draw_line(
+                draw_rotated_line(
+                    page,
                     fitz.Point(draw_x, underline_y),
                     fitz.Point(draw_x + text_width, underline_y),
                     color=color,
                     width=max(0.5, size * 0.06),
-                    overlay=True,
-                    stroke_opacity=opacity,
+                    opacity=opacity,
+                    morph=morph,
                 )
         return
 
@@ -1296,28 +1552,31 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
     y_top = ph - y_pdf
     baseline_y = y_top + size
     fallback_font = custom_font or fitz.Font(fontname)
+    ascender, descender = resolve_font_vertical_metrics(fallback_font)
     text_width = max(1.0, fallback_font.text_length(text, fontsize=size))
     draw_x = x
     if align == 1:
         draw_x -= text_width / 2.0
     elif align == 2:
         draw_x -= text_width
+    text_rect = fitz.Rect(
+        draw_x,
+        baseline_y - (size * ascender),
+        draw_x + text_width,
+        baseline_y + (size * descender),
+    )
+    pivot = fitz.Point((text_rect.x0 + text_rect.x1) / 2.0, (text_rect.y0 + text_rect.y1) / 2.0)
+    morph = build_rotation_morph(rotation, pivot)
     if background_color is not None:
-        ascender, descender = resolve_font_vertical_metrics(fallback_font)
-        bg_rect = fitz.Rect(
-            draw_x,
-            baseline_y - (size * ascender),
-            draw_x + text_width,
-            baseline_y + (size * descender),
-        )
-        if not bg_rect.is_empty:
-            page.draw_rect(
-                bg_rect,
+        if not text_rect.is_empty:
+            draw_rotated_rect(
+                page,
+                text_rect,
                 color=None,
                 fill=background_color,
                 width=0,
-                overlay=True,
-                fill_opacity=opacity,
+                opacity=opacity,
+                morph=morph,
             )
     page.insert_text(
         fitz.Point(draw_x, baseline_y),
@@ -1328,17 +1587,19 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
         overlay=True,
         fill_opacity=opacity,
         stroke_opacity=opacity,
+        morph=morph,
     )
     if resolve_annotation_underline(ann):
         text_width = fallback_font.text_length(text, fontsize=size)
         underline_y = baseline_y + max(0.5, size * 0.08)
-        page.draw_line(
+        draw_rotated_line(
+            page,
             fitz.Point(draw_x, underline_y),
             fitz.Point(draw_x + text_width, underline_y),
             color=color,
             width=max(0.5, size * 0.06),
-            overlay=True,
-            stroke_opacity=opacity,
+            opacity=opacity,
+            morph=morph,
         )
 
 
@@ -1350,7 +1611,9 @@ def draw_signature(page: fitz.Page, ann: Dict[str, Any]) -> None:
     asset_file_path = resolve_annotation_image_path(ann)
     if asset_file_path:
         try:
-            page.insert_image(rect, filename=asset_file_path, overlay=True)
+            # Match the editor's resized box exactly. PyMuPDF keeps aspect ratio
+            # by default, which would shrink one axis back toward the source image.
+            page.insert_image(rect, filename=asset_file_path, overlay=True, keep_proportion=False)
             return
         except Exception:
             pass
@@ -1363,7 +1626,7 @@ def draw_signature(page: fitz.Page, ann: Dict[str, Any]) -> None:
         img = base64.b64decode(payload)
     except Exception:
         return
-    page.insert_image(rect, stream=img, overlay=True)
+    page.insert_image(rect, stream=img, overlay=True, keep_proportion=False)
 
 
 def resolve_annotation_image_path(ann: Dict[str, Any]) -> Optional[str]:

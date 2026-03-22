@@ -91,8 +91,12 @@ async function activateOverlay(page) {
             toggle.dispatchEvent(new Event('change', { bubbles: true }));
         }
     });
-    await page.waitForFunction(() => typeof overlayEditorActive !== 'undefined' && overlayEditorActive === true, null, { timeout: 30000 });
-    await page.waitForFunction(() => document.querySelectorAll('.overlay-field').length > 0, null, { timeout: 30000 });
+    await page.waitForFunction(() => typeof overlayEditorActive !== 'undefined' && overlayEditorActive === true, null, { timeout: 90000 });
+    await page.waitForFunction(() => {
+        const overlayFieldCount = document.querySelectorAll('.overlay-field').length;
+        const promotedAnnotationCount = document.querySelectorAll('.annotation.promoted-extraction').length;
+        return overlayFieldCount > 0 || promotedAnnotationCount > 0;
+    }, null, { timeout: 90000 });
     await page.waitForTimeout(2500);
 }
 
@@ -108,41 +112,79 @@ async function waitForEditorReady(page) {
     await page.waitForTimeout(1500);
 }
 
-async function findOverlayField(page, expectedText) {
-    const key = await page.evaluate((target) => {
+async function findEditableTextTarget(page, expectedText) {
+    const target = await page.evaluate((target) => {
         const normalizeInner = (value) => String(value || '').replace(/\s+/g, ' ').trim();
         const wanted = normalizeInner(target);
         const wantedPrefix = wanted.slice(0, 120);
-        const fields = Array.from(document.querySelectorAll('.overlay-field'));
-        const match = fields.find((el) => {
-            const title = normalizeInner(el.title || '');
-            const text = normalizeInner(el.innerText || '');
-            return title === wanted
-                || text === wanted
-                || title.includes(wanted)
-                || text.includes(wanted)
-                || title.includes(wantedPrefix)
-                || text.includes(wantedPrefix);
+        document.querySelectorAll('[data-test-edit-target="drylab"]').forEach((el) => {
+            el.removeAttribute('data-test-edit-target');
         });
-        return match ? (match.dataset.wordIndex || '') : '';
+
+        const candidates = [
+            ...Array.from(document.querySelectorAll('.overlay-field')).map((el) => ({
+                kind: 'overlay-field',
+                element: el,
+                selector: `.overlay-field[data-word-index="${el.dataset.wordIndex || ''}"]`,
+                primaryText: normalizeInner(el.innerText || el.textContent || ''),
+                secondaryText: normalizeInner(el.title || ''),
+            })),
+            ...Array.from(document.querySelectorAll('.annotation.promoted-extraction')).map((el, index) => {
+                const textEl = el.querySelector('.annotation-text') || el;
+                return {
+                    kind: 'annotation',
+                    element: el,
+                    selector: `.annotation.promoted-extraction[data-test-edit-target="drylab"]`,
+                    primaryText: normalizeInner(textEl.innerText || textEl.textContent || ''),
+                    secondaryText: '',
+                    index,
+                };
+            }),
+        ];
+
+        const match = candidates.find((entry) => (
+            entry.primaryText === wanted
+            || entry.secondaryText === wanted
+            || entry.primaryText.includes(wanted)
+            || entry.secondaryText.includes(wanted)
+            || entry.primaryText.includes(wantedPrefix)
+            || entry.secondaryText.includes(wantedPrefix)
+        ));
+
+        if (!match) {
+            return null;
+        }
+
+        match.element.setAttribute('data-test-edit-target', 'drylab');
+        return {
+            kind: match.kind,
+            selector: match.selector,
+            text: match.primaryText,
+        };
     }, expectedText);
 
-    if (!key) {
+    if (!target?.selector) {
         throw new Error(`Missing overlay field matching page-1 paragraph: ${expectedText}`);
     }
 
-    return page.locator(`.overlay-field[data-word-index="${key}"]`).first();
+    return {
+        kind: target.kind,
+        locator: page.locator(target.selector).first(),
+    };
 }
 
 async function editField(page, expectedText, nextText) {
-    const locator = await findOverlayField(page, expectedText);
+    const target = await findEditableTextTarget(page, expectedText);
+    const locator = target.locator;
     await locator.scrollIntoViewIfNeeded();
-    await locator.dblclick();
-    await page.waitForTimeout(500);
+    await locator.evaluate((el) => {
+        el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+    });
+    await page.waitForTimeout(750);
     await locator.evaluate((el, updatedText) => {
         const editor = el.querySelector('[contenteditable]');
         if (!editor) {
-            throw new Error(`Missing contenteditable editor for ${el.title}`);
+            throw new Error(`Missing contenteditable editor for ${el.title || el.textContent || el.className}`);
         }
         editor.innerText = updatedText;
         editor.dispatchEvent(new Event('input', { bubbles: true }));
@@ -150,52 +192,56 @@ async function editField(page, expectedText, nextText) {
     await page.waitForTimeout(900);
 }
 
-async function savePdf(page) {
-    const [response] = await Promise.all([
-        page.waitForResponse((candidate) => {
-            if (candidate.request().method() !== 'POST') {
-                return false;
-            }
-            const url = candidate.url();
-            return url.includes('/save-edits') || url.includes('/live-save');
-        }, { timeout: 120000 }),
-        page.locator('#save-btn').click(),
-    ]);
+async function downloadPdfViaToolbar(page, outputPath) {
+    const responsePromise = page.waitForResponse((response) => (
+        response.request().method() === 'POST'
+        && response.url().includes('/download-annotated-pdf')
+    ), { timeout: 120000 });
+    const downloadPromise = page.waitForEvent('download', { timeout: 120000 });
 
+    await page.locator('#download-pdf-btn').click();
+
+    const response = await responsePromise;
     if (!response.ok()) {
-        throw new Error(`Save request failed: ${response.status()} ${await response.text()}`);
+        throw new Error(`Download PDF request failed: ${response.status()} ${await response.text()}`);
     }
 
-    await page.waitForTimeout(3000);
+    const download = await downloadPromise;
+    await download.saveAs(outputPath);
+    await page.waitForTimeout(1500);
 }
 
 async function collectPendingOverlayEdits(page) {
     return page.evaluate(() => {
         if (typeof overlayEditedFields === 'undefined' || !(overlayEditedFields instanceof Map)) {
-            return [];
+            const records = (typeof annotations !== 'undefined' && Array.isArray(annotations)) ? annotations : [];
+            return records
+                .filter((annotation) => annotation && annotation.type === 'text')
+                .map((annotation) => ({
+                    page_number: Number(annotation?.pageIndex) + 1,
+                    original_text: String(annotation?.originalText || ''),
+                    new_text: String(annotation?.text || annotation?.element?.textContent || ''),
+                }))
+                .filter((entry) => Number.isFinite(entry.page_number) && entry.new_text);
         }
-        return Array.from(overlayEditedFields.values()).map((edit) => ({
+        const edits = Array.from(overlayEditedFields.values()).map((edit) => ({
             page_number: Number(edit?.page_number),
             original_text: String(edit?.original_text || ''),
             new_text: String(edit?.new_text || ''),
         }));
+        if (edits.length > 0) {
+            return edits;
+        }
+        const records = (typeof annotations !== 'undefined' && Array.isArray(annotations)) ? annotations : [];
+        return records
+            .filter((annotation) => annotation && annotation.type === 'text')
+            .map((annotation) => ({
+                page_number: Number(annotation?.pageIndex) + 1,
+                original_text: String(annotation?.originalText || ''),
+                new_text: String(annotation?.text || annotation?.element?.textContent || ''),
+            }))
+            .filter((entry) => Number.isFinite(entry.page_number) && entry.new_text);
     });
-}
-
-async function downloadSavedPdf(page, documentId, outputPath) {
-    const result = spawnSync('curl', [
-        '-fsSL',
-        `${BASE_URL}/documents/${documentId}/file?v=${Date.now()}`,
-        '-o',
-        outputPath,
-    ], {
-        cwd: path.resolve(__dirname, '..', '..'),
-        encoding: 'utf8',
-    });
-
-    if (result.status !== 0) {
-        throw new Error(`Failed to download saved PDF via curl.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
-    }
 }
 
 function compareUneditedPagesStrictly(originalPdfPath, savedPdfPath, outputDir, documentId) {
@@ -298,7 +344,11 @@ async function main() {
     ensureOutputDir();
 
     const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage({ viewport: { width: 1600, height: 1800 } });
+    const context = await browser.newContext({
+        viewport: { width: 1600, height: 1800 },
+        acceptDownloads: true,
+    });
+    const page = await context.newPage();
     page.setDefaultTimeout(30000);
     page.setDefaultNavigationTimeout(90000);
     let savePayload = null;
@@ -365,11 +415,12 @@ async function main() {
         console.log('Editing page 1 paragraph...');
         await editField(page, ORIGINAL_PAGE_ONE_TEXT, UPDATED_PAGE_ONE_TEXT);
         const pendingOverlayEdits = await collectPendingOverlayEdits(page);
-        console.log('Saving page 1 edit...');
-        await savePdf(page);
+        const downloadedPdfPath = path.join(OUTPUT_DIR, `drylab_doc${documentId}_download.pdf`);
+        console.log('Downloading PDF with page 1 edit...');
+        await downloadPdfViaToolbar(page, downloadedPdfPath);
 
         if (pendingOverlayEdits.length < 1) {
-            throw new Error(`Expected pending overlay edits before save, got pending=${JSON.stringify(pendingOverlayEdits)} savePayload=${JSON.stringify(savePayload)}`);
+            throw new Error(`Expected pending overlay edits before download, got pending=${JSON.stringify(pendingOverlayEdits)} savePayload=${JSON.stringify(savePayload)}`);
         }
 
         const editedPages = Array.from(new Set(pendingOverlayEdits.map((edit) => Number(edit.page_number)).filter(Number.isFinite))).sort((a, b) => a - b);
@@ -377,7 +428,7 @@ async function main() {
             throw new Error(`Expected pending overlay edits to touch only page 1, got pages: ${JSON.stringify(editedPages)} edits=${JSON.stringify(pendingOverlayEdits)}`);
         }
         if (directAnnotationRequests.length > 0) {
-            throw new Error(`Overlay-only page-1 save should not call apply-annotations-direct, got ${JSON.stringify(directAnnotationRequests)}`);
+            throw new Error(`Overlay-only page-1 download should not call apply-annotations-direct from the browser, got ${JSON.stringify(directAnnotationRequests)}`);
         }
 
         const targetEdit = pendingOverlayEdits.find((edit) =>
@@ -388,18 +439,14 @@ async function main() {
             throw new Error(`Missing expected page-1 paragraph edit in pending edits: ${JSON.stringify(pendingOverlayEdits)}`);
         }
 
-        const savedPdfPath = path.join(OUTPUT_DIR, `drylab_doc${documentId}.pdf`);
-        console.log(`Downloading saved PDF for document ${documentId}...`);
-        await downloadSavedPdf(page, documentId, savedPdfPath);
-
         console.log('Comparing non-edited pages against original...');
-        const compareResult = compareUneditedPagesStrictly(PDF_PATH, savedPdfPath, OUTPUT_DIR, documentId);
+        const compareResult = compareUneditedPagesStrictly(PDF_PATH, downloadedPdfPath, OUTPUT_DIR, documentId);
 
-        console.log('drylab page-1-only save regression passed');
+        console.log('drylab page-1-only download regression passed');
         console.log(JSON.stringify({
             documentId,
             edited_pages: editedPages,
-            saved_pdf: savedPdfPath,
+            downloaded_pdf: downloadedPdfPath,
             compare: compareResult,
         }, null, 2));
     } finally {

@@ -1342,6 +1342,17 @@ def _merge_stacked_paragraph_blocks(page_blocks, page_words, page_lines):
                     and compact_single_line_pair
                     and sentence_like_single_line_pair
                 )
+                substantial_multiline_pair = (
+                    a_line_count >= 3
+                    and b_line_count >= 3
+                )
+                tight_continuation_gap = max(4.0, max(a_line_height, b_line_height) * 0.55)
+                if substantial_multiline_pair and vertical_gap > tight_continuation_gap:
+                    # Two real paragraphs in the same column often sit about one line-height
+                    # apart. Treat substantial multiline blocks as separate paragraphs unless
+                    # they are almost touching; otherwise edit/export state inherits merged
+                    # line geometry and reflows incorrectly after save/download.
+                    continue
                 compatible_column_shape = similar_column_width or short_lead_paragraph_pair
                 max_allowed_gap = base_gap
                 widened_blank_line_pair = (
@@ -1915,9 +1926,10 @@ def extract_text_with_pymupdf(pdf_path):
                                     'bold': is_bold,
                                     'italic': is_italic,
                                     'flags': flags,
+                                    'bbox': list(bbox) if bbox else None,
                                     'ascender': ascender,
                                     'descender': descender,
-                                    'origin': origin,  # (x, y) baseline point
+                                    'origin': list(origin) if origin else None,  # (x, y) baseline point
                                     'line_width': trace_linewidth,
                                     'render_type': trace_render_type,
                                     'space_width': trace_spacewidth,

@@ -334,6 +334,19 @@ async function drawShape(page, shapeDef) {
             jsToolMode = typeof toolMode !== 'undefined' ? toolMode : 'undefined';
         } catch (e) { jsToolMode = 'error'; }
 
+        let selectedAnnotationType = null;
+        let selectedShapeType = null;
+        let selectedShapeActionBarVisible = false;
+        try {
+            const selected = typeof selectedAnnotation !== 'undefined' ? selectedAnnotation : null;
+            selectedAnnotationType = selected?.type || null;
+            selectedShapeType = selected?.shapeType || null;
+            const actionBar = selected?.element?.querySelector?.('.shape-action-bar') || null;
+            selectedShapeActionBarVisible = !!(actionBar && getComputedStyle(actionBar).display !== 'none');
+        } catch (e) {
+            selectedAnnotationType = 'error';
+        }
+
         // Also check for shape preview elements (during drag) vs finalized annotations
         const shapePreview = document.querySelector('.shape-preview, .drawing-shape');
         
@@ -342,6 +355,9 @@ async function drawShape(page, shapeDef) {
             domSvgs,
             jsAnnotationsLength,
             jsToolMode,
+            selectedAnnotationType,
+            selectedShapeType,
+            selectedShapeActionBarVisible,
             hasShapePreview: !!shapePreview,
         };
     });
@@ -815,6 +831,20 @@ async function runShapeOnPage(page, csrfToken, shapeDef) {
                 `${shapeDef.label} Drawn`, shapeDrawn,
                 shapeDrawn ? `${shapeDef.label} shape drawn on page via mouse drag` : 'Shape annotation not found in DOM after drawing',
                 `DOM annotations: ${drawState.domAnnotations}, SVGs: ${drawState.domSvgs}, JS annotations: ${drawState.jsAnnotationsLength}, toolMode: ${drawState.jsToolMode}`
+            ));
+            checks.push(makeCheck(
+                `${shapeDef.label} Auto-Selected`,
+                drawState.selectedAnnotationType === 'shape'
+                    && drawState.selectedShapeType === shapeDef.type
+                    && drawState.selectedShapeActionBarVisible === true,
+                drawState.selectedAnnotationType === 'shape'
+                    ? 'Freshly drawn shape is immediately selected with its action bar visible'
+                    : 'Freshly drawn shape did not enter editable selected state',
+                JSON.stringify({
+                    selectedAnnotationType: drawState.selectedAnnotationType,
+                    selectedShapeType: drawState.selectedShapeType,
+                    selectedShapeActionBarVisible: drawState.selectedShapeActionBarVisible,
+                })
             ));
             if (!shapeDrawn) {
                 const ssPath = path.join(SHAPES_DIR, `${shapeType}_error_draw.png`);
