@@ -136,11 +136,22 @@ class DocumentController extends Controller
     {
         $annotationAssets = $this->annotationAssets();
 
-        return array_map(static function ($annotation) use ($annotationAssets) {
-            return is_array($annotation)
-                ? $annotationAssets->enrichForPython($annotation)
-                : $annotation;
-        }, $annotations);
+        return array_values(array_filter(array_map(static function ($annotation) use ($annotationAssets) {
+            if (!is_array($annotation)) {
+                return null;
+            }
+
+            $enriched = $annotationAssets->enrichForPython($annotation);
+            $annotationType = strtolower((string) ($enriched['type'] ?? ''));
+
+            // Interactive PDF form fields are exported client-side with pdf-lib.
+            // The Python stamping pipeline only supports visual annotations.
+            if ($annotationType === 'field') {
+                return null;
+            }
+
+            return $enriched;
+        }, $annotations)));
     }
 
     private function createOriginalBackup(string $storedPath): ?string
