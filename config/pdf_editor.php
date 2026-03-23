@@ -26,4 +26,15 @@ return [
     |
     */
     'split_paragraph_fully' => env('SPLIT_PARAGRAPH_FULLY', false),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Editor Debug Controls
+    |--------------------------------------------------------------------------
+    |
+    | Exposes debug-only toolbar actions in the PDF editor, including direct
+    | links to original/redacted files and restore-preview controls.
+    |
+    */
+    'editor_debug' => env('EDITOR_DEBUG', false),
 ];

@@ -3,6 +3,7 @@
     $editorUser = auth()->user() ?? auth('admin')->user();
     $editorIsAdmin = auth('admin')->check();
     $editorIsAuthenticated = auth()->check() || $editorIsAdmin;
+    $editorDebug = (bool) config('pdf_editor.editor_debug', false);
 @endphp
 <!DOCTYPE html>
 <html lang="en">
@@ -337,6 +338,11 @@
             .tab-nav button.active {
                 color: var(--accent);
                 border-bottom-color: var(--accent);
+            }
+            #mode-edit-text.active {
+                background: var(--accent) !important;
+                color: #0b2d20 !important;
+                border-color: rgba(16, 185, 129, 0.8) !important;
             }
             .tab-content {
                 display: none;
@@ -1547,6 +1553,45 @@
                 letter-spacing: 0.5px;
                 flex-shrink: 0;
             }
+            .draw-toolbar .draw-width-group {
+                min-width: 228px;
+            }
+            .draw-toolbar .draw-preview {
+                width: 36px;
+                height: 36px;
+                border-radius: 999px;
+                border: 1px solid rgba(255,255,255,0.14);
+                background: rgba(255,255,255,0.04);
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                flex-shrink: 0;
+            }
+            body.light-theme .draw-toolbar .draw-preview {
+                border-color: rgba(0, 0, 0, 0.12);
+                background: #f3f4f6;
+            }
+            .draw-toolbar .draw-preview-dot {
+                width: 12px;
+                height: 12px;
+                border-radius: 999px;
+                background: #111827;
+                box-shadow: 0 0 0 1px rgba(255,255,255,0.12);
+            }
+            .draw-toolbar .draw-hint {
+                white-space: nowrap;
+            }
+            .draw-preview-layer {
+                position: absolute;
+                inset: 0;
+                width: 100%;
+                height: 100%;
+                pointer-events: none;
+                z-index: 6;
+            }
+            .viewer.annotation-tool-lock .annotation {
+                pointer-events: none !important;
+            }
             /* Text box creation (Add Text mode) */
             .text-box-creator {
                 position: absolute;
@@ -1684,6 +1729,11 @@
             .viewer.overlay-editor-active .pdf-text {
                 display: none !important;
             }
+            .viewer.overlay-editor-active .acroform-preview-field,
+            .viewer.overlay-view-mode .acroform-preview-field,
+            .viewer.overlay-hidden .acroform-preview-field {
+                display: none !important;
+            }
             /* Overlay mode uses .overlay-field as the interactive text layer.
                Hide the legacy annotation layer so saved/promoted text does not paint twice. */
             .viewer.overlay-editor-active .annotation,
@@ -1716,6 +1766,98 @@
             }
             .overlay-field.active .resize-handle {
                 display: block;
+            }
+            .acroform-preview-field {
+                position: absolute;
+                box-sizing: border-box;
+                border: 1.5px solid rgba(59, 130, 246, 0.68);
+                background: rgba(191, 219, 254, 0.32);
+                border-radius: 2px;
+                box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+                pointer-events: none;
+                z-index: 2;
+            }
+            .acroform-preview-field.is-interactive {
+                pointer-events: auto;
+            }
+            .acroform-preview-field.acroform-preview-btn {
+                background: rgba(219, 234, 254, 0.18);
+                border-radius: 3px;
+            }
+            .acroform-preview-field.acroform-preview-btn.is-choice {
+                border-radius: 999px;
+            }
+            .acroform-preview-field.acroform-preview-ch {
+                background: rgba(224, 231, 255, 0.38);
+            }
+            .acroform-preview-field.acroform-preview-sig {
+                background: rgba(224, 231, 255, 0.26);
+                border-style: dashed;
+            }
+            .acroform-preview-arrow {
+                position: absolute;
+                top: 50%;
+                right: 6px;
+                width: 0;
+                height: 0;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 6px solid rgba(15, 23, 42, 0.82);
+                transform: translateY(-35%);
+                pointer-events: none;
+            }
+            .acroform-preview-check {
+                position: absolute;
+                inset: 2px;
+                border: 1.25px solid rgba(59, 130, 246, 0.72);
+                background: rgba(255, 255, 255, 0.55);
+                border-radius: 2px;
+            }
+            .acroform-preview-field.acroform-preview-btn.is-choice .acroform-preview-check {
+                border-radius: 999px;
+            }
+            .acroform-preview-control {
+                position: absolute;
+                inset: 0;
+                width: 100%;
+                height: 100%;
+                box-sizing: border-box;
+                border: none;
+                outline: none;
+                background: transparent;
+                color: #111827;
+                font: inherit;
+                padding: 2px 6px;
+                margin: 0;
+                resize: none;
+                appearance: none;
+                -webkit-appearance: none;
+                border-radius: inherit;
+            }
+            .acroform-preview-control::placeholder {
+                color: rgba(100, 116, 139, 0.88);
+            }
+            .acroform-preview-field textarea.acroform-preview-control {
+                padding-top: 4px;
+                line-height: 1.25;
+            }
+            .acroform-preview-field select.acroform-preview-control {
+                padding-right: 20px;
+                background: transparent;
+            }
+            .acroform-preview-field select.acroform-preview-control[multiple] {
+                padding-right: 6px;
+            }
+            .acroform-preview-choice-input {
+                position: absolute;
+                left: 50%;
+                top: 50%;
+                width: min(16px, 72%);
+                height: min(16px, 72%);
+                margin: 0;
+                transform: translate(-50%, -50%);
+                accent-color: #2563eb;
+                cursor: pointer;
             }
             /* ilovepdf-style states: invisible → hover → selected → editing */
             .overlay-field {
@@ -1804,6 +1946,39 @@
                 flex-direction: column;
                 align-items: center;
                 gap: 2px;
+            }
+            .field-type-btn {
+                min-height: 120px;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                gap: 10px;
+                padding: 18px 16px;
+                border-radius: 14px;
+                border: 1px solid #e5e7eb;
+                background: #fff;
+                color: #111827;
+                transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+            }
+            .field-type-btn:hover {
+                transform: translateY(-1px);
+                border-color: #94a3b8;
+                box-shadow: 0 10px 24px rgba(15, 23, 42, 0.1);
+            }
+            .field-type-btn-icon {
+                width: 48px;
+                height: 48px;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                border-radius: 12px;
+                background: #eff6ff;
+                color: #2563eb;
+            }
+            .field-type-btn-label {
+                font-size: 14px;
+                font-weight: 600;
             }
 
             /* Eraser cursor when draw mode is active */
@@ -2100,6 +2275,33 @@
                 box-sizing: border-box;
                 overflow: visible;
             }
+            .annotation.edit-mode-region {
+                isolation: isolate;
+            }
+            .annotation.edit-mode-region::before {
+                content: '';
+                position: absolute;
+                inset: -4px;
+                border-radius: 10px;
+                background: rgba(147, 197, 253, 0.18);
+                border: 1px solid rgba(96, 165, 250, 0.55);
+                box-shadow: 0 0 0 1px rgba(191, 219, 254, 0.35) inset;
+                opacity: 0;
+                pointer-events: none;
+                transition: opacity 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+                z-index: 0;
+            }
+            .annotation.edit-mode-region > * {
+                position: relative;
+                z-index: 1;
+            }
+            .viewer.edit-text-mode .annotation.edit-mode-region:not(.selected):not(.dragging)::before {
+                opacity: 1;
+            }
+            .viewer.edit-text-mode .annotation.edit-mode-region:not(.selected):not(.dragging):hover::before {
+                background: rgba(147, 197, 253, 0.24);
+                border-color: rgba(59, 130, 246, 0.7);
+            }
             .annotation.has-bounds {
                 display: block;
                 padding: 0;
@@ -2351,6 +2553,322 @@
             .annotation.has-bounds .annotation-text {
                 display: block;
                 width: 100%;
+            }
+            .annotation.field-annotation,
+            .annotation.field-annotation:hover,
+            .annotation.field-annotation.selected {
+                background: transparent !important;
+                border-color: transparent !important;
+                box-shadow: none;
+                padding: 0;
+            }
+            .field-annotation-shell {
+                position: relative;
+                width: 100%;
+                height: 100%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                box-sizing: border-box;
+                border-radius: 10px;
+                overflow: hidden;
+                background: rgba(238, 242, 255, 0.92);
+                border: 1.5px solid rgba(100, 116, 139, 0.95);
+                transition: box-shadow 0.15s ease, border-color 0.15s ease;
+            }
+            .annotation.selected.field-annotation .field-annotation-shell {
+                box-shadow: 0 0 0 1px rgba(77, 208, 168, 0.55), 0 0 0 5px rgba(77, 208, 168, 0.18);
+            }
+            .field-annotation-input {
+                width: 100%;
+                height: 100%;
+                border: none;
+                outline: none;
+                background: transparent;
+                color: #334155;
+                padding: 10px 12px;
+                font: inherit;
+                box-sizing: border-box;
+                pointer-events: none;
+                user-select: none;
+            }
+            .annotation.field-annotation.field-editing .field-annotation-input {
+                pointer-events: auto;
+                user-select: text;
+                cursor: text;
+            }
+            .field-annotation-date-picker {
+                position: absolute;
+                width: 1px;
+                height: 1px;
+                opacity: 0;
+                pointer-events: none;
+                border: 0;
+                padding: 0;
+                margin: 0;
+                inset: auto;
+            }
+            .field-annotation-input::placeholder {
+                color: rgba(71, 85, 105, 0.82);
+            }
+            .field-annotation-checkbox-shell {
+                padding: 8px;
+                background: rgba(255, 255, 255, 0.95);
+            }
+            .field-annotation-checkbox-box {
+                width: 100%;
+                height: 100%;
+                min-width: 18px;
+                min-height: 18px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border-radius: 8px;
+                background: #fff;
+                box-sizing: border-box;
+            }
+            .field-annotation-checkbox-mark {
+                font-size: 0.9em;
+                font-weight: 800;
+                line-height: 1;
+                opacity: 0;
+                transform: scale(0.72);
+                transition: opacity 0.15s ease, transform 0.15s ease;
+            }
+            .field-annotation-checkbox-mark.checked {
+                opacity: 1;
+                transform: scale(1);
+            }
+            .field-annotation-signature-shell {
+                flex-direction: row;
+                align-items: stretch;
+                justify-content: flex-start;
+                background: rgba(224, 231, 255, 0.92);
+                border-color: rgba(129, 140, 248, 0.85);
+                border-radius: 12px;
+                overflow: hidden;
+            }
+            .field-annotation-signature-badge {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                flex: 0 0 auto;
+                min-width: 72px;
+                padding: 0 18px;
+                background: linear-gradient(180deg, #4f46e5 0%, #4338ca 100%);
+                color: #ffffff;
+                font-weight: 700;
+                letter-spacing: 0.02em;
+                text-transform: lowercase;
+                user-select: none;
+            }
+            .field-annotation-signature-content {
+                position: relative;
+                flex: 1 1 auto;
+                min-width: 56px;
+                height: 100%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: rgba(224, 231, 255, 0.7);
+                overflow: hidden;
+            }
+            .field-annotation-signature-placeholder {
+                color: rgba(79, 70, 229, 0.42);
+                font-size: 13px;
+                font-weight: 600;
+                letter-spacing: 0.02em;
+                user-select: none;
+            }
+            .field-annotation-signature-image {
+                max-width: calc(100% - 10px);
+                max-height: calc(100% - 10px);
+                object-fit: contain;
+                display: none;
+                pointer-events: none;
+                user-select: none;
+                -webkit-user-drag: none;
+            }
+            .field-annotation-signature-shell.is-signed .field-annotation-signature-image {
+                display: block;
+            }
+            .field-annotation-signature-shell.is-signed .field-annotation-signature-placeholder {
+                display: none;
+            }
+            .field-annotation-select-shell {
+                justify-content: space-between;
+                gap: 10px;
+                padding: 0 14px;
+                background: rgba(255, 255, 255, 0.98);
+                border-color: rgba(100, 116, 139, 0.92);
+            }
+            .field-annotation-select-value {
+                flex: 1 1 auto;
+                min-width: 0;
+                color: #334155;
+                font-weight: 500;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                user-select: none;
+            }
+            .field-annotation-select-value.is-placeholder {
+                color: rgba(71, 85, 105, 0.72);
+            }
+            .field-annotation-select-caret {
+                flex: 0 0 auto;
+                width: 18px;
+                height: 18px;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                color: #64748b;
+                pointer-events: none;
+            }
+            .field-annotation-list-shell {
+                align-items: stretch;
+                justify-content: stretch;
+                padding: 8px;
+                background: rgba(255, 255, 255, 0.98);
+                border-color: rgba(100, 116, 139, 0.92);
+                overflow: hidden;
+            }
+            .field-annotation-list-items {
+                width: 100%;
+                height: 100%;
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+                overflow: hidden;
+            }
+            .field-annotation-list-item {
+                flex: 1 1 0;
+                min-height: 0;
+                display: flex;
+                align-items: center;
+                padding: 0 10px;
+                border-radius: 8px;
+                background: rgba(241, 245, 249, 0.92);
+                color: #334155;
+                font-weight: 500;
+                line-height: 1.2;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                user-select: none;
+                cursor: pointer;
+                transition: background 0.15s ease, color 0.15s ease;
+            }
+            .field-annotation-list-item.selected {
+                background: rgba(79, 70, 229, 0.16);
+                color: #312e81;
+            }
+            .field-select-config-popover {
+                position: absolute;
+                top: calc(100% + 8px);
+                left: 50%;
+                transform: translateX(-50%);
+                width: min(320px, calc(100vw - 32px));
+                padding: 14px;
+                border-radius: 14px;
+                background: rgba(255, 255, 255, 0.98);
+                border: 1px solid rgba(226, 232, 240, 0.95);
+                box-shadow: 0 18px 40px rgba(15, 23, 42, 0.22);
+                display: none;
+                z-index: 30;
+            }
+            .field-select-config-popover.active {
+                display: block;
+            }
+            .field-select-config-title {
+                margin-bottom: 12px;
+                color: #111827;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            .field-select-option-row {
+                display: grid;
+                grid-template-columns: minmax(0, 1fr) auto;
+                gap: 8px;
+                margin-bottom: 8px;
+            }
+            .field-select-option-row.reorderable {
+                grid-template-columns: auto minmax(0, 1fr) auto;
+            }
+            .field-select-option-row.drag-over .field-select-option-input {
+                border-color: #6366f1;
+                box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.14);
+            }
+            .field-select-option-row.is-dragging {
+                opacity: 0.6;
+            }
+            .field-select-option-row.is-selected .field-select-option-input {
+                border-color: #4f46e5;
+                box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.12);
+            }
+            .field-select-option-drag {
+                border-radius: 8px;
+                border: 1px solid #e5e7eb;
+                background: #ffffff;
+                color: #64748b;
+                width: 36px;
+                min-width: 36px;
+                min-height: 36px;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                cursor: grab;
+                transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+            }
+            .field-select-option-drag:hover {
+                background: #f8fafc;
+                border-color: #cbd5e1;
+                color: #334155;
+            }
+            .field-select-option-drag:active {
+                cursor: grabbing;
+            }
+            .field-select-option-input {
+                width: 100%;
+                min-width: 0;
+                padding: 8px 10px;
+                border-radius: 8px;
+                border: 1px solid #d1d5db;
+                background: #ffffff;
+                color: #111827;
+                font-size: 13px;
+                outline: none;
+            }
+            .field-select-option-input:focus {
+                border-color: #4f46e5;
+                box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.12);
+            }
+            .field-select-option-remove,
+            .field-select-add-btn {
+                border-radius: 8px;
+                border: 1px solid #e5e7eb;
+                background: #ffffff;
+                color: #ef4444;
+                min-width: 36px;
+                min-height: 36px;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+            }
+            .field-select-option-remove:hover,
+            .field-select-add-btn:hover {
+                background: #f8fafc;
+                border-color: #cbd5e1;
+                transform: translateY(-1px);
+            }
+            .field-select-add-btn {
+                margin-top: 2px;
+                padding: 0 12px;
+                color: #374151;
+                font-size: 13px;
+                font-weight: 600;
             }
             .text-editor {
                 position: absolute;
@@ -3560,33 +4078,21 @@
             </div>
         </header>
         
-        <!-- Page Navigation -->
+        <!-- Edit Text Toggle -->
         <nav id="tab-nav" class="bg-gray-800/95 border-b border-gray-700/50 backdrop-blur-sm">
-            <div class="flex gap-8 px-4">
-                @if (!str_starts_with($activeTab ?? 'pdf-editor', 'guided-') && ($activeTab ?? 'pdf-editor') !== 'extracted-text')
-                <a href="{{ route('documents.edit', $document) }}" class="page-nav-link flex items-center gap-2.5 py-3.5 text-base font-medium {{ ($activeTab ?? 'pdf-editor') === 'pdf-editor' ? 'text-white border-b-2 border-blue-500' : 'text-gray-400 border-b-2 border-transparent hover:text-white' }} -mb-px transition-all duration-200" style="text-decoration:none;">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+            <div class="px-4 py-2.5">
+                <button
+                    id="mode-edit-text"
+                    type="button"
+                    class="inline-flex items-center gap-2 rounded-lg border border-gray-600 bg-gray-700/50 px-4 py-2 text-sm font-semibold text-gray-100 transition hover:bg-gray-700"
+                    aria-pressed="false"
+                    title="Toggle text editing mode"
+                >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 21h4l10.5-10.5a2.121 2.121 0 10-3-3L5 18v3z"></path>
                     </svg>
-                    Editor
-                </a>
-                @endif
-                @if (($activeTab ?? 'pdf-editor') === 'extracted-text')
-                <a href="{{ route('documents.ai', $document) }}" class="page-nav-link flex items-center gap-2.5 py-3.5 text-base font-medium text-white border-b-2 border-blue-500 -mb-px transition-all duration-200" style="text-decoration:none;" id="extracted-text-tab">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
-                    </svg>
-                    AI
-                </a>
-                @endif
-                @if (($activeTab ?? 'pdf-editor') !== 'pdf-editor' && ($activeTab ?? 'pdf-editor') !== 'extracted-text')
-                <a href="{{ route('documents.guided', $document) }}{{ request('style') ? '?style=' . request('style') : (($document->template_slug && $document->template_slug !== 'default') ? '?style=' . $document->template_slug : (request('template_type') ? '?template_type=' . request('template_type') . '&template_slug=' . request('template_slug') : '')) }}" class="page-nav-link flex items-center gap-2.5 py-3.5 text-base font-medium {{ str_starts_with($activeTab ?? 'pdf-editor', 'guided-') ? 'text-white border-b-2 border-blue-500' : 'text-gray-400 border-b-2 border-transparent hover:text-white' }} -mb-px transition-all duration-200" style="text-decoration:none;" id="guided-invoice-tab">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path>
-                    </svg>
-                    Guided
-                </a>
-                @endif
+                    <span>Edit Text</span>
+                </button>
             </div>
         </nav>
         
@@ -3656,24 +4162,30 @@
                                     <span class="hidden sm:inline">Draw</span>
                                     <span class="sm:hidden">✏️</span>
                                 </button>
-                                <button id="view-original-pdf" type="button" class="px-4 py-2 bg-transparent border border-gray-600 hover:bg-gray-700/50 rounded-lg text-sm font-medium transition">
-                                    <span class="hidden sm:inline">View Original PDF</span>
-                                    <span class="sm:hidden">Original</span>
+                                <button id="mode-field" type="button" class="px-3 py-2 bg-gray-700/50 hover:bg-gray-700 rounded-lg text-sm font-medium transition">
+                                    <span class="hidden sm:inline">Field</span>
+                                    <span class="sm:hidden">Field</span>
                                 </button>
-                                <button id="view-clean-pdf" type="button" class="px-4 py-2 bg-transparent border border-gray-600 hover:bg-gray-700/50 rounded-lg text-sm font-medium transition" title="Open the text-stripped (redacted) PDF generated by the Python process">
-                                    <span class="hidden sm:inline">View Redacted PDF</span>
-                                    <span class="sm:hidden">Redacted</span>
-                                </button>
-                                <button
-                                    id="revert-original-pdf"
-                                    type="button"
-                                    class="px-4 py-2 rounded-lg text-sm font-medium transition border {{ $hasOriginalBackup ? 'bg-transparent border-amber-500/60 text-amber-200 hover:bg-amber-500/10' : 'bg-transparent border-gray-700 text-gray-500 cursor-not-allowed opacity-60' }}"
-                                    {{ $hasOriginalBackup ? '' : 'disabled' }}
-                                    title="{{ $hasOriginalBackup ? 'Restore the original uploaded PDF' : 'Original backup is not available for this document' }}"
-                                >
-                                    <span class="hidden sm:inline">Revert Original</span>
-                                    <span class="sm:hidden">Revert</span>
-                                </button>
+                                @if($editorDebug)
+                                    <button id="view-original-pdf" type="button" class="px-4 py-2 bg-transparent border border-gray-600 hover:bg-gray-700/50 rounded-lg text-sm font-medium transition">
+                                        <span class="hidden sm:inline">View Original PDF</span>
+                                        <span class="sm:hidden">Original</span>
+                                    </button>
+                                    <button id="view-clean-pdf" type="button" class="px-4 py-2 bg-transparent border border-gray-600 hover:bg-gray-700/50 rounded-lg text-sm font-medium transition" title="Open the text-stripped (redacted) PDF generated by the Python process">
+                                        <span class="hidden sm:inline">View Redacted PDF</span>
+                                        <span class="sm:hidden">Redacted</span>
+                                    </button>
+                                    <button
+                                        id="revert-original-pdf"
+                                        type="button"
+                                        class="px-4 py-2 rounded-lg text-sm font-medium transition border {{ $hasOriginalBackup ? 'bg-transparent border-amber-500/60 text-amber-200 hover:bg-amber-500/10' : 'bg-transparent border-gray-700 text-gray-500 cursor-not-allowed opacity-60' }}"
+                                        {{ $hasOriginalBackup ? '' : 'disabled' }}
+                                        title="{{ $hasOriginalBackup ? 'Restore the original uploaded PDF' : 'Original backup is not available for this document' }}"
+                                    >
+                                        <span class="hidden sm:inline">Revert Original</span>
+                                        <span class="sm:hidden">Revert</span>
+                                    </button>
+                                @endif
                             </div>
                             <div class="flex gap-2 items-center">
                                 <button id="clear-btn" class="px-4 py-2 bg-transparent border border-gray-600 hover:bg-gray-700/50 rounded-lg text-sm font-medium transition hidden sm:block" type="button">Clear All</button>
@@ -3758,10 +4270,12 @@
                                     <span class="hidden sm:inline">Load Annotations</span>
                                     <span class="sm:hidden">Load</span>
                                 </button>
-                                <a id="saved-edit-preview-btn" href="{{ $savedEditPreviewUrl ?? route('documents.savedEdit', $document) }}" target="_blank" rel="noopener" class="px-4 py-2 bg-amber-100 hover:bg-amber-200 text-amber-900 font-semibold rounded-lg text-sm transition flex items-center gap-1.5 border border-amber-300">
-                                    <span class="hidden sm:inline">Last Redaction</span>
-                                    <span class="sm:hidden">Preview</span>
-                                </a>
+                                @if($editorDebug)
+                                    <a id="saved-edit-preview-btn" href="{{ $savedEditPreviewUrl ?? route('documents.savedEdit', $document) }}" target="_blank" rel="noopener" class="px-4 py-2 bg-amber-100 hover:bg-amber-200 text-amber-900 font-semibold rounded-lg text-sm transition flex items-center gap-1.5 border border-amber-300">
+                                        <span class="hidden sm:inline">Last Redaction</span>
+                                        <span class="sm:hidden">Preview</span>
+                                    </a>
+                                @endif
                             </div>
                         </div>
                         <div class="flex flex-wrap items-center gap-2 mt-2" style="display: none;">
@@ -3906,6 +4420,42 @@
                     <button type="button" class="etb-btn" id="etb-delete" title="Delete" style="color: #f87171;">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                     </button>
+                </div>
+
+                <div class="edit-text-banner draw-toolbar inactive hidden" id="draw-toolbar">
+                    <span class="etb-label">Draw</span>
+                    <div class="etb-color-wrap" title="Stroke Color">
+                        <input type="color" id="draw-stroke-color" value="#111827" />
+                    </div>
+                    <div class="etb-divider"></div>
+                    <div class="etb-opacity-group">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                        <select class="etb-opacity-select" id="draw-opacity" title="Stroke Opacity">
+                            <option value="1">100%</option>
+                            <option value="0.9">90%</option>
+                            <option value="0.8">80%</option>
+                            <option value="0.7">70%</option>
+                            <option value="0.6">60%</option>
+                            <option value="0.5">50%</option>
+                            <option value="0.4">40%</option>
+                            <option value="0.3">30%</option>
+                            <option value="0.2">20%</option>
+                            <option value="0.1">10%</option>
+                        </select>
+                    </div>
+                    <div class="etb-divider"></div>
+                    <div class="etb-size-group draw-width-group" title="Stroke Width">
+                        <span class="etb-label">Width</span>
+                        <input type="range" class="etb-size-slider" id="draw-stroke-width" min="2" max="48" step="1" value="12" />
+                        <span class="etb-size-value" id="draw-stroke-width-value">12px</span>
+                    </div>
+                    <div class="etb-divider"></div>
+                    <div class="draw-preview" aria-hidden="true">
+                        <span class="draw-preview-dot" id="draw-stroke-preview-dot"></span>
+                    </div>
+                    <span class="etb-label draw-hint">Drag on the page to draw</span>
+                    <div style="flex: 1 1 auto;"></div>
+                    <button type="button" class="etb-btn" id="draw-exit" title="Exit Draw">✕</button>
                 </div>
                 
             
@@ -4805,7 +5355,90 @@
                 </div>
             </div>
         </div>
-        
+
+        <div class="modal" id="field-modal" aria-hidden="true">
+            <div class="modal-card" style="width: min(420px, 94vw);">
+                <div class="modal-header">
+                    <span style="font-size: 16px; display: flex; align-items: center; gap: 8px;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 9h8"/><path d="M8 13h5"/></svg>
+                        Fields
+                    </span>
+                    <button class="modal-close" type="button" id="field-close">&times;</button>
+                </div>
+                <div style="padding: 20px;">
+                    <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;">
+                        <button type="button" class="field-type-btn" data-field-type="text">
+                            <span class="field-type-btn-icon">
+                                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="3" y="6" width="18" height="12" rx="2"></rect>
+                                    <path d="M8 12h8"></path>
+                                    <path d="M8 15h5"></path>
+                                </svg>
+                            </span>
+                            <span class="field-type-btn-label">Text Field</span>
+                        </button>
+                        <button type="button" class="field-type-btn" data-field-type="date">
+                            <span class="field-type-btn-icon">
+                                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="3" y="5" width="18" height="16" rx="2"></rect>
+                                    <path d="M16 3v4"></path>
+                                    <path d="M8 3v4"></path>
+                                    <path d="M3 10h18"></path>
+                                    <path d="M8 14h.01"></path>
+                                    <path d="M12 14h.01"></path>
+                                    <path d="M16 14h.01"></path>
+                                </svg>
+                            </span>
+                            <span class="field-type-btn-label">Date Field</span>
+                        </button>
+                        <button type="button" class="field-type-btn" data-field-type="checkbox">
+                            <span class="field-type-btn-icon">
+                                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="5" y="5" width="14" height="14" rx="2"></rect>
+                                    <path d="M8.5 12.5 10.75 14.75 15.5 10"></path>
+                                </svg>
+                            </span>
+                            <span class="field-type-btn-label">Checkbox</span>
+                        </button>
+                        <button type="button" class="field-type-btn" data-field-type="signature">
+                            <span class="field-type-btn-icon">
+                                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="3" y="6" width="18" height="12" rx="2"></rect>
+                                    <path d="M7 14c1.2-1.8 2.5-2.7 3.8-2.7 1.6 0 1.9 2 3.2 2 1.1 0 1.8-.7 3-2.3"></path>
+                                    <path d="M6 17h12"></path>
+                                </svg>
+                            </span>
+                            <span class="field-type-btn-label">Signature Field</span>
+                        </button>
+                        <button type="button" class="field-type-btn" data-field-type="select">
+                            <span class="field-type-btn-icon">
+                                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="3" y="6" width="18" height="12" rx="2"></rect>
+                                    <path d="M8 11h8"></path>
+                                    <path d="m10 14 2 2 2-2"></path>
+                                </svg>
+                            </span>
+                            <span class="field-type-btn-label">Select Field</span>
+                        </button>
+                        <button type="button" class="field-type-btn" data-field-type="list">
+                            <span class="field-type-btn-icon">
+                                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+                                    <path d="M7 9h10"></path>
+                                    <path d="M7 12h10"></path>
+                                    <path d="M7 15h10"></path>
+                                </svg>
+                            </span>
+                            <span class="field-type-btn-label">List Field</span>
+                        </button>
+                    </div>
+                    <div style="margin-top: 14px; font-size: 12px; color: #6b7280;">
+                        Choose a field type, then click or drag on the page to place it.
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Shape Settings Modal -->
         <div class="modal" id="shape-modal" aria-hidden="true">
             <div class="modal-card" style="width: min(520px, 94vw);">
@@ -6126,10 +6759,138 @@
             // masking to all text annotation overlays in loadedSavedPdfMode so the PDF's
             // own rendered text is hidden and only the editable overlay text is visible.
             let basePdfHasBakedAnnotationText = false;
+            let basePdfHasAcroForm = false;
+            let basePdfAcroFormScanKey = '';
+            let basePdfAcroFormScanPromise = null;
+            let passiveAcroFormOverlayPreparedKey = '';
             const pdfUrlWithVersion = () => {
                 const joiner = basePdfUrl.includes('?') ? '&' : '?';
                 return `${basePdfUrl}${joiner}v=${pdfVersion}`;
             };
+
+            function uint8ArrayIncludesSequence(haystack, needle) {
+                if (!(haystack instanceof Uint8Array) || !(needle instanceof Uint8Array) || needle.length === 0 || haystack.length < needle.length) {
+                    return false;
+                }
+                const maxOffset = haystack.length - needle.length;
+                outer: for (let offset = 0; offset <= maxOffset; offset += 1) {
+                    for (let index = 0; index < needle.length; index += 1) {
+                        if (haystack[offset + index] !== needle[index]) {
+                            continue outer;
+                        }
+                    }
+                    return true;
+                }
+                return false;
+            }
+
+            async function ensureBasePdfAcroFormMetadata() {
+                if (isImageDocument) {
+                    basePdfHasAcroForm = false;
+                    return false;
+                }
+
+                const scanKey = String(basePdfUrl || '').trim();
+                if (!scanKey) {
+                    basePdfHasAcroForm = false;
+                    return false;
+                }
+
+                if (basePdfAcroFormScanPromise && basePdfAcroFormScanKey === scanKey) {
+                    return basePdfAcroFormScanPromise;
+                }
+
+                basePdfAcroFormScanKey = scanKey;
+                basePdfAcroFormScanPromise = (async () => {
+                    try {
+                        const response = await fetch(pdfUrlWithVersion(), {
+                            credentials: 'same-origin',
+                        });
+                        if (!response.ok) {
+                            basePdfHasAcroForm = false;
+                            return false;
+                        }
+                        const pdfBytes = new Uint8Array(await response.arrayBuffer());
+                        const acroFormMarker = new TextEncoder().encode('/AcroForm');
+                        basePdfHasAcroForm = uint8ArrayIncludesSequence(pdfBytes, acroFormMarker);
+                        return basePdfHasAcroForm;
+                    } catch (error) {
+                        console.warn('Failed to inspect PDF AcroForm metadata:', error);
+                        basePdfHasAcroForm = false;
+                        return false;
+                    }
+                })();
+
+                return basePdfAcroFormScanPromise;
+            }
+
+            async function ensurePassiveAcroFormOverlayReady() {
+                if (isImageDocument || overlayEditorActive || loadedSavedPdfMode || !basePdfHasAcroForm || basePdfUrl !== pdfUrl) {
+                    return false;
+                }
+
+                const passiveOverlayKey = `${basePdfUrl}|${pdfVersion}`;
+                if (passiveAcroFormOverlayPreparedKey === passiveOverlayKey && Array.isArray(overlayExtractionData) && overlayExtractionData.length > 0) {
+                    viewer.classList.remove('overlay-hidden');
+                    viewer.classList.remove('overlay-view-mode');
+                    await renderPdfWithOverlay(true);
+                    return true;
+                }
+
+                try {
+                    const prepareResponse = await fetch(`${prepareOverlayUrl}?v=${Date.now()}`, {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: {
+                            'X-CSRF-TOKEN': csrfToken,
+                            'Accept': 'application/json',
+                        },
+                    });
+                    if (!prepareResponse.ok) {
+                        return false;
+                    }
+
+                    let data = null;
+                    try {
+                        const quickResponse = await fetch(`${fitzExtractionDataUrl}?v=${Date.now()}`, {
+                            credentials: 'same-origin',
+                            headers: { Accept: 'application/json' },
+                        });
+                        if (quickResponse.ok) {
+                            data = await quickResponse.json();
+                        }
+                    } catch (_quickFetchError) {
+                        data = null;
+                    }
+
+                    if (!(data && data.success && Array.isArray(data.extraction_data))) {
+                        data = await waitForOverlayExtractionData({
+                            showModal: false,
+                            timeoutMs: 15000,
+                            pollMs: 700,
+                        });
+                    }
+
+                    if (!data?.success || !Array.isArray(data.extraction_data) || data.extraction_data.length === 0) {
+                        return false;
+                    }
+
+                    overlayExtractionData = data.extraction_data;
+                    if (data.embedded_fonts && typeof data.embedded_fonts === 'object') {
+                        overlayEmbeddedFonts = data.embedded_fonts;
+                        loadEmbeddedFontFaces(overlayEmbeddedFonts);
+                    }
+                    preloadExtractionFontFamilies(overlayExtractionData);
+                    passiveAcroFormOverlayPreparedKey = passiveOverlayKey;
+                    viewer.classList.remove('overlay-hidden');
+                    viewer.classList.remove('overlay-view-mode');
+                    await renderPdfWithOverlay(true);
+                    return true;
+                } catch (error) {
+                    console.warn('Failed to render passive AcroForm overlay preview:', error);
+                    return false;
+                }
+            }
             
             // Debug flag to control annotation deletion after save
             const DEBUG_KEEP_ANNOTATIONS = true; // Set to false to delete annotations after save
@@ -6177,6 +6938,7 @@
             const modeImage = document.getElementById('mode-image');
             const modeShape = document.getElementById('mode-shape');
             const modeDraw = document.getElementById('mode-draw');
+            const modeField = document.getElementById('mode-field');
             const modeOverlay = document.getElementById('mode-overlay');
             const modeOverlayToggle = document.getElementById('mode-overlay-toggle');
             const modeOverlayChip = document.getElementById('mode-overlay-chip');
@@ -6199,6 +6961,9 @@
             const signatureText = document.getElementById('signature-text');
             const signatureImageInput = document.getElementById('signature-image-input');
             const signatureImageName = document.getElementById('signature-image-name');
+            const fieldModal = document.getElementById('field-modal');
+            const fieldClose = document.getElementById('field-close');
+            const fieldTypeButtons = document.querySelectorAll('#field-modal [data-field-type]');
             const viewOriginalPdfBtn = document.getElementById('view-original-pdf');
             const viewCleanPdfBtn = document.getElementById('view-clean-pdf');
             const revertOriginalPdfBtn = document.getElementById('revert-original-pdf');
@@ -6513,6 +7278,15 @@
                         icon = 'T';
                         title = getAnnotationTextPreview(annotation)
                             || `New Text ${annotations.filter((a, i) => (a.type === 'text' || !a.type) && i <= index).length}`;
+                    } else if (annotation.type === 'field') {
+                        const fieldKind = normalizeFieldKind(annotation.fieldKind);
+                        icon = fieldKind === 'date'
+                            ? '📅'
+                            : fieldKind === 'checkbox'
+                            ? '☑'
+                            : (fieldKind === 'signature' ? '✒' : (fieldKind === 'select' ? '▾' : (fieldKind === 'list' ? '≣' : '⌨')));
+                        title = getFieldAnnotationPreview(annotation)
+                            || `${getFieldAnnotationLabel(annotation)} ${annotations.filter((a, i) => a.type === 'field' && i <= index).length}`;
                     } else if (annotation.type === 'signature') {
                         icon = '✒';
                         title = `New drawing ${annotations.filter((a, i) => a.type === 'signature' && i <= index).length}`;
@@ -6554,7 +7328,11 @@
                         if (page) {
                             page.scrollIntoView({ behavior: 'smooth', block: 'center' });
                         }
-                        setSelection(annotation);
+                        if (!setSelection(annotation)) {
+                            ensureAnnotationInteractionsEnabled(annotation, {
+                                message: 'Turn on Edit Text to select existing text, shapes, and signatures.',
+                            });
+                        }
                     });
                     
                     // Click on list item to select
@@ -6564,12 +7342,21 @@
                         if (page) {
                             page.scrollIntoView({ behavior: 'smooth', block: 'center' });
                         }
-                        setSelection(annotation);
+                        if (!setSelection(annotation)) {
+                            ensureAnnotationInteractionsEnabled(annotation, {
+                                message: 'Turn on Edit Text to select existing text, shapes, and signatures.',
+                            });
+                        }
                     });
                     
                     // Delete button
                     item.querySelector('.delete').addEventListener('click', (e) => {
                         e.stopPropagation();
+                        if (!ensureAnnotationInteractionsEnabled(annotation, {
+                            message: 'Turn on Edit Text to delete existing text, shapes, and signatures.',
+                        })) {
+                            return;
+                        }
                         if (confirm('Delete this annotation?')) {
                             const ann = annotations[index];
                             deleteAnnotationFromDatabase(ann);
@@ -6703,6 +7490,7 @@
             let toolMode = 'select'; // Start in select mode, user clicks Edit Text to edit
             let signatureDataUrl = null;
             let signatureImageAsset = null;
+            let signatureTargetField = null;
             let shapeType = 'circle';
             let shapeStroke = '#000000';
             let shapeStrokeWidth = 2;
@@ -6717,8 +7505,11 @@
             let tableFill = '#ffffff';
             let tableFillTransparent = true;
             let tableOuterBorder = true;
-            let drawToolType = 'eraser'; // 'brush' | 'highlighter' | 'eraser'
-            let drawBrushSize = 20;
+            let drawToolType = 'brush';
+            let drawStrokeColor = '#111827';
+            let drawOpacity = 1;
+            let drawBrushSize = 12;
+            let fieldType = 'text';
             const gridlinesSettingsStorageKey = 'pdf-editor-gridlines-settings-v1';
 
             function normalizeShapeOpacity(value) {
@@ -7110,7 +7901,193 @@
                 if (normalized === 'shape') return 'Shape';
                 if (normalized === 'table') return 'Table';
                 if (normalized === 'eraser') return 'Eraser';
+                if (normalized === 'field') return 'Field';
                 return 'Text';
+            }
+
+            function isFieldAnnotation(annotationOrType) {
+                const normalized = typeof annotationOrType === 'string'
+                    ? String(annotationOrType || '').toLowerCase()
+                    : String(annotationOrType?.type || '').toLowerCase();
+                return normalized === 'field';
+            }
+
+            function normalizeFieldKind(value) {
+                const normalized = String(value || '').toLowerCase().trim();
+                if (normalized === 'date') {
+                    return 'date';
+                }
+                if (normalized === 'checkbox') {
+                    return 'checkbox';
+                }
+                if (normalized === 'signature') {
+                    return 'signature';
+                }
+                if (normalized === 'select') {
+                    return 'select';
+                }
+                if (normalized === 'list') {
+                    return 'list';
+                }
+                return 'text';
+            }
+
+            function isOptionFieldKind(value) {
+                const normalized = normalizeFieldKind(value);
+                return normalized === 'select' || normalized === 'list';
+            }
+
+            function isTextEntryFieldKind(value) {
+                const normalized = normalizeFieldKind(value);
+                return normalized === 'text' || normalized === 'date';
+            }
+
+            function formatDateFieldValue(value, { finalize = false } = {}) {
+                const rawValue = String(value ?? '').trim();
+                if (!rawValue) {
+                    return '';
+                }
+
+                if (/[^\d]/.test(rawValue)) {
+                    const parts = rawValue
+                        .split(/[^0-9]+/)
+                        .map((part) => part.trim())
+                        .filter((part) => part.length > 0)
+                        .slice(0, 3);
+                    if (parts.length) {
+                        const month = finalize ? parts[0].slice(0, 2).padStart(2, '0') : parts[0].slice(0, 2);
+                        const day = parts.length > 1
+                            ? (finalize ? parts[1].slice(0, 2).padStart(2, '0') : parts[1].slice(0, 2))
+                            : '';
+                        const year = parts.length > 2 ? parts[2].slice(0, 4) : '';
+                        return [month, day, year].filter((part) => part.length > 0).join('/');
+                    }
+                }
+
+                const digits = rawValue.replace(/\D+/g, '').slice(0, 8);
+                if (!digits) {
+                    return '';
+                }
+                const month = digits.slice(0, 2);
+                const day = digits.slice(2, 4);
+                const year = digits.slice(4, 8);
+                return [month, day, year].filter((part) => part.length > 0).join('/');
+            }
+
+            function dateFieldValueToPickerValue(value) {
+                const normalized = formatDateFieldValue(value, { finalize: true });
+                const match = normalized.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+                if (!match) {
+                    return '';
+                }
+                const [, month, day, year] = match;
+                return `${year}-${month}-${day}`;
+            }
+
+            function pickerValueToDateFieldValue(value) {
+                const normalized = String(value || '').trim();
+                const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+                if (!match) {
+                    return formatDateFieldValue(normalized, { finalize: true });
+                }
+                const [, year, month, day] = match;
+                return `${month}/${day}/${year}`;
+            }
+
+            function getDefaultOptionFieldOptions(fieldKind) {
+                return normalizeFieldKind(fieldKind) === 'list'
+                    ? ['Option 1', 'Option 2', 'Option 3']
+                    : ['Option 1', 'Option 2'];
+            }
+
+            function normalizeSelectFieldOptions(options, fallbackOptions = ['Option 1']) {
+                const source = Array.isArray(options) ? options : [];
+                const normalized = source
+                    .map((option) => String(option ?? '').trim())
+                    .filter((option) => option.length > 0)
+                    .slice(0, 50);
+                if (normalized.length) {
+                    return normalized;
+                }
+                return fallbackOptions
+                    .map((option) => String(option ?? '').trim())
+                    .filter((option) => option.length > 0);
+            }
+
+            function getSelectFieldOptions(annotation, fallbackOptions = ['Option 1']) {
+                return normalizeSelectFieldOptions(annotation?.fieldOptions, fallbackOptions);
+            }
+
+            function getSelectFieldValue(annotation, fallbackOptions = ['Option 1']) {
+                const options = getSelectFieldOptions(annotation, fallbackOptions);
+                const currentValue = String(annotation?.fieldValue || '').trim();
+                if (currentValue && options.includes(currentValue)) {
+                    return currentValue;
+                }
+                return options[0] || '';
+            }
+
+            function getFieldAnnotationLabel(annotation) {
+                if (!isFieldAnnotation(annotation)) {
+                    return '';
+                }
+                const fieldKind = normalizeFieldKind(annotation.fieldKind);
+                if (fieldKind === 'date') {
+                    return 'Date Field';
+                }
+                if (fieldKind === 'checkbox') {
+                    return 'Checkbox';
+                }
+                if (fieldKind === 'signature') {
+                    return 'Signature Field';
+                }
+                if (fieldKind === 'select') {
+                    return 'Select Field';
+                }
+                if (fieldKind === 'list') {
+                    return 'List Field';
+                }
+                return 'Text Field';
+            }
+
+            function getFieldAnnotationPreview(annotation) {
+                if (!isFieldAnnotation(annotation)) {
+                    return '';
+                }
+                const fieldKind = normalizeFieldKind(annotation.fieldKind);
+                if (fieldKind === 'date') {
+                    const preview = String(annotation.fieldValue || '').trim()
+                        ? formatDateFieldValue(annotation.fieldValue || '', { finalize: true })
+                        : String(annotation.placeholder || 'MM/DD/YYYY').trim();
+                    return preview.length > 28 ? `${preview.slice(0, 28).trimEnd()}...` : preview;
+                }
+                if (fieldKind === 'checkbox') {
+                    return annotation.checked ? 'Checkbox checked' : 'Checkbox';
+                }
+                if (fieldKind === 'signature') {
+                    return annotation.signedDataUrl || annotation.signedAssetPath
+                        ? 'Signed signature field'
+                        : 'Signature field';
+                }
+                if (isOptionFieldKind(fieldKind)) {
+                    const preview = getSelectFieldValue(annotation, getDefaultOptionFieldOptions(fieldKind)) || (fieldKind === 'list' ? 'List field' : 'Select field');
+                    return preview.length > 28 ? `${preview.slice(0, 28).trimEnd()}...` : preview;
+                }
+                const preview = String(annotation.fieldValue || annotation.placeholder || 'Text Field').trim();
+                return preview.length > 28 ? `${preview.slice(0, 28).trimEnd()}...` : preview;
+            }
+
+            function getFieldSignatureImageUrl(annotation) {
+                if (!annotation || normalizeFieldKind(annotation.fieldKind) !== 'signature') {
+                    return '';
+                }
+                return getAnnotationImageDataUrl({
+                    dataUrl: annotation.signedDataUrl || '',
+                    src: annotation.signedDataUrl || '',
+                    assetPath: annotation.signedAssetPath || annotation.imagePath || '',
+                    imagePath: annotation.signedAssetPath || annotation.imagePath || '',
+                    mimeType: annotation.signedMimeType || 'image/png',
+                });
             }
 
             function isTextAnnotationType(annotationOrType) {
@@ -7127,7 +8104,12 @@
                 return normalized === 'shape'
                     || normalized === 'table'
                     || normalized === 'image'
-                    || normalized === 'signature';
+                    || normalized === 'signature'
+                    || normalized === 'field';
+            }
+
+            function getActiveFieldToolKind() {
+                return toolMode === 'field' ? normalizeFieldKind(fieldType) : null;
             }
 
             function shouldStartOverlayShapeDraw(event, overlay) {
@@ -7198,6 +8180,180 @@
             const overlayLoadingMessage = document.getElementById('overlay-loading-message');
             const overlayLoadingProgress = document.getElementById('overlay-loading-progress');
             const overlayLoadingPercent = document.getElementById('overlay-loading-percent');
+            const acroFormEditorStateStorageKey = `pdf-acroform-editor-state-${documentId}-${overlayDocumentRevision}`;
+            const acroFormFieldDefaults = new Map();
+            const acroFormFieldChanges = new Map();
+
+            function getAcroFormFieldStateKey(annotation) {
+                const fieldName = String(annotation?.fieldName || '').trim();
+                return fieldName || String(annotation?.id || '').trim();
+            }
+
+            function normalizeAcroFormFieldValue(annotation, rawValue) {
+                const fieldType = String(annotation?.fieldType || '').toUpperCase();
+                if (fieldType === 'BTN') {
+                    if (annotation?.radioButton) {
+                        return String(rawValue || '').trim();
+                    }
+                    return !(rawValue === false
+                        || rawValue == null
+                        || rawValue === ''
+                        || rawValue === 'Off'
+                        || rawValue === 'false'
+                        || rawValue === '0');
+                }
+                if (fieldType === 'CH') {
+                    if (annotation?.multiSelect) {
+                        const values = Array.isArray(rawValue) ? rawValue : (rawValue == null || rawValue === '' ? [] : [rawValue]);
+                        return values.map((value) => String(value ?? ''));
+                    }
+                    if (Array.isArray(rawValue)) {
+                        return String(rawValue[0] ?? '');
+                    }
+                    return String(rawValue ?? '');
+                }
+                if (Array.isArray(rawValue)) {
+                    return rawValue.map((value) => String(value ?? '')).join('\n');
+                }
+                return String(rawValue ?? '');
+            }
+
+            function createAcroFormFieldStateEntry(annotation, rawValue) {
+                const key = getAcroFormFieldStateKey(annotation);
+                return {
+                    key,
+                    fieldName: String(annotation?.fieldName || key || '').trim(),
+                    fieldType: String(annotation?.fieldType || '').toUpperCase(),
+                    checkBox: Boolean(annotation?.checkBox),
+                    radioButton: Boolean(annotation?.radioButton),
+                    combo: Boolean(annotation?.combo),
+                    multiLine: Boolean(annotation?.multiLine),
+                    multiSelect: Boolean(annotation?.multiSelect),
+                    exportValue: String(annotation?.exportValue || '').trim(),
+                    value: normalizeAcroFormFieldValue(annotation, rawValue),
+                };
+            }
+
+            function areAcroFormFieldValuesEqual(left, right) {
+                if (Array.isArray(left) || Array.isArray(right)) {
+                    const leftValues = Array.isArray(left) ? left : [left];
+                    const rightValues = Array.isArray(right) ? right : [right];
+                    if (leftValues.length !== rightValues.length) {
+                        return false;
+                    }
+                    return leftValues.every((value, index) => String(value ?? '') === String(rightValues[index] ?? ''));
+                }
+                if (typeof left === 'boolean' || typeof right === 'boolean') {
+                    return Boolean(left) === Boolean(right);
+                }
+                return String(left ?? '') === String(right ?? '');
+            }
+
+            function persistAcroFormEditorState() {
+                try {
+                    if (acroFormFieldChanges.size === 0) {
+                        sessionStorage.removeItem(acroFormEditorStateStorageKey);
+                        return;
+                    }
+                    sessionStorage.setItem(
+                        acroFormEditorStateStorageKey,
+                        JSON.stringify(Array.from(acroFormFieldChanges.values()))
+                    );
+                } catch (error) {
+                    console.warn('Failed to persist AcroForm editor state', error);
+                }
+            }
+
+            function loadAcroFormEditorState() {
+                try {
+                    const raw = sessionStorage.getItem(acroFormEditorStateStorageKey);
+                    if (!raw) {
+                        return;
+                    }
+                    const parsed = JSON.parse(raw);
+                    if (!Array.isArray(parsed)) {
+                        return;
+                    }
+                    acroFormFieldChanges.clear();
+                    parsed.forEach((entry) => {
+                        const key = String(entry?.key || entry?.fieldName || '').trim();
+                        if (!key) {
+                            return;
+                        }
+                        acroFormFieldChanges.set(key, {
+                            key,
+                            fieldName: String(entry?.fieldName || key).trim(),
+                            fieldType: String(entry?.fieldType || '').toUpperCase(),
+                            checkBox: Boolean(entry?.checkBox),
+                            radioButton: Boolean(entry?.radioButton),
+                            combo: Boolean(entry?.combo),
+                            multiLine: Boolean(entry?.multiLine),
+                            multiSelect: Boolean(entry?.multiSelect),
+                            exportValue: String(entry?.exportValue || '').trim(),
+                            value: entry?.value,
+                        });
+                    });
+                } catch (error) {
+                    console.warn('Failed to restore AcroForm editor state', error);
+                }
+            }
+
+            function clearAcroFormEditorState({ preserveDefaults = false } = {}) {
+                acroFormFieldChanges.clear();
+                if (!preserveDefaults) {
+                    acroFormFieldDefaults.clear();
+                }
+                try {
+                    sessionStorage.removeItem(acroFormEditorStateStorageKey);
+                } catch (error) {
+                    console.warn('Failed to clear AcroForm editor state', error);
+                }
+            }
+
+            function ensureAcroFormFieldDefaultState(annotation) {
+                const key = getAcroFormFieldStateKey(annotation);
+                if (!key) {
+                    return null;
+                }
+                const nextDefault = createAcroFormFieldStateEntry(annotation, annotation?.fieldValue);
+                acroFormFieldDefaults.set(key, nextDefault);
+                const existingChange = acroFormFieldChanges.get(key);
+                if (existingChange && areAcroFormFieldValuesEqual(existingChange.value, nextDefault.value)) {
+                    acroFormFieldChanges.delete(key);
+                    persistAcroFormEditorState();
+                }
+                return nextDefault;
+            }
+
+            function getAcroFormFieldCurrentState(annotation) {
+                const key = getAcroFormFieldStateKey(annotation);
+                if (!key) {
+                    return createAcroFormFieldStateEntry(annotation, annotation?.fieldValue);
+                }
+                const defaultEntry = ensureAcroFormFieldDefaultState(annotation) || createAcroFormFieldStateEntry(annotation, annotation?.fieldValue);
+                return acroFormFieldChanges.get(key) || defaultEntry;
+            }
+
+            function updateAcroFormFieldCurrentValue(annotation, rawValue) {
+                const key = getAcroFormFieldStateKey(annotation);
+                if (!key) {
+                    return;
+                }
+                const defaultEntry = ensureAcroFormFieldDefaultState(annotation) || createAcroFormFieldStateEntry(annotation, annotation?.fieldValue);
+                const nextEntry = createAcroFormFieldStateEntry(annotation, rawValue);
+                if (areAcroFormFieldValuesEqual(defaultEntry.value, nextEntry.value)) {
+                    acroFormFieldChanges.delete(key);
+                } else {
+                    acroFormFieldChanges.set(key, nextEntry);
+                }
+                persistAcroFormEditorState();
+            }
+
+            function hasAcroFormEditorChanges() {
+                return acroFormFieldChanges.size > 0;
+            }
+
+            loadAcroFormEditorState();
 
             if (loadedSavedPdfMode) {
                 try {
@@ -7786,6 +8942,19 @@
                     element,
                     textWrapper,
                     shapeSvg,
+                    fieldShell,
+                    fieldInput,
+                    fieldDatePicker,
+                    fieldCheckboxBox,
+                    fieldCheckboxMark,
+                    fieldSelectValue,
+                    fieldSelectCaret,
+                    fieldListItems,
+                    fieldSelectConfigPanel,
+                    fieldSignatureBadge,
+                    fieldSignatureContent,
+                    fieldSignaturePlaceholder,
+                    fieldSignatureImage,
                     db_state,
                     db_updated_at,
                     savedDatabaseAnnotation,
@@ -7963,6 +9132,7 @@
                         if (normalized.shapeType === 'line') {
                             ensureLineShapeGeometry(normalized);
                         }
+                        normalizeFieldAnnotation(normalized);
                         normalizeTextAnnotation(normalized);
                         registerAnnotationId(normalized);
                         annotations.push(normalized);
@@ -9126,7 +10296,11 @@
 
                 const labelRect = label.getBoundingClientRect();
                 const menuRect = menu.getBoundingClientRect();
-                const menuHeight = Math.max(menuRect.height || 0, menu.offsetHeight || 0);
+                const activeConfigPanel = menu.querySelector('.field-select-config-popover.active');
+                const configPanelHeight = activeConfigPanel
+                    ? Math.max(activeConfigPanel.getBoundingClientRect().height || 0, activeConfigPanel.offsetHeight || 0) + 8
+                    : 0;
+                const menuHeight = Math.max(menuRect.height || 0, menu.offsetHeight || 0) + configPanelHeight;
                 if (menuHeight <= 0) {
                     return;
                 }
@@ -9152,8 +10326,58 @@
                 });
             }
 
-            function setSelection(annotation) {
+            function annotationInteractionsRequireEditTextMode(annotation) {
+                const normalizedType = String(annotation?.type || 'text').toLowerCase();
+                return normalizedType === 'text'
+                    || normalizedType === 'shape'
+                    || normalizedType === 'signature'
+                    || normalizedType === 'table';
+            }
+
+            function ensureAnnotationInteractionsEnabled(annotation, {
+                notify = true,
+                message = 'Turn on Edit Text to select or modify existing text, shapes, and signatures.',
+            } = {}) {
+                if (!annotationInteractionsRequireEditTextMode(annotation) || toolMode === 'edit-text') {
+                    return true;
+                }
+                if (notify && message) {
+                    setStatus(message, 'warn');
+                }
+                return false;
+            }
+
+            function clearLockedAnnotationSelectionIfNeeded() {
+                if (!selectedAnnotation || ensureAnnotationInteractionsEnabled(selectedAnnotation, { notify: false })) {
+                    return false;
+                }
+                setSelection(null, { bypassInteractionGuard: true });
+                return true;
+            }
+
+            function setSelection(annotation, options = {}) {
+                const bypassInteractionGuard = options.bypassInteractionGuard === true;
+                if (annotation && !bypassInteractionGuard && !ensureAnnotationInteractionsEnabled(annotation, { notify: false })) {
+                    return false;
+                }
                 if (selectedAnnotation && selectedAnnotation.element) {
+                    selectedAnnotation.closeFieldConfigPanel?.();
+                    if (selectedAnnotation.type === 'field' && selectedAnnotation.element.classList.contains('field-editing')) {
+                        const previousFieldInput = selectedAnnotation.fieldInput || selectedAnnotation.element.querySelector('.field-annotation-input');
+                        if (previousFieldInput) {
+                            const previousFieldKind = normalizeFieldKind(selectedAnnotation.fieldKind);
+                            const nextFieldValue = previousFieldKind === 'date'
+                                ? formatDateFieldValue(previousFieldInput.value || '', { finalize: true })
+                                : String(previousFieldInput.value || '');
+                            previousFieldInput.value = nextFieldValue;
+                            selectedAnnotation.fieldValue = nextFieldValue;
+                            previousFieldInput.readOnly = true;
+                            previousFieldInput.tabIndex = -1;
+                            selectedAnnotation.element.classList.remove('field-editing');
+                            persistAnnotations();
+                            saveAnnotationToDatabase(selectedAnnotation);
+                        }
+                    }
                     selectedAnnotation.element.classList.remove('selected');
                     selectedAnnotation.element.classList.remove('annotation-menu-below');
                     // Hide resize handles and action bar from previously selected shape-like annotation
@@ -9191,6 +10415,26 @@
                 updateSelectionBar();
                 updateEditTextBanner();
                 queueSelectedAnnotationMenuPlacement();
+                return true;
+            }
+
+            function suppressNextOverlayBackgroundClick(overlay) {
+                if (!overlay) {
+                    return;
+                }
+                overlay.dataset.suppressNextBackgroundClick = '1';
+            }
+
+            function consumeSuppressedOverlayBackgroundClick(overlay, event) {
+                if (!overlay || overlay.dataset.suppressNextBackgroundClick !== '1') {
+                    return false;
+                }
+                delete overlay.dataset.suppressNextBackgroundClick;
+                if (event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                }
+                return true;
             }
 
             function updateTextLayerVisibility() {
@@ -13392,6 +14636,146 @@
                 if (!annotation || !annotation.element) {
                     return;
                 }
+                if (isFieldAnnotation(annotation)) {
+                    normalizeFieldAnnotation(annotation);
+                    annotation.element.classList.add('field-annotation');
+                    annotation.element.classList.toggle('field-editing', annotation.element.classList.contains('field-editing'));
+                    annotation.element.style.transform = 'none';
+                    const fieldShell = annotation.fieldShell || annotation.element.querySelector('.field-annotation-shell');
+                    if (!fieldShell) {
+                        return;
+                    }
+
+                    fieldShell.style.backgroundColor = annotation.backgroundColor || (annotation.fieldKind === 'checkbox' ? '#ffffff' : '#e0e7ff');
+                    fieldShell.style.borderColor = annotation.borderColor || '#64748b';
+                    fieldShell.style.borderWidth = `${Math.max(1, Number(annotation.borderWidth) || 1.5)}px`;
+                    fieldShell.style.opacity = String(annotation.opacity ?? 1);
+
+                    if (isTextEntryFieldKind(annotation.fieldKind)) {
+                        const fieldInput = annotation.fieldInput || annotation.element.querySelector('.field-annotation-input');
+                        const fieldDatePicker = annotation.fieldDatePicker || annotation.element.querySelector('.field-annotation-date-picker');
+                        if (fieldInput) {
+                            fieldInput.value = annotation.fieldKind === 'date'
+                                ? formatDateFieldValue(annotation.fieldValue || '', { finalize: true })
+                                : String(annotation.fieldValue || '');
+                            fieldInput.placeholder = String(annotation.placeholder || (annotation.fieldKind === 'date' ? 'MM/DD/YYYY' : 'Type here'));
+                            fieldInput.style.color = annotation.textColor || '#334155';
+                            fieldInput.style.fontSize = `${Math.max(8, Number(annotation.fontSize) || 12) * currentScale}px`;
+                            fieldInput.style.lineHeight = `${Math.max(8, Number(annotation.fontSize) || 12) * currentScale * 1.2}px`;
+                            fieldInput.inputMode = annotation.fieldKind === 'date' ? 'numeric' : 'text';
+                            if (annotation.fieldKind === 'date') {
+                                fieldInput.maxLength = 10;
+                            } else {
+                                fieldInput.removeAttribute('maxLength');
+                            }
+                        }
+                        if (annotation.fieldKind === 'date' && fieldDatePicker) {
+                            fieldDatePicker.value = dateFieldValueToPickerValue(annotation.fieldValue || '');
+                        }
+                    } else if (annotation.fieldKind === 'select') {
+                        const selectValue = annotation.fieldSelectValue || annotation.element.querySelector('.field-annotation-select-value');
+                        const selectCaret = annotation.fieldSelectCaret || annotation.element.querySelector('.field-annotation-select-caret');
+                        const selectedValue = getSelectFieldValue(annotation, getDefaultOptionFieldOptions(annotation.fieldKind));
+                        fieldShell.classList.add('field-annotation-select-shell');
+                        if (selectValue) {
+                            const hasValue = selectedValue.length > 0;
+                            selectValue.textContent = hasValue ? selectedValue : String(annotation.placeholder || 'Select option');
+                            selectValue.classList.toggle('is-placeholder', !hasValue);
+                            selectValue.style.color = hasValue
+                                ? (annotation.textColor || '#334155')
+                                : 'rgba(71, 85, 105, 0.72)';
+                            selectValue.style.fontSize = `${Math.max(8, Number(annotation.fontSize) || 12) * currentScale}px`;
+                            selectValue.style.lineHeight = `${Math.max(8, Number(annotation.fontSize) || 12) * currentScale * 1.2}px`;
+                        }
+                        if (selectCaret) {
+                            selectCaret.style.color = annotation.borderColor || '#64748b';
+                        }
+                    } else if (annotation.fieldKind === 'list') {
+                        const listItems = annotation.fieldListItems || annotation.element.querySelector('.field-annotation-list-items');
+                        const options = getSelectFieldOptions(annotation, getDefaultOptionFieldOptions(annotation.fieldKind));
+                        const selectedValue = getSelectFieldValue(annotation, options);
+                        const fontSizePx = `${Math.max(8, Number(annotation.fontSize) || 12) * currentScale}px`;
+                        fieldShell.classList.add('field-annotation-list-shell');
+                        if (listItems) {
+                            listItems.innerHTML = '';
+                            options.forEach((option) => {
+                                const item = document.createElement('div');
+                                item.className = 'field-annotation-list-item';
+                                item.textContent = option;
+                                item.title = option;
+                                item.style.fontSize = fontSizePx;
+                                item.classList.toggle('selected', option === selectedValue);
+                                item.addEventListener('pointerdown', (event) => {
+                                    event.stopPropagation();
+                                });
+                                item.addEventListener('click', (event) => {
+                                    event.stopPropagation();
+                                    setSelection(annotation);
+                                    if (annotation.fieldValue === option) {
+                                        return;
+                                    }
+                                    annotation.fieldValue = option;
+                                    applyAnnotationStyle(annotation);
+                                    persistAnnotations();
+                                    saveAnnotationToDatabase(annotation);
+                                    updateAnnotationsList();
+                                    setStatus(`List field set to ${option}. Click Save to keep changes.`, 'ok');
+                                });
+                                listItems.appendChild(item);
+                            });
+                        }
+                    } else if (annotation.fieldKind === 'signature') {
+                        const signatureBadge = annotation.fieldSignatureBadge || annotation.element.querySelector('.field-annotation-signature-badge');
+                        const signatureContent = annotation.fieldSignatureContent || annotation.element.querySelector('.field-annotation-signature-content');
+                        const signatureImage = annotation.fieldSignatureImage || annotation.element.querySelector('.field-annotation-signature-image');
+                        const signaturePlaceholder = annotation.fieldSignaturePlaceholder || annotation.element.querySelector('.field-annotation-signature-placeholder');
+                        const badgeWidthPx = Math.max(76, Math.min((Number(annotation.pdfWidth) || 220) * currentScale * 0.32, 132));
+                        const badgeFontSizePx = Math.max(16, Math.min((Number(annotation.pdfHeight) || 52) * currentScale * 0.5, 34));
+                        const placeholderFontSizePx = Math.max(11, Math.min((Number(annotation.pdfHeight) || 52) * currentScale * 0.28, 16));
+                        const signatureImageUrl = getFieldSignatureImageUrl(annotation);
+
+                        fieldShell.classList.add('field-annotation-signature-shell');
+                        fieldShell.style.backgroundColor = annotation.backgroundColor || '#e0e7ff';
+                        fieldShell.style.borderColor = annotation.borderColor || '#818cf8';
+                        if (signatureBadge) {
+                            signatureBadge.style.width = `${badgeWidthPx}px`;
+                            signatureBadge.style.minWidth = `${badgeWidthPx}px`;
+                            signatureBadge.style.background = annotation.accentColor || '#4f46e5';
+                            signatureBadge.style.color = annotation.textColor || '#ffffff';
+                            signatureBadge.style.fontSize = `${badgeFontSizePx}px`;
+                            signatureBadge.textContent = String(annotation.signatureBadgeLabel || 'sign');
+                        }
+                        if (signatureContent) {
+                            signatureContent.style.backgroundColor = annotation.backgroundColor || '#e0e7ff';
+                        }
+                        if (signaturePlaceholder) {
+                            signaturePlaceholder.textContent = signatureImageUrl ? '' : String(annotation.placeholder || 'Sign here');
+                            signaturePlaceholder.style.fontSize = `${placeholderFontSizePx}px`;
+                        }
+                        if (signatureImage) {
+                            signatureImage.src = signatureImageUrl || '';
+                        }
+                        fieldShell.classList.toggle('is-signed', Boolean(signatureImageUrl));
+                    } else {
+                        const checkboxBox = annotation.fieldCheckboxBox || annotation.element.querySelector('.field-annotation-checkbox-box');
+                        const checkboxMark = annotation.fieldCheckboxMark || annotation.element.querySelector('.field-annotation-checkbox-mark');
+                        if (checkboxBox) {
+                            checkboxBox.style.borderColor = annotation.borderColor || '#64748b';
+                            checkboxBox.style.borderWidth = `${Math.max(1, Number(annotation.borderWidth) || 1.5)}px`;
+                            checkboxBox.style.backgroundColor = annotation.backgroundColor || '#ffffff';
+                        }
+                        if (checkboxMark) {
+                            checkboxMark.style.color = annotation.textColor || '#334155';
+                            checkboxMark.style.fontSize = `${Math.max(12, Math.min(annotation.pdfWidth, annotation.pdfHeight) * currentScale * 0.7)}px`;
+                            checkboxMark.classList.toggle('checked', Boolean(annotation.checked));
+                        }
+                    }
+
+                    if (selectedAnnotation === annotation) {
+                        queueSelectedAnnotationMenuPlacement();
+                    }
+                    return;
+                }
                 if (annotation.type === 'text' || !annotation.type) {
                     const canUseExactPromotedGeometry = () => {
                         return canRenderPromotedAnnotationWithExactGeometry(annotation);
@@ -13790,8 +15174,66 @@
                 }
             }
 
+            function normalizeFieldAnnotation(annotation) {
+                if (!annotation || !isFieldAnnotation(annotation)) {
+                    return;
+                }
+
+                annotation.type = 'field';
+                annotation.fieldKind = normalizeFieldKind(annotation.fieldKind);
+                annotation.fieldName = String(annotation.fieldName || annotation.id || generateAnnotationId()).trim();
+                annotation.placeholder = String(annotation.placeholder || (
+                    annotation.fieldKind === 'date'
+                        ? 'MM/DD/YYYY'
+                        :
+                    annotation.fieldKind === 'signature'
+                        ? 'Sign here'
+                        : (isOptionFieldKind(annotation.fieldKind) ? 'Select option' : 'Type here')
+                ));
+                annotation.fieldOptions = isOptionFieldKind(annotation.fieldKind)
+                    ? getSelectFieldOptions(annotation, getDefaultOptionFieldOptions(annotation.fieldKind))
+                    : [];
+                if (annotation.fieldKind === 'date') {
+                    annotation.fieldValue = formatDateFieldValue(annotation.fieldValue ?? annotation.text ?? '', { finalize: true });
+                } else if (annotation.fieldKind === 'text') {
+                    annotation.fieldValue = String(annotation.fieldValue ?? annotation.text ?? '');
+                } else if (isOptionFieldKind(annotation.fieldKind)) {
+                    annotation.fieldValue = getSelectFieldValue(annotation, annotation.fieldOptions);
+                } else {
+                    annotation.fieldValue = '';
+                }
+                annotation.checked = Boolean(annotation.checked);
+                annotation.textColor = annotation.textColor || (annotation.fieldKind === 'signature' ? '#ffffff' : '#334155');
+                annotation.backgroundColor = annotation.backgroundColor || (
+                    (annotation.fieldKind === 'checkbox' || isOptionFieldKind(annotation.fieldKind))
+                        ? '#ffffff'
+                        : (annotation.fieldKind === 'signature' ? '#e0e7ff' : '#e0e7ff')
+                );
+                annotation.borderColor = annotation.borderColor || (annotation.fieldKind === 'signature' ? '#818cf8' : '#64748b');
+                annotation.accentColor = annotation.accentColor || (annotation.fieldKind === 'signature' ? '#4f46e5' : '#64748b');
+                annotation.borderWidth = Number(annotation.borderWidth) > 0 ? Number(annotation.borderWidth) : 1.5;
+                annotation.fontSize = Number(annotation.fontSize) > 0 ? Number(annotation.fontSize) : 12;
+                annotation.opacity = typeof annotation.opacity === 'number' ? normalizeShapeOpacity(annotation.opacity) : 1;
+                annotation.rotation = 0;
+                annotation.signedDataUrl = String(annotation.signedDataUrl || '').trim();
+                annotation.signedAssetPath = String(annotation.signedAssetPath || annotation.signatureAssetPath || '').trim();
+                annotation.signedMimeType = String(annotation.signedMimeType || '').trim();
+                annotation.signedFileName = String(annotation.signedFileName || '').trim();
+                annotation.pdfWidth = Number(annotation.pdfWidth) > 0
+                    ? Number(annotation.pdfWidth)
+                    : (annotation.fieldKind === 'checkbox' ? 18 : (annotation.fieldKind === 'signature' ? 220 : (annotation.fieldKind === 'list' ? 180 : (annotation.fieldKind === 'select' ? 180 : 160))));
+                annotation.pdfHeight = Number(annotation.pdfHeight) > 0
+                    ? Number(annotation.pdfHeight)
+                    : (annotation.fieldKind === 'checkbox' ? 18 : (annotation.fieldKind === 'signature' ? 52 : (annotation.fieldKind === 'list' ? 88 : (annotation.fieldKind === 'select' ? 40 : 32))));
+                if (annotation.fieldKind === 'checkbox') {
+                    const squareSize = Math.max(annotation.pdfWidth, annotation.pdfHeight);
+                    annotation.pdfWidth = squareSize;
+                    annotation.pdfHeight = squareSize;
+                }
+            }
+
             function normalizeTextAnnotation(annotation) {
-                if (!annotation || isImageBackedAnnotationType(annotation.type) || annotation.type === 'shape' || annotation.type === 'eraser' || annotation.type === 'table') {
+                if (!annotation || isImageBackedAnnotationType(annotation.type) || annotation.type === 'shape' || annotation.type === 'eraser' || annotation.type === 'table' || isFieldAnnotation(annotation)) {
                     return;
                 }
                 annotation.type = annotation.type || 'text';
@@ -14428,6 +15870,7 @@
                         // Click handler for deselect when not in text mode
                         overlay.addEventListener('click', (event) => {
                             if (event.target !== overlay) return;
+                            if (consumeSuppressedOverlayBackgroundClick(overlay, event)) return;
                             if (toolMode !== 'text') {
                                 setSelection(null);
                                 removeActiveEditor();
@@ -15028,6 +16471,324 @@
                 });
             }
 
+            function placeImageBackedAnnotationAtPageBox({
+                wrapper,
+                pageInfo,
+                type = 'image',
+                dataUrl,
+                pageIndex,
+                pdfX,
+                pdfY,
+                pdfWidth,
+                pdfHeight,
+                fileName = null,
+                mimeType = 'image/png',
+                statusMessage = 'Annotation placed. Click Save to keep changes.',
+            }) {
+                if (!wrapper || !pageInfo || !dataUrl) {
+                    return null;
+                }
+
+                const annotation = {
+                    id: generateAnnotationId(),
+                    type,
+                    dataUrl,
+                    src: null,
+                    fileName: fileName || undefined,
+                    mimeType: mimeType || undefined,
+                    pageIndex,
+                    pdfX,
+                    pdfY,
+                    pdfWidth,
+                    pdfHeight,
+                };
+
+                annotations.push(annotation);
+                persistAnnotations();
+                updateAnnotationsList();
+                addAnnotationElement(wrapper, annotation, pageInfo);
+                setSelection(annotation);
+                saveAnnotationToDatabase(annotation);
+                setStatus(statusMessage, 'ok');
+                return annotation;
+            }
+
+            function createFieldAnnotation(pageNumber, pageInfo, leftPx, topPx, widthPx, heightPx) {
+                const normalizedFieldKind = normalizeFieldKind(fieldType);
+                const minWidthPx = normalizedFieldKind === 'checkbox'
+                    ? 28
+                    : (normalizedFieldKind === 'signature' ? 220 : (normalizedFieldKind === 'list' ? 180 : (normalizedFieldKind === 'select' ? 180 : 140)));
+                const minHeightPx = normalizedFieldKind === 'checkbox'
+                    ? 28
+                    : (normalizedFieldKind === 'signature' ? 52 : (normalizedFieldKind === 'list' ? 88 : (normalizedFieldKind === 'select' ? 40 : 40)));
+                let nextWidthPx = Math.max(minWidthPx, Number(widthPx) || minWidthPx);
+                let nextHeightPx = Math.max(minHeightPx, Number(heightPx) || minHeightPx);
+                if (normalizedFieldKind === 'checkbox') {
+                    const squareSize = Math.max(nextWidthPx, nextHeightPx);
+                    nextWidthPx = squareSize;
+                    nextHeightPx = squareSize;
+                }
+
+                const annotation = {
+                    id: generateAnnotationId(),
+                    type: 'field',
+                    fieldKind: normalizedFieldKind,
+                    fieldName: `field_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                    placeholder: normalizedFieldKind === 'date'
+                        ? 'MM/DD/YYYY'
+                        : (normalizedFieldKind === 'signature' ? 'Sign here' : (isOptionFieldKind(normalizedFieldKind) ? 'Select option' : 'Type here')),
+                    fieldValue: isOptionFieldKind(normalizedFieldKind) ? 'Option 1' : '',
+                    fieldOptions: isOptionFieldKind(normalizedFieldKind) ? getDefaultOptionFieldOptions(normalizedFieldKind) : [],
+                    checked: false,
+                    pageIndex: pageNumber - 1,
+                    pdfX: leftPx / pageInfo.scale,
+                    pdfY: (pageInfo.canvasHeight - topPx) / pageInfo.scale - (nextHeightPx / pageInfo.scale),
+                    pdfWidth: nextWidthPx / pageInfo.scale,
+                    pdfHeight: nextHeightPx / pageInfo.scale,
+                    fontSize: 12,
+                    textColor: normalizedFieldKind === 'signature' ? '#ffffff' : '#334155',
+                    backgroundColor: (normalizedFieldKind === 'checkbox' || isOptionFieldKind(normalizedFieldKind)) ? '#ffffff' : '#e0e7ff',
+                    borderColor: normalizedFieldKind === 'signature' ? '#818cf8' : '#64748b',
+                    accentColor: normalizedFieldKind === 'signature' ? '#4f46e5' : '#64748b',
+                    borderWidth: 1.5,
+                    opacity: 1,
+                };
+
+                normalizeFieldAnnotation(annotation);
+                return annotation;
+            }
+
+            function createSignatureFieldShell() {
+                const shell = document.createElement('div');
+                shell.className = 'field-annotation-shell field-annotation-signature-shell';
+
+                const badge = document.createElement('div');
+                badge.className = 'field-annotation-signature-badge';
+                badge.textContent = 'sign';
+
+                const content = document.createElement('div');
+                content.className = 'field-annotation-signature-content';
+
+                const placeholder = document.createElement('div');
+                placeholder.className = 'field-annotation-signature-placeholder';
+                placeholder.textContent = 'Sign here';
+
+                const image = document.createElement('img');
+                image.className = 'field-annotation-signature-image';
+                image.alt = 'Signature';
+
+                content.appendChild(placeholder);
+                content.appendChild(image);
+                shell.appendChild(badge);
+                shell.appendChild(content);
+
+                return {
+                    shell,
+                    badge,
+                    content,
+                    placeholder,
+                    image,
+                };
+            }
+
+            function createSelectFieldShell() {
+                const shell = document.createElement('div');
+                shell.className = 'field-annotation-shell field-annotation-select-shell';
+
+                const value = document.createElement('div');
+                value.className = 'field-annotation-select-value';
+                value.textContent = 'Option 1';
+
+                const caret = document.createElement('div');
+                caret.className = 'field-annotation-select-caret';
+                caret.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>';
+
+                shell.appendChild(value);
+                shell.appendChild(caret);
+
+                return {
+                    shell,
+                    value,
+                    caret,
+                };
+            }
+
+            function createListFieldShell() {
+                const shell = document.createElement('div');
+                shell.className = 'field-annotation-shell field-annotation-list-shell';
+
+                const items = document.createElement('div');
+                items.className = 'field-annotation-list-items';
+                shell.appendChild(items);
+
+                return {
+                    shell,
+                    items,
+                };
+            }
+
+            function createFieldPreviewElement(fieldKind) {
+                const preview = document.createElement('div');
+                preview.className = `annotation field-annotation field-annotation-preview field-annotation-${fieldKind}`;
+                preview.style.position = 'absolute';
+                preview.style.left = '0';
+                preview.style.top = '0';
+                preview.style.width = '1px';
+                preview.style.height = '1px';
+
+                const shell = document.createElement('div');
+                shell.className = `field-annotation-shell ${fieldKind === 'checkbox' ? 'field-annotation-checkbox-shell' : ''}`;
+                if (fieldKind === 'checkbox') {
+                    const checkboxBox = document.createElement('div');
+                    checkboxBox.className = 'field-annotation-checkbox-box';
+                    const checkMark = document.createElement('span');
+                    checkMark.className = 'field-annotation-checkbox-mark checked';
+                    checkMark.textContent = '✓';
+                    checkboxBox.appendChild(checkMark);
+                    shell.appendChild(checkboxBox);
+                } else if (fieldKind === 'signature') {
+                    const signatureShell = createSignatureFieldShell();
+                    preview.appendChild(signatureShell.shell);
+                    return preview;
+                } else if (fieldKind === 'select') {
+                    const selectShell = createSelectFieldShell();
+                    preview.appendChild(selectShell.shell);
+                    return preview;
+                } else if (fieldKind === 'list') {
+                    const listShell = createListFieldShell();
+                    ['Option 1', 'Option 2', 'Option 3'].forEach((option, index) => {
+                        const item = document.createElement('div');
+                        item.className = `field-annotation-list-item${index === 0 ? ' selected' : ''}`;
+                        item.textContent = option;
+                        listShell.items.appendChild(item);
+                    });
+                    preview.appendChild(listShell.shell);
+                    return preview;
+                } else {
+                    const input = document.createElement('input');
+                    input.type = 'text';
+                    input.className = 'field-annotation-input';
+                    input.placeholder = fieldKind === 'date' ? 'MM/DD/YYYY' : 'Type here';
+                    input.value = '';
+                    if (fieldKind === 'date') {
+                        input.inputMode = 'numeric';
+                        input.maxLength = 10;
+                    }
+                    shell.appendChild(input);
+                }
+                preview.appendChild(shell);
+                return preview;
+            }
+
+            function setupFieldPlacementHandlers(overlay, wrapper, pageNumber, pageInfo) {
+                if (!overlay || !wrapper || !pageInfo) {
+                    return;
+                }
+
+                let pendingFieldPlacement = null;
+
+                overlay.addEventListener('pointerdown', (event) => {
+                    if (toolMode !== 'field' || event.target !== overlay) {
+                        return;
+                    }
+                    const rect = overlay.getBoundingClientRect();
+                    const startX = event.clientX - rect.left;
+                    const startY = event.clientY - rect.top;
+                    const preview = createFieldPreviewElement(getActiveFieldToolKind() || 'text');
+                    preview.style.left = `${startX}px`;
+                    preview.style.top = `${startY}px`;
+                    overlay.appendChild(preview);
+                    pendingFieldPlacement = {
+                        startX,
+                        startY,
+                        preview,
+                    };
+                });
+
+                overlay.addEventListener('pointermove', (event) => {
+                    if (!pendingFieldPlacement || toolMode !== 'field') {
+                        return;
+                    }
+                    const rect = overlay.getBoundingClientRect();
+                    const currentX = Math.max(0, Math.min(overlay.clientWidth, event.clientX - rect.left));
+                    const currentY = Math.max(0, Math.min(overlay.clientHeight, event.clientY - rect.top));
+                    const fieldKind = getActiveFieldToolKind() || 'text';
+                    let left = Math.min(currentX, pendingFieldPlacement.startX);
+                    let top = Math.min(currentY, pendingFieldPlacement.startY);
+                    let width = Math.max(1, Math.abs(currentX - pendingFieldPlacement.startX));
+                    let height = Math.max(1, Math.abs(currentY - pendingFieldPlacement.startY));
+                    if (fieldKind === 'checkbox') {
+                        const squareSize = Math.max(width, height);
+                        width = squareSize;
+                        height = squareSize;
+                        left = currentX >= pendingFieldPlacement.startX ? pendingFieldPlacement.startX : (pendingFieldPlacement.startX - squareSize);
+                        top = currentY >= pendingFieldPlacement.startY ? pendingFieldPlacement.startY : (pendingFieldPlacement.startY - squareSize);
+                    }
+                    pendingFieldPlacement.preview.style.left = `${Math.max(0, left)}px`;
+                    pendingFieldPlacement.preview.style.top = `${Math.max(0, top)}px`;
+                    pendingFieldPlacement.preview.style.width = `${Math.max(1, width)}px`;
+                    pendingFieldPlacement.preview.style.height = `${Math.max(1, height)}px`;
+                });
+
+                overlay.addEventListener('pointerup', (event) => {
+                    if (!pendingFieldPlacement || toolMode !== 'field') {
+                        return;
+                    }
+                    const preview = pendingFieldPlacement.preview;
+                    const overlayRect = overlay.getBoundingClientRect();
+                    const previewRect = preview.getBoundingClientRect();
+                    let left = Math.max(0, previewRect.left - overlayRect.left);
+                    let top = Math.max(0, previewRect.top - overlayRect.top);
+                    let width = previewRect.width;
+                    let height = previewRect.height;
+
+                    preview.remove();
+                    pendingFieldPlacement = null;
+
+                    if (width < 8 || height < 8) {
+                        const fieldKind = getActiveFieldToolKind() || 'text';
+                        width = fieldKind === 'checkbox' ? 28 : (fieldKind === 'signature' ? 240 : (fieldKind === 'list' ? 200 : (fieldKind === 'select' ? 200 : 180)));
+                        height = fieldKind === 'checkbox' ? 28 : (fieldKind === 'signature' ? 56 : (fieldKind === 'list' ? 96 : (fieldKind === 'select' ? 44 : 44)));
+                        if (fieldKind === 'checkbox') {
+                            width = height = 28;
+                        }
+                        const rect = overlay.getBoundingClientRect();
+                        left = Math.max(0, Math.min(overlay.clientWidth - width, event.clientX - rect.left - (width / 2)));
+                        top = Math.max(0, Math.min(overlay.clientHeight - height, event.clientY - rect.top - (height / 2)));
+                    }
+
+                    if (left + width > overlay.clientWidth) {
+                        left = Math.max(0, overlay.clientWidth - width);
+                    }
+                    if (top + height > overlay.clientHeight) {
+                        top = Math.max(0, overlay.clientHeight - height);
+                    }
+
+                    const annotation = createFieldAnnotation(pageNumber, pageInfo, left, top, width, height);
+                    annotations.push(annotation);
+                    persistAnnotations();
+                    updateAnnotationsList();
+                    addAnnotationElement(wrapper, annotation, pageInfo);
+                    saveAnnotationToDatabase(annotation);
+                    suppressNextOverlayBackgroundClick(overlay);
+                    toolMode = 'select';
+                    updateModeButtons();
+                    updateEditTextBanner();
+                    setSelection(annotation);
+                    applyAnnotationStyle(annotation);
+                    const statusMessage = annotation.fieldKind === 'signature'
+                        ? 'Signature field added and selected. Use the Sign button in the floating menu or double click to sign.'
+                        : (annotation.fieldKind === 'list'
+                            ? 'List field added and selected. Use the floating menu to configure options or click a row to change the default selection.'
+                            : (annotation.fieldKind === 'date'
+                                ? 'Date field added and selected. Double click or use the floating menu to enter a date in MM/DD/YYYY format.'
+                            : (isOptionFieldKind(annotation.fieldKind)
+                            ? 'Select field added and selected. Use the floating menu to configure options.'
+                            : `${getFieldAnnotationLabel(annotation)} added and selected. Use the floating menu or double click to edit text fields.`)));
+                    setStatus(statusMessage, 'ok');
+                });
+            }
+
             function sanitizeTextForPdf(text) {
                 if (!text) {
                     return text;
@@ -15050,6 +16811,384 @@
                 }
                 sanitized = sanitized.replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '');
                 return sanitized;
+            }
+
+            function sanitizePdfFormFieldName(value, fallback = 'field') {
+                const normalized = String(value || fallback)
+                    .replace(/[^A-Za-z0-9_.-]+/g, '_')
+                    .replace(/^_+|_+$/g, '');
+                return normalized || fallback;
+            }
+
+            function hexToPdfRgbComponents(hex, fallback = '#000000') {
+                const source = String(hex || fallback || '#000000').trim();
+                const normalized = /^#?[0-9a-f]{6}$/i.test(source)
+                    ? source.replace('#', '')
+                    : String(fallback || '#000000').replace('#', '');
+                const value = parseInt(normalized, 16);
+                return {
+                    r: Number((((value >> 16) & 255) / 255).toFixed(4)),
+                    g: Number((((value >> 8) & 255) / 255).toFixed(4)),
+                    b: Number(((value & 255) / 255).toFixed(4)),
+                };
+            }
+
+            function hexToPdfLibColor(hex, fallback = '#000000') {
+                const { r, g, b } = hexToPdfRgbComponents(hex, fallback);
+                return PDFLib.rgb(r, g, b);
+            }
+
+            async function applyExistingAcroFormEditorValuesToPdf(pdfDoc) {
+                if (!pdfDoc || !hasAcroFormEditorChanges() || typeof pdfDoc.getForm !== 'function') {
+                    return false;
+                }
+
+                const pdfForm = pdfDoc.getForm();
+                if (!pdfForm) {
+                    return false;
+                }
+                if (pdfForm?.acroForm?.dict && PDFLib?.PDFName && PDFLib?.PDFBool) {
+                    pdfForm.acroForm.dict.set(PDFLib.PDFName.of('NeedAppearances'), PDFLib.PDFBool.True);
+                }
+
+                const appearanceFont = await pdfDoc.embedFont(PDFLib.StandardFonts.Helvetica);
+                let applied = false;
+
+                for (const entry of acroFormFieldChanges.values()) {
+                    const fieldName = String(entry?.fieldName || '').trim();
+                    if (!fieldName) {
+                        continue;
+                    }
+
+                    let field = null;
+                    try {
+                        field = pdfForm.getField(fieldName);
+                    } catch (_fieldLookupError) {
+                        field = null;
+                    }
+                    if (!field) {
+                        continue;
+                    }
+
+                    try {
+                        if (entry.fieldType === 'BTN') {
+                            if (entry.radioButton && typeof field.select === 'function') {
+                                const radioValue = String(entry.value || '').trim();
+                                if (radioValue) {
+                                    field.select(radioValue);
+                                    applied = true;
+                                }
+                            } else if (entry.checkBox) {
+                                if (Boolean(entry.value) && typeof field.check === 'function') {
+                                    field.check();
+                                    applied = true;
+                                } else if (!Boolean(entry.value) && typeof field.uncheck === 'function') {
+                                    field.uncheck();
+                                    applied = true;
+                                }
+                            }
+                            if (typeof field.updateAppearances === 'function') {
+                                field.updateAppearances();
+                            }
+                            continue;
+                        }
+
+                        if (entry.fieldType === 'CH' && typeof field.select === 'function') {
+                            if (Array.isArray(entry.value) && entry.value.length > 0) {
+                                field.select(entry.value.map((value) => String(value ?? '')));
+                            } else {
+                                field.select(String(entry.value ?? ''));
+                            }
+                            if (typeof field.updateAppearances === 'function') {
+                                field.updateAppearances(appearanceFont);
+                            }
+                            applied = true;
+                            continue;
+                        }
+
+                        if (typeof field.setText === 'function') {
+                            field.setText(String(entry.value ?? ''));
+                            if (typeof field.updateAppearances === 'function') {
+                                field.updateAppearances(appearanceFont);
+                            }
+                            applied = true;
+                        }
+                    } catch (error) {
+                        console.warn('Failed to apply AcroForm field value:', fieldName, error);
+                    }
+                }
+
+                return applied;
+            }
+
+            async function appendInteractiveFieldAnnotationsToPdf(pdfDoc, fieldAnnotations) {
+                if (!pdfDoc || !Array.isArray(fieldAnnotations) || fieldAnnotations.length === 0 || typeof pdfDoc.getForm !== 'function') {
+                    return;
+                }
+
+                const pdfForm = pdfDoc.getForm();
+                if (pdfForm?.acroForm?.dict && PDFLib?.PDFName && PDFLib?.PDFBool) {
+                    pdfForm.acroForm.dict.set(PDFLib.PDFName.of('NeedAppearances'), PDFLib.PDFBool.True);
+                }
+                const formFont = await pdfDoc.embedFont(PDFLib.StandardFonts.Helvetica);
+                const formBoldFont = await pdfDoc.embedFont(PDFLib.StandardFonts.HelveticaBold);
+                const dataUrlToUint8 = (dataUrl) => {
+                    const base64 = String(dataUrl || '').split(',')[1] || '';
+                    const binary = atob(base64);
+                    const bytes = new Uint8Array(binary.length);
+                    for (let i = 0; i < binary.length; i += 1) {
+                        bytes[i] = binary.charCodeAt(i);
+                    }
+                    return bytes;
+                };
+                const loadFieldSignatureImagePayload = async (annotation) => {
+                    const signedDataUrl = String(annotation?.signedDataUrl || '').trim();
+                    if (signedDataUrl.startsWith('data:image/')) {
+                        const mimeMatch = signedDataUrl.match(/^data:([^;,]+)/i);
+                        return {
+                            bytes: dataUrlToUint8(signedDataUrl),
+                            mimeType: String(mimeMatch?.[1] || annotation?.signedMimeType || 'image/png').toLowerCase(),
+                        };
+                    }
+
+                    const imageUrl = getFieldSignatureImageUrl(annotation);
+                    if (!imageUrl) {
+                        return null;
+                    }
+
+                    const response = await fetch(imageUrl, {
+                        credentials: 'same-origin',
+                    });
+                    if (!response.ok) {
+                        throw new Error(`Failed to load field signature image (${response.status}).`);
+                    }
+                    return {
+                        bytes: new Uint8Array(await response.arrayBuffer()),
+                        mimeType: String(response.headers.get('content-type') || annotation?.signedMimeType || 'image/png').toLowerCase(),
+                    };
+                };
+                const embedFieldSignatureImage = async (annotation) => {
+                    const imagePayload = await loadFieldSignatureImagePayload(annotation);
+                    if (!imagePayload?.bytes?.length) {
+                        return null;
+                    }
+                    if (imagePayload.mimeType.includes('jpeg') || imagePayload.mimeType.includes('jpg')) {
+                        return pdfDoc.embedJpg(imagePayload.bytes);
+                    }
+                    return pdfDoc.embedPng(imagePayload.bytes);
+                };
+                const drawSignatureField = async (page, annotation) => {
+                    const x = Number(annotation.pdfX) || 0;
+                    const y = Number(annotation.pdfY) || 0;
+                    const width = Math.max(44, Number(annotation.pdfWidth) || 44);
+                    const height = Math.max(22, Number(annotation.pdfHeight) || 22);
+                    const borderWidth = Math.max(1, Number(annotation.borderWidth) || 1.5);
+                    const backgroundColor = hexToPdfLibColor(annotation.backgroundColor || '#e0e7ff', '#e0e7ff');
+                    const borderColor = hexToPdfLibColor(annotation.borderColor || '#818cf8', '#818cf8');
+                    const accentColor = hexToPdfLibColor(annotation.accentColor || '#4f46e5', '#4f46e5');
+                    const badgeWidth = Math.min(width * 0.34, Math.max(48, Math.min(94, width - 28)));
+                    const placeholderColor = PDFLib.rgb(0.42, 0.4, 0.82);
+                    const badgeLabel = String(annotation.signatureBadgeLabel || 'sign');
+
+                    page.drawRectangle({
+                        x,
+                        y,
+                        width,
+                        height,
+                        color: backgroundColor,
+                        borderColor,
+                        borderWidth,
+                    });
+                    page.drawRectangle({
+                        x,
+                        y,
+                        width: badgeWidth,
+                        height,
+                        color: accentColor,
+                        borderWidth: 0,
+                    });
+
+                    const badgeFontSize = Math.max(12, Math.min(height * 0.54, 28));
+                    const badgeTextWidth = formBoldFont.widthOfTextAtSize(badgeLabel, badgeFontSize);
+                    page.drawText(badgeLabel, {
+                        x: x + Math.max(6, (badgeWidth - badgeTextWidth) / 2),
+                        y: y + Math.max(4, (height - badgeFontSize) / 2) + (badgeFontSize * 0.1),
+                        size: badgeFontSize,
+                        font: formBoldFont,
+                        color: PDFLib.rgb(1, 1, 1),
+                    });
+
+                    const contentX = x + badgeWidth;
+                    const contentWidth = Math.max(12, width - badgeWidth);
+                    const signedImage = await embedFieldSignatureImage(annotation);
+                    if (signedImage) {
+                        const imageDims = signedImage.scale(1);
+                        const padding = Math.max(4, height * 0.12);
+                        const availableWidth = Math.max(1, contentWidth - (padding * 2));
+                        const availableHeight = Math.max(1, height - (padding * 2));
+                        const scale = Math.min(availableWidth / imageDims.width, availableHeight / imageDims.height, 1);
+                        const drawWidth = Math.max(1, imageDims.width * scale);
+                        const drawHeight = Math.max(1, imageDims.height * scale);
+                        page.drawImage(signedImage, {
+                            x: contentX + Math.max(padding, (contentWidth - drawWidth) / 2),
+                            y: y + Math.max(padding, (height - drawHeight) / 2),
+                            width: drawWidth,
+                            height: drawHeight,
+                        });
+                        return;
+                    }
+
+                    const placeholder = String(annotation.placeholder || '').trim();
+                    if (placeholder) {
+                        const placeholderFontSize = Math.max(8, Math.min(height * 0.24, 14));
+                        const placeholderWidth = formFont.widthOfTextAtSize(placeholder, placeholderFontSize);
+                        page.drawText(placeholder, {
+                            x: contentX + Math.max(8, (contentWidth - placeholderWidth) / 2),
+                            y: y + Math.max(4, (height - placeholderFontSize) / 2),
+                            size: placeholderFontSize,
+                            font: formFont,
+                            color: placeholderColor,
+                        });
+                    }
+                };
+
+                for (let index = 0; index < fieldAnnotations.length; index += 1) {
+                    const annotation = fieldAnnotations[index];
+                    if (!annotation) {
+                        continue;
+                    }
+
+                    const pageIndex = Number(annotation.pageIndex) || 0;
+                    if (pageIndex < 0 || pageIndex >= pdfDoc.getPageCount()) {
+                        continue;
+                    }
+                    const page = pdfDoc.getPage(pageIndex);
+                    const fieldKind = normalizeFieldKind(annotation.fieldKind);
+
+                    if (fieldKind === 'signature') {
+                        await drawSignatureField(page, annotation);
+                        continue;
+                    }
+
+                    const fieldNameBase = sanitizePdfFormFieldName(annotation.fieldName || annotation.id || `field_${index}`);
+                    const fieldName = `${fieldNameBase}_${index}`;
+                    const width = Math.max(12, Number(annotation.pdfWidth) || 12);
+                    const height = Math.max(12, Number(annotation.pdfHeight) || 12);
+                    const borderWidth = Math.max(1, Number(annotation.borderWidth) || 1.5);
+                    const backgroundColor = hexToPdfLibColor(
+                        annotation.backgroundColor || ((fieldKind === 'checkbox' || isOptionFieldKind(fieldKind)) ? '#ffffff' : '#e0e7ff'),
+                        '#ffffff'
+                    );
+                    const borderColor = hexToPdfLibColor(annotation.borderColor || '#64748b', '#64748b');
+                    const textColorComponents = hexToPdfRgbComponents(annotation.textColor || '#334155', '#334155');
+                    const textColor = PDFLib.rgb(textColorComponents.r, textColorComponents.g, textColorComponents.b);
+
+                    if (fieldKind === 'checkbox') {
+                        const checkBox = pdfForm.createCheckBox(fieldName);
+                        checkBox.addToPage(page, {
+                            x: Number(annotation.pdfX) || 0,
+                            y: Number(annotation.pdfY) || 0,
+                            width,
+                            height,
+                            borderColor,
+                            backgroundColor,
+                            borderWidth,
+                        });
+                        if (annotation.checked) {
+                            checkBox.check();
+                        } else {
+                            checkBox.uncheck();
+                        }
+                        checkBox.updateAppearances();
+                        continue;
+                    }
+
+                    const fontSize = Math.max(8, Number(annotation.fontSize) || 12);
+                    if (fieldKind === 'select') {
+                        const dropdown = pdfForm.createDropdown(fieldName);
+                        const selectOptions = getSelectFieldOptions(annotation, getDefaultOptionFieldOptions(fieldKind));
+                        const selectedValue = getSelectFieldValue(annotation, selectOptions);
+                        if (dropdown?.acroField && typeof dropdown.acroField.setDefaultAppearance === 'function') {
+                            dropdown.acroField.setDefaultAppearance(
+                                `${textColorComponents.r} ${textColorComponents.g} ${textColorComponents.b} rg\n/${formFont.name} ${fontSize} Tf`
+                            );
+                        }
+                        dropdown.setOptions(selectOptions);
+                        dropdown.select(selectedValue);
+                        dropdown.disableEditing();
+                        dropdown.disableMultiselect();
+                        dropdown.enableSelectOnClick();
+                        dropdown.addToPage(page, {
+                            x: Number(annotation.pdfX) || 0,
+                            y: Number(annotation.pdfY) || 0,
+                            width,
+                            height,
+                            font: formFont,
+                            textColor,
+                            backgroundColor,
+                            borderColor,
+                            borderWidth,
+                        });
+                        dropdown.updateAppearances(formFont);
+                        continue;
+                    }
+
+                    if (fieldKind === 'list') {
+                        const optionList = pdfForm.createOptionList(fieldName);
+                        const listOptions = getSelectFieldOptions(annotation, getDefaultOptionFieldOptions(fieldKind));
+                        const selectedValue = getSelectFieldValue(annotation, listOptions);
+                        if (optionList?.acroField && typeof optionList.acroField.setDefaultAppearance === 'function') {
+                            optionList.acroField.setDefaultAppearance(
+                                `${textColorComponents.r} ${textColorComponents.g} ${textColorComponents.b} rg\n/${formFont.name} ${fontSize} Tf`
+                            );
+                        }
+                        optionList.setOptions(listOptions);
+                        optionList.select(selectedValue);
+                        optionList.disableMultiselect();
+                        optionList.enableSelectOnClick();
+                        optionList.addToPage(page, {
+                            x: Number(annotation.pdfX) || 0,
+                            y: Number(annotation.pdfY) || 0,
+                            width,
+                            height,
+                            font: formFont,
+                            textColor,
+                            backgroundColor,
+                            borderColor,
+                            borderWidth,
+                        });
+                        optionList.updateAppearances(formFont);
+                        continue;
+                    }
+
+                    const textField = pdfForm.createTextField(fieldName);
+                    if (textField?.acroField && typeof textField.acroField.setDefaultAppearance === 'function') {
+                        textField.acroField.setDefaultAppearance(
+                            `${textColorComponents.r} ${textColorComponents.g} ${textColorComponents.b} rg\n/${formFont.name} ${fontSize} Tf`
+                        );
+                    }
+                    textField.setText(String(annotation.fieldValue || ''));
+                    textField.addToPage(page, {
+                        x: Number(annotation.pdfX) || 0,
+                        y: Number(annotation.pdfY) || 0,
+                        width,
+                        height,
+                        font: formFont,
+                        textColor,
+                        backgroundColor,
+                        borderColor,
+                        borderWidth,
+                    });
+                    textField.updateAppearances(formFont);
+                }
+            }
+
+            function getDownloadSourcePdfUrl() {
+                const useCleanPdf = shouldUseCleanPdfForAnnotationSave();
+                const useOriginalPdf = !useCleanPdf && shouldUseOriginalPdfForAnnotationSave();
+                const sourceUrl = useOriginalPdf ? originalPdfUrl : (useCleanPdf ? cleanPdfUrl : pdfUrl);
+                const joiner = sourceUrl.includes('?') ? '&' : '?';
+                return `${sourceUrl}${joiner}v=${pdfVersion}`;
             }
 
             function generateSessionId() {
@@ -16409,6 +18548,7 @@
                 const label = document.createElement('div');
                 label.className = 'annotation';
                 label.classList.toggle('promoted-extraction', Boolean(annotation.promotedFromExtraction));
+                label.classList.toggle('edit-mode-region', annotationInteractionsRequireEditTextMode(annotation));
                 const overlay = wrapper.querySelector('.overlay');
                 if (!overlay) {
                     console.error('addAnnotationElement: No .overlay found in wrapper', wrapper);
@@ -16418,13 +18558,24 @@
                 // Set z-index based on position in annotations array for proper layering
                 const zIndex = annotations.indexOf(annotation);
                 if (zIndex >= 0) {
-                    label.style.zIndex = String(zIndex);
+                    // Keep annotation overlays above the editable PDF text layer
+                    // in Edit Text mode while preserving their relative stacking order.
+                    label.style.zIndex = String(100 + zIndex);
                 }
                 
                 let textSpan = null;
                 let annotationImage = null;
                 let shapeSvg = null;
                 let lineHitTarget = null;
+                let fieldShell = null;
+                let fieldInput = null;
+                let fieldDatePicker = null;
+                let fieldCheckboxBox = null;
+                let fieldCheckboxMark = null;
+                let fieldSelectValue = null;
+                let fieldSelectCaret = null;
+                let fieldListItems = null;
+                let fieldSelectConfigPanel = null;
                 if (isImageBackedAnnotationType(annotation.type)) {
                     annotationImage = document.createElement('img');
                     annotationImage.src = getAnnotationImageDataUrl(annotation);
@@ -16500,6 +18651,60 @@
                         tableG.appendChild(vLine);
                     }
                     shapeSvg.appendChild(tableG);
+                } else if (annotation.type === 'field') {
+                    normalizeFieldAnnotation(annotation);
+                    label.classList.add('field-annotation', `field-annotation-${annotation.fieldKind}`);
+                    if (annotation.fieldKind === 'signature') {
+                        const signatureField = createSignatureFieldShell();
+                        fieldShell = signatureField.shell;
+                        annotation.fieldSignatureBadge = signatureField.badge;
+                        annotation.fieldSignatureContent = signatureField.content;
+                        annotation.fieldSignaturePlaceholder = signatureField.placeholder;
+                        annotation.fieldSignatureImage = signatureField.image;
+                    } else if (annotation.fieldKind === 'select') {
+                        const selectField = createSelectFieldShell();
+                        fieldShell = selectField.shell;
+                        fieldSelectValue = selectField.value;
+                        fieldSelectCaret = selectField.caret;
+                    } else if (annotation.fieldKind === 'list') {
+                        const listField = createListFieldShell();
+                        fieldShell = listField.shell;
+                        fieldListItems = listField.items;
+                    } else {
+                        fieldShell = document.createElement('div');
+                        fieldShell.className = `field-annotation-shell ${annotation.fieldKind === 'checkbox' ? 'field-annotation-checkbox-shell' : ''}`;
+                    }
+
+                    if (annotation.fieldKind === 'checkbox') {
+                        fieldCheckboxBox = document.createElement('div');
+                        fieldCheckboxBox.className = 'field-annotation-checkbox-box';
+                        fieldCheckboxMark = document.createElement('span');
+                        fieldCheckboxMark.className = 'field-annotation-checkbox-mark';
+                        fieldCheckboxMark.textContent = '✓';
+                        fieldCheckboxBox.appendChild(fieldCheckboxMark);
+                        fieldShell.appendChild(fieldCheckboxBox);
+                    } else if (isTextEntryFieldKind(annotation.fieldKind)) {
+                        fieldInput = document.createElement('input');
+                        fieldInput.type = 'text';
+                        fieldInput.className = 'field-annotation-input';
+                        fieldInput.readOnly = true;
+                        fieldInput.tabIndex = -1;
+                        fieldInput.autocomplete = 'off';
+                        fieldInput.spellcheck = false;
+                        if (annotation.fieldKind === 'date') {
+                            fieldInput.inputMode = 'numeric';
+                            fieldInput.maxLength = 10;
+                            fieldDatePicker = document.createElement('input');
+                            fieldDatePicker.type = 'date';
+                            fieldDatePicker.className = 'field-annotation-date-picker';
+                            fieldDatePicker.tabIndex = -1;
+                            fieldDatePicker.setAttribute('aria-hidden', 'true');
+                        }
+                        fieldShell.appendChild(fieldInput);
+                        if (fieldDatePicker) {
+                            fieldShell.appendChild(fieldDatePicker);
+                        }
+                    }
                 } else {
                     textSpan = document.createElement('span');
                     textSpan.className = 'annotation-text';
@@ -16532,9 +18737,24 @@
                 if (annotationImage) {
                     label.appendChild(annotationImage);
                 }
+                if (fieldShell) {
+                    label.appendChild(fieldShell);
+                    annotation.fieldShell = fieldShell;
+                    annotation.fieldInput = fieldInput;
+                    annotation.fieldDatePicker = fieldDatePicker;
+                    annotation.fieldCheckboxBox = fieldCheckboxBox;
+                    annotation.fieldCheckboxMark = fieldCheckboxMark;
+                    annotation.fieldSelectValue = fieldSelectValue;
+                    annotation.fieldSelectCaret = fieldSelectCaret;
+                    annotation.fieldListItems = fieldListItems;
+                    annotation.fieldSignatureBadge = annotation.fieldSignatureBadge || fieldShell.querySelector('.field-annotation-signature-badge');
+                    annotation.fieldSignatureContent = annotation.fieldSignatureContent || fieldShell.querySelector('.field-annotation-signature-content');
+                    annotation.fieldSignaturePlaceholder = annotation.fieldSignaturePlaceholder || fieldShell.querySelector('.field-annotation-signature-placeholder');
+                    annotation.fieldSignatureImage = annotation.fieldSignatureImage || fieldShell.querySelector('.field-annotation-signature-image');
+                }
                 let updateLineHandlePositions = () => {};
                 let updateShapeRotateHandlePosition = () => {};
-                const hasShapeLikeControls = shapeSvg || isImageBackedAnnotationType(annotation.type);
+                const hasShapeLikeControls = shapeSvg || isImageBackedAnnotationType(annotation.type) || annotation.type === 'field';
                 if (hasShapeLikeControls) {
                     const isLineShape = annotation.type === 'shape' && annotation.shapeType === 'line';
                     if (shapeSvg) {
@@ -16542,10 +18762,12 @@
                         annotation.shapeSvg = shapeSvg;
                     }
                     label.style.padding = '0';
-                    label.style.border = 'none';
+                    label.style.border = annotation.type === 'field' ? '1px solid transparent' : 'none';
                     label.style.background = 'transparent';
                     label.style.cursor = 'pointer';
-                    syncShapeAnnotationOutlineState(label, annotation);
+                    if (annotation.type !== 'field') {
+                        syncShapeAnnotationOutlineState(label, annotation);
+                    }
                     if (isLineShape) {
                         label.classList.add('line-annotation');
                         ensureLineShapeGeometry(annotation);
@@ -16692,6 +18914,18 @@
                                     }
                                 }
 
+                                if (annotation.type === 'field' && annotation.fieldKind === 'checkbox') {
+                                    const squareSize = Math.max(newWidth, newHeight, 18);
+                                    if (direction.includes('w')) {
+                                        newLeft = startLeft + (startWidth - squareSize);
+                                    }
+                                    if (direction.includes('n')) {
+                                        newTop = startTop + (startHeight - squareSize);
+                                    }
+                                    newWidth = squareSize;
+                                    newHeight = squareSize;
+                                }
+
                                 // Keep shape bounds fully inside page overlay.
                                 const maxW = overlay.clientWidth;
                                 const maxH = overlay.clientHeight;
@@ -16786,6 +19020,16 @@
                         return btn;
                     };
                     
+                    const moveShapeBtn = createActionButton(
+                        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9l-3 3 3 3"/><path d="M9 5l3-3 3 3"/><path d="M15 19l-3 3-3-3"/><path d="M19 9l3 3-3 3"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/></svg>',
+                        'Move'
+                    );
+                    moveShapeBtn.style.cursor = 'move';
+                    moveShapeBtn.addEventListener('pointerdown', (e) => {
+                        e.stopPropagation();
+                        startAnnotationDrag(e);
+                    });
+
                     // Send to front
                     const toFrontBtn = createActionButton('⬆', 'Send to front');
                     toFrontBtn.addEventListener('click', (e) => {
@@ -16822,6 +19066,277 @@
                             openShapeColorPicker(annotation, shapeSvg, label);
                         });
                     }
+
+                    let fieldActionBtn = null;
+                    if (annotation.type === 'field') {
+                        if (annotation.fieldKind === 'signature') {
+                            fieldActionBtn = createActionButton(
+                                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h6"/><path d="M14.5 3.5a2.121 2.121 0 0 1 3 3L7 17l-4 1 1-4z"/></svg>',
+                                'Sign field'
+                            );
+                            fieldActionBtn.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                openSignatureFieldModal();
+                            });
+                        } else if (annotation.fieldKind === 'date') {
+                            fieldActionBtn = createActionButton(
+                                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M16 3v4"></path><path d="M8 3v4"></path><path d="M3 10h18"></path></svg>',
+                                'Pick date'
+                            );
+                            fieldActionBtn.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                openDateFieldPicker();
+                            });
+                        } else if (isTextEntryFieldKind(annotation.fieldKind)) {
+                            fieldActionBtn = createActionButton(
+                                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
+                                annotation.fieldKind === 'date' ? 'Edit date' : 'Edit field'
+                            );
+                            fieldActionBtn.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                enableFieldTextEditing();
+                            });
+                        } else if (annotation.fieldKind === 'checkbox') {
+                            fieldActionBtn = createActionButton(
+                                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
+                                'Toggle checkbox'
+                            );
+                            fieldActionBtn.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                annotation.checked = !annotation.checked;
+                                applyAnnotationStyle(annotation);
+                                persistAnnotations();
+                                saveAnnotationToDatabase(annotation);
+                                setStatus(`Checkbox ${annotation.checked ? 'checked' : 'cleared'}. Click Save to keep changes.`, 'ok');
+                            });
+                        } else if (isOptionFieldKind(annotation.fieldKind)) {
+                            const optionsPanel = document.createElement('div');
+                            optionsPanel.className = 'field-select-config-popover';
+
+                            const optionsTitle = document.createElement('div');
+                            optionsTitle.className = 'field-select-config-title';
+                            optionsTitle.textContent = annotation.fieldKind === 'list'
+                                ? 'List options'
+                                : 'Select menu options';
+
+                            const optionsList = document.createElement('div');
+
+                            const addOptionBtn = document.createElement('button');
+                            addOptionBtn.type = 'button';
+                            addOptionBtn.className = 'field-select-add-btn';
+                            addOptionBtn.textContent = 'Add option';
+
+                            optionsPanel.appendChild(optionsTitle);
+                            optionsPanel.appendChild(optionsList);
+                            optionsPanel.appendChild(addOptionBtn);
+                            fieldSelectConfigPanel = optionsPanel;
+                            annotation.fieldSelectConfigPanel = optionsPanel;
+
+                            let focusOptionIndex = null;
+                            let draggedOptionIndex = null;
+                            const closeFieldConfigPanel = () => {
+                                optionsPanel.classList.remove('active');
+                                draggedOptionIndex = null;
+                            };
+                            const applySelectFieldConfig = (nextOptions, nextValue = null) => {
+                                const normalizedOptions = normalizeSelectFieldOptions(nextOptions, ['Option 1']);
+                                let resolvedValue = typeof nextValue === 'string'
+                                    ? String(nextValue || '').trim()
+                                    : String(annotation.fieldValue || '').trim();
+                                if (!resolvedValue || !normalizedOptions.includes(resolvedValue)) {
+                                    resolvedValue = normalizedOptions[0] || '';
+                                }
+                                annotation.fieldOptions = normalizedOptions;
+                                annotation.fieldValue = resolvedValue;
+                                applyAnnotationStyle(annotation);
+                                persistAnnotations();
+                                saveAnnotationToDatabase(annotation);
+                                updateAnnotationsList();
+                            };
+                            const reorderSelectFieldOptions = (fromIndex, toIndex) => {
+                                const currentOptions = getSelectFieldOptions(annotation, getDefaultOptionFieldOptions(annotation.fieldKind));
+                                if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= currentOptions.length || toIndex >= currentOptions.length) {
+                                    return;
+                                }
+                                const nextOptions = [...currentOptions];
+                                const [movedOption] = nextOptions.splice(fromIndex, 1);
+                                nextOptions.splice(toIndex, 0, movedOption);
+                                applySelectFieldConfig(nextOptions, annotation.fieldValue);
+                                renderFieldConfigPanel();
+                                setStatus(`${getFieldAnnotationLabel(annotation)} options reordered. Click Save to keep changes.`, 'ok');
+                            };
+                            const renderFieldConfigPanel = () => {
+                                const currentOptions = getSelectFieldOptions(annotation, getDefaultOptionFieldOptions(annotation.fieldKind));
+                                const currentValue = getSelectFieldValue(annotation, currentOptions);
+                                optionsList.innerHTML = '';
+
+                                currentOptions.forEach((option, optionIndex) => {
+                                    const row = document.createElement('div');
+                                    row.className = 'field-select-option-row';
+                                    const isReorderableList = annotation.fieldKind === 'list';
+                                    row.classList.toggle('reorderable', isReorderableList);
+                                    row.classList.toggle('is-selected', option === currentValue);
+
+                                    if (isReorderableList) {
+                                        const dragHandle = document.createElement('button');
+                                        dragHandle.type = 'button';
+                                        dragHandle.className = 'field-select-option-drag';
+                                        dragHandle.draggable = true;
+                                        dragHandle.title = 'Drag to reorder';
+                                        dragHandle.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h.01"/><path d="M8 12h.01"/><path d="M8 18h.01"/><path d="M16 6h.01"/><path d="M16 12h.01"/><path d="M16 18h.01"/></svg>';
+                                        dragHandle.addEventListener('pointerdown', (event) => {
+                                            event.stopPropagation();
+                                        });
+                                        dragHandle.addEventListener('click', (event) => {
+                                            event.stopPropagation();
+                                        });
+                                        dragHandle.addEventListener('dragstart', (event) => {
+                                            draggedOptionIndex = optionIndex;
+                                            row.classList.add('is-dragging');
+                                            if (event.dataTransfer) {
+                                                event.dataTransfer.effectAllowed = 'move';
+                                                event.dataTransfer.setData('text/plain', String(optionIndex));
+                                            }
+                                        });
+                                        dragHandle.addEventListener('dragend', () => {
+                                            draggedOptionIndex = null;
+                                            optionsList.querySelectorAll('.field-select-option-row').forEach((rowEl) => {
+                                                rowEl.classList.remove('drag-over', 'is-dragging');
+                                            });
+                                        });
+                                        row.addEventListener('dragover', (event) => {
+                                            if (draggedOptionIndex === null || draggedOptionIndex === optionIndex) {
+                                                return;
+                                            }
+                                            event.preventDefault();
+                                            row.classList.add('drag-over');
+                                        });
+                                        row.addEventListener('dragleave', () => {
+                                            row.classList.remove('drag-over');
+                                        });
+                                        row.addEventListener('drop', (event) => {
+                                            if (draggedOptionIndex === null || draggedOptionIndex === optionIndex) {
+                                                return;
+                                            }
+                                            event.preventDefault();
+                                            row.classList.remove('drag-over');
+                                            reorderSelectFieldOptions(draggedOptionIndex, optionIndex);
+                                            draggedOptionIndex = null;
+                                        });
+                                        row.appendChild(dragHandle);
+                                    }
+
+                                    const input = document.createElement('input');
+                                    input.type = 'text';
+                                    input.className = 'field-select-option-input';
+                                    input.value = option;
+                                    input.placeholder = `Option ${optionIndex + 1}`;
+
+                                    const removeBtn = document.createElement('button');
+                                    removeBtn.type = 'button';
+                                    removeBtn.className = 'field-select-option-remove';
+                                    removeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>';
+                                    removeBtn.title = 'Remove option';
+
+                                    row.addEventListener('click', (event) => {
+                                        if (event.target === input || event.target === removeBtn || removeBtn.contains(event.target)) {
+                                            return;
+                                        }
+                                        if (annotation.fieldValue !== option) {
+                                            applySelectFieldConfig(currentOptions, option);
+                                            renderFieldConfigPanel();
+                                        }
+                                    });
+
+                                    input.addEventListener('focus', () => {
+                                        if (annotation.fieldValue !== option) {
+                                            applySelectFieldConfig(currentOptions, option);
+                                            renderFieldConfigPanel();
+                                        }
+                                    });
+                                    input.addEventListener('keydown', (event) => {
+                                        if (event.key === 'Enter') {
+                                            event.preventDefault();
+                                            input.blur();
+                                        } else if (event.key === 'Escape') {
+                                            event.preventDefault();
+                                            input.value = option;
+                                            input.blur();
+                                        }
+                                    });
+                                    input.addEventListener('change', () => {
+                                        const previousOption = currentOptions[optionIndex] || '';
+                                        const nextLabel = String(input.value || '').trim();
+                                        const nextOptions = [...currentOptions];
+                                        if (nextLabel) {
+                                            nextOptions[optionIndex] = nextLabel;
+                                        } else {
+                                            nextOptions.splice(optionIndex, 1);
+                                        }
+                                        const nextValue = annotation.fieldValue === previousOption
+                                            ? nextLabel
+                                            : annotation.fieldValue;
+                                        applySelectFieldConfig(nextOptions, nextValue);
+                                        renderFieldConfigPanel();
+                                    });
+
+                                    removeBtn.addEventListener('click', (event) => {
+                                        event.stopPropagation();
+                                        const nextOptions = currentOptions.filter((_, index) => index !== optionIndex);
+                                        const nextValue = annotation.fieldValue === option ? '' : annotation.fieldValue;
+                                        applySelectFieldConfig(nextOptions, nextValue);
+                                        renderFieldConfigPanel();
+                                    });
+
+                                    row.appendChild(input);
+                                    row.appendChild(removeBtn);
+                                    optionsList.appendChild(row);
+                                });
+
+                                if (focusOptionIndex !== null) {
+                                    const targetInput = optionsList.querySelectorAll('.field-select-option-input')[focusOptionIndex];
+                                    if (targetInput) {
+                                        requestAnimationFrame(() => {
+                                            targetInput.focus();
+                                            targetInput.select();
+                                        });
+                                    }
+                                    focusOptionIndex = null;
+                                }
+                            };
+                            const openFieldConfigPanel = () => {
+                                setSelection(annotation);
+                                renderFieldConfigPanel();
+                                optionsPanel.classList.add('active');
+                                queueSelectedAnnotationMenuPlacement();
+                            };
+
+                            addOptionBtn.addEventListener('click', (event) => {
+                                event.stopPropagation();
+                                const currentOptions = getSelectFieldOptions(annotation, getDefaultOptionFieldOptions(annotation.fieldKind));
+                                const nextOptions = [...currentOptions, `Option ${currentOptions.length + 1}`];
+                                focusOptionIndex = nextOptions.length - 1;
+                                applySelectFieldConfig(nextOptions, annotation.fieldValue);
+                                openFieldConfigPanel();
+                            });
+
+                            annotation.closeFieldConfigPanel = closeFieldConfigPanel;
+                            actionBar.appendChild(optionsPanel);
+
+                            fieldActionBtn = createActionButton(
+                                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16"></path><path d="M7 12h10"></path><path d="m10 18 2 2 2-2"></path></svg>',
+                                'Edit options'
+                            );
+                            fieldActionBtn.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                if (optionsPanel.classList.contains('active')) {
+                                    closeFieldConfigPanel();
+                                    return;
+                                }
+                                openFieldConfigPanel();
+                            });
+                        }
+                    }
                     
                     // Delete
                     const deleteShapeBtn = createActionButton('🗑', `Delete ${getAnnotationTypeLabel(annotation).toLowerCase()}`, '#ff6b6b');
@@ -16851,10 +19366,14 @@
                         }
                     });
                     
+                    actionBar.appendChild(moveShapeBtn);
                     actionBar.appendChild(toFrontBtn);
                     actionBar.appendChild(toBackBtn);
                     if (colorBtn) {
                         actionBar.appendChild(colorBtn);
+                    }
+                    if (fieldActionBtn) {
+                        actionBar.appendChild(fieldActionBtn);
                     }
                     actionBar.appendChild(deleteShapeBtn);
                     label.appendChild(actionBar);
@@ -17004,8 +19523,173 @@
                         label.appendChild(rotateHandle);
                     }
                 }
+
+                const disableFieldTextEditing = ({ commit = true, restore = false } = {}) => {
+                    if (!annotation || annotation.type !== 'field' || !isTextEntryFieldKind(annotation.fieldKind) || !fieldInput) {
+                        return;
+                    }
+                    const resolveFieldInputValue = (value, { finalize = false } = {}) => {
+                        if (annotation.fieldKind === 'date') {
+                            return formatDateFieldValue(value, { finalize });
+                        }
+                        return String(value || '');
+                    };
+                    if (restore) {
+                        fieldInput.value = resolveFieldInputValue(annotation.fieldValue || '', { finalize: true });
+                    } else {
+                        const nextValue = resolveFieldInputValue(fieldInput.value || '', { finalize: true });
+                        fieldInput.value = nextValue;
+                        annotation.fieldValue = nextValue;
+                    }
+                    label.classList.remove('field-editing');
+                    fieldInput.readOnly = true;
+                    fieldInput.tabIndex = -1;
+                    persistAnnotations();
+                    if (commit) {
+                        saveAnnotationToDatabase(annotation);
+                    }
+                };
+
+                const enableFieldTextEditing = () => {
+                    if (!annotation || annotation.type !== 'field' || !isTextEntryFieldKind(annotation.fieldKind) || !fieldInput) {
+                        return;
+                    }
+                    setSelection(annotation);
+                    label.classList.add('field-editing');
+                    fieldInput.readOnly = false;
+                    fieldInput.tabIndex = 0;
+                    requestAnimationFrame(() => {
+                        fieldInput.focus();
+                        fieldInput.select();
+                    });
+                };
+
+                const openDateFieldPicker = () => {
+                    if (!annotation || annotation.type !== 'field' || annotation.fieldKind !== 'date') {
+                        return;
+                    }
+                    const datePickerInput = annotation.fieldDatePicker || label.querySelector('.field-annotation-date-picker');
+                    if (!datePickerInput || datePickerInput.type !== 'date') {
+                        enableFieldTextEditing();
+                        return;
+                    }
+                    setSelection(annotation);
+                    datePickerInput.value = dateFieldValueToPickerValue(annotation.fieldValue || '');
+                    try {
+                        if (typeof datePickerInput.showPicker === 'function') {
+                            datePickerInput.showPicker();
+                            return;
+                        }
+                    } catch (_error) {
+                        // Fall back to focus/click below.
+                    }
+                    try {
+                        datePickerInput.focus({ preventScroll: true });
+                    } catch (_error) {
+                        datePickerInput.focus();
+                    }
+                    datePickerInput.click();
+                };
+
+                const applySignatureToField = (imageAsset) => {
+                    if (!annotation || annotation.type !== 'field' || annotation.fieldKind !== 'signature' || !imageAsset?.dataUrl) {
+                        return;
+                    }
+                    annotation.signedDataUrl = String(imageAsset.dataUrl || '');
+                    annotation.signedMimeType = String(imageAsset.mimeType || 'image/png');
+                    annotation.signedFileName = String(imageAsset.fileName || 'signature.png');
+                    delete annotation.signedAssetPath;
+                    applyAnnotationStyle(annotation);
+                    persistAnnotations();
+                    saveAnnotationToDatabase(annotation);
+                    updateAnnotationsList();
+                    setSelection(annotation);
+                    setStatus('Signature applied to field. Click Save to keep changes.', 'ok');
+                };
+
+                const openSignatureFieldModal = () => {
+                    if (!annotation || annotation.type !== 'field' || annotation.fieldKind !== 'signature') {
+                        return;
+                    }
+                    setSelection(annotation);
+                    signatureTargetField = annotation;
+                    const existingSignatureUrl = getFieldSignatureImageUrl(annotation);
+                    if (existingSignatureUrl) {
+                        signatureImageAsset = {
+                            dataUrl: existingSignatureUrl,
+                            width: Math.max(1, Math.round((Number(annotation.pdfWidth) || 220) * currentScale)),
+                            height: Math.max(1, Math.round((Number(annotation.pdfHeight) || 52) * currentScale)),
+                            fileName: annotation.signedFileName || 'signature.png',
+                            mimeType: annotation.signedMimeType || 'image/png',
+                        };
+                        openSignatureModal('image');
+                        return;
+                    }
+                    clearSignatureCanvas();
+                    setSignatureDirtyState(false);
+                    signatureImageAsset = null;
+                    openSignatureModal('draw');
+                };
+
+                annotation.applySignatureToField = applySignatureToField;
+                annotation.openSignatureFieldModal = openSignatureFieldModal;
+                annotation.openDateFieldPicker = openDateFieldPicker;
+
+                if (fieldInput) {
+                    fieldInput.addEventListener('input', () => {
+                        if (annotation.fieldKind === 'date') {
+                            const formattedValue = formatDateFieldValue(fieldInput.value || '');
+                            if (fieldInput.value !== formattedValue) {
+                                fieldInput.value = formattedValue;
+                            }
+                            annotation.fieldValue = formattedValue;
+                        } else {
+                            annotation.fieldValue = String(fieldInput.value || '');
+                        }
+                        persistAnnotations();
+                    });
+                    fieldInput.addEventListener('blur', () => {
+                        if (!label.classList.contains('field-editing')) {
+                            return;
+                        }
+                        disableFieldTextEditing({ commit: true });
+                    });
+                    fieldInput.addEventListener('keydown', (event) => {
+                        if (event.key === 'Escape') {
+                            event.preventDefault();
+                            disableFieldTextEditing({ commit: false, restore: true });
+                            setSelection(annotation);
+                            return;
+                        }
+                        if (event.key === 'Enter') {
+                            event.preventDefault();
+                            fieldInput.blur();
+                        }
+                    });
+                }
+                if (fieldDatePicker) {
+                    fieldDatePicker.addEventListener('change', () => {
+                        const nextValue = pickerValueToDateFieldValue(fieldDatePicker.value || '');
+                        annotation.fieldValue = nextValue;
+                        if (fieldInput) {
+                            fieldInput.value = nextValue;
+                        }
+                        applyAnnotationStyle(annotation);
+                        persistAnnotations();
+                        saveAnnotationToDatabase(annotation);
+                        updateAnnotationsList();
+                        setSelection(annotation);
+                        if (nextValue) {
+                            setStatus(`Date field set to ${nextValue}. Click Save to keep changes.`, 'ok');
+                        }
+                    });
+                }
+
+                if (annotation.type === 'field') {
+                    deleteBtn.style.display = 'none';
+                }
                 label.appendChild(deleteBtn);
-                if (!isImageBackedAnnotationType(annotation.type) && annotation.type !== 'shape' && annotation.type !== 'eraser' && annotation.type !== 'table') {
+                if (!isImageBackedAnnotationType(annotation.type) && annotation.type !== 'shape' && annotation.type !== 'eraser' && annotation.type !== 'table' && annotation.type !== 'field') {
                     label.style.fontFamily = annotation.promotedFromExtraction
                         ? resolveAnnotationCssFontFamily(annotation.fontFamily, {
                             preferExact: true,
@@ -17033,6 +19717,9 @@
                     tbcEdit.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
                     tbcEdit.addEventListener('click', (e) => {
                         e.stopPropagation();
+                        if (!ensureEditTextModeEnabled()) {
+                            return;
+                        }
                         startInlineEdit(wrapper, annotation);
                     });
                     
@@ -17310,6 +19997,8 @@
                 } else if (annotation.type === 'table') {
                     // Tables use the shape action bar for deletion
                     deleteBtn.style.display = 'none';
+                } else if (annotation.type === 'field') {
+                    deleteBtn.style.display = 'none';
                 }
 
                 const updatePosition = () => {
@@ -17344,6 +20033,14 @@
                             updateLineHandlePositions();
                         }
                     } else if (annotation.type === 'table') {
+                        const width = annotation.pdfWidth * pageInfo.scale;
+                        const height = annotation.pdfHeight * pageInfo.scale;
+                        const y = pageInfo.canvasHeight - (annotation.pdfY + annotation.pdfHeight) * pageInfo.scale;
+                        label.style.left = x + 'px';
+                        label.style.top = y + 'px';
+                        label.style.width = width + 'px';
+                        label.style.height = height + 'px';
+                    } else if (annotation.type === 'field') {
                         const width = annotation.pdfWidth * pageInfo.scale;
                         const height = annotation.pdfHeight * pageInfo.scale;
                         const y = pageInfo.canvasHeight - (annotation.pdfY + annotation.pdfHeight) * pageInfo.scale;
@@ -17417,7 +20114,7 @@
                     if (isImageBackedAnnotationType(annotation.type)) {
                         annotation.pdfX = clampedX / pageInfo.scale;
                         annotation.pdfY = (pageInfo.canvasHeight - clampedY) / pageInfo.scale - annotation.pdfHeight;
-                    } else if (annotation.type === 'shape' || annotation.type === 'eraser' || annotation.type === 'table') {
+                    } else if (annotation.type === 'shape' || annotation.type === 'eraser' || annotation.type === 'table' || annotation.type === 'field') {
                         annotation.pdfX = clampedX / pageInfo.scale;
                         annotation.pdfY = (pageInfo.canvasHeight - clampedY) / pageInfo.scale - annotation.pdfHeight;
                     } else {
@@ -17435,7 +20132,7 @@
                         return;
                     }
                     label.classList.remove('dragging');
-                    if (annotation.type === 'shape' || annotation.type === 'eraser' || isImageBackedAnnotationType(annotation.type)) {
+                    if (annotation.type === 'shape' || annotation.type === 'eraser' || annotation.type === 'field' || isImageBackedAnnotationType(annotation.type)) {
                         label.style.cursor = 'pointer';
                     }
                     dragStart = null;
@@ -17467,7 +20164,7 @@
                         offsetY: event.clientY - rect.top,
                     };
                     label.classList.add('dragging');
-                    if (annotation.type === 'shape' || annotation.type === 'eraser' || isImageBackedAnnotationType(annotation.type)) {
+                    if (annotation.type === 'shape' || annotation.type === 'eraser' || annotation.type === 'field' || isImageBackedAnnotationType(annotation.type)) {
                         label.style.cursor = 'move';
                     }
                     window.addEventListener('pointermove', onPointerMove);
@@ -17483,21 +20180,67 @@
                     if (event.target.closest('.shape-action-bar')) {
                         return;
                     }
+                    if (!ensureAnnotationInteractionsEnabled(annotation, {
+                        message: 'Turn on Edit Text to edit existing text, shapes, and signatures.',
+                    })) {
+                        return;
+                    }
                     event.preventDefault();
                     if (isTextAnnotationType(annotation)) {
+                        if (!ensureEditTextModeEnabled()) {
+                            return;
+                        }
                         startInlineEdit(wrapper, annotation);
+                    } else if (annotation.type === 'field') {
+                        if (annotation.fieldKind === 'date') {
+                            openDateFieldPicker();
+                        } else if (isTextEntryFieldKind(annotation.fieldKind)) {
+                            enableFieldTextEditing();
+                        } else if (isOptionFieldKind(annotation.fieldKind)) {
+                            annotation.closeFieldConfigPanel?.();
+                            const fieldActionBtn = label.querySelector('[title="Edit options"]');
+                            fieldActionBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+                        } else if (annotation.fieldKind === 'signature') {
+                            openSignatureFieldModal();
+                        } else {
+                            annotation.checked = !annotation.checked;
+                            applyAnnotationStyle(annotation);
+                            persistAnnotations();
+                            saveAnnotationToDatabase(annotation);
+                            setStatus(`Checkbox ${annotation.checked ? 'checked' : 'cleared'}. Click Save to keep changes.`, 'ok');
+                        }
                     } else {
                         setSelection(annotation);
                     }
                 });
 
                 label.addEventListener('pointerdown', (event) => {
+                    const moveButtonRequested = Boolean(event.target.closest('[title="Move"]'));
                     if (event.target === deleteBtn) {
+                        return;
+                    }
+                    if (!ensureAnnotationInteractionsEnabled(annotation, {
+                        message: moveButtonRequested
+                            ? 'Turn on Edit Text to move existing text, shapes, and signatures.'
+                            : 'Turn on Edit Text to select existing text, shapes, and signatures.',
+                    })) {
+                        event.preventDefault();
                         return;
                     }
                     if ((annotation.type === 'text' || !annotation.type) && event.target.closest('.annotation-text')) {
                         if (selectedAnnotation !== annotation) {
                             setSelection(annotation);
+                        }
+                    }
+                    if (annotation.type === 'field') {
+                        if (selectedAnnotation !== annotation) {
+                            setSelection(annotation);
+                        }
+                        if (label.classList.contains('field-editing')) {
+                            return;
+                        }
+                        if (event.target.closest('.field-annotation-input')) {
+                            return;
                         }
                     }
                     // Don't start dragging if clicking on rotate handle or tbc-menu (except move button)
@@ -17520,9 +20263,9 @@
                     if (label.dataset.rotating || label.dataset.resizing) {
                         return;
                     }
-                    
+
                     // For shape-like annotations: check if in ACTIVE state (action bar visible = selected)
-                    if (annotation.type === 'shape' || annotation.type === 'eraser' || isImageBackedAnnotationType(annotation.type)) {
+                    if (annotation.type === 'shape' || annotation.type === 'eraser' || annotation.type === 'field' || isImageBackedAnnotationType(annotation.type)) {
                         const actionBar = label.querySelector('.shape-action-bar');
                         const isActive = actionBar && actionBar.style.display === 'flex';
                         
@@ -17598,6 +20341,12 @@
 
                     lineHitTarget.addEventListener('pointerdown', (event) => {
                         event.stopPropagation();
+                        if (!ensureAnnotationInteractionsEnabled(annotation, {
+                            message: 'Turn on Edit Text to move existing text, shapes, and signatures.',
+                        })) {
+                            event.preventDefault();
+                            return;
+                        }
                         if (label.dataset.rotating || label.dataset.resizing) {
                             return;
                         }
@@ -17613,6 +20362,7 @@
                 }
 
                 annotation.element = label;
+                normalizeFieldAnnotation(annotation);
                 normalizeTextAnnotation(annotation);
                 applyAnnotationStyle(annotation);
                 if (selectedAnnotation === annotation) {
@@ -17784,6 +20534,7 @@
                 // Click on overlay deselects
                 overlay.addEventListener('click', (event) => {
                     if (event.target !== overlay) return;
+                    if (consumeSuppressedOverlayBackgroundClick(overlay, event)) return;
                     if (toolMode !== 'text') {
                         setSelection(null);
                         removeActiveEditor();
@@ -17996,6 +20747,149 @@
                 });
             }
 
+            async function renderPassiveAcroFormWidgetPreview(overlay, page, viewport) {
+                if (!overlay || !page || !viewport || overlayEditorActive || loadedSavedPdfMode) {
+                    return;
+                }
+
+                let annotationsForPage = [];
+                try {
+                    annotationsForPage = await page.getAnnotations({ intent: 'display' });
+                } catch (error) {
+                    console.warn('Failed to inspect AcroForm widget annotations:', error);
+                    return;
+                }
+
+                (Array.isArray(annotationsForPage) ? annotationsForPage : [])
+                    .filter((annotation) => (
+                        annotation
+                        && annotation.subtype === 'Widget'
+                        && !annotation.hidden
+                        && Array.isArray(annotation.rect)
+                        && annotation.rect.length === 4
+                    ))
+                    .forEach((annotation) => {
+                        const viewportRect = viewport.convertToViewportRectangle(annotation.rect);
+                        const left = Math.min(viewportRect[0], viewportRect[2]);
+                        const top = Math.min(viewportRect[1], viewportRect[3]);
+                        const width = Math.abs(viewportRect[2] - viewportRect[0]);
+                        const height = Math.abs(viewportRect[3] - viewportRect[1]);
+
+                        if (!(width > 3 && height > 3)) {
+                            return;
+                        }
+
+                        const fieldType = String(annotation.fieldType || '').toUpperCase();
+                        const preview = document.createElement('div');
+                        preview.className = `acroform-preview-field acroform-preview-${fieldType ? fieldType.toLowerCase() : 'unknown'}`;
+                        preview.style.left = `${left}px`;
+                        preview.style.top = `${top}px`;
+                        preview.style.width = `${width}px`;
+                        preview.style.height = `${height}px`;
+                        preview.style.fontSize = `${Math.max(10, Math.min(15, height * 0.52))}px`;
+                        preview.dataset.fieldType = fieldType;
+                        if (annotation.fieldName) {
+                            preview.dataset.fieldName = String(annotation.fieldName);
+                        }
+                        if (annotation.alternativeText) {
+                            preview.title = String(annotation.alternativeText);
+                        }
+
+                        if (!annotation.readOnly) {
+                            preview.classList.add('is-interactive');
+                        }
+
+                        const fieldState = getAcroFormFieldCurrentState(annotation);
+
+                        if (fieldType === 'TX') {
+                            const control = annotation.multiLine
+                                ? document.createElement('textarea')
+                                : document.createElement('input');
+                            if (control instanceof HTMLInputElement) {
+                                control.type = 'text';
+                            }
+                            control.className = 'acroform-preview-control';
+                            control.disabled = Boolean(annotation.readOnly);
+                            control.value = String(fieldState?.value ?? '');
+                            control.spellcheck = false;
+                            if (annotation.maxLen > 0) {
+                                control.maxLength = Number(annotation.maxLen);
+                            }
+                            control.placeholder = annotation.alternativeText ? '' : 'Type here';
+                            const commitValue = () => updateAcroFormFieldCurrentValue(annotation, control.value);
+                            control.addEventListener('input', commitValue);
+                            control.addEventListener('change', commitValue);
+                            preview.appendChild(control);
+                        } else if (fieldType === 'CH') {
+                            const control = document.createElement('select');
+                            control.className = 'acroform-preview-control';
+                            control.disabled = Boolean(annotation.readOnly);
+                            const options = Array.isArray(annotation.options) ? annotation.options : [];
+                            options.forEach((option) => {
+                                const optionElement = document.createElement('option');
+                                optionElement.value = String(option?.exportValue ?? option?.displayValue ?? '');
+                                optionElement.textContent = String(option?.displayValue ?? option?.exportValue ?? '');
+                                control.appendChild(optionElement);
+                            });
+                            if (annotation.multiSelect) {
+                                control.multiple = true;
+                                control.size = Math.max(3, Math.min(6, options.length || 3));
+                                const currentValues = Array.isArray(fieldState?.value) ? fieldState.value.map((value) => String(value ?? '')) : [];
+                                Array.from(control.options).forEach((optionElement) => {
+                                    optionElement.selected = currentValues.includes(optionElement.value);
+                                });
+                            } else {
+                                control.value = String(fieldState?.value ?? '');
+                                if (!control.value && control.options.length > 0) {
+                                    control.selectedIndex = 0;
+                                }
+                            }
+                            control.addEventListener('change', () => {
+                                if (annotation.multiSelect) {
+                                    updateAcroFormFieldCurrentValue(
+                                        annotation,
+                                        Array.from(control.selectedOptions).map((optionElement) => optionElement.value)
+                                    );
+                                } else {
+                                    updateAcroFormFieldCurrentValue(annotation, control.value);
+                                }
+                            });
+                            preview.appendChild(control);
+                            if (annotation.combo && !annotation.multiSelect) {
+                                const arrow = document.createElement('div');
+                                arrow.className = 'acroform-preview-arrow';
+                                preview.appendChild(arrow);
+                            }
+                        } else if (fieldType === 'BTN' && (annotation.checkBox || annotation.radioButton)) {
+                            preview.classList.add('is-choice');
+                            const control = document.createElement('input');
+                            control.className = 'acroform-preview-choice-input';
+                            control.type = annotation.radioButton ? 'radio' : 'checkbox';
+                            control.disabled = Boolean(annotation.readOnly);
+                            if (annotation.radioButton) {
+                                control.name = String(annotation.fieldName || annotation.id || 'acroform-radio');
+                                control.value = String(annotation.exportValue || '');
+                                control.checked = String(fieldState?.value || '') !== '' && String(fieldState?.value || '') === String(annotation.exportValue || '');
+                                control.addEventListener('change', () => {
+                                    if (control.checked) {
+                                        updateAcroFormFieldCurrentValue(annotation, control.value);
+                                    }
+                                });
+                            } else {
+                                control.checked = Boolean(fieldState?.value);
+                                control.addEventListener('change', () => {
+                                    updateAcroFormFieldCurrentValue(annotation, control.checked);
+                                });
+                            }
+                            preview.appendChild(control);
+                        } else if (fieldType === 'SIG') {
+                            preview.classList.add('acroform-preview-sig');
+                        }
+
+                        overlay.appendChild(preview);
+                    });
+            }
+
             async function renderPdf() {
                 // Clear the viewer completely
                 while (viewer.firstChild) {
@@ -18016,6 +20910,7 @@
                 const loadingTask = pdfjsLib.getDocument(pdfUrlWithVersion());
                 pdfjsDocument = await loadingTask.promise;
                 const pdf = pdfjsDocument;
+                basePdfHasAcroForm = await ensureBasePdfAcroFormMetadata();
                 pdfTextItems.length = 0;
                 if (pageList) {
                     // Clear page list thumbnails
@@ -18091,10 +20986,14 @@
 
                     // Always build text layer so edit-text mode can work
                     await buildTextLayerFromPdf(page, viewport, textLayer, pageNumber - 1, overlay);
+                    if (basePdfHasAcroForm) {
+                        await renderPassiveAcroFormWidgetPreview(overlay, page, viewport);
+                    }
 
                     // Click on empty overlay: deselect when not in text mode
                     overlay.addEventListener('click', (event) => {
                         if (event.target !== overlay) return;
+                        if (consumeSuppressedOverlayBackgroundClick(overlay, event)) return;
                         if (toolMode !== 'text') {
                             setSelection(null);
                             removeActiveEditor();
@@ -18163,6 +21062,7 @@
                             }
                         });
                     })(overlay, pageNumber, canvas, wrapper, pageInfo);
+                    setupFieldPlacementHandlers(overlay, wrapper, pageNumber, pageInfo);
 
                     let drawingShape = null;
                     overlay.addEventListener('pointerdown', (event) => {
@@ -18405,8 +21305,7 @@
                         }, 10);
                     });
 
-                    // ─── Draw / Eraser tool pointer events ───
-                    let eraserDrag = null;
+                    // ─── Smooth draw tool pointer events ───
                     overlay.addEventListener('pointerdown', (event) => {
                         if (toolMode !== 'draw') return;
                         if (event.target !== overlay) return;
@@ -18415,119 +21314,163 @@
                         const rect = overlay.getBoundingClientRect();
                         const x = event.clientX - rect.left;
                         const y = event.clientY - rect.top;
-                        const half = drawBrushSize / 2;
 
-                        // Collect eraser patches as we drag
-                        eraserDrag = {
+                        clearActiveDrawStrokePreview();
+
+                        const previewCanvas = document.createElement('canvas');
+                        previewCanvas.className = 'draw-preview-layer';
+                        previewCanvas.width = Math.max(1, Math.round(overlay.clientWidth));
+                        previewCanvas.height = Math.max(1, Math.round(overlay.clientHeight));
+                        previewCanvas.style.width = `${overlay.clientWidth}px`;
+                        previewCanvas.style.height = `${overlay.clientHeight}px`;
+                        previewCanvas.style.opacity = String(drawOpacity);
+                        overlay.appendChild(previewCanvas);
+
+                        const previewCtx = previewCanvas.getContext('2d');
+                        previewCtx.lineCap = 'round';
+                        previewCtx.lineJoin = 'round';
+                        previewCtx.strokeStyle = drawStrokeColor;
+                        previewCtx.fillStyle = drawStrokeColor;
+                        previewCtx.lineWidth = drawBrushSize;
+                        previewCtx.imageSmoothingEnabled = true;
+                        previewCtx.beginPath();
+                        previewCtx.arc(x, y, drawBrushSize / 2, 0, Math.PI * 2);
+                        previewCtx.fill();
+
+                        activeDrawStroke = {
+                            overlay,
+                            wrapper,
                             pageInfo,
-                            patches: [],
-                            lastX: x,
-                            lastY: y
+                            pageNumber,
+                            pointerId: event.pointerId,
+                            opacity: drawOpacity,
+                            previewCanvas,
+                            previewCtx,
+                            points: [{ x, y }],
+                            lastMidPoint: { x, y },
+                            minX: x - (drawBrushSize / 2),
+                            minY: y - (drawBrushSize / 2),
+                            maxX: x + (drawBrushSize / 2),
+                            maxY: y + (drawBrushSize / 2),
                         };
-
-                        // First patch at click point
-                        const patch = createEraserPatch(overlay, x - half, y - half, drawBrushSize, drawBrushSize);
-                        eraserDrag.patches.push(patch);
                     });
 
                     overlay.addEventListener('pointermove', (event) => {
-                        if (!eraserDrag) return;
+                        if (!activeDrawStroke || activeDrawStroke.overlay !== overlay) return;
+                        if (event.pointerId !== activeDrawStroke.pointerId) return;
+
                         const rect = overlay.getBoundingClientRect();
                         const x = event.clientX - rect.left;
                         const y = event.clientY - rect.top;
-                        const half = drawBrushSize / 2;
-
-                        // Interpolate between last point and current to avoid gaps
-                        const dx = x - eraserDrag.lastX;
-                        const dy = y - eraserDrag.lastY;
-                        const dist = Math.sqrt(dx * dx + dy * dy);
-                        const step = Math.max(drawBrushSize / 3, 2);
-
-                        if (dist >= step) {
-                            const steps = Math.ceil(dist / step);
-                            for (let i = 1; i <= steps; i++) {
-                                const t = i / steps;
-                                const px = eraserDrag.lastX + dx * t;
-                                const py = eraserDrag.lastY + dy * t;
-                                const patch = createEraserPatch(overlay, px - half, py - half, drawBrushSize, drawBrushSize);
-                                eraserDrag.patches.push(patch);
-                            }
-                            eraserDrag.lastX = x;
-                            eraserDrag.lastY = y;
-                        }
-                    });
-
-                    overlay.addEventListener('pointerup', (event) => {
-                        if (!eraserDrag) return;
-                        if (eraserDrag.patches.length === 0) {
-                            eraserDrag = null;
+                        const lastPoint = activeDrawStroke.points[activeDrawStroke.points.length - 1];
+                        const dx = x - lastPoint.x;
+                        const dy = y - lastPoint.y;
+                        if ((dx * dx) + (dy * dy) < 0.5) {
                             return;
                         }
 
-                        // Collect bounding box and stroke rects from patches before cleanup
-                        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-                        const strokeRects = [];
-                        eraserDrag.patches.forEach(p => {
-                            const pl = parseFloat(p.dataset.patchX);
-                            const pt = parseFloat(p.dataset.patchY);
-                            const pw = parseFloat(p.dataset.patchW);
-                            const ph = parseFloat(p.dataset.patchH);
-                            if (pl < minX) minX = pl;
-                            if (pt < minY) minY = pt;
-                            if (pl + pw > maxX) maxX = pl + pw;
-                            if (pt + ph > maxY) maxY = pt + ph;
-                            strokeRects.push({
-                                x: pl / currentScale,
-                                y: (overlay.clientHeight - pt) / currentScale - ph / currentScale,
-                                w: pw / currentScale,
-                                h: ph / currentScale,
-                            });
-                        });
+                        activeDrawStroke.points.push({ x, y });
+                        activeDrawStroke.minX = Math.min(activeDrawStroke.minX, x - (drawBrushSize / 2));
+                        activeDrawStroke.minY = Math.min(activeDrawStroke.minY, y - (drawBrushSize / 2));
+                        activeDrawStroke.maxX = Math.max(activeDrawStroke.maxX, x + (drawBrushSize / 2));
+                        activeDrawStroke.maxY = Math.max(activeDrawStroke.maxY, y + (drawBrushSize / 2));
 
-                        // Remove individual patch elements from DOM
-                        eraserDrag.patches.forEach(p => p.remove());
+                        const midPoint = {
+                            x: (lastPoint.x + x) / 2,
+                            y: (lastPoint.y + y) / 2,
+                        };
 
-                        const pdfX = minX / currentScale;
-                        const pdfWidth = (maxX - minX) / currentScale;
-                        const pdfHeight = (maxY - minY) / currentScale;
-                        const pdfY = (overlay.clientHeight - minY) / currentScale - pdfHeight;
+                        activeDrawStroke.previewCtx.strokeStyle = drawStrokeColor;
+                        activeDrawStroke.previewCtx.lineWidth = drawBrushSize;
+                        activeDrawStroke.previewCtx.beginPath();
+                        activeDrawStroke.previewCtx.moveTo(activeDrawStroke.lastMidPoint.x, activeDrawStroke.lastMidPoint.y);
+                        activeDrawStroke.previewCtx.quadraticCurveTo(lastPoint.x, lastPoint.y, midPoint.x, midPoint.y);
+                        activeDrawStroke.previewCtx.stroke();
+                        activeDrawStroke.lastMidPoint = midPoint;
+                    });
 
-                        const annotation = {
-                            id: generateAnnotationId(),
-                            type: 'eraser',
-                            pageIndex: pageNumber - 1,
+                    overlay.addEventListener('pointerup', (event) => {
+                        if (!activeDrawStroke || activeDrawStroke.overlay !== overlay) return;
+                        if (event.pointerId !== activeDrawStroke.pointerId) return;
+
+                        if (typeof overlay.releasePointerCapture === 'function') {
+                            try {
+                                overlay.releasePointerCapture(event.pointerId);
+                            } catch (_err) {}
+                        }
+
+                        if (activeDrawStroke.points.length > 1) {
+                            const lastPoint = activeDrawStroke.points[activeDrawStroke.points.length - 1];
+                            activeDrawStroke.previewCtx.strokeStyle = drawStrokeColor;
+                            activeDrawStroke.previewCtx.lineWidth = drawBrushSize;
+                            activeDrawStroke.previewCtx.beginPath();
+                            activeDrawStroke.previewCtx.moveTo(activeDrawStroke.lastMidPoint.x, activeDrawStroke.lastMidPoint.y);
+                            activeDrawStroke.previewCtx.quadraticCurveTo(lastPoint.x, lastPoint.y, lastPoint.x, lastPoint.y);
+                            activeDrawStroke.previewCtx.stroke();
+                        }
+
+                        const padding = Math.max(drawBrushSize, 8);
+                        const cropLeft = Math.max(0, Math.floor(activeDrawStroke.minX - padding));
+                        const cropTop = Math.max(0, Math.floor(activeDrawStroke.minY - padding));
+                        const cropRight = Math.min(activeDrawStroke.previewCanvas.width, Math.ceil(activeDrawStroke.maxX + padding));
+                        const cropBottom = Math.min(activeDrawStroke.previewCanvas.height, Math.ceil(activeDrawStroke.maxY + padding));
+                        const cropWidth = Math.max(1, cropRight - cropLeft);
+                        const cropHeight = Math.max(1, cropBottom - cropTop);
+                        const outputScale = 2;
+
+                        const outputCanvas = document.createElement('canvas');
+                        outputCanvas.width = Math.max(1, Math.ceil(cropWidth * outputScale));
+                        outputCanvas.height = Math.max(1, Math.ceil(cropHeight * outputScale));
+                        const outputCtx = outputCanvas.getContext('2d');
+                        outputCtx.imageSmoothingEnabled = true;
+                        outputCtx.scale(outputScale, outputScale);
+                        outputCtx.globalAlpha = activeDrawStroke.opacity;
+                        outputCtx.drawImage(activeDrawStroke.previewCanvas, -cropLeft, -cropTop);
+
+                        const pageScale = Math.max(0.0001, Number(pageInfo?.scale || currentScale || 1));
+                        const pdfWidth = cropWidth / pageScale;
+                        const pdfHeight = cropHeight / pageScale;
+                        const pdfX = cropLeft / pageScale;
+                        const pdfY = (overlay.clientHeight - cropTop) / pageScale - pdfHeight;
+                        const pageIndex = wrapper.dataset.pageIndex?.startsWith('pending-')
+                            ? wrapper.dataset.pageIndex
+                            : (parseInt(wrapper.dataset.pageIndex || '0', 10) || 0);
+
+                        clearActiveDrawStrokePreview();
+
+                        const annotation = placeImageBackedAnnotationAtPageBox({
+                            wrapper,
+                            pageInfo,
+                            type: 'signature',
+                            dataUrl: outputCanvas.toDataURL('image/png'),
+                            pageIndex,
                             pdfX,
                             pdfY,
                             pdfWidth,
                             pdfHeight,
-                            brushSize: drawBrushSize / currentScale,
-                            strokeRects,
-                        };
-                        annotations.push(annotation);
-                        persistAnnotations();
-                        updateAnnotationsList();
-                        addAnnotationElement(wrapper, annotation, pageInfo);
-                        saveAnnotationToDatabase(annotation);
-                        eraserDrag = null;
-                        setStatus('Erased area applied. Click Save to keep changes.', 'ok');
+                            fileName: 'drawing.png',
+                            mimeType: 'image/png',
+                            statusMessage: 'Drawing added. Click Save to keep changes.',
+                        });
+
+                        toolMode = 'select';
+                        updateModeButtons();
+                        updateEditTextBanner();
+                        if (annotation) {
+                            setSelection(annotation);
+                        }
+                    });
+
+                    overlay.addEventListener('pointercancel', (event) => {
+                        if (!activeDrawStroke || activeDrawStroke.overlay !== overlay) return;
+                        if (event.pointerId !== activeDrawStroke.pointerId) return;
+                        clearActiveDrawStrokePreview();
+                        toolMode = 'select';
+                        updateModeButtons();
+                        updateEditTextBanner();
+                        setStatus('Draw canceled.', 'ok');
                     });
                 }
-            }
-
-            // Helper: create a single eraser patch element on overlay
-            function createEraserPatch(overlay, x, y, w, h) {
-                const patch = document.createElement('div');
-                patch.className = 'eraser-stroke-annotation';
-                patch.style.left = x + 'px';
-                patch.style.top = y + 'px';
-                patch.style.width = w + 'px';
-                patch.style.height = h + 'px';
-                patch.dataset.patchX = x;
-                patch.dataset.patchY = y;
-                patch.dataset.patchW = w;
-                patch.dataset.patchH = h;
-                overlay.appendChild(patch);
-                return patch;
             }
 
             function resolvePdfFontKey(annotation) {
@@ -18943,8 +21886,16 @@
                 const hasDeletedPages = pendingDeletedPages.length > 0;
                 const hasNewPages = pendingNewPages.length > 0;
                 const hasAnnotations = getMaterialAnnotationsForSave().length > 0;
+                const hasExistingAcroFormChanges = hasAcroFormEditorChanges();
                 const hasPromotedExtractionDeletions = hasPendingPromotedAnnotationDeletions() || hasDeletedAnnotations();
-                const hasPdfChanges = hasAnnotations || hasPromotedExtractionDeletions || hasTextEdits || hasRotations || hasDeletedPages || hasNewPages;
+                const hasPdfChanges = hasAnnotations || hasPromotedExtractionDeletions || hasTextEdits || hasRotations || hasDeletedPages || hasNewPages || hasExistingAcroFormChanges;
+                const hasOnlyAcroFormChanges = hasExistingAcroFormChanges
+                    && !hasAnnotations
+                    && !hasPromotedExtractionDeletions
+                    && !hasTextEdits
+                    && !hasRotations
+                    && !hasDeletedPages
+                    && !hasNewPages;
 
                 console.groupCollapsed('[Save Debug] Save button pressed');
                 console.log('meta', {
@@ -18955,11 +21906,13 @@
                     hasDeletedPages,
                     hasNewPages,
                     hasAnnotations,
+                    hasExistingAcroFormChanges,
                     hasPromotedExtractionDeletions,
                     hasPdfChanges,
                     pendingDocumentName,
                     overlayEditedFieldsCount: overlayEditedFields.size,
                     annotationsCount: getMaterialAnnotationsForSave().length,
+                    acroFormChangedCount: acroFormFieldChanges.size,
                     pendingDeletedPagesCount: pendingDeletedPages.length,
                     pendingNewPagesCount: pendingNewPages.length,
                     rotationEntries: Object.keys(pageRotations).length,
@@ -18977,6 +21930,15 @@
                         await persistDocumentNameIfNeeded(pendingDocumentName);
                         setSaveSpinner(false);
                         setStatus('Saved.', 'ok');
+                        return true;
+                    }
+
+                    if (!hasOverlayEdits && hasOnlyAcroFormChanges) {
+                        setSaveSpinner(true, 'Saving form values...');
+                        persistAcroFormEditorState();
+                        await persistDocumentNameIfNeeded(pendingDocumentName);
+                        setSaveSpinner(false);
+                        setStatus('Saved in editor. Download PDF to embed form values.', 'ok');
                         return true;
                     }
 
@@ -19096,26 +22058,71 @@
 
                 syncAnnotationsForSave();
                 const annotationsToSave = getDirectAnnotationsForSave();
+                const fieldAnnotations = annotationsToSave.filter((annotation) => isFieldAnnotation(annotation));
+                const nonFieldAnnotations = annotationsToSave.filter((annotation) => !isFieldAnnotation(annotation));
+                const hasExistingAcroFormChanges = hasAcroFormEditorChanges();
                 const sessionId = localStorage.getItem('pdf_session_id') || null;
-                const response = await fetch('{{ route("documents.downloadAnnotatedPdf", $document) }}', {
-                    method: 'POST',
-                    headers: {
-                        'X-CSRF-TOKEN': csrfToken,
-                        'Content-Type': 'application/json',
-                        'Accept': '*/*',
-                    },
-                    body: JSON.stringify({
-                        annotations: annotationsToSave,
-                        use_clean_pdf: shouldUseCleanPdfForAnnotationSave(),
-                        use_original_pdf: shouldUseOriginalPdfForAnnotationSave(),
-                        session_id: sessionId,
-                    }),
-                });
-                if (!response.ok) {
-                    const errorText = await response.text().catch(() => '');
-                    throw new Error('Download failed: ' + errorText);
+                let pdfBytes = null;
+
+                if (fieldAnnotations.length > 0 || hasExistingAcroFormChanges) {
+                    if (nonFieldAnnotations.length > 0) {
+                        const stampedResponse = await fetch('{{ route("documents.downloadAnnotatedPdf", $document) }}', {
+                            method: 'POST',
+                            headers: {
+                                'X-CSRF-TOKEN': csrfToken,
+                                'Content-Type': 'application/json',
+                                'Accept': '*/*',
+                            },
+                            body: JSON.stringify({
+                                annotations: nonFieldAnnotations,
+                                use_clean_pdf: shouldUseCleanPdfForAnnotationSave(),
+                                use_original_pdf: shouldUseOriginalPdfForAnnotationSave(),
+                                session_id: null,
+                            }),
+                        });
+                        if (!stampedResponse.ok) {
+                            const errorText = await stampedResponse.text().catch(() => '');
+                            throw new Error('Download failed: ' + errorText);
+                        }
+                        pdfBytes = await stampedResponse.arrayBuffer();
+                    } else {
+                        const basePdfResponse = await fetch(getDownloadSourcePdfUrl(), {
+                            credentials: 'same-origin',
+                        });
+                        if (!basePdfResponse.ok) {
+                            const errorText = await basePdfResponse.text().catch(() => '');
+                            throw new Error('Download failed: ' + errorText);
+                        }
+                        pdfBytes = await basePdfResponse.arrayBuffer();
+                    }
+
+                    const pdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
+                    await applyExistingAcroFormEditorValuesToPdf(pdfDoc);
+                    await appendInteractiveFieldAnnotationsToPdf(pdfDoc, fieldAnnotations);
+                    pdfBytes = await pdfDoc.save();
+                } else {
+                    const response = await fetch('{{ route("documents.downloadAnnotatedPdf", $document) }}', {
+                        method: 'POST',
+                        headers: {
+                            'X-CSRF-TOKEN': csrfToken,
+                            'Content-Type': 'application/json',
+                            'Accept': '*/*',
+                        },
+                        body: JSON.stringify({
+                            annotations: annotationsToSave,
+                            use_clean_pdf: shouldUseCleanPdfForAnnotationSave(),
+                            use_original_pdf: shouldUseOriginalPdfForAnnotationSave(),
+                            session_id: sessionId,
+                        }),
+                    });
+                    if (!response.ok) {
+                        const errorText = await response.text().catch(() => '');
+                        throw new Error('Download failed: ' + errorText);
+                    }
+                    pdfBytes = await response.arrayBuffer();
                 }
-                const blob = await response.blob();
+
+                const blob = new Blob([pdfBytes], { type: 'application/pdf' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
@@ -19139,11 +22146,12 @@
                 const hasRotations = Object.keys(pageRotations).some(pageIndex => pageRotations[pageIndex] !== 0);
                 const hasDeletedPages = pendingDeletedPages.length > 0;
                 const hasNewPages = pendingNewPages.length > 0;
+                const hasExistingAcroFormChanges = hasAcroFormEditorChanges();
                 const annotationsToSave = getDirectAnnotationsForSave();
                 const hasAnnotations = annotationsToSave.length > 0;
                 const hasPromotedExtractionDeletions = hasPendingPromotedAnnotationDeletions() || hasDeletedAnnotations();
                 
-                if (!hasAnnotations && !hasPromotedExtractionDeletions && !hasTextEdits && !hasRotations && !hasDeletedPages && !hasNewPages) {
+                if (!hasAnnotations && !hasPromotedExtractionDeletions && !hasTextEdits && !hasRotations && !hasDeletedPages && !hasNewPages && !hasExistingAcroFormChanges) {
                     setStatus('No changes to save.', 'err');
                     return;
                 }
@@ -19190,6 +22198,10 @@
                         rotation: ann.rotation || 0
                     }))
                 });
+                console.log('AcroForm field changes:', {
+                    count: acroFormFieldChanges.size,
+                    items: Array.from(acroFormFieldChanges.values()),
+                });
 
                 setStatus('Saving...', '');
                 setSaveSpinner(true, 'Saving and refreshing...');
@@ -19235,6 +22247,7 @@
                 const directAnnotationTypes = new Set(['shape', 'eraser', 'signature', 'image', 'text', 'table']);
                 const canApplyAnnotationsDirect =
                     (hasAnnotations || hasPromotedExtractionDeletions) &&
+                    !hasExistingAcroFormChanges &&
                     !hasTextEdits &&
                     !hasRotations &&
                     !hasDeletedPages &&
@@ -19244,6 +22257,7 @@
                 console.log('=== SAVE PATH DECISION ===', {
                     canApplyAnnotationsDirect,
                     hasAnnotations,
+                    hasExistingAcroFormChanges,
                     hasPromotedExtractionDeletions,
                     hasTextEdits,
                     hasRotations,
@@ -19420,6 +22434,7 @@
                 
                 // Load the PDF (rotated or original) with pdf-lib for annotations
                 const pdfDoc = await PDFLib.PDFDocument.load(pdfBytesForLib);
+                await applyExistingAcroFormEditorValuesToPdf(pdfDoc);
                 
                 // Track deleted pages for adjusting new page insertAfter values
                 let deletedPagesForNewPageAdjustment = [];
@@ -19549,6 +22564,10 @@
                 // Don't apply rotations yet - do it after annotations are drawn
                 
                 const fontCache = {};
+                await appendInteractiveFieldAnnotationsToPdf(
+                    pdfDoc,
+                    annotations.filter((annotation) => isFieldAnnotation(annotation))
+                );
 
                 for (const item of pdfTextItems) {
                     if (!item.modified) {
@@ -19640,6 +22659,9 @@
                 };
 
                 for (const annotation of annotations) {
+                    if (annotation.type === 'field') {
+                        continue;
+                    }
                     const page = pdfDoc.getPage(annotation.pageIndex);
                     if (isImageBackedAnnotationType(annotation.type)) {
                         const image = await embedAnnotationImage(annotation);
@@ -20392,6 +23414,7 @@
                 });
 
                 if (response.ok) {
+                    clearAcroFormEditorState();
                     setStatus('Saved! Refreshing...', 'ok');
                     setSelection(null);
                     
@@ -20662,6 +23685,7 @@
                 // Delete all current annotations from the DB before clearing them locally
                 const idsToDelete = annotations.filter(a => a?.id).map(a => a.id);
                 deleteAnnotationIdsFromDatabase(idsToDelete);
+                clearAcroFormEditorState();
                 annotations.length = 0;
                 selectedAnnotation = null;
                 clearOverlaySelection();
@@ -21119,6 +24143,11 @@
             if (selectedDelete) {
                 selectedDelete.addEventListener('click', () => {
                     if (selectedAnnotation) {
+                        if (!ensureAnnotationInteractionsEnabled(selectedAnnotation, {
+                            message: 'Turn on Edit Text to delete existing text, shapes, and signatures.',
+                        })) {
+                            return;
+                        }
                         removeAnnotationRecord(selectedAnnotation);
                         updateSelectionBar();
                         persistAnnotations();
@@ -21796,11 +24825,20 @@
                 setSignatureDirtyState(true);
             };
             const updateSignatureModalCopy = () => {
+                const usingFieldTarget = Boolean(signatureTargetField && normalizeFieldKind(signatureTargetField.fieldKind) === 'signature');
                 if (signatureModalTitle) {
-                    signatureModalTitle.textContent = signatureMode === 'image' ? 'Import image' : 'Create signature';
+                    if (usingFieldTarget) {
+                        signatureModalTitle.textContent = signatureMode === 'image' ? 'Import signature into field' : 'Sign field';
+                    } else {
+                        signatureModalTitle.textContent = signatureMode === 'image' ? 'Import image' : 'Create signature';
+                    }
                 }
                 if (signatureSave) {
-                    signatureSave.textContent = signatureMode === 'image' ? 'Import and use' : 'Create and use';
+                    if (usingFieldTarget) {
+                        signatureSave.textContent = signatureMode === 'image' ? 'Import into field' : 'Apply to field';
+                    } else {
+                        signatureSave.textContent = signatureMode === 'image' ? 'Import and use' : 'Create and use';
+                    }
                 }
                 if (signatureCanvas) {
                     signatureCanvas.style.cursor = signatureMode === 'draw' ? 'crosshair' : 'default';
@@ -21860,6 +24898,7 @@
             function closeSignatureModal() {
                 signatureModal.classList.remove('active');
                 signatureModal.setAttribute('aria-hidden', 'true');
+                signatureTargetField = null;
             }
 
             signatureClear.addEventListener('click', () => {
@@ -22018,9 +25057,25 @@
                 if (!signatureDirty) {
                     return;
                 }
+                const targetField = signatureTargetField;
                 closeSignatureModal();
                 toolMode = 'select';
                 updateModeButtons();
+                updateEditTextBanner();
+                if (targetField && normalizeFieldKind(targetField.fieldKind) === 'signature') {
+                    if (signatureMode === 'image') {
+                        targetField.applySignatureToField?.(signatureImageAsset);
+                        return;
+                    }
+                    targetField.applySignatureToField?.({
+                        dataUrl: signatureCanvas.toDataURL('image/png'),
+                        width: signatureCanvas?.width || 900,
+                        height: signatureCanvas?.height || 300,
+                        fileName: 'signature.png',
+                        mimeType: 'image/png',
+                    });
+                    return;
+                }
                 if (signatureMode === 'image') {
                     placeImportedImageOnVisiblePage(signatureImageAsset);
                     return;
@@ -22074,7 +25129,15 @@
             const drawBrushSizeLabel = document.getElementById('draw-brush-size-label');
             const drawBrushPreview = document.getElementById('draw-brush-preview');
             const drawToolButtons = document.querySelectorAll('[data-draw-tool]');
+            const drawToolbar = document.getElementById('draw-toolbar');
+            const drawStrokeColorInput = document.getElementById('draw-stroke-color');
+            const drawOpacityInput = document.getElementById('draw-opacity');
+            const drawStrokeWidthInput = document.getElementById('draw-stroke-width');
+            const drawStrokeWidthValue = document.getElementById('draw-stroke-width-value');
+            const drawStrokePreviewDot = document.getElementById('draw-stroke-preview-dot');
+            const drawExitBtn = document.getElementById('draw-exit');
             let drawModeBanner = null;
+            let activeDrawStroke = null;
 
             const gridlinesToggle = document.getElementById('settings-gridlines-toggle');
             const gridlinesOptions = document.getElementById('settings-gridlines-options');
@@ -24024,6 +27087,8 @@
                     return;
                 }
                 closeShapeModal();
+                setSelection(null);
+                removeActiveEditor();
                 toolMode = 'shape';
                 insertMode = null;
                 if (insertX) insertX.classList.remove('pill-active');
@@ -24701,6 +27766,7 @@
                             // Click handler for deselect when not in text mode
                             overlay.addEventListener('click', (event) => {
                                 if (event.target !== overlay) return;
+                                if (consumeSuppressedOverlayBackgroundClick(overlay, event)) return;
                                 if (toolMode !== 'text') {
                                     setSelection(null);
                                     removeActiveEditor();
@@ -25135,9 +28201,13 @@
             const updateModeButtons = () => {
                 if (modeText) modeText.classList.toggle('active', toolMode === 'text');
                 if (modeEditText) modeEditText.classList.toggle('active', toolMode === 'edit-text');
+                if (modeEditText) {
+                    modeEditText.setAttribute('aria-pressed', toolMode === 'edit-text' ? 'true' : 'false');
+                }
                 if (modeSign) modeSign.classList.toggle('active', toolMode === 'sign');
                 if (modeShape) modeShape.classList.toggle('active', toolMode === 'shape' || toolMode === 'table');
                 if (modeDraw) modeDraw.classList.toggle('active', toolMode === 'draw');
+                if (modeField) modeField.classList.toggle('active', toolMode === 'field');
                 if (modeTable) modeTable.classList.toggle('active', toolMode === 'table');
                 if (modeOverlay) {
                     modeOverlay.checked = overlayEditorActive;
@@ -25148,10 +28218,15 @@
                 }
                 // Toggle eraser cursor class on viewer
                 if (viewer) viewer.classList.toggle('eraser-cursor', toolMode === 'draw');
+                if (viewer) viewer.classList.toggle('annotation-tool-lock', toolMode === 'draw' || toolMode === 'shape' || toolMode === 'field');
                 // Show/hide draw mode banner
                 updateDrawModeBanner();
                 updateOverlayUiState();
                 updateTextLayerVisibility();
+                if (clearLockedAnnotationSelectionIfNeeded()) {
+                    updateSelectionBar();
+                    updateEditTextBanner();
+                }
             };
 
             const setOverlayToolDisabled = (button, disabled) => {
@@ -25175,9 +28250,17 @@
                 if (modeOverlayChip) modeOverlayChip.classList.toggle('overlay-active', overlayOn);
                 if (overlayStateIndicator) overlayStateIndicator.classList.toggle('active', overlayOn);
 
-                [modeText, modeSign, modeImage, modeShape, modeDraw, convertBtn, document.getElementById('split-btn')].forEach((btn) => {
+                [modeText, modeEditText, modeSign, modeImage, modeShape, modeDraw, modeField, convertBtn, document.getElementById('split-btn')].forEach((btn) => {
                     setOverlayToolDisabled(btn, overlayOn);
                 });
+            };
+
+            const ensureEditTextModeEnabled = (message = 'Turn on Edit Text to edit existing text boxes.') => {
+                if (toolMode === 'edit-text') {
+                    return true;
+                }
+                setStatus(message, 'warn');
+                return false;
             };
 
             if (modeText) {
@@ -25200,9 +28283,30 @@
 
             if (modeEditText) {
                 modeEditText.addEventListener('click', () => {
-                    // Switch to extracted text tab
-                    const extractedTextTab = document.getElementById('extracted-text-tab');
-                    extractedTextTab.click();
+                    if (overlayEditorActive) {
+                        setStatus('Turn off Overlay Editor first to use Edit Text.', 'warn');
+                        return;
+                    }
+
+                    exitOverlayEditorForTool();
+                    insertMode = null;
+                    if (insertX) insertX.classList.remove('pill-active');
+                    if (insertCheckbox) insertCheckbox.classList.remove('pill-active');
+
+                    if (toolMode === 'edit-text') {
+                        toolMode = 'select';
+                        closeTextEditPopup();
+                        updateModeButtons();
+                        updateEditTextBanner();
+                        setStatus('Edit Text mode exited.', 'ok');
+                        return;
+                    }
+
+                    toolMode = 'edit-text';
+                    closeTextEditPopup();
+                    updateModeButtons();
+                    updateEditTextBanner();
+                    setStatus('Edit Text mode active. Click a text block to edit.', 'ok');
                 });
             }
 
@@ -25214,9 +28318,48 @@
                 }
             });
 
+            function syncDrawToolbar() {
+                if (drawStrokeColorInput) {
+                    drawStrokeColorInput.value = drawStrokeColor;
+                }
+                if (drawOpacityInput) {
+                    drawOpacityInput.value = String(drawOpacity);
+                }
+                if (drawStrokeWidthInput) {
+                    drawStrokeWidthInput.value = String(drawBrushSize);
+                }
+                if (drawStrokeWidthValue) {
+                    drawStrokeWidthValue.textContent = `${drawBrushSize}px`;
+                }
+                if (drawStrokePreviewDot) {
+                    const previewDotSize = Math.min(24, Math.max(6, drawBrushSize));
+                    drawStrokePreviewDot.style.width = `${previewDotSize}px`;
+                    drawStrokePreviewDot.style.height = `${previewDotSize}px`;
+                    drawStrokePreviewDot.style.background = drawStrokeColor;
+                    drawStrokePreviewDot.style.opacity = String(drawOpacity);
+                }
+            }
+
             function updateEditTextBanner() {
                 const banner = document.getElementById('edit-text-banner');
+                const isDrawMode = toolMode === 'draw';
+                const isFieldMode = toolMode === 'field';
+
+                syncEditTextBannerStickyOffset();
+                syncDrawToolbar();
+
+                if (drawToolbar) {
+                    drawToolbar.classList.toggle('hidden', !isDrawMode);
+                    drawToolbar.classList.toggle('inactive', !isDrawMode);
+                }
+
                 if (!banner) return;
+
+                banner.classList.toggle('hidden', isDrawMode || isFieldMode);
+                if (isDrawMode || isFieldMode) {
+                    banner.classList.add('inactive');
+                    return;
+                }
 
                 const activeEditorInput = getActiveEditorInput();
                 const activeEditorStyles = activeEditorInput
@@ -25239,8 +28382,6 @@
                     : null;
                 const hasTextAnnotation = selectedAnnotation && (selectedAnnotation.type === 'text' || !selectedAnnotation.type);
 
-                syncEditTextBannerStickyOffset();
-
                 if (activeEditorBannerState) {
                     banner.classList.remove('inactive');
                     populateEditTextBanner(activeEditorBannerState);
@@ -25262,9 +28403,8 @@
             }
 
             function syncEditTextBannerStickyOffset() {
-                const banner = document.getElementById('edit-text-banner');
                 const modeBar = document.getElementById('pdf-mode-bar');
-                if (!banner || !modeBar) return;
+                if (!modeBar) return;
 
                 let stickyBottom = 0;
                 const modeBarRect = modeBar.getBoundingClientRect();
@@ -25280,7 +28420,11 @@
                     }
                 }
 
-                banner.style.top = `${Math.max(0, Math.round(stickyBottom))}px`;
+                [document.getElementById('edit-text-banner'), document.getElementById('draw-toolbar')].forEach((toolbar) => {
+                    if (toolbar) {
+                        toolbar.style.top = `${Math.max(0, Math.round(stickyBottom))}px`;
+                    }
+                });
             }
             
             function populateEditTextBanner(annotation) {
@@ -25337,6 +28481,41 @@
                 if (italic) italic.classList.remove('active');
                 if (underline) underline.classList.remove('active');
                 if (align) align.value = 'left';
+            }
+
+            function openFieldModal() {
+                if (!fieldModal) {
+                    return;
+                }
+                fieldModal.classList.add('active');
+                fieldModal.setAttribute('aria-hidden', 'false');
+            }
+
+            function closeFieldModal() {
+                if (!fieldModal) {
+                    return;
+                }
+                fieldModal.classList.remove('active');
+                fieldModal.setAttribute('aria-hidden', 'true');
+            }
+
+            function activateFieldTool(nextFieldType) {
+                fieldType = normalizeFieldKind(nextFieldType);
+                closeFieldModal();
+                exitOverlayEditorForTool();
+                setSelection(null);
+                removeActiveEditor();
+                insertMode = null;
+                closeTextEditPopup();
+                if (insertX) insertX.classList.remove('pill-active');
+                if (insertCheckbox) insertCheckbox.classList.remove('pill-active');
+                toolMode = 'field';
+                updateModeButtons();
+                updateEditTextBanner();
+                const fieldLabel = fieldType === 'checkbox'
+                    ? 'Checkbox'
+                    : (fieldType === 'signature' ? 'Signature field' : (fieldType === 'select' ? 'Select field' : 'Text field'));
+                setStatus(`${fieldLabel} tool active. Click or drag on the PDF to place it.`, 'ok');
             }
 
             let ocrViewActive = false;
@@ -25464,6 +28643,34 @@
                 });
             }
 
+            if (modeField) {
+                modeField.addEventListener('click', () => {
+                    if (overlayEditorActive) {
+                        setStatus('Turn off Overlay Editor first to add fields.', 'warn');
+                        return;
+                    }
+                    openFieldModal();
+                });
+            }
+
+            if (fieldClose) {
+                fieldClose.addEventListener('click', closeFieldModal);
+            }
+
+            if (fieldModal) {
+                fieldModal.addEventListener('click', (event) => {
+                    if (event.target === fieldModal) {
+                        closeFieldModal();
+                    }
+                });
+            }
+
+            fieldTypeButtons.forEach((button) => {
+                button.addEventListener('click', () => {
+                    activateFieldTool(button.dataset.fieldType);
+                });
+            });
+
             if (modeShape) {
                 modeShape.addEventListener('click', () => {
                     if (overlayEditorActive) {
@@ -25492,7 +28699,17 @@
             function closeDrawModal() {
                 if (drawModal) drawModal.classList.remove('active');
             }
+            function clearActiveDrawStrokePreview() {
+                if (!activeDrawStroke) {
+                    return;
+                }
+                if (activeDrawStroke.previewCanvas?.parentNode) {
+                    activeDrawStroke.previewCanvas.parentNode.removeChild(activeDrawStroke.previewCanvas);
+                }
+                activeDrawStroke = null;
+            }
             function exitDrawMode() {
+                clearActiveDrawStrokePreview();
                 toolMode = 'select';
                 if (drawModeBanner) {
                     drawModeBanner.remove();
@@ -25504,24 +28721,9 @@
                 setStatus('Draw mode exited.', 'ok');
             }
             function updateDrawModeBanner() {
-                if (toolMode === 'draw') {
-                    if (!drawModeBanner) {
-                        drawModeBanner = document.createElement('div');
-                        drawModeBanner.className = 'draw-mode-banner';
-                        const toolLabel = drawToolType.charAt(0).toUpperCase() + drawToolType.slice(1);
-                        drawModeBanner.innerHTML = `
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20H7L3 16c-.8-.8-.8-2 0-2.8L14.6 1.6c.8-.8 2-.8 2.8 0l5 5c.8.8.8 2 0 2.8L12 20"/><path d="M6 11l4 4"/></svg>
-                            ${toolLabel} mode — drag on page to erase
-                            <button id="draw-mode-exit">Exit</button>
-                        `;
-                        document.body.appendChild(drawModeBanner);
-                        drawModeBanner.querySelector('#draw-mode-exit').addEventListener('click', exitDrawMode);
-                    }
-                } else {
-                    if (drawModeBanner) {
-                        drawModeBanner.remove();
-                        drawModeBanner = null;
-                    }
+                if (drawModeBanner) {
+                    drawModeBanner.remove();
+                    drawModeBanner = null;
                 }
             }
 
@@ -25531,7 +28733,24 @@
                         setStatus('Turn off Overlay Editor first to use Draw.', 'warn');
                         return;
                     }
-                    openDrawModal();
+
+                    if (toolMode === 'draw') {
+                        exitDrawMode();
+                        return;
+                    }
+
+                    exitOverlayEditorForTool();
+                    setSelection(null);
+                    removeActiveEditor();
+                    toolMode = 'draw';
+                    drawToolType = 'brush';
+                    insertMode = null;
+                    closeTextEditPopup();
+                    if (insertX) insertX.classList.remove('pill-active');
+                    if (insertCheckbox) insertCheckbox.classList.remove('pill-active');
+                    updateModeButtons();
+                    updateEditTextBanner();
+                    setStatus('Draw mode active. Drag on the PDF to draw.', 'ok');
                 });
             }
 
@@ -25548,6 +28767,32 @@
                     drawToolType = btn.dataset.drawTool;
                 });
             });
+
+            if (drawStrokeColorInput) {
+                drawStrokeColorInput.addEventListener('input', () => {
+                    drawStrokeColor = drawStrokeColorInput.value || '#111827';
+                    syncDrawToolbar();
+                });
+            }
+
+            if (drawOpacityInput) {
+                drawOpacityInput.addEventListener('change', () => {
+                    const nextOpacity = Number(drawOpacityInput.value || '1');
+                    drawOpacity = Number.isFinite(nextOpacity) ? Math.max(0.1, Math.min(1, nextOpacity)) : 1;
+                    syncDrawToolbar();
+                });
+            }
+
+            if (drawStrokeWidthInput) {
+                drawStrokeWidthInput.addEventListener('input', () => {
+                    drawBrushSize = parseInt(drawStrokeWidthInput.value || '12', 10) || 12;
+                    syncDrawToolbar();
+                });
+            }
+
+            if (drawExitBtn) {
+                drawExitBtn.addEventListener('click', exitDrawMode);
+            }
 
             // Brush size slider
             if (drawBrushSizeInput) {
@@ -25566,12 +28811,13 @@
                 drawApply.addEventListener('click', () => {
                     closeDrawModal();
                     toolMode = 'draw';
+                    drawToolType = 'brush';
                     insertMode = null;
                     if (insertX) insertX.classList.remove('pill-active');
                     if (insertCheckbox) insertCheckbox.classList.remove('pill-active');
                     updateModeButtons();
                     updateEditTextBanner();
-                    setStatus('Draw mode active. Drag on page to erase content.', 'ok');
+                    setStatus('Draw mode active. Drag on the PDF to draw.', 'ok');
                 });
             }
 
@@ -26600,6 +29846,7 @@
                 
                 overlay.addEventListener('click', (event) => {
                     if (event.target === overlay) {
+                        if (consumeSuppressedOverlayBackgroundClick(overlay, event)) return;
                         clearOverlaySelection();
                         overlay.querySelectorAll('.overlay-field.active').forEach(f => {
                             f.classList.remove('active');
@@ -26752,6 +29999,7 @@
                     }
 
                     if (event.target === overlay) {
+                        if (consumeSuppressedOverlayBackgroundClick(overlay, event)) return;
                         clearOverlaySelection();
                         overlay.querySelectorAll('.overlay-field.active').forEach(f => {
                             f.classList.remove('active');
@@ -26833,6 +30081,7 @@
                         }
                     });
                 })(overlay, pageNumber, canvas, wrapper, pageInfo);
+                setupFieldPlacementHandlers(overlay, wrapper, pageNumber, pageInfo);
                 
                 // Setup shape drawing for this overlay (same as in renderPdf)
                 let drawingShape = null;
@@ -31806,6 +35055,7 @@
                         // Double click = EDIT (enable text cursor)
                         field.addEventListener('dblclick', function(e) {
                             if (!overlayEditorActive) return;
+                            if (!ensureEditTextModeEnabled()) return;
                             if (e.target.closest('.box-menu') || e.target.classList.contains('resize-handle')) return;
                             if (getSelectedOverlayFields().length > 1) {
                                 setOverlaySelection(field);
@@ -32117,7 +35367,14 @@
                                 }
                             };
                             
-                            dragBtn.addEventListener('mousedown', (e) => startDrag(e, { immediate: true }));
+                            dragBtn.addEventListener('mousedown', (e) => {
+                                if (!ensureEditTextModeEnabled('Turn on Edit Text to move existing text boxes.')) {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    return;
+                                }
+                                startDrag(e, { immediate: true });
+                            });
                             
                             // Allow dragging the whole box when in selected (not editing) mode.
                             field.addEventListener('mousedown', (e) => {
@@ -32130,6 +35387,9 @@
                                 // selection works — otherwise startDrag's preventDefault()
                                 // kills the browser's native selection.
                                 if (wasSelectedBeforeMouseDown && field.classList.contains('active') && !field.classList.contains('editing') && e.detail < 2) {
+                                    if (toolMode !== 'edit-text') {
+                                        return;
+                                    }
                                     startDrag(e, { preventDefault: false, stopPropagation: false });
                                 }
                             });
@@ -32490,11 +35750,11 @@
                 const scaleY = canvas.height / pageData.height;
                 
                 // Once promoted extraction has been hydrated into live annotations,
-                // raw fitz blocks become a fallback only. Rendering both layers in
-                // loaded-saved mode creates visible duplicate text when the fallback
-                // block text is not an exact geometry/text match for the promoted
-                // annotation (for example truncated extraction fragments).
-                const shouldRenderOverlayBlocks = !promotedExtractionHydrated;
+                // raw fitz blocks usually become a fallback only. However, PDFs that
+                // advertise an AcroForm can rely on these overlay blocks to expose
+                // visible editor boxes for fillable regions when the source PDF's
+                // native form widgets are not imported into our custom field layer.
+                const shouldRenderOverlayBlocks = basePdfHasAcroForm || !promotedExtractionHydrated;
                 if (shouldRenderOverlayBlocks) {
                     renderOverlayBlocks();
                 }
@@ -32853,6 +36113,7 @@
                     field.addEventListener('mousedown', (e) => {
                         if (e.target.classList.contains('resize-handle')) return;
                         if (e.target !== field && e.target !== textSpan) return;
+                        if (toolMode !== 'edit-text') return;
 
                         isDragging = true;
                         dragStart = { x: e.clientX, y: e.clientY };
@@ -32900,6 +36161,7 @@
 
                     textSpan.addEventListener('dblclick', (e) => {
                         if (!overlayEditorActive) return;
+                        if (!ensureEditTextModeEnabled()) return;
                         e.stopPropagation();
                         textSpan.style.cursor = 'text';
                         textSpan.focus();
