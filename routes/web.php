@@ -69,6 +69,7 @@ Route::post('/documents/{document}/delete-annotations', [DocumentController::cla
 Route::post('/documents/{document}/apply-annotations-direct', [DocumentController::class, 'applyAnnotationsDirect'])->name('documents.applyAnnotationsDirect');
 Route::post('/documents/{document}/save-annotation-state', [DocumentController::class, 'saveAnnotationState'])->name('documents.saveAnnotationState');
 Route::post('/documents/{document}/download-annotated-pdf', [DocumentController::class, 'downloadAnnotatedPdf'])->name('documents.downloadAnnotatedPdf');
+Route::get('/documents/{document}/saved-acro-form-state', [DocumentController::class, 'getSavedAcroFormState'])->name('documents.getSavedAcroFormState');
 Route::post('documents/{document}/process-ocr', [DocumentController::class, 'processOcr'])->name('documents.processOcr');
 Route::get('documents/{document}/extraction-data', [DocumentController::class, 'getExtractionData'])->name('documents.getExtractionData');
 Route::post('documents/{document}/process-fitz', [DocumentController::class, 'processFitz'])->name('documents.processFitz');

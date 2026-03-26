@@ -2,6 +2,7 @@
 
 import importlib.util
 import pathlib
+import sys
 import unittest
 
 import fitz
@@ -11,6 +12,9 @@ MODULE_PATH = pathlib.Path(__file__).resolve().parents[1] / "pdf-editor" / "appl
 
 
 def load_module():
+    module_dir = str(MODULE_PATH.parent)
+    if module_dir not in sys.path:
+        sys.path.insert(0, module_dir)
     spec = importlib.util.spec_from_file_location("apply_annotations_direct", MODULE_PATH)
     module = importlib.util.module_from_spec(spec)
     if spec.loader is None:
@@ -125,11 +129,349 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         expected_top = insert_point.y - (annotation["fontSize"] * ascender)
         expected_bottom = insert_point.y + (annotation["fontSize"] * descender)
 
-        self.assertAlmostEqual(background_rect.x0, insert_point.x, places=3)
-        self.assertAlmostEqual(background_rect.x1, insert_point.x + expected_width, places=3)
+        self.assertAlmostEqual(background_rect.x0, insert_point.x - 6.0, places=3)
+        self.assertAlmostEqual(background_rect.x1, insert_point.x + expected_width + 6.0, places=3)
         self.assertAlmostEqual(background_rect.y0, expected_top, places=3)
         self.assertAlmostEqual(background_rect.y1, expected_bottom, places=3)
         self.assertGreater(background_rect.y1, insert_point.y)
+
+    def test_draw_text_normalizes_nonbreaking_spaces_before_pdf_write(self):
+        annotation = {
+            "text": "Spiders\u00A0in\u00A0The\u00A0Lord\u00A0of\u00A0the\u00A0Rings",
+            "pdfX": 72,
+            "pdfY": 144,
+            "fontFamily": "Helvetica",
+            "fontSize": 16,
+            "textColor": "#000000",
+        }
+
+        page = self.FakePage()
+
+        self.module.draw_text(page, annotation)
+
+        self.assertEqual(len(page.insert_text_calls), 1)
+        self.assertEqual(
+            page.insert_text_calls[0][1],
+            "Spiders in The Lord of the Rings",
+        )
+
+    def test_skip_promoted_source_erase_does_not_paint_background_rect(self):
+        annotation = {
+            "promotedFromExtraction": True,
+            "promotedDirty": True,
+            "skipPromotedSourceErase": True,
+        }
+        page = self.FakePage()
+        current_rect = fitz.Rect(100, 100, 180, 124)
+        lines = [{"rect": fitz.Rect(100, 100, 180, 124)}]
+
+        self.module.erase_promoted_source_text_region(page, annotation, current_rect, lines)
+
+        self.assertEqual(len(page.draw_rect_calls), 0)
+        self.assertEqual(len(page.shape_draw_rect_calls), 0)
+
+    def test_draw_text_without_rect_uses_editor_left_padding_for_visible_text(self):
+        annotation = {
+            "text": "This is the world",
+            "pdfX": 73.07692307692307,
+            "pdfY": 585.207100591716,
+            "fontFamily": "Helvetica",
+            "fontSize": 16,
+            "textAlign": "left",
+            "textColor": "#000000",
+        }
+
+        page = self.FakePage()
+
+        self.module.draw_text(page, annotation)
+
+        self.assertEqual(len(page.insert_text_calls), 1)
+        insert_point, _, _ = page.insert_text_calls[0]
+        self.assertAlmostEqual(insert_point.x, annotation["pdfX"] + 6.0, places=3)
+
+    def test_draw_text_uses_pdf_oblique_variant_for_italic_helvetica(self):
+        annotation = {
+            "text": "my cool title",
+            "pdfX": 73.0,
+            "pdfY": 585.0,
+            "fontFamily": "Helvetica",
+            "fontSize": 16,
+            "fontStyle": "italic",
+            "textColor": "#000000",
+        }
+
+        page = self.FakePage()
+
+        self.module.draw_text(page, annotation)
+
+        self.assertEqual(self.module.resolve_text_fontfile(annotation), None)
+        self.assertEqual(len(page.insert_text_calls), 1)
+        self.assertEqual(page.insert_text_calls[0][2]["fontname"], "heit")
+
+    def test_dropdown_font_families_resolve_to_supported_export_families(self):
+        expectations = {
+            "Helvetica": "Helvetica",
+            "Verdana": "Verdana",
+            "TrebuchetMS": "TrebuchetMS",
+            "TimesRoman": "TimesRoman",
+            "Georgia": "Georgia",
+            "Palatino": "TimesRoman",
+            "Garamond": "Garamond",
+            "Courier": "Courier",
+        }
+
+        for requested_family, normalized_family in expectations.items():
+            with self.subTest(font=requested_family):
+                annotation = {
+                    "text": "font smoke",
+                    "fontFamily": requested_family,
+                    "fontSize": 14,
+                }
+                self.assertEqual(
+                    self.module.normalize_font_family(requested_family),
+                    normalized_family,
+                )
+                fontfile = self.module.resolve_text_fontfile(annotation)
+                if normalized_family in {"Helvetica", "TimesRoman", "Courier"}:
+                    self.assertTrue(
+                        fontfile is None or pathlib.Path(fontfile).exists()
+                    )
+                else:
+                    self.assertTrue(pathlib.Path(fontfile).exists())
+
+    def test_helvetica_css_font_family_uses_annotation_alias(self):
+        self.assertEqual(
+            self.module.css_font_family("Helvetica"),
+            '"AnnotHelvetica", "Arimo", Arial, sans-serif',
+        )
+
+    def test_trebuchet_ms_italic_uses_real_italic_font_file(self):
+        annotation = {
+            "text": "my cool title",
+            "fontFamily": "TrebuchetMS",
+            "fontSize": 16,
+            "fontStyle": "italic",
+        }
+
+        fontfile = self.module.resolve_text_fontfile(annotation)
+
+        self.assertIsNotNone(fontfile)
+        self.assertTrue(pathlib.Path(fontfile).exists())
+        self.assertTrue(str(fontfile).endswith("Verdana-Italic.ttf"))
+
+    def test_trebuchet_ms_bold_italic_uses_real_bold_italic_font_file(self):
+        annotation = {
+            "text": "my cool title",
+            "fontFamily": "TrebuchetMS",
+            "fontSize": 16,
+            "fontWeight": "700",
+            "fontStyle": "italic",
+        }
+
+        fontfile = self.module.resolve_text_fontfile(annotation)
+
+        self.assertIsNotNone(fontfile)
+        self.assertTrue(pathlib.Path(fontfile).exists())
+        self.assertTrue(str(fontfile).endswith("Verdana-BoldItalic.ttf"))
+
+    def test_verdana_bold_italic_uses_real_bold_italic_font_file(self):
+        annotation = {
+            "text": "my cool title",
+            "fontFamily": "Verdana",
+            "fontSize": 16,
+            "fontWeight": "700",
+            "fontStyle": "italic",
+        }
+
+        fontfile = self.module.resolve_text_fontfile(annotation)
+
+        self.assertIsNotNone(fontfile)
+        self.assertTrue(pathlib.Path(fontfile).exists())
+        self.assertTrue(str(fontfile).endswith("Verdana-BoldItalic.ttf"))
+
+    def test_times_roman_italic_uses_real_italic_font_file(self):
+        annotation = {
+            "text": "my cool title",
+            "fontFamily": "TimesRoman",
+            "fontSize": 16,
+            "fontStyle": "italic",
+        }
+
+        fontfile = self.module.resolve_text_fontfile(annotation)
+
+        self.assertIsNotNone(fontfile)
+        self.assertTrue(pathlib.Path(fontfile).exists())
+        self.assertTrue(str(fontfile).endswith("LiberationSerif-Italic.ttf"))
+
+    def test_georgia_italic_uses_real_italic_font_file(self):
+        annotation = {
+            "text": "my cool title",
+            "fontFamily": "Georgia",
+            "fontSize": 16,
+            "fontStyle": "italic",
+        }
+
+        fontfile = self.module.resolve_text_fontfile(annotation)
+
+        self.assertIsNotNone(fontfile)
+        self.assertTrue(pathlib.Path(fontfile).exists())
+        self.assertTrue(str(fontfile).endswith("LiberationSerif-Italic.ttf"))
+
+    def test_georgia_bold_italic_uses_real_bold_italic_font_file(self):
+        annotation = {
+            "text": "my cool title",
+            "fontFamily": "Georgia",
+            "fontSize": 16,
+            "fontWeight": "700",
+            "fontStyle": "italic",
+        }
+
+        fontfile = self.module.resolve_text_fontfile(annotation)
+
+        self.assertIsNotNone(fontfile)
+        self.assertTrue(pathlib.Path(fontfile).exists())
+        self.assertTrue(str(fontfile).endswith("LiberationSerif-BoldItalic.ttf"))
+
+    def test_garamond_italic_uses_real_eb_garamond_italic_font_file(self):
+        annotation = {
+            "text": "my cool title",
+            "fontFamily": "Garamond",
+            "fontSize": 16,
+            "fontStyle": "italic",
+        }
+
+        fontfile = self.module.resolve_text_fontfile(annotation)
+
+        self.assertIsNotNone(fontfile)
+        self.assertTrue(pathlib.Path(fontfile).exists())
+        self.assertTrue(str(fontfile).endswith("EBGaramond-Italic.ttf"))
+
+    def test_garamond_bold_italic_uses_real_eb_garamond_bold_italic_font_file(self):
+        annotation = {
+            "text": "my cool title",
+            "fontFamily": "Garamond",
+            "fontSize": 16,
+            "fontWeight": "700",
+            "fontStyle": "italic",
+        }
+
+        fontfile = self.module.resolve_text_fontfile(annotation)
+
+        self.assertIsNotNone(fontfile)
+        self.assertTrue(pathlib.Path(fontfile).exists())
+        self.assertTrue(str(fontfile).endswith("EBGaramond-BoldItalic.ttf"))
+
+    def test_garamond_bypasses_embedded_font_metadata_and_uses_vendored_font_file(self):
+        annotation = {
+            "text": "my cool title",
+            "fontFamily": "Garamond",
+            "fontSourceName": "Garamond",
+            "fontSize": 16,
+            "__documentId": 1930,
+        }
+
+        original_loader = self.module.load_embedded_font_metadata
+        try:
+            self.module.load_embedded_font_metadata = lambda document_id: {
+                "fake-garamond": {
+                    "clean_name": "Garamond",
+                    "family": "Garamond",
+                    "css_weight": "400",
+                    "css_style": "normal",
+                    "file_path": "/fonts/extracted/fake-garamond.ttf",
+                }
+            }
+
+            self.assertIsNone(self.module.resolve_embedded_font_entry(annotation))
+            fontfile = self.module.resolve_text_fontfile(annotation)
+        finally:
+            self.module.load_embedded_font_metadata = original_loader
+
+        self.assertIsNotNone(fontfile)
+        self.assertTrue(pathlib.Path(fontfile).exists())
+        self.assertTrue(str(fontfile).endswith("EBGaramond-Regular.ttf"))
+
+    def test_courier_italic_falls_back_to_pdf_courier_oblique(self):
+        annotation = {
+            "text": "my cool title",
+            "fontFamily": "Courier",
+            "fontSize": 16,
+            "fontStyle": "italic",
+        }
+
+        self.assertIsNone(self.module.resolve_text_fontfile(annotation))
+        self.assertEqual(self.module.resolve_text_fontname(annotation), "coit")
+
+    def test_courier_bold_italic_falls_back_to_pdf_courier_bold_oblique(self):
+        annotation = {
+            "text": "my cool title",
+            "fontFamily": "Courier",
+            "fontSize": 16,
+            "fontWeight": "700",
+            "fontStyle": "italic",
+        }
+
+        self.assertIsNone(self.module.resolve_text_fontfile(annotation))
+        self.assertEqual(self.module.resolve_text_fontname(annotation), "cobi")
+
+    def test_palatino_italic_uses_real_italic_font_file(self):
+        annotation = {
+            "text": "my cool title",
+            "fontFamily": "Palatino",
+            "fontSize": 16,
+            "fontStyle": "italic",
+        }
+
+        fontfile = self.module.resolve_text_fontfile(annotation)
+
+        self.assertIsNotNone(fontfile)
+        self.assertTrue(pathlib.Path(fontfile).exists())
+        self.assertTrue(str(fontfile).endswith("LiberationSerif-Italic.ttf"))
+
+    def test_palatino_bold_italic_uses_real_bold_italic_font_file(self):
+        annotation = {
+            "text": "my cool title",
+            "fontFamily": "Palatino",
+            "fontSize": 16,
+            "fontWeight": "700",
+            "fontStyle": "italic",
+        }
+
+        fontfile = self.module.resolve_text_fontfile(annotation)
+
+        self.assertIsNotNone(fontfile)
+        self.assertTrue(pathlib.Path(fontfile).exists())
+        self.assertTrue(str(fontfile).endswith("LiberationSerif-BoldItalic.ttf"))
+
+    def test_palatino_bypasses_embedded_font_metadata_and_uses_vendored_font_file(self):
+        annotation = {
+            "text": "my cool title",
+            "fontFamily": "Palatino",
+            "fontSourceName": "Palatino",
+            "fontSize": 16,
+            "__documentId": 1930,
+        }
+
+        original_loader = self.module.load_embedded_font_metadata
+        try:
+            self.module.load_embedded_font_metadata = lambda document_id: {
+                "fake-palatino": {
+                    "clean_name": "Palatino",
+                    "family": "Palatino",
+                    "css_weight": "400",
+                    "css_style": "normal",
+                    "file_path": "/fonts/extracted/fake-palatino.ttf",
+                }
+            }
+
+            self.assertIsNone(self.module.resolve_embedded_font_entry(annotation))
+            fontfile = self.module.resolve_text_fontfile(annotation)
+        finally:
+            self.module.load_embedded_font_metadata = original_loader
+
+        self.assertIsNotNone(fontfile)
+        self.assertTrue(pathlib.Path(fontfile).exists())
+        self.assertTrue(str(fontfile).endswith("LiberationSerif-Regular.ttf"))
 
     def test_draw_shape_line_uses_saved_endpoints(self):
         annotation = {
@@ -161,6 +503,403 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         self.assertAlmostEqual(end.y, rect.y0 + (rect.height * 0.8), places=3)
         self.assertLess(start.x, end.x)
         self.assertLess(start.y, end.y)
+
+    def test_should_preserve_promoted_source_lines_respects_reflow_flag(self):
+        annotation = {
+            "promotedFromExtraction": True,
+            "promotedReflowEnabled": True,
+            "sourceLineBBoxes": [
+                [0, 0, 100, 12],
+                [0, 14, 120, 26],
+                [0, 28, 180, 40],
+            ],
+            "sourceTextLines": [
+                "Employment Eligibility Verification",
+                "Department of Homeland Security",
+                "U.S.Citizenship and Immigration Services",
+            ],
+        }
+
+        self.assertFalse(
+            self.module.should_preserve_promoted_source_lines(
+                annotation,
+                "Employment Eligibility Verification\nDepartment of Homeland DOGCHENEZ\nU.S.Citizenship and Immigration Services",
+            )
+        )
+
+    def test_should_preserve_promoted_source_lines_rejects_multiline_text_against_single_source_line(self):
+        annotation = {
+            "promotedFromExtraction": True,
+            "sourceLineBBoxes": [
+                [38.09, 109.68, 536.03, 117.35],
+            ],
+            "sourceTextLines": [
+                "ANTI-DISCRIMINATION NOTICE:All employees can choose which acceptable documentation to present for Form I-9. Employers cannot ask",
+            ],
+        }
+
+        self.assertFalse(
+            self.module.should_preserve_promoted_source_lines(
+                annotation,
+                "ANTI-DISCRIMINATION NOTICE:All employees can choose which acceptable documentation to present for Form I-9. Employers cannot ask\nemp 111111\nSupplement B, Reverification and Rehire. Treating employees differently based on their citizenship, immigration status, or national origin may be illegal.",
+            )
+        )
+
+    def test_should_use_htmlbox_for_promoted_rich_text_with_multiple_runs(self):
+        annotation = {
+            "promotedFromExtraction": True,
+            "text": "Heading\nBody",
+            "richTextHtml": (
+                "<span style=\"font-weight:700\">Heading</span><br>"
+                "<span>Body</span>"
+            ),
+        }
+
+        self.assertTrue(
+            self.module.should_use_htmlbox_for_text(
+                annotation,
+                embedded_font_entry={"clean_name": "TimesNewRomanPSMT"},
+            )
+        )
+
+    def test_normalize_exact_source_line_layout_preserves_line_style_metadata(self):
+        annotation = {
+            "promotedFromExtraction": True,
+            "sourceBlockLeft": 100,
+            "sourceBlockTop": 20,
+            "sourceBlockWidth": 200,
+            "sourceLineBBoxes": [
+                [120, 20, 280, 35],
+                [110, 40, 290, 52],
+            ],
+            "sourceTextLines": [
+                "Employment Eligibility Verification",
+                "Department of Homeland DOGCHENEZ",
+            ],
+            "sourceSpans": [
+                {
+                    "text": "Employment Eligibility Verification",
+                    "bbox": [120, 20, 280, 35],
+                    "origin": [120, 32],
+                    "font": "TimesNewRomanPS-BoldMT",
+                    "fontSize": 14,
+                    "fontWeight": "700",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                },
+                {
+                    "text": "Department of Homeland Security",
+                    "bbox": [110, 40, 290, 52],
+                    "origin": [110, 50],
+                    "font": "TimesNewRomanPSMT",
+                    "fontSize": 11,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                },
+            ],
+        }
+
+        layout = self.module.normalize_exact_source_line_layout(
+            annotation,
+            "Employment Eligibility Verification\nDepartment of Homeland DOGCHENEZ",
+            fitz.Font("helv"),
+            11,
+            fitz.Rect(100, 20, 300, 60),
+        )
+
+        self.assertEqual(len(layout), 2)
+        self.assertEqual(layout[0]["align"], 1)
+        self.assertAlmostEqual(layout[0]["baseline_x"], 120.0, places=3)
+        self.assertEqual(layout[0]["font_weight"], "700")
+        self.assertAlmostEqual(layout[0]["font_size"], 14.0, places=3)
+        self.assertEqual(layout[1]["align"], 1)
+        self.assertAlmostEqual(layout[1]["baseline_x"], 110.0, places=3)
+        self.assertEqual(layout[1]["font_source_name"], "TimesNewRomanPSMT")
+        self.assertAlmostEqual(layout[1]["font_size"], 11.0, places=3)
+
+    def test_draw_text_using_exact_source_lines_uses_line_specific_font_size(self):
+        page = self.FakePage()
+        annotation = {
+            "fontFamily": "TimesRoman",
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "textColor": "#000000",
+        }
+        lines = [
+            {
+                "rect": fitz.Rect(120, 20, 280, 35),
+                "text": "Employment Eligibility Verification",
+                "baseline_x": 120,
+                "baseline_y": 32,
+                "align": 1,
+                "font_family": "TimesNewRomanPS-BoldMT",
+                "font_source_name": "TimesNewRomanPS-BoldMT",
+                "font_size": 14,
+                "font_weight": "700",
+                "font_style": "normal",
+                "color": "#000000",
+                "underline": False,
+            },
+            {
+                "rect": fitz.Rect(110, 40, 290, 52),
+                "text": "Department of Homeland DOGCHENEZ",
+                "baseline_x": 110,
+                "baseline_y": 50,
+                "align": 1,
+                "font_family": "TimesNewRomanPSMT",
+                "font_source_name": "TimesNewRomanPSMT",
+                "font_size": 11,
+                "font_weight": "400",
+                "font_style": "normal",
+                "color": "#000000",
+                "underline": False,
+            },
+        ]
+
+        result = self.module.draw_text_using_exact_source_lines(
+            page,
+            annotation,
+            lines,
+            fitz.Font("tiro"),
+            "tiro",
+            11,
+            (0.0, 0.0, 0.0),
+            1.0,
+            0,
+            None,
+        )
+
+        self.assertTrue(result)
+        self.assertEqual(len(page.insert_text_calls), 2)
+        self.assertAlmostEqual(page.insert_text_calls[0][0].x, 120.0, places=3)
+        self.assertAlmostEqual(page.insert_text_calls[1][0].x, 110.0, places=3)
+        self.assertAlmostEqual(page.insert_text_calls[0][2]["fontsize"], 14.0, places=3)
+        self.assertAlmostEqual(page.insert_text_calls[1][2]["fontsize"], 11.0, places=3)
+        self.assertEqual(
+            page.insert_text_calls[0][2]["fontname"],
+            self.module.resolve_text_font_resource_name({
+                "fontFamily": "TimesNewRomanPS-BoldMT",
+                "fontSourceName": "TimesNewRomanPS-BoldMT",
+                "fontWeight": "700",
+                "fontStyle": "normal",
+            }),
+        )
+        self.assertEqual(
+            page.insert_text_calls[1][2]["fontname"],
+            self.module.resolve_text_font_resource_name({
+                "fontFamily": "TimesNewRomanPSMT",
+                "fontSourceName": "TimesNewRomanPSMT",
+                "fontWeight": "400",
+                "fontStyle": "normal",
+            }),
+        )
+
+    def test_normalize_exact_source_line_layout_prefers_edited_annotation_color(self):
+        annotation = {
+            "promotedFromExtraction": True,
+            "textColor": "#c45454",
+            "sourceBlockLeft": 155.17999267578125,
+            "sourceBlockTop": 55.526222229003906,
+            "sourceBlockWidth": 309.01568603515625,
+            "sourceLineBBoxes": [
+                [155.17999267578125, 55.526222229003906, 464.1956787109375, 63.887081146240234],
+            ],
+            "sourceTextLines": [
+                "ADDENDUM CONCERNING RIGHT TO TERMINATE",
+            ],
+            "sourceSpans": [
+                {
+                    "text": "ADDENDUM CONCERNING RIGHT TO TERMINATE",
+                    "bbox": [155.17999267578125, 54.56551361083984, 460.4667053222656, 65.60551452636719],
+                    "origin": [155.17999267578125, 63.719970703125],
+                    "font": "Verdana-Bold",
+                    "fontSize": 11.039999961853027,
+                    "fontWeight": "700",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                },
+            ],
+        }
+
+        layout = self.module.normalize_exact_source_line_layout(
+            annotation,
+            "ADDENDUM CONCERNING RIGHT TO TERMINATE",
+            fitz.Font("helv"),
+            11,
+            fitz.Rect(166.2721893491124, 52.94674441564941, 480.47337278106504, 69.51479175292752),
+        )
+
+        self.assertEqual(len(layout), 1)
+        self.assertEqual(layout[0]["color"], "#c45454")
+        self.assertEqual(layout[0]["align"], 1)
+
+    def test_normalize_exact_source_line_layout_keeps_center_alignment_after_translation(self):
+        annotation = {
+            "promotedFromExtraction": True,
+            "sourceBlockLeft": 100,
+            "sourceBlockTop": 20,
+            "sourceBlockWidth": 200,
+            "sourceLineBBoxes": [
+                [120, 20, 280, 35],
+            ],
+            "sourceTextLines": [
+                "Centered title",
+            ],
+            "sourceSpans": [
+                {
+                    "text": "Centered title",
+                    "bbox": [120, 20, 280, 35],
+                    "origin": [120, 32],
+                    "font": "TimesNewRomanPS-BoldMT",
+                    "fontSize": 14,
+                    "fontWeight": "700",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                },
+            ],
+        }
+
+        layout = self.module.normalize_exact_source_line_layout(
+            annotation,
+            "Centered title",
+            fitz.Font("helv"),
+            14,
+            fitz.Rect(140, 20, 340, 35),
+        )
+
+        self.assertEqual(len(layout), 1)
+        self.assertEqual(layout[0]["align"], 1)
+
+    def test_normalize_exact_source_line_layout_prefers_edited_style_over_source_span_style(self):
+        annotation = {
+            "promotedFromExtraction": True,
+            "textColor": "#000000",
+            "fontWeight": "700",
+            "fontStyle": "italic",
+            "underline": True,
+            "sourceBlockLeft": 100,
+            "sourceBlockTop": 20,
+            "sourceBlockWidth": 200,
+            "sourceLineBBoxes": [
+                [120, 20, 280, 35],
+            ],
+            "sourceTextLines": [
+                "Styled title",
+            ],
+            "sourceSpans": [
+                {
+                    "text": "Styled title",
+                    "bbox": [120, 20, 280, 35],
+                    "origin": [120, 32],
+                    "font": "TimesNewRomanPSMT",
+                    "fontSize": 12,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "underline": False,
+                    "color": "#000000",
+                },
+            ],
+        }
+
+        layout = self.module.normalize_exact_source_line_layout(
+            annotation,
+            "Styled title",
+            fitz.Font("helv"),
+            12,
+            fitz.Rect(120, 20, 280, 35),
+        )
+
+        self.assertEqual(len(layout), 1)
+        self.assertEqual(layout[0]["font_weight"], "700")
+        self.assertEqual(layout[0]["font_style"], "italic")
+        self.assertTrue(layout[0]["underline"])
+
+    def test_normalize_exact_source_line_layout_prefers_edited_font_family_over_source_span_font(self):
+        annotation = {
+            "promotedFromExtraction": True,
+            "fontFamily": "TrebuchetMS",
+            "fontSourceName": "TrebuchetMS",
+            "fontWeight": "700",
+            "fontStyle": "italic",
+            "sourceBlockLeft": 30,
+            "sourceBlockTop": 40,
+            "sourceBlockWidth": 220,
+            "sourceLineBBoxes": [
+                [30, 40, 250, 76],
+            ],
+            "sourceTextLines": [
+                "my cool title",
+            ],
+            "sourceSpans": [
+                {
+                    "text": "my cool title",
+                    "bbox": [30, 40, 250, 76],
+                    "origin": [30, 68],
+                    "font": "Cousine-Regular",
+                    "fontSize": 36,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#3b72a5",
+                },
+            ],
+        }
+
+        layout = self.module.normalize_exact_source_line_layout(
+            annotation,
+            "my cool title",
+            fitz.Font("helv"),
+            36,
+            fitz.Rect(30, 40, 250, 76),
+        )
+
+        self.assertEqual(len(layout), 1)
+        self.assertEqual(layout[0]["font_family"], "TrebuchetMS")
+        self.assertEqual(layout[0]["font_source_name"], "TrebuchetMS")
+        self.assertEqual(layout[0]["font_style"], "italic")
+
+    def test_normalize_exact_source_line_layout_prefers_edited_font_size_over_source_span_size(self):
+        annotation = {
+            "promotedFromExtraction": True,
+            "fontFamily": "Palatino",
+            "fontSourceName": "Palatino",
+            "fontWeight": "700",
+            "fontStyle": "italic",
+            "sourceBlockLeft": 30,
+            "sourceBlockTop": 40,
+            "sourceBlockWidth": 220,
+            "sourceLineBBoxes": [
+                [30, 40, 250, 76],
+            ],
+            "sourceTextLines": [
+                "my cool title",
+            ],
+            "sourceSpans": [
+                {
+                    "text": "my cool title",
+                    "bbox": [30, 40, 250, 76],
+                    "origin": [30, 68],
+                    "font": "SomeOriginalSerif-Regular",
+                    "fontSize": 60,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#3b72a5",
+                },
+            ],
+        }
+
+        layout = self.module.normalize_exact_source_line_layout(
+            annotation,
+            "my cool title",
+            fitz.Font("helv"),
+            80,
+            fitz.Rect(30, 40, 250, 76),
+        )
+
+        self.assertEqual(len(layout), 1)
+        self.assertEqual(layout[0]["font_family"], "Palatino")
+        self.assertEqual(layout[0]["font_source_name"], "Palatino")
+        self.assertAlmostEqual(layout[0]["font_size"], 80.0, places=3)
 
 
 if __name__ == "__main__":

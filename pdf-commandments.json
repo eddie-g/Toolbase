@@ -24,6 +24,14 @@
     {
       "id": 6,
       "text": "When Download PDF is pressed, the annotations are merged into the redacted PDF. Until then, they are kept separate."
+    },
+    {
+      "id": 7,
+      "text": "ONLY the affected page is redrawn when an annotation is added, removed, or modified. Other pages are not redrawn."
+    },
+    {
+      "id": 8,
+      "text": "Each TEXT annotation or modification(delete, move, update, change) should trigger a FULL PAGE REDRAW THERE ARE NO EXCEPTIONS TO THIS RULE."
     }
   ]
 }
