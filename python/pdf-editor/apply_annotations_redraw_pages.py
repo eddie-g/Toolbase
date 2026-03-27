@@ -118,6 +118,13 @@ def draw_text_absolute(
     tw.write_text(page, color=color, overlay=True)
 
 
+def span_rect(span: Dict[str, Any]) -> Optional[fitz.Rect]:
+    bbox = span.get("bbox")
+    if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
+        return None
+    return rect_from_bbox(bbox, padding=0.25)
+
+
 def get_widget_rects(page: fitz.Page) -> List[fitz.Rect]:
     rects: List[fitz.Rect] = []
     try:
@@ -216,6 +223,31 @@ def get_block_lookup(page_data: Dict[str, Any]) -> Dict[int, Dict[str, Any]]:
             continue
         lookup[block_num] = block
     return lookup
+
+
+def block_rect_from_data(block: Dict[str, Any]) -> Optional[fitz.Rect]:
+    if not isinstance(block, dict):
+        return None
+
+    line_bboxes = [
+        bbox
+        for bbox in (block.get("line_bboxes") or [])
+        if isinstance(bbox, (list, tuple)) and len(bbox) >= 4
+    ]
+    if line_bboxes:
+        x0 = min(float(bbox[0]) for bbox in line_bboxes)
+        y0 = min(float(bbox[1]) for bbox in line_bboxes)
+        x1 = max(float(bbox[2]) for bbox in line_bboxes)
+        y1 = max(float(bbox[3]) for bbox in line_bboxes)
+        return fitz.Rect(x0, y0, x1, y1)
+
+    return rect_from_box_metrics(
+        block.get("left"),
+        block.get("top"),
+        block.get("width"),
+        block.get("height"),
+        padding=0.0,
+    )
 
 
 def normalize_text_lines(value: Any) -> List[str]:
@@ -527,12 +559,14 @@ def draw_extraction_words_for_page(
     mask_rects: List[fitz.Rect],
     widget_rects: List[fitz.Rect],
     font_cache: Dict[str, fitz.Font],
+    skip_block_nums: Optional[Set[int]] = None,
 ) -> int:
     page = rebuilt_doc[page_index]
     page_words = page_data.get("words") or []
     seen_words = set()
     block_color_writers: Dict[Tuple[Tuple[float, float, float], Any], fitz.TextWriter] = {}
     drawn_words = 0
+    skipped_blocks = set(skip_block_nums or set())
 
     sorted_words = sorted(
         [word for word in page_words if isinstance(word, dict)],
@@ -540,6 +574,12 @@ def draw_extraction_words_for_page(
     )
 
     for word in sorted_words:
+        try:
+            word_block_num = int(word.get("block_num"))
+        except Exception:
+            word_block_num = None
+        if word_block_num is not None and word_block_num in skipped_blocks:
+            continue
         if should_skip_word(word, mask_rects, widget_rects):
             continue
 
@@ -569,6 +609,7 @@ def draw_extraction_words_for_page(
             "italic" if bool(word.get("italic")) else "normal",
             word.get("font_xref"),
             font_cache,
+            prefer_embedded=True,
         )
 
         block_num = word.get("block_num")
@@ -584,6 +625,196 @@ def draw_extraction_words_for_page(
         writer.write_text(page, color=writer_key[0], overlay=True)
 
     return drawn_words
+
+
+def block_can_use_exact_replay(
+    block: Dict[str, Any],
+    block_words: List[Dict[str, Any]],
+    mask_rects: List[fitz.Rect],
+    widget_rects: List[fitz.Rect],
+) -> bool:
+    if not isinstance(block, dict):
+        return False
+    if not isinstance(block.get("spans"), list) or not block.get("spans"):
+        return False
+
+    if block_words:
+        for word in block_words:
+            if should_skip_word(word, mask_rects, widget_rects):
+                return False
+        return True
+
+    block_rect = block_rect_from_data(block)
+    if block_rect is None:
+        return False
+    if overlaps_mask_rects(block_rect, mask_rects):
+        return False
+    if overlaps_widget_rects(block_rect, widget_rects):
+        return False
+    return True
+
+
+def draw_extraction_block_spans(
+    rebuilt_doc: fitz.Document,
+    font_lookup_doc: fitz.Document,
+    page_index: int,
+    block: Dict[str, Any],
+    font_cache: Dict[str, fitz.Font],
+    mask_rects: List[fitz.Rect],
+    widget_rects: List[fitz.Rect],
+) -> bool:
+    page = rebuilt_doc[page_index]
+    spans = [span for span in (block.get("spans") or []) if isinstance(span, dict)]
+    if not spans:
+        return False
+
+    seen_spans = set()
+    block_num = block.get("block_num")
+    span_color_writers: Dict[Tuple[Tuple[float, float, float], Any], fitz.TextWriter] = {}
+    drew_any = False
+
+    sorted_spans = sorted(
+        spans,
+        key=lambda span: (
+            float((span.get("bbox") or [0, 0, 0, 0])[1] or 0),
+            float((span.get("bbox") or [0, 0, 0, 0])[0] or 0),
+        ),
+    )
+
+    for span in sorted_spans:
+        rect = span_rect(span)
+        if overlaps_mask_rects(rect, mask_rects):
+            return False
+        if overlaps_widget_rects(rect, widget_rects):
+            return False
+
+        text = sanitize_text(span.get("text", ""))
+        if not text.strip():
+            continue
+
+        origin = span.get("origin")
+        try:
+            if isinstance(origin, (list, tuple)) and len(origin) >= 2:
+                origin_x = float(origin[0])
+                origin_y = float(origin[1])
+            elif rect is not None:
+                origin_x = float(rect.x0)
+                origin_y = float(rect.y1)
+            else:
+                continue
+        except Exception:
+            continue
+
+        try:
+            font_size = float(span.get("fontSize") or span.get("font_size") or 12.0)
+        except Exception:
+            font_size = 12.0
+
+        font_name = span.get("embedded_font_name") or span.get("font")
+        font_weight = span.get("fontWeight") or span.get("font_weight")
+        font_style = span.get("fontStyle") or span.get("font_style")
+        if not font_style:
+            font_style = "italic" if bool(span.get("italic")) else "normal"
+        color = parse_color(span.get("hex_color") if span.get("hex_color") is not None else span.get("color"))
+        font_xref = span.get("font_xref") or span.get("xref")
+
+        signature = (
+            text,
+            round(origin_x, 3),
+            round(origin_y, 3),
+            round(font_size, 3),
+            str(font_name or ""),
+            str(font_weight or ""),
+            str(font_style or ""),
+            str(font_xref or ""),
+        )
+        if signature in seen_spans:
+            continue
+        seen_spans.add(signature)
+
+        font_obj = build_font(
+            font_lookup_doc,
+            page_index + 1,
+            font_name,
+            font_weight,
+            font_style,
+            font_xref,
+            font_cache,
+            prefer_embedded=True,
+        )
+
+        writer_key = (color, block_num)
+        writer = span_color_writers.setdefault(writer_key, fitz.TextWriter(page.rect))
+        try:
+            writer.append((origin_x, origin_y), text, font=font_obj, fontsize=font_size)
+        except Exception:
+            draw_text_absolute(page, text, origin_x, origin_y, font_obj, font_size, color)
+        drew_any = True
+
+    for writer_key, writer in span_color_writers.items():
+        writer.write_text(page, color=writer_key[0], overlay=True)
+
+    return drew_any
+
+
+def draw_extraction_blocks_for_page(
+    rebuilt_doc: fitz.Document,
+    font_lookup_doc: fitz.Document,
+    page_index: int,
+    page_data: Dict[str, Any],
+    mask_rects: List[fitz.Rect],
+    widget_rects: List[fitz.Rect],
+    font_cache: Dict[str, fitz.Font],
+) -> Tuple[int, Set[int]]:
+    blocks = [
+        block
+        for block in (page_data.get("blocks") or [])
+        if isinstance(block, dict)
+    ]
+    words_by_block: Dict[int, List[Dict[str, Any]]] = {}
+    for word in page_data.get("words") or []:
+        if not isinstance(word, dict):
+            continue
+        try:
+            block_num = int(word.get("block_num"))
+        except Exception:
+            continue
+        words_by_block.setdefault(block_num, []).append(word)
+
+    drawn_blocks = 0
+    replayed_block_nums: Set[int] = set()
+    sorted_blocks = sorted(
+        blocks,
+        key=lambda block: (
+            float(block.get("top", 0) or 0),
+            float(block.get("left", 0) or 0),
+        ),
+    )
+    for block in sorted_blocks:
+        try:
+            block_num = int(block.get("block_num"))
+        except Exception:
+            continue
+        if not block_can_use_exact_replay(
+            block,
+            words_by_block.get(block_num, []),
+            mask_rects,
+            widget_rects,
+        ):
+            continue
+        if draw_extraction_block_spans(
+            rebuilt_doc,
+            font_lookup_doc,
+            page_index,
+            block,
+            font_cache,
+            mask_rects,
+            widget_rects,
+        ):
+            replayed_block_nums.add(block_num)
+            drawn_blocks += 1
+
+    return drawn_blocks, replayed_block_nums
 
 
 def draw_annotation(page: fitz.Page, annotation: Dict[str, Any]) -> None:
@@ -741,6 +972,7 @@ def rebuild_pages_with_annotations(
 
     total_words_drawn = 0
     total_annotations_drawn = 0
+    total_exact_blocks_drawn = 0
 
     output_doc = fitz.open()
     output_doc.insert_pdf(
@@ -756,6 +988,16 @@ def rebuild_pages_with_annotations(
         output_page = output_doc[page_index]
         widget_rects = get_widget_rects(output_page)
         erase_extraction_words_on_page(output_page, page_data, widget_rects)
+        exact_blocks_drawn, replayed_block_nums = draw_extraction_blocks_for_page(
+            output_doc,
+            font_lookup_doc,
+            page_index,
+            page_data,
+            mask_rects,
+            widget_rects,
+            font_cache,
+        )
+        total_exact_blocks_drawn += exact_blocks_drawn
         total_words_drawn += draw_extraction_words_for_page(
             output_doc,
             font_lookup_doc,
@@ -764,6 +1006,7 @@ def rebuild_pages_with_annotations(
             mask_rects,
             widget_rects,
             font_cache,
+            skip_block_nums=replayed_block_nums,
         )
 
         for annotation in annotations_by_page.get(page_index, []):
@@ -797,7 +1040,8 @@ def rebuild_pages_with_annotations(
     print(
         f"Rebuilt {len(redraw_pages)} touched page(s); "
         f"preserved {max(0, total_page_count - len(redraw_pages))} untouched page(s); "
-        f"redrew {total_words_drawn} extracted words and {total_annotations_drawn} annotation(s)."
+        f"redrew {total_exact_blocks_drawn} exact block(s), {total_words_drawn} extracted word(s), "
+        f"and {total_annotations_drawn} annotation(s)."
     )
 
 

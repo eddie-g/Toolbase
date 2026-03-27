@@ -296,8 +296,9 @@ def build_font(
     font_style: Optional[str],
     font_xref: Optional[Any],
     font_cache: Dict[str, fitz.Font],
+    prefer_embedded: bool = False,
 ) -> fitz.Font:
-    key = f"{page_num}|{font_name}|{font_weight}|{font_style}|{font_xref}"
+    key = f"{page_num}|{font_name}|{font_weight}|{font_style}|{font_xref}|{int(bool(prefer_embedded))}"
     if key in font_cache:
         return font_cache[key]
 
@@ -327,33 +328,17 @@ def build_font(
     except Exception:
         xref_num = None
 
-    # Priority 1: bundled / full font files. The selective redraw path writes
-    # arbitrary Unicode text with TextWriter; extracted embedded PDF subsets are
-    # not safe for that and can emit tofu / NUL glyph runs in the saved PDF.
-    # When we have a known full-font mapping, prefer it over the original PDF's
-    # subset font even if metrics are slightly less exact.
-    font_file = get_font_file(font_name or "", script_dir, font_weight=font_weight)
-    if font_file and os.path.exists(font_file):
-        try:
-            font_obj = fitz.Font(fontfile=font_file)
-        except Exception:
-            font_obj = None
+    def _embedded_matches_requested_style(candidate: Optional[fitz.Font]) -> bool:
+        if candidate is None:
+            return False
+        return candidate.is_bold == _want_bold and candidate.is_italic == _want_italic
 
-    # Priority 2: embedded font from original doc by xref. Keep this only as a
-    # fallback for fonts we do not have a safe full-file mapping for.
-    if font_obj is None and xref_num is not None:
-        candidate = get_embedded_font(doc, xref_num, font_name=font_name, page_num=page_num)
-        if candidate is not None:
-            # Reject if bold/italic flags don't match — means match_font_xref
-            # picked the wrong xref variant (e.g. Bold subset for a regular span).
-            bold_ok = candidate.is_bold == _want_bold
-            italic_ok = candidate.is_italic == _want_italic
-            if bold_ok and italic_ok:
-                font_obj = candidate
-
-    # Priority 3: embedded font by name scan for fonts without a direct mapping.
-    if font_obj is None:
-        font_obj = get_embedded_font(
+    def _resolve_embedded_font() -> Optional[fitz.Font]:
+        if xref_num is not None:
+            candidate = get_embedded_font(doc, xref_num, font_name=font_name, page_num=page_num)
+            if _embedded_matches_requested_style(candidate):
+                return candidate
+        return get_embedded_font(
             doc,
             None,
             font_name=font_name,
@@ -361,6 +346,30 @@ def build_font(
             want_bold=_want_bold,
             want_italic=_want_italic,
         )
+
+    # When we are replaying untouched extracted text, the glyph set is identical
+    # to the original PDF, so reusing the original embedded subset is safe and
+    # preserves exact metrics for condensed / custom faces.
+    if prefer_embedded:
+        font_obj = _resolve_embedded_font()
+
+    # For edited text, prefer bundled / full font files. The selective redraw
+    # path writes arbitrary Unicode text with TextWriter; extracted embedded PDF
+    # subsets are not safe for that and can emit tofu / NUL glyph runs in the
+    # saved PDF. When we have a known full-font mapping, prefer it over the
+    # original PDF's subset font even if metrics are slightly less exact.
+    if font_obj is None:
+        font_file = get_font_file(font_name or "", script_dir, font_weight=font_weight)
+        if font_file and os.path.exists(font_file):
+            try:
+                font_obj = fitz.Font(fontfile=font_file)
+            except Exception:
+                font_obj = None
+
+    # Fallback to the original embedded font when a safe full-font mapping is
+    # unavailable, or when the caller explicitly requested exact embedded replay.
+    if font_obj is None:
+        font_obj = _resolve_embedded_font()
 
     if font_obj is None:
         # Final fallback. Keep deterministic and robust over fancy matching.
@@ -758,6 +767,7 @@ def rebuild(clean_pdf_path: str, extraction_data: List[Dict[str, Any]], edits: L
                 "italic" if bool(w.get("italic")) else "normal",
                 w.get("font_xref"),
                 font_cache,
+                prefer_embedded=True,
             )
             # Key: (color, block_num) — words in the same block share a writer,
             # but words from different blocks are never merged together.

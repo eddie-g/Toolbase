@@ -134,6 +134,86 @@ class DocumentController extends Controller
         }, $annotations);
     }
 
+    private function upsertPdfStateSessionSnapshot(
+        Document $document,
+        string $sessionId,
+        array $annotations,
+        string $state = 'saved'
+    ): int {
+        if ($sessionId === '') {
+            return 0;
+        }
+
+        $normalizedAnnotations = array_values(array_filter($annotations, 'is_array'));
+        $annotationIds = array_values(array_filter(array_map(
+            static fn (array $annotation) => is_string($annotation['id'] ?? null)
+                ? trim((string) $annotation['id'])
+                : '',
+            $normalizedAnnotations
+        )));
+
+        DB::transaction(function () use ($document, $sessionId, $normalizedAnnotations, $annotationIds, $state) {
+            $existingRows = PdfState::query()
+                ->where('document_id', $document->id)
+                ->where('session_id', $sessionId)
+                ->get()
+                ->keyBy(static fn (PdfState $record) => trim((string) data_get($record->annotation_data, 'id', '')));
+
+            $seenIds = [];
+            foreach ($normalizedAnnotations as $annotation) {
+                $annotationId = is_string($annotation['id'] ?? null)
+                    ? trim((string) $annotation['id'])
+                    : '';
+                if ($annotationId === '') {
+                    continue;
+                }
+
+                $pageIndex = isset($annotation['pageIndex']) && is_numeric($annotation['pageIndex'])
+                    ? (int) $annotation['pageIndex']
+                    : null;
+
+                /** @var PdfState|null $existing */
+                $existing = $existingRows->get($annotationId);
+                if ($existing) {
+                    $existing->update([
+                        'annotation_data' => $annotation,
+                        'page_number' => $pageIndex,
+                        'state' => $state,
+                    ]);
+                } else {
+                    PdfState::create([
+                        'document_id' => $document->id,
+                        'user_email' => null,
+                        'session_id' => $sessionId,
+                        'page_number' => $pageIndex,
+                        'annotation_data' => $annotation,
+                        'state' => $state,
+                    ]);
+                }
+
+                $seenIds[$annotationId] = true;
+            }
+
+            $staleIds = [];
+            foreach ($existingRows as $existingId => $record) {
+                if ($existingId === '' || isset($seenIds[$existingId])) {
+                    continue;
+                }
+                $staleIds[] = $record->id;
+            }
+
+            if (!empty($staleIds)) {
+                PdfState::query()
+                    ->where('document_id', $document->id)
+                    ->where('session_id', $sessionId)
+                    ->whereIn('id', $staleIds)
+                    ->delete();
+            }
+        });
+
+        return count($annotationIds);
+    }
+
     private function normalizeAcroFormEntriesForPersistence(array $entries): array
     {
         $normalized = [];
@@ -1460,16 +1540,240 @@ class DocumentController extends Controller
         return false;
     }
 
-    private function annotationRequiresSelectiveRedraw(array $annotation): bool
+    private function normalizeComparableAnnotationNumberForSelectiveRedraw($value): ?float
     {
-        if (strtolower((string) ($annotation['type'] ?? '')) !== 'text') {
-            return false;
+        if (!is_numeric($value)) {
+            return null;
         }
-        if (!($annotation['promotedFromExtraction'] ?? false) || !($annotation['promotedDirty'] ?? false)) {
+
+        return round((float) $value, 4);
+    }
+
+    private function getCanonicalPromotedAnnotationSourceTextForSelectiveRedraw(array $annotation): string
+    {
+        $sourceTextLines = array_values(array_filter(array_map(
+            fn ($line) => $this->sanitizePromotedExtractionLineForMaterialization($line),
+            is_array($annotation['sourceTextLines'] ?? null) ? $annotation['sourceTextLines'] : []
+        ), static fn ($line) => $line !== ''));
+
+        if (!empty($sourceTextLines)) {
+            return $this->sanitizePromotedExtractionTextForMaterialization(implode("\n", $sourceTextLines));
+        }
+
+        return $this->sanitizePromotedExtractionTextForMaterialization($annotation['originalText'] ?? '');
+    }
+
+    private function getPromotedAnnotationPrimarySourceSpanForSelectiveRedraw(array $annotation): array
+    {
+        foreach ((is_array($annotation['sourceSpans'] ?? null) ? $annotation['sourceSpans'] : []) as $span) {
+            if (is_array($span)) {
+                return $span;
+            }
+        }
+
+        return [];
+    }
+
+    private function getPromotedAnnotationSourceFontFamilyForSelectiveRedraw(array $annotation): string
+    {
+        $span = $this->getPromotedAnnotationPrimarySourceSpanForSelectiveRedraw($annotation);
+        $fontSourceName = trim((string) ($span['font'] ?? ''));
+        $resolvedFontFamily = $this->normalizePdfEditableFontFamilyForMaterialization($fontSourceName);
+        if ($resolvedFontFamily !== '') {
+            return $resolvedFontFamily;
+        }
+
+        return $this->normalizeBuiltinAnnotationFontFamilyForMaterialization($fontSourceName ?: 'Helvetica');
+    }
+
+    private function getPromotedAnnotationSourceFontStyleForSelectiveRedraw(array $annotation): string
+    {
+        $span = $this->getPromotedAnnotationPrimarySourceSpanForSelectiveRedraw($annotation);
+        $fontName = trim((string) ($span['font'] ?? ''));
+        if (!empty($span['italic']) || preg_match('/italic|oblique/i', $fontName)) {
+            return 'italic';
+        }
+
+        return 'normal';
+    }
+
+    private function getPromotedAnnotationSourceFontWeightForSelectiveRedraw(array $annotation): string
+    {
+        $span = $this->getPromotedAnnotationPrimarySourceSpanForSelectiveRedraw($annotation);
+        $fontWeight = trim((string) ($span['font_weight'] ?? ''));
+        if ($fontWeight !== '') {
+            return $fontWeight;
+        }
+
+        $fontName = trim((string) ($span['font'] ?? ''));
+        return (!empty($span['bold']) || preg_match('/bold/i', $fontName)) ? '700' : '400';
+    }
+
+    private function getPromotedAnnotationSourceColorForSelectiveRedraw(array $annotation): string
+    {
+        $span = $this->getPromotedAnnotationPrimarySourceSpanForSelectiveRedraw($annotation);
+        if (!empty($span['hex_color'])) {
+            return $this->colorToHexForMaterialization((string) $span['hex_color']);
+        }
+
+        if (array_key_exists('color', $span) && $span['color'] !== null) {
+            if (is_numeric($span['color'])) {
+                return $this->colorToHexForMaterialization('#' . str_pad(dechex((int) $span['color']), 6, '0', STR_PAD_LEFT));
+            }
+
+            return $this->colorToHexForMaterialization((string) $span['color']);
+        }
+
+        return '#000000';
+    }
+
+    private function promotedAnnotationMatchesExactSourceStateForSelectiveRedraw(array $annotation): bool
+    {
+        if (!($annotation['promotedFromExtraction'] ?? false) || !empty($annotation['promotedReflowEnabled'])) {
             return false;
         }
 
-        return !$this->annotationCanBeDirectStamped($annotation);
+        $currentText = $this->sanitizePromotedExtractionTextForMaterialization($annotation['text'] ?? '');
+        if ($currentText !== $this->getCanonicalPromotedAnnotationSourceTextForSelectiveRedraw($annotation)) {
+            return false;
+        }
+
+        if (trim((string) ($annotation['richTextHtml'] ?? '')) !== '') {
+            return false;
+        }
+
+        $sourceLineBBoxes = array_values(array_filter(
+            is_array($annotation['sourceLineBBoxes'] ?? null) ? $annotation['sourceLineBBoxes'] : [],
+            static fn ($bbox) => is_array($bbox) && count($bbox) >= 4
+        ));
+        if (empty($sourceLineBBoxes)) {
+            return false;
+        }
+
+        $sourceBlockLeft = isset($annotation['sourceBlockLeft']) ? (float) $annotation['sourceBlockLeft'] : null;
+        $sourceBlockTop = isset($annotation['sourceBlockTop']) ? (float) $annotation['sourceBlockTop'] : null;
+        $sourceBlockWidth = isset($annotation['sourceBlockWidth']) ? (float) $annotation['sourceBlockWidth'] : null;
+        $sourceBlockHeight = isset($annotation['sourceBlockHeight']) ? (float) $annotation['sourceBlockHeight'] : null;
+        $sourcePageHeight = isset($annotation['sourcePageHeight']) ? (float) $annotation['sourcePageHeight'] : null;
+        if ($sourceBlockLeft === null || $sourceBlockTop === null || $sourceBlockWidth === null || $sourceBlockHeight === null || !($sourcePageHeight > 0)) {
+            return false;
+        }
+
+        $currentTop = $sourcePageHeight - (((float) ($annotation['pdfY'] ?? 0)) + ((float) ($annotation['pdfHeight'] ?? 0)));
+        $geometryTolerance = 0.75;
+        if (
+            abs(((float) ($annotation['pdfX'] ?? 0)) - $sourceBlockLeft) > $geometryTolerance
+            || abs($currentTop - $sourceBlockTop) > $geometryTolerance
+            || abs(((float) ($annotation['pdfWidth'] ?? 0)) - $sourceBlockWidth) > $geometryTolerance
+            || abs(((float) ($annotation['pdfHeight'] ?? 0)) - $sourceBlockHeight) > $geometryTolerance
+        ) {
+            return false;
+        }
+
+        if (strtolower((string) ($annotation['backgroundColor'] ?? 'transparent')) !== 'transparent') {
+            return false;
+        }
+
+        if ($this->colorToHexForMaterialization((string) ($annotation['textColor'] ?? '#000000')) !== $this->getPromotedAnnotationSourceColorForSelectiveRedraw($annotation)) {
+            return false;
+        }
+
+        if (trim((string) ($annotation['fontFamily'] ?? '')) !== $this->getPromotedAnnotationSourceFontFamilyForSelectiveRedraw($annotation)) {
+            return false;
+        }
+
+        if (trim((string) ($annotation['fontStyle'] ?? 'normal')) !== $this->getPromotedAnnotationSourceFontStyleForSelectiveRedraw($annotation)) {
+            return false;
+        }
+
+        if (trim((string) ($annotation['fontWeight'] ?? '400')) !== $this->getPromotedAnnotationSourceFontWeightForSelectiveRedraw($annotation)) {
+            return false;
+        }
+
+        if (!empty($annotation['underline'])) {
+            return false;
+        }
+
+        if (trim((string) ($annotation['textAlign'] ?? 'left')) !== 'left') {
+            return false;
+        }
+
+        if ($this->normalizeComparableAnnotationNumberForSelectiveRedraw($annotation['opacity'] ?? 1) !== 1.0) {
+            return false;
+        }
+
+        $sourceLineHeights = array_values(array_filter(array_map(static function (array $bbox): float {
+            return (float) ($bbox[3] ?? 0) - (float) ($bbox[1] ?? 0);
+        }, $sourceLineBBoxes), static fn ($height) => is_finite($height) && $height > 0));
+        $savedLineHeight = (float) ($annotation['lineHeight'] ?? 0);
+        if (!empty($sourceLineHeights) && $savedLineHeight > 0) {
+            $averageSourceLineHeight = array_sum($sourceLineHeights) / count($sourceLineHeights);
+            if (abs($savedLineHeight - $averageSourceLineHeight) > 1.5) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function annotationRequiresSelectiveRedraw(array $annotation): bool
+    {
+        if ($this->isFieldAnnotation($annotation)) {
+            return false;
+        }
+
+        if (!($annotation['promotedFromExtraction'] ?? false)) {
+            return true;
+        }
+
+        return !$this->promotedAnnotationMatchesExactSourceStateForSelectiveRedraw($annotation);
+    }
+
+    private function isFieldAnnotation(array $annotation): bool
+    {
+        return strtolower((string) ($annotation['type'] ?? '')) === 'field';
+    }
+
+    private function shouldReplayAnnotationOnSelectiveRedraw(array $annotation): bool
+    {
+        if ($this->isFieldAnnotation($annotation)) {
+            return false;
+        }
+
+        if (!($annotation['promotedFromExtraction'] ?? false)) {
+            return true;
+        }
+
+        return true;
+    }
+
+    private function filterRenderAnnotationsForSelectiveRedraw(
+        array $annotationsPayload,
+        array $requestedPageIndices
+    ): array {
+        $allowedPages = array_fill_keys(array_values(array_unique(array_filter(array_map(
+            static fn ($value) => is_numeric($value) ? (int) $value : null,
+            $requestedPageIndices
+        ), static fn ($value) => is_int($value) && $value >= 0))), true);
+
+        if (empty($allowedPages)) {
+            return [];
+        }
+
+        return array_values(array_filter($annotationsPayload, function ($annotation) use ($allowedPages) {
+            if (!is_array($annotation)) {
+                return false;
+            }
+
+            $pageIndex = isset($annotation['pageIndex']) && is_numeric($annotation['pageIndex'])
+                ? (int) $annotation['pageIndex']
+                : null;
+            if ($pageIndex === null || !isset($allowedPages[$pageIndex])) {
+                return false;
+            }
+
+            return $this->shouldReplayAnnotationOnSelectiveRedraw($annotation);
+        }));
     }
 
     private function filterSelectiveRedrawPageIndices(
@@ -2648,9 +2952,62 @@ class DocumentController extends Controller
 
         $userEmail = $this->resolveEditorEmail();
         $sessionId = session()->getId();
+        $fullPath = Storage::path($document->path);
         $extraction = $this->findLatestFitzExtraction($document->id, $userEmail, $sessionId);
 
+        if (!file_exists($fullPath)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'PDF file not found.'
+            ], 404);
+        }
+
+        $needsRefresh = false;
         if (!$extraction) {
+            $needsRefresh = true;
+        } else {
+            $pdfModifiedTime = filemtime($fullPath) ?: 0;
+            $extractionTime = strtotime((string) $extraction->created_at) ?: 0;
+            $scriptPath = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
+            $scriptModifiedTime = file_exists($scriptPath) ? (filemtime($scriptPath) ?: 0) : 0;
+
+            if ($pdfModifiedTime > $extractionTime || $scriptModifiedTime > $extractionTime) {
+                $needsRefresh = true;
+            } else {
+                $extractionData = json_decode($extraction->extraction_data, true);
+                $hasFontXref = false;
+                if (is_array($extractionData)) {
+                    foreach ($extractionData as $page) {
+                        if (!empty($page['words'])) {
+                            $firstWord = $page['words'][0];
+                            if (array_key_exists('font_xref', $firstWord)) {
+                                $hasFontXref = true;
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                if (!$hasFontXref) {
+                    $needsRefresh = true;
+                }
+            }
+        }
+
+        if ($needsRefresh) {
+            [$returnCode, $output] = $this->runFitzExtraction($document, $fullPath, $userEmail, $sessionId, $pythonBinary);
+            if ($returnCode === 0) {
+                $extraction = $this->findLatestFitzExtraction($document->id, $userEmail, $sessionId);
+            } else {
+                \Log::error('Failed to refresh FITZ extraction data', [
+                    'document_id' => $document->id,
+                    'return_code' => $returnCode,
+                    'output' => implode("\n", $output),
+                ]);
+            }
+        }
+
+        if (!$extraction || !isset($extraction->extraction_data)) {
             return response()->json([
                 'success' => false,
                 'message' => 'No extraction data found. Processing may still be in progress.'
@@ -2664,7 +3021,6 @@ class DocumentController extends Controller
             $embeddedFonts = json_decode(file_get_contents($embeddedFontsPath), true);
         } else {
             // Try to extract fonts on-the-fly if not yet done
-            $fullPath = Storage::path($document->path);
             if (file_exists($fullPath)) {
                 $docId = $document->id;
                 $escapedPath = escapeshellarg($fullPath);
@@ -5655,8 +6011,11 @@ class DocumentController extends Controller
                 : [],
             $annotationsPayload
         );
-        if (empty($renderAnnotationsPayload) && !empty($sessionAnnotationsPayload)) {
-            $renderAnnotationsPayload = $sessionAnnotationsPayload;
+        if (empty($renderAnnotationsPayload) && !empty($sessionAnnotationsPayload) && !empty($redrawPageIndices)) {
+            $renderAnnotationsPayload = $this->filterRenderAnnotationsForSelectiveRedraw(
+                $sessionAnnotationsPayload,
+                $redrawPageIndices
+            );
         }
         if (empty($redrawPageIndices) && !empty($renderAnnotationsPayload)) {
             $redrawPageIndices = $this->collectAnnotationPageIndices($renderAnnotationsPayload);
@@ -5674,6 +6033,12 @@ class DocumentController extends Controller
             $renderAnnotationsPayload,
             $deletedPromotedSourceKeys
         );
+        if (empty($renderAnnotationsPayload) && !empty($redrawPageIndices)) {
+            $renderAnnotationsPayload = $this->filterRenderAnnotationsForSelectiveRedraw(
+                !empty($sessionAnnotationsPayload) ? $sessionAnnotationsPayload : $annotationsPayload,
+                $redrawPageIndices
+            );
+        }
 
         $annotationsPayload = array_map(function ($annotation) use ($document) {
             if (!is_array($annotation)) {
@@ -5972,6 +6337,341 @@ class DocumentController extends Controller
         ]);
     }
 
+    public function stampPdfStatePreview(Request $request)
+    {
+        $validated = $request->validate([
+            'annotation' => 'nullable|array',
+            'annotations' => 'nullable|array',
+            'document_id' => 'nullable|integer|exists:documents,id',
+            'pdf_state_source' => 'nullable|string|in:saved,extracted',
+            'page_width' => 'nullable|numeric|min:1',
+            'page_height' => 'nullable|numeric|min:1',
+            'reuse_url' => 'nullable|boolean',
+            'use_base' => 'nullable|boolean',
+        ]);
+
+        $annotationsPayload = $request->input('annotations', null);
+        $singleAnnotationPayload = $request->input('annotation', null);
+        $documentIdFilter = isset($validated['document_id']) ? (int) $validated['document_id'] : 0;
+        $pdfStateSource = (string) ($validated['pdf_state_source'] ?? 'saved');
+        $useBase = $request->has('use_base')
+            ? (bool) ($validated['use_base'] ?? false)
+            : ($documentIdFilter > 0);
+        $pdfStateIdInput = $request->input('pdf_state_id', null);
+        $pdfStateIds = [];
+        if (is_array($pdfStateIdInput)) {
+            foreach ($pdfStateIdInput as $value) {
+                if (is_numeric($value)) {
+                    $pdfStateIds[] = (int) $value;
+                }
+            }
+        } elseif (is_numeric($pdfStateIdInput)) {
+            $pdfStateIds[] = (int) $pdfStateIdInput;
+        }
+        $pdfStateIds = array_values(array_unique(array_filter($pdfStateIds, static fn ($value) => $value > 0)));
+
+        $annotations = [];
+        $source = null;
+        $usingDocumentStateSource = false;
+
+        if (is_array($annotationsPayload)) {
+            $annotations = array_values(array_filter($annotationsPayload, static fn ($annotation) => is_array($annotation)));
+            $source = 'annotations';
+        } elseif (is_array($singleAnnotationPayload)) {
+            $annotations = [$singleAnnotationPayload];
+            $source = 'annotation';
+        } elseif (!empty($pdfStateIds)) {
+            $records = PdfState::query()
+                ->whereIn('id', $pdfStateIds)
+                ->get()
+                ->keyBy(static fn (PdfState $record) => (int) $record->id);
+
+            $missingIds = array_values(array_filter(
+                $pdfStateIds,
+                static fn ($id) => !$records->has((int) $id)
+            ));
+            if (!empty($missingIds)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'One or more requested pdf_state rows were not found.',
+                    'missing_ids' => $missingIds,
+                ], 422);
+            }
+
+            foreach ($pdfStateIds as $pdfStateId) {
+                $record = $records->get((int) $pdfStateId);
+                $annotationData = $record && is_array($record->annotation_data) ? $record->annotation_data : null;
+                if (!$annotationData) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "pdf_state row {$pdfStateId} does not contain an annotation payload.",
+                    ], 422);
+                }
+                $annotationData['documentId'] = (int) ($record->document_id ?? 0);
+                $annotationData['__documentId'] = (int) ($record->document_id ?? 0);
+                $annotations[] = $annotationData;
+            }
+            $source = count($pdfStateIds) === 1 ? 'pdf_state' : 'pdf_state_array';
+        } elseif ($documentIdFilter > 0) {
+            $records = PdfState::query()
+                ->where('document_id', $documentIdFilter)
+                ->where('state', $pdfStateSource)
+                ->orderBy('id')
+                ->get();
+
+            if ($records->isEmpty()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "No {$pdfStateSource} pdf_state annotations were found for the requested document.",
+                    'document_id' => $documentIdFilter,
+                    'pdf_state_source' => $pdfStateSource,
+                ], 422);
+            }
+
+            foreach ($records as $record) {
+                $annotationData = is_array($record->annotation_data) ? $record->annotation_data : null;
+                if (!$annotationData) {
+                    continue;
+                }
+                $annotationData['documentId'] = (int) ($record->document_id ?? 0);
+                $annotationData['__documentId'] = (int) ($record->document_id ?? 0);
+                $annotations[] = $annotationData;
+            }
+
+            if (empty($annotations)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "No valid {$pdfStateSource} pdf_state annotation payloads were found for the requested document.",
+                    'document_id' => $documentIdFilter,
+                    'pdf_state_source' => $pdfStateSource,
+                ], 422);
+            }
+
+            $source = 'document_pdf_state_' . $pdfStateSource;
+            $usingDocumentStateSource = true;
+        } else {
+            $rawPayload = $request->all();
+            if (is_array($rawPayload) && isset($rawPayload['type'])) {
+                $annotations = [$rawPayload];
+                $source = 'raw_annotation';
+            } elseif (array_is_list($rawPayload) && !empty($rawPayload) && is_array($rawPayload[0] ?? null)) {
+                $annotations = array_values(array_filter($rawPayload, static fn ($annotation) => is_array($annotation)));
+                $source = 'raw_annotations';
+            }
+        }
+
+        if (empty($annotations)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Provide document_id, pdf_state_id, annotation, or annotations.',
+            ], 422);
+        }
+
+        if ($usingDocumentStateSource) {
+            $useBase = true;
+        }
+
+        $normalizedAnnotations = [];
+        foreach ($annotations as $index => $annotation) {
+            if (!is_array($annotation)) {
+                continue;
+            }
+            $normalizedAnnotation = $annotation;
+            if ($useBase) {
+                $normalizedAnnotation['pageIndex'] = is_numeric($normalizedAnnotation['pageIndex'] ?? null)
+                    ? max(0, (int) $normalizedAnnotation['pageIndex'])
+                    : 0;
+            } else {
+                $normalizedAnnotation['pageIndex'] = 0;
+            }
+            $annotationId = trim((string) ($normalizedAnnotation['id'] ?? ''));
+            if ($annotationId === '') {
+                $normalizedAnnotation['id'] = 'blank_preview_' . ($index + 1);
+            }
+            $normalizedAnnotations[] = $normalizedAnnotation;
+        }
+
+        if (empty($normalizedAnnotations)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No valid annotation payloads were provided.',
+            ], 422);
+        }
+
+        $annotationDocumentIds = [];
+        foreach ($normalizedAnnotations as $annotation) {
+            if (!is_array($annotation)) {
+                continue;
+            }
+            $documentIdValue = $annotation['documentId'] ?? $annotation['__documentId'] ?? null;
+            if (is_numeric($documentIdValue) && (int) $documentIdValue > 0) {
+                $annotationDocumentIds[] = (int) $documentIdValue;
+            }
+        }
+        $annotationDocumentIds = array_values(array_unique($annotationDocumentIds));
+
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+        $scriptPath = base_path('python/pdf-editor/stamp_annotations_on_blank_pdf.py');
+        if (!is_file($scriptPath)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Blank preview stamping script not found.',
+            ], 500);
+        }
+
+        $baseDocumentId = isset($validated['document_id']) ? (int) $validated['document_id'] : 0;
+        $resolvedBasePdfPath = null;
+        $resolvedSourcePdfPath = null;
+        if ($useBase) {
+            if ($baseDocumentId <= 0) {
+                if (count($annotationDocumentIds) === 1) {
+                    $baseDocumentId = $annotationDocumentIds[0];
+                } elseif (count($annotationDocumentIds) > 1) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'use_base requires all annotations to belong to one document, or an explicit document_id.',
+                        'document_ids' => $annotationDocumentIds,
+                    ], 422);
+                }
+            }
+
+            if ($baseDocumentId <= 0) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'use_base requires a document_id or pdf_state rows tied to one document.',
+                ], 422);
+            }
+
+            $baseDocument = Document::query()->find($baseDocumentId);
+            if (!$baseDocument) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Requested base document was not found.',
+                    'document_id' => $baseDocumentId,
+                ], 422);
+            }
+
+            $resolvedBasePdfPath = $this->ensureCleanPdfPath($baseDocument, $pythonBinary);
+            if (!$resolvedBasePdfPath || !is_file($resolvedBasePdfPath)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unable to resolve the clean redacted base PDF for the requested document.',
+                    'document_id' => $baseDocumentId,
+                ], 500);
+            }
+
+            $resolvedSourcePdfPath = Storage::path($baseDocument->path);
+            if ($baseDocument->original_backup_path && Storage::exists($baseDocument->original_backup_path)) {
+                $originalBackupPath = Storage::path($baseDocument->original_backup_path);
+                if (is_file($originalBackupPath)) {
+                    $resolvedSourcePdfPath = $originalBackupPath;
+                }
+            }
+            if (!$resolvedSourcePdfPath || !is_file($resolvedSourcePdfPath)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unable to resolve the original source PDF for the requested document.',
+                    'document_id' => $baseDocumentId,
+                ], 500);
+            }
+        }
+
+        Storage::disk('public')->makeDirectory('debug/pdf-state-stamps');
+        $reuseUrl = (bool) ($validated['reuse_url'] ?? false);
+        $previewModeSuffix = $useBase
+            ? '-base-' . ($baseDocumentId > 0 ? $baseDocumentId : 'doc')
+            : '-blank';
+        $stableArrayScope = count($annotationDocumentIds) === 1
+            ? 'doc-' . $annotationDocumentIds[0]
+            : 'shared';
+        if ($reuseUrl) {
+            if ($usingDocumentStateSource && $documentIdFilter > 0) {
+                $stableFilename = 'pdf-state-document-' . $documentIdFilter . '-' . $pdfStateSource . $previewModeSuffix . '.pdf';
+            } elseif (!empty($pdfStateIds)) {
+                if (count($pdfStateIds) === 1) {
+                    $stableFilename = 'pdf-state-' . $pdfStateIds[0] . $previewModeSuffix . '.pdf';
+                } else {
+                    $stableFilename = 'pdf-state-array-' . $stableArrayScope . $previewModeSuffix . '.pdf';
+                }
+            } else {
+                $stableFilename = 'payload-' . substr(
+                    sha1(
+                        json_encode($normalizedAnnotations, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+                        . $previewModeSuffix
+                    ),
+                    0,
+                    20
+                ) . '.pdf';
+            }
+            $relativeOutputPath = 'debug/pdf-state-stamps/' . $stableFilename;
+        } else {
+            $relativeOutputPath = 'debug/pdf-state-stamps/' . Str::uuid() . '.pdf';
+        }
+        $absoluteOutputPath = Storage::disk('public')->path($relativeOutputPath);
+
+        $tempDir = storage_path('app/temp');
+        if (!is_dir($tempDir)) {
+            @mkdir($tempDir, 0775, true);
+        }
+
+        $annotationsFile = tempnam($tempDir, 'blank_pdf_state_preview_');
+        if ($annotationsFile === false) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unable to allocate temporary annotation file.',
+            ], 500);
+        }
+
+        file_put_contents(
+            $annotationsFile,
+            json_encode($normalizedAnnotations, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+        );
+
+        $command = sprintf(
+            '%s %s %s %s%s%s%s%s 2>&1',
+            escapeshellarg($pythonBinary),
+            escapeshellarg($scriptPath),
+            escapeshellarg($annotationsFile),
+            escapeshellarg($absoluteOutputPath),
+            isset($validated['page_width']) ? ' ' . escapeshellarg((string) $validated['page_width']) : '',
+            isset($validated['page_height']) ? ' ' . escapeshellarg((string) $validated['page_height']) : '',
+            $resolvedBasePdfPath ? ' --base-pdf ' . escapeshellarg($resolvedBasePdfPath) : '',
+            $resolvedSourcePdfPath ? ' --source-pdf ' . escapeshellarg($resolvedSourcePdfPath) : ''
+        );
+
+        $output = [];
+        $returnCode = 1;
+        try {
+            exec($command, $output, $returnCode);
+        } finally {
+            @unlink($annotationsFile);
+        }
+
+        if ($returnCode !== 0 || !is_file($absoluteOutputPath)) {
+            if (is_file($absoluteOutputPath)) {
+                @unlink($absoluteOutputPath);
+            }
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to stamp annotation preview PDF.',
+                'error' => implode("\n", $output),
+            ], 500);
+        }
+
+        return response()->json([
+            'success' => true,
+            'source' => $source,
+            'annotation_count' => count($normalizedAnnotations),
+            'reuse_url' => $reuseUrl,
+            'use_base' => $useBase,
+            'pdf_state_source' => $usingDocumentStateSource ? $pdfStateSource : null,
+            'document_id' => $baseDocumentId > 0 ? $baseDocumentId : null,
+            'file_url' => url(Storage::url($relativeOutputPath)),
+            'relative_path' => $relativeOutputPath,
+            'debug_output' => implode("\n", $output),
+        ]);
+    }
+
     public function markAnnotationsSaved(Request $request, Document $document)
     {
         $validated = $request->validate([
@@ -6096,9 +6796,12 @@ class DocumentController extends Controller
     public function saveAnnotationState(Request $request, Document $document)
     {
         $validated = $request->validate([
-            'annotations' => 'present|array',
-            'annotations.*.type' => 'required|string',
-            'annotations.*.pageIndex' => 'required',
+            'annotations' => 'nullable|array',
+            'annotations.*.type' => 'required_with:annotations|string',
+            'annotations.*.pageIndex' => 'required_with:annotations',
+            'session_annotations' => 'nullable|array',
+            'session_annotations.*.type' => 'required_with:session_annotations|string',
+            'session_annotations.*.pageIndex' => 'required_with:session_annotations',
             'acro_form_entries' => 'nullable|array',
             'session_id' => 'nullable|string',
         ]);
@@ -6109,6 +6812,15 @@ class DocumentController extends Controller
         }
 
         $annotationsPayload = $this->normalizeAnnotationsForPersistence($document, $annotationsPayload);
+        $sessionAnnotationsPayload = $request->input('session_annotations', null);
+        if ($request->exists('session_annotations')) {
+            if (!is_array($sessionAnnotationsPayload)) {
+                return response()->json(['success' => false, 'message' => 'Invalid session annotations payload.'], 422);
+            }
+            $sessionAnnotationsPayload = $this->normalizeAnnotationsForPersistence($document, $sessionAnnotationsPayload);
+        } else {
+            $sessionAnnotationsPayload = $annotationsPayload;
+        }
         $acroFormEntries = $this->normalizeAcroFormEntriesForPersistence(
             is_array($validated['acro_form_entries'] ?? null) ? $validated['acro_form_entries'] : []
         );
@@ -6118,44 +6830,12 @@ class DocumentController extends Controller
             : '';
 
         if ($sessionId !== '') {
-            foreach ($annotationsPayload as $annotation) {
-                if (!is_array($annotation)) {
-                    continue;
-                }
-                $annotationId = is_string($annotation['id'] ?? null)
-                    ? trim((string) $annotation['id'])
-                    : '';
-                if ($annotationId === '') {
-                    continue;
-                }
-
-                $existing = PdfState::query()
-                    ->where('document_id', $document->id)
-                    ->where('session_id', $sessionId)
-                    ->whereRaw("JSON_EXTRACT(annotation_data, '$.id') = ?", [$annotationId])
-                    ->first();
-
-                if ($existing) {
-                    $existing->update([
-                        'annotation_data' => $annotation,
-                        'page_number' => $annotation['pageIndex'] ?? null,
-                        'state' => 'saved',
-                    ]);
-                } else {
-                    PdfState::create([
-                        'document_id' => $document->id,
-                        'user_email' => null,
-                        'session_id' => $sessionId,
-                        'page_number' => $annotation['pageIndex'] ?? null,
-                        'annotation_data' => $annotation,
-                        'state' => 'saved',
-                    ]);
-                }
-            }
-
-            // Purge orphans (annotations that were deleted by the user).
-            // Do not purge rows absent from this payload. This endpoint stores the
-            // current material annotation state, not an exhaustive layer snapshot.
+            $this->upsertPdfStateSessionSnapshot(
+                $document,
+                $sessionId,
+                $sessionAnnotationsPayload,
+                'saved'
+            );
 
             $this->upsertPdfAcroFormSessionState(
                 $document,
@@ -6198,6 +6878,7 @@ class DocumentController extends Controller
             'deleted_promoted_source_keys.*' => 'string',
             'use_clean_pdf' => 'nullable|boolean',
             'use_original_pdf' => 'nullable|boolean',
+            'use_exact_download_path' => 'nullable|boolean',
             'session_id' => 'nullable|string',
         ]);
 
@@ -6238,8 +6919,11 @@ class DocumentController extends Controller
                 : [],
             $annotationsPayload
         );
-        if (empty($renderAnnotationsPayload) && !empty($sessionAnnotationsPayload)) {
-            $renderAnnotationsPayload = $sessionAnnotationsPayload;
+        if (empty($renderAnnotationsPayload) && !empty($sessionAnnotationsPayload) && !empty($redrawPageIndices)) {
+            $renderAnnotationsPayload = $this->filterRenderAnnotationsForSelectiveRedraw(
+                $sessionAnnotationsPayload,
+                $redrawPageIndices
+            );
         }
         if (empty($redrawPageIndices) && !empty($renderAnnotationsPayload)) {
             $redrawPageIndices = $this->collectAnnotationPageIndices($renderAnnotationsPayload);
@@ -6250,18 +6934,45 @@ class DocumentController extends Controller
             $renderAnnotationsPayload,
             $deletedPromotedSourceKeys
         );
+        if (empty($renderAnnotationsPayload) && !empty($redrawPageIndices)) {
+            $renderAnnotationsPayload = $this->filterRenderAnnotationsForSelectiveRedraw(
+                !empty($sessionAnnotationsPayload) ? $sessionAnnotationsPayload : $annotationsPayload,
+                $redrawPageIndices
+            );
+        }
 
         $pdfPath = Storage::path($document->path);
         $useCleanPdf = $request->boolean('use_clean_pdf');
         $useOriginalPdf = $request->boolean('use_original_pdf');
+        $useExactDownloadPath = $request->boolean('use_exact_download_path');
         $editorEmail = $this->resolveEditorEmail();
+        $originalSourcePdfPath = $pdfPath;
+        if ($document->original_backup_path && Storage::exists($document->original_backup_path)) {
+            $originalBackupPath = Storage::path($document->original_backup_path);
+            if (file_exists($originalBackupPath)) {
+                $originalSourcePdfPath = $originalBackupPath;
+            }
+        }
 
         // Select the redraw working source separately from the preserve source
         // used for untouched pages. Clean PDFs are valid redraw bases but cannot
         // be used to preserve untouched pages because their text layer is stripped.
         $sourcePdfPath = $pdfPath;
         $preservePdfPath = $pdfPath;
-        if ($useOriginalPdf && $document->original_backup_path && Storage::exists($document->original_backup_path)) {
+        $useExactCleanRebuild = $useExactDownloadPath && !empty($sessionAnnotationsPayload);
+        if ($useExactCleanRebuild) {
+            $cleanPath = $this->ensureCleanPdfPath(
+                $document,
+                $pythonBinary,
+                $editorEmail,
+                $sessionId !== '' ? $sessionId : null
+            );
+            if (!$cleanPath || !file_exists($cleanPath)) {
+                return response()->json(['success' => false, 'message' => 'Clean PDF source not found.'], 404);
+            }
+            $sourcePdfPath = $cleanPath;
+            $preservePdfPath = $originalSourcePdfPath;
+        } elseif ($useOriginalPdf && $document->original_backup_path && Storage::exists($document->original_backup_path)) {
             $originalPath = Storage::path($document->original_backup_path);
             if (file_exists($originalPath)) {
                 $sourcePdfPath = $originalPath;
@@ -6284,6 +6995,14 @@ class DocumentController extends Controller
             return response()->json(['success' => false, 'message' => 'Source PDF not found.'], 404);
         }
 
+        if ($useExactCleanRebuild) {
+            // Temporary exact-download path: rebuild from the clean/redacted base
+            // using the full session annotation set plus replay from the original
+            // source PDF for unchanged promoted extraction blocks.
+            $redrawPageIndices = [];
+            $renderAnnotationsPayload = [];
+        }
+
         $tempDir = storage_path('app/temp');
         if (!is_dir($tempDir)) {
             @mkdir($tempDir, 0775, true);
@@ -6297,13 +7016,28 @@ class DocumentController extends Controller
 
         // Write annotations payload to a temp JSON file for the Python script.
         $annotationsFile = $tempDir . '/download_ann_' . $document->id . '_' . uniqid('', true) . '.json';
-        $annotationsJson = json_encode($this->prepareAnnotationsForPython($annotationsPayload), JSON_INVALID_UTF8_SUBSTITUTE);
+        $pythonAnnotationsPayload = $useExactCleanRebuild ? $sessionAnnotationsPayload : $annotationsPayload;
+        $preparedAnnotationsForPython = $this->prepareAnnotationsForPython($pythonAnnotationsPayload);
+        if ($useExactCleanRebuild) {
+            $preparedAnnotationsForPython = array_map(static function ($annotation) use ($preservePdfPath) {
+                if (!is_array($annotation)) {
+                    return $annotation;
+                }
+                $annotation['__sourcePdfPath'] = $preservePdfPath;
+                return $annotation;
+            }, $preparedAnnotationsForPython);
+        }
+        $annotationsJson = json_encode($preparedAnnotationsForPython, JSON_INVALID_UTF8_SUBSTITUTE);
         if ($annotationsJson === false || @file_put_contents($annotationsFile, $annotationsJson) === false) {
             @unlink($tempPdfPath);
             return response()->json(['success' => false, 'message' => 'Failed to prepare annotations payload.'], 500);
         }
 
-        $script = base_path('python/pdf-editor/apply_annotations_direct.py');
+        $script = base_path(
+            $useExactDownloadPath
+                ? 'python/pdf-editor/apply_annotations_direct_new.py'
+                : 'python/pdf-editor/apply_annotations_direct.py'
+        );
         $command = sprintf(
             '%s %s %s %s 2>&1',
             escapeshellarg($pythonBinary),
@@ -6373,28 +7107,12 @@ class DocumentController extends Controller
 
         // Save annotation state to DB (same as saveAnnotationState).
         if ($sessionId !== '') {
-            foreach ($sessionAnnotationsPayload as $annotation) {
-                if (!is_array($annotation)) {
-                    continue;
-                }
-                $annotationId = is_string($annotation['id'] ?? null) ? trim((string) $annotation['id']) : '';
-                if ($annotationId === '') {
-                    continue;
-                }
-                $existing = PdfState::query()
-                    ->where('document_id', $document->id)
-                    ->where('session_id', $sessionId)
-                    ->whereRaw("JSON_EXTRACT(annotation_data, '$.id') = ?", [$annotationId])
-                    ->first();
-                if ($existing) {
-                    $existing->update(['annotation_data' => $annotation, 'page_number' => $annotation['pageIndex'] ?? null, 'state' => 'saved']);
-                } else {
-                    PdfState::create(['document_id' => $document->id, 'user_email' => null, 'session_id' => $sessionId, 'page_number' => $annotation['pageIndex'] ?? null, 'annotation_data' => $annotation, 'state' => 'saved']);
-                }
-            }
-
-            // Do not purge rows absent from this payload. Export receives only the
-            // material annotation delta needed to build the download.
+            $this->upsertPdfStateSessionSnapshot(
+                $document,
+                $sessionId,
+                $sessionAnnotationsPayload,
+                'saved'
+            );
 
             $this->upsertPdfAcroFormSessionState(
                 $document,

@@ -37,6 +37,7 @@ Route::get('auth/google/callback', [\App\Http\Controllers\SocialAuthController::
 
 
 Route::get('/pdf-editor', [DocumentController::class, 'index'])->name('documents.index');
+Route::post('/pdf-state/stamp-preview', [DocumentController::class, 'stampPdfStatePreview'])->name('pdfState.stampPreview');
 Route::post('/documents', [DocumentController::class, 'store'])->name('documents.store');
 Route::post('/documents/create-blank', [DocumentController::class, 'createBlank'])->name('documents.createBlank');
 Route::post('/documents/create-ai', [DocumentController::class, 'createAi'])->name('documents.createAi');

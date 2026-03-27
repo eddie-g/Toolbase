@@ -8,12 +8,218 @@ Much faster than OCR-based extraction
 import sys
 import os
 import json
+import math
 import re
+import time
 from pathlib import Path
 import fitz  # PyMuPDF
 import mysql.connector
 from mysql.connector import Error
 from datetime import datetime
+
+
+# ---------------------------------------------------------------------------
+# Glyph-name → Unicode codepoint table (Adobe standard glyph names).
+# Used by cff_raw_to_otf() to populate the cmap table in the OTF wrapper.
+# ---------------------------------------------------------------------------
+_GLYPH_NAME_TO_UNICODE = {
+    'space': 0x0020, 'exclam': 0x0021, 'quotedbl': 0x0022, 'numbersign': 0x0023,
+    'dollar': 0x0024, 'percent': 0x0025, 'ampersand': 0x0026, 'quotesingle': 0x0027,
+    'parenleft': 0x0028, 'parenright': 0x0029, 'asterisk': 0x002A, 'plus': 0x002B,
+    'comma': 0x002C, 'hyphen': 0x002D, 'period': 0x002E, 'slash': 0x002F,
+    'zero': 0x0030, 'one': 0x0031, 'two': 0x0032, 'three': 0x0033, 'four': 0x0034,
+    'five': 0x0035, 'six': 0x0036, 'seven': 0x0037, 'eight': 0x0038, 'nine': 0x0039,
+    'colon': 0x003A, 'semicolon': 0x003B, 'less': 0x003C, 'equal': 0x003D,
+    'greater': 0x003E, 'question': 0x003F, 'at': 0x0040,
+    'A': 0x0041, 'B': 0x0042, 'C': 0x0043, 'D': 0x0044, 'E': 0x0045,
+    'F': 0x0046, 'G': 0x0047, 'H': 0x0048, 'I': 0x0049, 'J': 0x004A,
+    'K': 0x004B, 'L': 0x004C, 'M': 0x004D, 'N': 0x004E, 'O': 0x004F,
+    'P': 0x0050, 'Q': 0x0051, 'R': 0x0052, 'S': 0x0053, 'T': 0x0054,
+    'U': 0x0055, 'V': 0x0056, 'W': 0x0057, 'X': 0x0058, 'Y': 0x0059, 'Z': 0x005A,
+    'bracketleft': 0x005B, 'backslash': 0x005C, 'bracketright': 0x005D,
+    'asciicircum': 0x005E, 'underscore': 0x005F, 'grave': 0x0060,
+    'a': 0x0061, 'b': 0x0062, 'c': 0x0063, 'd': 0x0064, 'e': 0x0065,
+    'f': 0x0066, 'g': 0x0067, 'h': 0x0068, 'i': 0x0069, 'j': 0x006A,
+    'k': 0x006B, 'l': 0x006C, 'm': 0x006D, 'n': 0x006E, 'o': 0x006F,
+    'p': 0x0070, 'q': 0x0071, 'r': 0x0072, 's': 0x0073, 't': 0x0074,
+    'u': 0x0075, 'v': 0x0076, 'w': 0x0077, 'x': 0x0078, 'y': 0x0079, 'z': 0x007A,
+    'braceleft': 0x007B, 'bar': 0x007C, 'braceright': 0x007D, 'asciitilde': 0x007E,
+    'endash': 0x2013, 'emdash': 0x2014, 'quoteleft': 0x2018, 'quoteright': 0x2019,
+    'quotedblleft': 0x201C, 'quotedblright': 0x201D, 'bullet': 0x2022,
+    'ellipsis': 0x2026, 'fi': 0xFB01, 'fl': 0xFB02,
+    'AE': 0x00C6, 'ae': 0x00E6, 'OE': 0x0152, 'oe': 0x0153,
+    'Oslash': 0x00D8, 'oslash': 0x00F8, 'germandbls': 0x00DF,
+    'copyright': 0x00A9, 'registered': 0x00AE, 'trademark': 0x2122,
+    'degree': 0x00B0, 'plusminus': 0x00B1, 'multiply': 0x00D7, 'divide': 0x00F7,
+    'fraction': 0x2044, 'perthousand': 0x2030, 'Euro': 0x20AC, 'currency': 0x00A4,
+    'dagger': 0x2020, 'daggerdbl': 0x2021,
+}
+
+
+def cff_raw_to_otf(cff_data: bytes, font_name: str = 'UnknownFont',
+                   css_weight: int = 400, css_stretch: str = 'normal') -> bytes:
+    """
+    Wrap a raw CFF blob (as extracted by PyMuPDF) in a minimal but valid
+    OpenType ("OTTO") container that web browsers can load via @font-face.
+    Returns the OTF binary or raises on failure.
+    """
+    try:
+        from io import BytesIO as _BytesIO
+        from fontTools.cffLib import CFFFontSet
+        from fontTools.ttLib import TTFont
+        from fontTools.pens.boundsPen import BoundsPen
+        from fontTools.ttLib.tables.C_F_F_ import table_C_F_F_
+        from fontTools.ttLib.tables._h_e_a_d import table__h_e_a_d
+        from fontTools.ttLib.tables._h_h_e_a import table__h_h_e_a
+        from fontTools.ttLib.tables._m_a_x_p import table__m_a_x_p
+        from fontTools.ttLib.tables.O_S_2f_2 import table_O_S_2f_2, Panose
+        from fontTools.ttLib.tables._n_a_m_e import table__n_a_m_e, NameRecord
+        from fontTools.ttLib.tables._c_m_a_p import table__c_m_a_p, cmap_format_4
+        from fontTools.ttLib.tables._p_o_s_t import table__p_o_s_t
+        from fontTools.ttLib.tables._h_m_t_x import table__h_m_t_x
+    except ImportError as e:
+        raise RuntimeError(f'fontTools not available for CFF→OTF conversion: {e}') from e
+
+    from io import BytesIO
+
+    cff_set = CFFFontSet()
+    cff_set.decompile(BytesIO(cff_data), None, isCFF2=False)
+    top_dict = cff_set.topDictIndex[0]
+    cs = top_dict.CharStrings
+    glyphs = list(cs.keys())
+
+    widths: dict = {}
+    lsbs: dict = {}
+    all_bounds: list = []
+    for g in glyphs:
+        pen = BoundsPen(None)
+        try:
+            cs[g].draw(pen)
+            b = pen.bounds or (0, 0, 500, 700)
+        except Exception:
+            b = (0, 0, 500, 700)
+        # Use the CFF charstring's actual advance width (accessible after draw)
+        # rather than estimating from bounding box, to keep hmtx consistent with CFF.
+        actual_w = getattr(cs[g], 'width', None)
+        widths[g] = int(actual_w) if actual_w and actual_w > 0 else max(1, int((b[2] if b else 500) + 50))
+        lsbs[g] = int(b[0]) if b else 0
+        if b:
+            all_bounds.append(b)
+
+    upm = 1000
+    ascent = 800
+    descent = -200
+    bbxMin = int(min(b[0] for b in all_bounds)) if all_bounds else 0
+    bbxMax = int(max(b[2] for b in all_bounds)) if all_bounds else 800
+    bbyMin = int(min(b[1] for b in all_bounds)) if all_bounds else -200
+    bbyMax = int(max(b[3] for b in all_bounds)) if all_bounds else 800
+
+    # Mac timestamp = Unix timestamp + seconds(1904→1970)
+    mac_ts = int(time.time()) + 2082844800
+
+    font = TTFont(sfntVersion='OTTO')
+    font.setGlyphOrder(glyphs)
+
+    cff_table = table_C_F_F_()
+    cff_table.cff = cff_set
+    font['CFF '] = cff_table
+
+    head = table__h_e_a_d()
+    head.tableVersion = 1.0
+    head.fontRevision = 1.0
+    head.checkSumAdjustment = 0
+    head.magicNumber = 0x5F0F3CF5
+    head.flags = 0x000B
+    head.unitsPerEm = upm
+    head.created = mac_ts
+    head.modified = mac_ts
+    head.xMin = bbxMin; head.yMin = bbyMin
+    head.xMax = bbxMax; head.yMax = bbyMax
+    head.macStyle = 0x0001 if css_weight >= 700 else 0
+    head.lowestRecPPEM = 8
+    head.fontDirectionHint = 2
+    head.indexToLocFormat = 0
+    head.glyphDataFormat = 0
+    font['head'] = head
+
+    hhea = table__h_h_e_a()
+    hhea.tableVersion = 0x00010000
+    hhea.ascent = ascent; hhea.descent = descent; hhea.lineGap = 0
+    hhea.advanceWidthMax = max(widths.values())
+    hhea.minLeftSideBearing = min(lsbs.values())
+    hhea.minRightSideBearing = 0
+    hhea.xMaxExtent = bbxMax
+    hhea.caretSlopeRise = 1; hhea.caretSlopeRun = 0; hhea.caretOffset = 0
+    hhea.reserved0 = hhea.reserved1 = hhea.reserved2 = hhea.reserved3 = 0
+    hhea.metricDataFormat = 0
+    hhea.numberOfHMetrics = len(glyphs)
+    font['hhea'] = hhea
+
+    maxp = table__m_a_x_p()
+    maxp.tableVersion = 0x00005000
+    maxp.numGlyphs = len(glyphs)
+    font['maxp'] = maxp
+
+    os2 = table_O_S_2f_2()
+    os2.version = 4
+    os2.xAvgCharWidth = 500
+    os2.usWeightClass = css_weight
+    os2.usWidthClass = 3 if css_stretch == 'condensed' else 5
+    os2.fsType = 0
+    os2.ySubscriptXSize = 650; os2.ySubscriptYSize = 600
+    os2.ySubscriptXOffset = 0; os2.ySubscriptYOffset = 75
+    os2.ySuperscriptXSize = 650; os2.ySuperscriptYSize = 600
+    os2.ySuperscriptXOffset = 0; os2.ySuperscriptYOffset = 350
+    os2.yStrikeoutSize = 80; os2.yStrikeoutPosition = 300
+    os2.sFamilyClass = 0
+    os2.panose = Panose()
+    os2.ulUnicodeRange1 = 3
+    os2.ulUnicodeRange2 = os2.ulUnicodeRange3 = os2.ulUnicodeRange4 = 0
+    os2.achVendID = 'UNKN'
+    os2.fsSelection = 0x0020 if css_weight >= 700 else 0x0040
+    char_codes = [cp for g, cp in _GLYPH_NAME_TO_UNICODE.items() if g in glyphs]
+    os2.firstCharIndex = min(char_codes) if char_codes else 32
+    os2.lastCharIndex = max(char_codes) if char_codes else 126
+    os2.sTypoAscender = ascent; os2.sTypoDescender = descent; os2.sTypoLineGap = 0
+    os2.usWinAscent = ascent; os2.usWinDescent = abs(descent)
+    os2.ulCodePageRange1 = 1; os2.ulCodePageRange2 = 0
+    os2.sxHeight = 500; os2.sCapHeight = 700
+    os2.usDefaultChar = 0; os2.usBreakChar = 32; os2.usMaxContext = 0
+    font['OS/2'] = os2
+
+    name_table = table__n_a_m_e()
+    name_table.names = []
+    family = font_name.split('-')[0]
+    for nid, s in [(1, family), (2, 'Regular'), (4, font_name), (6, font_name)]:
+        nr = NameRecord()
+        nr.nameID = nid; nr.platformID = 3; nr.platEncID = 1; nr.langID = 0x0409
+        nr.string = s.encode('utf-16-be')
+        name_table.names.append(nr)
+    font['name'] = name_table
+
+    cmap_t = table__c_m_a_p()
+    cmap_t.tableVersion = 0
+    fmt4 = cmap_format_4(4)
+    fmt4.platformID = 3; fmt4.platEncID = 1; fmt4.language = 0
+    fmt4.cmap = {_GLYPH_NAME_TO_UNICODE[g]: g
+                 for g in glyphs if g in _GLYPH_NAME_TO_UNICODE}
+    cmap_t.tables = [fmt4]
+    font['cmap'] = cmap_t
+
+    post = table__p_o_s_t()
+    post.formatType = 3.0; post.italicAngle = 0
+    post.underlinePosition = -100; post.underlineThickness = 50
+    post.isFixedPitch = 0
+    post.minMemType42 = post.maxMemType42 = post.minMemType1 = post.maxMemType1 = 0
+    font['post'] = post
+
+    hmtx = table__h_m_t_x()
+    hmtx.metrics = {g: (widths[g], lsbs[g]) for g in glyphs}
+    font['hmtx'] = hmtx
+
+    out = BytesIO()
+    font.save(out)
+    return out.getvalue()
 
 
 _EXTRACTION_ZERO_WIDTH_RE = re.compile(r'[\u200B\u200C\u200D\u2060\uFEFF]')
@@ -386,6 +592,33 @@ def _collect_horizontal_lines(page):
     return lines
 
 
+def _collect_vertical_lines(page):
+    """Collect vertical vector line segments from page drawings."""
+    lines = []
+    try:
+        drawings = page.get_drawings() or []
+    except Exception:
+        return lines
+
+    for d in drawings:
+        stroke_w = float(d.get("width") or 0)
+        for item in d.get("items", []):
+            if not item or item[0] != "l":
+                continue
+            p1, p2 = item[1], item[2]
+            if p1 is None or p2 is None:
+                continue
+            if abs(float(p1.x) - float(p2.x)) > 0.5:
+                continue
+            y0 = min(float(p1.y), float(p2.y))
+            y1 = max(float(p1.y), float(p2.y))
+            if (y1 - y0) < 10:
+                continue
+            x = (float(p1.x) + float(p2.x)) / 2.0
+            lines.append((x, y0, y1, stroke_w))
+    return lines
+
+
 def _span_has_drawn_underline(span_bbox, horizontal_lines):
     """True when a span bbox sits on top of an existing horizontal vector line."""
     if not span_bbox or not horizontal_lines:
@@ -401,6 +634,76 @@ def _span_has_drawn_underline(span_bbox, horizontal_lines):
         overlap_ratio = overlap / span_w
         if overlap_ratio >= 0.55 or overlap >= 40:
             return True
+    return False
+
+
+def _rect_union(a, b):
+    if not a:
+        return b
+    if not b:
+        return a
+    return (
+        min(float(a[0]), float(b[0])),
+        min(float(a[1]), float(b[1])),
+        max(float(a[2]), float(b[2])),
+        max(float(a[3]), float(b[3])),
+    )
+
+
+def _rects_have_vertical_barrier(left_rect, right_rect, vertical_lines):
+    if not left_rect or not right_rect or not vertical_lines:
+        return False
+
+    a = tuple(float(value) for value in left_rect[:4])
+    b = tuple(float(value) for value in right_rect[:4])
+    if a[0] > b[0]:
+        a, b = b, a
+
+    gap_left = min(a[2], b[0])
+    gap_right = max(a[2], b[0])
+    if gap_right < gap_left:
+        gap_left, gap_right = gap_right, gap_left
+
+    band_top = min(a[1], b[1]) - 1.0
+    band_bottom = max(a[3], b[3]) + 1.0
+    band_height = max(1.0, band_bottom - band_top)
+
+    for x, y0, y1, _stroke_w in vertical_lines:
+        if x < (gap_left - 1.0) or x > (gap_right + 1.0):
+            continue
+        overlap = max(0.0, min(band_bottom, y1) - max(band_top, y0))
+        if overlap <= 0:
+            continue
+        if overlap >= max(6.0, band_height * 0.5):
+            return True
+    return False
+
+
+def _rects_have_widget_barrier(left_rect, right_rect, widget_rects):
+    if not left_rect or not right_rect or not widget_rects:
+        return False
+
+    a = tuple(float(value) for value in left_rect[:4])
+    b = tuple(float(value) for value in right_rect[:4])
+    if a[0] > b[0]:
+        a, b = b, a
+
+    gap_left = min(a[2], b[0])
+    gap_right = max(a[2], b[0])
+    if gap_right < gap_left:
+        gap_left, gap_right = gap_right, gap_left
+
+    band_top = min(a[1], b[1]) - 2.0
+    band_bottom = max(a[3], b[3]) + 2.0
+
+    for widget_rect in widget_rects:
+        wx0, wy0, wx1, wy1 = [float(value) for value in widget_rect[:4]]
+        widget_center_x = (wx0 + wx1) / 2.0
+        if widget_center_x < (gap_left - 1.5) or widget_center_x > (gap_right + 1.5):
+            continue
+        if wy1 < band_top or wy0 > band_bottom:
+            continue
+        return True
     return False
 
 
@@ -420,6 +723,36 @@ def _overlay_render_text(text, has_drawn_underline):
     render_text = re.sub(r"[ \t]{2,}", " ", render_text).rstrip()
     changed = (render_text != text)
     return render_text, changed
+
+
+def _normalize_line_direction(line_dir):
+    if not isinstance(line_dir, (list, tuple)) or len(line_dir) < 2:
+        return (1.0, 0.0)
+    try:
+        return (float(line_dir[0]), float(line_dir[1]))
+    except (TypeError, ValueError):
+        return (1.0, 0.0)
+
+
+def _line_rotation_degrees(line_dir):
+    dx, dy = _normalize_line_direction(line_dir)
+    rotation = math.degrees(math.atan2(dy, dx))
+    if abs(rotation) < 0.01:
+        return 0.0
+    return rotation
+
+
+def _should_reverse_rotated_line_text(line_dir):
+    dx, dy = _normalize_line_direction(line_dir)
+    return abs(dx) <= 0.25 and dy < -0.75
+
+
+def _apply_line_direction_text_order(text, line_dir):
+    if not text or len(text) <= 1:
+        return text
+    if _should_reverse_rotated_line_text(line_dir):
+        return text[::-1]
+    return text
 
 
 def _split_gap_separated_span_words(text, bbox, word_data, page_pymupdf_words, has_drawn_underline):
@@ -488,12 +821,19 @@ def _split_gap_separated_span_words(text, bbox, word_data, page_pymupdf_words, h
 def _normalize_font_name(font_name):
     if not font_name:
         return ''
-    name = font_name
+    name = _strip_pdf_font_subset_prefix(font_name)
+    return ''.join(ch for ch in name.lower() if ch.isalnum())
+
+
+def _strip_pdf_font_subset_prefix(font_name):
+    if not font_name:
+        return ''
+    name = str(font_name).strip()
     if '+' in name:
         prefix, rest = name.split('+', 1)
         if len(prefix) == 6 and prefix.isupper():
-            name = rest
-    return ''.join(ch for ch in name.lower() if ch.isalnum())
+            return rest
+    return name
 
 
 def _font_family_name(font_name):
@@ -509,6 +849,94 @@ def _font_family_name(font_name):
             if trimmed:
                 return trimmed
     return font_name
+
+
+def _build_page_font_metadata(page_fonts):
+    by_xref = {}
+    by_name = {}
+
+    for font in page_fonts or []:
+        if not font:
+            continue
+
+        try:
+            xref = int(font[0])
+        except Exception:
+            continue
+
+        font_ext = str(font[1] or '') if len(font) > 1 else ''
+        basefont = str(font[3] or '') if len(font) > 3 else ''
+        reported_name = str(font[4] or '') if len(font) > 4 else ''
+        clean_basefont = _strip_pdf_font_subset_prefix(basefont)
+        clean_reported_name = _strip_pdf_font_subset_prefix(reported_name)
+        clean_name = clean_basefont or clean_reported_name or basefont or reported_name
+        family = _font_family_name(clean_name or basefont or reported_name)
+        is_embedded = bool(font_ext and font_ext != 'n/a')
+
+        meta = {
+            'font_xref': xref,
+            'pdf_font_name': basefont or reported_name or clean_name,
+            'clean_name': clean_name or basefont or reported_name,
+            'family': family or clean_name or basefont or reported_name,
+            'file_ext': font_ext,
+            'is_embedded': is_embedded,
+        }
+        by_xref[xref] = meta
+
+        candidate_names = {
+            basefont,
+            reported_name,
+            clean_basefont,
+            clean_reported_name,
+            meta['clean_name'],
+        }
+        for candidate in candidate_names:
+            normalized = _normalize_font_name(candidate)
+            if not normalized:
+                continue
+            by_name.setdefault(normalized, []).append(meta)
+
+    return {
+        'by_xref': by_xref,
+        'by_name': by_name,
+    }
+
+
+def _resolve_embedded_font_meta(font_name, font_xref, page_font_metadata):
+    if not page_font_metadata:
+        return None
+
+    try:
+        xref_num = int(font_xref) if font_xref is not None else None
+    except Exception:
+        xref_num = None
+
+    if xref_num is not None:
+        meta = (page_font_metadata.get('by_xref') or {}).get(xref_num)
+        if meta and meta.get('is_embedded'):
+            return dict(meta)
+
+    normalized_name = _normalize_font_name(font_name)
+    if not normalized_name:
+        return None
+
+    for meta in (page_font_metadata.get('by_name') or {}).get(normalized_name, []):
+        if meta.get('is_embedded'):
+            return dict(meta)
+
+    return None
+
+
+def _attach_embedded_font_fields(target, embedded_font_meta):
+    if not isinstance(target, dict):
+        return target
+
+    target['uses_embedded_font'] = bool(embedded_font_meta)
+    if embedded_font_meta:
+        target['embedded_font_name'] = embedded_font_meta.get('clean_name')
+        target['embedded_font_family'] = embedded_font_meta.get('family')
+        target['embedded_font_xref'] = embedded_font_meta.get('font_xref')
+    return target
 
 
 def extract_embedded_fonts(pdf_path, document_id, output_dir=None):
@@ -552,11 +980,7 @@ def extract_embedded_fonts(pdf_path, document_id, output_dir=None):
                 continue  # Skip empty or trivially small fonts
 
             # Clean font name: remove AAAAAA+ prefix
-            clean_name = font_name
-            if '+' in clean_name:
-                prefix, rest = clean_name.split('+', 1)
-                if len(prefix) == 6 and prefix.isupper():
-                    clean_name = rest
+            clean_name = _strip_pdf_font_subset_prefix(font_name)
 
             # Determine CSS font-family, weight, style from font name
             lower_name = clean_name.lower()
@@ -567,22 +991,48 @@ def extract_embedded_fonts(pdf_path, document_id, output_dir=None):
                 if sep in family_base:
                     family_base = family_base.split(sep, 1)[0]
 
-            # Determine weight
+            # Determine weight — check full lowercase name first, then suffix tokens
+            # for abbreviated forms like "Blk" (Black=900), "Bd"/"Bold"=700, "Lt"=300
             css_weight = '400'
+            # Check suffix tokens (split on - _ ,) so abbreviations like "BlkCn" are isolated
+            _suffix_tokens = [p for p in re.split(r'[-_,]', lower_name)[1:] if p]
+            _suffix_str = '-'.join(_suffix_tokens)
             if 'bold' in lower_name and ('extra' in lower_name or 'ultra' in lower_name):
                 css_weight = '800'
             elif 'semibold' in lower_name or 'demibold' in lower_name:
                 css_weight = '600'
-            elif 'black' in lower_name or 'heavy' in lower_name:
+            elif ('black' in lower_name or 'heavy' in lower_name
+                  or any(t.startswith('blk') or t == 'hvy' for t in _suffix_tokens)):
+                # Covers: "Black", "Heavy", "BlkCn", "BlkCond", "Hvy" suffix tokens
                 css_weight = '900'
+            elif re.search(r'\bbd\b|bold', _suffix_str):
+                css_weight = '700'
             elif 'bold' in lower_name:
                 css_weight = '700'
-            elif 'medium' in lower_name:
+            elif 'medium' in lower_name or re.search(r'\bmd\b|\bmed\b', _suffix_str):
                 css_weight = '500'
-            elif 'light' in lower_name:
+            elif 'light' in lower_name or re.search(r'\blt\b|\bltc[nd]?$', _suffix_str):
                 css_weight = '300'
             elif 'thin' in lower_name or 'hairline' in lower_name:
                 css_weight = '100'
+
+            # Determine stretch from suffix tokens
+            css_stretch = 'normal'
+            _full_suffix_lower = lower_name
+            if 'condensed' in _full_suffix_lower or 'narrow' in _full_suffix_lower:
+                css_stretch = 'condensed'
+            elif 'expanded' in _full_suffix_lower or 'extended' in _full_suffix_lower:
+                css_stretch = 'expanded'
+            else:
+                for _tok in _suffix_tokens:
+                    # e.g. "BlkCn" → token "blkcn" ends with "cn"
+                    # e.g. "BlkCond" → token "blkcond" ends with "cond"
+                    if _tok in ('cn', 'cd', 'cond') or _tok.endswith(('cn', 'cd', 'cond')):
+                        css_stretch = 'condensed'
+                        break
+                    if _tok in ('ext', 'exp', 'expanded', 'extended', 'wide'):
+                        css_stretch = 'expanded'
+                        break
 
             # Determine style
             css_style = 'italic' if ('italic' in lower_name or 'oblique' in lower_name) else 'normal'
@@ -594,8 +1044,29 @@ def extract_embedded_fonts(pdf_path, document_id, output_dir=None):
             with open(filepath, 'wb') as f:
                 f.write(content)
 
-            # Web-relative path served directly from public/.
+            # For raw CFF data (browsers cannot load bare CFF): wrap in OTF container.
+            # Saves a companion .otf file and updates file_path/ext to point at it.
+            actual_ext = ext
+            actual_path = filepath
             web_path = f"/fonts/runtime-extracted/{document_id}/{filename}"
+            if ext == 'cff':
+                try:
+                    otf_data = cff_raw_to_otf(
+                        content,
+                        font_name=clean_name,
+                        css_weight=int(css_weight),
+                        css_stretch=css_stretch,
+                    )
+                    otf_filename = f"{safe_name}.otf"
+                    otf_filepath = os.path.join(output_dir, otf_filename)
+                    with open(otf_filepath, 'wb') as f_otf:
+                        f_otf.write(otf_data)
+                    actual_ext = 'otf'
+                    actual_path = otf_filepath
+                    web_path = f"/fonts/runtime-extracted/{document_id}/{otf_filename}"
+                    print(f"    ↳ Wrapped CFF → OTF: {otf_filename}")
+                except Exception as cff_err:
+                    print(f"    ⚠ CFF→OTF conversion failed for {clean_name}: {cff_err}")
 
             embedded_fonts[clean_name] = {
                 'pdf_font_name': font_name,
@@ -603,12 +1074,13 @@ def extract_embedded_fonts(pdf_path, document_id, output_dir=None):
                 'family': family_base,
                 'css_weight': css_weight,
                 'css_style': css_style,
+                'css_stretch': css_stretch,
                 'file_path': web_path,
-                'file_ext': ext,
+                'file_ext': actual_ext,
                 'xref': xref,
             }
 
-            print(f"  📋 Extracted font: {clean_name} → {filename} (weight={css_weight}, style={css_style})")
+            print(f"  📋 Extracted font: {clean_name} → {filename} (weight={css_weight}, style={css_style}, stretch={css_stretch})")
 
     doc.close()
     print(f"  ✓ Extracted {len(embedded_fonts)} embedded fonts")
@@ -632,6 +1104,164 @@ def _trace_text_from_chars(chars):
 
 def _collapse_trace_text(text):
     return ' '.join(sanitize_extracted_text(text).split())
+
+
+def _build_texttrace_char_records(page):
+    records = []
+    try:
+        traces = page.get_texttrace() or []
+    except Exception:
+        return records
+
+    for tr in traces:
+        chars = tr.get('chars') or []
+        trace_font = tr.get('font', '')
+        trace_size = float(tr.get('size') or 0)
+        for ch in chars:
+            if not ch or len(ch) < 4:
+                continue
+            codepoint = ch[0]
+            bbox = ch[3]
+            if codepoint is None or not bbox or len(bbox) < 4:
+                continue
+            try:
+                glyph = chr(codepoint)
+            except Exception:
+                continue
+            glyph = sanitize_extracted_text(glyph)
+            if glyph == '':
+                continue
+            x0, y0, x1, y1 = [float(value) for value in bbox[:4]]
+            records.append({
+                'text': glyph,
+                'font': trace_font,
+                'size': trace_size,
+                'bbox': (x0, y0, x1, y1),
+                'center_x': (x0 + x1) / 2.0,
+                'center_y': (y0 + y1) / 2.0,
+                'origin': ch[2] if len(ch) > 2 and ch[2] else None,
+            })
+    return records
+
+
+def _collect_widget_rects(page):
+    rects = []
+    try:
+        widgets = page.widgets() or []
+    except Exception:
+        return rects
+
+    for widget in widgets:
+        try:
+            rect = widget.rect
+        except Exception:
+            continue
+        if not rect:
+            continue
+        try:
+            rects.append((float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)))
+        except Exception:
+            continue
+    return rects
+
+
+def _point_in_rect(x, y, rect, padding=0.0):
+    if not rect or len(rect) < 4:
+        return False
+    return (
+        x >= (float(rect[0]) - padding)
+        and x <= (float(rect[2]) + padding)
+        and y >= (float(rect[1]) - padding)
+        and y <= (float(rect[3]) + padding)
+    )
+
+
+def _rect_intersects_widget(rect, widget_rects, padding=0.0):
+    if not rect or len(rect) < 4 or not widget_rects:
+        return False
+    x0, y0, x1, y1 = [float(value) for value in rect[:4]]
+    for widget_rect in widget_rects:
+        wx0, wy0, wx1, wy1 = [float(value) for value in widget_rect[:4]]
+        if x1 < (wx0 - padding) or x0 > (wx1 + padding) or y1 < (wy0 - padding) or y0 > (wy1 + padding):
+            continue
+        return True
+    return False
+
+
+def _char_hits_widget(char_record, widget_rects):
+    if not widget_rects:
+        return False
+    cx = float(char_record.get('center_x') or 0)
+    cy = float(char_record.get('center_y') or 0)
+    for rect in widget_rects:
+        if _point_in_rect(cx, cy, rect, padding=0.45):
+            return True
+    return False
+
+
+def _rebuild_visible_text_from_trace_bbox(trace_chars, bbox, font, size, widget_rects=None):
+    if not trace_chars or not bbox or len(bbox) < 4:
+        return None
+
+    try:
+        x0, y0, x1, y1 = [float(value) for value in bbox[:4]]
+    except Exception:
+        return None
+
+    if x1 <= x0 or y1 <= y0:
+        return None
+
+    pad_x = 0.75
+    pad_y = 1.25
+    target_font = _normalize_font_name(font)
+    target_size = float(size or 0)
+    candidates = []
+
+    for record in trace_chars:
+        char_bbox = record.get('bbox')
+        if not char_bbox:
+            continue
+        cx = float(record.get('center_x') or 0)
+        cy = float(record.get('center_y') or 0)
+        if cx < (x0 - pad_x) or cx > (x1 + pad_x) or cy < (y0 - pad_y) or cy > (y1 + pad_y):
+            continue
+
+        if target_font:
+            record_font = _normalize_font_name(record.get('font'))
+            if record_font and record_font != target_font:
+                continue
+
+        if target_size > 0:
+            record_size = float(record.get('size') or 0)
+            if record_size > 0 and abs(record_size - target_size) > max(1.25, target_size * 0.18):
+                continue
+
+        if _char_hits_widget(record, widget_rects or []):
+            continue
+
+        candidates.append(record)
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda record: (
+        round(float(record.get('center_y') or 0), 1),
+        round(float(record.get('center_x') or 0), 1),
+    ))
+    rebuilt = sanitize_extracted_text(''.join(record.get('text', '') for record in candidates))
+    if rebuilt == '':
+        return None
+
+    rebuilt_x0 = min(float(record['bbox'][0]) for record in candidates)
+    rebuilt_y0 = min(float(record['bbox'][1]) for record in candidates)
+    rebuilt_x1 = max(float(record['bbox'][2]) for record in candidates)
+    rebuilt_y1 = max(float(record['bbox'][3]) for record in candidates)
+    rebuilt_origin = next((record.get('origin') for record in candidates if record.get('origin')), None)
+    return {
+        'text': rebuilt,
+        'bbox': (rebuilt_x0, rebuilt_y0, rebuilt_x1, rebuilt_y1),
+        'origin': rebuilt_origin,
+    }
 
 
 def _build_texttrace_index(page):
@@ -824,6 +1454,14 @@ def _parse_font_style(font_name):
     }
 
 
+def _block_contains_symbol_font(block):
+    for span in block.get('spans') or []:
+        font_name = _normalize_font_name(span.get('font') or '')
+        if any(token in font_name for token in ('europeanpi', 'symbol', 'dingbat', 'zapf')):
+            return True
+    return False
+
+
 def _score_font_match(target_name, candidate_name):
     target_norm = _normalize_font_name(target_name)
     candidate_norm = _normalize_font_name(candidate_name)
@@ -872,7 +1510,7 @@ def match_font_xref(font_name, page_fonts):
     return best[0]
 
 
-def _merge_same_row_lines(line_items):
+def _merge_same_row_lines(line_items, vertical_lines=None, widget_rects=None):
     """
     Merge line items that share the same visual row into single items.
     This handles cases where PyMuPDF splits text on the same visual line into
@@ -913,6 +1551,20 @@ def _merge_same_row_lines(line_items):
                 if size_ratio < 0.6:
                     should_merge = False
 
+        # Don't merge items across real form structure such as field borders/widgets.
+        if should_merge:
+            row_bbox = (
+                min(it['bbox'][0] for it in row),
+                min(it['bbox'][1] for it in row),
+                max(it['bbox'][2] for it in row),
+                max(it['bbox'][3] for it in row),
+            )
+            item_bbox = item['bbox']
+            if _rects_have_vertical_barrier(row_bbox, item_bbox, vertical_lines or []):
+                should_merge = False
+            elif _rects_have_widget_barrier(row_bbox, item_bbox, widget_rects or []):
+                should_merge = False
+
         # Don't merge items with a significant horizontal overlap (z-ordered text).
         # Normal text flows left-to-right with positive gaps.
         # Minimal negative gap (kerning) is okay, but large overlap means
@@ -927,8 +1579,17 @@ def _merge_same_row_lines(line_items):
             # We want to merge items that are SEQUENTIAL (small positive gap).
             # We do NOT want to merge items that OVERLAP significantly (negative gap).
             
-            # Distance between end of row and start of item
-            dist = item_x0 - row_x1
+            if row_x1 <= item_x0:
+                dist = item_x0 - row_x1
+                overlap = 0.0
+            elif item_x1 <= row_x0:
+                dist = row_x0 - item_x1
+                overlap = 0.0
+                if not _looks_like_leading_inline_label(_line_item_text(item)):
+                    should_merge = False
+            else:
+                overlap = min(row_x1, item_x1) - max(row_x0, item_x0)
+                dist = -overlap
             
             if dist > 0:
                 # Positive gap logic (existing)
@@ -939,7 +1600,6 @@ def _merge_same_row_lines(line_items):
                     should_merge = False
             else:
                 # Negative gap (overlap)
-                overlap = -dist
                 # Allow small overlap for italics/kerning (up to 20% of font size)
                 avg_size = max(row_max_size if row_max_size > 0 else 12,
                                item['max_size'] if item['max_size'] > 0 else 12)
@@ -1007,7 +1667,205 @@ def _groups_share_visual_row(group_a, group_b):
     return False
 
 
-def _merge_adjacent_page_blocks(page_blocks, page_width, page_words, page_lines):
+def _line_item_text(item):
+    line = item.get('line') or {}
+    spans = line.get('spans') or []
+    return ''.join(str(span.get('text') or '') for span in spans).strip()
+
+
+def _looks_like_form_section_header(text):
+    normalized = ' '.join(str(text or '').split())
+    if not normalized:
+        return False
+    return re.match(r'^Part\s+[IVXLCM]+\b', normalized, re.IGNORECASE) is not None
+
+
+def _starts_with_form_field_number(text):
+    normalized = ' '.join(str(text or '').split())
+    if not normalized:
+        return False
+    return re.match(r'^\d+[A-Za-z]?\b', normalized) is not None
+
+
+def _looks_like_leading_inline_label(text):
+    normalized = ' '.join(str(text or '').split())
+    if not normalized:
+        return False
+    return re.match(r'^(?:\d{1,2}[A-Za-z]?|[A-Za-z]\)|\([A-Za-z0-9]{1,2}\)|[•◦▪■▶▲])$', normalized) is not None
+
+
+def _split_stacked_form_header_groups(group_items):
+    if len(group_items) <= 1:
+        return [group_items]
+
+    ordered_items = sorted(group_items, key=lambda item: (item['bbox'][1], item['bbox'][0]))
+    split_groups = [[ordered_items[0]]]
+
+    for item in ordered_items[1:]:
+        current_group = split_groups[-1]
+        previous_item = current_group[-1]
+        previous_text = _line_item_text(previous_item)
+        item_text = _line_item_text(item)
+        shares_visual_row = _groups_share_visual_row([previous_item], [item])
+
+        if (
+            not shares_visual_row
+            and _looks_like_form_section_header(previous_text)
+            and _starts_with_form_field_number(item_text)
+        ):
+            split_groups.append([item])
+        else:
+            current_group.append(item)
+
+    return split_groups
+
+
+def _looks_like_dot_leader_fragment(text):
+    normalized = str(text or '').strip()
+    if not normalized:
+        return False
+    if '.' not in normalized:
+        return False
+
+    without_leaders = normalized.replace('.', '').replace(' ', '').replace('\t', '')
+    if without_leaders == '':
+        return True
+
+    return re.match(r'^[A-Z0-9][A-Z0-9\-./()]*$', without_leaders) is not None
+
+
+def _group_and_item_share_column(group_items, item_bbox):
+    if not group_items or not item_bbox:
+        return False
+
+    group_bbox = None
+    for existing_item in group_items:
+        group_bbox = _rect_union(group_bbox, existing_item.get('bbox'))
+    if not group_bbox:
+        return False
+
+    group_left = float(group_bbox[0])
+    group_right = float(group_bbox[2])
+    item_left = float(item_bbox[0])
+    item_right = float(item_bbox[2])
+    group_width = max(1.0, group_right - group_left)
+    item_width = max(1.0, item_right - item_left)
+    inter_width = max(0.0, min(group_right, item_right) - max(group_left, item_left))
+    overlap_ratio = inter_width / max(1.0, min(group_width, item_width))
+    center_delta = abs(
+        ((group_left + group_right) / 2.0) - ((item_left + item_right) / 2.0)
+    )
+
+    if overlap_ratio >= 0.5:
+        return True
+
+    if abs(item_left - group_left) <= max(12.0, min(group_width, item_width) * 0.2):
+        return True
+
+    if center_delta <= max(18.0, min(group_width, item_width) * 0.25):
+        return True
+
+    return False
+
+
+def _split_candidate_lines_by_x_gap(candidate_items, vertical_lines=None, widget_rects=None):
+    """
+    Split a candidate line group into x-clusters when items occupy distinct columns
+    on the same visual row. Vertically stacked paragraph lines in the same column
+    should stay together even though their x0 is to the left of the previous
+    line's right edge.
+    """
+    if len(candidate_items) <= 1:
+        return [candidate_items]
+
+    sorted_by_x = sorted(candidate_items, key=lambda item: item['x0'])
+    x_groups = [[sorted_by_x[0]]]
+
+    for item in sorted_by_x[1:]:
+        current_group = x_groups[-1]
+        current_group_bbox = None
+        for existing_item in current_group:
+            current_group_bbox = _rect_union(current_group_bbox, existing_item.get('bbox'))
+        item_bbox = item.get('bbox')
+        group_right = float(current_group_bbox[2]) if current_group_bbox else float(item['x0'])
+        gap = float(item['x0']) - group_right
+
+        avg_size = max(
+            (it.get('max_size', 0) for it in current_group if it.get('max_size', 0) > 0),
+            default=12,
+        )
+        pair_size = max(avg_size, float(item.get('max_size') or 0), 8.0)
+        gap_threshold = min(max(pair_size * 1.1, 7.0), 16.0)
+        overlap_threshold = avg_size * 0.2
+        has_structural_barrier = (
+            _rects_have_vertical_barrier(current_group_bbox, item_bbox, vertical_lines or [])
+            or _rects_have_widget_barrier(current_group_bbox, item_bbox, widget_rects or [])
+        )
+        shares_visual_row = _groups_share_visual_row(current_group, [item])
+        current_group_text = ''.join(_line_item_text(existing_item) for existing_item in current_group).strip()
+        item_text = _line_item_text(item)
+        keeps_dot_leader_continuity = (
+            _looks_like_dot_leader_fragment(item_text)
+            or _looks_like_dot_leader_fragment(current_group_text)
+        )
+
+        if has_structural_barrier or (
+            shares_visual_row
+            and not keeps_dot_leader_continuity
+            and (gap >= gap_threshold or gap < -overlap_threshold)
+        ):
+            x_groups.append([item])
+        elif not shares_visual_row and not _group_and_item_share_column(current_group, item_bbox):
+            x_groups.append([item])
+        else:
+            current_group.append(item)
+
+    return x_groups
+
+
+def _split_same_row_group_by_barriers(group_items, vertical_lines, widget_rects):
+    if len(group_items) <= 1:
+        return [group_items]
+
+    sorted_items = sorted(group_items, key=lambda item: item['x0'])
+    split_groups = [[sorted_items[0]]]
+
+    for item in sorted_items[1:]:
+        current_group = split_groups[-1]
+        current_bbox = None
+        for existing_item in current_group:
+            current_bbox = _rect_union(current_bbox, existing_item.get('bbox'))
+        item_bbox = item.get('bbox')
+        same_row = _groups_share_visual_row(current_group, [item])
+        avg_size = max(
+            (it.get('max_size', 0) for it in current_group if it.get('max_size', 0) > 0),
+            default=12,
+        )
+        pair_size = max(avg_size, float(item.get('max_size') or 0), 8.0)
+        gap_threshold = min(max(pair_size * 0.9, 6.0), 14.0)
+        gap = float(item_bbox[0]) - float(current_bbox[2]) if current_bbox and item_bbox else 0.0
+        has_structural_barrier = (
+            _rects_have_vertical_barrier(current_bbox, item_bbox, vertical_lines)
+            or _rects_have_widget_barrier(current_bbox, item_bbox, widget_rects)
+        )
+        current_group_text = ''.join(_line_item_text(existing_item) for existing_item in current_group).strip()
+        item_text = _line_item_text(item)
+        keeps_dot_leader_continuity = (
+            _looks_like_dot_leader_fragment(item_text)
+            or _looks_like_dot_leader_fragment(current_group_text)
+        )
+
+        if same_row and has_structural_barrier:
+            split_groups.append([item])
+        elif same_row and not keeps_dot_leader_continuity and gap >= gap_threshold:
+            split_groups.append([item])
+        else:
+            current_group.append(item)
+
+    return split_groups
+
+
+def _merge_adjacent_page_blocks(page_blocks, page_width, page_words, page_lines, widget_rects=None, vertical_lines=None):
     """
     Post-process page blocks to merge blocks that sit on the same visual line.
     This handles cases where PyMuPDF reports inline text as entirely separate blocks.
@@ -1069,6 +1927,26 @@ def _merge_adjacent_page_blocks(page_blocks, page_width, page_words, page_lines)
                     if size_ratio < 0.7:
                         continue
 
+                if _block_contains_symbol_font(block_a) or _block_contains_symbol_font(block_b):
+                    continue
+
+                if bool(block_a.get('bold')) != bool(block_b.get('bold')):
+                    continue
+
+                if _rects_have_vertical_barrier(
+                    (a_left, a_top, a_right, a_bottom),
+                    (b_left, b_top, b_right, b_bottom),
+                    vertical_lines or [],
+                ):
+                    continue
+
+                if _rects_have_widget_barrier(
+                    (a_left, a_top, a_right, a_bottom),
+                    (b_left, b_top, b_right, b_bottom),
+                    widget_rects or [],
+                ):
+                    continue
+
                 # CRITICAL FIX: Much stricter horizontal gap threshold
                 # Elements must be very close together to merge (max 3x font size)
                 h_gap = max(b_left - a_right, a_left - b_right, 0)
@@ -1126,6 +2004,11 @@ def _merge_adjacent_page_blocks(page_blocks, page_width, page_words, page_lines)
                 m_top = min(block_a['top'], block_b['top'])
                 m_right = max(a_right, b_right)
                 m_bottom = max(a_bottom, b_bottom)
+                merged_bbox = (m_left, m_top, m_right, m_bottom)
+
+                first_line_text = (first.get('text_single_line') or first.get('text') or '').replace('\n', ' ').strip()
+                second_line_text = (second.get('text_single_line') or second.get('text') or '').replace('\n', ' ').strip()
+                merged_single_line = ' '.join(part for part in [first_line_text, second_line_text] if part).strip()
 
                 merged_block = {
                     'block_num': surviving_block_num,
@@ -1135,16 +2018,18 @@ def _merge_adjacent_page_blocks(page_blocks, page_width, page_words, page_lines)
                     'height': m_bottom - m_top,
                 }
 
-                # Combine text lines
-                merged_block['text_lines'] = first.get('text_lines', []) + second.get('text_lines', [])
-                merged_block['text'] = '\n'.join(merged_block['text_lines'])
-                merged_block['text_single_line'] = ' '.join(merged_block['text_lines'])
+                # Same-row merges should remain a single visual line. Keeping both
+                # source blocks as separate text lines creates fake multiline form
+                # labels that the editor later renders as stacked content.
+                merged_block['text_lines'] = [merged_single_line] if merged_single_line else []
+                merged_block['text'] = merged_single_line
+                merged_block['text_single_line'] = merged_single_line
                 merged_block['spans'] = first.get('spans', []) + second.get('spans', [])
                 merged_block['source_content_ops'] = _dedupe_source_content_ops(
                     (first.get('source_content_ops') or []) + (second.get('source_content_ops') or [])
                 )
-                merged_block['line_bboxes'] = first.get('line_bboxes', []) + second.get('line_bboxes', [])
-                merged_block['line_count'] = first.get('line_count', 0) + second.get('line_count', 0)
+                merged_block['line_bboxes'] = [merged_bbox]
+                merged_block['line_count'] = 1
 
                 all_heights = [bbox[3] - bbox[1] for bbox in merged_block['line_bboxes']]
                 if all_heights:
@@ -1155,7 +2040,8 @@ def _merge_adjacent_page_blocks(page_blocks, page_width, page_words, page_lines)
                 # Style from the larger block (dominant)
                 larger = first if len(first.get('text', '')) >= len(second.get('text', '')) else second
                 for key in ('font', 'font_xref', 'font_size', 'font_weight', 'color',
-                            'hex_color', 'bold', 'italic', 'line_height', 'ascender', 'descender'):
+                            'hex_color', 'bold', 'italic', 'line_height', 'ascender', 'descender',
+                            'uses_embedded_font', 'embedded_font_name', 'embedded_font_family', 'embedded_font_xref'):
                     if key in larger:
                         merged_block[key] = larger[key]
 
@@ -1322,6 +2208,13 @@ def _merge_stacked_paragraph_blocks(page_blocks, page_words, page_lines):
                 b_text_lines = block_b.get('text_lines') or [block_b.get('text') or '']
                 a_primary_line = str(a_text_lines[0] if a_text_lines else block_a.get('text') or '').strip()
                 b_primary_line = str(b_text_lines[0] if b_text_lines else block_b.get('text') or '').strip()
+                heading_prefix = b_primary_line.split(':', 1)[0].strip() if ':' in b_primary_line else ''
+                lower_starts_heading_like_followup = (
+                    heading_prefix != ''
+                    and len(heading_prefix) <= 24
+                    and 1 <= len(heading_prefix.split()) <= 4
+                    and re.match(r'^[A-Z][A-Za-z0-9&/().,\- ]*$', heading_prefix) is not None
+                )
                 single_line_text_length = max(len(a_primary_line), len(b_primary_line))
                 single_line_visual_width = max(a_width, b_width)
                 compact_single_line_pair = (
@@ -1352,6 +2245,12 @@ def _merge_stacked_paragraph_blocks(page_blocks, page_words, page_lines):
                     # apart. Treat substantial multiline blocks as separate paragraphs unless
                     # they are almost touching; otherwise edit/export state inherits merged
                     # line geometry and reflows incorrectly after save/download.
+                    continue
+                if (
+                    lower_starts_heading_like_followup
+                    and a_line_count >= 3
+                    and vertical_gap >= max(4.0, max(a_line_height, b_line_height) * 0.4)
+                ):
                     continue
                 compatible_column_shape = similar_column_width or short_lead_paragraph_pair
                 max_allowed_gap = base_gap
@@ -1633,10 +2532,14 @@ def extract_text_with_pymupdf(pdf_path):
             text_dict = page.get_text("dict", flags=text_flags, sort=True)
             blocks = text_dict.get("blocks", [])
             page_fonts = page.get_fonts(full=True)
+            page_font_metadata = _build_page_font_metadata(page_fonts)
             trace_index = _build_texttrace_index(page)
+            trace_char_records = _build_texttrace_char_records(page)
+            widget_rects = _collect_widget_rects(page)
             source_content_op_index = _build_source_content_op_index(doc, page)
             opaque_fill_occluders = _build_opaque_fill_occluders(page)
             horizontal_lines = _collect_horizontal_lines(page)
+            vertical_lines = _collect_vertical_lines(page)
 
             # Pre-fetch PyMuPDF word-level positions (with the same space-inhibit
             # flag).  Used below to split spans that mix regular text with underscore
@@ -1666,13 +2569,19 @@ def extract_text_with_pymupdf(pdf_path):
                             'bbox': line_bbox,
                             'x0': line_bbox[0],
                             'y0': line_bbox[1],
-                            'max_size': line_max_size
+                            'max_size': line_max_size,
+                            'dir': _normalize_line_direction(line.get("dir")),
+                            'wmode': int(line.get("wmode", 0) or 0),
                         })
 
                     # Pre-process: merge lines that share the same visual row.
                     # This prevents inline formatting (e.g., italic book titles) from
                     # being split into separate bounding boxes.
-                    line_items = _merge_same_row_lines(line_items)
+                    line_items = _merge_same_row_lines(
+                        line_items,
+                        vertical_lines=vertical_lines,
+                        widget_rects=widget_rects,
+                    )
 
                     groups = []
 
@@ -1700,28 +2609,11 @@ def extract_text_with_pymupdf(pdf_path):
                     split_groups = []
                     for candidate in groups:
                         if len(candidate) > 1:
-                            sorted_by_x = sorted(candidate, key=lambda item: item['x0'])
-                            gap_threshold = max(12.0, block_width * 0.08)
-
-                            # Cluster items by x0 proximity
-                            x_groups = [[sorted_by_x[0]]]
-                            for item in sorted_by_x[1:]:
-                                last_x = max(it['x0'] for it in x_groups[-1])
-                                gap = item['x0'] - last_x
-                                
-                                # Split if significant gap OR significant overlap (z-order)
-                                # Gap threshold: 8% of width or 12pt
-                                # Overlap threshold: 20% of font size
-                                avg_size = max(
-                                    (it.get('max_size', 0) for it in x_groups[-1] if it.get('max_size', 0) > 0), 
-                                    default=12
-                                )
-                                overlap_threshold = avg_size * 0.2
-                                
-                                if gap >= gap_threshold or gap < -overlap_threshold:
-                                    x_groups.append([item])
-                                else:
-                                    x_groups[-1].append(item)
+                            x_groups = _split_candidate_lines_by_x_gap(
+                                candidate,
+                                vertical_lines=vertical_lines,
+                                widget_rects=widget_rects,
+                            )
 
                             if len(x_groups) > 1:
                                 # For each adjacent pair of groups, check if the split is valid.
@@ -1735,10 +2627,20 @@ def extract_text_with_pymupdf(pdf_path):
                                 )
                                 large_gap_threshold = max(avg_font_size * 2, 20)
                                 for gi in range(len(x_groups) - 1):
+                                    left_group_bbox = None
+                                    right_group_bbox = None
+                                    for left_item in x_groups[gi]:
+                                        left_group_bbox = _rect_union(left_group_bbox, left_item.get('bbox'))
+                                    for right_item in x_groups[gi + 1]:
+                                        right_group_bbox = _rect_union(right_group_bbox, right_item.get('bbox'))
+                                    has_structural_barrier = (
+                                        _rects_have_vertical_barrier(left_group_bbox, right_group_bbox, vertical_lines)
+                                        or _rects_have_widget_barrier(left_group_bbox, right_group_bbox, widget_rects)
+                                    )
                                     right_min_x = min(it['x0'] for it in x_groups[gi + 1])
                                     left_max_x = max(it['x0'] for it in x_groups[gi])
                                     inter_gap = right_min_x - left_max_x
-                                    if inter_gap < large_gap_threshold:
+                                    if inter_gap < large_gap_threshold and not has_structural_barrier:
                                         # Small gap — only split if groups are on different rows
                                         if _groups_share_visual_row(x_groups[gi], x_groups[gi + 1]):
                                             all_valid = False
@@ -1753,6 +2655,25 @@ def extract_text_with_pymupdf(pdf_path):
                         split_groups.append(candidate)
 
                     groups = split_groups if split_groups else [line_items]
+                    normalized_groups = []
+                    for group_items in groups:
+                        regrouped_items = _split_same_row_group_by_barriers(
+                            group_items,
+                            vertical_lines,
+                            widget_rects,
+                        )
+                        if len(regrouped_items) > 1:
+                            for regrouped in regrouped_items:
+                                for regrouped_item in regrouped:
+                                    regrouped_item['_from_xgap_split'] = True
+                            normalized_groups.extend(regrouped_items)
+                        else:
+                            normalized_groups.append(group_items)
+                    groups = normalized_groups if normalized_groups else groups
+                    form_split_groups = []
+                    for group_items in groups:
+                        form_split_groups.extend(_split_stacked_form_header_groups(group_items))
+                    groups = form_split_groups if form_split_groups else groups
 
                     groups = sorted(groups, key=lambda items: min(item['y0'] for item in items) if items else 0)
 
@@ -1787,10 +2708,11 @@ def extract_text_with_pymupdf(pdf_path):
 
                         for item in sorted(group_items, key=lambda it: it['line_num']):
                             line = item['line']
+                            line_dir = item.get('dir') or _normalize_line_direction(line.get("dir"))
+                            line_wmode = int(item.get('wmode', line.get("wmode", 0)) or 0)
+                            line_rotation = _line_rotation_degrees(line_dir)
                             line_text = ""
                             line_bbox = item['bbox']
-                            block_line_bboxes.append(line_bbox)
-                            block_line_heights.append(line_bbox[3] - line_bbox[1])
 
                             line_spans = []
                             line_style = None
@@ -1800,6 +2722,7 @@ def extract_text_with_pymupdf(pdf_path):
 
                             for span_num, span in enumerate(line.get("spans", [])):
                                 text = sanitize_extracted_text(span.get("text", ""))
+                                text = _apply_line_direction_text_order(text, line_dir)
                                 if not text or not text.strip():
                                     continue
 
@@ -1840,10 +2763,32 @@ def extract_text_with_pymupdf(pdf_path):
                                     trace_render_type = trace_match.get("render_type")
                                     trace_spacewidth = trace_match.get("spacewidth")
 
+                                trace_visible_span = _rebuild_visible_text_from_trace_bbox(
+                                    trace_char_records,
+                                    bbox,
+                                    font,
+                                    size,
+                                    widget_rects,
+                                )
+                                if trace_visible_span:
+                                    text = trace_visible_span.get("text") or text
+                                    text = _apply_line_direction_text_order(text, line_dir)
+                                    rebuilt_bbox = trace_visible_span.get("bbox")
+                                    if rebuilt_bbox and len(rebuilt_bbox) >= 4:
+                                        bbox = rebuilt_bbox
+                                    rebuilt_origin = trace_visible_span.get("origin")
+                                    if rebuilt_origin:
+                                        origin = rebuilt_origin
+                                elif _rect_intersects_widget(bbox, widget_rects, padding=0.35):
+                                    continue
+
+                                if not text or not text.strip():
+                                    continue
+
                                 source_content_op = _match_source_content_op(
                                     source_content_op_index,
-                                    trace_match.get('text') if trace_match else text,
-                                    trace_match.get('origin') if trace_match else origin,
+                                    text,
+                                    origin,
                                 )
                                 source_content_ops = _clone_source_content_ops_with_matched_text(
                                     [source_content_op] if source_content_op else [],
@@ -1864,7 +2809,10 @@ def extract_text_with_pymupdf(pdf_path):
                                 
                                 # Also infer from font name (more reliable than flags in many PDFs)
                                 font_lower = font.lower()
-                                is_bold_from_name = 'bold' in font_lower or 'black' in font_lower or 'heavy' in font_lower
+                                _span_suffix_tokens = [p for p in re.split(r'[-_,]', font_lower) if p][1:]
+                                _span_has_blk = any(t.startswith('blk') or t == 'hvy' for t in _span_suffix_tokens)
+                                is_bold_from_name = ('bold' in font_lower or 'black' in font_lower
+                                                     or 'heavy' in font_lower or _span_has_blk)
                                 is_italic_from_name = 'italic' in font_lower or 'oblique' in font_lower
                                 
                                 # Determine weight - first try to parse explicit weight from font name
@@ -1891,7 +2839,7 @@ def extract_text_with_pymupdf(pdf_path):
                                         font_weight = 600
                                     elif 'extrabold' in font_lower or 'ultrabold' in font_lower:
                                         font_weight = 800
-                                    elif 'black' in font_lower or 'heavy' in font_lower:
+                                    elif 'black' in font_lower or 'heavy' in font_lower or _span_has_blk:
                                         font_weight = 900
                                     elif is_bold_from_name or is_bold_from_flags:
                                         font_weight = 700
@@ -1903,6 +2851,11 @@ def extract_text_with_pymupdf(pdf_path):
                                 is_italic = is_italic_from_name or is_italic_from_flags
 
                                 font_xref = match_font_xref(font, page_fonts)
+                                embedded_font_meta = _resolve_embedded_font_meta(
+                                    font,
+                                    font_xref,
+                                    page_font_metadata,
+                                )
 
                                 # Track style frequency to find dominant style
                                 # Include hex_color so spans with the same font/size but
@@ -1930,11 +2883,15 @@ def extract_text_with_pymupdf(pdf_path):
                                     'ascender': ascender,
                                     'descender': descender,
                                     'origin': list(origin) if origin else None,  # (x, y) baseline point
+                                    'direction': list(line_dir) if line_dir else None,
+                                    'writing_mode': line_wmode,
+                                    'rotation': line_rotation,
                                     'line_width': trace_linewidth,
                                     'render_type': trace_render_type,
                                     'space_width': trace_spacewidth,
                                     'source_content_ops': source_content_ops,
                                 }
+                                _attach_embedded_font_fields(span_data, embedded_font_meta)
                                 block_spans.append(span_data)
                                 line_spans.append(span_data)
                                 line_source_content_ops.extend(source_content_ops)
@@ -1951,6 +2908,7 @@ def extract_text_with_pymupdf(pdf_path):
                                         'bold': is_bold,
                                         'italic': is_italic
                                     }
+                                    _attach_embedded_font_fields(line_style, embedded_font_meta)
 
                                 if block_style is None or style_counts.get(style_key, 0) > style_counts.get(f"{block_style.get('font', '')}_{block_style.get('font_size', 0)}_{block_style.get('bold', False)}_{block_style.get('italic', False)}_{block_style.get('hex_color', '#000000')}", 0):
                                     block_style = {
@@ -1962,10 +2920,11 @@ def extract_text_with_pymupdf(pdf_path):
                                         'hex_color': hex_color,
                                         'bold': is_bold,
                                         'italic': is_italic,
-                                        'line_height': line_bbox[3] - line_bbox[1],
+                                        'line_height': (bbox[3] - bbox[1]) if bbox else (line_bbox[3] - line_bbox[1]),
                                         'ascender': ascender,
                                         'descender': descender
                                     }
+                                    _attach_embedded_font_fields(block_style, embedded_font_meta)
 
                                 word_data = {
                                     'text': text,
@@ -1991,11 +2950,15 @@ def extract_text_with_pymupdf(pdf_path):
                                     'span_num': span_num,
                                     'ascender': ascender,
                                     'descender': descender,
+                                    'direction': list(line_dir) if line_dir else None,
+                                    'writing_mode': line_wmode,
+                                    'rotation': line_rotation,
                                     'line_width': trace_linewidth,
                                     'render_type': trace_render_type,
                                     'space_width': trace_spacewidth,
                                     'source_content_ops': source_content_ops,
                                 }
+                                _attach_embedded_font_fields(word_data, embedded_font_meta)
 
                                 # When a span has a drawn underline AND contains an
                                 # underscore run with real text both before and after
@@ -2063,17 +3026,37 @@ def extract_text_with_pymupdf(pdf_path):
                                 total_words += len(text.split())
 
                             if line_text.strip():
+                                visible_line_bboxes = [
+                                    tuple(map(float, span.get('bbox')[:4]))
+                                    for span in line_spans
+                                    if isinstance(span.get('bbox'), (list, tuple)) and len(span.get('bbox')) >= 4
+                                ]
+                                if visible_line_bboxes:
+                                    effective_line_bbox = (
+                                        min(bbox[0] for bbox in visible_line_bboxes),
+                                        min(bbox[1] for bbox in visible_line_bboxes),
+                                        max(bbox[2] for bbox in visible_line_bboxes),
+                                        max(bbox[3] for bbox in visible_line_bboxes),
+                                    )
+                                else:
+                                    effective_line_bbox = line_bbox
+
                                 page_text_lines.append(line_text.strip())
                                 block_text_lines.append(line_text.strip())
+                                block_line_bboxes.append(effective_line_bbox)
+                                block_line_heights.append(effective_line_bbox[3] - effective_line_bbox[1])
 
                                 line_data = {
                                     'text': line_text.strip(),
-                                    'left': line_bbox[0],
-                                    'top': line_bbox[1],
-                                    'width': line_bbox[2] - line_bbox[0],
-                                    'height': line_bbox[3] - line_bbox[1],
+                                    'left': effective_line_bbox[0],
+                                    'top': effective_line_bbox[1],
+                                    'width': effective_line_bbox[2] - effective_line_bbox[0],
+                                    'height': effective_line_bbox[3] - effective_line_bbox[1],
                                     'block_num': block_counter,
                                     'line_num': item['line_num'],
+                                    'direction': list(line_dir) if line_dir else None,
+                                    'writing_mode': line_wmode,
+                                    'rotation': line_rotation,
                                     'spans': line_spans,
                                     'source_content_ops': _dedupe_source_content_ops(line_source_content_ops),
                                 }
@@ -2124,6 +3107,20 @@ def extract_text_with_pymupdf(pdf_path):
                         current_block['spans'] = block_spans  # Store span data for rich text
                         current_block['source_content_ops'] = _dedupe_source_content_ops(block_source_content_ops)
                         current_block['has_mixed_styles'] = len(style_counts) > 1  # Flag for mixed styling
+                        unique_line_rotations = sorted({
+                            round(float(line.get('rotation', 0.0) or 0.0), 4)
+                            for line in page_lines
+                            if line.get('block_num') == block_counter
+                        })
+                        unique_line_directions = [
+                            line.get('direction')
+                            for line in page_lines
+                            if line.get('block_num') == block_counter and line.get('direction')
+                        ]
+                        if len(unique_line_rotations) == 1:
+                            current_block['rotation'] = unique_line_rotations[0]
+                        if len(unique_line_directions) == 1:
+                            current_block['direction'] = unique_line_directions[0]
                         if block_style:
                             if block_line_heights:
                                 block_style['line_height'] = sum(block_line_heights) / len(block_line_heights)
@@ -2135,7 +3132,14 @@ def extract_text_with_pymupdf(pdf_path):
 
             # Post-process: merge blocks that sit on the same visual line
             # This catches cases where PyMuPDF reports inline text as separate blocks
-            page_blocks = _merge_adjacent_page_blocks(page_blocks, page_width, page_words, page_lines)
+            page_blocks = _merge_adjacent_page_blocks(
+                page_blocks,
+                page_width,
+                page_words,
+                page_lines,
+                widget_rects=widget_rects,
+                vertical_lines=vertical_lines,
+            )
             page_blocks = _merge_stacked_paragraph_blocks(page_blocks, page_words, page_lines)
 
             # ── Word-level deduplication ──────────────────────────────

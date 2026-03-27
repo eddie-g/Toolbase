@@ -32,6 +32,10 @@
     {
       "id": 8,
       "text": "Each TEXT annotation or modification(delete, move, update, change) should trigger a FULL PAGE REDRAW THERE ARE NO EXCEPTIONS TO THIS RULE."
+    },
+    {
+      "id": 9,
+      "text": "show_pdf_page shall be used only for unchanged promoted extraction text when the original source page and clip rectangle are known and the block is geometrically safe to replay as a clipped source rectangle. If the text was edited, the source page is unknown, or the block is a risky long/thin clip-replay case, the system shall use a more precise text replay/redraw path instead."
     }
   ]
 }

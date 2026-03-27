@@ -29,6 +29,18 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Line Grouping Editor Mode
+    |--------------------------------------------------------------------------
+    |
+    | When enabled, promoted extraction blocks may be split into smaller
+    | line-level editor annotations. When disabled, the editor keeps the
+    | original extracted paragraph/block grouping.
+    |
+    */
+    'line_grouping_editor_mode' => env('LINE_GROUPING_EDITOR_MODE', false),
+
+    /*
+    |--------------------------------------------------------------------------
     | Editor Debug Controls
     |--------------------------------------------------------------------------
     |
