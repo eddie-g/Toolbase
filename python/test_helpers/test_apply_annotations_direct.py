@@ -8,7 +8,7 @@ import unittest
 import fitz
 
 
-MODULE_PATH = pathlib.Path(__file__).resolve().parents[1] / "pdf-editor" / "apply_annotations_direct.py"
+MODULE_PATH = pathlib.Path(__file__).resolve().parents[1] / "pdf-editor" / "apply_annotations_direct_new.py"
 
 
 def load_module():
@@ -900,6 +900,213 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         self.assertEqual(layout[0]["font_family"], "Palatino")
         self.assertEqual(layout[0]["font_source_name"], "Palatino")
         self.assertAlmostEqual(layout[0]["font_size"], 80.0, places=3)
+
+    def test_normalize_exact_source_line_layout_uses_leftmost_source_origin_when_span_bbox_is_broken(self):
+        annotation = {
+            "promotedFromExtraction": True,
+            "fontFamily": "TimesNewRomanPSMT",
+            "fontSourceName": "TimesNewRomanPSMT",
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "sourceBlockLeft": 29.947967529296875,
+            "sourceBlockTop": 315.726806640625,
+            "sourceBlockWidth": 478.4940185546875,
+            "sourceLineBBoxes": [
+                [29.947967529296875, 315.726806640625, 508.4419860839844, 335.63525390625],
+            ],
+            "sourceTextLines": [
+                "• If you want to file a request for higher-level review, use VA Form 20-0996, Decision Review Request: Higher-Level Review.",
+            ],
+            "sourceSpans": [
+                {
+                    "text": ".",
+                    "bbox": [29.947967529296875, 315.7542419433594, 508.4419860839844, 335.63525390625],
+                    "origin": [499.4419860839844, 322.7030029296875],
+                    "font": "TimesNewRomanPSMT",
+                    "fontSize": 9,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                },
+                {
+                    "text": "•",
+                    "bbox": [43.447998046875, 315.726806640625, 52.08799743652344, 324.726806640625],
+                    "origin": [43.447998046875, 322.7030029296875],
+                    "font": "Symbol",
+                    "fontSize": 9,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                },
+                {
+                    "text": "If you want to file a request for higher-level review, use VA Form 20-0996,",
+                    "bbox": [52.08799743652344, 315.7542419433594, 327.0290222167969, 324.7542419433594],
+                    "origin": [52.08799743652344, 322.7030029296875],
+                    "font": "TimesNewRomanPSMT",
+                    "fontSize": 9,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                },
+                {
+                    "text": "Decision Review Request: Higher-Level Review",
+                    "bbox": [327.010986328125, 315.78045654296875, 499.4690246582031, 324.78045654296875],
+                    "origin": [327.010986328125, 322.7030029296875],
+                    "font": "TimesNewRomanPS-ItalicMT",
+                    "fontSize": 9,
+                    "fontWeight": "400",
+                    "fontStyle": "italic",
+                    "color": "#000000",
+                },
+            ],
+        }
+
+        layout = self.module.normalize_exact_source_line_layout(
+            annotation,
+            "•  If you want to file a request for higher-level review, use VA Form 20-0996, Decision Review Request: Higher-Level Review.",
+            fitz.Font("tiro"),
+            9,
+            fitz.Rect(42.01183431952662, 314.48520710059177, 520.7100591715975, 329.2781065088758),
+        )
+
+        self.assertEqual(len(layout), 1)
+        self.assertLess(layout[0]["baseline_x"], 60.0)
+        self.assertAlmostEqual(layout[0]["baseline_x"], 42.01183431952662, places=3)
+
+    def test_build_dirty_promoted_style_mapped_span_layout_uses_authoritative_single_run_edit_style(self):
+        annotation = {
+            "text": "THIS FORM SUCKS:",
+            "promotedFromExtraction": True,
+            "promotedDirty": True,
+            "fontFamily": "Verdana",
+            "fontSourceName": "Verdana",
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "fontSize": 9,
+            "textColor": "#000000",
+            "sourceBlockLeft": 29.947999954223633,
+            "sourceBlockTop": 162.17494201660156,
+            "sourceBlockWidth": 108.05000114440918,
+            "sourceLineBBoxes": [
+                [29.947999954223633, 162.17494201660156, 137.9980010986328, 184.17494201660156],
+            ],
+            "sourceTextLines": [
+                "THIS FORM SUCKS:",
+            ],
+            "sourceSpans": [
+                {
+                    "text": "When to Use This Form:",
+                    "bbox": [29.947999954223633, 162.17494201660156, 137.9980010986328, 184.17494201660156],
+                    "origin": [29.947999954223633, 169.80499267578125],
+                    "font": "TimesNewRomanPS-BoldMT",
+                    "fontSize": 10,
+                    "fontWeight": "700",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                },
+            ],
+            "richTextHtml": "<span style=\"font-size:15.21px;font-weight:700;font-family:Verdana, Geneva, Arial, sans-serif\">THIS FORM SUCKS:</span>",
+        }
+
+        line_layout = self.module.normalize_exact_source_line_layout(
+            annotation,
+            "THIS FORM SUCKS:",
+            fitz.Font("hebo"),
+            9,
+            fitz.Rect(28.40236686390532, 152.94674556213022, 136.68639053254435, 175.43195266272198),
+        )
+        dirty_layout = self.module.build_dirty_promoted_style_mapped_span_layout(
+            annotation,
+            "THIS FORM SUCKS:",
+            line_layout,
+        )
+
+        self.assertEqual(len(line_layout), 1)
+        self.assertEqual(line_layout[0]["font_family"], "Verdana")
+        self.assertEqual(line_layout[0]["font_source_name"], "Verdana")
+        self.assertEqual(line_layout[0]["font_weight"], "700")
+        self.assertEqual(len(dirty_layout), 1)
+        self.assertEqual(len(dirty_layout[0]["spans"]), 1)
+        self.assertEqual(dirty_layout[0]["spans"][0]["text"], "THIS FORM SUCKS:")
+        self.assertEqual(dirty_layout[0]["spans"][0]["font_family"], "Verdana")
+        self.assertEqual(dirty_layout[0]["spans"][0]["font_source_name"], "Verdana")
+        self.assertEqual(dirty_layout[0]["spans"][0]["font_weight"], "700")
+
+    def test_normalize_exact_source_line_layout_prefers_visible_content_anchor_when_block_left_is_stale(self):
+        annotation = {
+            "id": "promoted_1_5",
+            "text": "•  If you want to file a request for higher-level review, use VA Form 20-0996, Decision Review Request: Higher-Level Review.",
+            "fontSize": 9,
+            "fontFamily": "Times New Roman",
+            "fontSourceName": "TimesNewRomanPSMT",
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "textColor": "#000000",
+            "underline": False,
+            "sourceBlockLeft": 29.947967529296875,
+            "sourceBlockTop": 315.726806640625,
+            "sourceBlockWidth": 478.4940185546875,
+            "sourceBlockHeight": 19.908447265625,
+            "sourceLineBBoxes": [
+                [29.947967529296875, 315.726806640625, 508.4419860839844, 335.63525390625],
+            ],
+            "sourceTextLines": [
+                "•  If you want to file a request for higher-level review, use VA Form 20-0996, Decision Review Request: Higher-Level Review.",
+            ],
+            "sourceSpans": [
+                {
+                    "text": "•",
+                    "bbox": [43.447998046875, 315.726806640625, 52.08799743652344, 324.726806640625],
+                    "origin": [43.447998046875, 322.7030029296875],
+                    "font": "TimesNewRomanPSMT",
+                    "fontSize": 9,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                },
+                {
+                    "text": "If you want to file a request for higher-level review, use VA Form 20-0996,",
+                    "bbox": [52.08799743652344, 315.7542419433594, 327.0290222167969, 324.7542419433594],
+                    "origin": [52.08799743652344, 322.7030029296875],
+                    "font": "TimesNewRomanPSMT",
+                    "fontSize": 9,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                },
+                {
+                    "text": "Decision Review Request: Higher-Level Review",
+                    "bbox": [327.010986328125, 315.78045654296875, 499.4690246582031, 324.78045654296875],
+                    "origin": [327.010986328125, 322.7030029296875],
+                    "font": "TimesNewRomanPS-ItalicMT",
+                    "fontSize": 9,
+                    "fontWeight": "400",
+                    "fontStyle": "italic",
+                    "color": "#000000",
+                },
+                {
+                    "text": ".",
+                    "bbox": [499.4690246582031, 315.8341979980469, 501.7190246582031, 324.8341979980469],
+                    "origin": [499.4690246582031, 322.7030029296875],
+                    "font": "TimesNewRomanPSMT",
+                    "fontSize": 9,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                },
+            ],
+        }
+
+        layout = self.module.normalize_exact_source_line_layout(
+            annotation,
+            annotation["text"],
+            fitz.Font("tiro"),
+            9,
+            fitz.Rect(37.869822485207095, 497.0414201183431, 516.5680473372781, 511.83431952662714),
+        )
+
+        self.assertEqual(len(layout), 1)
+        self.assertAlmostEqual(layout[0]["baseline_x"], 37.869822485207095, places=3)
 
 
 if __name__ == "__main__":

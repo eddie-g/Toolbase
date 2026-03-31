@@ -13,6 +13,11 @@ class Document extends Model
         'original_backup_path',
         'mime_type',
         'size_bytes',
+        'preview_image',
+        'preview_image_mime_type',
+        'preview_image_width',
+        'preview_image_height',
+        'preview_image_updated_at',
         'mode',
         'template_type',
         'template_slug',
@@ -21,6 +26,7 @@ class Document extends Model
 
     protected $casts = [
         'form_data' => 'array',
+        'preview_image_updated_at' => 'datetime',
     ];
 
     public function pdfExtractionsFitz()

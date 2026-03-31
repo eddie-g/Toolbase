@@ -166,13 +166,17 @@ async function collectRowGeometry(page) {
                 .filter((element) => element instanceof HTMLElement);
             const spans = spanElements.map((spanEl) => {
                 const style = window.getComputedStyle(spanEl);
+                const display = style.display;
+                const visibility = style.visibility;
                 return {
                     text: normalizeText(spanEl.innerText || spanEl.textContent || ''),
                     transform: style.transform,
                     color: style.color,
+                    display,
+                    visibility,
                     ...relativeRect(spanEl),
                 };
-            });
+            }).filter((span) => span.display !== 'none' && span.visibility !== 'hidden');
 
             return {
                 text: normalizeText(annotation.text || annotationEl.innerText || ''),
@@ -193,9 +197,21 @@ async function collectRowGeometry(page) {
             return text === '/' || text === '//' || text === '/ /';
         });
 
+        const passiveAcroformPreviews = Array.from(document.querySelectorAll('.acroform-preview-field'))
+            .filter((element) => element instanceof HTMLElement)
+            .map((element) => ({
+                className: element.className,
+                text: normalizeText(element.innerText || element.textContent || ''),
+                cellTexts: Array.from(element.querySelectorAll('.acroform-preview-comb-cell'))
+                    .map((cell) => normalizeText(cell.textContent || ''))
+                    .filter(Boolean),
+                ...relativeRect(element),
+            }));
+
         return {
             rows,
             straySlashAnnotations,
+            passiveAcroformPreviews,
             candidates: annotationsSummary.slice(0, 40),
         };
     }, TARGET_ROWS);
@@ -243,7 +259,17 @@ async function main() {
                 continue;
             }
 
-            const slashSpans = (row.spans || []).filter((span) => span.text === '/').sort((a, b) => a.left - b.left);
+            const placeholderSpans = (row.spans || [])
+                .filter((span) => ['MM', 'DD', 'YYYY'].includes(span.text))
+                .sort((a, b) => a.left - b.left);
+            const rowPreviews = (actual.passiveAcroformPreviews || [])
+                .filter((preview) => {
+                    const verticalOverlap = Math.max(0, Math.min(preview.bottom, row.bottom) - Math.max(preview.top, row.top));
+                    return verticalOverlap > 0;
+                })
+                .sort((a, b) => a.left - b.left);
+            const combPreviews = rowPreviews.filter((preview) => String(preview.className || '').includes('acroform-preview-comb'));
+            const combPlaceholderTexts = combPreviews.map((preview) => (preview.cellTexts || []).join(''));
             const overlappingStray = (actual.straySlashAnnotations || []).filter((annotation) => {
                 const verticalOverlap = Math.max(0, Math.min(annotation.bottom, row.bottom) - Math.max(annotation.top, row.top));
                 const horizontalOverlap = Math.max(0, Math.min(annotation.right, row.right) - Math.max(annotation.left, row.left));
@@ -251,32 +277,42 @@ async function main() {
             });
 
             checks.push(buildCheck(`${target}_exact_geometry`, row.exactGeometry === true, { exactGeometry: row.exactGeometry }));
-            checks.push(buildCheck(`${target}_no_double_slash_text`, !row.text.includes('//'), { text: row.text }));
-            checks.push(buildCheck(`${target}_slash_span_count`, slashSpans.length === 2, {
-                slashSpanCount: slashSpans.length,
+            checks.push(buildCheck(`${target}_promoted_placeholders_hidden`, placeholderSpans.length === 0, {
+                placeholderSpanCount: placeholderSpans.length,
                 spans: row.spans,
             }));
-            checks.push(buildCheck(`${target}_no_stray_slash_annotations`, overlappingStray.length === 0, {
+            checks.push(buildCheck(`${target}_date_comb_field_count`, combPreviews.length === 3, {
+                combPreviewCount: combPreviews.length,
+                rowPreviews,
+            }));
+            checks.push(buildCheck(`${target}_date_comb_placeholders`, JSON.stringify(combPlaceholderTexts) === JSON.stringify(['MM', 'DD', 'YYYY']), {
+                combPlaceholderTexts,
+                combPreviews,
+            }));
+            checks.push(buildCheck(`${target}_slash_annotations_present`, overlappingStray.length === 2, {
                 stray: overlappingStray,
             }));
-
-            if (slashSpans.length >= 2) {
-                const gap = slashSpans[1].left - slashSpans[0].left;
+            if (overlappingStray.length >= 2) {
+                const sortedSlashAnnotations = overlappingStray.slice().sort((a, b) => a.left - b.left);
+                const gap = sortedSlashAnnotations[1].left - sortedSlashAnnotations[0].left;
                 checks.push(buildCheck(`${target}_slash_gap`, gap >= MIN_SLASH_GAP_PX, {
                     gap: round(gap),
                     minGap: MIN_SLASH_GAP_PX,
-                    slashPositions: slashSpans.map((span) => round(span.left)),
+                    slashPositions: sortedSlashAnnotations.map((annotation) => round(annotation.left)),
                 }));
-                checks.push(buildCheck(`${target}_slash_color_dark`, slashSpans.every((span) => isDarkRgbColor(span.color)), {
-                    slashColors: slashSpans.map((span) => span.color),
+                checks.push(buildCheck(`${target}_slash_color_dark`, sortedSlashAnnotations.every((annotation) => {
+                    const firstSpan = Array.isArray(annotation.spans) ? annotation.spans[0] : null;
+                    return isDarkRgbColor(firstSpan?.color || '');
+                }), {
+                    slashColors: sortedSlashAnnotations.map((annotation) => annotation.spans?.[0]?.color || ''),
                 }));
             } else {
                 checks.push(buildCheck(`${target}_slash_gap`, false, {
-                    slashSpanCount: slashSpans.length,
-                    slashPositions: slashSpans.map((span) => round(span.left)),
+                    slashCount: overlappingStray.length,
+                    slashPositions: overlappingStray.map((annotation) => round(annotation.left)),
                 }));
                 checks.push(buildCheck(`${target}_slash_color_dark`, false, {
-                    slashColors: slashSpans.map((span) => span.color),
+                    slashColors: overlappingStray.map((annotation) => annotation.spans?.[0]?.color || ''),
                 }));
             }
         }

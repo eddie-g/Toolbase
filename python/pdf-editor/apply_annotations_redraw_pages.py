@@ -864,6 +864,36 @@ def erase_mask_rects(page: fitz.Page, mask_rects: List[fitz.Rect]) -> None:
     page.apply_redactions()
 
 
+def reset_page_to_clean_base(
+    page: fitz.Page,
+    clean_doc: fitz.Document,
+    page_index: int,
+) -> None:
+    page.add_redact_annot(page.rect, fill=(1, 1, 1))
+    try:
+        page.apply_redactions(
+            images=fitz.PDF_REDACT_IMAGE_REMOVE,
+            graphics=fitz.PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED,
+            text=fitz.PDF_REDACT_TEXT_REMOVE,
+        )
+    except TypeError:
+        try:
+            page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_REMOVE, graphics=fitz.PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED)
+        except TypeError:
+            try:
+                page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_REMOVE)
+            except TypeError:
+                page.apply_redactions()
+
+    page.show_pdf_page(
+        page.rect,
+        clean_doc,
+        page_index,
+        overlay=True,
+        keep_proportion=False,
+    )
+
+
 def erase_extraction_words_on_page(
     page: fitz.Page,
     page_data: Dict[str, Any],
@@ -918,6 +948,7 @@ def rebuild_pages_with_annotations(
         annotations,
         redraw_page_indices=redraw_page_indices,
     )
+    clean_doc = fitz.open(clean_pdf_path)
     preserve_doc = fitz.open(preserve_pdf_path)
     font_lookup_doc = preserve_doc
     font_cache: Dict[str, fitz.Font] = {}
@@ -986,7 +1017,9 @@ def rebuild_pages_with_annotations(
         page_data = extraction_by_page.get(page_index, {})
         mask_rects = mask_rects_by_page.get(page_index, [])
         output_page = output_doc[page_index]
+        reset_page_to_clean_base(output_page, clean_doc, page_index)
         widget_rects = get_widget_rects(output_page)
+        erase_mask_rects(output_page, mask_rects)
         erase_extraction_words_on_page(output_page, page_data, widget_rects)
         exact_blocks_drawn, replayed_block_nums = draw_extraction_blocks_for_page(
             output_doc,
@@ -1034,6 +1067,7 @@ def rebuild_pages_with_annotations(
         )
     finally:
         output_doc.close()
+        clean_doc.close()
         preserve_doc.close()
 
     os.replace(temp_path, output_pdf_path)

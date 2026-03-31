@@ -10,6 +10,7 @@ import os
 import json
 import math
 import re
+import statistics
 import time
 from pathlib import Path
 import fitz  # PyMuPDF
@@ -54,6 +55,65 @@ _GLYPH_NAME_TO_UNICODE = {
     'fraction': 0x2044, 'perthousand': 0x2030, 'Euro': 0x20AC, 'currency': 0x00A4,
     'dagger': 0x2020, 'daggerdbl': 0x2021,
 }
+
+
+def _collect_page_link_regions(page):
+    regions = []
+    try:
+        raw_links = page.get_links() or []
+    except Exception:
+        return regions
+
+    for link in raw_links:
+        link_rect = link.get('from')
+        if not link_rect:
+            continue
+        try:
+            rect = fitz.Rect(link_rect)
+        except Exception:
+            continue
+        if rect.width <= 0 or rect.height <= 0:
+            continue
+        regions.append({
+            'rect': rect,
+            'uri': str(link.get('uri') or '').strip(),
+            'kind': str(link.get('kind') or '').strip(),
+            'page': link.get('page'),
+        })
+
+    return regions
+
+
+def _find_link_region_for_bbox(bbox, link_regions):
+    if not bbox or len(bbox) < 4 or not link_regions:
+        return None
+
+    try:
+        target_rect = fitz.Rect(bbox)
+    except Exception:
+        return None
+
+    if target_rect.width <= 0 or target_rect.height <= 0:
+        return None
+
+    center = fitz.Point(
+        (target_rect.x0 + target_rect.x1) / 2,
+        (target_rect.y0 + target_rect.y1) / 2,
+    )
+    for link_region in link_regions:
+        if link_region['rect'].contains(center):
+            return link_region
+
+    best_region = None
+    best_overlap_area = 0.0
+    for link_region in link_regions:
+        overlap = target_rect & link_region['rect']
+        overlap_area = float(overlap.width * overlap.height) if overlap.width > 0 and overlap.height > 0 else 0.0
+        if overlap_area > best_overlap_area:
+            best_overlap_area = overlap_area
+            best_region = link_region
+
+    return best_region if best_overlap_area > 0 else None
 
 
 def cff_raw_to_otf(cff_data: bytes, font_name: str = 'UnknownFont',
@@ -581,12 +641,15 @@ def _collect_horizontal_lines(page):
             p1, p2 = item[1], item[2]
             if p1 is None or p2 is None:
                 continue
-            if abs(float(p1.y) - float(p2.y)) > 0.5:
+            dy = abs(float(p1.y) - float(p2.y))
+            dx = abs(float(p1.x) - float(p2.x))
+            if dy > 0.5:
+                if dx < 100 or dy > 1.2:
+                    continue
+            if dx < 20:
                 continue
             x0 = min(float(p1.x), float(p2.x))
             x1 = max(float(p1.x), float(p2.x))
-            if (x1 - x0) < 20:
-                continue
             y = (float(p1.y) + float(p2.y)) / 2.0
             lines.append((x0, x1, y, stroke_w))
     return lines
@@ -748,10 +811,6 @@ def _should_reverse_rotated_line_text(line_dir):
 
 
 def _apply_line_direction_text_order(text, line_dir):
-    if not text or len(text) <= 1:
-        return text
-    if _should_reverse_rotated_line_text(line_dir):
-        return text[::-1]
     return text
 
 
@@ -1165,6 +1224,42 @@ def _collect_widget_rects(page):
     return rects
 
 
+def _collect_drawn_box_rects(page):
+    """Collect small drawn rectangle outlines such as checkbox boxes."""
+    rects = []
+    try:
+        drawings = page.get_drawings() or []
+    except Exception:
+        return rects
+
+    for drawing in drawings:
+        width = float(drawing.get("width") or 0)
+        for item in drawing.get("items", []):
+            if not item or item[0] != "re":
+                continue
+            rect = item[1]
+            if rect is None:
+                continue
+            try:
+                x0 = float(rect.x0)
+                y0 = float(rect.y0)
+                x1 = float(rect.x1)
+                y1 = float(rect.y1)
+            except Exception:
+                continue
+            box_width = abs(x1 - x0)
+            box_height = abs(y1 - y0)
+            if box_width < 4.0 or box_height < 4.0:
+                continue
+            if box_width > 24.0 or box_height > 24.0:
+                continue
+            aspect_ratio = box_width / max(1.0, box_height)
+            if aspect_ratio < 0.45 or aspect_ratio > 2.2:
+                continue
+            rects.append((min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1), width))
+    return rects
+
+
 def _point_in_rect(x, y, rect, padding=0.0):
     if not rect or len(rect) < 4:
         return False
@@ -1188,6 +1283,34 @@ def _rect_intersects_widget(rect, widget_rects, padding=0.0):
     return False
 
 
+def _rects_have_drawn_box_barrier(left_rect, right_rect, drawn_box_rects):
+    if not left_rect or not right_rect or not drawn_box_rects:
+        return False
+
+    a = tuple(float(value) for value in left_rect[:4])
+    b = tuple(float(value) for value in right_rect[:4])
+    if a[0] > b[0]:
+        a, b = b, a
+
+    gap_left = min(a[2], b[0])
+    gap_right = max(a[2], b[0])
+    if gap_right < gap_left:
+        gap_left, gap_right = gap_right, gap_left
+
+    band_top = min(a[1], b[1]) - 2.0
+    band_bottom = max(a[3], b[3]) + 2.0
+
+    for box_rect in drawn_box_rects:
+        bx0, by0, bx1, by1 = [float(value) for value in box_rect[:4]]
+        box_center_x = (bx0 + bx1) / 2.0
+        if box_center_x < (gap_left - 1.0) or box_center_x > (gap_right + 1.0):
+            continue
+        overlap = max(0.0, min(band_bottom, by1) - max(band_top, by0))
+        if overlap >= max(4.0, min(by1 - by0, band_bottom - band_top) * 0.45):
+            return True
+    return False
+
+
 def _char_hits_widget(char_record, widget_rects):
     if not widget_rects:
         return False
@@ -1197,6 +1320,253 @@ def _char_hits_widget(char_record, widget_rects):
         if _point_in_rect(cx, cy, rect, padding=0.45):
             return True
     return False
+
+
+def _compact_duplicate_compare_text(text):
+    return re.sub(r'\s+', '', sanitize_extracted_text(text or '')).casefold()
+
+
+def _entry_bbox(entry, bbox_key='bbox', left_key='left', top_key='top', width_key='width', height_key='height'):
+    if not isinstance(entry, dict):
+        return None
+
+    bbox = entry.get(bbox_key)
+    if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+        try:
+            return tuple(float(value) for value in bbox[:4])
+        except Exception:
+            return None
+
+    try:
+        left = float(entry.get(left_key))
+        top = float(entry.get(top_key))
+        width = float(entry.get(width_key))
+        height = float(entry.get(height_key))
+    except Exception:
+        return None
+
+    return (left, top, left + width, top + height)
+
+
+def _rect_overlap_ratio(a, b):
+    if not a or not b:
+        return 0.0
+
+    overlap_w = max(0.0, min(float(a[2]), float(b[2])) - max(float(a[0]), float(b[0])))
+    overlap_h = max(0.0, min(float(a[3]), float(b[3])) - max(float(a[1]), float(b[1])))
+    if overlap_w <= 0.0 or overlap_h <= 0.0:
+        return 0.0
+
+    overlap_area = overlap_w * overlap_h
+    area_a = max(0.01, (float(a[2]) - float(a[0])) * (float(a[3]) - float(a[1])))
+    area_b = max(0.01, (float(b[2]) - float(b[0])) * (float(b[3]) - float(b[1])))
+    return overlap_area / min(area_a, area_b)
+
+
+def _text_entries_are_near_duplicate_layers(
+    first,
+    second,
+    *,
+    text_key='text',
+    bbox_key='bbox',
+    left_key='left',
+    top_key='top',
+    width_key='width',
+    height_key='height',
+    font_key='font',
+    font_size_key='font_size',
+):
+    if not isinstance(first, dict) or not isinstance(second, dict):
+        return False
+
+    first_text = _compact_duplicate_compare_text(first.get(text_key, ''))
+    second_text = _compact_duplicate_compare_text(second.get(text_key, ''))
+    if not first_text or not second_text:
+        return False
+
+    shorter, longer = sorted((first_text, second_text), key=len)
+    texts_match = first_text == second_text
+    if not texts_match:
+        if len(shorter) < 3:
+            return False
+        texts_match = longer.startswith(shorter) and (len(longer) - len(shorter)) <= 2
+        if not texts_match:
+            return False
+
+    if font_key:
+        first_font = _normalize_font_name(first.get(font_key))
+        second_font = _normalize_font_name(second.get(font_key))
+        if first_font and second_font and first_font != second_font:
+            return False
+
+    if font_size_key:
+        try:
+            first_size = float(first.get(font_size_key) or 0)
+            second_size = float(second.get(font_size_key) or 0)
+        except Exception:
+            first_size = 0.0
+            second_size = 0.0
+        if first_size > 0 and second_size > 0:
+            if abs(first_size - second_size) > max(0.75, min(first_size, second_size) * 0.08):
+                return False
+
+    first_bbox = _entry_bbox(
+        first,
+        bbox_key=bbox_key,
+        left_key=left_key,
+        top_key=top_key,
+        width_key=width_key,
+        height_key=height_key,
+    )
+    second_bbox = _entry_bbox(
+        second,
+        bbox_key=bbox_key,
+        left_key=left_key,
+        top_key=top_key,
+        width_key=width_key,
+        height_key=height_key,
+    )
+    if not first_bbox or not second_bbox:
+        return False
+
+    if abs(first_bbox[0] - second_bbox[0]) > 1.25 or abs(first_bbox[1] - second_bbox[1]) > 1.25:
+        return False
+
+    return _rect_overlap_ratio(first_bbox, second_bbox) >= 0.72
+
+
+def _prefer_richer_duplicate_text_entry(
+    candidate,
+    existing,
+    *,
+    text_key='text',
+    bbox_key='bbox',
+    left_key='left',
+    top_key='top',
+    width_key='width',
+    height_key='height',
+):
+    candidate_text = _compact_duplicate_compare_text(candidate.get(text_key, ''))
+    existing_text = _compact_duplicate_compare_text(existing.get(text_key, ''))
+    if len(candidate_text) != len(existing_text):
+        return len(candidate_text) > len(existing_text)
+
+    candidate_bbox = _entry_bbox(
+        candidate,
+        bbox_key=bbox_key,
+        left_key=left_key,
+        top_key=top_key,
+        width_key=width_key,
+        height_key=height_key,
+    )
+    existing_bbox = _entry_bbox(
+        existing,
+        bbox_key=bbox_key,
+        left_key=left_key,
+        top_key=top_key,
+        width_key=width_key,
+        height_key=height_key,
+    )
+    if candidate_bbox and existing_bbox:
+        candidate_area = max(0.0, (candidate_bbox[2] - candidate_bbox[0]) * (candidate_bbox[3] - candidate_bbox[1]))
+        existing_area = max(0.0, (existing_bbox[2] - existing_bbox[0]) * (existing_bbox[3] - existing_bbox[1]))
+        if abs(candidate_area - existing_area) > 0.01:
+            return candidate_area > existing_area
+
+    return False
+
+
+def _dedupe_near_duplicate_text_entries(
+    entries,
+    *,
+    text_key='text',
+    bbox_key='bbox',
+    left_key='left',
+    top_key='top',
+    width_key='width',
+    height_key='height',
+    font_key='font',
+    font_size_key='font_size',
+):
+    deduped = []
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            deduped.append(entry)
+            continue
+
+        duplicate_index = -1
+        for index, existing in enumerate(deduped):
+            if not isinstance(existing, dict):
+                continue
+            if _text_entries_are_near_duplicate_layers(
+                existing,
+                entry,
+                text_key=text_key,
+                bbox_key=bbox_key,
+                left_key=left_key,
+                top_key=top_key,
+                width_key=width_key,
+                height_key=height_key,
+                font_key=font_key,
+                font_size_key=font_size_key,
+            ):
+                duplicate_index = index
+                break
+
+        if duplicate_index < 0:
+            deduped.append(entry)
+            continue
+
+        if _prefer_richer_duplicate_text_entry(
+            entry,
+            deduped[duplicate_index],
+            text_key=text_key,
+            bbox_key=bbox_key,
+            left_key=left_key,
+            top_key=top_key,
+            width_key=width_key,
+            height_key=height_key,
+        ):
+            deduped[duplicate_index] = entry
+
+    return deduped
+
+
+def _dedupe_near_overlapping_trace_chars(records, x_eps=0.75, y_eps=0.75):
+    if len(records) < 2:
+        return records
+
+    deduped = []
+    for record in records:
+        if not deduped:
+            deduped.append(record)
+            continue
+
+        previous = deduped[-1]
+        if record.get('text') != previous.get('text'):
+            deduped.append(record)
+            continue
+
+        cx = float(record.get('center_x') or 0.0)
+        cy = float(record.get('center_y') or 0.0)
+        prev_cx = float(previous.get('center_x') or 0.0)
+        prev_cy = float(previous.get('center_y') or 0.0)
+        if abs(cx - prev_cx) > x_eps or abs(cy - prev_cy) > y_eps:
+            deduped.append(record)
+            continue
+
+        record_bbox = record.get('bbox')
+        previous_bbox = previous.get('bbox')
+        record_area = 0.0
+        previous_area = 0.0
+        if record_bbox and len(record_bbox) >= 4:
+            record_area = max(0.0, (float(record_bbox[2]) - float(record_bbox[0])) * (float(record_bbox[3]) - float(record_bbox[1])))
+        if previous_bbox and len(previous_bbox) >= 4:
+            previous_area = max(0.0, (float(previous_bbox[2]) - float(previous_bbox[0])) * (float(previous_bbox[3]) - float(previous_bbox[1])))
+        if record_area and previous_area and record_area < previous_area:
+            deduped[-1] = record
+
+    return deduped
 
 
 def _rebuild_visible_text_from_trace_bbox(trace_chars, bbox, font, size, widget_rects=None):
@@ -1248,6 +1618,7 @@ def _rebuild_visible_text_from_trace_bbox(trace_chars, bbox, font, size, widget_
         round(float(record.get('center_y') or 0), 1),
         round(float(record.get('center_x') or 0), 1),
     ))
+    candidates = _dedupe_near_overlapping_trace_chars(candidates)
     rebuilt = sanitize_extracted_text(''.join(record.get('text', '') for record in candidates))
     if rebuilt == '':
         return None
@@ -1262,6 +1633,368 @@ def _rebuild_visible_text_from_trace_bbox(trace_chars, bbox, font, size, widget_
         'bbox': (rebuilt_x0, rebuilt_y0, rebuilt_x1, rebuilt_y1),
         'origin': rebuilt_origin,
     }
+
+
+def _dedupe_block_text_lines(block):
+    if not isinstance(block, dict):
+        return block
+
+    text_lines = [
+        sanitize_extracted_text(line)
+        for line in (block.get('text_lines') or [])
+        if sanitize_extracted_text(line)
+    ]
+    line_bboxes = [
+        tuple(float(value) for value in bbox[:4])
+        for bbox in (block.get('line_bboxes') or [])
+        if isinstance(bbox, (list, tuple)) and len(bbox) >= 4
+    ]
+    if not text_lines or not line_bboxes:
+        return block
+
+    entries = []
+    for index, text in enumerate(text_lines):
+        bbox = line_bboxes[index] if index < len(line_bboxes) else None
+        if not bbox:
+            continue
+        entries.append({
+            '_index': index,
+            'text': text,
+            'bbox': bbox,
+        })
+
+    deduped_entries = _dedupe_near_duplicate_text_entries(
+        entries,
+        text_key='text',
+        bbox_key='bbox',
+        font_key=None,
+        font_size_key=None,
+    )
+    deduped_entries.sort(key=lambda entry: entry.get('_index', 0))
+    if len(deduped_entries) == len(entries):
+        return block
+
+    deduped_lines = [entry['text'] for entry in deduped_entries]
+    deduped_bboxes = [list(entry['bbox']) for entry in deduped_entries]
+
+    block['text_lines'] = deduped_lines
+    block['line_bboxes'] = deduped_bboxes
+    block['text'] = '\n'.join(deduped_lines)
+    block['text_single_line'] = ' '.join(deduped_lines)
+    block['line_count'] = len(deduped_lines)
+    if deduped_bboxes:
+        block['left'] = min(bbox[0] for bbox in deduped_bboxes)
+        block['top'] = min(bbox[1] for bbox in deduped_bboxes)
+        right = max(bbox[2] for bbox in deduped_bboxes)
+        bottom = max(bbox[3] for bbox in deduped_bboxes)
+        block['width'] = right - block['left']
+        block['height'] = bottom - block['top']
+        heights = [max(0.0, bbox[3] - bbox[1]) for bbox in deduped_bboxes]
+        if heights:
+            block['avg_line_height'] = sum(heights) / len(heights)
+
+    spans = block.get('spans')
+    if isinstance(spans, list):
+        block['spans'] = _dedupe_near_duplicate_text_entries(
+            spans,
+            text_key='text',
+            bbox_key='bbox',
+            font_key='font',
+            font_size_key='font_size',
+        )
+
+    return block
+
+
+def _select_block_spans_for_line_bboxes(spans, line_bboxes):
+    selected_spans = []
+    for span in spans or []:
+        span_bbox = span.get('bbox')
+        if not isinstance(span_bbox, (list, tuple)) or len(span_bbox) < 4:
+            continue
+        center_x = (float(span_bbox[0]) + float(span_bbox[2])) / 2.0
+        center_y = (float(span_bbox[1]) + float(span_bbox[3])) / 2.0
+        for line_bbox in line_bboxes:
+            if _point_in_rect(center_x, center_y, line_bbox, padding=1.0):
+                selected_spans.append(span)
+                break
+    return selected_spans
+
+
+def _line_bbox_group_union(line_bboxes):
+    group_bbox = None
+    for line_bbox in line_bboxes or []:
+        group_bbox = _rect_union(group_bbox, line_bbox)
+    return group_bbox
+
+
+def _build_split_blocks_from_line_segments(block, text_lines, line_bboxes, segments):
+    split_blocks = []
+    base_fields = dict(block)
+    for key in (
+        'text',
+        'text_single_line',
+        'text_lines',
+        'line_bboxes',
+        'line_count',
+        'left',
+        'top',
+        'width',
+        'height',
+        'avg_line_height',
+        'line_height',
+        'spans',
+        'source_content_ops',
+    ):
+        base_fields.pop(key, None)
+
+    for segment in segments:
+        segment_lines = [text_lines[index] for index in segment]
+        segment_line_bboxes = [line_bboxes[index] for index in segment]
+        segment_bbox = _line_bbox_group_union(segment_line_bboxes)
+        if not segment_bbox:
+            continue
+
+        segment_spans = _select_block_spans_for_line_bboxes(block.get('spans') or [], segment_line_bboxes)
+        segment_heights = [max(0.0, bbox[3] - bbox[1]) for bbox in segment_line_bboxes]
+        segment_block = dict(base_fields)
+        segment_block['text_lines'] = segment_lines
+        segment_block['line_bboxes'] = [list(bbox) for bbox in segment_line_bboxes]
+        segment_block['text'] = '\n'.join(segment_lines)
+        segment_block['text_single_line'] = ' '.join(segment_lines)
+        segment_block['line_count'] = len(segment_lines)
+        segment_block['left'] = float(segment_bbox[0])
+        segment_block['top'] = float(segment_bbox[1])
+        segment_block['width'] = float(segment_bbox[2]) - float(segment_bbox[0])
+        segment_block['height'] = float(segment_bbox[3]) - float(segment_bbox[1])
+        if segment_heights:
+            avg_line_height = sum(segment_heights) / len(segment_heights)
+            segment_block['avg_line_height'] = avg_line_height
+            segment_block['line_height'] = avg_line_height
+        segment_block['spans'] = segment_spans
+        segment_block['source_content_ops'] = []
+        segment_block['has_mixed_styles'] = len({
+            (
+                _normalize_font_name(span.get('font') or ''),
+                float(span.get('font_size') or 0),
+                bool(span.get('bold')),
+                bool(span.get('italic')),
+            )
+            for span in segment_spans
+            if str(span.get('text') or '').strip()
+        }) > 1
+        split_blocks.append(segment_block)
+
+    return split_blocks or [block]
+
+
+def _looks_like_section_heading_label(text):
+    normalized = ' '.join(str(text or '').split())
+    if not normalized:
+        return False
+
+    heading_match = re.match(r'^(?P<label>.+?)\s*:\s*$', normalized)
+    if not heading_match:
+        return False
+
+    label = heading_match.group('label').strip()
+    if len(label) < 4 or len(label) > 72:
+        return False
+    if any(token in label.lower() for token in ('www.', 'http://', 'https://', '@')):
+        return False
+
+    words = re.findall(r"[A-Za-z][A-Za-z'&/-]*", label)
+    if not words or len(words) > 10:
+        return False
+
+    stop_words = {'a', 'an', 'and', 'as', 'at', 'by', 'for', 'from', 'in', 'of', 'on', 'or', 'the', 'to', 'with', 'your'}
+    significant_words = [word for word in words if word.lower() not in stop_words]
+    if not significant_words:
+        return False
+
+    return all(word[:1].isupper() for word in significant_words)
+
+
+def _split_block_on_horizontal_barriers(block, horizontal_lines=None):
+    if not isinstance(block, dict):
+        return [block] if block else []
+
+    text_lines = [
+        sanitize_extracted_text(line)
+        for line in (block.get('text_lines') or [])
+    ]
+    line_bboxes = [
+        tuple(float(value) for value in bbox[:4])
+        for bbox in (block.get('line_bboxes') or [])
+        if isinstance(bbox, (list, tuple)) and len(bbox) >= 4
+    ]
+    if len(text_lines) < 2 or len(text_lines) != len(line_bboxes) or not horizontal_lines:
+        return [block]
+
+    line_heights = [max(0.0, bbox[3] - bbox[1]) for bbox in line_bboxes]
+    typical_line_height = statistics.median(line_heights) if line_heights else 0.0
+    cap_height = max(8.0, typical_line_height * 1.35) if typical_line_height > 0 else 12.0
+
+    def _effective_line_rect(line_bbox, position):
+        x0, y0, x1, y1 = line_bbox
+        if position == 'upper':
+            return (x0, y0, x1, min(y1, y0 + cap_height))
+        return (x0, max(y0, y1 - cap_height), x1, y1)
+
+    segments = []
+    current_segment = [0]
+    split_detected = False
+
+    for index in range(1, len(text_lines)):
+        if _rects_have_horizontal_barrier(
+            _effective_line_rect(line_bboxes[index - 1], 'upper'),
+            _effective_line_rect(line_bboxes[index], 'lower'),
+            horizontal_lines,
+        ):
+            segments.append(current_segment)
+            current_segment = [index]
+            split_detected = True
+        else:
+            current_segment.append(index)
+
+    if current_segment:
+        segments.append(current_segment)
+
+    if not split_detected or len(segments) <= 1:
+        return [block]
+
+    return _build_split_blocks_from_line_segments(block, text_lines, line_bboxes, segments)
+
+
+def _split_block_for_standalone_list_markers_and_callouts(block, horizontal_lines=None):
+    if not isinstance(block, dict):
+        return [block] if block else []
+
+    text_lines = [
+        sanitize_extracted_text(line)
+        for line in (block.get('text_lines') or [])
+    ]
+    line_bboxes = [
+        tuple(float(value) for value in bbox[:4])
+        for bbox in (block.get('line_bboxes') or [])
+        if isinstance(bbox, (list, tuple)) and len(bbox) >= 4
+    ]
+    if len(text_lines) < 2 or len(text_lines) != len(line_bboxes):
+        return [block]
+
+    segments = []
+    current_segment = []
+    split_detected = False
+
+    for index, line_text in enumerate(text_lines):
+        if _is_standalone_list_item_marker(line_text) or _looks_like_section_heading_label(line_text):
+            if current_segment:
+                segments.append(current_segment)
+                current_segment = []
+            segments.append([index])
+            split_detected = True
+            continue
+
+        if _starts_with_callout_label(line_text):
+            if current_segment:
+                segments.append(current_segment)
+            current_segment = [index]
+            split_detected = True
+            continue
+
+        current_segment.append(index)
+
+    if current_segment:
+        segments.append(current_segment)
+
+    if not split_detected or len(segments) <= 1:
+        return [block]
+
+    return _build_split_blocks_from_line_segments(block, text_lines, line_bboxes, segments)
+
+
+def _assign_bbox_to_line_bbox_group(entry_bbox, line_bboxes):
+    if not entry_bbox or not line_bboxes:
+        return False
+
+    center_x = (float(entry_bbox[0]) + float(entry_bbox[2])) / 2.0
+    center_y = (float(entry_bbox[1]) + float(entry_bbox[3])) / 2.0
+    if any(_point_in_rect(center_x, center_y, bbox, padding=1.0) for bbox in line_bboxes):
+        return True
+
+    best_overlap = 0.0
+    for line_bbox in line_bboxes:
+        best_overlap = max(best_overlap, _rect_overlap_ratio(entry_bbox, line_bbox))
+    return best_overlap >= 0.35
+
+
+def _split_blocks_on_list_marker_callouts(page_blocks, page_words, page_lines, horizontal_lines=None):
+    if not page_blocks:
+        return page_blocks
+
+    new_blocks = []
+    old_to_new = {}
+    split_specs = {}
+
+    for block in page_blocks:
+        horizontally_split_blocks = _split_block_on_horizontal_barriers(block, horizontal_lines=horizontal_lines)
+        split_blocks = []
+        for candidate_block in horizontally_split_blocks:
+            split_blocks.extend(
+                _split_block_for_standalone_list_markers_and_callouts(
+                    candidate_block,
+                    horizontal_lines=horizontal_lines,
+                )
+            )
+        if len(split_blocks) <= 1:
+            new_block = dict(block)
+            new_block['block_num'] = len(new_blocks)
+            new_blocks.append(new_block)
+            old_to_new[block.get('block_num')] = new_block['block_num']
+            continue
+
+        segment_specs = []
+        for split_block in split_blocks:
+            new_block = dict(split_block)
+            new_block['block_num'] = len(new_blocks)
+            new_blocks.append(new_block)
+            segment_specs.append({
+                'block_num': new_block['block_num'],
+                'line_bboxes': [
+                    tuple(float(value) for value in bbox[:4])
+                    for bbox in (new_block.get('line_bboxes') or [])
+                    if isinstance(bbox, (list, tuple)) and len(bbox) >= 4
+                ],
+            })
+        split_specs[block.get('block_num')] = segment_specs
+
+    for line in page_lines:
+        old_block_num = line.get('block_num')
+        if old_block_num in split_specs:
+            line_bbox = _entry_bbox(line)
+            for spec in split_specs[old_block_num]:
+                if _assign_bbox_to_line_bbox_group(line_bbox, spec['line_bboxes']):
+                    line['block_num'] = spec['block_num']
+                    break
+            else:
+                line['block_num'] = split_specs[old_block_num][-1]['block_num']
+        elif old_block_num in old_to_new:
+            line['block_num'] = old_to_new[old_block_num]
+
+    for word in page_words:
+        old_block_num = word.get('block_num')
+        if old_block_num in split_specs:
+            word_bbox = _entry_bbox(word)
+            for spec in split_specs[old_block_num]:
+                if _assign_bbox_to_line_bbox_group(word_bbox, spec['line_bboxes']):
+                    word['block_num'] = spec['block_num']
+                    break
+            else:
+                word['block_num'] = split_specs[old_block_num][-1]['block_num']
+        elif old_block_num in old_to_new:
+            word['block_num'] = old_to_new[old_block_num]
+
+    return new_blocks
 
 
 def _build_texttrace_index(page):
@@ -1510,7 +2243,7 @@ def match_font_xref(font_name, page_fonts):
     return best[0]
 
 
-def _merge_same_row_lines(line_items, vertical_lines=None, widget_rects=None):
+def _merge_same_row_lines(line_items, vertical_lines=None, widget_rects=None, drawn_box_rects=None):
     """
     Merge line items that share the same visual row into single items.
     This handles cases where PyMuPDF splits text on the same visual line into
@@ -1564,6 +2297,8 @@ def _merge_same_row_lines(line_items, vertical_lines=None, widget_rects=None):
                 should_merge = False
             elif _rects_have_widget_barrier(row_bbox, item_bbox, widget_rects or []):
                 should_merge = False
+            elif _rects_have_drawn_box_barrier(row_bbox, item_bbox, drawn_box_rects or []):
+                should_merge = False
 
         # Don't merge items with a significant horizontal overlap (z-ordered text).
         # Normal text flows left-to-right with positive gaps.
@@ -1595,6 +2330,22 @@ def _merge_same_row_lines(line_items, vertical_lines=None, widget_rects=None):
                 # Positive gap logic (existing)
                 avg_size = max(row_max_size if row_max_size > 0 else 12,
                                item['max_size'] if item['max_size'] > 0 else 12)
+                row_text = ''.join(_line_item_text(existing_item) for existing_item in row).strip()
+                item_text = _line_item_text(item)
+                left_text = row_text
+                left_width = max(0.0, row_x1 - row_x0)
+                right_text = item_text
+                right_width = max(0.0, item_x1 - item_x0)
+                detached_row_label_pair = (
+                    _looks_like_detached_row_label(left_text)
+                    and left_width <= max(110.0, avg_size * 6.5)
+                    and len(right_text) >= 24
+                    and right_width >= max(180.0, avg_size * 10.0)
+                    and dist >= max(8.0, avg_size * 0.65)
+                )
+                if detached_row_label_pair:
+                    should_merge = False
+                    continue
                 x_gap_threshold = max(avg_size * 2, 15)
                 if dist > x_gap_threshold:
                     should_merge = False
@@ -1636,7 +2387,9 @@ def _merge_same_row_lines(line_items, vertical_lines=None, widget_rects=None):
 
             merged_line = {
                 'spans': combined_spans,
-                'bbox': merged_bbox
+                'bbox': merged_bbox,
+                'dir': row_sorted[0].get('dir') or row_sorted[0].get('line', {}).get('dir'),
+                'wmode': row_sorted[0].get('wmode', row_sorted[0].get('line', {}).get('wmode', 0)),
             }
 
             all_sizes = [s.get('size', 0) for s in combined_spans if s.get('text', '')]
@@ -1648,7 +2401,10 @@ def _merge_same_row_lines(line_items, vertical_lines=None, widget_rects=None):
                 'bbox': merged_bbox,
                 'x0': merged_bbox[0],
                 'y0': merged_bbox[1],
-                'max_size': max_size
+                'max_size': max_size,
+                'dir': row_sorted[0].get('dir'),
+                'wmode': row_sorted[0].get('wmode', 0),
+                '_from_xgap_split': any(it.get('_from_xgap_split') for it in row_sorted),
             })
 
     return merged_items
@@ -1667,10 +2423,94 @@ def _groups_share_visual_row(group_a, group_b):
     return False
 
 
+def _split_line_item_by_structural_span_barriers(line_item, vertical_lines=None, widget_rects=None, drawn_box_rects=None):
+    line = line_item.get('line') or {}
+    spans = [
+        span
+        for span in (line.get('spans') or [])
+        if isinstance(span.get('bbox'), (list, tuple)) and len(span.get('bbox')) >= 4 and str(span.get('text') or '').strip()
+    ]
+    if len(spans) <= 1:
+        return [line_item]
+
+    ordered_spans = sorted(spans, key=lambda span: (float(span['bbox'][0]), float(span['bbox'][1])))
+    span_groups = [[ordered_spans[0]]]
+
+    for span in ordered_spans[1:]:
+        current_group = span_groups[-1]
+        current_bbox = None
+        for existing_span in current_group:
+            current_bbox = _rect_union(current_bbox, existing_span.get('bbox'))
+        span_bbox = span.get('bbox')
+
+        has_structural_barrier = (
+            _rects_have_vertical_barrier(current_bbox, span_bbox, vertical_lines or [])
+            or _rects_have_widget_barrier(current_bbox, span_bbox, widget_rects or [])
+            or _rects_have_drawn_box_barrier(current_bbox, span_bbox, drawn_box_rects or [])
+        )
+
+        current_group_max_size = max(
+            (float(existing_span.get('size') or 0) for existing_span in current_group),
+            default=0.0,
+        )
+        span_size = float(span.get('size') or 0)
+        size_ratio = (
+            min(current_group_max_size, span_size) / max(current_group_max_size, span_size)
+            if current_group_max_size > 0 and span_size > 0
+            else 1.0
+        )
+        force_style_split = (
+            abs(current_group_max_size - span_size) >= 8.0
+            and size_ratio <= 0.5
+        )
+
+        if has_structural_barrier or force_style_split:
+            span_groups.append([span])
+        else:
+            current_group.append(span)
+
+    if len(span_groups) <= 1:
+        return [line_item]
+
+    split_items = []
+    base_line_num = int(line_item.get('line_num', 0) or 0)
+    for index, group_spans in enumerate(span_groups):
+        group_bbox = None
+        for group_span in group_spans:
+            group_bbox = _rect_union(group_bbox, group_span.get('bbox'))
+        if not group_bbox:
+            continue
+
+        split_line = {
+            'spans': group_spans,
+            'bbox': group_bbox,
+            'dir': line_item.get('dir') or line.get('dir'),
+            'wmode': line_item.get('wmode', line.get('wmode', 0)),
+        }
+        max_size = max((float(span.get('size') or 0) for span in group_spans), default=float(line_item.get('max_size') or 0))
+        split_items.append({
+            'line_num': base_line_num + index,
+            'line': split_line,
+            'bbox': group_bbox,
+            'x0': float(group_bbox[0]),
+            'y0': float(group_bbox[1]),
+            'max_size': max_size,
+            'dir': line_item.get('dir'),
+            'wmode': line_item.get('wmode', 0),
+            '_from_xgap_split': True,
+        })
+
+    return split_items or [line_item]
+
+
 def _line_item_text(item):
     line = item.get('line') or {}
     spans = line.get('spans') or []
     return ''.join(str(span.get('text') or '') for span in spans).strip()
+
+
+def _line_item_has_large_whitespace_gap(item):
+    return re.search(r'\s{6,}', _line_item_text(item) or '') is not None
 
 
 def _looks_like_form_section_header(text):
@@ -1692,6 +2532,50 @@ def _looks_like_leading_inline_label(text):
     if not normalized:
         return False
     return re.match(r'^(?:\d{1,2}[A-Za-z]?|[A-Za-z]\)|\([A-Za-z0-9]{1,2}\)|[•◦▪■▶▲])$', normalized) is not None
+
+
+def _is_standalone_list_item_marker(text):
+    normalized = ' '.join(str(text or '').split())
+    if not normalized:
+        return False
+    return re.match(
+        r'^(?:\(?\d{1,3}[A-Za-z]?\)|\d{1,3}[.)]|[A-Za-z][.)]|[•◦▪■▶▲])$',
+        normalized,
+    ) is not None
+
+
+def _starts_with_list_item_marker(text):
+    normalized = ' '.join(str(text or '').split())
+    if not normalized:
+        return False
+    return re.match(
+        r'^(?:\(?\d{1,3}[A-Za-z]?\)|\d{1,3}[.)]|[A-Za-z][.)]|[•◦▪■▶▲])\s+\S+',
+        normalized,
+    ) is not None
+
+
+def _starts_with_callout_label(text):
+    normalized = ' '.join(str(text or '').split())
+    if len(normalized) < 12:
+        return False
+    return re.match(
+        r'^(?:NOTE|NOTES|IMPORTANT|WARNING|CAUTION|NOTICE|ATTENTION)\s*:\s+\S+',
+        normalized,
+        re.IGNORECASE,
+    ) is not None
+
+
+def _looks_like_detached_row_label(text):
+    normalized = ' '.join(str(text or '').split())
+    if not normalized or len(normalized) > 24:
+        return False
+    if normalized.endswith((':', ';', '.', '!', '?')):
+        return False
+    if len(normalized.split()) > 4:
+        return False
+    if re.search(r'\d{4,}', normalized):
+        return False
+    return re.match(r"^[A-Za-z0-9&()/'’.·\- ]+$", normalized) is not None
 
 
 def _split_stacked_form_header_groups(group_items):
@@ -1718,6 +2602,357 @@ def _split_stacked_form_header_groups(group_items):
             current_group.append(item)
 
     return split_groups
+
+
+def _items_bbox(items):
+    bbox = None
+    for item in items or []:
+        bbox = _rect_union(bbox, item.get('bbox'))
+    return bbox
+
+
+def _rects_have_horizontal_barrier(upper_rect, lower_rect, horizontal_lines):
+    if not upper_rect or not lower_rect or not horizontal_lines:
+        return False
+
+    a = tuple(float(value) for value in upper_rect[:4])
+    b = tuple(float(value) for value in lower_rect[:4])
+    if a[1] > b[1]:
+        a, b = b, a
+
+    gap_top = a[3]
+    gap_bottom = b[1]
+    if gap_bottom <= gap_top:
+        return False
+
+    band_left = min(a[0], b[0]) - 1.0
+    band_right = max(a[2], b[2]) + 1.0
+    required_overlap = max(18.0, min((a[2] - a[0]), (b[2] - b[0])) * 0.35)
+
+    for x0, x1, y, _stroke_w in horizontal_lines:
+        if y < (gap_top - 1.0) or y > (gap_bottom + 1.0):
+            continue
+        overlap = max(0.0, min(band_right, x1) - max(band_left, x0))
+        if overlap >= required_overlap:
+            return True
+    return False
+
+
+def _row_accepts_line_item(row_items, candidate_item):
+    row_bbox = _items_bbox(row_items)
+    item_bbox = candidate_item.get('bbox')
+    if not row_bbox or not item_bbox:
+        return False
+
+    row_top, row_bottom = float(row_bbox[1]), float(row_bbox[3])
+    item_top, item_bottom = float(item_bbox[1]), float(item_bbox[3])
+    overlap_ratio = _row_overlap_ratio(row_top, row_bottom, item_top, item_bottom)
+
+    row_center = (row_top + row_bottom) / 2.0
+    item_center = (item_top + item_bottom) / 2.0
+    row_height = max(1.0, row_bottom - row_top)
+    item_height = max(1.0, item_bottom - item_top)
+    center_tolerance = max(2.5, min(max(row_height, item_height) * 0.3, 4.5))
+
+    return overlap_ratio >= 0.45 or abs(row_center - item_center) <= center_tolerance
+
+
+def _line_group_share_column(block_groups, candidate_group):
+    block_bbox = _items_bbox([
+        item
+        for group in (block_groups or [])
+        for item in (group or [])
+    ])
+    candidate_bbox = _items_bbox(candidate_group)
+    if not block_bbox or not candidate_bbox:
+        return False
+
+    block_left = float(block_bbox[0])
+    block_right = float(block_bbox[2])
+    candidate_left = float(candidate_bbox[0])
+    candidate_right = float(candidate_bbox[2])
+    block_width = max(1.0, block_right - block_left)
+    candidate_width = max(1.0, candidate_right - candidate_left)
+    overlap_width = max(0.0, min(block_right, candidate_right) - max(block_left, candidate_left))
+    overlap_ratio = overlap_width / max(1.0, min(block_width, candidate_width))
+    left_delta = abs(block_left - candidate_left)
+    center_delta = abs(
+        ((block_left + block_right) / 2.0) - ((candidate_left + candidate_right) / 2.0)
+    )
+
+    if overlap_ratio >= 0.45:
+        return True
+
+    if left_delta <= max(12.0, min(block_width, candidate_width) * 0.2):
+        return True
+
+    if center_delta <= max(18.0, min(block_width, candidate_width) * 0.25):
+        return True
+
+    return False
+
+
+def _should_start_new_form_block(current_groups, candidate_group, horizontal_lines, widget_rects=None, drawn_box_rects=None):
+    if not current_groups:
+        return False
+
+    previous_group = current_groups[-1]
+    prev_bbox = _items_bbox(previous_group)
+    candidate_bbox = _items_bbox(candidate_group)
+    if not prev_bbox or not candidate_bbox:
+        return False
+
+    prev_text = ' '.join(_line_item_text(item) for item in previous_group).strip()
+    candidate_text = ' '.join(_line_item_text(item) for item in candidate_group).strip()
+    shares_visual_row = _groups_share_visual_row(previous_group, candidate_group)
+
+    vertical_gap = float(candidate_bbox[1]) - float(prev_bbox[3])
+    if vertical_gap > 10.0:
+        return True
+
+    if _rects_have_horizontal_barrier(prev_bbox, candidate_bbox, horizontal_lines or []):
+        return True
+
+    if widget_rects and _rects_have_widget_barrier(prev_bbox, candidate_bbox, widget_rects):
+        return True
+
+    if drawn_box_rects and _rects_have_drawn_box_barrier(prev_bbox, candidate_bbox, drawn_box_rects):
+        return True
+
+    if shares_visual_row and (
+        any(_line_item_has_large_whitespace_gap(item) for item in previous_group)
+        or any(_line_item_has_large_whitespace_gap(item) for item in candidate_group)
+    ):
+        return True
+
+    if shares_visual_row and (
+        any(item.get('_from_xgap_split') for item in previous_group)
+        or any(item.get('_from_xgap_split') for item in candidate_group)
+    ):
+        return True
+
+    if (
+        _looks_like_form_section_header(prev_text)
+        and _starts_with_form_field_number(candidate_text)
+    ):
+        return True
+
+    if _starts_with_list_item_marker(prev_text) and _starts_with_callout_label(candidate_text):
+        return True
+
+    if not _line_group_share_column(current_groups, candidate_group):
+        return True
+
+    return False
+
+
+def _page_requires_synthetic_form_grouping(blocks, horizontal_lines, vertical_lines, widget_rects, drawn_box_rects=None):
+    form_line_count = 0
+    numbered_line_count = 0
+    compact_label_count = 0
+
+    for block in blocks or []:
+        if block.get("type") != 0:
+            continue
+        for line in (block.get("lines") or []):
+            spans = line.get("spans") or []
+            text = ''.join(str(span.get('text') or '') for span in spans)
+            normalized = ' '.join(str(text or '').split())
+            if not normalized:
+                continue
+            if _looks_like_form_section_header(normalized):
+                form_line_count += 1
+            if _starts_with_form_field_number(normalized):
+                numbered_line_count += 1
+                form_line_count += 1
+            if (
+                len(normalized) <= 36
+                and normalized.upper() == normalized
+                and re.search(r'[A-Z]', normalized)
+                and re.search(r'\s', normalized)
+            ):
+                compact_label_count += 1
+
+    has_form_like_text_structure = (
+        numbered_line_count >= 2
+        or form_line_count >= 3
+        or compact_label_count >= 5
+    )
+
+    if len(widget_rects or []) >= 2:
+        return True
+
+    if has_form_like_text_structure and len(vertical_lines or []) >= 3 and len(horizontal_lines or []) >= 3:
+        return True
+
+    if has_form_like_text_structure and len(drawn_box_rects or []) >= 2:
+        return True
+
+    for block in blocks or []:
+        if block.get("type") != 0:
+            continue
+        line_bboxes = [
+            tuple(line.get("bbox") or ())
+            for line in (block.get("lines") or [])
+            if isinstance(line.get("bbox"), (list, tuple)) and len(line.get("bbox")) >= 4
+        ]
+        if len(line_bboxes) < 2:
+            continue
+        ordered = sorted(line_bboxes, key=lambda bbox: (bbox[1], bbox[0]))
+        for previous_bbox, current_bbox in zip(ordered, ordered[1:]):
+            vertical_gap = float(current_bbox[1]) - float(previous_bbox[3])
+            left_delta = abs(float(current_bbox[0]) - float(previous_bbox[0]))
+            if has_form_like_text_structure and vertical_gap > 10.0 and (
+                left_delta > 18.0
+                or _rects_have_horizontal_barrier(previous_bbox, current_bbox, horizontal_lines or [])
+            ):
+                return True
+
+    return False
+
+
+def _build_synthetic_form_blocks(blocks, vertical_lines=None, widget_rects=None, horizontal_lines=None, drawn_box_rects=None):
+    page_line_items = []
+    for block in blocks or []:
+        if block.get("type") != 0:
+            continue
+        for line_num, line in enumerate(block.get("lines", []) or []):
+            line_bbox = line.get("bbox", (0, 0, 0, 0))
+            if not isinstance(line_bbox, (list, tuple)) or len(line_bbox) < 4:
+                continue
+            span_sizes = [
+                span.get("size", 0)
+                for span in (line.get("spans", []) or [])
+                if span.get("text", "")
+            ]
+            page_line_items.append({
+                'line_num': line_num,
+                'line': line,
+                'bbox': line_bbox,
+                'x0': float(line_bbox[0]),
+                'y0': float(line_bbox[1]),
+                'max_size': max(span_sizes) if span_sizes else 0,
+                'dir': _normalize_line_direction(line.get("dir")),
+                'wmode': int(line.get("wmode", 0) or 0),
+            })
+
+    if not page_line_items:
+        return [block for block in (blocks or []) if block.get("type") == 0]
+
+    split_page_line_items = []
+    for page_line_item in page_line_items:
+        split_page_line_items.extend(
+            _split_line_item_by_structural_span_barriers(
+                page_line_item,
+                vertical_lines=vertical_lines,
+                widget_rects=widget_rects,
+                drawn_box_rects=drawn_box_rects,
+            )
+        )
+
+    merged_page_line_items = _merge_same_row_lines(
+        split_page_line_items,
+        vertical_lines=vertical_lines,
+        widget_rects=widget_rects,
+        drawn_box_rects=drawn_box_rects,
+    )
+    ordered_items = sorted(
+        merged_page_line_items,
+        key=lambda item: (
+            round((float(item['bbox'][1]) + float(item['bbox'][3])) / 2.0, 3),
+            round(float(item['bbox'][0]), 3),
+        ),
+    )
+
+    visual_rows = []
+    for item in ordered_items:
+        if visual_rows and _row_accepts_line_item(visual_rows[-1], item):
+            visual_rows[-1].append(item)
+        else:
+            visual_rows.append([item])
+
+    row_groups = []
+    for row_items in visual_rows:
+        x_groups = _split_candidate_lines_by_x_gap(
+            row_items,
+            vertical_lines=vertical_lines,
+            widget_rects=widget_rects,
+            drawn_box_rects=drawn_box_rects,
+        )
+        normalized_groups = []
+        for group_items in x_groups:
+            normalized_groups.extend(
+                _split_same_row_group_by_barriers(
+                    group_items,
+                    vertical_lines or [],
+                    widget_rects or [],
+                    drawn_box_rects=drawn_box_rects,
+                )
+            )
+        for group_items in normalized_groups:
+            merged_group_items = _merge_same_row_lines(
+                group_items,
+                vertical_lines=vertical_lines,
+                widget_rects=widget_rects,
+                drawn_box_rects=drawn_box_rects,
+            )
+            if not merged_group_items:
+                continue
+            if len(merged_group_items) == 1:
+                row_groups.append(merged_group_items)
+            else:
+                for merged_group_item in merged_group_items:
+                    row_groups.append([merged_group_item])
+
+    ordered_row_groups = sorted(
+        row_groups,
+        key=lambda group: (
+            round(float(_items_bbox(group)[1]) if _items_bbox(group) else 0.0, 3),
+            round(float(_items_bbox(group)[0]) if _items_bbox(group) else 0.0, 3),
+        ),
+    )
+
+    grouped_blocks = []
+    current_groups = []
+    for row_group in ordered_row_groups:
+        if _should_start_new_form_block(
+            current_groups,
+            row_group,
+            horizontal_lines or [],
+            widget_rects=widget_rects or [],
+            drawn_box_rects=drawn_box_rects or [],
+        ):
+            grouped_blocks.append(current_groups)
+            current_groups = [row_group]
+        else:
+            current_groups.append(row_group)
+    if current_groups:
+        grouped_blocks.append(current_groups)
+
+    synthetic_blocks = []
+    for grouped_rows in grouped_blocks:
+        block_lines = []
+        block_bbox = None
+        for group in grouped_rows:
+            for item in group:
+                line_payload = dict(item.get('line') or {})
+                if item.get('bbox'):
+                    line_payload['bbox'] = item['bbox']
+                if item.get('dir'):
+                    line_payload['dir'] = item.get('dir')
+                line_payload['wmode'] = int(item.get('wmode', line_payload.get('wmode', 0)) or 0)
+                block_lines.append(line_payload)
+                block_bbox = _rect_union(block_bbox, item.get('bbox'))
+        if not block_lines or not block_bbox:
+            continue
+        synthetic_blocks.append({
+            'type': 0,
+            'bbox': block_bbox,
+            'lines': block_lines,
+            '_synthetic_form_block': True,
+        })
+
+    return synthetic_blocks or [block for block in (blocks or []) if block.get("type") == 0]
 
 
 def _looks_like_dot_leader_fragment(text):
@@ -1768,7 +3003,7 @@ def _group_and_item_share_column(group_items, item_bbox):
     return False
 
 
-def _split_candidate_lines_by_x_gap(candidate_items, vertical_lines=None, widget_rects=None):
+def _split_candidate_lines_by_x_gap(candidate_items, vertical_lines=None, widget_rects=None, drawn_box_rects=None):
     """
     Split a candidate line group into x-clusters when items occupy distinct columns
     on the same visual row. Vertically stacked paragraph lines in the same column
@@ -1800,6 +3035,7 @@ def _split_candidate_lines_by_x_gap(candidate_items, vertical_lines=None, widget
         has_structural_barrier = (
             _rects_have_vertical_barrier(current_group_bbox, item_bbox, vertical_lines or [])
             or _rects_have_widget_barrier(current_group_bbox, item_bbox, widget_rects or [])
+            or _rects_have_drawn_box_barrier(current_group_bbox, item_bbox, drawn_box_rects or [])
         )
         shares_visual_row = _groups_share_visual_row(current_group, [item])
         current_group_text = ''.join(_line_item_text(existing_item) for existing_item in current_group).strip()
@@ -1823,7 +3059,7 @@ def _split_candidate_lines_by_x_gap(candidate_items, vertical_lines=None, widget
     return x_groups
 
 
-def _split_same_row_group_by_barriers(group_items, vertical_lines, widget_rects):
+def _split_same_row_group_by_barriers(group_items, vertical_lines, widget_rects, drawn_box_rects=None):
     if len(group_items) <= 1:
         return [group_items]
 
@@ -1847,6 +3083,7 @@ def _split_same_row_group_by_barriers(group_items, vertical_lines, widget_rects)
         has_structural_barrier = (
             _rects_have_vertical_barrier(current_bbox, item_bbox, vertical_lines)
             or _rects_have_widget_barrier(current_bbox, item_bbox, widget_rects)
+            or _rects_have_drawn_box_barrier(current_bbox, item_bbox, drawn_box_rects or [])
         )
         current_group_text = ''.join(_line_item_text(existing_item) for existing_item in current_group).strip()
         item_text = _line_item_text(item)
@@ -1865,7 +3102,7 @@ def _split_same_row_group_by_barriers(group_items, vertical_lines, widget_rects)
     return split_groups
 
 
-def _merge_adjacent_page_blocks(page_blocks, page_width, page_words, page_lines, widget_rects=None, vertical_lines=None):
+def _merge_adjacent_page_blocks(page_blocks, page_width, page_words, page_lines, widget_rects=None, vertical_lines=None, drawn_box_rects=None):
     """
     Post-process page blocks to merge blocks that sit on the same visual line.
     This handles cases where PyMuPDF reports inline text as entirely separate blocks.
@@ -1927,6 +3164,16 @@ def _merge_adjacent_page_blocks(page_blocks, page_width, page_words, page_lines,
                     if size_ratio < 0.7:
                         continue
 
+                # Adjacent-block merging is only for sequential left-to-right fragments.
+                # If the blocks substantially overlap horizontally, they are layered or
+                # nested same-row content and must remain separate.
+                horizontal_overlap = max(0.0, min(a_right, b_right) - max(a_left, b_left))
+                min_width = max(1.0, min(block_a['width'], block_b['width']))
+                if horizontal_overlap > max(3.0, max(a_size, b_size) * 0.25):
+                    continue
+                if (horizontal_overlap / min_width) > 0.15:
+                    continue
+
                 if _block_contains_symbol_font(block_a) or _block_contains_symbol_font(block_b):
                     continue
 
@@ -1944,6 +3191,13 @@ def _merge_adjacent_page_blocks(page_blocks, page_width, page_words, page_lines,
                     (a_left, a_top, a_right, a_bottom),
                     (b_left, b_top, b_right, b_bottom),
                     widget_rects or [],
+                ):
+                    continue
+
+                if _rects_have_drawn_box_barrier(
+                    (a_left, a_top, a_right, a_bottom),
+                    (b_left, b_top, b_right, b_bottom),
+                    drawn_box_rects or [],
                 ):
                     continue
 
@@ -2540,6 +3794,23 @@ def extract_text_with_pymupdf(pdf_path):
             opaque_fill_occluders = _build_opaque_fill_occluders(page)
             horizontal_lines = _collect_horizontal_lines(page)
             vertical_lines = _collect_vertical_lines(page)
+            drawn_box_rects = _collect_drawn_box_rects(page)
+            page_link_regions = _collect_page_link_regions(page)
+
+            if _page_requires_synthetic_form_grouping(
+                blocks,
+                horizontal_lines,
+                vertical_lines,
+                widget_rects,
+                drawn_box_rects,
+            ):
+                blocks = _build_synthetic_form_blocks(
+                    blocks,
+                    vertical_lines=vertical_lines,
+                    widget_rects=widget_rects,
+                    horizontal_lines=horizontal_lines,
+                    drawn_box_rects=drawn_box_rects,
+                )
 
             # Pre-fetch PyMuPDF word-level positions (with the same space-inhibit
             # flag).  Used below to split spans that mix regular text with underscore
@@ -2581,6 +3852,7 @@ def extract_text_with_pymupdf(pdf_path):
                         line_items,
                         vertical_lines=vertical_lines,
                         widget_rects=widget_rects,
+                        drawn_box_rects=drawn_box_rects,
                     )
 
                     groups = []
@@ -2613,6 +3885,7 @@ def extract_text_with_pymupdf(pdf_path):
                                 candidate,
                                 vertical_lines=vertical_lines,
                                 widget_rects=widget_rects,
+                                drawn_box_rects=drawn_box_rects,
                             )
 
                             if len(x_groups) > 1:
@@ -2661,6 +3934,7 @@ def extract_text_with_pymupdf(pdf_path):
                             group_items,
                             vertical_lines,
                             widget_rects,
+                            drawn_box_rects=drawn_box_rects,
                         )
                         if len(regrouped_items) > 1:
                             for regrouped in regrouped_items:
@@ -2771,14 +4045,22 @@ def extract_text_with_pymupdf(pdf_path):
                                     widget_rects,
                                 )
                                 if trace_visible_span:
-                                    text = trace_visible_span.get("text") or text
-                                    text = _apply_line_direction_text_order(text, line_dir)
-                                    rebuilt_bbox = trace_visible_span.get("bbox")
-                                    if rebuilt_bbox and len(rebuilt_bbox) >= 4:
-                                        bbox = rebuilt_bbox
-                                    rebuilt_origin = trace_visible_span.get("origin")
-                                    if rebuilt_origin:
-                                        origin = rebuilt_origin
+                                    rebuilt_text = trace_visible_span.get("text") or text
+                                    rebuilt_text = _apply_line_direction_text_order(rebuilt_text, line_dir)
+                                    original_compact_text = _compact_duplicate_compare_text(text)
+                                    rebuilt_compact_text = _compact_duplicate_compare_text(rebuilt_text)
+                                    if (
+                                        rebuilt_compact_text
+                                        and original_compact_text
+                                        and rebuilt_compact_text == original_compact_text
+                                    ):
+                                        text = rebuilt_text
+                                        rebuilt_bbox = trace_visible_span.get("bbox")
+                                        if rebuilt_bbox and len(rebuilt_bbox) >= 4:
+                                            bbox = rebuilt_bbox
+                                        rebuilt_origin = trace_visible_span.get("origin")
+                                        if rebuilt_origin:
+                                            origin = rebuilt_origin
                                 elif _rect_intersects_widget(bbox, widget_rects, padding=0.35):
                                     continue
 
@@ -2891,6 +4173,15 @@ def extract_text_with_pymupdf(pdf_path):
                                     'space_width': trace_spacewidth,
                                     'source_content_ops': source_content_ops,
                                 }
+                                link_region = _find_link_region_for_bbox(bbox, page_link_regions)
+                                if link_region:
+                                    span_data['is_link'] = True
+                                    if link_region.get('uri'):
+                                        span_data['link_uri'] = link_region['uri']
+                                    if link_region.get('kind'):
+                                        span_data['link_kind'] = link_region['kind']
+                                    if link_region.get('page') is not None:
+                                        span_data['link_page'] = link_region['page']
                                 _attach_embedded_font_fields(span_data, embedded_font_meta)
                                 block_spans.append(span_data)
                                 line_spans.append(span_data)
@@ -2958,6 +4249,14 @@ def extract_text_with_pymupdf(pdf_path):
                                     'space_width': trace_spacewidth,
                                     'source_content_ops': source_content_ops,
                                 }
+                                if link_region:
+                                    word_data['is_link'] = True
+                                    if link_region.get('uri'):
+                                        word_data['link_uri'] = link_region['uri']
+                                    if link_region.get('kind'):
+                                        word_data['link_kind'] = link_region['kind']
+                                    if link_region.get('page') is not None:
+                                        word_data['link_page'] = link_region['page']
                                 _attach_embedded_font_fields(word_data, embedded_font_meta)
 
                                 # When a span has a drawn underline AND contains an
@@ -3139,26 +4438,46 @@ def extract_text_with_pymupdf(pdf_path):
                 page_lines,
                 widget_rects=widget_rects,
                 vertical_lines=vertical_lines,
+                drawn_box_rects=drawn_box_rects,
             )
             page_blocks = _merge_stacked_paragraph_blocks(page_blocks, page_words, page_lines)
+            page_blocks = _split_blocks_on_list_marker_callouts(
+                page_blocks,
+                page_words,
+                page_lines,
+                horizontal_lines=horizontal_lines,
+            )
+
+            page_lines = _dedupe_near_duplicate_text_entries(
+                page_lines,
+                text_key='text',
+                left_key='left',
+                top_key='top',
+                width_key='width',
+                height_key='height',
+                font_key='font',
+                font_size_key='font_size',
+            )
+
+            page_blocks = [
+                _dedupe_block_text_lines(block)
+                for block in page_blocks
+            ]
 
             # ── Word-level deduplication ──────────────────────────────
             # PyMuPDF can emit duplicate spans for OCR layers, font
             # re-encoding, or ligature splitting. Remove near-identical
             # entries to prevent stacked/doubled glyphs in the overlay.
-            WORD_POS_EPS = 1.5  # PDF-point tolerance
-            deduped_words = []
-            seen_word_sigs = set()
-            for w in page_words:
-                sig = (
-                    w.get('text', '').strip(),
-                    round(w.get('left', 0) / WORD_POS_EPS),
-                    round(w.get('top', 0) / WORD_POS_EPS),
-                )
-                if sig in seen_word_sigs:
-                    continue
-                seen_word_sigs.add(sig)
-                deduped_words.append(w)
+            deduped_words = _dedupe_near_duplicate_text_entries(
+                page_words,
+                text_key='text',
+                left_key='left',
+                top_key='top',
+                width_key='width',
+                height_key='height',
+                font_key='font',
+                font_size_key='font_size',
+            )
             removed = len(page_words) - len(deduped_words)
             if removed > 0:
                 print(f"    ⚠ Removed {removed} duplicate word entries")
@@ -3177,6 +4496,8 @@ def extract_text_with_pymupdf(pdf_path):
                 'blocks': page_blocks,  # Paragraph tracking
                 'lines': page_lines,  # Line-level tracking for editing
                 'words': page_words,
+                'drawn_box_rects': [list(rect[:4]) for rect in (drawn_box_rects or [])],
+                'widget_rects': [list(rect[:4]) for rect in (widget_rects or [])],
                 'text': page_full_text,
                 'word_count': len(page_words)
             }

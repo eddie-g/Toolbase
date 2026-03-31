@@ -5,10 +5,13 @@ import pathlib
 import sys
 import unittest
 
+import fitz
+
 
 MODULE_PATH = pathlib.Path(__file__).resolve().parents[1] / "pdf-editor" / "extract_pdf_pymupdf.py"
 FIXTURE_PATH = pathlib.Path(__file__).resolve().parents[2] / "public" / "2026-593.pdf"
 FW8BEN_FIXTURE_PATH = pathlib.Path(__file__).resolve().parents[2] / "public" / "fw8ben.pdf"
+DRYLAB_FIXTURE_PATH = pathlib.Path(__file__).resolve().parents[2] / "public" / "drylab_page_1.pdf"
 
 
 def load_module():
@@ -182,6 +185,64 @@ class ExtractPdfPyMuPdfTests(unittest.TestCase):
         self.assertEqual(len(groups), 1)
         self.assertEqual(len(groups[0]), 3)
 
+    def test_trace_rebuild_dedupes_overlapped_footer_glyph_layers(self):
+        doc = fitz.open(DRYLAB_FIXTURE_PATH)
+        page = doc[0]
+        trace_chars = self.module._build_texttrace_char_records(page)
+        widget_rects = self.module._collect_widget_rects(page)
+        raw = page.get_text("dict")
+
+        rebuilt = {}
+        for block in raw.get("blocks", []):
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    text = span.get("text", "")
+                    if text not in {"meetings", "NY · SF", "LA · L", "LA · LV"}:
+                        continue
+                    rebuilt[text, tuple(span.get("bbox", ()))] = self.module._rebuild_visible_text_from_trace_bbox(
+                        trace_chars,
+                        span.get("bbox"),
+                        span.get("font"),
+                        span.get("size"),
+                        widget_rects,
+                    )["text"]
+
+        self.assertIn("meetings", rebuilt.values())
+        self.assertIn("NY · SF", rebuilt.values())
+        self.assertIn("LA · L", rebuilt.values())
+        self.assertIn("LA · LV", rebuilt.values())
+        for value in rebuilt.values():
+            self.assertNotIn("mmeeeettiinnggss", value)
+            self.assertNotIn("NNYY", value)
+            self.assertNotIn("LLAA", value)
+
+    def test_block_line_dedupe_prefers_richer_overlapped_layer(self):
+        block = {
+            "text_lines": ["meetings", "meetings", "NY · SF", "NY · SF", "LA · L", "LA · LV"],
+            "line_bboxes": [
+                [56.69, 706.29, 112.68, 723.09],
+                [56.97, 706.29, 112.95, 723.09],
+                [62.70, 724.29, 106.66, 741.09],
+                [62.98, 724.29, 106.94, 741.09],
+                [63.99, 742.29, 97.13, 759.09],
+                [64.27, 742.29, 105.37, 759.09],
+            ],
+            "spans": [
+                {"text": "meetings", "bbox": [56.69, 706.29, 112.68, 723.09], "font": "PdbpbbLato-Regular", "font_size": 14},
+                {"text": "meetings", "bbox": [56.97, 706.29, 112.95, 723.09], "font": "PdbpbbLato-Regular", "font_size": 14},
+                {"text": "NY · SF", "bbox": [62.70, 724.29, 106.66, 741.09], "font": "PdbpbbLato-Regular", "font_size": 14},
+                {"text": "NY · SF", "bbox": [62.98, 724.29, 106.94, 741.09], "font": "PdbpbbLato-Regular", "font_size": 14},
+                {"text": "LA · L", "bbox": [63.99, 742.29, 97.13, 759.09], "font": "PdbpbbLato-Regular", "font_size": 14},
+                {"text": "LA · LV", "bbox": [64.27, 742.29, 105.37, 759.09], "font": "PdbpbbLato-Regular", "font_size": 14},
+            ],
+        }
+
+        deduped = self.module._dedupe_block_text_lines(block)
+
+        self.assertEqual(deduped["text_lines"], ["meetings", "NY · SF", "LA · LV"])
+        self.assertEqual(deduped["text"], "meetings\nNY · SF\nLA · LV")
+        self.assertEqual([span["text"] for span in deduped["spans"]], ["meetings", "NY · SF", "LA · LV"])
+
     def test_stacked_paragraph_merge_preserves_heading_like_followup_paragraphs(self):
         page_blocks = [
             {
@@ -311,6 +372,192 @@ class ExtractPdfPyMuPdfTests(unittest.TestCase):
             "10 Special rates and conditions (if applicable—see instructions): The beneficial owner is claiming the provisions of Article and paragraph",
             normalized_lines,
         )
+
+    def test_numbered_list_item_starts_new_block_before_following_note_paragraph(self):
+        current_groups = [[{
+            "bbox": (28.0, 100.0, 520.0, 118.0),
+            "line": {"spans": [{"text": "9. I received the refund check and signed it."}]},
+        }]]
+        candidate_group = [{
+            "bbox": (28.0, 121.0, 560.0, 156.0),
+            "line": {"spans": [{"text": "NOTE: The law doesn't allow us to issue a replacement check if you endorsed it."}]},
+        }]
+
+        self.assertTrue(
+            self.module._should_start_new_form_block(current_groups, candidate_group, [], [], []),
+        )
+
+    def test_numbered_list_item_keeps_attached_followup_line_without_callout_label(self):
+        current_groups = [[{
+            "bbox": (28.0, 100.0, 520.0, 118.0),
+            "line": {"spans": [{"text": "9. I received the refund check and signed it."}]},
+        }]]
+        candidate_group = [{
+            "bbox": (52.0, 121.0, 560.0, 139.0),
+            "line": {"spans": [{"text": "Someone other than you cashed the check."}]},
+        }]
+
+        self.assertFalse(
+            self.module._should_start_new_form_block(current_groups, candidate_group, [], [], []),
+        )
+
+    def test_split_blocks_on_list_marker_callouts_splits_number_markers_and_note(self):
+        page_blocks = [{
+            "block_num": 15,
+            "font": "ArialMT",
+            "font_size": 9,
+            "font_weight": 400,
+            "bold": False,
+            "italic": False,
+            "hex_color": "#000000",
+            "text_lines": [
+                "8.",
+                "9.",
+                "NOTE:  The law doesn’t allow us to issue a replacement check if you endorsed it and someone other than you cashed the check, since",
+                "that person didn’t forge your signature.",
+            ],
+            "line_bboxes": [
+                [36.0, 575.29, 43.50, 584.29],
+                [36.0, 589.69, 43.50, 598.69],
+                [35.99, 605.89, 572.74, 615.14],
+                [35.99, 616.69, 190.07, 625.69],
+            ],
+            "spans": [
+                {"text": "8.", "bbox": [36.0, 575.29, 43.50, 584.29], "font": "ArialMT", "font_size": 9, "bold": False, "italic": False},
+                {"text": "9.", "bbox": [36.0, 589.69, 43.50, 598.69], "font": "ArialMT", "font_size": 9, "bold": False, "italic": False},
+                {"text": "NOTE: ", "bbox": [35.99, 606.14, 66.49, 615.14], "font": "Arial-BoldMT", "font_size": 9, "bold": True, "italic": False},
+                {"text": "The law doesn’t allow us to issue a replacement check if you endorsed it and someone other than you cashed the check, since ", "bbox": [66.49, 605.89, 572.74, 614.89], "font": "ArialMT", "font_size": 9, "bold": False, "italic": False},
+                {"text": "that person didn’t forge your signature.", "bbox": [35.99, 616.69, 190.07, 625.69], "font": "ArialMT", "font_size": 9, "bold": False, "italic": False},
+            ],
+            "source_content_ops": [],
+        }]
+        page_lines = [
+            {"text": "8.", "left": 36.0, "top": 575.29, "width": 7.5, "height": 9.0, "block_num": 15},
+            {"text": "9.", "left": 36.0, "top": 589.69, "width": 7.5, "height": 9.0, "block_num": 15},
+            {"text": "NOTE:  The law doesn’t allow us to issue a replacement check if you endorsed it and someone other than you cashed the check, since", "left": 35.99, "top": 605.89, "width": 536.75, "height": 9.25, "block_num": 15},
+            {"text": "that person didn’t forge your signature.", "left": 35.99, "top": 616.69, "width": 154.08, "height": 9.0, "block_num": 15},
+        ]
+        page_words = [
+            {"text": "8.", "left": 36.0, "top": 575.29, "width": 7.5, "height": 9.0, "block_num": 15},
+            {"text": "9.", "left": 36.0, "top": 589.69, "width": 7.5, "height": 9.0, "block_num": 15},
+            {"text": "NOTE:", "left": 35.99, "top": 606.14, "width": 30.5, "height": 9.0, "block_num": 15},
+            {"text": "The", "left": 66.49, "top": 605.89, "width": 15.0, "height": 9.0, "block_num": 15},
+            {"text": "that", "left": 35.99, "top": 616.69, "width": 18.0, "height": 9.0, "block_num": 15},
+        ]
+
+        split_blocks = self.module._split_blocks_on_list_marker_callouts(page_blocks, page_words, page_lines)
+
+        self.assertEqual([block["text_lines"] for block in split_blocks], [
+            ["8."],
+            ["9."],
+            [
+                "NOTE:  The law doesn’t allow us to issue a replacement check if you endorsed it and someone other than you cashed the check, since",
+                "that person didn’t forge your signature.",
+            ],
+        ])
+        self.assertEqual([line["block_num"] for line in page_lines], [0, 1, 2, 2])
+        self.assertEqual([word["block_num"] for word in page_words], [0, 1, 2, 2, 2])
+
+    def test_split_block_on_horizontal_barriers_and_heading_label(self):
+        block = {
+            "block_num": 2,
+            "font": "TimesNewRomanPSMT",
+            "font_size": 12,
+            "font_weight": 400,
+            "bold": False,
+            "italic": False,
+            "hex_color": "#000000",
+            "text_lines": [
+                "Note : A supplemental claim is a new review of an issue previously decided by VA based on",
+                "submission of new and relevant evidence.",
+                "This form should only be",
+                "used if you DISAGREE with a decision you received.",
+                "• If you feel your condition has worsened and is no longer accurately reflected by VA, use",
+                "VA Form 21-526EZ to request an increased evaluation.",
+                "You may also submit your claim online.",
+                "• If you want to file a request for higher-level review, use VA Form 20-0996.",
+                "• You can also appeal to the BVA by using VA Form 10182.",
+                "For additional information on these different options, visit www.va.gov/decision-reviews/.",
+                "Where to Submit This Form :",
+                "Submit your supplemental claim to the address shown below.",
+                "Keep a copy of all completed forms and materials you give to VA.",
+            ],
+            "line_bboxes": [
+                [29.95, 218.47, 520.00, 228.47],
+                [29.95, 229.27, 400.00, 239.27],
+                [29.95, 240.07, 220.00, 250.07],
+                [29.95, 250.87, 260.00, 260.87],
+                [43.45, 272.44, 510.00, 282.44],
+                [29.95, 283.35, 430.00, 293.35],
+                [29.95, 294.15, 280.00, 304.15],
+                [29.95, 315.73, 470.00, 325.73],
+                [43.45, 337.41, 430.00, 347.41],
+                [29.95, 359.12, 360.00, 369.12],
+                [29.95, 379.52, 180.00, 389.52],
+                [30.60, 406.93, 420.00, 416.93],
+                [30.60, 417.73, 430.00, 427.73],
+            ],
+            "spans": [
+                {"text": "Note : A supplemental claim is a new review of an issue previously decided by VA based on", "bbox": [29.95, 218.47, 520.00, 228.47], "font": "TimesNewRomanPSMT", "font_size": 12, "bold": False, "italic": False},
+                {"text": "submission of new and relevant evidence.", "bbox": [29.95, 229.27, 400.00, 239.27], "font": "TimesNewRomanPSMT", "font_size": 12, "bold": False, "italic": False},
+                {"text": "This form should only be", "bbox": [29.95, 240.07, 220.00, 250.07], "font": "TimesNewRomanPSMT", "font_size": 12, "bold": False, "italic": False},
+                {"text": "used if you DISAGREE with a decision you received.", "bbox": [29.95, 250.87, 260.00, 260.87], "font": "TimesNewRomanPSMT", "font_size": 12, "bold": False, "italic": False},
+                {"text": "• If you feel your condition has worsened and is no longer accurately reflected by VA, use", "bbox": [43.45, 272.44, 510.00, 282.44], "font": "TimesNewRomanPSMT", "font_size": 12, "bold": False, "italic": False},
+                {"text": "VA Form 21-526EZ to request an increased evaluation.", "bbox": [29.95, 283.35, 430.00, 293.35], "font": "TimesNewRomanPSMT", "font_size": 12, "bold": False, "italic": False},
+                {"text": "You may also submit your claim online.", "bbox": [29.95, 294.15, 280.00, 304.15], "font": "TimesNewRomanPSMT", "font_size": 12, "bold": False, "italic": False},
+                {"text": "• If you want to file a request for higher-level review, use VA Form 20-0996.", "bbox": [29.95, 315.73, 470.00, 325.73], "font": "TimesNewRomanPSMT", "font_size": 12, "bold": False, "italic": False},
+                {"text": "• You can also appeal to the BVA by using VA Form 10182.", "bbox": [43.45, 337.41, 430.00, 347.41], "font": "TimesNewRomanPSMT", "font_size": 12, "bold": False, "italic": False},
+                {"text": "For additional information on these different options, visit www.va.gov/decision-reviews/.", "bbox": [29.95, 359.12, 360.00, 369.12], "font": "TimesNewRomanPSMT", "font_size": 12, "bold": False, "italic": False},
+                {"text": "Where to Submit This Form :", "bbox": [29.95, 379.52, 180.00, 389.52], "font": "TimesNewRomanPS-BoldMT", "font_size": 12, "bold": True, "italic": False},
+                {"text": "Submit your supplemental claim to the address shown below.", "bbox": [30.60, 406.93, 420.00, 416.93], "font": "TimesNewRomanPSMT", "font_size": 12, "bold": False, "italic": False},
+                {"text": "Keep a copy of all completed forms and materials you give to VA.", "bbox": [30.60, 417.73, 430.00, 427.73], "font": "TimesNewRomanPSMT", "font_size": 12, "bold": False, "italic": False},
+            ],
+            "source_content_ops": [],
+        }
+
+        horizontal_lines = [
+            (28.71, 587.15, 264.60, 0.72),
+            (28.71, 587.36, 312.20, 0.72),
+            (29.21, 586.37, 335.72, 0.72),
+            (28.71, 587.15, 356.50, 0.72),
+        ]
+
+        split_blocks = self.module._split_blocks_on_list_marker_callouts(
+            [block],
+            [],
+            [],
+            horizontal_lines=horizontal_lines,
+        )
+
+        self.assertEqual([segment["text_lines"] for segment in split_blocks], [
+            [
+                "Note : A supplemental claim is a new review of an issue previously decided by VA based on",
+                "submission of new and relevant evidence.",
+                "This form should only be",
+                "used if you DISAGREE with a decision you received.",
+            ],
+            [
+                "• If you feel your condition has worsened and is no longer accurately reflected by VA, use",
+                "VA Form 21-526EZ to request an increased evaluation.",
+                "You may also submit your claim online.",
+            ],
+            [
+                "• If you want to file a request for higher-level review, use VA Form 20-0996.",
+            ],
+            [
+                "• You can also appeal to the BVA by using VA Form 10182.",
+            ],
+            [
+                "For additional information on these different options, visit www.va.gov/decision-reviews/.",
+            ],
+            [
+                "Where to Submit This Form :",
+            ],
+            [
+                "Submit your supplemental claim to the address shown below.",
+                "Keep a copy of all completed forms and materials you give to VA.",
+            ],
+        ])
 
 
 if __name__ == "__main__":

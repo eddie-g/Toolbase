@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Document;
 use App\Models\PdfState;
 use App\Models\User;
+use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -129,5 +130,169 @@ class SavedPdfSessionLoadingTest extends TestCase
             'session-a' => 2,
             'session-b' => 1,
         ], $sessionCounts);
+    }
+
+    public function test_get_saved_annotations_prefers_latest_session_even_if_not_saved(): void
+    {
+        $user = User::factory()->create([
+            'email' => 'owner@example.com',
+        ]);
+
+        $document = Document::query()->create([
+            'user_id' => $user->id,
+            'original_name' => 'draft-session-test.pdf',
+            'path' => 'documents/draft-session-test.pdf',
+            'mime_type' => 'application/pdf',
+            'size_bytes' => 0,
+        ]);
+
+        PdfState::query()->create([
+            'document_id' => $document->id,
+            'user_email' => $user->email,
+            'session_id' => 'session-saved',
+            'page_number' => 1,
+            'annotation_data' => ['id' => 'saved-1', 'type' => 'text', 'text' => 'older saved session'],
+            'state' => 'saved',
+            'updated_at' => CarbonImmutable::parse('2026-03-29 10:00:00'),
+            'created_at' => CarbonImmutable::parse('2026-03-29 10:00:00'),
+        ]);
+
+        PdfState::query()->create([
+            'document_id' => $document->id,
+            'user_email' => $user->email,
+            'session_id' => 'session-draft',
+            'page_number' => 1,
+            'annotation_data' => ['id' => 'draft-1', 'type' => 'text', 'text' => 'newer draft session'],
+            'state' => 'not_saved',
+            'updated_at' => CarbonImmutable::parse('2026-03-30 10:00:00'),
+            'created_at' => CarbonImmutable::parse('2026-03-30 10:00:00'),
+        ]);
+
+        $response = $this->actingAs($user)->getJson(route('documents.getSavedAnnotations', $document));
+
+        $response->assertOk()
+            ->assertJson([
+                'success' => true,
+                'session_id' => 'session-draft',
+                'count' => 1,
+            ]);
+
+        $annotationIds = collect($response->json('annotations'))
+            ->pluck('id')
+            ->values()
+            ->all();
+
+        $this->assertSame(['draft-1'], $annotationIds);
+    }
+
+    public function test_save_annotation_state_infers_deleted_promoted_source_keys_from_missing_session_annotations(): void
+    {
+        $user = User::factory()->create([
+            'email' => 'owner@example.com',
+        ]);
+
+        $document = Document::query()->create([
+            'user_id' => $user->id,
+            'original_name' => 'promoted-delete-save.pdf',
+            'path' => 'documents/promoted-delete-save.pdf',
+            'mime_type' => 'application/pdf',
+            'size_bytes' => 0,
+        ]);
+
+        PdfState::query()->create([
+            'document_id' => $document->id,
+            'user_email' => null,
+            'session_id' => 'session-promoted',
+            'page_number' => 0,
+            'annotation_data' => [
+                'id' => 'promoted_1_4',
+                'type' => 'text',
+                'pageIndex' => 0,
+                'promotedFromExtraction' => true,
+                'promotedSourceKey' => 'block-1-4',
+                'text' => 'Old promoted block',
+            ],
+            'state' => 'not_saved',
+        ]);
+        PdfState::query()->create([
+            'document_id' => $document->id,
+            'user_email' => null,
+            'session_id' => 'session-promoted',
+            'page_number' => 0,
+            'annotation_data' => [
+                'id' => 'promoted_1_5',
+                'type' => 'text',
+                'pageIndex' => 0,
+                'promotedFromExtraction' => true,
+                'promotedSourceKey' => 'block-1-5',
+                'text' => 'Kept promoted block',
+            ],
+            'state' => 'not_saved',
+        ]);
+
+        $saveResponse = $this->actingAs($user)->postJson(
+            route('documents.saveAnnotationState', $document),
+            [
+                'session_id' => 'session-promoted',
+                'annotations' => [
+                    [
+                        'id' => 'promoted_1_5',
+                        'type' => 'text',
+                        'pageIndex' => 0,
+                        'promotedFromExtraction' => true,
+                        'promotedSourceKey' => 'block-1-5',
+                        'text' => 'Kept promoted block',
+                    ],
+                ],
+                'session_annotations' => [
+                    [
+                        'id' => 'promoted_1_5',
+                        'type' => 'text',
+                        'pageIndex' => 0,
+                        'promotedFromExtraction' => true,
+                        'promotedSourceKey' => 'block-1-5',
+                        'text' => 'Kept promoted block',
+                    ],
+                ],
+                'deleted_promoted_source_keys' => [],
+            ]
+        );
+
+        $saveResponse->assertOk()
+            ->assertJson([
+                'success' => true,
+                'session_id' => 'session-promoted',
+            ]);
+
+        $loadResponse = $this->actingAs($user)->getJson(
+            route('documents.getSavedAnnotations', $document) . '?session_id=session-promoted'
+        );
+
+        $loadResponse->assertOk()
+            ->assertJson([
+                'success' => true,
+                'session_id' => 'session-promoted',
+                'count' => 1,
+            ]);
+
+        $this->assertSame(
+            ['promoted_1_5'],
+            collect($loadResponse->json('annotations'))->pluck('id')->values()->all()
+        );
+        $this->assertSame(
+            ['block-1-4'],
+            collect($loadResponse->json('deleted_promoted_source_keys'))->sort()->values()->all()
+        );
+
+        $this->assertDatabaseMissing('pdf_state', [
+            'document_id' => $document->id,
+            'session_id' => 'session-promoted',
+            'state' => 'not_saved',
+        ]);
+        $this->assertDatabaseHas('pdf_state', [
+            'document_id' => $document->id,
+            'session_id' => 'session-promoted',
+            'state' => 'deleted',
+        ]);
     }
 }

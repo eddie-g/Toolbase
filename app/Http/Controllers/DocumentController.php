@@ -10,6 +10,7 @@ use App\Services\PdfAnnotationAssetService;
 use App\Models\User;
 use App\Models\UserActivity;
 use App\Models\UserPdfMonthlyUsage;
+use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
@@ -23,6 +24,115 @@ class DocumentController extends Controller
     private const MONTHLY_UPLOAD_LIMIT = 100;
     private const MONTHLY_ACTION_LIMIT = 1000;
     private const PDF_ACRO_FORM_BASE_SESSION = '__document_acro_form__';
+    private const SESSION_DOCUMENT_ACCESS_KEY = 'pdf_editor_accessible_document_ids';
+
+    public function __construct()
+    {
+        $this->middleware(function (Request $request, Closure $next) {
+            $routeDocument = $request->route('document');
+            $routeName = (string) optional($request->route())->getName();
+
+            if ($routeName === 'documents.ai' && $routeDocument !== null) {
+                $this->authorizeAiRouteAccess($request, $routeDocument);
+            } elseif ($routeDocument instanceof Document) {
+                $this->authorizeDocumentAccess($request, $routeDocument);
+            }
+
+            return $next($request);
+        });
+    }
+
+    private function sessionAccessibleDocumentIds(Request $request): array
+    {
+        return collect($request->session()->get(self::SESSION_DOCUMENT_ACCESS_KEY, []))
+            ->map(static fn ($value) => (int) $value)
+            ->filter(static fn (int $value) => $value > 0)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    private function rememberSessionAccessibleDocument(Request $request, Document $document): void
+    {
+        if ($document->id <= 0 || $document->user_id !== null) {
+            return;
+        }
+
+        $documentIds = collect($this->sessionAccessibleDocumentIds($request))
+            ->push((int) $document->id)
+            ->unique()
+            ->values()
+            ->all();
+
+        $request->session()->put(self::SESSION_DOCUMENT_ACCESS_KEY, $documentIds);
+    }
+
+    private function canAccessDocument(Request $request, Document $document): bool
+    {
+        $webUserId = Auth::guard('web')->id();
+        if ($webUserId !== null && (int) $document->user_id === (int) $webUserId) {
+            return true;
+        }
+
+        if ($document->user_id === null) {
+            return in_array((int) $document->id, $this->sessionAccessibleDocumentIds($request), true);
+        }
+
+        return false;
+    }
+
+    private function authorizeDocumentAccess(Request $request, Document $document): void
+    {
+        abort_unless($this->canAccessDocument($request, $document), 404);
+    }
+
+    private function authorizeAiRouteAccess(Request $request, mixed $routeDocument): void
+    {
+        $identifier = is_scalar($routeDocument) ? (string) $routeDocument : '';
+        if ($identifier === '') {
+            abort(404);
+        }
+
+        $aiDocument = \App\Models\AiDocument::with('document')->find($identifier);
+        if ($aiDocument instanceof \App\Models\AiDocument && $aiDocument->document instanceof Document) {
+            $this->authorizeDocumentAccess($request, $aiDocument->document);
+            return;
+        }
+
+        $document = Document::query()->find($identifier);
+        if ($document instanceof Document) {
+            $this->authorizeDocumentAccess($request, $document);
+            return;
+        }
+
+        abort(404);
+    }
+
+    private function applyAccessibleDocumentScope(Request $request, $query)
+    {
+        $webUserId = Auth::guard('web')->id();
+        $sessionDocumentIds = $this->sessionAccessibleDocumentIds($request);
+
+        $query->where(function ($scopedQuery) use ($webUserId, $sessionDocumentIds) {
+            if ($webUserId !== null) {
+                $scopedQuery->where('user_id', $webUserId);
+            }
+
+            if (!empty($sessionDocumentIds)) {
+                $method = $webUserId !== null ? 'orWhere' : 'where';
+                $scopedQuery->{$method}(function ($sessionQuery) use ($sessionDocumentIds) {
+                    $sessionQuery->whereNull('user_id')
+                        ->whereIn('id', $sessionDocumentIds);
+                });
+            }
+
+            if ($webUserId === null && empty($sessionDocumentIds)) {
+                $scopedQuery->whereRaw('1 = 0');
+            }
+        });
+
+        return $query;
+    }
 
     private function resolveEditorActor(): mixed
     {
@@ -83,6 +193,233 @@ class DocumentController extends Controller
     private function annotationAssets(): PdfAnnotationAssetService
     {
         return app(PdfAnnotationAssetService::class);
+    }
+
+    private function hasDocumentPreviewColumns(): bool
+    {
+        static $hasColumns = null;
+
+        if ($hasColumns !== null) {
+            return $hasColumns;
+        }
+
+        $hasColumns = Schema::hasColumn('documents', 'preview_image')
+            && Schema::hasColumn('documents', 'preview_image_mime_type');
+
+        return $hasColumns;
+    }
+
+    private function clearDocumentPreviewSnapshot(Document $document): void
+    {
+        if (!$this->hasDocumentPreviewColumns()) {
+            return;
+        }
+
+        $timestamps = $document->timestamps;
+        try {
+            $document->timestamps = false;
+            $document->preview_image = null;
+            $document->preview_image_mime_type = null;
+            $document->preview_image_width = null;
+            $document->preview_image_height = null;
+            $document->preview_image_updated_at = null;
+            $document->saveQuietly();
+        } finally {
+            $document->timestamps = $timestamps;
+        }
+    }
+
+    private function generatePdfPreviewJpeg(string $fullPath, int $targetWidth = 320, int $quality = 58): ?array
+    {
+        if (!is_file($fullPath)) {
+            return null;
+        }
+
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+        $tmpOutputBase = tempnam(sys_get_temp_dir(), 'doc_preview_');
+        $tmpScriptBase = tempnam(sys_get_temp_dir(), 'doc_preview_script_');
+
+        if ($tmpOutputBase === false || $tmpScriptBase === false) {
+            return null;
+        }
+
+        $tmpOutput = $tmpOutputBase . '.jpg';
+        $tmpScript = $tmpScriptBase . '.py';
+        @unlink($tmpOutputBase);
+        @unlink($tmpScriptBase);
+
+        $script = implode("\n", [
+            'import fitz, sys',
+            'src, dest, target_width, quality = sys.argv[1], sys.argv[2], max(int(sys.argv[3]), 64), max(int(sys.argv[4]), 20)',
+            'doc = fitz.open(src)',
+            'if doc.page_count < 1:',
+            '    raise RuntimeError("Document has no pages")',
+            'page = doc.load_page(0)',
+            'rect = page.rect',
+            'scale = float(target_width) / max(float(rect.width), 1.0)',
+            'pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)',
+            'pix.save(dest, output="jpeg", jpg_quality=quality)',
+            'print(f"{pix.width}x{pix.height}")',
+        ]);
+
+        if (@file_put_contents($tmpScript, $script) === false) {
+            return null;
+        }
+
+        $output = [];
+        $returnCode = 1;
+        $command = sprintf(
+            '%s %s %s %s %d %d 2>&1',
+            escapeshellarg($pythonBinary),
+            escapeshellarg($tmpScript),
+            escapeshellarg($fullPath),
+            escapeshellarg($tmpOutput),
+            $targetWidth,
+            $quality
+        );
+        exec($command, $output, $returnCode);
+
+        @unlink($tmpScript);
+
+        if ($returnCode !== 0 || !is_file($tmpOutput)) {
+            @unlink($tmpOutput);
+            Log::warning('Failed to generate PDF preview snapshot', [
+                'path' => $fullPath,
+                'output' => implode("\n", $output),
+                'return_code' => $returnCode,
+            ]);
+            return null;
+        }
+
+        $bytes = @file_get_contents($tmpOutput);
+        $dimensions = @getimagesize($tmpOutput);
+        @unlink($tmpOutput);
+
+        if ($bytes === false || $dimensions === false) {
+            return null;
+        }
+
+        return [
+            'bytes' => $bytes,
+            'mime_type' => 'image/jpeg',
+            'width' => (int) ($dimensions[0] ?? 0),
+            'height' => (int) ($dimensions[1] ?? 0),
+        ];
+    }
+
+    private function generateRasterPreviewJpeg(string $fullPath, int $targetWidth = 320, int $quality = 72): ?array
+    {
+        if (!is_file($fullPath)) {
+            return null;
+        }
+
+        $sourceBytes = @file_get_contents($fullPath);
+        if ($sourceBytes === false) {
+            return null;
+        }
+
+        $sourceImage = @imagecreatefromstring($sourceBytes);
+        if (!$sourceImage) {
+            return null;
+        }
+
+        try {
+            $sourceWidth = imagesx($sourceImage);
+            $sourceHeight = imagesy($sourceImage);
+            if ($sourceWidth <= 0 || $sourceHeight <= 0) {
+                return null;
+            }
+
+            $scale = min(1, $targetWidth / $sourceWidth);
+            $previewWidth = max(1, (int) round($sourceWidth * $scale));
+            $previewHeight = max(1, (int) round($sourceHeight * $scale));
+
+            $previewImage = imagecreatetruecolor($previewWidth, $previewHeight);
+            if (!$previewImage) {
+                return null;
+            }
+
+            try {
+                $background = imagecolorallocate($previewImage, 255, 255, 255);
+                imagefill($previewImage, 0, 0, $background);
+                imagecopyresampled(
+                    $previewImage,
+                    $sourceImage,
+                    0,
+                    0,
+                    0,
+                    0,
+                    $previewWidth,
+                    $previewHeight,
+                    $sourceWidth,
+                    $sourceHeight
+                );
+
+                ob_start();
+                imagejpeg($previewImage, null, $quality);
+                $jpegBytes = ob_get_clean();
+            } finally {
+                imagedestroy($previewImage);
+            }
+        } finally {
+            imagedestroy($sourceImage);
+        }
+
+        if (!is_string($jpegBytes) || $jpegBytes === '') {
+            return null;
+        }
+
+        return [
+            'bytes' => $jpegBytes,
+            'mime_type' => 'image/jpeg',
+            'width' => $previewWidth,
+            'height' => $previewHeight,
+        ];
+    }
+
+    private function refreshDocumentPreviewSnapshot(Document $document): void
+    {
+        if (!$this->hasDocumentPreviewColumns()) {
+            return;
+        }
+
+        $fullPath = Storage::path($document->path);
+        $preview = null;
+        $mimeType = strtolower((string) $document->mime_type);
+        $extension = strtolower((string) pathinfo((string) $document->path, PATHINFO_EXTENSION));
+
+        try {
+            if ($mimeType === 'application/pdf' || $extension === 'pdf') {
+                $preview = $this->generatePdfPreviewJpeg($fullPath);
+            } elseif (str_starts_with($mimeType, 'image/')) {
+                $preview = $this->generateRasterPreviewJpeg($fullPath);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('Failed to refresh document preview snapshot', [
+                'document_id' => $document->id,
+                'path' => $document->path,
+                'error' => $e->getMessage(),
+            ]);
+            $preview = null;
+        }
+
+        if (!is_array($preview) || empty($preview['bytes'])) {
+            $this->clearDocumentPreviewSnapshot($document);
+            return;
+        }
+
+        $timestamps = $document->timestamps;
+        try {
+            $document->timestamps = false;
+            $document->preview_image = base64_encode($preview['bytes']);
+            $document->preview_image_mime_type = $preview['mime_type'] ?? 'image/jpeg';
+            $document->preview_image_width = $preview['width'] ?? null;
+            $document->preview_image_height = $preview['height'] ?? null;
+            $document->preview_image_updated_at = now();
+            $document->saveQuietly();
+        } finally {
+            $document->timestamps = $timestamps;
+        }
     }
 
     private function normalizeDocumentOriginalName(Document $document, string $value): string
@@ -787,7 +1124,7 @@ class DocumentController extends Controller
         $isNumberedLine = static fn (array $entry): bool => preg_match('/^\(?\d+\)?[.)]/', $normalizeLineText($entry)) === 1;
         $isFooterLine = static fn (array $entry): bool => preg_match('/^The form of this addendum/i', $normalizeLineText($entry)) === 1;
 
-        $shouldSplitCluster = static function (array $previousEntry, array $nextEntry) use ($isFooterLine, $isNumberedLine): bool {
+        $shouldSplitCluster = static function (array $previousEntry, array $nextEntry) use ($isFooterLine, $isNumberedLine, $normalizeLineText): bool {
             $prevBox = is_array($previousEntry['bbox'] ?? null) ? $previousEntry['bbox'] : [0, 0, 0, 0];
             $nextBox = is_array($nextEntry['bbox'] ?? null) ? $nextEntry['bbox'] : [0, 0, 0, 0];
             $prevTop = (float) ($prevBox[1] ?? 0);
@@ -818,7 +1155,15 @@ class DocumentController extends Controller
 
             $prevLeft = (float) ($prevBox[0] ?? 0);
             $nextLeft = (float) ($nextBox[0] ?? 0);
-            if (($nextLeft - $prevLeft) > max(12, min($prevHeight, $nextHeight) * 0.3)) {
+            $dramaticIndentSplitThreshold = max(24, min($prevHeight, $nextHeight) * 1.2);
+            if (
+                preg_match('/[:)]\s*$/', $normalizeLineText($previousEntry)) === 1
+                && ($nextLeft - $prevLeft) > max(14, min($prevHeight, $nextHeight) * 0.75)
+            ) {
+                return true;
+            }
+
+            if (($nextLeft - $prevLeft) > $dramaticIndentSplitThreshold) {
                 return true;
             }
 
@@ -1521,6 +1866,125 @@ class DocumentController extends Controller
         sort($result);
 
         return $result;
+    }
+
+    private function inferRemovedPromotedSourceKeysForSessionSnapshot(
+        Document $document,
+        string $sessionId,
+        array $annotationsPayload = []
+    ): array {
+        $sessionId = trim($sessionId);
+        if ($sessionId === '') {
+            return [];
+        }
+
+        $currentSourceKeys = [];
+        foreach ($annotationsPayload as $annotation) {
+            if (!is_array($annotation) || empty($annotation['promotedFromExtraction'])) {
+                continue;
+            }
+            $sourceKey = trim((string) ($annotation['promotedSourceKey'] ?? ''));
+            if ($sourceKey !== '') {
+                $currentSourceKeys[$sourceKey] = true;
+            }
+        }
+
+        $existingSourceKeys = [];
+        PdfState::query()
+            ->where('document_id', $document->id)
+            ->where('session_id', $sessionId)
+            ->where('state', '!=', 'deleted')
+            ->where('state', '!=', 'extracted')
+            ->get(['annotation_data'])
+            ->each(static function (PdfState $record) use (&$existingSourceKeys) {
+                $annotationData = is_array($record->annotation_data) ? $record->annotation_data : [];
+                if (empty($annotationData['promotedFromExtraction'])) {
+                    return;
+                }
+                $sourceKey = trim((string) ($annotationData['promotedSourceKey'] ?? ''));
+                if ($sourceKey !== '') {
+                    $existingSourceKeys[$sourceKey] = true;
+                }
+            });
+
+        $removedSourceKeys = array_diff_key($existingSourceKeys, $currentSourceKeys);
+        $result = array_keys($removedSourceKeys);
+        sort($result);
+
+        return $result;
+    }
+
+    private function syncDeletedPromotedSourceKeysForSession(
+        Document $document,
+        string $sessionId,
+        array $deletedPromotedSourceKeys
+    ): void {
+        $sessionId = trim($sessionId);
+        if ($sessionId === '') {
+            return;
+        }
+
+        $normalizedKeys = array_values(array_unique(array_filter(array_map(
+            static fn ($value) => is_string($value) ? trim($value) : '',
+            $deletedPromotedSourceKeys
+        ))));
+        $normalizedLookup = array_fill_keys($normalizedKeys, true);
+
+        $existingDeletedRecords = PdfState::query()
+            ->where('document_id', $document->id)
+            ->where('session_id', $sessionId)
+            ->where('state', 'deleted')
+            ->get();
+
+        $existingBySourceKey = [];
+        foreach ($existingDeletedRecords as $record) {
+            $sourceKey = trim((string) data_get($record->annotation_data, 'promotedSourceKey', ''));
+            $explicitDelete = filter_var(
+                data_get($record->annotation_data, '_explicitPromotedDelete'),
+                FILTER_VALIDATE_BOOLEAN
+            );
+            if ($sourceKey === '' || !$explicitDelete) {
+                continue;
+            }
+            $existingBySourceKey[$sourceKey] = $record;
+        }
+
+        foreach ($existingBySourceKey as $sourceKey => $record) {
+            if (isset($normalizedLookup[$sourceKey])) {
+                continue;
+            }
+            $record->delete();
+        }
+
+        foreach ($normalizedKeys as $sourceKey) {
+            $existingRecord = $existingBySourceKey[$sourceKey] ?? null;
+            if ($existingRecord) {
+                $annotationData = is_array($existingRecord->annotation_data) ? $existingRecord->annotation_data : [];
+                $annotationData['promotedFromExtraction'] = true;
+                $annotationData['promotedSourceKey'] = $sourceKey;
+                $annotationData['_explicitPromotedDelete'] = true;
+                $existingRecord->annotation_data = $annotationData;
+                $existingRecord->page_number = $this->parsePromotedSourceKeyPageIndex($sourceKey);
+                $existingRecord->state = 'deleted';
+                $existingRecord->save();
+                continue;
+            }
+
+            PdfState::create([
+                'document_id' => $document->id,
+                'user_email' => null,
+                'session_id' => $sessionId,
+                'page_number' => $this->parsePromotedSourceKeyPageIndex($sourceKey),
+                'annotation_data' => [
+                    'id' => 'deleted_promoted_' . Str::uuid(),
+                    'type' => 'text',
+                    'promotedFromExtraction' => true,
+                    'promotedSourceKey' => $sourceKey,
+                    '_explicitPromotedDelete' => true,
+                ],
+                'state' => 'deleted',
+            ]);
+        }
     }
 
     private function parsePromotedSourceKeyPageIndex(string $sourceKey): ?int
@@ -2227,7 +2691,25 @@ class DocumentController extends Controller
 
     public function index()
     {
-        $documents = Document::latest()->get();
+        $documentQuery = $this->applyAccessibleDocumentScope(request(), Document::query())
+            ->where(function ($query) {
+                $query->whereNull('mode')
+                    ->orWhere('mode', '!=', 'regression');
+            });
+
+        $documents = $documentQuery
+            ->latest()
+            ->get();
+
+        if ($this->hasDocumentPreviewColumns()) {
+            foreach ($documents->take(8) as $document) {
+                if (empty($document->preview_image) && !empty($document->path)) {
+                    $this->refreshDocumentPreviewSnapshot($document);
+                    $document->refresh();
+                }
+            }
+        }
+
         $guidedTemplates = GuidedTemplate::where('is_active', true)
             ->orderBy('sort_order')
             ->get();
@@ -2245,6 +2727,7 @@ class DocumentController extends Controller
     {
         $validated = $request->validate([
             'document' => ['required', 'file', 'mimes:pdf', 'max:20480'],
+            'document_mode' => ['nullable', 'string', 'in:editor,regression'],
         ]);
 
         if ($response = $this->consumeMonthlyUploadQuota($request)) {
@@ -2258,6 +2741,13 @@ class DocumentController extends Controller
         );
         $backupPath = $this->createOriginalBackup($storedPath);
 
+        $documentMode = is_string($validated['document_mode'] ?? null)
+            ? trim((string) $validated['document_mode'])
+            : '';
+        if ($documentMode === '') {
+            $documentMode = 'editor';
+        }
+
         $document = Document::create([
             'user_id' => Auth::id(),
             'original_name' => $file->getClientOriginalName(),
@@ -2265,6 +2755,7 @@ class DocumentController extends Controller
             'original_backup_path' => $backupPath,
             'mime_type' => $file->getClientMimeType(),
             'size_bytes' => $file->getSize(),
+            'mode' => $documentMode,
         ]);
 
         // Auto-download fonts for this PDF in background
@@ -2318,6 +2809,9 @@ class DocumentController extends Controller
             'document_id' => $document->id,
             'materialized_count' => $materializedAcroFormCount,
         ]);
+
+        $this->refreshDocumentPreviewSnapshot($document);
+        $this->rememberSessionAccessibleDocument($request, $document);
 
         return redirect()
             ->route('documents.edit', $document)
@@ -2395,6 +2889,9 @@ class DocumentController extends Controller
             'size_bytes' => filesize($storedFull),
         ]);
 
+        $this->refreshDocumentPreviewSnapshot($document);
+        $this->rememberSessionAccessibleDocument($request, $document);
+
         return redirect()
             ->route('documents.edit', $document)
             ->with('status', 'Blank PDF created. You can now add text, images and annotations.');
@@ -2455,6 +2952,9 @@ class DocumentController extends Controller
             'size_bytes' => filesize($storedFull),
         ]);
 
+        $this->refreshDocumentPreviewSnapshot($document);
+        $this->rememberSessionAccessibleDocument($request, $document);
+
         // Auto-download fonts
         $fontScript = base_path('python/pdf-editor/auto_download_fonts.py');
         $fontCommand = sprintf(
@@ -2495,7 +2995,8 @@ class DocumentController extends Controller
         $style = $validated['style'] ?? 'default';
 
         // Enforce one template per type: redirect to existing if found
-        $existing = Document::where('mode', 'guided')
+        $existing = $this->applyAccessibleDocumentScope($request, Document::query())
+            ->where('mode', 'guided')
             ->where('template_type', 'invoice')
             ->where('template_slug', $style)
             ->first();
@@ -2559,6 +3060,9 @@ class DocumentController extends Controller
             'form_data' => $payload, // Save initial payload as form data
         ]);
 
+        $this->refreshDocumentPreviewSnapshot($document);
+        $this->rememberSessionAccessibleDocument($request, $document);
+
         // Auto-download fonts
         $fontScript = base_path('python/pdf-editor/auto_download_fonts.py');
         $fontCommand = sprintf(
@@ -2594,7 +3098,8 @@ class DocumentController extends Controller
         $templateSlug = $validated['_template_slug'];
 
         // Enforce one template per type: redirect to existing if found
-        $existing = Document::where('mode', 'guided')
+        $existing = $this->applyAccessibleDocumentScope($request, Document::query())
+            ->where('mode', 'guided')
             ->where('template_type', $templateType)
             ->where('template_slug', $templateSlug)
             ->first();
@@ -2664,6 +3169,9 @@ class DocumentController extends Controller
             'template_slug' => $templateSlug,
             'form_data' => $payload,
         ]);
+
+        $this->refreshDocumentPreviewSnapshot($document);
+        $this->rememberSessionAccessibleDocument($request, $document);
 
         // Auto-download fonts
         $fontScript = base_path('python/pdf-editor/auto_download_fonts.py');
@@ -3126,8 +3634,11 @@ class DocumentController extends Controller
             'document_id' => 'required|exists:documents,id',
         ]);
 
+        $document = Document::query()->findOrFail($validated['document_id']);
+        $this->authorizeDocumentAccess($request, $document);
+
         $aiDocument = \App\Models\AiDocument::create([
-            'document_id' => $validated['document_id'],
+            'document_id' => $document->id,
             'session_id' => Str::uuid(),
             'email' => $this->resolveEditorEmail(null),
         ]);
@@ -3553,6 +4064,8 @@ class DocumentController extends Controller
             );
         }
 
+        $this->refreshDocumentPreviewSnapshot($document);
+
         return response()->json([
             'ok' => true,
             'message' => 'Document saved.',
@@ -3680,10 +4193,10 @@ class DocumentController extends Controller
 
             $deletedAnnotationCount = $annotationCleanupQuery->delete();
 
-            if (Auth::check()) {
-                UserActivity::create([
-                    'user_id' => Auth::id(),
-                    'action' => 'Restore Original PDF',
+        if (Auth::check()) {
+            UserActivity::create([
+                'user_id' => Auth::id(),
+                'action' => 'Restore Original PDF',
                     'category' => 'pdf_save',
                     'details' => [
                         'deleted_annotation_count' => $deletedAnnotationCount,
@@ -3692,9 +4205,11 @@ class DocumentController extends Controller
                     'document_id' => $document->id,
                     'status' => 'success',
                     'ip_address' => $request->ip(),
-                    'user_agent' => $request->userAgent(),
-                ]);
-            }
+                'user_agent' => $request->userAgent(),
+            ]);
+        }
+
+            $this->refreshDocumentPreviewSnapshot($document);
 
             return response()->json([
                 'success' => true,
@@ -3724,7 +4239,12 @@ class DocumentController extends Controller
             'ids.*' => 'exists:documents,id',
         ]);
 
-        $documents = Document::whereIn('id', $validated['ids'])->get();
+        $documents = $this->applyAccessibleDocumentScope($request, Document::query())
+            ->whereIn('id', $validated['ids'])
+            ->get();
+        if ($documents->count() !== count($validated['ids'])) {
+            abort(404);
+        }
         $count = 0;
 
         foreach ($documents as $document) {
@@ -4596,6 +5116,7 @@ class DocumentController extends Controller
         }
 
         $document->touch();
+        $this->refreshDocumentPreviewSnapshot($document);
 
         if (Auth::check()) {
             UserActivity::create([
@@ -4636,6 +5157,8 @@ class DocumentController extends Controller
             'mime_type' => $file->getClientMimeType() ?: 'image/png',
             'size_bytes' => $file->getSize(),
         ]);
+
+        $this->refreshDocumentPreviewSnapshot($document);
 
         return response()->json([
             'success' => true,
@@ -5369,10 +5892,9 @@ class DocumentController extends Controller
             $baseUrl = 'http://host.docker.internal:8081';
         }
         
-        // Choose URL based on url_type
-        $url = $urlType === 'overlay' 
-            ? "{$baseUrl}/documents/{$document->id}/overlay-editor"
-            : "{$baseUrl}/documents/{$document->id}/edit";
+        // Overlay editor is retired; keep the request field for compatibility
+        // but always capture the unified edit screen.
+        $url = "{$baseUrl}/documents/{$document->id}/edit";
         
         // Path to Python script and venv
         $pythonVenv = base_path('python/venv/bin/python');
@@ -5605,6 +6127,18 @@ class DocumentController extends Controller
 
         $resolvedSessionId = '';
         $records = collect();
+        $buildSessionLookupQuery = function () use ($document, $excludeMaterialized) {
+            $query = PdfState::query()
+                ->where('document_id', $document->id)
+                ->where('state', '!=', 'deleted')
+                ->where('state', '!=', 'extracted');
+
+            if ($excludeMaterialized) {
+                $query->where('state', '!=', 'materialized');
+            }
+
+            return $query;
+        };
 
         if ($requestedSessionId !== '') {
             $records = $fetchAnnotationsForSession($requestedSessionId);
@@ -5614,17 +6148,9 @@ class DocumentController extends Controller
         }
 
         if ($records->isEmpty()) {
-            $latestSessionQuery = PdfState::query()
-                ->where('document_id', $document->id)
-                ->where('state', '!=', 'deleted')
-                ->where('state', '!=', 'extracted')
-                ->orderByDesc('updated_at');
-
-            if ($excludeMaterialized) {
-                $latestSessionQuery->where('state', '!=', 'materialized');
-            }
-
-            $latestSessionId = (string) ($latestSessionQuery->value('session_id') ?? '');
+            $latestSessionId = (string) ($buildSessionLookupQuery()
+                ->orderByDesc('updated_at')
+                ->value('session_id') ?? '');
 
             if ($latestSessionId !== '') {
                 $records = $fetchAnnotationsForSession($latestSessionId);
@@ -5675,11 +6201,19 @@ class DocumentController extends Controller
     {
         $validated = $request->validate([
             'session_id' => 'nullable|string',
+            'session_ids' => 'nullable|array',
+            'session_ids.*' => 'string',
         ]);
 
         $requestedSessionId = is_string($validated['session_id'] ?? null)
             ? trim((string) $validated['session_id'])
             : '';
+        $requestedSessionIds = collect($validated['session_ids'] ?? [])
+            ->map(static fn ($value) => is_string($value) ? trim($value) : '')
+            ->filter(static fn ($value) => $value !== '')
+            ->prepend($requestedSessionId)
+            ->unique()
+            ->values();
         $editorEmail = $this->resolveEditorEmail('');
 
         $query = PdfState::query()
@@ -5688,15 +6222,16 @@ class DocumentController extends Controller
             ->where('state', '!=', 'deleted')
             ->where('state', '!=', 'extracted');
 
-        if ($editorEmail !== '' && $requestedSessionId !== '') {
-            $query->where(function ($scopedQuery) use ($editorEmail, $requestedSessionId) {
+        if ($editorEmail !== '' && $requestedSessionIds->isNotEmpty()) {
+            $sessionIds = $requestedSessionIds->all();
+            $query->where(function ($scopedQuery) use ($editorEmail, $sessionIds) {
                 $scopedQuery->where('user_email', $editorEmail)
-                    ->orWhere('session_id', $requestedSessionId);
+                    ->orWhereIn('session_id', $sessionIds);
             });
         } elseif ($editorEmail !== '') {
             $query->where('user_email', $editorEmail);
-        } elseif ($requestedSessionId !== '') {
-            $query->where('session_id', $requestedSessionId);
+        } elseif ($requestedSessionIds->isNotEmpty()) {
+            $query->whereIn('session_id', $requestedSessionIds->all());
         } else {
             return response()->json([
                 'success' => true,
@@ -5709,7 +6244,7 @@ class DocumentController extends Controller
             ->get()
             ->filter(static fn (PdfState $record) => $record->document instanceof Document);
 
-        $pdfs = $records
+        $savedEntriesByDocumentId = $records
             ->groupBy('document_id')
             ->map(function ($group) {
                 /** @var \Illuminate\Support\Collection $group */
@@ -5730,8 +6265,61 @@ class DocumentController extends Controller
                     'delete_url' => route('documents.deleteSavedPdfOption', $document),
                 ];
             })
-            ->filter()
-            ->sortByDesc(static fn (array $entry) => $entry['updated_at'] ?? '')
+            ->filter();
+
+        $documentQuery = Document::query()
+            ->select(['id', 'user_id', 'original_name', 'path', 'updated_at', 'mode'])
+            ->where(function ($query) {
+                $query->whereNull('mode')
+                    ->orWhere('mode', '!=', 'regression');
+            });
+        $this->applyAccessibleDocumentScope($request, $documentQuery);
+
+        $documents = $documentQuery
+            ->orderByDesc('updated_at')
+            ->get()
+            ->keyBy('id');
+
+        $savedEntriesByDocumentId->each(function (array $entry, $documentId) use ($documents, $request) {
+            if (!$documents->has($documentId) && !empty($entry['document_id'])) {
+                $document = Document::query()
+                    ->select(['id', 'user_id', 'original_name', 'path', 'updated_at', 'mode'])
+                    ->find($entry['document_id']);
+                if ($document && $this->canAccessDocument($request, $document)) {
+                    $documents->put($document->id, $document);
+                }
+            }
+        });
+
+        $pdfs = $documents
+            ->map(function (Document $document) use ($savedEntriesByDocumentId) {
+                $savedEntry = $savedEntriesByDocumentId->get($document->id);
+                $savedUpdatedAt = $savedEntry['updated_at'] ?? null;
+                $documentUpdatedAt = optional($document->updated_at)?->toIso8601String();
+                $sortTimestamp = max(
+                    optional($document->updated_at)?->getTimestamp() ?? 0,
+                    $savedUpdatedAt ? (strtotime($savedUpdatedAt) ?: 0) : 0
+                );
+
+                return [
+                    'document_id' => $document->id,
+                    'pdf_name' => $document->original_name ?: basename((string) $document->path),
+                    'session_id' => $savedEntry['session_id'] ?? null,
+                    'annotation_count' => $savedEntry['annotation_count'] ?? 0,
+                    'has_saved_state' => (bool) $savedEntry,
+                    'updated_at' => $savedUpdatedAt ?: $documentUpdatedAt,
+                    'edit_url' => route('documents.edit', $document),
+                    'load_url' => route('documents.loadSavedPdf', $document),
+                    'delete_url' => route('documents.deleteSavedPdfOption', $document),
+                    '_sort_timestamp' => $sortTimestamp,
+                ];
+            })
+            ->sortByDesc(static fn (array $entry) => $entry['_sort_timestamp'] ?? 0)
+            ->values()
+            ->map(function (array $entry) {
+                unset($entry['_sort_timestamp']);
+                return $entry;
+            })
             ->values();
 
         return response()->json([
@@ -6291,6 +6879,12 @@ class DocumentController extends Controller
         ]);
 
         if ($sessionId !== '') {
+            $this->syncDeletedPromotedSourceKeysForSession(
+                $document,
+                $sessionId,
+                $deletedPromotedSourceKeys
+            );
+
             foreach ($persistableAnnotationsPayload as $annotation) {
                 if (!is_array($annotation)) {
                     continue;
@@ -6550,6 +7144,7 @@ class DocumentController extends Controller
                     'document_id' => $baseDocumentId,
                 ], 422);
             }
+            $this->authorizeDocumentAccess($request, $baseDocument);
 
             $resolvedBasePdfPath = $this->ensureCleanPdfPath($baseDocument, $pythonBinary);
             if (!$resolvedBasePdfPath || !is_file($resolvedBasePdfPath)) {
@@ -6803,6 +7398,8 @@ class DocumentController extends Controller
             'session_annotations.*.type' => 'required_with:session_annotations|string',
             'session_annotations.*.pageIndex' => 'required_with:session_annotations',
             'acro_form_entries' => 'nullable|array',
+            'deleted_promoted_source_keys' => 'nullable|array',
+            'deleted_promoted_source_keys.*' => 'string',
             'session_id' => 'nullable|string',
         ]);
 
@@ -6828,6 +7425,22 @@ class DocumentController extends Controller
         $sessionId = is_string($validated['session_id'] ?? null)
             ? trim((string) $validated['session_id'])
             : '';
+        $inferredDeletedPromotedSourceKeys = $this->inferRemovedPromotedSourceKeysForSessionSnapshot(
+            $document,
+            $sessionId,
+            $sessionAnnotationsPayload
+        );
+        $deletedPromotedSourceKeys = $this->mergeDeletedPromotedSourceKeys(
+            $document,
+            $sessionId,
+            array_values(array_unique(array_merge(
+                is_array($validated['deleted_promoted_source_keys'] ?? null)
+                    ? array_values(array_filter($validated['deleted_promoted_source_keys'], 'is_string'))
+                    : [],
+                $inferredDeletedPromotedSourceKeys
+            ))),
+            $sessionAnnotationsPayload
+        );
 
         if ($sessionId !== '') {
             $this->upsertPdfStateSessionSnapshot(
@@ -6835,6 +7448,11 @@ class DocumentController extends Controller
                 $sessionId,
                 $sessionAnnotationsPayload,
                 'saved'
+            );
+            $this->syncDeletedPromotedSourceKeysForSession(
+                $document,
+                $sessionId,
+                $deletedPromotedSourceKeys
             );
 
             $this->upsertPdfAcroFormSessionState(
@@ -6911,12 +7529,20 @@ class DocumentController extends Controller
         $redrawPageIndices = is_array($validated['redraw_page_indices'] ?? null)
             ? array_values(array_unique(array_map('intval', $validated['redraw_page_indices'])))
             : [];
+        $inferredDeletedPromotedSourceKeys = $this->inferRemovedPromotedSourceKeysForSessionSnapshot(
+            $document,
+            $sessionId,
+            $sessionAnnotationsPayload
+        );
         $deletedPromotedSourceKeys = $this->mergeDeletedPromotedSourceKeys(
             $document,
             $sessionId,
-            is_array($validated['deleted_promoted_source_keys'] ?? null)
-                ? array_values(array_filter($validated['deleted_promoted_source_keys'], 'is_string'))
-                : [],
+            array_values(array_unique(array_merge(
+                is_array($validated['deleted_promoted_source_keys'] ?? null)
+                    ? array_values(array_filter($validated['deleted_promoted_source_keys'], 'is_string'))
+                    : [],
+                $inferredDeletedPromotedSourceKeys
+            ))),
             $annotationsPayload
         );
         if (empty($renderAnnotationsPayload) && !empty($sessionAnnotationsPayload) && !empty($redrawPageIndices)) {
@@ -7112,6 +7738,11 @@ class DocumentController extends Controller
                 $sessionId,
                 $sessionAnnotationsPayload,
                 'saved'
+            );
+            $this->syncDeletedPromotedSourceKeysForSession(
+                $document,
+                $sessionId,
+                $deletedPromotedSourceKeys
             );
 
             $this->upsertPdfAcroFormSessionState(

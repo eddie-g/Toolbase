@@ -6,11 +6,13 @@ independent of overlay/text save behavior.
 """
 
 import base64
+import difflib
 import html
 import io
 import json
 import math
 import os
+import re
 import sys
 from html.parser import HTMLParser
 from typing import Any, Dict, Optional, Tuple
@@ -574,10 +576,6 @@ HTML_FONT_FACE_CSS = build_html_font_face_css()
 def should_preserve_promoted_source_lines(ann: Dict[str, Any], text: str) -> bool:
     if not bool(ann.get("promotedFromExtraction")):
         return False
-    if bool(ann.get("promotedDirty")):
-        return False
-    if bool(ann.get("promotedReflowEnabled")):
-        return False
 
     normalized_text_lines = str(text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
     raw_boxes = ann.get("sourceLineBBoxes")
@@ -589,8 +587,21 @@ def should_preserve_promoted_source_lines(ann: Dict[str, Any], text: str) -> boo
     if source_line_count <= 0:
         return True
 
+    if (
+        bool(ann.get("promotedDirty"))
+        and len(normalized_text_lines) > 1
+        and len(normalized_text_lines) <= source_line_count
+    ):
+        return True
+
+    if bool(ann.get("promotedReflowEnabled")):
+        return False
+
     if len(normalized_text_lines) == source_line_count:
         return True
+
+    if bool(ann.get("promotedDirty")):
+        return False
 
     if (
         len(normalized_text_lines) == 1
@@ -871,6 +882,11 @@ def should_use_htmlbox_for_text(ann: Dict[str, Any], embedded_font_entry: Option
     rich_html = str(ann.get("richTextHtml") or "").strip()
     text = str(ann.get("text") or "")
     if rich_html and not has_single_run_rich_text(ann, text):
+        # Edited promoted-extraction paragraphs already carry explicit saved
+        # line breaks in `text`; replay them with direct line drawing so PyMuPDF's
+        # htmlbox renderer does not introduce browser-style word-spacing drift.
+        if bool(ann.get("promotedFromExtraction")) and bool(ann.get("promotedDirty")):
+            return False
         return True
     if not rich_html:
         return False
@@ -1018,6 +1034,14 @@ def normalize_exact_source_line_layout(
 
     if len(normalized_text_lines) == len(raw_boxes):
         line_texts = [str(line or "") for line in normalized_text_lines]
+        active_raw_boxes = list(raw_boxes)
+    elif (
+        bool(ann.get("promotedDirty"))
+        and len(normalized_text_lines) > 1
+        and len(normalized_text_lines) <= len(raw_boxes)
+    ):
+        line_texts = [str(line or "") for line in normalized_text_lines]
+        active_raw_boxes = list(raw_boxes[:len(line_texts)])
     else:
         reconstructed_line_texts = _reconstruct_flattened_source_lines(
             normalized_text_lines,
@@ -1026,8 +1050,10 @@ def normalize_exact_source_line_layout(
         )
         if reconstructed_line_texts:
             line_texts = reconstructed_line_texts
+            active_raw_boxes = list(raw_boxes)
         elif len(source_lines) == len(raw_boxes):
             line_texts = [str(line or "") for line in source_lines]
+            active_raw_boxes = list(raw_boxes)
         else:
             return []
 
@@ -1104,28 +1130,6 @@ def normalize_exact_source_line_layout(
             for extra_rect in source_rects[1:]:
                 source_rect |= extra_rect
 
-    translate_x = 0.0
-    translate_y = 0.0
-    if (
-        current_rect is not None
-        and isinstance(current_rect, fitz.Rect)
-        and source_anchor_x is not None
-        and source_anchor_y is not None
-    ):
-        should_translate = True
-        if source_rect is not None and not source_rect.is_empty:
-            geometry_tolerance = max(0.75, min(2.0, float(font_size or 0.0) * 0.08))
-            if (
-                abs(current_rect.x0 - source_rect.x0) <= geometry_tolerance
-                and abs(current_rect.y0 - source_rect.y0) <= geometry_tolerance
-                and abs(current_rect.width - source_rect.width) <= geometry_tolerance
-                and abs(current_rect.height - source_rect.height) <= geometry_tolerance
-            ):
-                should_translate = False
-        if should_translate:
-            translate_x = current_rect.x0 - source_anchor_x
-            translate_y = current_rect.y0 - source_anchor_y
-
     annotation_text_color = str(ann.get("textColor") or "#000000").strip() or "#000000"
     raw_annotation_font_family = str(ann.get("fontFamily") or "").strip()
     raw_annotation_font_source_name = str(ann.get("fontSourceName") or "").strip()
@@ -1135,9 +1139,9 @@ def normalize_exact_source_line_layout(
         or raw_annotation_font_family
         or "Helvetica"
     )
-    annotation_font_weight = str(ann.get("fontWeight") or "400")
-    annotation_font_style = str(ann.get("fontStyle") or "normal")
-    annotation_underline = bool(ann.get("underline"))
+    annotation_font_weight = resolve_annotation_font_weight(ann)
+    annotation_font_style = resolve_annotation_font_style(ann)
+    annotation_underline = resolve_annotation_underline(ann)
     dominant_source_color = None
     dominant_source_font_family = None
     dominant_source_font_weight = None
@@ -1181,6 +1185,62 @@ def normalize_exact_source_line_layout(
                 "color": str(span.get("color") or ann.get("textColor") or "#000000"),
                 "underline": bool(span.get("underline")),
             })
+    visible_source_anchor_x = None
+    if normalized_source_spans:
+        visible_source_anchor_candidates = []
+        for span in normalized_source_spans:
+            origin = span.get("origin")
+            if isinstance(origin, (list, tuple)) and len(origin) >= 2:
+                try:
+                    visible_source_anchor_candidates.append(float(origin[0]))
+                    continue
+                except Exception:
+                    pass
+            try:
+                visible_source_anchor_candidates.append(float(span["bbox"][0]))
+            except Exception:
+                continue
+        if visible_source_anchor_candidates:
+            visible_source_anchor_x = min(visible_source_anchor_candidates)
+
+    translate_anchor_x = source_anchor_x
+    if (
+        current_rect is not None
+        and isinstance(current_rect, fitz.Rect)
+        and source_anchor_x is not None
+        and visible_source_anchor_x is not None
+    ):
+        anchor_gap = float(visible_source_anchor_x) - float(source_anchor_x)
+        closer_to_visible_anchor = (
+            abs(float(current_rect.x0) - float(visible_source_anchor_x))
+            + 0.5
+            < abs(float(current_rect.x0) - float(source_anchor_x))
+        )
+        if anchor_gap > max(3.0, float(font_size or 0.0) * 0.25) and closer_to_visible_anchor:
+            translate_anchor_x = float(visible_source_anchor_x)
+
+    translate_x = 0.0
+    translate_y = 0.0
+    if (
+        current_rect is not None
+        and isinstance(current_rect, fitz.Rect)
+        and translate_anchor_x is not None
+        and source_anchor_y is not None
+    ):
+        should_translate = True
+        if source_rect is not None and not source_rect.is_empty:
+            geometry_tolerance = max(0.75, min(2.0, float(font_size or 0.0) * 0.08))
+            if (
+                abs(current_rect.x0 - source_rect.x0) <= geometry_tolerance
+                and abs(current_rect.y0 - source_rect.y0) <= geometry_tolerance
+                and abs(current_rect.width - source_rect.width) <= geometry_tolerance
+                and abs(current_rect.height - source_rect.height) <= geometry_tolerance
+            ):
+                should_translate = False
+        if should_translate:
+            translate_x = current_rect.x0 - translate_anchor_x
+            translate_y = current_rect.y0 - source_anchor_y
+
     if normalized_source_spans:
         dominant_source_span = max(
             normalized_source_spans,
@@ -1238,13 +1298,13 @@ def normalize_exact_source_line_layout(
     def _overlap_amount(a_top: float, a_bottom: float, b_top: float, b_bottom: float) -> float:
         return max(0.0, min(a_bottom, b_bottom) - max(a_top, b_top))
 
-    spans_by_line: list[list[Dict[str, Any]]] = [[] for _ in raw_boxes]
+    spans_by_line: list[list[Dict[str, Any]]] = [[] for _ in active_raw_boxes]
     for span in normalized_source_spans:
         span_top = float(span["bbox"][1])
         span_bottom = float(span["bbox"][3])
         best_index = -1
         best_score = -1.0
-        for index, raw_box in enumerate(raw_boxes):
+        for index, raw_box in enumerate(active_raw_boxes):
             if not isinstance(raw_box, (list, tuple)) or len(raw_box) < 4:
                 continue
             line_top = float(raw_box[1])
@@ -1300,7 +1360,7 @@ def normalize_exact_source_line_layout(
         return 0
 
     layout: list[Dict[str, Any]] = []
-    for index, raw_box in enumerate(raw_boxes):
+    for index, raw_box in enumerate(active_raw_boxes):
         if not isinstance(raw_box, (list, tuple)) or len(raw_box) < 4:
             return []
         try:
@@ -1331,11 +1391,21 @@ def normalize_exact_source_line_layout(
             origins = [span["origin"][1] for span in line_spans if span.get("origin")]
             if origins:
                 baseline_y = float(sum(origins) / len(origins))
-            first_span = sorted_line_spans[0]
-            if first_span.get("origin") and len(first_span["origin"]) >= 2:
-                baseline_x = float(first_span["origin"][0])
-            else:
-                baseline_x = float(first_span["bbox"][0])
+            baseline_x_candidates = []
+            for span in sorted_line_spans:
+                origin = span.get("origin")
+                if isinstance(origin, (list, tuple)) and len(origin) >= 2:
+                    try:
+                        baseline_x_candidates.append(float(origin[0]))
+                        continue
+                    except Exception:
+                        pass
+                try:
+                    baseline_x_candidates.append(float(span["bbox"][0]))
+                except Exception:
+                    continue
+            if baseline_x_candidates:
+                baseline_x = min(baseline_x_candidates)
             dominant_span = max(
                 line_spans,
                 key=lambda span: max(
@@ -1392,6 +1462,22 @@ def normalize_exact_source_span_layout(
     source_spans = ann.get("sourceSpans")
     if not isinstance(source_spans, list) or not source_spans:
         return []
+
+    normalized_text_lines = str(text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    if len(normalized_text_lines) == len(raw_boxes or []):
+        line_texts = [sanitize_pdf_text(line) for line in normalized_text_lines]
+        active_raw_boxes = list(raw_boxes or [])
+    elif (
+        bool(ann.get("promotedDirty"))
+        and len(normalized_text_lines) > 1
+        and isinstance(raw_boxes, list)
+        and len(normalized_text_lines) <= len(raw_boxes)
+    ):
+        line_texts = [sanitize_pdf_text(line) for line in normalized_text_lines]
+        active_raw_boxes = list(raw_boxes[:len(line_texts)])
+    else:
+        line_texts = []
+        active_raw_boxes = list(raw_boxes or [])
 
     source_anchor_x = None
     source_anchor_y = None
@@ -1531,8 +1617,8 @@ def normalize_exact_source_span_layout(
         return []
 
     line_rects = []
-    if isinstance(raw_boxes, list) and raw_boxes:
-        for raw_box in raw_boxes:
+    if active_raw_boxes:
+        for raw_box in active_raw_boxes:
             if not isinstance(raw_box, (list, tuple)) or len(raw_box) < 4:
                 continue
             try:
@@ -1579,12 +1665,475 @@ def normalize_exact_source_span_layout(
         )
         if not line_spans:
             continue
+        current_line_text = line_texts[index] if index < len(line_texts) else ""
+        if bool(ann.get("promotedDirty")) and current_line_text:
+            if len(line_spans) == 1:
+                span = dict(line_spans[0])
+                span["text"] = current_line_text
+                line_spans = [span]
+            elif len(line_spans) >= 2:
+                first_span = dict(line_spans[0])
+                remaining_text = current_line_text
+                first_text = sanitize_pdf_text(first_span.get("text") or "")
+                synthetic_spans: list[Dict[str, Any]] = []
+                if first_text and remaining_text.startswith(first_text):
+                    first_span["text"] = first_text
+                    synthetic_spans.append(first_span)
+                    remaining_text = remaining_text[len(first_text):].lstrip()
+                    if remaining_text:
+                        second_span = dict(line_spans[1])
+                        second_span["text"] = remaining_text
+                        synthetic_spans.append(second_span)
+                    line_spans = synthetic_spans
+                else:
+                    dominant_span = max(
+                        line_spans,
+                        key=lambda span: max(
+                            1.0,
+                            float(span["rect"].x1) - float(span["rect"].x0),
+                            len(str(span.get("text") or "")),
+                        ),
+                    )
+                    fallback_span = dict(dominant_span)
+                    fallback_span["text"] = current_line_text
+                    fallback_span["rect"] = fitz.Rect(line_rect)
+                    fallback_span["baseline_x"] = float(line_rect.x0)
+                    fallback_span["baseline_y"] = (
+                        float(dominant_span.get("baseline_y"))
+                        if dominant_span.get("baseline_y") is not None
+                        else float(line_rect.y1)
+                    )
+                    line_spans = [fallback_span]
         layout.append({
             "rect": line_rect,
             "spans": line_spans,
         })
 
     return layout
+
+
+def _style_run_signature(style: Dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        str(style.get("font_family") or ""),
+        str(style.get("font_source_name") or ""),
+        round(float(style.get("font_size") or 0.0), 4),
+        str(style.get("font_weight") or ""),
+        str(style.get("font_style") or ""),
+        str(style.get("color") or ""),
+        bool(style.get("underline")),
+    )
+
+
+def _measure_style_run_text_width(
+    text: str,
+    style: Dict[str, Any],
+    font_cache: Optional[Dict[tuple[Any, ...], fitz.Font]] = None,
+) -> float:
+    if not text:
+        return 0.0
+
+    style_ann = {
+        "fontFamily": style.get("font_family"),
+        "fontSourceName": style.get("font_source_name"),
+        "fontWeight": style.get("font_weight"),
+        "fontStyle": style.get("font_style"),
+        "textColor": style.get("color"),
+        "underline": style.get("underline"),
+    }
+    font_size = float(style.get("font_size") or 0.0)
+    if font_size <= 0:
+        font_size = 12.0
+
+    cache_key = _style_run_signature(style)
+    font = font_cache.get(cache_key) if font_cache is not None else None
+    if font is None:
+        fontfile = resolve_text_fontfile(style_ann)
+        if fontfile:
+            font = fitz.Font(fontfile=fontfile)
+        else:
+            font = fitz.Font(resolve_text_fontname(style_ann))
+        if font_cache is not None:
+            font_cache[cache_key] = font
+
+    return float(font.text_length(text, fontsize=font_size))
+
+
+def _style_mapping_is_ambiguous(
+    source_text: str,
+    source_char_styles: list[Dict[str, Any]],
+    matcher: difflib.SequenceMatcher,
+) -> bool:
+    if not source_text or not source_char_styles:
+        return False
+
+    for tag, i1, i2, _j1, _j2 in matcher.get_opcodes():
+        if tag != "equal":
+            continue
+        segment = source_text[i1:i2]
+        if len(segment.strip()) < 3:
+            continue
+
+        occurrence_patterns: set[tuple[tuple[Any, ...], ...]] = set()
+        search_index = 0
+        while True:
+            occurrence_index = source_text.find(segment, search_index)
+            if occurrence_index < 0:
+                break
+            occurrence_patterns.add(tuple(
+                _style_run_signature(source_char_styles[occurrence_index + offset])
+                for offset in range(len(segment))
+            ))
+            if len(occurrence_patterns) > 1:
+                return True
+            search_index = occurrence_index + 1
+
+    return False
+
+
+def _normalized_style_value(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _should_use_authoritative_dirty_promoted_base_style(
+    ann: Dict[str, Any],
+    expected_line_text: str,
+    source_line_spans: list[Dict[str, Any]],
+    base_style: Dict[str, Any],
+) -> bool:
+    if has_single_run_rich_text(ann, expected_line_text):
+        return True
+    if not source_line_spans:
+        return True
+
+    base_exact_family = normalize_exact_font_family(
+        base_style.get("font_source_name") or base_style.get("font_family")
+    )
+    source_families = {
+        normalize_exact_font_family(span.get("font_source_name") or span.get("font_family"))
+        for span in source_line_spans
+        if normalize_exact_font_family(span.get("font_source_name") or span.get("font_family"))
+    }
+    if base_exact_family and source_families and base_exact_family not in source_families:
+        return True
+
+    source_weights = {
+        _normalized_style_value(span.get("font_weight"))
+        for span in source_line_spans
+        if _normalized_style_value(span.get("font_weight"))
+    }
+    base_weight = _normalized_style_value(base_style.get("font_weight"))
+    if len(source_weights) == 1 and base_weight and base_weight not in source_weights:
+        return True
+
+    source_styles = {
+        _normalized_style_value(span.get("font_style"))
+        for span in source_line_spans
+        if _normalized_style_value(span.get("font_style"))
+    }
+    base_style_value = _normalized_style_value(base_style.get("font_style"))
+    if len(source_styles) == 1 and base_style_value and base_style_value not in source_styles:
+        return True
+
+    return False
+
+
+def _source_line_uses_uniform_value(
+    source_line_spans: list[Dict[str, Any]],
+    field: str,
+) -> tuple[bool, str]:
+    values = {
+        _normalized_style_value(span.get(field))
+        for span in source_line_spans
+        if isinstance(span, dict) and _normalized_style_value(span.get(field)) != ""
+    }
+    if len(values) != 1:
+        return False, ""
+    return True, next(iter(values))
+
+
+def _map_source_styles_onto_saved_text(
+    current_line_text: str,
+    source_line_spans: list[Dict[str, Any]],
+    base_style: Dict[str, Any],
+) -> list[Dict[str, Any]]:
+    current_line_text = sanitize_pdf_text(current_line_text)
+    if current_line_text == "":
+        return []
+
+    source_chars: list[str] = []
+    source_char_styles: list[Dict[str, Any]] = []
+    for span in source_line_spans:
+        span_text = sanitize_pdf_text(span.get("text") or "")
+        if not span_text:
+            continue
+        span_style = {
+            "font_family": span.get("font_family") or base_style.get("font_family"),
+            "font_source_name": span.get("font_source_name") or base_style.get("font_source_name"),
+            "font_size": float(span.get("font_size") or base_style.get("font_size") or 0.0),
+            "font_weight": span.get("font_weight") or base_style.get("font_weight"),
+            "font_style": span.get("font_style") or base_style.get("font_style"),
+            "color": span.get("color") or base_style.get("color"),
+            "underline": bool(span.get("underline")) if span.get("underline") is not None else bool(base_style.get("underline")),
+        }
+        for character in span_text:
+            source_chars.append(character)
+            source_char_styles.append(dict(span_style))
+
+    source_text = "".join(source_chars)
+    if not source_text or len(source_char_styles) != len(source_text):
+        return [{**base_style, "text": current_line_text}]
+
+    matcher = difflib.SequenceMatcher(a=source_text, b=current_line_text, autojunk=False)
+    if _style_mapping_is_ambiguous(source_text, source_char_styles, matcher):
+        return [{**base_style, "text": current_line_text}]
+
+    mapped_styles: list[Optional[Dict[str, Any]]] = [None] * len(current_line_text)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag != "equal":
+            continue
+        for offset in range(min(i2 - i1, j2 - j1)):
+            mapped_styles[j1 + offset] = dict(source_char_styles[i1 + offset])
+
+    runs: list[Dict[str, Any]] = []
+    current_style: Optional[Dict[str, Any]] = None
+    current_chars: list[str] = []
+
+    def flush_run() -> None:
+        nonlocal current_style, current_chars
+        if current_style is None or not current_chars:
+            return
+        run = dict(current_style)
+        run["text"] = "".join(current_chars)
+        runs.append(run)
+        current_style = None
+        current_chars = []
+
+    for index, character in enumerate(current_line_text):
+        style = dict(mapped_styles[index] or base_style)
+        if current_style is None or _style_run_signature(style) != _style_run_signature(current_style):
+            flush_run()
+            current_style = style
+        current_chars.append(character)
+
+    flush_run()
+    return runs or [{**base_style, "text": current_line_text}]
+
+
+def validate_style_mapped_span_layout(
+    lines: list[Dict[str, Any]],
+    expected_lines: list[str],
+) -> bool:
+    if len(lines) != len(expected_lines):
+        return False
+
+    actual_lines: list[str] = []
+    for line in lines:
+        spans = line.get("spans") or []
+        if not spans:
+            return False
+        line_text = "".join(sanitize_pdf_text(span.get("text") or "") for span in spans)
+        if line_text == "":
+            return False
+        actual_lines.append(line_text)
+
+    normalized_expected = [sanitize_pdf_text(line) for line in expected_lines]
+    return actual_lines == normalized_expected
+
+
+def build_dirty_promoted_style_mapped_span_layout(
+    ann: Dict[str, Any],
+    text: str,
+    line_layout: list[Dict[str, Any]],
+) -> list[Dict[str, Any]]:
+    if not bool(ann.get("promotedFromExtraction")) or not bool(ann.get("promotedDirty")):
+        return []
+    source_spans = ann.get("sourceSpans")
+    raw_boxes = ann.get("sourceLineBBoxes")
+    if not isinstance(source_spans, list) or not source_spans:
+        return []
+    if not isinstance(raw_boxes, list) or not raw_boxes:
+        return []
+
+    expected_lines = [sanitize_pdf_text(line) for line in split_text_preserving_manual_line_breaks(text)]
+    if not expected_lines or len(expected_lines) != len(line_layout):
+        return []
+
+    active_raw_boxes = list(raw_boxes[:len(expected_lines)])
+    if len(active_raw_boxes) != len(expected_lines):
+        return []
+
+    translate_x = 0.0
+    translate_y = 0.0
+    first_line_rect = line_layout[0].get("rect") if line_layout else None
+    first_raw_box = active_raw_boxes[0] if active_raw_boxes else None
+    if isinstance(first_line_rect, fitz.Rect) and isinstance(first_raw_box, (list, tuple)) and len(first_raw_box) >= 4:
+        try:
+            translate_x = float(first_line_rect.x0) - float(first_raw_box[0])
+            translate_y = float(first_line_rect.y0) - float(first_raw_box[1])
+        except Exception:
+            translate_x = 0.0
+            translate_y = 0.0
+
+    normalized_source_spans: list[Dict[str, Any]] = []
+    for span in source_spans:
+        if not isinstance(span, dict):
+            continue
+        bbox = span.get("bbox")
+        if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
+            continue
+        try:
+            rect = fitz.Rect(
+                float(bbox[0]) + translate_x,
+                float(bbox[1]) + translate_y,
+                float(bbox[2]) + translate_x,
+                float(bbox[3]) + translate_y,
+            )
+        except Exception:
+            continue
+        if rect.is_empty:
+            continue
+        origin = span.get("origin")
+        baseline_x = None
+        baseline_y = None
+        try:
+            if isinstance(origin, (list, tuple)) and len(origin) >= 2:
+                baseline_x = float(origin[0]) + translate_x
+                baseline_y = float(origin[1]) + translate_y
+        except Exception:
+            baseline_x = None
+            baseline_y = None
+        normalized_source_spans.append({
+            "text": sanitize_pdf_text(span.get("text") or ""),
+            "rect": rect,
+            "baseline_x": baseline_x,
+            "baseline_y": baseline_y,
+            "font_family": str(span.get("font") or ann.get("fontFamily") or "Helvetica"),
+            "font_source_name": str(
+                span.get("embedded_font_name")
+                or span.get("font")
+                or ann.get("fontSourceName")
+                or ann.get("fontFamily")
+                or "Helvetica"
+            ),
+            "font_size": float(span.get("fontSize") or span.get("font_size") or ann.get("fontSize") or 12),
+            "font_weight": str(span.get("fontWeight") or span.get("font_weight") or ann.get("fontWeight") or "400"),
+            "font_style": str(span.get("fontStyle") or span.get("font_style") or ann.get("fontStyle") or "normal"),
+            "color": str(span.get("hex_color") or span.get("color") or ann.get("textColor") or "#000000"),
+            "underline": bool(span.get("underline")),
+        })
+
+    if not normalized_source_spans:
+        return []
+
+    def _overlap_amount(a_top: float, a_bottom: float, b_top: float, b_bottom: float) -> float:
+        return max(0.0, min(a_bottom, b_bottom) - max(a_top, b_top))
+
+    spans_by_line: list[list[Dict[str, Any]]] = [[] for _ in line_layout]
+    for span in normalized_source_spans:
+        best_index = -1
+        best_score = -1.0
+        for index, line_entry in enumerate(line_layout):
+            line_rect = line_entry.get("rect")
+            if not isinstance(line_rect, fitz.Rect):
+                continue
+            overlap = _overlap_amount(span["rect"].y0, span["rect"].y1, line_rect.y0, line_rect.y1)
+            min_height = max(1.0, min(span["rect"].height, line_rect.height))
+            score = overlap / min_height
+            if score > best_score:
+                best_score = score
+                best_index = index
+        if best_index >= 0 and best_score >= 0.15:
+            spans_by_line[best_index].append(span)
+
+    font_cache: Dict[tuple[Any, ...], fitz.Font] = {}
+    mapped_layout: list[Dict[str, Any]] = []
+    for index, line_entry in enumerate(line_layout):
+        line_rect = line_entry.get("rect")
+        if not isinstance(line_rect, fitz.Rect):
+            return []
+
+        source_line_spans = sorted(
+            spans_by_line[index] if index < len(spans_by_line) else [],
+            key=lambda span: (
+                float(span["rect"].x0),
+                float(span["baseline_x"]) if span.get("baseline_x") is not None else float(span["rect"].x0),
+            ),
+        )
+        base_style = {
+            "font_family": line_entry.get("font_family") or ann.get("fontFamily") or "Helvetica",
+            "font_source_name": line_entry.get("font_source_name") or ann.get("fontSourceName") or ann.get("fontFamily") or "Helvetica",
+            "font_size": float(line_entry.get("font_size") or ann.get("fontSize") or 12),
+            "font_weight": line_entry.get("font_weight") or ann.get("fontWeight") or "400",
+            "font_style": line_entry.get("font_style") or ann.get("fontStyle") or "normal",
+            "color": line_entry.get("color") or ann.get("textColor") or "#000000",
+            "underline": bool(line_entry.get("underline")) if line_entry.get("underline") is not None else bool(ann.get("underline")),
+        }
+
+        if _should_use_authoritative_dirty_promoted_base_style(
+            ann,
+            expected_lines[index],
+            source_line_spans,
+            base_style,
+        ):
+            mapped_runs = [{**base_style, "text": expected_lines[index]}]
+        else:
+            mapped_runs = _map_source_styles_onto_saved_text(
+                expected_lines[index],
+                source_line_spans,
+                base_style,
+            )
+        if not mapped_runs:
+            return []
+
+        uniform_source_color, source_color_value = _source_line_uses_uniform_value(source_line_spans, "color")
+        base_color_value = _normalized_style_value(base_style.get("color"))
+        if uniform_source_color and base_color_value and base_color_value != source_color_value:
+            for run in mapped_runs:
+                run["color"] = base_style.get("color")
+
+        baseline_y = line_entry.get("baseline_y")
+        if baseline_y is None and source_line_spans:
+            origins = [span["baseline_y"] for span in source_line_spans if span.get("baseline_y") is not None]
+            if origins:
+                baseline_y = float(sum(origins) / len(origins))
+
+        align = line_entry.get("align")
+        draw_x = line_entry.get("baseline_x")
+        if draw_x is None:
+            total_width = sum(_measure_style_run_text_width(run.get("text") or "", run, font_cache) for run in mapped_runs)
+            draw_x = float(line_rect.x0)
+            if align == 1:
+                draw_x = ((line_rect.x0 + line_rect.x1) / 2.0) - (total_width / 2.0)
+            elif align == 2:
+                draw_x = line_rect.x1 - total_width
+
+        spans: list[Dict[str, Any]] = []
+        cursor_x = float(draw_x)
+        for run in mapped_runs:
+            run_text = sanitize_pdf_text(run.get("text") or "")
+            if run_text == "":
+                continue
+            run_width = _measure_style_run_text_width(run_text, run, font_cache)
+            spans.append({
+                **run,
+                "text": run_text,
+                "rect": fitz.Rect(cursor_x, line_rect.y0, cursor_x + max(run_width, 0.01), line_rect.y1),
+                "baseline_x": cursor_x,
+                "baseline_y": baseline_y,
+            })
+            cursor_x += run_width
+
+        if not spans:
+            return []
+        mapped_layout.append({
+            "rect": line_rect,
+            "spans": spans,
+        })
+
+    if not validate_style_mapped_span_layout(mapped_layout, expected_lines):
+        return []
+
+    return mapped_layout
 
 
 def draw_text_using_exact_source_lines(
@@ -2578,12 +3127,6 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
                 morph=morph,
             )
         draw_font = custom_font or fitz.Font(fontname)
-        exact_source_span_layout = normalize_exact_source_span_layout(
-            ann,
-            text,
-            size,
-            current_rect=rect,
-        ) if preserve_extracted_lines else []
         exact_source_line_layout = normalize_exact_source_line_layout(
             ann,
             text,
@@ -2591,14 +3134,39 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
             size,
             current_rect=rect,
         ) if preserve_extracted_lines else []
+        dirty_promoted_span_layout = build_dirty_promoted_style_mapped_span_layout(
+            ann,
+            text,
+            exact_source_line_layout,
+        ) if exact_source_line_layout else []
+        exact_source_span_layout = normalize_exact_source_span_layout(
+            ann,
+            text,
+            size,
+            current_rect=rect,
+        ) if (preserve_extracted_lines and not bool(ann.get("promotedDirty"))) else []
         if exact_source_line_layout:
             erase_promoted_source_text_region(page, ann, rect, exact_source_line_layout, morph)
-        if exact_source_span_layout and draw_text_using_exact_source_spans(
-            page,
-            ann,
-            exact_source_span_layout,
-            opacity,
-            morph,
+        if (
+            dirty_promoted_span_layout
+            and draw_text_using_exact_source_spans(
+                page,
+                ann,
+                dirty_promoted_span_layout,
+                opacity,
+                morph,
+            )
+        ):
+            return
+        if (
+            exact_source_span_layout
+            and draw_text_using_exact_source_spans(
+                page,
+                ann,
+                exact_source_span_layout,
+                opacity,
+                morph,
+            )
         ):
             return
         if exact_source_line_layout and draw_text_using_exact_source_lines(
@@ -2624,8 +3192,9 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
             except Exception:
                 html_archive = None
         preview_font = custom_font or fitz.Font(fontname)
-        preview_padding_x = 0.0 if preserve_extracted_lines else min(6.0, max(1.0, rect.width * 0.03))
-        preview_padding_top = 0.0 if preserve_extracted_lines else min(2.0, max(0.5, rect.height * 0.01))
+        use_flush_dirty_promoted_padding = bool(ann.get("promotedFromExtraction")) and bool(ann.get("promotedDirty"))
+        preview_padding_x = 0.0 if (preserve_extracted_lines or use_flush_dirty_promoted_padding) else min(6.0, max(1.0, rect.width * 0.03))
+        preview_padding_top = 0.0 if (preserve_extracted_lines or use_flush_dirty_promoted_padding) else min(2.0, max(0.5, rect.height * 0.01))
         preview_available_width = max(1.0, rect.width - (preview_padding_x * 2.0))
         explicit_text_lines = split_text_preserving_manual_line_breaks(text)
         preview_lines = (
@@ -2646,8 +3215,8 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
             padding_bottom=max(1.0, size * descender * 0.35),
         )
         if html_archive is not None:
-            padding_x = 0.0 if preserve_extracted_lines else 6.0
-            padding_y = 0.0 if preserve_extracted_lines else 2.0
+            padding_x = 0.0 if (preserve_extracted_lines or use_flush_dirty_promoted_padding) else 6.0
+            padding_y = 0.0 if (preserve_extracted_lines or use_flush_dirty_promoted_padding) else 2.0
             # For promoted-extraction annotations, text must never be clipped on
             # the right: the CSS uses white-space:pre / no wrapping, so if the
             # render font is slightly wider than the source PDF font the last
