@@ -27,6 +27,7 @@ return Application::configure(basePath: dirname(__DIR__))
             '/ai/sections/*',
             '/domain-search/ai-generate',
             '/stripe/webhook',
+            '/pdf-state/stamp-preview',
         ]);
         
         // Enable stateful Sanctum authentication

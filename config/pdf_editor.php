@@ -3,6 +3,18 @@
 return [
     /*
     |--------------------------------------------------------------------------
+    | PDF Materialization Mode
+    |--------------------------------------------------------------------------
+    |
+    | fitz_extraction: use raw Fitz extraction JSON as the redraw/export source
+    | annotation_base: materialize Fitz extraction into pdf_state/pdf_groups and
+    |                  reconstruct redraw/export blocks from those tables
+    |
+    */
+    'mode' => env('PDF_MODE', env('PDF_mode', 'fitz_extraction')),
+
+    /*
+    |--------------------------------------------------------------------------
     | PDF Save Mode
     |--------------------------------------------------------------------------
     |
@@ -17,6 +29,18 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Editor Layout Mode
+    |--------------------------------------------------------------------------
+    |
+    | default: existing promoted-annotation/editor behavior
+    | bounding_box_edit: render the source PDF first, then place extraction
+    |                    bounding boxes over it and edit/persist one box at a time
+    |
+    */
+    'layout_mode' => env('LAYOUT_MODE', 'default'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Split Paragraph Fully In Edit Mode
     |--------------------------------------------------------------------------
     |
@@ -26,6 +50,18 @@ return [
     |
     */
     'split_paragraph_fully' => env('SPLIT_PARAGRAPH_FULLY', false),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Line Grouping Editor Mode
+    |--------------------------------------------------------------------------
+    |
+    | When enabled, promoted extraction blocks may be split into smaller
+    | line-level editor annotations. When disabled, the editor keeps the
+    | original extracted paragraph/block grouping.
+    |
+    */
+    'line_grouping_editor_mode' => env('LINE_GROUPING_EDITOR_MODE', false),
 
     /*
     |--------------------------------------------------------------------------

@@ -8,7 +8,7 @@ import unittest
 import fitz
 
 
-MODULE_PATH = pathlib.Path(__file__).resolve().parents[1] / "pdf-editor" / "apply_annotations_direct.py"
+MODULE_PATH = pathlib.Path(__file__).resolve().parents[1] / "pdf-editor" / "apply_annotations_direct_new.py"
 
 
 def load_module():
@@ -189,6 +189,37 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         insert_point, _, _ = page.insert_text_calls[0]
         self.assertAlmostEqual(insert_point.x, annotation["pdfX"] + 6.0, places=3)
 
+    def test_draw_text_with_manual_heading_break_still_wraps_following_paragraph_to_bounds(self):
+        annotation = {
+            "text": (
+                "What is Lorem Ipsum?\n"
+                "Lorem Ipsum is simply dummy text of the printing and typesetting industry. "
+                "Lorem Ipsum has been the industry's standard dummy text ever since the 1500s."
+            ),
+            "pdfX": 18.934911242603548,
+            "pdfY": 405.9171597633135,
+            "pdfWidth": 290.5325443786982,
+            "pdfHeight": 285.20710059171597,
+            "fontFamily": "TrebuchetMS",
+            "fontSourceName": "TrebuchetMS",
+            "fontSize": 13,
+            "requestedFontSize": 13,
+            "lineHeight": 15.6,
+            "textAlign": "left",
+            "textColor": "#000000",
+            "backgroundColor": "transparent",
+            "keepBounds": True,
+        }
+
+        page = self.FakePage()
+
+        self.module.draw_text(page, annotation)
+
+        rendered_lines = [call[1] for call in page.insert_text_calls]
+        self.assertGreater(len(rendered_lines), 2)
+        self.assertEqual(rendered_lines[0], "What is Lorem Ipsum?")
+        self.assertTrue(any("Lorem Ipsum is simply dummy text" in line for line in rendered_lines[1:]))
+
     def test_draw_text_uses_pdf_oblique_variant_for_italic_helvetica(self):
         annotation = {
             "text": "my cool title",
@@ -217,6 +248,7 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
             "Georgia": "Georgia",
             "Palatino": "TimesRoman",
             "Garamond": "Garamond",
+            "MontserratThin_300wght": "Montserrat",
             "Courier": "Courier",
         }
 
@@ -244,6 +276,27 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
             self.module.css_font_family("Helvetica"),
             '"AnnotHelvetica", "Arimo", Arial, sans-serif',
         )
+
+    def test_montserrat_css_font_family_uses_montserrat_alias(self):
+        self.assertEqual(
+            self.module.css_font_family("MontserratThin_300wght"),
+            "Montserrat, Helvetica, Arial, sans-serif",
+        )
+
+    def test_montserrat_uses_real_font_file(self):
+        annotation = {
+            "text": "for investors & friends · May 2017",
+            "fontFamily": "MontserratThin_300wght",
+            "fontSourceName": "MontserratThin_300wght",
+            "fontSize": 13,
+            "fontWeight": "300",
+        }
+
+        fontfile = self.module.resolve_text_fontfile(annotation)
+
+        self.assertIsNotNone(fontfile)
+        self.assertTrue(pathlib.Path(fontfile).exists())
+        self.assertTrue(str(fontfile).endswith("Montserrat-Light.ttf"))
 
     def test_trebuchet_ms_italic_uses_real_italic_font_file(self):
         annotation = {
@@ -390,6 +443,40 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         self.assertIsNotNone(fontfile)
         self.assertTrue(pathlib.Path(fontfile).exists())
         self.assertTrue(str(fontfile).endswith("EBGaramond-Regular.ttf"))
+
+    def test_montserrat_can_use_embedded_font_metadata(self):
+        annotation = {
+            "text": "for investors & friends · May 2017",
+            "fontFamily": "Montserrat",
+            "fontSourceName": "MontserratThin_300wght",
+            "fontSize": 13,
+            "fontWeight": "300",
+            "__documentId": 2518,
+        }
+
+        original_loader = self.module.load_embedded_font_metadata
+        try:
+            self.module.load_embedded_font_metadata = lambda document_id: {
+                "fake-montserrat": {
+                    "clean_name": "MontserratThin_300wght",
+                    "family": "Montserrat",
+                    "css_weight": "300",
+                    "css_style": "normal",
+                    "file_path": "/fonts/extracted/montserrat-thin.ttf",
+                }
+            }
+            original_path_resolver = self.module.embedded_font_public_path_to_absolute
+            self.module.embedded_font_public_path_to_absolute = lambda path: str(
+                pathlib.Path("python/pdf-editor/fonts/Montserrat-Light.ttf").resolve()
+            )
+
+            embedded_entry = self.module.resolve_embedded_font_entry(annotation)
+        finally:
+            self.module.load_embedded_font_metadata = original_loader
+            self.module.embedded_font_public_path_to_absolute = original_path_resolver
+
+        self.assertIsNotNone(embedded_entry)
+        self.assertEqual(embedded_entry["clean_name"], "MontserratThin_300wght")
 
     def test_courier_italic_falls_back_to_pdf_courier_oblique(self):
         annotation = {
@@ -559,6 +646,28 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
             self.module.should_use_htmlbox_for_text(
                 annotation,
                 embedded_font_entry={"clean_name": "TimesNewRomanPSMT"},
+            )
+        )
+
+    def test_drop_preview_side_padding_only_when_padding_causes_single_line_wrap(self):
+        font = fitz.Font(fontfile=str(pathlib.Path("python/pdf-editor/fonts/EBGaramond-Regular.ttf")))
+        size = 53.25443786982248
+        text = "Wolfchenez News"
+        rect = fitz.Rect(0, 0, 371.00591715976327, 110.65088757396448)
+
+        self.assertTrue(
+            self.module.should_drop_preview_side_padding_for_single_line_text(
+                {
+                    "text": text,
+                    "fontFamily": "Garamond",
+                    "fontSize": size,
+                },
+                text,
+                rect,
+                font,
+                size,
+                False,
+                False,
             )
         )
 
@@ -900,6 +1009,310 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         self.assertEqual(layout[0]["font_family"], "Palatino")
         self.assertEqual(layout[0]["font_source_name"], "Palatino")
         self.assertAlmostEqual(layout[0]["font_size"], 80.0, places=3)
+
+    def test_normalize_exact_source_line_layout_uses_leftmost_source_origin_when_span_bbox_is_broken(self):
+        annotation = {
+            "promotedFromExtraction": True,
+            "fontFamily": "TimesNewRomanPSMT",
+            "fontSourceName": "TimesNewRomanPSMT",
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "sourceBlockLeft": 29.947967529296875,
+            "sourceBlockTop": 315.726806640625,
+            "sourceBlockWidth": 478.4940185546875,
+            "sourceLineBBoxes": [
+                [29.947967529296875, 315.726806640625, 508.4419860839844, 335.63525390625],
+            ],
+            "sourceTextLines": [
+                "• If you want to file a request for higher-level review, use VA Form 20-0996, Decision Review Request: Higher-Level Review.",
+            ],
+            "sourceSpans": [
+                {
+                    "text": ".",
+                    "bbox": [29.947967529296875, 315.7542419433594, 508.4419860839844, 335.63525390625],
+                    "origin": [499.4419860839844, 322.7030029296875],
+                    "font": "TimesNewRomanPSMT",
+                    "fontSize": 9,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                },
+                {
+                    "text": "•",
+                    "bbox": [43.447998046875, 315.726806640625, 52.08799743652344, 324.726806640625],
+                    "origin": [43.447998046875, 322.7030029296875],
+                    "font": "Symbol",
+                    "fontSize": 9,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                },
+                {
+                    "text": "If you want to file a request for higher-level review, use VA Form 20-0996,",
+                    "bbox": [52.08799743652344, 315.7542419433594, 327.0290222167969, 324.7542419433594],
+                    "origin": [52.08799743652344, 322.7030029296875],
+                    "font": "TimesNewRomanPSMT",
+                    "fontSize": 9,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                },
+                {
+                    "text": "Decision Review Request: Higher-Level Review",
+                    "bbox": [327.010986328125, 315.78045654296875, 499.4690246582031, 324.78045654296875],
+                    "origin": [327.010986328125, 322.7030029296875],
+                    "font": "TimesNewRomanPS-ItalicMT",
+                    "fontSize": 9,
+                    "fontWeight": "400",
+                    "fontStyle": "italic",
+                    "color": "#000000",
+                },
+            ],
+        }
+
+        layout = self.module.normalize_exact_source_line_layout(
+            annotation,
+            "•  If you want to file a request for higher-level review, use VA Form 20-0996, Decision Review Request: Higher-Level Review.",
+            fitz.Font("tiro"),
+            9,
+            fitz.Rect(42.01183431952662, 314.48520710059177, 520.7100591715975, 329.2781065088758),
+        )
+
+        self.assertEqual(len(layout), 1)
+        self.assertLess(layout[0]["baseline_x"], 60.0)
+        self.assertAlmostEqual(layout[0]["baseline_x"], 42.01183431952662, places=3)
+
+    def test_build_dirty_promoted_style_mapped_span_layout_uses_authoritative_single_run_edit_style(self):
+        annotation = {
+            "text": "THIS FORM SUCKS:",
+            "promotedFromExtraction": True,
+            "promotedDirty": True,
+            "fontFamily": "Verdana",
+            "fontSourceName": "Verdana",
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "fontSize": 9,
+            "textColor": "#000000",
+            "sourceBlockLeft": 29.947999954223633,
+            "sourceBlockTop": 162.17494201660156,
+            "sourceBlockWidth": 108.05000114440918,
+            "sourceLineBBoxes": [
+                [29.947999954223633, 162.17494201660156, 137.9980010986328, 184.17494201660156],
+            ],
+            "sourceTextLines": [
+                "THIS FORM SUCKS:",
+            ],
+            "sourceSpans": [
+                {
+                    "text": "When to Use This Form:",
+                    "bbox": [29.947999954223633, 162.17494201660156, 137.9980010986328, 184.17494201660156],
+                    "origin": [29.947999954223633, 169.80499267578125],
+                    "font": "TimesNewRomanPS-BoldMT",
+                    "fontSize": 10,
+                    "fontWeight": "700",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                },
+            ],
+            "richTextHtml": "<span style=\"font-size:15.21px;font-weight:700;font-family:Verdana, Geneva, Arial, sans-serif\">THIS FORM SUCKS:</span>",
+        }
+
+        line_layout = self.module.normalize_exact_source_line_layout(
+            annotation,
+            "THIS FORM SUCKS:",
+            fitz.Font("hebo"),
+            9,
+            fitz.Rect(28.40236686390532, 152.94674556213022, 136.68639053254435, 175.43195266272198),
+        )
+        dirty_layout = self.module.build_dirty_promoted_style_mapped_span_layout(
+            annotation,
+            "THIS FORM SUCKS:",
+            line_layout,
+        )
+
+        self.assertEqual(len(line_layout), 1)
+        self.assertEqual(line_layout[0]["font_family"], "Verdana")
+        self.assertEqual(line_layout[0]["font_source_name"], "Verdana")
+        self.assertEqual(line_layout[0]["font_weight"], "700")
+        self.assertEqual(len(dirty_layout), 1)
+        self.assertEqual(len(dirty_layout[0]["spans"]), 1)
+        self.assertEqual(dirty_layout[0]["spans"][0]["text"], "THIS FORM SUCKS:")
+        self.assertEqual(dirty_layout[0]["spans"][0]["font_family"], "Verdana")
+        self.assertEqual(dirty_layout[0]["spans"][0]["font_source_name"], "Verdana")
+        self.assertEqual(dirty_layout[0]["spans"][0]["font_weight"], "700")
+
+    def test_normalize_exact_source_line_layout_prefers_visible_content_anchor_when_block_left_is_stale(self):
+        annotation = {
+            "id": "promoted_1_5",
+            "text": "•  If you want to file a request for higher-level review, use VA Form 20-0996, Decision Review Request: Higher-Level Review.",
+            "fontSize": 9,
+            "fontFamily": "Times New Roman",
+            "fontSourceName": "TimesNewRomanPSMT",
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "textColor": "#000000",
+            "underline": False,
+            "sourceBlockLeft": 29.947967529296875,
+            "sourceBlockTop": 315.726806640625,
+            "sourceBlockWidth": 478.4940185546875,
+            "sourceBlockHeight": 19.908447265625,
+            "sourceLineBBoxes": [
+                [29.947967529296875, 315.726806640625, 508.4419860839844, 335.63525390625],
+            ],
+            "sourceTextLines": [
+                "•  If you want to file a request for higher-level review, use VA Form 20-0996, Decision Review Request: Higher-Level Review.",
+            ],
+            "sourceSpans": [
+                {
+                    "text": "•",
+                    "bbox": [43.447998046875, 315.726806640625, 52.08799743652344, 324.726806640625],
+                    "origin": [43.447998046875, 322.7030029296875],
+                    "font": "TimesNewRomanPSMT",
+                    "fontSize": 9,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                },
+                {
+                    "text": "If you want to file a request for higher-level review, use VA Form 20-0996,",
+                    "bbox": [52.08799743652344, 315.7542419433594, 327.0290222167969, 324.7542419433594],
+                    "origin": [52.08799743652344, 322.7030029296875],
+                    "font": "TimesNewRomanPSMT",
+                    "fontSize": 9,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                },
+                {
+                    "text": "Decision Review Request: Higher-Level Review",
+                    "bbox": [327.010986328125, 315.78045654296875, 499.4690246582031, 324.78045654296875],
+                    "origin": [327.010986328125, 322.7030029296875],
+                    "font": "TimesNewRomanPS-ItalicMT",
+                    "fontSize": 9,
+                    "fontWeight": "400",
+                    "fontStyle": "italic",
+                    "color": "#000000",
+                },
+                {
+                    "text": ".",
+                    "bbox": [499.4690246582031, 315.8341979980469, 501.7190246582031, 324.8341979980469],
+                    "origin": [499.4690246582031, 322.7030029296875],
+                    "font": "TimesNewRomanPSMT",
+                    "fontSize": 9,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                },
+            ],
+        }
+
+        layout = self.module.normalize_exact_source_line_layout(
+            annotation,
+            annotation["text"],
+            fitz.Font("tiro"),
+            9,
+            fitz.Rect(37.869822485207095, 497.0414201183431, 516.5680473372781, 511.83431952662714),
+        )
+
+        self.assertEqual(len(layout), 1)
+        self.assertAlmostEqual(layout[0]["baseline_x"], 37.869822485207095, places=3)
+
+    def test_normalize_exact_source_line_layout_skips_stale_leading_source_line_for_dirty_promoted_text(self):
+        annotation = {
+            "id": "promoted_4_26",
+            "promotedFromExtraction": True,
+            "promotedDirty": True,
+            "text": "VETERANS HEALTH ADMINISTRATION (NOTE: If checked, specify in the space provided below, which benefit type you are claiming for VHA. (e.g., Travel/Mileage\nReimbursement, Medical Treatment Reimbursement, Health Care Eligibility, Clothing Allowance, etc.)",
+            "fontSize": 7,
+            "fontFamily": "ArialMT",
+            "fontSourceName": "ArialMT",
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "textColor": "#000000",
+            "underline": False,
+            "sourceBlockLeft": 49.97999954223633,
+            "sourceBlockTop": 209.76365661621097,
+            "sourceBlockWidth": 511.9510307312012,
+            "sourceBlockHeight": 28.19201660156247,
+            "sourceLineBBoxes": [
+                [264.6499938964844, 209.76365661621097, 402.3342590332031, 216.76365661621097],
+                [49.97999954223633, 223.95567321777344, 561.9310302734375, 231.12698364257812],
+                [49.97999954223633, 230.95567321777344, 363.90191650390625, 237.95567321777344],
+            ],
+            "sourceTextLines": [
+                "NATIONAL CEMETERY ADMINISTRATION",
+                "VETERANS HEALTH ADMINISTRATION (NOTE: If checked, specify in the space provided below, which benefit type you are claiming for VHA. (e.g., Travel/Mileage",
+                "Reimbursement, Medical Treatment Reimbursement, Health Care Eligibility, Clothing Allowance, etc.)",
+            ],
+            "sourceSpans": [
+                {
+                    "text": "NATIONAL CEMETERY ADMINISTRATION",
+                    "bbox": [264.6499938964844, 209.76365661621097, 402.3342590332031, 216.76365661621097],
+                    "origin": [264.6499938964844, 215.09698486328125],
+                    "font": "ArialMT",
+                    "fontSize": 7,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                },
+                {
+                    "text": "VETERANS HEALTH ADMINISTRATION (",
+                    "bbox": [49.97999954223633, 223.95567321777344, 183.3860321044922, 230.95567321777344],
+                    "origin": [49.97999954223633, 229.28900146484375],
+                    "font": "ArialMT",
+                    "fontSize": 7,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                },
+                {
+                    "text": "NOTE",
+                    "bbox": [183.3859710693359, 224.12698364257812, 202.8319091796875, 231.12698364257812],
+                    "origin": [183.3859710693359, 229.28900146484375],
+                    "font": "Arial-BoldMT",
+                    "fontSize": 7,
+                    "fontWeight": "700",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                },
+                {
+                    "text": ": If checked, specify in the space provided below, which benefit type you are claiming for VHA. (e.g., Travel/Mileage",
+                    "bbox": [202.83197021484375, 223.95567321777344, 561.9310302734375, 230.95567321777344],
+                    "origin": [202.83197021484375, 229.28900146484375],
+                    "font": "ArialMT",
+                    "fontSize": 7,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                },
+                {
+                    "text": "Reimbursement, Medical Treatment Reimbursement, Health Care Eligibility, Clothing Allowance, etc.)",
+                    "bbox": [49.97999954223633, 230.95567321777344, 363.90191650390625, 237.95567321777344],
+                    "origin": [49.97999954223633, 236.28900146484375],
+                    "font": "ArialMT",
+                    "fontSize": 7,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                },
+            ],
+        }
+
+        layout = self.module.normalize_exact_source_line_layout(
+            annotation,
+            annotation["text"],
+            fitz.Font("helv"),
+            7,
+            fitz.Rect(49.97999954223633, 223.95567321777344, 561.9310302734375, 237.95567321777344),
+        )
+
+        self.assertEqual(len(layout), 2)
+        self.assertAlmostEqual(layout[0]["baseline_x"], 49.97999954223633, places=3)
+        self.assertAlmostEqual(layout[1]["baseline_x"], 49.97999954223633, places=3)
+        self.assertEqual(
+            layout[0]["text"],
+            "VETERANS HEALTH ADMINISTRATION (NOTE: If checked, specify in the space provided below, which benefit type you are claiming for VHA. (e.g., Travel/Mileage",
+        )
 
 
 if __name__ == "__main__":

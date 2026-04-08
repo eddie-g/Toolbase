@@ -1090,28 +1090,6 @@ def normalize_exact_source_line_layout(
             for extra_rect in source_rects[1:]:
                 source_rect |= extra_rect
 
-    translate_x = 0.0
-    translate_y = 0.0
-    if (
-        current_rect is not None
-        and isinstance(current_rect, fitz.Rect)
-        and source_anchor_x is not None
-        and source_anchor_y is not None
-    ):
-        should_translate = True
-        if source_rect is not None and not source_rect.is_empty:
-            geometry_tolerance = max(0.75, min(2.0, float(font_size or 0.0) * 0.08))
-            if (
-                abs(current_rect.x0 - source_rect.x0) <= geometry_tolerance
-                and abs(current_rect.y0 - source_rect.y0) <= geometry_tolerance
-                and abs(current_rect.width - source_rect.width) <= geometry_tolerance
-                and abs(current_rect.height - source_rect.height) <= geometry_tolerance
-            ):
-                should_translate = False
-        if should_translate:
-            translate_x = current_rect.x0 - source_anchor_x
-            translate_y = current_rect.y0 - source_anchor_y
-
     annotation_text_color = str(ann.get("textColor") or "#000000").strip() or "#000000"
     raw_annotation_font_family = str(ann.get("fontFamily") or "").strip()
     raw_annotation_font_source_name = str(ann.get("fontSourceName") or "").strip()
@@ -1121,9 +1099,9 @@ def normalize_exact_source_line_layout(
         or raw_annotation_font_family
         or "Helvetica"
     )
-    annotation_font_weight = str(ann.get("fontWeight") or "400")
-    annotation_font_style = str(ann.get("fontStyle") or "normal")
-    annotation_underline = bool(ann.get("underline"))
+    annotation_font_weight = resolve_annotation_font_weight(ann)
+    annotation_font_style = resolve_annotation_font_style(ann)
+    annotation_underline = resolve_annotation_underline(ann)
     dominant_source_color = None
     dominant_source_font_family = None
     dominant_source_font_weight = None
@@ -1167,6 +1145,62 @@ def normalize_exact_source_line_layout(
                 "color": str(span.get("color") or ann.get("textColor") or "#000000"),
                 "underline": bool(span.get("underline")),
             })
+    visible_source_anchor_x = None
+    if normalized_source_spans:
+        visible_source_anchor_candidates = []
+        for span in normalized_source_spans:
+            origin = span.get("origin")
+            if isinstance(origin, (list, tuple)) and len(origin) >= 2:
+                try:
+                    visible_source_anchor_candidates.append(float(origin[0]))
+                    continue
+                except Exception:
+                    pass
+            try:
+                visible_source_anchor_candidates.append(float(span["bbox"][0]))
+            except Exception:
+                continue
+        if visible_source_anchor_candidates:
+            visible_source_anchor_x = min(visible_source_anchor_candidates)
+
+    translate_anchor_x = source_anchor_x
+    if (
+        current_rect is not None
+        and isinstance(current_rect, fitz.Rect)
+        and source_anchor_x is not None
+        and visible_source_anchor_x is not None
+    ):
+        anchor_gap = float(visible_source_anchor_x) - float(source_anchor_x)
+        closer_to_visible_anchor = (
+            abs(float(current_rect.x0) - float(visible_source_anchor_x))
+            + 0.5
+            < abs(float(current_rect.x0) - float(source_anchor_x))
+        )
+        if anchor_gap > max(3.0, float(font_size or 0.0) * 0.25) and closer_to_visible_anchor:
+            translate_anchor_x = float(visible_source_anchor_x)
+
+    translate_x = 0.0
+    translate_y = 0.0
+    if (
+        current_rect is not None
+        and isinstance(current_rect, fitz.Rect)
+        and translate_anchor_x is not None
+        and source_anchor_y is not None
+    ):
+        should_translate = True
+        if source_rect is not None and not source_rect.is_empty:
+            geometry_tolerance = max(0.75, min(2.0, float(font_size or 0.0) * 0.08))
+            if (
+                abs(current_rect.x0 - source_rect.x0) <= geometry_tolerance
+                and abs(current_rect.y0 - source_rect.y0) <= geometry_tolerance
+                and abs(current_rect.width - source_rect.width) <= geometry_tolerance
+                and abs(current_rect.height - source_rect.height) <= geometry_tolerance
+            ):
+                should_translate = False
+        if should_translate:
+            translate_x = current_rect.x0 - translate_anchor_x
+            translate_y = current_rect.y0 - source_anchor_y
+
     if normalized_source_spans:
         dominant_source_span = max(
             normalized_source_spans,
@@ -1317,11 +1351,21 @@ def normalize_exact_source_line_layout(
             origins = [span["origin"][1] for span in line_spans if span.get("origin")]
             if origins:
                 baseline_y = float(sum(origins) / len(origins))
-            first_span = sorted_line_spans[0]
-            if first_span.get("origin") and len(first_span["origin"]) >= 2:
-                baseline_x = float(first_span["origin"][0])
-            else:
-                baseline_x = float(first_span["bbox"][0])
+            baseline_x_candidates = []
+            for span in sorted_line_spans:
+                origin = span.get("origin")
+                if isinstance(origin, (list, tuple)) and len(origin) >= 2:
+                    try:
+                        baseline_x_candidates.append(float(origin[0]))
+                        continue
+                    except Exception:
+                        pass
+                try:
+                    baseline_x_candidates.append(float(span["bbox"][0]))
+                except Exception:
+                    continue
+            if baseline_x_candidates:
+                baseline_x = min(baseline_x_candidates)
             dominant_span = max(
                 line_spans,
                 key=lambda span: max(

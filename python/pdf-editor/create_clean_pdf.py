@@ -79,6 +79,8 @@ _SIMPLE_LINE_BLOCK_RE = re.compile(
     rb'S\s+Q\s*',
     re.DOTALL,
 )
+_CALLOUT_SYMBOL_RE = re.compile(r'^(?:!|¡|‼|▲|△|▼|▽|◆|◇|■|□|●|○|◦|▪|▶|►)$')
+_CALLOUT_CAPTION_RE = re.compile(r'^[A-Z][A-Z0-9/& -]{2,14}$')
 
 
 def _strip_text_sections(stream):
@@ -239,6 +241,186 @@ def _strip_artifact_line_blocks(doc, page, original_lines):
     return removed
 
 
+def _normalize_block_lines(block):
+    text_lines = block.get("text_lines") or []
+    normalized = [
+        str(line or "").replace("\u00A0", " ").strip()
+        for line in text_lines
+        if str(line or "").replace("\u00A0", " ").strip()
+    ]
+    if normalized:
+        return normalized
+
+    block_text = str(block.get("text") or "").replace("\u00A0", " ").strip()
+    return [block_text] if block_text else []
+
+
+def _block_rect(block):
+    bbox = block.get("bbox")
+    if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+        rect = fitz.Rect(float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+        if rect.width > 0 and rect.height > 0:
+            return rect
+
+    line_bboxes = block.get("line_bboxes") or []
+    normalized_line_bboxes = [
+        fitz.Rect(float(entry[0]), float(entry[1]), float(entry[2]), float(entry[3]))
+        for entry in line_bboxes
+        if isinstance(entry, (list, tuple)) and len(entry) >= 4
+    ]
+    normalized_line_bboxes = [rect for rect in normalized_line_bboxes if rect.width > 0 and rect.height > 0]
+    if normalized_line_bboxes:
+        rect = fitz.Rect(normalized_line_bboxes[0])
+        for line_rect in normalized_line_bboxes[1:]:
+            rect.include_rect(line_rect)
+        return rect
+
+    left = block.get("left")
+    top = block.get("top")
+    width = block.get("width")
+    height = block.get("height")
+    if all(value is not None for value in (left, top, width, height)):
+        rect = fitz.Rect(
+            float(left),
+            float(top),
+            float(left) + max(0.0, float(width)),
+            float(top) + max(0.0, float(height)),
+        )
+        if rect.width > 0 and rect.height > 0:
+            return rect
+
+    return None
+
+
+def _block_looks_like_decorative_callout_symbol(block):
+    lines = _normalize_block_lines(block)
+    if len(lines) != 1:
+        return False
+
+    text = re.sub(r'\s+', '', lines[0])
+    if not _CALLOUT_SYMBOL_RE.match(text):
+        return False
+
+    rect = _block_rect(block)
+    return bool(rect and rect.width <= 42 and rect.height <= 60)
+
+
+def _block_looks_like_compact_callout_caption(block):
+    lines = _normalize_block_lines(block)
+    if len(lines) != 1:
+        return False
+
+    text = lines[0].strip()
+    if not _CALLOUT_CAPTION_RE.match(text):
+        return False
+
+    rect = _block_rect(block)
+    return bool(rect and rect.width <= 80 and rect.height <= 20)
+
+
+def _block_belongs_to_decorative_callout_icon_cluster(block, page_blocks):
+    if not isinstance(block, dict):
+        return False
+
+    block_is_symbol = _block_looks_like_decorative_callout_symbol(block)
+    block_is_caption = _block_looks_like_compact_callout_caption(block)
+    if not block_is_symbol and not block_is_caption:
+        return False
+
+    block_rect = _block_rect(block)
+    if not block_rect:
+        return False
+
+    saw_symbol = block_is_symbol
+    saw_caption = block_is_caption
+
+    for other_block in page_blocks or []:
+        if not isinstance(other_block, dict) or other_block is block:
+            continue
+
+        other_is_symbol = _block_looks_like_decorative_callout_symbol(other_block)
+        other_is_caption = _block_looks_like_compact_callout_caption(other_block)
+        if not other_is_symbol and not other_is_caption:
+            continue
+
+        other_rect = _block_rect(other_block)
+        if not other_rect:
+            continue
+
+        horizontal_overlap = max(0.0, min(block_rect.x1, other_rect.x1) - max(block_rect.x0, other_rect.x0))
+        min_width = max(1.0, min(block_rect.width, other_rect.width))
+        overlap_ratio = horizontal_overlap / min_width
+        same_narrow_column = overlap_ratio >= 0.55 or abs(block_rect.x0 + (block_rect.width / 2) - (other_rect.x0 + (other_rect.width / 2))) <= 12
+        if not same_narrow_column:
+            continue
+
+        vertical_gap = max(
+            0.0,
+            max(other_rect.y0 - block_rect.y1, block_rect.y0 - other_rect.y1),
+        )
+        if vertical_gap > 12:
+            continue
+
+        saw_symbol = saw_symbol or other_is_symbol
+        saw_caption = saw_caption or other_is_caption
+
+    return saw_symbol and saw_caption
+
+
+def _collect_preserved_callout_icon_regions(page_data):
+    preserved = []
+    seen = set()
+    page_blocks = [
+        block for block in (page_data.get("blocks") or [])
+        if isinstance(block, dict)
+    ]
+    for block in page_blocks:
+        if not _block_belongs_to_decorative_callout_icon_cluster(block, page_blocks):
+            continue
+        rect = _block_rect(block)
+        if not rect:
+            continue
+        key = _rect_key(rect)
+        if key in seen:
+            continue
+        seen.add(key)
+        preserved.append(rect)
+    return preserved
+
+
+def _rect_intersects_preserved_regions(rect, preserved_regions, padding=0.5):
+    if not preserved_regions:
+        return False
+
+    probe = _inflate_rect(rect, padding, padding)
+    center = fitz.Point((rect.x0 + rect.x1) / 2, (rect.y0 + rect.y1) / 2)
+    for region in preserved_regions:
+        expanded_region = _inflate_rect(region, padding, padding)
+        if expanded_region.contains(center) or expanded_region.intersects(probe):
+            return True
+    return False
+
+
+def _filtered_residual_words(page, preserved_regions):
+    filtered = []
+    for word in page.get_text("words") or []:
+        rect = fitz.Rect(float(word[0]), float(word[1]), float(word[2]), float(word[3]))
+        if _rect_intersects_preserved_regions(rect, preserved_regions, padding=0.75):
+            continue
+        filtered.append(word)
+    return filtered
+
+
+def _filtered_residual_spans(page, preserved_regions):
+    filtered = []
+    for bbox in _iter_span_bboxes(page.get_text("dict") or {}):
+        rect = fitz.Rect(bbox)
+        if _rect_intersects_preserved_regions(rect, preserved_regions, padding=0.75):
+            continue
+        filtered.append(bbox)
+    return filtered
+
+
 def _strip_page_text_content(doc, page):
     removed = 0
     content_xrefs = page.get_contents() or []
@@ -283,6 +465,7 @@ def _strip_page_text_content(doc, page):
 
 
 def _iter_extracted_text_rects(page_data):
+    preserved_regions = _collect_preserved_callout_icon_regions(page_data)
     words = page_data.get("words", []) or []
     if words:
         for word in words:
@@ -292,10 +475,15 @@ def _iter_extracted_text_rects(page_data):
             height = float(word.get("height") or 0)
             if width <= 0 or height <= 0:
                 continue
+            rect = fitz.Rect(left, top, left + width, top + height)
+            if _rect_intersects_preserved_regions(rect, preserved_regions, padding=0.75):
+                continue
             yield left, top, left + width, top + height
         return
 
     for block in page_data.get("blocks", []) or []:
+        if _block_belongs_to_decorative_callout_icon_cluster(block, page_data.get("blocks") or []):
+            continue
         line_bboxes = block.get("line_bboxes") or []
         for bbox in line_bboxes:
             if not bbox or len(bbox) < 4:
@@ -304,15 +492,21 @@ def _iter_extracted_text_rects(page_data):
 
 
 def _iter_extracted_region_rects(page_data):
+    preserved_regions = _collect_preserved_callout_icon_regions(page_data)
     blocks = page_data.get("blocks", []) or []
     yielded = False
     for block in blocks:
+        if _block_belongs_to_decorative_callout_icon_cluster(block, blocks):
+            continue
         line_bboxes = block.get("line_bboxes") or []
         for bbox in line_bboxes:
             if not bbox or len(bbox) < 4:
                 continue
             yielded = True
-            yield fitz.Rect(float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+            rect = fitz.Rect(float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+            if _rect_intersects_preserved_regions(rect, preserved_regions, padding=0.75):
+                continue
+            yield rect
     if yielded:
         return
 
@@ -360,7 +554,7 @@ def _cleanup_residual_spans(page, region_rects, region_pad=1.5, redact_pad=0.8):
     return applied
 
 
-def _redact_remaining_page_spans(page, redact_pad=0.8):
+def _redact_remaining_page_spans(page, redact_pad=0.8, preserve_regions=None):
     text_dict = page.get_text("dict") or {}
     seen = set()
     applied = 0
@@ -368,6 +562,8 @@ def _redact_remaining_page_spans(page, redact_pad=0.8):
     for bbox in _iter_span_bboxes(text_dict):
         span_rect = fitz.Rect(bbox)
         if span_rect.width <= 0 or span_rect.height <= 0:
+            continue
+        if _rect_intersects_preserved_regions(span_rect, preserve_regions or [], padding=0.75):
             continue
         rect = (_inflate_rect(span_rect, redact_pad, 0.6) & page.rect)
         if rect.width <= 0 or rect.height <= 0:
@@ -499,6 +695,7 @@ def create_clean_pdf(pdf_path, extraction_data, output_path):
             
             page = doc[page_num - 1]  # Convert to 0-indexed
             original_lines = _collect_simple_stroke_lines(page)
+            preserved_regions = _collect_preserved_callout_icon_regions(page_data)
             
             extracted_words = page_data.get('words', [])
             live_words = page.get_text("words") or []
@@ -508,27 +705,27 @@ def create_clean_pdf(pdf_path, extraction_data, output_path):
             )
 
             removed_here = _redact_extracted_page_text(page, page_data)
-            if removed_here == 0:
+            if removed_here == 0 and not preserved_regions:
                 removed_here = _strip_page_text_content(doc, page)
             total_removed_streams += removed_here
             residual_cleanup = _cleanup_residual_spans(page, list(_iter_extracted_region_rects(page_data)))
             removed_artifact_lines = _strip_artifact_line_blocks(doc, page, original_lines)
-            residual_words = page.get_text("words") or []
-            residual_spans = list(_iter_span_bboxes(page.get_text("dict") or {}))
+            residual_words = _filtered_residual_words(page, preserved_regions)
+            residual_spans = _filtered_residual_spans(page, preserved_regions)
 
             page_wide_cleanup = 0
             fallback_stream_strip = 0
             if residual_words or residual_spans:
-                page_wide_cleanup = _redact_remaining_page_spans(page)
+                page_wide_cleanup = _redact_remaining_page_spans(page, preserve_regions=preserved_regions)
                 if page_wide_cleanup:
-                    residual_words = page.get_text("words") or []
-                    residual_spans = list(_iter_span_bboxes(page.get_text("dict") or {}))
-            if residual_words or residual_spans:
+                    residual_words = _filtered_residual_words(page, preserved_regions)
+                    residual_spans = _filtered_residual_spans(page, preserved_regions)
+            if (residual_words or residual_spans) and not preserved_regions:
                 fallback_stream_strip = _strip_page_text_content(doc, page)
                 removed_artifact_lines += _strip_artifact_line_blocks(doc, page, original_lines)
-                page_wide_cleanup += _redact_remaining_page_spans(page)
-                residual_words = page.get_text("words") or []
-                residual_spans = list(_iter_span_bboxes(page.get_text("dict") or {}))
+                page_wide_cleanup += _redact_remaining_page_spans(page, preserve_regions=preserved_regions)
+                residual_words = _filtered_residual_words(page, preserved_regions)
+                residual_spans = _filtered_residual_spans(page, preserved_regions)
 
             if residual_words or residual_spans:
                 print(
@@ -536,10 +733,15 @@ def create_clean_pdf(pdf_path, extraction_data, output_path):
                     f"{len(residual_spans)} spans after selective cleanup"
                 )
             else:
+                status_suffix = "page is text-free"
+                if preserved_regions:
+                    status_suffix = "page is text-free outside preserved decorative icon regions"
                 print(
                     f"    ✓ Removed extracted text from {removed_here} region(s); "
-                    f"page is text-free"
+                    f"{status_suffix}"
                 )
+            if preserved_regions:
+                print(f"    ✓ Preserved {len(preserved_regions)} decorative callout icon region(s)")
             if residual_cleanup:
                 print(f"    ✓ Removed {residual_cleanup} residual span fragment(s)")
             if page_wide_cleanup:

@@ -5,11 +5,14 @@ namespace App\Http\Controllers;
 use App\Models\Document;
 use App\Models\GuidedTemplate;
 use App\Models\PdfAcroForm;
+use App\Models\PdfGroup;
 use App\Models\PdfState;
 use App\Services\PdfAnnotationAssetService;
+use App\Services\PdfFitzExtractionNormalizer;
 use App\Models\User;
 use App\Models\UserActivity;
 use App\Models\UserPdfMonthlyUsage;
+use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
@@ -23,6 +26,255 @@ class DocumentController extends Controller
     private const MONTHLY_UPLOAD_LIMIT = 100;
     private const MONTHLY_ACTION_LIMIT = 1000;
     private const PDF_ACRO_FORM_BASE_SESSION = '__document_acro_form__';
+    private const SESSION_DOCUMENT_ACCESS_KEY = 'pdf_editor_accessible_document_ids';
+
+    public function __construct()
+    {
+        $this->middleware(function (Request $request, Closure $next) {
+            $routeDocument = $request->route('document');
+            $routeName = (string) optional($request->route())->getName();
+
+            if ($routeName === 'documents.ai' && $routeDocument !== null) {
+                $this->authorizeAiRouteAccess($request, $routeDocument);
+            } elseif ($routeDocument instanceof Document) {
+                $this->authorizeDocumentAccess($request, $routeDocument);
+            }
+
+            return $next($request);
+        });
+    }
+
+    private function sessionAccessibleDocumentIds(Request $request): array
+    {
+        return collect($request->session()->get(self::SESSION_DOCUMENT_ACCESS_KEY, []))
+            ->map(static fn ($value) => (int) $value)
+            ->filter(static fn (int $value) => $value > 0)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    private function rememberSessionAccessibleDocument(Request $request, Document $document): void
+    {
+        if ($document->id <= 0 || $this->documentHasPersistentOwner($document)) {
+            return;
+        }
+
+        $documentIds = collect($this->sessionAccessibleDocumentIds($request))
+            ->push((int) $document->id)
+            ->unique()
+            ->values()
+            ->all();
+
+        $request->session()->put(self::SESSION_DOCUMENT_ACCESS_KEY, $documentIds);
+    }
+
+    private function currentWebUserId(): ?int
+    {
+        $userId = Auth::guard('web')->id();
+
+        return $userId !== null ? (int) $userId : null;
+    }
+
+    private function currentAdminId(): ?int
+    {
+        $adminId = Auth::guard('admin')->id();
+
+        return $adminId !== null ? (int) $adminId : null;
+    }
+
+    private function currentEditorOwnership(): array
+    {
+        $webUserId = $this->currentWebUserId();
+        if ($webUserId !== null) {
+            return [
+                'user_id' => $webUserId,
+                'admin_id' => null,
+            ];
+        }
+
+        $adminId = $this->currentAdminId();
+        if ($adminId !== null) {
+            return [
+                'user_id' => null,
+                'admin_id' => $adminId,
+            ];
+        }
+
+        return [
+            'user_id' => null,
+            'admin_id' => null,
+        ];
+    }
+
+    private function resolveDocumentOwnership(?Document $document = null): array
+    {
+        $documentUserId = $document?->user_id;
+        if ($documentUserId !== null) {
+            return [
+                'user_id' => (int) $documentUserId,
+                'admin_id' => null,
+            ];
+        }
+
+        $documentAdminId = $document?->admin_id;
+        if ($documentAdminId !== null) {
+            return [
+                'user_id' => null,
+                'admin_id' => (int) $documentAdminId,
+            ];
+        }
+
+        return $this->currentEditorOwnership();
+    }
+
+    private function documentOwnershipPayload(?Document $document = null): array
+    {
+        return $this->resolveDocumentOwnership($document);
+    }
+
+    private function documentHasPersistentOwner(Document $document): bool
+    {
+        return $document->user_id !== null || $document->admin_id !== null;
+    }
+
+    private function claimSessionAccessibleDocuments(Request $request): void
+    {
+        static $claimed = false;
+
+        if ($claimed) {
+            return;
+        }
+
+        $claimed = true;
+        $ownership = $this->currentEditorOwnership();
+        if (($ownership['user_id'] ?? null) === null && ($ownership['admin_id'] ?? null) === null) {
+            return;
+        }
+
+        $sessionDocumentIds = $this->sessionAccessibleDocumentIds($request);
+        if (empty($sessionDocumentIds)) {
+            return;
+        }
+
+        $unownedDocumentIds = Document::query()
+            ->whereIn('id', $sessionDocumentIds)
+            ->whereNull('user_id')
+            ->whereNull('admin_id')
+            ->pluck('id')
+            ->map(static fn ($value) => (int) $value)
+            ->all();
+
+        if (empty($unownedDocumentIds)) {
+            return;
+        }
+
+        DB::table('documents')
+            ->whereIn('id', $unownedDocumentIds)
+            ->update($ownership);
+
+        if (Schema::hasColumn('pdf_state', 'admin_id')) {
+            DB::table('pdf_state')
+                ->whereIn('document_id', $unownedDocumentIds)
+                ->whereNull('user_id')
+                ->whereNull('admin_id')
+                ->update(array_merge($ownership, ['user_email' => null]));
+        }
+
+        if (Schema::hasColumn('pdf_acro_form', 'admin_id')) {
+            DB::table('pdf_acro_form')
+                ->whereIn('document_id', $unownedDocumentIds)
+                ->whereNull('user_id')
+                ->whereNull('admin_id')
+                ->update($ownership);
+        }
+    }
+
+    private function canAccessDocument(Request $request, Document $document): bool
+    {
+        $this->claimSessionAccessibleDocuments($request);
+
+        $webUserId = $this->currentWebUserId();
+        if ($webUserId !== null && (int) $document->user_id === $webUserId) {
+            return true;
+        }
+
+        $adminId = $this->currentAdminId();
+        if ($adminId !== null && (int) $document->admin_id === $adminId) {
+            return true;
+        }
+
+        if (!$this->documentHasPersistentOwner($document)) {
+            if (app()->environment('local')) {
+                return true;
+            }
+            return in_array((int) $document->id, $this->sessionAccessibleDocumentIds($request), true);
+        }
+
+        return false;
+    }
+
+    private function authorizeDocumentAccess(Request $request, Document $document): void
+    {
+        abort_unless($this->canAccessDocument($request, $document), 404);
+    }
+
+    private function authorizeAiRouteAccess(Request $request, mixed $routeDocument): void
+    {
+        $identifier = is_scalar($routeDocument) ? (string) $routeDocument : '';
+        if ($identifier === '') {
+            abort(404);
+        }
+
+        $aiDocument = \App\Models\AiDocument::with('document')->find($identifier);
+        if ($aiDocument instanceof \App\Models\AiDocument && $aiDocument->document instanceof Document) {
+            $this->authorizeDocumentAccess($request, $aiDocument->document);
+            return;
+        }
+
+        $document = Document::query()->find($identifier);
+        if ($document instanceof Document) {
+            $this->authorizeDocumentAccess($request, $document);
+            return;
+        }
+
+        abort(404);
+    }
+
+    private function applyAccessibleDocumentScope(Request $request, $query)
+    {
+        $this->claimSessionAccessibleDocuments($request);
+
+        $webUserId = $this->currentWebUserId();
+        $adminId = $this->currentAdminId();
+        $sessionDocumentIds = $this->sessionAccessibleDocumentIds($request);
+
+        $query->where(function ($scopedQuery) use ($webUserId, $adminId, $sessionDocumentIds) {
+            if ($webUserId !== null) {
+                $scopedQuery->where('user_id', $webUserId);
+            }
+
+            if ($adminId !== null) {
+                $method = $webUserId !== null ? 'orWhere' : 'where';
+                $scopedQuery->{$method}('admin_id', $adminId);
+            }
+
+            if (!empty($sessionDocumentIds)) {
+                $method = ($webUserId !== null || $adminId !== null) ? 'orWhere' : 'where';
+                $scopedQuery->{$method}(function ($sessionQuery) use ($sessionDocumentIds) {
+                    $sessionQuery->whereNull('user_id')
+                        ->whereNull('admin_id')
+                        ->whereIn('id', $sessionDocumentIds);
+                });
+            }
+
+            if ($webUserId === null && $adminId === null && empty($sessionDocumentIds)) {
+                $scopedQuery->whereRaw('1 = 0');
+            }
+        });
+
+        return $query;
+    }
 
     private function resolveEditorActor(): mixed
     {
@@ -40,6 +292,121 @@ class DocumentController extends Controller
         $email = is_object($actor) && isset($actor->email) ? trim((string) $actor->email) : '';
 
         return $email !== '' ? $email : $fallback;
+    }
+
+    private function resolvePdfStateUserId(?Document $document = null): ?int
+    {
+        return $this->resolveDocumentOwnership($document)['user_id'];
+    }
+
+    private function resolvePdfStateAdminId(?Document $document = null): ?int
+    {
+        return $this->resolveDocumentOwnership($document)['admin_id'];
+    }
+
+    private function resolvePdfStateOwnership(?Document $document = null): array
+    {
+        return $this->resolveDocumentOwnership($document);
+    }
+
+    private function applyPdfStateOwnershipScope($query, ?int $userId, ?int $adminId, string $sessionId = '')
+    {
+        if ($userId !== null) {
+            return $query->where('user_id', $userId);
+        }
+
+        if ($adminId !== null) {
+            return $query->where('admin_id', $adminId);
+        }
+
+        if ($sessionId !== '') {
+            return $query->where('session_id', $sessionId);
+        }
+
+        return $query->whereRaw('1 = 0');
+    }
+
+    private function pdfStateOwnershipPayload(Document $document, string $sessionId, ?string $fallbackUserEmail = null): array
+    {
+        $ownership = $this->resolvePdfStateOwnership($document);
+        $userId = $ownership['user_id'];
+        $adminId = $ownership['admin_id'];
+
+        return [
+            'user_id' => $userId,
+            'admin_id' => $adminId,
+            'user_email' => ($userId !== null || $adminId !== null)
+                ? null
+                : ($fallbackUserEmail ?? $this->resolveEditorEmail()),
+            'session_id' => $sessionId,
+        ];
+    }
+
+    private function pdfEditorMode(): string
+    {
+        $mode = strtolower(trim((string) config('pdf_editor.mode', 'fitz_extraction')));
+
+        return in_array($mode, ['fitz_extraction', 'annotation_base'], true)
+            ? $mode
+            : 'fitz_extraction';
+    }
+
+    private function usesAnnotationBaseMode(): bool
+    {
+        return $this->pdfEditorMode() === 'annotation_base';
+    }
+
+    private function applyPdfGroupOwnershipScope($query, ?int $userId, ?int $adminId, string $sessionId = '')
+    {
+        if ($userId !== null) {
+            return $query->where('user_id', $userId);
+        }
+
+        if ($adminId !== null) {
+            return $query->where('admin_id', $adminId);
+        }
+
+        if ($sessionId !== '') {
+            return $query->where('session_id', $sessionId);
+        }
+
+        return $query->whereRaw('1 = 0');
+    }
+
+    private function pdfGroupOwnershipPayload(Document $document, string $sessionId, ?string $fallbackUserEmail = null): array
+    {
+        return $this->pdfStateOwnershipPayload($document, $sessionId, $fallbackUserEmail);
+    }
+
+    private function normalizePromotedSourceRootKey(string $sourceKey): string
+    {
+        if (preg_match('/^(block-\d+-\d+)/', trim($sourceKey), $matches)) {
+            return (string) $matches[1];
+        }
+
+        return trim($sourceKey);
+    }
+
+    private function parsePromotedSourceKeyDetails(string $sourceKey): array
+    {
+        $normalized = trim($sourceKey);
+        if (!preg_match('/^block-(\d+)-(\d+)(?:-lines-(\d+)-(\d+))?(?:-.+)?$/', $normalized, $matches)) {
+            return [
+                'page_number' => null,
+                'block_num' => null,
+                'line_start' => null,
+                'line_end' => null,
+                'root_source_key' => $normalized,
+            ];
+        }
+
+        return [
+            'page_number' => (int) $matches[1],
+            'block_num' => (int) $matches[2],
+            'line_start' => isset($matches[3]) && $matches[3] !== '' ? (int) $matches[3] : null,
+            'line_end' => isset($matches[4]) && $matches[4] !== '' ? (int) $matches[4] : null,
+            'root_source_key' => 'block-' . (int) $matches[1] . '-' . (int) $matches[2],
+        ];
     }
 
     private function resolvePythonBinaryForPdfEditor(?string $requiredModule = null): string
@@ -83,6 +450,265 @@ class DocumentController extends Controller
     private function annotationAssets(): PdfAnnotationAssetService
     {
         return app(PdfAnnotationAssetService::class);
+    }
+
+    private function fitzExtractionNormalizer(): PdfFitzExtractionNormalizer
+    {
+        return app(PdfFitzExtractionNormalizer::class);
+    }
+
+    private function normalizeFitzExtractionSnapshot($extractionRow): ?int
+    {
+        return $this->fitzExtractionNormalizer()->syncSnapshot($extractionRow);
+    }
+
+    private function findPinnedFitzExtractionSnapshotId(Document $document, iterable $stateRows, iterable $groupRows): ?int
+    {
+        foreach ([$stateRows, $groupRows] as $rows) {
+            foreach ($rows as $row) {
+                $snapshotId = is_numeric($row->pdf_extraction_fitz_id ?? null)
+                    ? (int) $row->pdf_extraction_fitz_id
+                    : null;
+                if ($snapshotId !== null && $snapshotId > 0) {
+                    return $snapshotId;
+                }
+            }
+        }
+
+        $latestFitzExtraction = $document->pdfExtractionsFitz()->latest()->first();
+        if (!$latestFitzExtraction) {
+            return null;
+        }
+
+        return $this->normalizeFitzExtractionSnapshot($latestFitzExtraction)
+            ?? $this->fitzExtractionNormalizer()->snapshotId($latestFitzExtraction);
+    }
+
+    private function hasDocumentPreviewColumns(): bool
+    {
+        static $hasColumns = null;
+
+        if ($hasColumns !== null) {
+            return $hasColumns;
+        }
+
+        $hasColumns = Schema::hasColumn('documents', 'preview_image')
+            && Schema::hasColumn('documents', 'preview_image_mime_type');
+
+        return $hasColumns;
+    }
+
+    private function clearDocumentPreviewSnapshot(Document $document): void
+    {
+        if (!$this->hasDocumentPreviewColumns()) {
+            return;
+        }
+
+        $timestamps = $document->timestamps;
+        try {
+            $document->timestamps = false;
+            $document->preview_image = null;
+            $document->preview_image_mime_type = null;
+            $document->preview_image_width = null;
+            $document->preview_image_height = null;
+            $document->preview_image_updated_at = null;
+            $document->saveQuietly();
+        } finally {
+            $document->timestamps = $timestamps;
+        }
+    }
+
+    private function generatePdfPreviewJpeg(string $fullPath, int $targetWidth = 320, int $quality = 58): ?array
+    {
+        if (!is_file($fullPath)) {
+            return null;
+        }
+
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+        $tmpOutputBase = tempnam(sys_get_temp_dir(), 'doc_preview_');
+        $tmpScriptBase = tempnam(sys_get_temp_dir(), 'doc_preview_script_');
+
+        if ($tmpOutputBase === false || $tmpScriptBase === false) {
+            return null;
+        }
+
+        $tmpOutput = $tmpOutputBase . '.jpg';
+        $tmpScript = $tmpScriptBase . '.py';
+        @unlink($tmpOutputBase);
+        @unlink($tmpScriptBase);
+
+        $script = implode("\n", [
+            'import fitz, sys',
+            'src, dest, target_width, quality = sys.argv[1], sys.argv[2], max(int(sys.argv[3]), 64), max(int(sys.argv[4]), 20)',
+            'doc = fitz.open(src)',
+            'if doc.page_count < 1:',
+            '    raise RuntimeError("Document has no pages")',
+            'page = doc.load_page(0)',
+            'rect = page.rect',
+            'scale = float(target_width) / max(float(rect.width), 1.0)',
+            'pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)',
+            'pix.save(dest, output="jpeg", jpg_quality=quality)',
+            'print(f"{pix.width}x{pix.height}")',
+        ]);
+
+        if (@file_put_contents($tmpScript, $script) === false) {
+            return null;
+        }
+
+        $output = [];
+        $returnCode = 1;
+        $command = sprintf(
+            '%s %s %s %s %d %d 2>&1',
+            escapeshellarg($pythonBinary),
+            escapeshellarg($tmpScript),
+            escapeshellarg($fullPath),
+            escapeshellarg($tmpOutput),
+            $targetWidth,
+            $quality
+        );
+        exec($command, $output, $returnCode);
+
+        @unlink($tmpScript);
+
+        if ($returnCode !== 0 || !is_file($tmpOutput)) {
+            @unlink($tmpOutput);
+            Log::warning('Failed to generate PDF preview snapshot', [
+                'path' => $fullPath,
+                'output' => implode("\n", $output),
+                'return_code' => $returnCode,
+            ]);
+            return null;
+        }
+
+        $bytes = @file_get_contents($tmpOutput);
+        $dimensions = @getimagesize($tmpOutput);
+        @unlink($tmpOutput);
+
+        if ($bytes === false || $dimensions === false) {
+            return null;
+        }
+
+        return [
+            'bytes' => $bytes,
+            'mime_type' => 'image/jpeg',
+            'width' => (int) ($dimensions[0] ?? 0),
+            'height' => (int) ($dimensions[1] ?? 0),
+        ];
+    }
+
+    private function generateRasterPreviewJpeg(string $fullPath, int $targetWidth = 320, int $quality = 72): ?array
+    {
+        if (!is_file($fullPath)) {
+            return null;
+        }
+
+        $sourceBytes = @file_get_contents($fullPath);
+        if ($sourceBytes === false) {
+            return null;
+        }
+
+        $sourceImage = @imagecreatefromstring($sourceBytes);
+        if (!$sourceImage) {
+            return null;
+        }
+
+        try {
+            $sourceWidth = imagesx($sourceImage);
+            $sourceHeight = imagesy($sourceImage);
+            if ($sourceWidth <= 0 || $sourceHeight <= 0) {
+                return null;
+            }
+
+            $scale = min(1, $targetWidth / $sourceWidth);
+            $previewWidth = max(1, (int) round($sourceWidth * $scale));
+            $previewHeight = max(1, (int) round($sourceHeight * $scale));
+
+            $previewImage = imagecreatetruecolor($previewWidth, $previewHeight);
+            if (!$previewImage) {
+                return null;
+            }
+
+            try {
+                $background = imagecolorallocate($previewImage, 255, 255, 255);
+                imagefill($previewImage, 0, 0, $background);
+                imagecopyresampled(
+                    $previewImage,
+                    $sourceImage,
+                    0,
+                    0,
+                    0,
+                    0,
+                    $previewWidth,
+                    $previewHeight,
+                    $sourceWidth,
+                    $sourceHeight
+                );
+
+                ob_start();
+                imagejpeg($previewImage, null, $quality);
+                $jpegBytes = ob_get_clean();
+            } finally {
+                imagedestroy($previewImage);
+            }
+        } finally {
+            imagedestroy($sourceImage);
+        }
+
+        if (!is_string($jpegBytes) || $jpegBytes === '') {
+            return null;
+        }
+
+        return [
+            'bytes' => $jpegBytes,
+            'mime_type' => 'image/jpeg',
+            'width' => $previewWidth,
+            'height' => $previewHeight,
+        ];
+    }
+
+    private function refreshDocumentPreviewSnapshot(Document $document): void
+    {
+        if (!$this->hasDocumentPreviewColumns()) {
+            return;
+        }
+
+        $fullPath = Storage::path($document->path);
+        $preview = null;
+        $mimeType = strtolower((string) $document->mime_type);
+        $extension = strtolower((string) pathinfo((string) $document->path, PATHINFO_EXTENSION));
+
+        try {
+            if ($mimeType === 'application/pdf' || $extension === 'pdf') {
+                $preview = $this->generatePdfPreviewJpeg($fullPath);
+            } elseif (str_starts_with($mimeType, 'image/')) {
+                $preview = $this->generateRasterPreviewJpeg($fullPath);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('Failed to refresh document preview snapshot', [
+                'document_id' => $document->id,
+                'path' => $document->path,
+                'error' => $e->getMessage(),
+            ]);
+            $preview = null;
+        }
+
+        if (!is_array($preview) || empty($preview['bytes'])) {
+            $this->clearDocumentPreviewSnapshot($document);
+            return;
+        }
+
+        $timestamps = $document->timestamps;
+        try {
+            $document->timestamps = false;
+            $document->preview_image = base64_encode($preview['bytes']);
+            $document->preview_image_mime_type = $preview['mime_type'] ?? 'image/jpeg';
+            $document->preview_image_width = $preview['width'] ?? null;
+            $document->preview_image_height = $preview['height'] ?? null;
+            $document->preview_image_updated_at = now();
+            $document->saveQuietly();
+        } finally {
+            $document->timestamps = $timestamps;
+        }
     }
 
     private function normalizeDocumentOriginalName(Document $document, string $value): string
@@ -132,6 +758,163 @@ class DocumentController extends Controller
                 ? $annotationAssets->normalizeForPersistence($document, $annotation)
                 : $annotation;
         }, $annotations);
+    }
+
+    private function isDurablePromotedAnnotation(array $annotation): bool
+    {
+        return !empty($annotation['promotedFromExtraction'])
+            && trim((string) ($annotation['promotedSourceKey'] ?? '')) !== '';
+    }
+
+    private function durablePdfStateIdentityKeyFromAnnotation(array $annotation): string
+    {
+        if ($this->isDurablePromotedAnnotation($annotation)) {
+            return 'promoted:' . trim((string) $annotation['promotedSourceKey']);
+        }
+
+        $annotationId = trim((string) ($annotation['id'] ?? ''));
+        return $annotationId !== '' ? ('id:' . $annotationId) : '';
+    }
+
+    private function durablePdfStateIdentityKeyFromRecord(PdfState $record): string
+    {
+        $annotation = is_array($record->annotation_data) ? $record->annotation_data : [];
+        return $this->durablePdfStateIdentityKeyFromAnnotation($annotation);
+    }
+
+    private function promotedSuppressionAnnotationId(string $sourceKey): string
+    {
+        return 'deleted_promoted:' . trim($sourceKey);
+    }
+
+    private function isPromotedSuppressionRecord(PdfState $record): bool
+    {
+        $annotationData = is_array($record->annotation_data) ? $record->annotation_data : [];
+        return filter_var(
+            $annotationData['_promotedSuppression'] ?? false,
+            FILTER_VALIDATE_BOOLEAN
+        ) && filter_var(
+            $annotationData['_explicitPromotedDelete'] ?? false,
+            FILTER_VALIDATE_BOOLEAN
+        );
+    }
+
+    private function findExistingPdfStateRecordForAnnotation(
+        Document $document,
+        string $sessionId,
+        array $annotation
+    ): ?PdfState {
+        $ownership = $this->resolvePdfStateOwnership($document);
+        $query = PdfState::query()
+            ->where('document_id', $document->id)
+            ->where('state', '!=', 'deleted')
+            ->where('state', '!=', 'extracted');
+        $this->applyPdfStateOwnershipScope($query, $ownership['user_id'], $ownership['admin_id'], $sessionId);
+
+        if ($this->isDurablePromotedAnnotation($annotation)) {
+            $sourceKey = trim((string) ($annotation['promotedSourceKey'] ?? ''));
+            return $query
+                ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.promotedSourceKey')) = ?", [$sourceKey])
+                ->orderByDesc('updated_at')
+                ->first();
+        }
+
+        $annotationId = trim((string) ($annotation['id'] ?? ''));
+        if ($annotationId === '') {
+            return null;
+        }
+
+        return $query
+            ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.id')) = ?", [$annotationId])
+            ->orderByDesc('updated_at')
+            ->first();
+    }
+
+    private function upsertPdfStateSessionSnapshot(
+        Document $document,
+        string $sessionId,
+        array $annotations,
+        string $state = 'saved'
+    ): int {
+        if ($sessionId === '') {
+            return 0;
+        }
+
+        $ownership = $this->resolvePdfStateOwnership($document);
+        $normalizedAnnotations = array_values(array_filter($annotations, 'is_array'));
+        $annotationIds = array_values(array_filter(array_map(
+            static fn (array $annotation) => is_string($annotation['id'] ?? null)
+                ? trim((string) $annotation['id'])
+                : '',
+            $normalizedAnnotations
+        )));
+
+        DB::transaction(function () use ($document, $sessionId, $normalizedAnnotations, $annotationIds, $state, $ownership) {
+            $existingRowsQuery = PdfState::query()
+                ->where('document_id', $document->id)
+                ->where('state', '!=', 'deleted')
+                ->where('state', '!=', 'extracted');
+            $this->applyPdfStateOwnershipScope($existingRowsQuery, $ownership['user_id'], $ownership['admin_id'], $sessionId);
+            $existingRows = $existingRowsQuery
+                ->get()
+                ->keyBy(fn (PdfState $record) => $this->durablePdfStateIdentityKeyFromRecord($record));
+
+            $seenIds = [];
+            foreach ($normalizedAnnotations as $annotation) {
+                $annotationId = $this->durablePdfStateIdentityKeyFromAnnotation($annotation);
+                if ($annotationId === '') {
+                    continue;
+                }
+
+                $pageIndex = isset($annotation['pageIndex']) && is_numeric($annotation['pageIndex'])
+                    ? (int) $annotation['pageIndex']
+                    : null;
+
+                /** @var PdfState|null $existing */
+                $existing = $existingRows->get($annotationId);
+                if ($existing) {
+                    $existing->update([
+                        'annotation_data' => $annotation,
+                        'page_number' => $pageIndex,
+                        'session_id' => $sessionId,
+                        'user_id' => $ownership['user_id'],
+                        'admin_id' => $ownership['admin_id'],
+                        'user_email' => ($ownership['user_id'] !== null || $ownership['admin_id'] !== null)
+                            ? null
+                            : $existing->user_email,
+                        'state' => $state,
+                    ]);
+                } else {
+                    PdfState::create([
+                        'document_id' => $document->id,
+                        'page_number' => $pageIndex,
+                        'annotation_data' => $annotation,
+                        'state' => $state,
+                        ...$this->pdfStateOwnershipPayload($document, $sessionId),
+                    ]);
+                }
+
+                $seenIds[$annotationId] = true;
+            }
+
+            $staleIds = [];
+            foreach ($existingRows as $existingId => $record) {
+                if ($existingId === '' || isset($seenIds[$existingId])) {
+                    continue;
+                }
+                $staleIds[] = $record->id;
+            }
+
+            if (!empty($staleIds)) {
+                $staleRowsQuery = PdfState::query()
+                    ->where('document_id', $document->id)
+                    ->whereIn('id', $staleIds);
+                $this->applyPdfStateOwnershipScope($staleRowsQuery, $ownership['user_id'], $ownership['admin_id'], $sessionId);
+                $staleRowsQuery->delete();
+            }
+        });
+
+        return count($annotationIds);
     }
 
     private function normalizeAcroFormEntriesForPersistence(array $entries): array
@@ -199,7 +982,7 @@ class DocumentController extends Controller
         Document $document,
         string $sessionId,
         array $entries,
-        ?int $userId,
+        array $ownership,
         string $state = 'saved'
     ): int {
         if ($sessionId === '') {
@@ -212,21 +995,29 @@ class DocumentController extends Controller
             $normalizedEntries
         )));
 
-        DB::transaction(function () use ($document, $sessionId, $normalizedEntries, $userId, $state, $keys) {
+        DB::transaction(function () use ($document, $sessionId, $normalizedEntries, $ownership, $state, $keys) {
             foreach ($normalizedEntries as $entry) {
                 $fieldKey = trim((string) ($entry['key'] ?? ''));
                 if ($fieldKey === '') {
                     continue;
                 }
 
-                $existing = PdfAcroForm::query()
+                $existingQuery = PdfAcroForm::query()
                     ->where('document_id', $document->id)
-                    ->where('sess_id', $sessionId)
-                    ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(data, '$.key')) = ?", [$fieldKey])
-                    ->first();
+                    ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(data, '$.key')) = ?", [$fieldKey]);
+                if (($ownership['user_id'] ?? null) !== null) {
+                    $existingQuery->where('user_id', $ownership['user_id']);
+                } elseif (($ownership['admin_id'] ?? null) !== null) {
+                    $existingQuery->where('admin_id', $ownership['admin_id']);
+                } else {
+                    $existingQuery->where('sess_id', $sessionId);
+                }
+                $existing = $existingQuery->first();
 
                 $payload = [
-                    'user_id' => $userId,
+                    'user_id' => $ownership['user_id'] ?? null,
+                    'admin_id' => $ownership['admin_id'] ?? null,
+                    'sess_id' => $sessionId,
                     'page_num' => isset($entry['pageIndex']) && $entry['pageIndex'] !== null ? (int) $entry['pageIndex'] : null,
                     'data' => $entry,
                     'state' => $state,
@@ -237,14 +1028,19 @@ class DocumentController extends Controller
                 } else {
                     PdfAcroForm::create(array_merge($payload, [
                         'document_id' => $document->id,
-                        'sess_id' => $sessionId,
                     ]));
                 }
             }
 
             $cleanupQuery = PdfAcroForm::query()
-                ->where('document_id', $document->id)
-                ->where('sess_id', $sessionId);
+                ->where('document_id', $document->id);
+            if (($ownership['user_id'] ?? null) !== null) {
+                $cleanupQuery->where('user_id', $ownership['user_id']);
+            } elseif (($ownership['admin_id'] ?? null) !== null) {
+                $cleanupQuery->where('admin_id', $ownership['admin_id']);
+            } else {
+                $cleanupQuery->where('sess_id', $sessionId);
+            }
 
             if (empty($keys)) {
                 $cleanupQuery->delete();
@@ -299,6 +1095,7 @@ class DocumentController extends Controller
                 PdfAcroForm::create([
                     'document_id' => $document->id,
                     'user_id' => $document->user_id,
+                    'admin_id' => $document->admin_id,
                     'sess_id' => $baseSessionId,
                     'page_num' => isset($field['pageIndex']) && $field['pageIndex'] !== null ? (int) $field['pageIndex'] : null,
                     'data' => $field,
@@ -383,7 +1180,7 @@ class DocumentController extends Controller
     {
         $annotationAssets = $this->annotationAssets();
 
-        return array_values(array_filter(array_map(static function ($annotation) use ($annotationAssets) {
+        $prepared = array_values(array_filter(array_map(static function ($annotation) use ($annotationAssets) {
             if (!is_array($annotation)) {
                 return null;
             }
@@ -399,6 +1196,71 @@ class DocumentController extends Controller
 
             return $enriched;
         }, $annotations)));
+
+        // Suppress parent annotations when line-split children are present.
+        // Child ids match "<parent_id>_lines-N-M"; writing both would double-render text.
+        $allIds = array_flip(array_filter(array_map(
+            static fn ($ann) => is_array($ann) ? (string) ($ann['id'] ?? '') : '',
+            $prepared
+        )));
+        $parentsToSuppress = [];
+        foreach (array_keys($allIds) as $annId) {
+            if (preg_match('/^(.+?)_lines-\d+-\d+$/', $annId, $m) && isset($allIds[$m[1]])) {
+                $parentsToSuppress[$m[1]] = true;
+            }
+        }
+
+        // Also suppress simple _lines-N-M variants when modifier-qualified siblings exist
+        // for the same base (e.g. A_inline-bullet-lines-* is more specific than A_lines-N-M).
+        $baseToSimpleLines = [];
+        foreach (array_keys($allIds) as $annId) {
+            if (preg_match('/^(.+?)_lines-\d+-\d+$/', $annId, $m)) {
+                $baseToSimpleLines[$m[1]][] = $annId;
+            }
+        }
+        foreach ($baseToSimpleLines as $base => $simpleVariants) {
+            $prefix = $base . '_';
+            $found = false;
+            foreach (array_keys($allIds) as $annId) {
+                if (str_starts_with($annId, $prefix)
+                    && str_contains($annId, '-lines-')
+                    && !preg_match('/^(.+?)_lines-\d+-\d+$/', $annId)) {
+                    $found = true;
+                    break;
+                }
+            }
+            if ($found) {
+                foreach ($simpleVariants as $v) {
+                    $parentsToSuppress[$v] = true;
+                }
+            }
+        }
+
+        // Rule 3: Suppress A when any A_<suffix> child exists where the suffix contains '-line'.
+        // Catches parents whose children use _label-line-*, _leader-line-*,
+        // _inline-bullet-lines-* etc. (Rules 1 & 2 only fire on plain _lines-N-M children).
+        foreach (array_keys($allIds) as $annId) {
+            if (isset($parentsToSuppress[$annId])) {
+                continue;
+            }
+            $prefix = $annId . '_';
+            foreach (array_keys($allIds) as $otherId) {
+                if (str_starts_with($otherId, $prefix)
+                    && str_contains(substr($otherId, strlen($annId)), '-line')) {
+                    $parentsToSuppress[$annId] = true;
+                    break;
+                }
+            }
+        }
+
+        if (!empty($parentsToSuppress)) {
+            $prepared = array_values(array_filter(
+                $prepared,
+                static fn ($ann) => !isset($parentsToSuppress[(string) ($ann['id'] ?? '')])
+            ));
+        }
+
+        return $prepared;
     }
 
     private function createOriginalBackup(string $storedPath): ?string
@@ -486,6 +1348,45 @@ class DocumentController extends Controller
         exec($command, $output, $returnCode);
 
         return [$returnCode, $output];
+    }
+
+    private function resolveRedrawExtractionData(
+        Document $document,
+        ?string $userEmail = null,
+        ?string $sessionId = null
+    ): ?array {
+        if ($this->usesAnnotationBaseMode()) {
+            $annotationBaseData = $this->buildAnnotationBaseExtractionData($document);
+            if (!empty($annotationBaseData)) {
+                return $annotationBaseData;
+            }
+        }
+
+        $extractionRow = $this->findLatestFitzExtraction($document->id, $userEmail, $sessionId);
+        if (!$extractionRow || !isset($extractionRow->extraction_data)) {
+            return null;
+        }
+
+        $rawExtractionData = is_string($extractionRow->extraction_data)
+            ? json_decode($extractionRow->extraction_data, true)
+            : $extractionRow->extraction_data;
+
+        return is_array($rawExtractionData) ? $rawExtractionData : null;
+    }
+
+    private function resolveRedrawExtractionJson(
+        Document $document,
+        ?string $userEmail = null,
+        ?string $sessionId = null
+    ): ?string {
+        $extractionData = $this->resolveRedrawExtractionData($document, $userEmail, $sessionId);
+        if (!is_array($extractionData)) {
+            return null;
+        }
+
+        $json = json_encode($extractionData, JSON_INVALID_UTF8_SUBSTITUTE);
+
+        return is_string($json) ? $json : null;
     }
 
     private function collapseAdjacentDuplicatePromotedTokenRunsForMaterialization($value): string
@@ -626,6 +1527,7 @@ class DocumentController extends Controller
             str_contains($lower, 'arimo'), str_contains($lower, 'helvetica'), str_contains($lower, 'nimbussans') => 'Helvetica',
             str_contains($lower, 'verdana'), str_contains($lower, 'geneva') => 'Verdana',
             str_contains($lower, 'trebuchet') => 'TrebuchetMS',
+            str_contains($lower, 'montserrat') => 'Montserrat',
             str_contains($lower, 'gelasio'), str_contains($lower, 'georgia') => 'Georgia',
             str_contains($lower, 'palatino'), str_contains($lower, 'bookantiqua') => 'Palatino',
             str_contains($lower, 'tinos'), str_contains($lower, 'garamond'), str_contains($lower, 'baskerville') => 'Garamond',
@@ -707,7 +1609,7 @@ class DocumentController extends Controller
         $isNumberedLine = static fn (array $entry): bool => preg_match('/^\(?\d+\)?[.)]/', $normalizeLineText($entry)) === 1;
         $isFooterLine = static fn (array $entry): bool => preg_match('/^The form of this addendum/i', $normalizeLineText($entry)) === 1;
 
-        $shouldSplitCluster = static function (array $previousEntry, array $nextEntry) use ($isFooterLine, $isNumberedLine): bool {
+        $shouldSplitCluster = static function (array $previousEntry, array $nextEntry) use ($isFooterLine, $isNumberedLine, $normalizeLineText): bool {
             $prevBox = is_array($previousEntry['bbox'] ?? null) ? $previousEntry['bbox'] : [0, 0, 0, 0];
             $nextBox = is_array($nextEntry['bbox'] ?? null) ? $nextEntry['bbox'] : [0, 0, 0, 0];
             $prevTop = (float) ($prevBox[1] ?? 0);
@@ -738,7 +1640,15 @@ class DocumentController extends Controller
 
             $prevLeft = (float) ($prevBox[0] ?? 0);
             $nextLeft = (float) ($nextBox[0] ?? 0);
-            if (($nextLeft - $prevLeft) > max(12, min($prevHeight, $nextHeight) * 0.3)) {
+            $dramaticIndentSplitThreshold = max(24, min($prevHeight, $nextHeight) * 1.2);
+            if (
+                preg_match('/[:)]\s*$/', $normalizeLineText($previousEntry)) === 1
+                && ($nextLeft - $prevLeft) > max(14, min($prevHeight, $nextHeight) * 0.75)
+            ) {
+                return true;
+            }
+
+            if (($nextLeft - $prevLeft) > $dramaticIndentSplitThreshold) {
                 return true;
             }
 
@@ -964,18 +1874,791 @@ class DocumentController extends Controller
         return $annotations;
     }
 
+    private function buildPromotedStateGroupsFromAnnotations(array $annotations): array
+    {
+        $groups = [];
+
+        foreach ($annotations as $annotation) {
+            if (!is_array($annotation) || empty($annotation['promotedFromExtraction'])) {
+                continue;
+            }
+
+            $sourceKey = trim((string) ($annotation['promotedSourceKey'] ?? ''));
+            if ($sourceKey === '') {
+                continue;
+            }
+
+            $sourceDetails = $this->parsePromotedSourceKeyDetails($sourceKey);
+            $rootSourceKey = trim((string) ($sourceDetails['root_source_key'] ?? ''));
+            if ($rootSourceKey === '') {
+                $rootSourceKey = $this->normalizePromotedSourceRootKey($sourceKey);
+            }
+
+            $pageNumber = isset($sourceDetails['page_number']) && $sourceDetails['page_number'] !== null
+                ? (int) $sourceDetails['page_number']
+                : ((isset($annotation['pageIndex']) && is_numeric($annotation['pageIndex']))
+                    ? ((int) $annotation['pageIndex'] + 1)
+                    : 1);
+
+            if (!isset($groups[$rootSourceKey])) {
+                $groups[$rootSourceKey] = [
+                    'group_key' => $rootSourceKey,
+                    'root_source_key' => $rootSourceKey,
+                    'page_number' => $pageNumber - 1,
+                    'group_type' => 'promoted_text',
+                    'group_bbox' => null,
+                    'annotation_ids' => [],
+                    'annotation_source_keys' => [],
+                    'group_data' => [
+                        'page_number' => $pageNumber,
+                        'page_width' => null,
+                        'page_height' => isset($annotation['sourcePageHeight']) && is_numeric($annotation['sourcePageHeight'])
+                            ? (float) $annotation['sourcePageHeight']
+                            : null,
+                        'source_text_lines' => [],
+                        'source_line_bboxes' => [],
+                        'source_spans' => [],
+                        'annotations' => [],
+                    ],
+                    'state' => 'extracted',
+                ];
+            }
+
+            $group = &$groups[$rootSourceKey];
+            $annotationId = trim((string) ($annotation['id'] ?? ''));
+            if ($annotationId !== '') {
+                $group['annotation_ids'][] = $annotationId;
+            }
+            $group['annotation_source_keys'][] = $sourceKey;
+
+            $lineBBoxes = array_values(array_filter(
+                is_array($annotation['sourceLineBBoxes'] ?? null) ? $annotation['sourceLineBBoxes'] : [],
+                static fn ($bbox) => is_array($bbox) && count($bbox) >= 4
+            ));
+            $textLines = array_values(array_map(
+                fn ($line) => $this->sanitizePromotedExtractionLineForMaterialization($line),
+                is_array($annotation['sourceTextLines'] ?? null) ? $annotation['sourceTextLines'] : []
+            ));
+
+            if (
+                empty($lineBBoxes)
+                && isset($annotation['sourceBlockLeft'], $annotation['sourceBlockTop'], $annotation['sourceBlockWidth'], $annotation['sourceBlockHeight'])
+            ) {
+                $left = (float) $annotation['sourceBlockLeft'];
+                $top = (float) $annotation['sourceBlockTop'];
+                $width = (float) $annotation['sourceBlockWidth'];
+                $height = (float) $annotation['sourceBlockHeight'];
+                if ($width > 0 && $height > 0) {
+                    $lineBBoxes[] = [$left, $top, $left + $width, $top + $height];
+                }
+            }
+
+            $group['group_data']['source_text_lines'] = array_merge($group['group_data']['source_text_lines'], $textLines);
+            $group['group_data']['source_line_bboxes'] = array_merge($group['group_data']['source_line_bboxes'], $lineBBoxes);
+            $group['group_data']['source_spans'] = array_merge(
+                $group['group_data']['source_spans'],
+                is_array($annotation['sourceSpans'] ?? null) ? array_values($annotation['sourceSpans']) : []
+            );
+            $group['group_data']['annotations'][] = [
+                'id' => $annotationId,
+                'source_key' => $sourceKey,
+                'line_start' => $sourceDetails['line_start'],
+                'line_end' => $sourceDetails['line_end'],
+                'font_size' => isset($annotation['fontSize']) && is_numeric($annotation['fontSize']) ? (float) $annotation['fontSize'] : null,
+                'font_family' => (string) ($annotation['fontFamily'] ?? ''),
+                'font_source_name' => (string) ($annotation['fontSourceName'] ?? ''),
+                'font_weight' => (string) ($annotation['fontWeight'] ?? ''),
+                'font_style' => (string) ($annotation['fontStyle'] ?? ''),
+                'underline' => (bool) ($annotation['underline'] ?? false),
+                'text_color' => (string) ($annotation['textColor'] ?? '#000000'),
+                'line_height' => isset($annotation['lineHeight']) && is_numeric($annotation['lineHeight']) ? (float) $annotation['lineHeight'] : null,
+                'source_block_left' => isset($annotation['sourceBlockLeft']) && is_numeric($annotation['sourceBlockLeft']) ? (float) $annotation['sourceBlockLeft'] : null,
+                'source_block_top' => isset($annotation['sourceBlockTop']) && is_numeric($annotation['sourceBlockTop']) ? (float) $annotation['sourceBlockTop'] : null,
+                'source_block_width' => isset($annotation['sourceBlockWidth']) && is_numeric($annotation['sourceBlockWidth']) ? (float) $annotation['sourceBlockWidth'] : null,
+                'source_block_height' => isset($annotation['sourceBlockHeight']) && is_numeric($annotation['sourceBlockHeight']) ? (float) $annotation['sourceBlockHeight'] : null,
+            ];
+            unset($group);
+        }
+
+        foreach ($groups as &$group) {
+            usort($group['group_data']['annotations'], static function (array $left, array $right): int {
+                $leftStart = $left['line_start'] ?? PHP_INT_MAX;
+                $rightStart = $right['line_start'] ?? PHP_INT_MAX;
+                if ($leftStart !== $rightStart) {
+                    return $leftStart <=> $rightStart;
+                }
+
+                return strcmp((string) ($left['source_key'] ?? ''), (string) ($right['source_key'] ?? ''));
+            });
+
+            $orderedSourceKeys = array_map(
+                static fn (array $entry): string => (string) ($entry['source_key'] ?? ''),
+                $group['group_data']['annotations']
+            );
+            $group['annotation_source_keys'] = array_values(array_unique(array_filter($orderedSourceKeys)));
+
+            $group['annotation_ids'] = array_values(array_unique(array_filter(
+                $group['annotation_ids'],
+                static fn ($value) => is_string($value) && trim($value) !== ''
+            )));
+
+            $lineBBoxes = array_values(array_filter(
+                $group['group_data']['source_line_bboxes'],
+                static fn ($bbox) => is_array($bbox) && count($bbox) >= 4
+            ));
+
+            if (!empty($lineBBoxes)) {
+                $left = min(array_map(static fn (array $bbox): float => (float) $bbox[0], $lineBBoxes));
+                $top = min(array_map(static fn (array $bbox): float => (float) $bbox[1], $lineBBoxes));
+                $right = max(array_map(static fn (array $bbox): float => (float) $bbox[2], $lineBBoxes));
+                $bottom = max(array_map(static fn (array $bbox): float => (float) $bbox[3], $lineBBoxes));
+                $group['group_bbox'] = [$left, $top, $right, $bottom];
+            } else {
+                $firstAnnotation = $group['group_data']['annotations'][0] ?? [];
+                $left = isset($firstAnnotation['source_block_left']) ? (float) $firstAnnotation['source_block_left'] : 0.0;
+                $top = isset($firstAnnotation['source_block_top']) ? (float) $firstAnnotation['source_block_top'] : 0.0;
+                $width = isset($firstAnnotation['source_block_width']) ? (float) $firstAnnotation['source_block_width'] : 0.0;
+                $height = isset($firstAnnotation['source_block_height']) ? (float) $firstAnnotation['source_block_height'] : 0.0;
+                if ($width > 0 && $height > 0) {
+                    $group['group_bbox'] = [$left, $top, $left + $width, $top + $height];
+                }
+            }
+
+            $group['group_data']['annotation_count'] = count($group['annotation_source_keys']);
+            $group['group_data']['is_grouped'] = count($group['annotation_source_keys']) > 1;
+        }
+        unset($group);
+
+        return array_values($groups);
+    }
+
+    private function syncMaterializedPdfGroups(
+        Document $document,
+        array $groups,
+        ?int $pdfExtractionFitzId = null
+    ): int
+    {
+        $sessionId = $this->extractedPdfStateSessionId($document);
+        $ownership = $this->resolvePdfStateOwnership($document);
+        $groupKeys = array_values(array_unique(array_filter(array_map(
+            static fn (array $group) => is_string($group['group_key'] ?? null)
+                ? trim((string) $group['group_key'])
+                : '',
+            $groups
+        ))));
+        $syncedCount = 0;
+
+        DB::transaction(function () use ($document, $sessionId, $ownership, $groups, $groupKeys, $pdfExtractionFitzId, &$syncedCount) {
+            $staleOwnershipRowsQuery = PdfGroup::query()
+                ->where('document_id', $document->id)
+                ->where('session_id', $sessionId)
+                ->where('state', 'extracted');
+
+            if (($ownership['user_id'] ?? null) !== null) {
+                $userId = (int) $ownership['user_id'];
+                $staleOwnershipRowsQuery->where(function ($query) use ($userId) {
+                    $query->whereNull('user_id')
+                        ->orWhere('user_id', '!=', $userId)
+                        ->orWhereNotNull('admin_id');
+                });
+            } elseif (($ownership['admin_id'] ?? null) !== null) {
+                $adminId = (int) $ownership['admin_id'];
+                $staleOwnershipRowsQuery->where(function ($query) use ($adminId) {
+                    $query->whereNull('admin_id')
+                        ->orWhere('admin_id', '!=', $adminId)
+                        ->orWhereNotNull('user_id');
+                });
+            } else {
+                $staleOwnershipRowsQuery->where(function ($query) {
+                    $query->whereNotNull('user_id')
+                        ->orWhereNotNull('admin_id');
+                });
+            }
+
+            $staleOwnershipRowsQuery->delete();
+
+            $existingRowsQuery = PdfGroup::query()
+                ->where('document_id', $document->id)
+                ->where('state', 'extracted');
+            $this->applyPdfGroupOwnershipScope($existingRowsQuery, $ownership['user_id'], $ownership['admin_id'], $sessionId);
+            $existingRows = $existingRowsQuery
+                ->get()
+                ->keyBy(static fn (PdfGroup $record) => trim((string) $record->group_key));
+
+            $seenGroupKeys = [];
+            foreach ($groups as $group) {
+                $groupKey = trim((string) ($group['group_key'] ?? ''));
+                if ($groupKey === '') {
+                    continue;
+                }
+
+                $pageNumber = isset($group['page_number']) && is_numeric($group['page_number'])
+                    ? (int) $group['page_number']
+                    : null;
+
+                $payload = [
+                    'pdf_extraction_fitz_id' => $pdfExtractionFitzId,
+                    'page_number' => $pageNumber,
+                    'group_key' => $groupKey,
+                    'root_source_key' => trim((string) ($group['root_source_key'] ?? $groupKey)),
+                    'group_type' => trim((string) ($group['group_type'] ?? 'promoted_text')) ?: 'promoted_text',
+                    'group_bbox' => is_array($group['group_bbox'] ?? null) ? $group['group_bbox'] : null,
+                    'annotation_ids' => is_array($group['annotation_ids'] ?? null) ? array_values($group['annotation_ids']) : [],
+                    'annotation_source_keys' => is_array($group['annotation_source_keys'] ?? null) ? array_values($group['annotation_source_keys']) : [],
+                    'group_data' => is_array($group['group_data'] ?? null) ? $group['group_data'] : [],
+                    'state' => 'extracted',
+                    'session_id' => $sessionId,
+                    'user_id' => $ownership['user_id'],
+                    'admin_id' => $ownership['admin_id'],
+                    'user_email' => ($ownership['user_id'] !== null || $ownership['admin_id'] !== null)
+                        ? null
+                        : $this->resolveEditorEmail(),
+                ];
+
+                $existing = $existingRows->get($groupKey);
+                if ($existing) {
+                    $existing->update($payload);
+                } else {
+                    PdfGroup::create(array_merge([
+                        'document_id' => $document->id,
+                    ], $payload));
+                }
+
+                $seenGroupKeys[$groupKey] = true;
+                $syncedCount++;
+            }
+
+            $staleIds = [];
+            foreach ($existingRows as $existingGroupKey => $record) {
+                if ($existingGroupKey === '' || isset($seenGroupKeys[$existingGroupKey])) {
+                    continue;
+                }
+                $staleIds[] = $record->id;
+            }
+
+            if (!empty($staleIds)) {
+                $staleRowsQuery = PdfGroup::query()
+                    ->where('document_id', $document->id)
+                    ->whereIn('id', $staleIds);
+                $this->applyPdfGroupOwnershipScope($staleRowsQuery, $ownership['user_id'], $ownership['admin_id'], $sessionId);
+                $staleRowsQuery->delete();
+            }
+
+            if (empty($groupKeys)) {
+                $clearRowsQuery = PdfGroup::query()
+                    ->where('document_id', $document->id)
+                    ->where('state', 'extracted');
+                $this->applyPdfGroupOwnershipScope($clearRowsQuery, $ownership['user_id'], $ownership['admin_id'], $sessionId);
+                $clearRowsQuery->delete();
+            }
+        });
+
+        return $syncedCount;
+    }
+
+    private function buildAnnotationBaseExtractionData(Document $document): array
+    {
+        $sessionId = $this->extractedPdfStateSessionId($document);
+        $ownership = $this->resolvePdfStateOwnership($document);
+        $rawPageDimensions = [];
+
+        $stateRowsQuery = PdfState::query()
+            ->where('document_id', $document->id)
+            ->where('state', 'extracted');
+        $this->applyPdfStateOwnershipScope($stateRowsQuery, $ownership['user_id'], $ownership['admin_id'], $sessionId);
+        $stateRows = $stateRowsQuery
+            ->orderBy('page_number')
+            ->orderBy('id')
+            ->get();
+
+        $groupRowsQuery = PdfGroup::query()
+            ->where('document_id', $document->id)
+            ->where('state', 'extracted');
+        $this->applyPdfGroupOwnershipScope($groupRowsQuery, $ownership['user_id'], $ownership['admin_id'], $sessionId);
+        $groupRows = $groupRowsQuery
+            ->orderBy('page_number')
+            ->orderBy('id')
+            ->get();
+
+        $snapshotId = $this->findPinnedFitzExtractionSnapshotId($document, $stateRows, $groupRows);
+        if ($snapshotId !== null && !$this->fitzExtractionNormalizer()->hasNormalizedSnapshot($snapshotId)) {
+            $snapshot = $document->pdfExtractionsFitz()
+                ->where('id', $snapshotId)
+                ->first();
+            if ($snapshot) {
+                $this->normalizeFitzExtractionSnapshot($snapshot);
+            }
+        }
+
+        if ($snapshotId !== null) {
+            foreach ($this->fitzExtractionNormalizer()->buildPageDataForSnapshot($snapshotId) as $normalizedPage) {
+                $pageNumber = is_numeric($normalizedPage['page_number'] ?? null)
+                    ? (int) $normalizedPage['page_number']
+                    : null;
+                if (!$pageNumber) {
+                    continue;
+                }
+
+                $rawPageDimensions[$pageNumber] = [
+                    'width' => isset($normalizedPage['width']) && is_numeric($normalizedPage['width'])
+                        ? (float) $normalizedPage['width']
+                        : 0.0,
+                    'height' => isset($normalizedPage['height']) && is_numeric($normalizedPage['height'])
+                        ? (float) $normalizedPage['height']
+                        : 0.0,
+                ];
+            }
+        }
+
+        $annotationsBySourceKey = [];
+        foreach ($stateRows as $record) {
+            $annotation = is_array($record->annotation_data) ? $record->annotation_data : [];
+            if (empty($annotation['promotedFromExtraction'])) {
+                continue;
+            }
+
+            $sourceKey = trim((string) ($annotation['promotedSourceKey'] ?? ''));
+            if ($sourceKey === '') {
+                continue;
+            }
+
+            $annotationsBySourceKey[$sourceKey] = $annotation;
+        }
+
+        $pages = [];
+        $seenRootKeys = [];
+        foreach ($groupRows as $groupRow) {
+            $groupData = is_array($groupRow->group_data) ? $groupRow->group_data : [];
+            $rootSourceKey = trim((string) ($groupRow->root_source_key ?: $groupRow->group_key));
+            if ($rootSourceKey === '') {
+                continue;
+            }
+
+            $pageNumber = is_numeric($groupData['page_number'] ?? null)
+                ? (int) $groupData['page_number']
+                : ((is_numeric($groupRow->page_number) ? ((int) $groupRow->page_number + 1) : 1));
+            $pageIndex = max(1, $pageNumber);
+            $rawPageWidth = (float) ($rawPageDimensions[$pageIndex]['width'] ?? 0.0);
+            $rawPageHeight = (float) ($rawPageDimensions[$pageIndex]['height'] ?? 0.0);
+            if (!isset($pages[$pageIndex])) {
+                $pages[$pageIndex] = [
+                    'page_number' => $pageIndex,
+                    'width' => $rawPageWidth > 0
+                        ? $rawPageWidth
+                        : (isset($groupData['page_width']) && is_numeric($groupData['page_width'])
+                            ? (float) $groupData['page_width']
+                            : 0.0),
+                    'height' => $rawPageHeight > 0
+                        ? $rawPageHeight
+                        : (isset($groupData['page_height']) && is_numeric($groupData['page_height'])
+                            ? (float) $groupData['page_height']
+                            : 0.0),
+                    'blocks' => [],
+                    'words' => [],
+                ];
+            } else {
+                if ($rawPageWidth > 0) {
+                    $pages[$pageIndex]['width'] = max((float) $pages[$pageIndex]['width'], $rawPageWidth);
+                } elseif (isset($groupData['page_width']) && is_numeric($groupData['page_width'])) {
+                    $pages[$pageIndex]['width'] = max((float) $pages[$pageIndex]['width'], (float) $groupData['page_width']);
+                }
+                if ($rawPageHeight > 0) {
+                    $pages[$pageIndex]['height'] = max((float) $pages[$pageIndex]['height'], $rawPageHeight);
+                } elseif (isset($groupData['page_height']) && is_numeric($groupData['page_height'])) {
+                    $pages[$pageIndex]['height'] = max((float) $pages[$pageIndex]['height'], (float) $groupData['page_height']);
+                }
+            }
+
+            $orderedSourceKeys = array_values(array_filter(
+                is_array($groupRow->annotation_source_keys) ? $groupRow->annotation_source_keys : [],
+                static fn ($value) => is_string($value) && trim($value) !== ''
+            ));
+
+            $memberAnnotations = [];
+            foreach ($orderedSourceKeys as $sourceKey) {
+                $sourceKey = trim((string) $sourceKey);
+                if ($sourceKey !== '' && isset($annotationsBySourceKey[$sourceKey])) {
+                    $memberAnnotations[] = $annotationsBySourceKey[$sourceKey];
+                }
+            }
+
+            if (empty($memberAnnotations)) {
+                continue;
+            }
+
+            $firstAnnotation = $memberAnnotations[0];
+            $blockNum = (int) (($this->parsePromotedSourceKeyDetails($rootSourceKey)['block_num']) ?? 0);
+            $lineBBoxes = [];
+            $textLines = [];
+            $sourceSpans = [];
+
+            foreach ($memberAnnotations as $annotation) {
+                $textLines = array_merge($textLines, array_values(array_filter(array_map(
+                    fn ($line) => $this->sanitizePromotedExtractionLineForMaterialization($line),
+                    is_array($annotation['sourceTextLines'] ?? null) ? $annotation['sourceTextLines'] : []
+                ), static fn ($line) => $line !== '')));
+                $lineBBoxes = array_merge($lineBBoxes, array_values(array_filter(
+                    is_array($annotation['sourceLineBBoxes'] ?? null) ? $annotation['sourceLineBBoxes'] : [],
+                    static fn ($bbox) => is_array($bbox) && count($bbox) >= 4
+                )));
+                $sourceSpans = array_merge(
+                    $sourceSpans,
+                    is_array($annotation['sourceSpans'] ?? null) ? array_values($annotation['sourceSpans']) : []
+                );
+            }
+
+            $groupBbox = is_array($groupRow->group_bbox) && count($groupRow->group_bbox) >= 4
+                ? array_values(array_map('floatval', array_slice($groupRow->group_bbox, 0, 4)))
+                : null;
+
+            if ($groupBbox === null && !empty($lineBBoxes)) {
+                $groupBbox = [
+                    min(array_map(static fn (array $bbox): float => (float) $bbox[0], $lineBBoxes)),
+                    min(array_map(static fn (array $bbox): float => (float) $bbox[1], $lineBBoxes)),
+                    max(array_map(static fn (array $bbox): float => (float) $bbox[2], $lineBBoxes)),
+                    max(array_map(static fn (array $bbox): float => (float) $bbox[3], $lineBBoxes)),
+                ];
+            }
+
+            if ($groupBbox === null) {
+                continue;
+            }
+
+            [$left, $top, $right, $bottom] = $groupBbox;
+            $pages[$pageIndex]['blocks'][] = [
+                'block_num' => $blockNum,
+                'text' => implode("\n", $textLines),
+                'text_lines' => $textLines,
+                'line_bboxes' => array_values(array_map(
+                    static fn (array $bbox): array => array_map(static fn ($value): float => (float) $value, array_slice($bbox, 0, 4)),
+                    $lineBBoxes
+                )),
+                'left' => $left,
+                'top' => $top,
+                'width' => max(0, $right - $left),
+                'height' => max(0, $bottom - $top),
+                'bbox' => [$left, $top, $right, $bottom],
+                'font_size' => (float) ($firstAnnotation['fontSize'] ?? 12),
+                'line_height' => isset($firstAnnotation['lineHeight']) && is_numeric($firstAnnotation['lineHeight'])
+                    ? (float) $firstAnnotation['lineHeight']
+                    : null,
+                'avg_line_height' => isset($firstAnnotation['lineHeight']) && is_numeric($firstAnnotation['lineHeight'])
+                    ? (float) $firstAnnotation['lineHeight']
+                    : null,
+                'font' => (string) ($firstAnnotation['fontSourceName'] ?? $firstAnnotation['fontFamily'] ?? 'Helvetica'),
+                'font_weight' => (string) ($firstAnnotation['fontWeight'] ?? '400'),
+                'italic' => (($firstAnnotation['fontStyle'] ?? 'normal') === 'italic'),
+                'underline' => (bool) ($firstAnnotation['underline'] ?? false),
+                'hex_color' => (string) ($firstAnnotation['textColor'] ?? '#000000'),
+                'spans' => $sourceSpans,
+            ];
+            $seenRootKeys[$rootSourceKey] = true;
+        }
+
+        foreach ($annotationsBySourceKey as $sourceKey => $annotation) {
+            $rootSourceKey = $this->normalizePromotedSourceRootKey($sourceKey);
+            if (isset($seenRootKeys[$rootSourceKey])) {
+                continue;
+            }
+
+            $sourceDetails = $this->parsePromotedSourceKeyDetails($sourceKey);
+            $pageNumber = (int) (($sourceDetails['page_number']) ?? ((int) ($annotation['pageIndex'] ?? 0) + 1));
+            $pageIndex = max(1, $pageNumber);
+            $rawPageWidth = (float) ($rawPageDimensions[$pageIndex]['width'] ?? 0.0);
+            $rawPageHeight = (float) ($rawPageDimensions[$pageIndex]['height'] ?? 0.0);
+            if (!isset($pages[$pageIndex])) {
+                $pages[$pageIndex] = [
+                    'page_number' => $pageIndex,
+                    'width' => $rawPageWidth,
+                    'height' => $rawPageHeight > 0
+                        ? $rawPageHeight
+                        : (isset($annotation['sourcePageHeight']) && is_numeric($annotation['sourcePageHeight'])
+                            ? (float) $annotation['sourcePageHeight']
+                            : 0.0),
+                    'blocks' => [],
+                    'words' => [],
+                ];
+            } else {
+                if ($rawPageWidth > 0) {
+                    $pages[$pageIndex]['width'] = max((float) $pages[$pageIndex]['width'], $rawPageWidth);
+                }
+                if ($rawPageHeight > 0) {
+                    $pages[$pageIndex]['height'] = max((float) $pages[$pageIndex]['height'], $rawPageHeight);
+                }
+            }
+
+            $lineBBoxes = array_values(array_filter(
+                is_array($annotation['sourceLineBBoxes'] ?? null) ? $annotation['sourceLineBBoxes'] : [],
+                static fn ($bbox) => is_array($bbox) && count($bbox) >= 4
+            ));
+            if (empty($lineBBoxes) && isset($annotation['sourceBlockLeft'], $annotation['sourceBlockTop'], $annotation['sourceBlockWidth'], $annotation['sourceBlockHeight'])) {
+                $left = (float) $annotation['sourceBlockLeft'];
+                $top = (float) $annotation['sourceBlockTop'];
+                $width = (float) $annotation['sourceBlockWidth'];
+                $height = (float) $annotation['sourceBlockHeight'];
+                if ($width > 0 && $height > 0) {
+                    $lineBBoxes[] = [$left, $top, $left + $width, $top + $height];
+                }
+            }
+            if (empty($lineBBoxes)) {
+                continue;
+            }
+
+            $left = min(array_map(static fn (array $bbox): float => (float) $bbox[0], $lineBBoxes));
+            $top = min(array_map(static fn (array $bbox): float => (float) $bbox[1], $lineBBoxes));
+            $right = max(array_map(static fn (array $bbox): float => (float) $bbox[2], $lineBBoxes));
+            $bottom = max(array_map(static fn (array $bbox): float => (float) $bbox[3], $lineBBoxes));
+
+            $pages[$pageIndex]['blocks'][] = [
+                'block_num' => (int) (($sourceDetails['block_num']) ?? 0),
+                'text' => implode("\n", array_values(array_filter(array_map(
+                    fn ($line) => $this->sanitizePromotedExtractionLineForMaterialization($line),
+                    is_array($annotation['sourceTextLines'] ?? null) ? $annotation['sourceTextLines'] : []
+                ), static fn ($line) => $line !== ''))),
+                'text_lines' => array_values(array_filter(array_map(
+                    fn ($line) => $this->sanitizePromotedExtractionLineForMaterialization($line),
+                    is_array($annotation['sourceTextLines'] ?? null) ? $annotation['sourceTextLines'] : []
+                ), static fn ($line) => $line !== '')),
+                'line_bboxes' => array_values(array_map(
+                    static fn (array $bbox): array => array_map(static fn ($value): float => (float) $value, array_slice($bbox, 0, 4)),
+                    $lineBBoxes
+                )),
+                'left' => $left,
+                'top' => $top,
+                'width' => max(0, $right - $left),
+                'height' => max(0, $bottom - $top),
+                'bbox' => [$left, $top, $right, $bottom],
+                'font_size' => (float) ($annotation['fontSize'] ?? 12),
+                'line_height' => isset($annotation['lineHeight']) && is_numeric($annotation['lineHeight'])
+                    ? (float) $annotation['lineHeight']
+                    : null,
+                'avg_line_height' => isset($annotation['lineHeight']) && is_numeric($annotation['lineHeight'])
+                    ? (float) $annotation['lineHeight']
+                    : null,
+                'font' => (string) ($annotation['fontSourceName'] ?? $annotation['fontFamily'] ?? 'Helvetica'),
+                'font_weight' => (string) ($annotation['fontWeight'] ?? '400'),
+                'italic' => (($annotation['fontStyle'] ?? 'normal') === 'italic'),
+                'underline' => (bool) ($annotation['underline'] ?? false),
+                'hex_color' => (string) ($annotation['textColor'] ?? '#000000'),
+                'spans' => is_array($annotation['sourceSpans'] ?? null) ? array_values($annotation['sourceSpans']) : [],
+            ];
+        }
+
+        ksort($pages);
+        foreach ($pages as &$page) {
+            $page['blocks'] = $this->splitNestedAnnotationBaseBlocks(
+                is_array($page['blocks'] ?? null) ? $page['blocks'] : []
+            );
+            usort($page['blocks'], static function (array $left, array $right): int {
+                $leftTop = (float) ($left['top'] ?? 0);
+                $rightTop = (float) ($right['top'] ?? 0);
+                if ($leftTop !== $rightTop) {
+                    return $leftTop <=> $rightTop;
+                }
+
+                return ((int) ($left['block_num'] ?? 0)) <=> ((int) ($right['block_num'] ?? 0));
+            });
+
+            $pageNumber = (int) ($page['page_number'] ?? 0);
+            $rawPageWidth = (float) ($rawPageDimensions[$pageNumber]['width'] ?? 0.0);
+            $rawPageHeight = (float) ($rawPageDimensions[$pageNumber]['height'] ?? 0.0);
+
+            if ($rawPageWidth > 0) {
+                $page['width'] = $rawPageWidth;
+            } elseif ((float) ($page['width'] ?? 0) <= 0) {
+                $page['width'] = array_reduce($page['blocks'], static function (float $carry, array $block): float {
+                    return max($carry, (float) (($block['left'] ?? 0) + ($block['width'] ?? 0)));
+                }, 0.0);
+            }
+            if ($rawPageHeight > 0) {
+                $page['height'] = $rawPageHeight;
+            } elseif ((float) ($page['height'] ?? 0) <= 0) {
+                $page['height'] = array_reduce($page['blocks'], static function (float $carry, array $block): float {
+                    return max($carry, (float) (($block['top'] ?? 0) + ($block['height'] ?? 0)));
+                }, 0.0);
+            }
+        }
+        unset($page);
+
+        return array_values($pages);
+    }
+
+    private function normalizeAnnotationBaseBlockBBox(array $block): ?array
+    {
+        $bbox = is_array($block['bbox'] ?? null) ? array_slice($block['bbox'], 0, 4) : null;
+        if (is_array($bbox) && count($bbox) >= 4) {
+            $normalized = array_map('floatval', $bbox);
+            if (count(array_filter($normalized, 'is_finite')) === 4) {
+                return $normalized;
+            }
+        }
+
+        $left = isset($block['left']) && is_numeric($block['left']) ? (float) $block['left'] : null;
+        $top = isset($block['top']) && is_numeric($block['top']) ? (float) $block['top'] : null;
+        $width = isset($block['width']) && is_numeric($block['width']) ? (float) $block['width'] : null;
+        $height = isset($block['height']) && is_numeric($block['height']) ? (float) $block['height'] : null;
+        if ($left === null || $top === null || $width === null || $height === null) {
+            return null;
+        }
+
+        return [$left, $top, $left + max(0.0, $width), $top + max(0.0, $height)];
+    }
+
+    private function annotationBaseRectsIntersect(array $rectA, array $rectB, float $padding = 0.0): bool
+    {
+        return !(
+            ($rectA[2] + $padding) <= ($rectB[0] - $padding)
+            || ($rectB[2] + $padding) <= ($rectA[0] - $padding)
+            || ($rectA[3] + $padding) <= ($rectB[1] - $padding)
+            || ($rectB[3] + $padding) <= ($rectA[1] - $padding)
+        );
+    }
+
+    private function splitNestedAnnotationBaseBlocks(array $blocks): array
+    {
+        if (count($blocks) < 2) {
+            return $blocks;
+        }
+
+        $normalizedBlocks = array_values($blocks);
+        $maxBlockNum = array_reduce($normalizedBlocks, static function (int $carry, array $block): int {
+            return max($carry, (int) ($block['block_num'] ?? 0));
+        }, 0);
+        $nextSyntheticBlockNum = $maxBlockNum + 1;
+        $result = [];
+
+        foreach ($normalizedBlocks as $index => $block) {
+            $lineBBoxes = array_values(array_filter(
+                is_array($block['line_bboxes'] ?? null) ? $block['line_bboxes'] : [],
+                static fn ($bbox) => is_array($bbox) && count($bbox) >= 4
+            ));
+            if (count($lineBBoxes) < 2) {
+                $result[] = $block;
+                continue;
+            }
+
+            $blockBBox = $this->normalizeAnnotationBaseBlockBBox($block);
+            if (!$blockBBox) {
+                $result[] = $block;
+                continue;
+            }
+
+            $shouldSplit = false;
+            foreach ($normalizedBlocks as $siblingIndex => $sibling) {
+                if ($siblingIndex === $index) {
+                    continue;
+                }
+
+                $siblingBBox = $this->normalizeAnnotationBaseBlockBBox($sibling);
+                if (!$siblingBBox || !$this->annotationBaseRectsIntersect($blockBBox, $siblingBBox, 0.25)) {
+                    continue;
+                }
+
+                $intersectsAnyLine = false;
+                foreach ($lineBBoxes as $lineBBox) {
+                    $normalizedLineBBox = array_map('floatval', array_slice($lineBBox, 0, 4));
+                    if ($this->annotationBaseRectsIntersect($normalizedLineBBox, $siblingBBox, 0.25)) {
+                        $intersectsAnyLine = true;
+                        break;
+                    }
+                }
+
+                if (!$intersectsAnyLine) {
+                    $shouldSplit = true;
+                    break;
+                }
+            }
+
+            if (!$shouldSplit) {
+                $result[] = $block;
+                continue;
+            }
+
+            $textLines = array_values(array_filter(array_map(
+                fn ($line) => $this->sanitizePromotedExtractionLineForMaterialization($line),
+                is_array($block['text_lines'] ?? null) ? $block['text_lines'] : []
+            ), static fn ($line) => $line !== ''));
+            $sourceSpans = is_array($block['spans'] ?? null) ? array_values($block['spans']) : [];
+
+            foreach ($lineBBoxes as $lineIndex => $lineBBox) {
+                $normalizedLineBBox = array_map('floatval', array_slice($lineBBox, 0, 4));
+                if (count($normalizedLineBBox) < 4) {
+                    continue;
+                }
+
+                [$left, $top, $right, $bottom] = $normalizedLineBBox;
+                $lineText = $textLines[$lineIndex] ?? trim((string) ($block['text'] ?? ''));
+                $lineSpans = array_values(array_filter($sourceSpans, function ($span) use ($normalizedLineBBox) {
+                    if (!is_array($span)) {
+                        return false;
+                    }
+                    $spanBBox = is_array($span['bbox'] ?? null) ? array_slice($span['bbox'], 0, 4) : null;
+                    if (!is_array($spanBBox) || count($spanBBox) < 4) {
+                        return false;
+                    }
+
+                    return $this->annotationBaseRectsIntersect(
+                        array_map('floatval', $normalizedLineBBox),
+                        array_map('floatval', $spanBBox),
+                        0.25
+                    );
+                }));
+
+                $splitBlock = $block;
+                $splitBlock['block_num'] = $lineIndex === 0
+                    ? (int) ($block['block_num'] ?? 0)
+                    : $nextSyntheticBlockNum++;
+                $splitBlock['text'] = $lineText;
+                $splitBlock['text_lines'] = [$lineText];
+                $splitBlock['line_bboxes'] = [$normalizedLineBBox];
+                $splitBlock['left'] = $left;
+                $splitBlock['top'] = $top;
+                $splitBlock['width'] = max(0.0, $right - $left);
+                $splitBlock['height'] = max(0.0, $bottom - $top);
+                $splitBlock['bbox'] = [$left, $top, $right, $bottom];
+                $splitBlock['spans'] = !empty($lineSpans) ? $lineSpans : $sourceSpans;
+                $result[] = $splitBlock;
+            }
+        }
+
+        usort($result, static function (array $left, array $right): int {
+            $leftTop = (float) ($left['top'] ?? 0);
+            $rightTop = (float) ($right['top'] ?? 0);
+            if ($leftTop !== $rightTop) {
+                return $leftTop <=> $rightTop;
+            }
+
+            $leftValue = (float) ($left['left'] ?? 0);
+            $rightValue = (float) ($right['left'] ?? 0);
+            if ($leftValue !== $rightValue) {
+                return $leftValue <=> $rightValue;
+            }
+
+            return ((int) ($left['block_num'] ?? 0)) <=> ((int) ($right['block_num'] ?? 0));
+        });
+
+        return $result;
+    }
+
     private function materializeFitzExtractionToPdfState(Document $document, $extractionRow): int
     {
         if (!$extractionRow) {
             return 0;
         }
 
-        $rawExtractionData = is_array($extractionRow)
-            ? ($extractionRow['extraction_data'] ?? null)
-            : ($extractionRow->extraction_data ?? null);
-        $extractionData = is_array($rawExtractionData)
-            ? $rawExtractionData
-            : json_decode((string) $rawExtractionData, true);
+        $snapshotId = $this->normalizeFitzExtractionSnapshot($extractionRow);
+        $extractionData = $snapshotId !== null
+            ? $this->fitzExtractionNormalizer()->buildPageDataForSnapshot($snapshotId)
+            : [];
+
+        if (empty($extractionData)) {
+            $rawExtractionData = is_array($extractionRow)
+                ? ($extractionRow['extraction_data'] ?? null)
+                : ($extractionRow->extraction_data ?? null);
+            $extractionData = is_array($rawExtractionData)
+                ? $rawExtractionData
+                : json_decode((string) $rawExtractionData, true);
+        }
 
         if (!is_array($extractionData)) {
             return 0;
@@ -985,20 +2668,55 @@ class DocumentController extends Controller
             $document,
             $this->buildPromotedStateAnnotationsFromExtractionData($extractionData)
         );
+        $groups = $this->buildPromotedStateGroupsFromAnnotations($annotations);
         $annotationIds = array_values(array_unique(array_filter(array_map(
-            static fn ($annotation) => is_array($annotation) ? trim((string) ($annotation['id'] ?? '')) : '',
+            fn ($annotation) => is_array($annotation) ? $this->durablePdfStateIdentityKeyFromAnnotation($annotation) : '',
             $annotations
         ))));
 
         $materializedCount = 0;
-        DB::transaction(function () use ($document, $annotations, $annotationIds, &$materializedCount) {
+        DB::transaction(function () use ($document, $annotations, $annotationIds, $snapshotId, &$materializedCount) {
             $sessionId = $this->extractedPdfStateSessionId($document);
-            $existingRows = PdfState::query()
+            $ownership = $this->resolvePdfStateOwnership($document);
+
+            // Extraction materialization is document-derived state, not user-authored
+            // session state. Keep exactly one ownership scope for the fixed extracted
+            // session so legacy guest rows do not coexist with later user/admin rows.
+            $staleOwnershipRowsQuery = PdfState::query()
                 ->where('document_id', $document->id)
                 ->where('session_id', $sessionId)
-                ->where('state', 'extracted')
+                ->where('state', 'extracted');
+
+            if (($ownership['user_id'] ?? null) !== null) {
+                $userId = (int) $ownership['user_id'];
+                $staleOwnershipRowsQuery->where(function ($query) use ($userId) {
+                    $query->whereNull('user_id')
+                        ->orWhere('user_id', '!=', $userId)
+                        ->orWhereNotNull('admin_id');
+                });
+            } elseif (($ownership['admin_id'] ?? null) !== null) {
+                $adminId = (int) $ownership['admin_id'];
+                $staleOwnershipRowsQuery->where(function ($query) use ($adminId) {
+                    $query->whereNull('admin_id')
+                        ->orWhere('admin_id', '!=', $adminId)
+                        ->orWhereNotNull('user_id');
+                });
+            } else {
+                $staleOwnershipRowsQuery->where(function ($query) {
+                    $query->whereNotNull('user_id')
+                        ->orWhereNotNull('admin_id');
+                });
+            }
+
+            $staleOwnershipRowsQuery->delete();
+
+            $existingRowsQuery = PdfState::query()
+                ->where('document_id', $document->id)
+                ->where('state', 'extracted');
+            $this->applyPdfStateOwnershipScope($existingRowsQuery, $ownership['user_id'], $ownership['admin_id'], $sessionId);
+            $existingRows = $existingRowsQuery
                 ->get()
-                ->keyBy(static fn (PdfState $record) => trim((string) data_get($record->annotation_data, 'id', '')));
+                ->keyBy(fn (PdfState $record) => $this->durablePdfStateIdentityKeyFromRecord($record));
 
             $seenIds = [];
             foreach ($annotations as $annotation) {
@@ -1006,7 +2724,7 @@ class DocumentController extends Controller
                     continue;
                 }
 
-                $annotationId = trim((string) ($annotation['id'] ?? ''));
+                $annotationId = $this->durablePdfStateIdentityKeyFromAnnotation($annotation);
                 if ($annotationId === '') {
                     continue;
                 }
@@ -1019,17 +2737,24 @@ class DocumentController extends Controller
                 $existing = $existingRows->get($annotationId);
                 if ($existing) {
                     $existing->update([
+                        'pdf_extraction_fitz_id' => $snapshotId,
                         'annotation_data' => $annotation,
                         'page_number' => $pageIndex,
+                        'session_id' => $sessionId,
+                        'user_id' => $ownership['user_id'],
+                        'admin_id' => $ownership['admin_id'],
+                        'user_email' => ($ownership['user_id'] !== null || $ownership['admin_id'] !== null)
+                            ? null
+                            : $existing->user_email,
                     ]);
                 } else {
                     PdfState::create([
                         'document_id' => $document->id,
-                        'user_email' => null,
-                        'session_id' => $sessionId,
+                        'pdf_extraction_fitz_id' => $snapshotId,
                         'page_number' => $pageIndex,
                         'annotation_data' => $annotation,
                         'state' => 'extracted',
+                        ...$this->pdfStateOwnershipPayload($document, $sessionId),
                     ]);
                 }
 
@@ -1037,32 +2762,34 @@ class DocumentController extends Controller
                 $materializedCount++;
             }
 
-            $staleIds = array_values(array_filter(
-                $existingRows->keys()->all(),
-                static fn ($id) => $id !== '' && !isset($seenIds[$id])
+            $staleRowIds = array_values(array_map(
+                static fn (PdfState $record) => $record->id,
+                array_filter(
+                    $existingRows->all(),
+                    static fn ($record, $identityKey) => $identityKey !== '' && !isset($seenIds[$identityKey]),
+                    ARRAY_FILTER_USE_BOTH
+                )
             ));
 
-            if (!empty($staleIds)) {
-                PdfState::query()
+            if (!empty($staleRowIds)) {
+                $staleRowsQuery = PdfState::query()
                     ->where('document_id', $document->id)
-                    ->where('session_id', $sessionId)
                     ->where('state', 'extracted')
-                    ->where(function ($query) use ($staleIds) {
-                        foreach ($staleIds as $annotationId) {
-                            $query->orWhereRaw("JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.id')) = ?", [$annotationId]);
-                        }
-                    })
-                    ->delete();
+                    ->whereIn('id', $staleRowIds);
+                $this->applyPdfStateOwnershipScope($staleRowsQuery, $ownership['user_id'], $ownership['admin_id'], $sessionId);
+                $staleRowsQuery->delete();
             }
 
             if (empty($annotationIds)) {
-                PdfState::query()
+                $clearRowsQuery = PdfState::query()
                     ->where('document_id', $document->id)
-                    ->where('session_id', $sessionId)
-                    ->where('state', 'extracted')
-                    ->delete();
+                    ->where('state', 'extracted');
+                $this->applyPdfStateOwnershipScope($clearRowsQuery, $ownership['user_id'], $ownership['admin_id'], $sessionId);
+                $clearRowsQuery->delete();
             }
         });
+
+        $this->syncMaterializedPdfGroups($document, $groups, $snapshotId);
 
         return $materializedCount;
     }
@@ -1399,6 +3126,7 @@ class DocumentController extends Controller
         array $requestedKeys = [],
         array $annotationsPayload = []
     ): array {
+        $ownership = $this->resolvePdfStateOwnership($document);
         $mergedKeys = [];
 
         foreach ($requestedKeys as $key) {
@@ -1412,15 +3140,17 @@ class DocumentController extends Controller
         }
 
         if ($sessionId !== '') {
-            PdfState::query()
+            $deletedQuery = PdfState::query()
                 ->where('document_id', $document->id)
-                ->where('session_id', $sessionId)
-                ->where('state', 'deleted')
-                ->get(['annotation_data'])
-                ->each(static function (PdfState $record) use (&$mergedKeys) {
+                ->where('state', 'deleted');
+            $this->applyPdfStateOwnershipScope($deletedQuery, $ownership['user_id'], $ownership['admin_id'], $sessionId);
+            $deletedQuery->get(['annotation_data'])
+                ->each(function (PdfState $record) use (&$mergedKeys) {
+                    if (!$this->isPromotedSuppressionRecord($record)) {
+                        return;
+                    }
                     $sourceKey = trim((string) data_get($record->annotation_data, 'promotedSourceKey', ''));
-                    $explicitDelete = data_get($record->annotation_data, '_explicitPromotedDelete');
-                    if ($sourceKey !== '' && filter_var($explicitDelete, FILTER_VALIDATE_BOOLEAN)) {
+                    if ($sourceKey !== '') {
                         $mergedKeys[$sourceKey] = true;
                     }
                 });
@@ -1443,6 +3173,109 @@ class DocumentController extends Controller
         return $result;
     }
 
+    private function ensurePromotedSuppressionRecordForSession(
+        Document $document,
+        string $sessionId,
+        string $sourceKey
+    ): void {
+        $sessionId = trim($sessionId);
+        $sourceKey = trim($sourceKey);
+        if ($sessionId === '' || $sourceKey === '') {
+            return;
+        }
+
+        $ownership = $this->resolvePdfStateOwnership($document);
+        $suppressionId = $this->promotedSuppressionAnnotationId($sourceKey);
+        $existingRecordQuery = PdfState::query()
+            ->where('document_id', $document->id)
+            ->where('state', 'deleted')
+            ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.id')) = ?", [$suppressionId]);
+        $this->applyPdfStateOwnershipScope($existingRecordQuery, $ownership['user_id'], $ownership['admin_id'], $sessionId);
+        $existingRecord = $existingRecordQuery->first();
+
+        $annotationData = [
+            'id' => $suppressionId,
+            'type' => 'text',
+            'promotedFromExtraction' => true,
+            'promotedSourceKey' => $sourceKey,
+            '_explicitPromotedDelete' => true,
+            '_promotedSuppression' => true,
+        ];
+
+        if ($existingRecord) {
+            $existingRecord->annotation_data = $annotationData;
+            $existingRecord->page_number = $this->parsePromotedSourceKeyPageIndex($sourceKey);
+            $existingRecord->session_id = $sessionId;
+            $existingRecord->user_id = $ownership['user_id'];
+            $existingRecord->admin_id = $ownership['admin_id'];
+            $existingRecord->user_email = ($ownership['user_id'] !== null || $ownership['admin_id'] !== null)
+                ? null
+                : $existingRecord->user_email;
+            $existingRecord->state = 'deleted';
+            $existingRecord->save();
+            return;
+        }
+
+        PdfState::create([
+            'document_id' => $document->id,
+            'page_number' => $this->parsePromotedSourceKeyPageIndex($sourceKey),
+            'annotation_data' => $annotationData,
+            'state' => 'deleted',
+            ...$this->pdfStateOwnershipPayload($document, $sessionId),
+        ]);
+    }
+
+    private function syncDeletedPromotedSourceKeysForSession(
+        Document $document,
+        string $sessionId,
+        array $deletedPromotedSourceKeys
+    ): void {
+        $sessionId = trim($sessionId);
+        if ($sessionId === '') {
+            return;
+        }
+
+        $ownership = $this->resolvePdfStateOwnership($document);
+        $normalizedKeys = array_values(array_unique(array_filter(array_map(
+            static fn ($value) => is_string($value) ? trim($value) : '',
+            $deletedPromotedSourceKeys
+        ))));
+        $normalizedLookup = array_fill_keys($normalizedKeys, true);
+
+        $existingDeletedRecordsQuery = PdfState::query()
+            ->where('document_id', $document->id)
+            ->where('state', 'deleted');
+        $this->applyPdfStateOwnershipScope($existingDeletedRecordsQuery, $ownership['user_id'], $ownership['admin_id'], $sessionId);
+        $existingDeletedRecords = $existingDeletedRecordsQuery->get();
+
+        $existingBySourceKey = [];
+        foreach ($existingDeletedRecords as $record) {
+            if (!$this->isPromotedSuppressionRecord($record)) {
+                continue;
+            }
+            $sourceKey = trim((string) data_get($record->annotation_data, 'promotedSourceKey', ''));
+            if ($sourceKey === '') {
+                continue;
+            }
+            $existingBySourceKey[$sourceKey] = $record;
+        }
+
+        foreach ($existingBySourceKey as $sourceKey => $record) {
+            if (isset($normalizedLookup[$sourceKey])) {
+                continue;
+            }
+            $record->delete();
+        }
+
+        foreach ($normalizedKeys as $sourceKey) {
+            $existingRecord = $existingBySourceKey[$sourceKey] ?? null;
+            if ($existingRecord) {
+                continue;
+            }
+            $this->ensurePromotedSuppressionRecordForSession($document, $sessionId, $sourceKey);
+        }
+    }
+
     private function parsePromotedSourceKeyPageIndex(string $sourceKey): ?int
     {
         if (!preg_match('/^block-(\d+)-\d+(?:-.+)?$/', trim($sourceKey), $matches)) {
@@ -1460,16 +3293,240 @@ class DocumentController extends Controller
         return false;
     }
 
-    private function annotationRequiresSelectiveRedraw(array $annotation): bool
+    private function normalizeComparableAnnotationNumberForSelectiveRedraw($value): ?float
     {
-        if (strtolower((string) ($annotation['type'] ?? '')) !== 'text') {
-            return false;
+        if (!is_numeric($value)) {
+            return null;
         }
-        if (!($annotation['promotedFromExtraction'] ?? false) || !($annotation['promotedDirty'] ?? false)) {
+
+        return round((float) $value, 4);
+    }
+
+    private function getCanonicalPromotedAnnotationSourceTextForSelectiveRedraw(array $annotation): string
+    {
+        $sourceTextLines = array_values(array_filter(array_map(
+            fn ($line) => $this->sanitizePromotedExtractionLineForMaterialization($line),
+            is_array($annotation['sourceTextLines'] ?? null) ? $annotation['sourceTextLines'] : []
+        ), static fn ($line) => $line !== ''));
+
+        if (!empty($sourceTextLines)) {
+            return $this->sanitizePromotedExtractionTextForMaterialization(implode("\n", $sourceTextLines));
+        }
+
+        return $this->sanitizePromotedExtractionTextForMaterialization($annotation['originalText'] ?? '');
+    }
+
+    private function getPromotedAnnotationPrimarySourceSpanForSelectiveRedraw(array $annotation): array
+    {
+        foreach ((is_array($annotation['sourceSpans'] ?? null) ? $annotation['sourceSpans'] : []) as $span) {
+            if (is_array($span)) {
+                return $span;
+            }
+        }
+
+        return [];
+    }
+
+    private function getPromotedAnnotationSourceFontFamilyForSelectiveRedraw(array $annotation): string
+    {
+        $span = $this->getPromotedAnnotationPrimarySourceSpanForSelectiveRedraw($annotation);
+        $fontSourceName = trim((string) ($span['font'] ?? ''));
+        $resolvedFontFamily = $this->normalizePdfEditableFontFamilyForMaterialization($fontSourceName);
+        if ($resolvedFontFamily !== '') {
+            return $resolvedFontFamily;
+        }
+
+        return $this->normalizeBuiltinAnnotationFontFamilyForMaterialization($fontSourceName ?: 'Helvetica');
+    }
+
+    private function getPromotedAnnotationSourceFontStyleForSelectiveRedraw(array $annotation): string
+    {
+        $span = $this->getPromotedAnnotationPrimarySourceSpanForSelectiveRedraw($annotation);
+        $fontName = trim((string) ($span['font'] ?? ''));
+        if (!empty($span['italic']) || preg_match('/italic|oblique/i', $fontName)) {
+            return 'italic';
+        }
+
+        return 'normal';
+    }
+
+    private function getPromotedAnnotationSourceFontWeightForSelectiveRedraw(array $annotation): string
+    {
+        $span = $this->getPromotedAnnotationPrimarySourceSpanForSelectiveRedraw($annotation);
+        $fontWeight = trim((string) ($span['font_weight'] ?? ''));
+        if ($fontWeight !== '') {
+            return $fontWeight;
+        }
+
+        $fontName = trim((string) ($span['font'] ?? ''));
+        return (!empty($span['bold']) || preg_match('/bold/i', $fontName)) ? '700' : '400';
+    }
+
+    private function getPromotedAnnotationSourceColorForSelectiveRedraw(array $annotation): string
+    {
+        $span = $this->getPromotedAnnotationPrimarySourceSpanForSelectiveRedraw($annotation);
+        if (!empty($span['hex_color'])) {
+            return $this->colorToHexForMaterialization((string) $span['hex_color']);
+        }
+
+        if (array_key_exists('color', $span) && $span['color'] !== null) {
+            if (is_numeric($span['color'])) {
+                return $this->colorToHexForMaterialization('#' . str_pad(dechex((int) $span['color']), 6, '0', STR_PAD_LEFT));
+            }
+
+            return $this->colorToHexForMaterialization((string) $span['color']);
+        }
+
+        return '#000000';
+    }
+
+    private function promotedAnnotationMatchesExactSourceStateForSelectiveRedraw(array $annotation): bool
+    {
+        if (!($annotation['promotedFromExtraction'] ?? false) || !empty($annotation['promotedReflowEnabled'])) {
             return false;
         }
 
-        return !$this->annotationCanBeDirectStamped($annotation);
+        $currentText = $this->sanitizePromotedExtractionTextForMaterialization($annotation['text'] ?? '');
+        if ($currentText !== $this->getCanonicalPromotedAnnotationSourceTextForSelectiveRedraw($annotation)) {
+            return false;
+        }
+
+        if (trim((string) ($annotation['richTextHtml'] ?? '')) !== '') {
+            return false;
+        }
+
+        $sourceLineBBoxes = array_values(array_filter(
+            is_array($annotation['sourceLineBBoxes'] ?? null) ? $annotation['sourceLineBBoxes'] : [],
+            static fn ($bbox) => is_array($bbox) && count($bbox) >= 4
+        ));
+        if (empty($sourceLineBBoxes)) {
+            return false;
+        }
+
+        $sourceBlockLeft = isset($annotation['sourceBlockLeft']) ? (float) $annotation['sourceBlockLeft'] : null;
+        $sourceBlockTop = isset($annotation['sourceBlockTop']) ? (float) $annotation['sourceBlockTop'] : null;
+        $sourceBlockWidth = isset($annotation['sourceBlockWidth']) ? (float) $annotation['sourceBlockWidth'] : null;
+        $sourceBlockHeight = isset($annotation['sourceBlockHeight']) ? (float) $annotation['sourceBlockHeight'] : null;
+        $sourcePageHeight = isset($annotation['sourcePageHeight']) ? (float) $annotation['sourcePageHeight'] : null;
+        if ($sourceBlockLeft === null || $sourceBlockTop === null || $sourceBlockWidth === null || $sourceBlockHeight === null || !($sourcePageHeight > 0)) {
+            return false;
+        }
+
+        $currentTop = $sourcePageHeight - (((float) ($annotation['pdfY'] ?? 0)) + ((float) ($annotation['pdfHeight'] ?? 0)));
+        $geometryTolerance = 0.75;
+        if (
+            abs(((float) ($annotation['pdfX'] ?? 0)) - $sourceBlockLeft) > $geometryTolerance
+            || abs($currentTop - $sourceBlockTop) > $geometryTolerance
+            || abs(((float) ($annotation['pdfWidth'] ?? 0)) - $sourceBlockWidth) > $geometryTolerance
+            || abs(((float) ($annotation['pdfHeight'] ?? 0)) - $sourceBlockHeight) > $geometryTolerance
+        ) {
+            return false;
+        }
+
+        if (strtolower((string) ($annotation['backgroundColor'] ?? 'transparent')) !== 'transparent') {
+            return false;
+        }
+
+        if ($this->colorToHexForMaterialization((string) ($annotation['textColor'] ?? '#000000')) !== $this->getPromotedAnnotationSourceColorForSelectiveRedraw($annotation)) {
+            return false;
+        }
+
+        if (trim((string) ($annotation['fontFamily'] ?? '')) !== $this->getPromotedAnnotationSourceFontFamilyForSelectiveRedraw($annotation)) {
+            return false;
+        }
+
+        if (trim((string) ($annotation['fontStyle'] ?? 'normal')) !== $this->getPromotedAnnotationSourceFontStyleForSelectiveRedraw($annotation)) {
+            return false;
+        }
+
+        if (trim((string) ($annotation['fontWeight'] ?? '400')) !== $this->getPromotedAnnotationSourceFontWeightForSelectiveRedraw($annotation)) {
+            return false;
+        }
+
+        if (!empty($annotation['underline'])) {
+            return false;
+        }
+
+        if (trim((string) ($annotation['textAlign'] ?? 'left')) !== 'left') {
+            return false;
+        }
+
+        if ($this->normalizeComparableAnnotationNumberForSelectiveRedraw($annotation['opacity'] ?? 1) !== 1.0) {
+            return false;
+        }
+
+        $sourceLineHeights = array_values(array_filter(array_map(static function (array $bbox): float {
+            return (float) ($bbox[3] ?? 0) - (float) ($bbox[1] ?? 0);
+        }, $sourceLineBBoxes), static fn ($height) => is_finite($height) && $height > 0));
+        $savedLineHeight = (float) ($annotation['lineHeight'] ?? 0);
+        if (!empty($sourceLineHeights) && $savedLineHeight > 0) {
+            $averageSourceLineHeight = array_sum($sourceLineHeights) / count($sourceLineHeights);
+            if (abs($savedLineHeight - $averageSourceLineHeight) > 1.5) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function annotationRequiresSelectiveRedraw(array $annotation): bool
+    {
+        if ($this->isFieldAnnotation($annotation)) {
+            return false;
+        }
+
+        if (!($annotation['promotedFromExtraction'] ?? false)) {
+            return true;
+        }
+
+        return !$this->promotedAnnotationMatchesExactSourceStateForSelectiveRedraw($annotation);
+    }
+
+    private function isFieldAnnotation(array $annotation): bool
+    {
+        return strtolower((string) ($annotation['type'] ?? '')) === 'field';
+    }
+
+    private function shouldReplayAnnotationOnSelectiveRedraw(array $annotation): bool
+    {
+        if ($this->isFieldAnnotation($annotation)) {
+            return false;
+        }
+
+        if (!($annotation['promotedFromExtraction'] ?? false)) {
+            return true;
+        }
+
+        return true;
+    }
+
+    private function filterRenderAnnotationsForSelectiveRedraw(
+        array $annotationsPayload,
+        array $requestedPageIndices
+    ): array {
+        $allowedPages = array_fill_keys(array_values(array_unique(array_filter(array_map(
+            static fn ($value) => is_numeric($value) ? (int) $value : null,
+            $requestedPageIndices
+        ), static fn ($value) => is_int($value) && $value >= 0))), true);
+
+        if (empty($allowedPages)) {
+            return [];
+        }
+
+        return array_values(array_filter($annotationsPayload, function ($annotation) use ($allowedPages) {
+            if (!is_array($annotation)) {
+                return false;
+            }
+
+            $pageIndex = isset($annotation['pageIndex']) && is_numeric($annotation['pageIndex'])
+                ? (int) $annotation['pageIndex']
+                : null;
+            if ($pageIndex === null || !isset($allowedPages[$pageIndex])) {
+                return false;
+            }
+
+            return $this->shouldReplayAnnotationOnSelectiveRedraw($annotation);
+        }));
     }
 
     private function filterSelectiveRedrawPageIndices(
@@ -1629,8 +3686,8 @@ class DocumentController extends Controller
             ];
         }
 
-        $extractionRow = $this->findLatestFitzExtraction($document->id, $userEmail, $sessionId);
-        if (!$extractionRow || !isset($extractionRow->extraction_data)) {
+        $extractionJson = $this->resolveRedrawExtractionJson($document, $userEmail, $sessionId);
+        if (!is_string($extractionJson)) {
             @unlink($cleanPdfPath);
             return [
                 'success' => false,
@@ -1685,9 +3742,6 @@ class DocumentController extends Controller
             );
             $deletedKeysJson = json_encode(array_values(array_filter($deletedPromotedSourceKeys, 'is_string')), JSON_INVALID_UTF8_SUBSTITUTE);
             $pagesJson = json_encode($normalizedPageIndices, JSON_INVALID_UTF8_SUBSTITUTE);
-            $extractionJson = is_string($extractionRow->extraction_data)
-                ? $extractionRow->extraction_data
-                : json_encode($extractionRow->extraction_data, JSON_INVALID_UTF8_SUBSTITUTE);
 
             if (
                 !is_string($extractionJson)
@@ -1923,7 +3977,25 @@ class DocumentController extends Controller
 
     public function index()
     {
-        $documents = Document::latest()->get();
+        $documentQuery = $this->applyAccessibleDocumentScope(request(), Document::query())
+            ->where(function ($query) {
+                $query->whereNull('mode')
+                    ->orWhere('mode', '!=', 'regression');
+            });
+
+        $documents = $documentQuery
+            ->latest()
+            ->get();
+
+        if ($this->hasDocumentPreviewColumns()) {
+            foreach ($documents->take(8) as $document) {
+                if (empty($document->preview_image) && !empty($document->path)) {
+                    $this->refreshDocumentPreviewSnapshot($document);
+                    $document->refresh();
+                }
+            }
+        }
+
         $guidedTemplates = GuidedTemplate::where('is_active', true)
             ->orderBy('sort_order')
             ->get();
@@ -1941,6 +4013,7 @@ class DocumentController extends Controller
     {
         $validated = $request->validate([
             'document' => ['required', 'file', 'mimes:pdf', 'max:20480'],
+            'document_mode' => ['nullable', 'string', 'in:editor,regression'],
         ]);
 
         if ($response = $this->consumeMonthlyUploadQuota($request)) {
@@ -1954,13 +4027,21 @@ class DocumentController extends Controller
         );
         $backupPath = $this->createOriginalBackup($storedPath);
 
+        $documentMode = is_string($validated['document_mode'] ?? null)
+            ? trim((string) $validated['document_mode'])
+            : '';
+        if ($documentMode === '') {
+            $documentMode = 'editor';
+        }
+
         $document = Document::create([
-            'user_id' => Auth::id(),
+            ...$this->documentOwnershipPayload(),
             'original_name' => $file->getClientOriginalName(),
             'path' => $storedPath,
             'original_backup_path' => $backupPath,
             'mime_type' => $file->getClientMimeType(),
             'size_bytes' => $file->getSize(),
+            'mode' => $documentMode,
         ]);
 
         // Auto-download fonts for this PDF in background
@@ -2014,6 +4095,9 @@ class DocumentController extends Controller
             'document_id' => $document->id,
             'materialized_count' => $materializedAcroFormCount,
         ]);
+
+        $this->refreshDocumentPreviewSnapshot($document);
+        $this->rememberSessionAccessibleDocument($request, $document);
 
         return redirect()
             ->route('documents.edit', $document)
@@ -2083,13 +4167,16 @@ class DocumentController extends Controller
         }
 
         $document = Document::create([
-            'user_id' => Auth::id(),
+            ...$this->documentOwnershipPayload(),
             'original_name' => 'Blank ' . $pageSize . ' ' . ucfirst($orientation) . '.pdf',
             'path' => $storedRelative,
             'original_backup_path' => $this->createOriginalBackup($storedRelative),
             'mime_type' => 'application/pdf',
             'size_bytes' => filesize($storedFull),
         ]);
+
+        $this->refreshDocumentPreviewSnapshot($document);
+        $this->rememberSessionAccessibleDocument($request, $document);
 
         return redirect()
             ->route('documents.edit', $document)
@@ -2143,13 +4230,16 @@ class DocumentController extends Controller
         }
 
         $document = Document::create([
-            'user_id' => Auth::id(),
+            ...$this->documentOwnershipPayload(),
             'original_name' => $templateNames[$templateKey],
             'path' => $storedRelative,
             'original_backup_path' => $this->createOriginalBackup($storedRelative),
             'mime_type' => 'application/pdf',
             'size_bytes' => filesize($storedFull),
         ]);
+
+        $this->refreshDocumentPreviewSnapshot($document);
+        $this->rememberSessionAccessibleDocument($request, $document);
 
         // Auto-download fonts
         $fontScript = base_path('python/pdf-editor/auto_download_fonts.py');
@@ -2191,7 +4281,8 @@ class DocumentController extends Controller
         $style = $validated['style'] ?? 'default';
 
         // Enforce one template per type: redirect to existing if found
-        $existing = Document::where('mode', 'guided')
+        $existing = $this->applyAccessibleDocumentScope($request, Document::query())
+            ->where('mode', 'guided')
             ->where('template_type', 'invoice')
             ->where('template_slug', $style)
             ->first();
@@ -2243,7 +4334,7 @@ class DocumentController extends Controller
         }
 
         $document = Document::create([
-            'user_id' => Auth::id(),
+            ...$this->documentOwnershipPayload(),
             'original_name' => 'Invoice ' . ($validated['invoice_number'] ?? $uuid) . '.pdf',
             'path' => $storedRelative,
             'original_backup_path' => $this->createOriginalBackup($storedRelative),
@@ -2254,6 +4345,9 @@ class DocumentController extends Controller
             'template_slug' => $validated['style'] ?? 'default',
             'form_data' => $payload, // Save initial payload as form data
         ]);
+
+        $this->refreshDocumentPreviewSnapshot($document);
+        $this->rememberSessionAccessibleDocument($request, $document);
 
         // Auto-download fonts
         $fontScript = base_path('python/pdf-editor/auto_download_fonts.py');
@@ -2290,7 +4384,8 @@ class DocumentController extends Controller
         $templateSlug = $validated['_template_slug'];
 
         // Enforce one template per type: redirect to existing if found
-        $existing = Document::where('mode', 'guided')
+        $existing = $this->applyAccessibleDocumentScope($request, Document::query())
+            ->where('mode', 'guided')
             ->where('template_type', $templateType)
             ->where('template_slug', $templateSlug)
             ->first();
@@ -2349,7 +4444,7 @@ class DocumentController extends Controller
         }
 
         $document = Document::create([
-            'user_id' => Auth::id(),
+            ...$this->documentOwnershipPayload(),
             'original_name' => $template->name . '.pdf',
             'path' => $storedRelative,
             'original_backup_path' => $this->createOriginalBackup($storedRelative),
@@ -2360,6 +4455,9 @@ class DocumentController extends Controller
             'template_slug' => $templateSlug,
             'form_data' => $payload,
         ]);
+
+        $this->refreshDocumentPreviewSnapshot($document);
+        $this->rememberSessionAccessibleDocument($request, $document);
 
         // Auto-download fonts
         $fontScript = base_path('python/pdf-editor/auto_download_fonts.py');
@@ -2648,9 +4746,62 @@ class DocumentController extends Controller
 
         $userEmail = $this->resolveEditorEmail();
         $sessionId = session()->getId();
+        $fullPath = Storage::path($document->path);
         $extraction = $this->findLatestFitzExtraction($document->id, $userEmail, $sessionId);
 
+        if (!file_exists($fullPath)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'PDF file not found.'
+            ], 404);
+        }
+
+        $needsRefresh = false;
         if (!$extraction) {
+            $needsRefresh = true;
+        } else {
+            $pdfModifiedTime = filemtime($fullPath) ?: 0;
+            $extractionTime = strtotime((string) $extraction->created_at) ?: 0;
+            $scriptPath = base_path('python/pdf-editor/extract_pdf_pymupdf.py');
+            $scriptModifiedTime = file_exists($scriptPath) ? (filemtime($scriptPath) ?: 0) : 0;
+
+            if ($pdfModifiedTime > $extractionTime || $scriptModifiedTime > $extractionTime) {
+                $needsRefresh = true;
+            } else {
+                $extractionData = json_decode($extraction->extraction_data, true);
+                $hasFontXref = false;
+                if (is_array($extractionData)) {
+                    foreach ($extractionData as $page) {
+                        if (!empty($page['words'])) {
+                            $firstWord = $page['words'][0];
+                            if (array_key_exists('font_xref', $firstWord)) {
+                                $hasFontXref = true;
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                if (!$hasFontXref) {
+                    $needsRefresh = true;
+                }
+            }
+        }
+
+        if ($needsRefresh) {
+            [$returnCode, $output] = $this->runFitzExtraction($document, $fullPath, $userEmail, $sessionId, $pythonBinary);
+            if ($returnCode === 0) {
+                $extraction = $this->findLatestFitzExtraction($document->id, $userEmail, $sessionId);
+            } else {
+                \Log::error('Failed to refresh FITZ extraction data', [
+                    'document_id' => $document->id,
+                    'return_code' => $returnCode,
+                    'output' => implode("\n", $output),
+                ]);
+            }
+        }
+
+        if (!$extraction || !isset($extraction->extraction_data)) {
             return response()->json([
                 'success' => false,
                 'message' => 'No extraction data found. Processing may still be in progress.'
@@ -2664,7 +4815,6 @@ class DocumentController extends Controller
             $embeddedFonts = json_decode(file_get_contents($embeddedFontsPath), true);
         } else {
             // Try to extract fonts on-the-fly if not yet done
-            $fullPath = Storage::path($document->path);
             if (file_exists($fullPath)) {
                 $docId = $document->id;
                 $escapedPath = escapeshellarg($fullPath);
@@ -2684,9 +4834,26 @@ class DocumentController extends Controller
             }
         }
 
+        $groupedExtractionData = [];
+        if (
+            strtolower((string) config('pdf_editor.mode', 'fitz_extraction')) === 'annotation_base'
+            || strtolower((string) config('pdf_editor.layout_mode', 'default')) === 'bounding_box_edit'
+        ) {
+            try {
+                $groupedExtractionData = $this->buildAnnotationBaseExtractionData($document);
+            } catch (\Throwable $error) {
+                \Log::warning('Failed to build grouped annotation-base extraction data', [
+                    'document_id' => $document->id,
+                    'error' => $error->getMessage(),
+                ]);
+                $groupedExtractionData = [];
+            }
+        }
+
         return response()->json([
             'success' => true,
             'extraction_data' => json_decode($extraction->extraction_data, true),
+            'grouped_extraction_data' => $groupedExtractionData,
             'total_pages' => $extraction->total_pages,
             'total_words' => $extraction->total_words,
             'full_text' => $extraction->full_text,
@@ -2701,6 +4868,20 @@ class DocumentController extends Controller
             'activeTab' => 'pdf-editor',
             'pdfSaveMode' => strtolower((string) config('pdf_editor.save_mode', 'full_page_save')),
             'savedEditPreviewUrl' => route('documents.savedEdit', $document),
+        ]);
+    }
+
+    public function editNew(Document $document)
+    {
+        return view('documents.edit-new', [
+            'document' => $document,
+        ]);
+    }
+
+    public function edit2(Document $document)
+    {
+        return view('documents.edit2', [
+            'document' => $document,
         ]);
     }
 
@@ -2770,8 +4951,11 @@ class DocumentController extends Controller
             'document_id' => 'required|exists:documents,id',
         ]);
 
+        $document = Document::query()->findOrFail($validated['document_id']);
+        $this->authorizeDocumentAccess($request, $document);
+
         $aiDocument = \App\Models\AiDocument::create([
-            'document_id' => $validated['document_id'],
+            'document_id' => $document->id,
             'session_id' => Str::uuid(),
             'email' => $this->resolveEditorEmail(null),
         ]);
@@ -3192,10 +5376,12 @@ class DocumentController extends Controller
                 $document,
                 $sessionId,
                 $acroFormEntries,
-                Auth::id(),
+                $this->resolvePdfStateOwnership($document),
                 'saved'
             );
         }
+
+        $this->refreshDocumentPreviewSnapshot($document);
 
         return response()->json([
             'ok' => true,
@@ -3312,22 +5498,24 @@ class DocumentController extends Controller
                 ->where('document_id', $document->id)
                 ->delete();
 
-            $editorEmail = $this->resolveEditorEmail('');
+            $pdfStateOwnership = $this->resolvePdfStateOwnership($document);
             $annotationCleanupQuery = PdfState::query()
                 ->where('document_id', $document->id);
 
-            if ($editorEmail !== '') {
-                $annotationCleanupQuery->where('user_email', $editorEmail);
+            if (($pdfStateOwnership['user_id'] ?? null) !== null) {
+                $annotationCleanupQuery->where('user_id', $pdfStateOwnership['user_id']);
+            } elseif (($pdfStateOwnership['admin_id'] ?? null) !== null) {
+                $annotationCleanupQuery->where('admin_id', $pdfStateOwnership['admin_id']);
             } else {
                 $annotationCleanupQuery->where('session_id', $request->session()->getId());
             }
 
             $deletedAnnotationCount = $annotationCleanupQuery->delete();
 
-            if (Auth::check()) {
-                UserActivity::create([
-                    'user_id' => Auth::id(),
-                    'action' => 'Restore Original PDF',
+        if (Auth::check()) {
+            UserActivity::create([
+                'user_id' => Auth::id(),
+                'action' => 'Restore Original PDF',
                     'category' => 'pdf_save',
                     'details' => [
                         'deleted_annotation_count' => $deletedAnnotationCount,
@@ -3336,9 +5524,11 @@ class DocumentController extends Controller
                     'document_id' => $document->id,
                     'status' => 'success',
                     'ip_address' => $request->ip(),
-                    'user_agent' => $request->userAgent(),
-                ]);
-            }
+                'user_agent' => $request->userAgent(),
+            ]);
+        }
+
+            $this->refreshDocumentPreviewSnapshot($document);
 
             return response()->json([
                 'success' => true,
@@ -3368,7 +5558,12 @@ class DocumentController extends Controller
             'ids.*' => 'exists:documents,id',
         ]);
 
-        $documents = Document::whereIn('id', $validated['ids'])->get();
+        $documents = $this->applyAccessibleDocumentScope($request, Document::query())
+            ->whereIn('id', $validated['ids'])
+            ->get();
+        if ($documents->count() !== count($validated['ids'])) {
+            abort(404);
+        }
         $count = 0;
 
         foreach ($documents as $document) {
@@ -4139,9 +6334,9 @@ class DocumentController extends Controller
             // Fetch extraction data from DB (needed to redraw unchanged words).
             $userEmail = $this->resolveEditorEmail();
             $sessionId = session()->getId();
-            $extractionRow = $this->findLatestFitzExtraction($document->id, $userEmail, $sessionId);
+            $extractionJson = $this->resolveRedrawExtractionJson($document, $userEmail, $sessionId);
 
-            if (!$extractionRow) {
+            if (!is_string($extractionJson)) {
                 if (file_exists($editsFile)) @unlink($editsFile);
                 return response()->json([
                     'success' => false,
@@ -4150,7 +6345,7 @@ class DocumentController extends Controller
             }
 
             $extractionFile = $makeTempFile('extraction_');
-            if (@file_put_contents($extractionFile, $extractionRow->extraction_data) === false) {
+            if (@file_put_contents($extractionFile, $extractionJson) === false) {
                 if (file_exists($editsFile)) @unlink($editsFile);
                 return response()->json([
                     'success' => false,
@@ -4240,6 +6435,7 @@ class DocumentController extends Controller
         }
 
         $document->touch();
+        $this->refreshDocumentPreviewSnapshot($document);
 
         if (Auth::check()) {
             UserActivity::create([
@@ -4280,6 +6476,8 @@ class DocumentController extends Controller
             'mime_type' => $file->getClientMimeType() ?: 'image/png',
             'size_bytes' => $file->getSize(),
         ]);
+
+        $this->refreshDocumentPreviewSnapshot($document);
 
         return response()->json([
             'success' => true,
@@ -4686,10 +6884,15 @@ class DocumentController extends Controller
             // Delete annotations for deleted pages if session_id provided
             if ($sessionId && !empty($deletedPages)) {
                 foreach ($deletedPages as $deletedPage) {
-                    $deletedCount = PdfState::where('document_id', $document->id)
-                        ->where('session_id', $sessionId)
-                        ->where('page_number', $deletedPage)
-                        ->delete();
+                    $deletedQuery = PdfState::where('document_id', $document->id)
+                        ->where('page_number', $deletedPage);
+                    $this->applyPdfStateOwnershipScope(
+                        $deletedQuery,
+                        $this->resolvePdfStateUserId($document),
+                        $this->resolvePdfStateAdminId($document),
+                        (string) $sessionId
+                    );
+                    $deletedCount = $deletedQuery->delete();
                     
                     if ($deletedCount > 0) {
                         \Log::info("Deleted {$deletedCount} annotations for page {$deletedPage}", [
@@ -5013,10 +7216,9 @@ class DocumentController extends Controller
             $baseUrl = 'http://host.docker.internal:8081';
         }
         
-        // Choose URL based on url_type
-        $url = $urlType === 'overlay' 
-            ? "{$baseUrl}/documents/{$document->id}/overlay-editor"
-            : "{$baseUrl}/documents/{$document->id}/edit";
+        // Overlay editor is retired; keep the request field for compatibility
+        // but always capture the unified edit screen.
+        $url = "{$baseUrl}/documents/{$document->id}/edit";
         
         // Path to Python script and venv
         $pythonVenv = base_path('python/venv/bin/python');
@@ -5112,6 +7314,7 @@ class DocumentController extends Controller
 
         $sessionId = $validated['session_id'];
         $userEmail = $validated['user_email'] ?? null;
+        $pdfStateOwnership = $this->pdfStateOwnershipPayload($document, $sessionId, $userEmail);
         $annotationId = $validated['annotation_id'] ?? null;
         
         // If annotation_id is provided, update/create that specific annotation
@@ -5123,44 +7326,52 @@ class DocumentController extends Controller
                     'message' => 'Missing annotation payload.',
                 ], 422);
             }
-            
-            // Try to find existing annotation by annotation ID
-            $existingAnnotation = PdfState::where('document_id', $document->id)
-                ->where('session_id', $sessionId)
-                ->whereRaw("JSON_EXTRACT(annotation_data, '$.id') = ?", [$annotationId])
-                ->first();
+
+            $existingAnnotation = $this->findExistingPdfStateRecordForAnnotation(
+                $document,
+                $sessionId,
+                $annotation
+            );
             
             if ($existingAnnotation) {
                 // Update existing annotation
                 $existingAnnotation->update([
                     'annotation_data' => $annotation,
-                    'user_email' => $userEmail,
+                    'user_id' => $pdfStateOwnership['user_id'],
+                    'admin_id' => $pdfStateOwnership['admin_id'],
+                    'user_email' => $pdfStateOwnership['user_email'],
+                    'session_id' => $sessionId,
                     'page_number' => $annotation['pageIndex'] ?? null,
                     'state' => 'not_saved',
                 ]);
-                
+
+                $enriched = $this->annotationAssets()->enrichForClient($annotation);
+                $enriched['db_id'] = $existingAnnotation->id;
+
                 return response()->json([
                     'success' => true,
                     'message' => 'Annotation updated',
                     'updated' => true,
-                    'annotation' => $this->annotationAssets()->enrichForClient($annotation),
+                    'annotation' => $enriched,
                 ]);
             } else {
                 // Create new annotation
-                PdfState::create([
+                $newState = PdfState::create([
                     'document_id' => $document->id,
-                    'user_email' => $userEmail,
-                    'session_id' => $sessionId,
                     'page_number' => $annotation['pageIndex'] ?? null,
                     'annotation_data' => $annotation,
                     'state' => 'not_saved',
+                    ...$pdfStateOwnership,
                 ]);
-                
+
+                $enriched = $this->annotationAssets()->enrichForClient($annotation);
+                $enriched['db_id'] = $newState->id;
+
                 return response()->json([
                     'success' => true,
                     'message' => 'Annotation created',
                     'created' => true,
-                    'annotation' => $this->annotationAssets()->enrichForClient($annotation),
+                    'annotation' => $enriched,
                 ]);
             }
         }
@@ -5183,36 +7394,36 @@ class DocumentController extends Controller
                 continue;
             }
             $annotationId = $annotation['id'] ?? null;
-            
-            if ($annotationId) {
-                // Try to find and update existing annotation
-                $existingAnnotation = PdfState::where('document_id', $document->id)
-                    ->where('session_id', $sessionId)
-                    ->whereRaw("JSON_EXTRACT(annotation_data, '$.id') = ?", [$annotationId])
-                    ->first();
-                
-                if ($existingAnnotation) {
-                    $existingAnnotation->update([
-                        'annotation_data' => $annotation,
-                        'user_email' => $userEmail,
-                        'page_number' => $annotation['pageIndex'] ?? null,
-                        'state' => $targetState,
-                    ]);
-                    $savedCount++;
-                    $updatedCount++;
-                    \Log::info("Updated annotation", ['id' => $annotationId, 'state' => $targetState]);
-                    continue;
-                }
+
+            $existingAnnotation = $this->findExistingPdfStateRecordForAnnotation(
+                $document,
+                $sessionId,
+                $annotation
+            );
+
+            if ($existingAnnotation) {
+                $existingAnnotation->update([
+                    'annotation_data' => $annotation,
+                    'user_id' => $pdfStateOwnership['user_id'],
+                    'admin_id' => $pdfStateOwnership['admin_id'],
+                    'user_email' => $pdfStateOwnership['user_email'],
+                    'session_id' => $sessionId,
+                    'page_number' => $annotation['pageIndex'] ?? null,
+                    'state' => $targetState,
+                ]);
+                $savedCount++;
+                $updatedCount++;
+                \Log::info("Updated annotation", ['id' => $annotationId, 'state' => $targetState]);
+                continue;
             }
             
             // Create new annotation if not found
             PdfState::create([
                 'document_id' => $document->id,
-                'user_email' => $userEmail,
-                'session_id' => $sessionId,
                 'page_number' => $annotation['pageIndex'] ?? null,
                 'annotation_data' => $annotation,
                 'state' => $targetState,
+                ...$pdfStateOwnership,
             ]);
             $savedCount++;
             $createdCount++;
@@ -5231,49 +7442,53 @@ class DocumentController extends Controller
 
     private function resolveSavedAnnotationRecords(Document $document, string $requestedSessionId = '', bool $excludeMaterialized = false): array
     {
-        $fetchAnnotationsForSession = function (string $sessionId) use ($document, $excludeMaterialized) {
+        $ownership = $this->resolvePdfStateOwnership($document);
+        $buildRecordsQuery = function (?string $sessionId = null) use ($document, $excludeMaterialized, $ownership) {
             $query = PdfState::query()
                 ->where('document_id', $document->id)
-                ->where('session_id', $sessionId)
                 ->where('state', '!=', 'deleted')
-                ->where('state', '!=', 'extracted')
-                ->orderBy('page_number')
-                ->orderBy('updated_at');
+                ->where('state', '!=', 'extracted');
+
+            if ($sessionId !== null && $sessionId !== '') {
+                $query->where('session_id', $sessionId);
+            }
+
+            if (($ownership['user_id'] ?? null) !== null) {
+                $query->where('user_id', $ownership['user_id']);
+            } elseif (($ownership['admin_id'] ?? null) !== null) {
+                $query->where('admin_id', $ownership['admin_id']);
+            }
 
             if ($excludeMaterialized) {
                 $query->where('state', '!=', 'materialized');
             }
 
-            return $query->get();
+            return $query;
         };
 
         $resolvedSessionId = '';
         $records = collect();
 
         if ($requestedSessionId !== '') {
-            $records = $fetchAnnotationsForSession($requestedSessionId);
+            $records = $buildRecordsQuery($requestedSessionId)
+                ->orderBy('page_number')
+                ->orderBy('updated_at')
+                ->get();
             if ($records->isNotEmpty()) {
-                $resolvedSessionId = $requestedSessionId;
+                return [$requestedSessionId, $records];
             }
         }
 
-        if ($records->isEmpty()) {
-            $latestSessionQuery = PdfState::query()
-                ->where('document_id', $document->id)
-                ->where('state', '!=', 'deleted')
-                ->where('state', '!=', 'extracted')
-                ->orderByDesc('updated_at');
+        $latestSessionId = (string) ($buildRecordsQuery()
+            ->orderByDesc('updated_at')
+            ->value('session_id') ?? '');
 
-            if ($excludeMaterialized) {
-                $latestSessionQuery->where('state', '!=', 'materialized');
-            }
-
-            $latestSessionId = (string) ($latestSessionQuery->value('session_id') ?? '');
-
-            if ($latestSessionId !== '') {
-                $records = $fetchAnnotationsForSession($latestSessionId);
-                $resolvedSessionId = $latestSessionId;
-            }
+        if ($latestSessionId !== '') {
+            $records = $buildRecordsQuery($latestSessionId)
+                ->orderBy('page_number')
+                ->orderBy('updated_at')
+                ->get();
+            $resolvedSessionId = $latestSessionId;
         }
 
         return [$resolvedSessionId, $records];
@@ -5301,6 +7516,7 @@ class DocumentController extends Controller
             $annotation = is_array($record->annotation_data)
                 ? $annotationAssets->enrichForClient($record->annotation_data)
                 : [];
+            $annotation['db_id'] = $record->id;
             $annotation['db_state'] = $record->state;
             $annotation['db_updated_at'] = optional($record->updated_at)?->toIso8601String();
             return $annotation;
@@ -5319,28 +7535,43 @@ class DocumentController extends Controller
     {
         $validated = $request->validate([
             'session_id' => 'nullable|string',
+            'session_ids' => 'nullable|array',
+            'session_ids.*' => 'string',
         ]);
 
         $requestedSessionId = is_string($validated['session_id'] ?? null)
             ? trim((string) $validated['session_id'])
             : '';
-        $editorEmail = $this->resolveEditorEmail('');
+        $requestedSessionIds = collect($validated['session_ids'] ?? [])
+            ->map(static fn ($value) => is_string($value) ? trim($value) : '')
+            ->filter(static fn ($value) => $value !== '')
+            ->prepend($requestedSessionId)
+            ->unique()
+            ->values();
+        $editorOwnership = $this->resolvePdfStateOwnership();
 
         $query = PdfState::query()
             ->with(['document:id,original_name,path'])
-            ->select(['id', 'document_id', 'user_email', 'session_id', 'state', 'updated_at'])
+            ->select(['id', 'document_id', 'user_id', 'admin_id', 'user_email', 'session_id', 'state', 'updated_at'])
             ->where('state', '!=', 'deleted')
             ->where('state', '!=', 'extracted');
 
-        if ($editorEmail !== '' && $requestedSessionId !== '') {
-            $query->where(function ($scopedQuery) use ($editorEmail, $requestedSessionId) {
-                $scopedQuery->where('user_email', $editorEmail)
-                    ->orWhere('session_id', $requestedSessionId);
+        if ((($editorOwnership['user_id'] ?? null) !== null || ($editorOwnership['admin_id'] ?? null) !== null) && $requestedSessionIds->isNotEmpty()) {
+            $sessionIds = $requestedSessionIds->all();
+            $query->where(function ($scopedQuery) use ($editorOwnership, $sessionIds) {
+                if (($editorOwnership['user_id'] ?? null) !== null) {
+                    $scopedQuery->where('user_id', $editorOwnership['user_id']);
+                } else {
+                    $scopedQuery->where('admin_id', $editorOwnership['admin_id']);
+                }
+                $scopedQuery->orWhereIn('session_id', $sessionIds);
             });
-        } elseif ($editorEmail !== '') {
-            $query->where('user_email', $editorEmail);
-        } elseif ($requestedSessionId !== '') {
-            $query->where('session_id', $requestedSessionId);
+        } elseif (($editorOwnership['user_id'] ?? null) !== null) {
+            $query->where('user_id', $editorOwnership['user_id']);
+        } elseif (($editorOwnership['admin_id'] ?? null) !== null) {
+            $query->where('admin_id', $editorOwnership['admin_id']);
+        } elseif ($requestedSessionIds->isNotEmpty()) {
+            $query->whereIn('session_id', $requestedSessionIds->all());
         } else {
             return response()->json([
                 'success' => true,
@@ -5353,7 +7584,7 @@ class DocumentController extends Controller
             ->get()
             ->filter(static fn (PdfState $record) => $record->document instanceof Document);
 
-        $pdfs = $records
+        $savedEntriesByDocumentId = $records
             ->groupBy('document_id')
             ->map(function ($group) {
                 /** @var \Illuminate\Support\Collection $group */
@@ -5374,8 +7605,61 @@ class DocumentController extends Controller
                     'delete_url' => route('documents.deleteSavedPdfOption', $document),
                 ];
             })
-            ->filter()
-            ->sortByDesc(static fn (array $entry) => $entry['updated_at'] ?? '')
+            ->filter();
+
+        $documentQuery = Document::query()
+            ->select(['id', 'user_id', 'admin_id', 'original_name', 'path', 'updated_at', 'mode'])
+            ->where(function ($query) {
+                $query->whereNull('mode')
+                    ->orWhere('mode', '!=', 'regression');
+            });
+        $this->applyAccessibleDocumentScope($request, $documentQuery);
+
+        $documents = $documentQuery
+            ->orderByDesc('updated_at')
+            ->get()
+            ->keyBy('id');
+
+        $savedEntriesByDocumentId->each(function (array $entry, $documentId) use ($documents, $request) {
+            if (!$documents->has($documentId) && !empty($entry['document_id'])) {
+                $document = Document::query()
+                    ->select(['id', 'user_id', 'admin_id', 'original_name', 'path', 'updated_at', 'mode'])
+                    ->find($entry['document_id']);
+                if ($document && $this->canAccessDocument($request, $document)) {
+                    $documents->put($document->id, $document);
+                }
+            }
+        });
+
+        $pdfs = $documents
+            ->map(function (Document $document) use ($savedEntriesByDocumentId) {
+                $savedEntry = $savedEntriesByDocumentId->get($document->id);
+                $savedUpdatedAt = $savedEntry['updated_at'] ?? null;
+                $documentUpdatedAt = optional($document->updated_at)?->toIso8601String();
+                $sortTimestamp = max(
+                    optional($document->updated_at)?->getTimestamp() ?? 0,
+                    $savedUpdatedAt ? (strtotime($savedUpdatedAt) ?: 0) : 0
+                );
+
+                return [
+                    'document_id' => $document->id,
+                    'pdf_name' => $document->original_name ?: basename((string) $document->path),
+                    'session_id' => $savedEntry['session_id'] ?? null,
+                    'annotation_count' => $savedEntry['annotation_count'] ?? 0,
+                    'has_saved_state' => (bool) $savedEntry,
+                    'updated_at' => $savedUpdatedAt ?: $documentUpdatedAt,
+                    'edit_url' => route('documents.edit', $document),
+                    'load_url' => route('documents.loadSavedPdf', $document),
+                    'delete_url' => route('documents.deleteSavedPdfOption', $document),
+                    '_sort_timestamp' => $sortTimestamp,
+                ];
+            })
+            ->sortByDesc(static fn (array $entry) => $entry['_sort_timestamp'] ?? 0)
+            ->values()
+            ->map(function (array $entry) {
+                unset($entry['_sort_timestamp']);
+                return $entry;
+            })
             ->values();
 
         return response()->json([
@@ -5398,16 +7682,15 @@ class DocumentController extends Controller
             ], 422);
         }
 
-        $editorEmail = $this->resolveEditorEmail('');
+        $editorOwnership = $this->resolvePdfStateOwnership($document);
         $deleteQuery = PdfState::query()
             ->where('document_id', $document->id)
             ->where('session_id', $sessionId);
 
-        if ($editorEmail !== '') {
-            $deleteQuery->where(function ($scopedQuery) use ($editorEmail) {
-                $scopedQuery->whereNull('user_email')
-                    ->orWhere('user_email', $editorEmail);
-            });
+        if (($editorOwnership['user_id'] ?? null) !== null) {
+            $deleteQuery->where('user_id', $editorOwnership['user_id']);
+        } elseif (($editorOwnership['admin_id'] ?? null) !== null) {
+            $deleteQuery->where('admin_id', $editorOwnership['admin_id']);
         }
 
         $deletedCount = $deleteQuery->delete();
@@ -5655,8 +7938,11 @@ class DocumentController extends Controller
                 : [],
             $annotationsPayload
         );
-        if (empty($renderAnnotationsPayload) && !empty($sessionAnnotationsPayload)) {
-            $renderAnnotationsPayload = $sessionAnnotationsPayload;
+        if (empty($renderAnnotationsPayload) && !empty($sessionAnnotationsPayload) && !empty($redrawPageIndices)) {
+            $renderAnnotationsPayload = $this->filterRenderAnnotationsForSelectiveRedraw(
+                $sessionAnnotationsPayload,
+                $redrawPageIndices
+            );
         }
         if (empty($redrawPageIndices) && !empty($renderAnnotationsPayload)) {
             $redrawPageIndices = $this->collectAnnotationPageIndices($renderAnnotationsPayload);
@@ -5674,6 +7960,12 @@ class DocumentController extends Controller
             $renderAnnotationsPayload,
             $deletedPromotedSourceKeys
         );
+        if (empty($renderAnnotationsPayload) && !empty($redrawPageIndices)) {
+            $renderAnnotationsPayload = $this->filterRenderAnnotationsForSelectiveRedraw(
+                !empty($sessionAnnotationsPayload) ? $sessionAnnotationsPayload : $annotationsPayload,
+                $redrawPageIndices
+            );
+        }
 
         $annotationsPayload = array_map(function ($annotation) use ($document) {
             if (!is_array($annotation)) {
@@ -5926,6 +8218,13 @@ class DocumentController extends Controller
         ]);
 
         if ($sessionId !== '') {
+            $pdfStateOwnership = $this->resolvePdfStateOwnership($document);
+            $this->syncDeletedPromotedSourceKeysForSession(
+                $document,
+                $sessionId,
+                $deletedPromotedSourceKeys
+            );
+
             foreach ($persistableAnnotationsPayload as $annotation) {
                 if (!is_array($annotation)) {
                     continue;
@@ -5937,15 +8236,26 @@ class DocumentController extends Controller
                     continue;
                 }
 
-                $existingRecord = PdfState::query()
+                $existingRecordQuery = PdfState::query()
                     ->where('document_id', $document->id)
-                    ->where('session_id', $sessionId)
-                    ->whereRaw("JSON_EXTRACT(annotation_data, '$.id') = ?", [$annotationId])
-                    ->first();
+                    ->whereRaw("JSON_EXTRACT(annotation_data, '$.id') = ?", [$annotationId]);
+                $this->applyPdfStateOwnershipScope(
+                    $existingRecordQuery,
+                    $pdfStateOwnership['user_id'],
+                    $pdfStateOwnership['admin_id'],
+                    $sessionId
+                );
+                $existingRecord = $existingRecordQuery->first();
 
                 if ($existingRecord) {
                     $existingRecord->update([
                         'annotation_data' => $annotation,
+                        'session_id' => $sessionId,
+                        'user_id' => $pdfStateOwnership['user_id'],
+                        'admin_id' => $pdfStateOwnership['admin_id'],
+                        'user_email' => ($pdfStateOwnership['user_id'] !== null || $pdfStateOwnership['admin_id'] !== null)
+                            ? null
+                            : $existingRecord->user_email,
                         'page_number' => $annotation['pageIndex'] ?? null,
                         'state' => 'saved',
                     ]);
@@ -5954,11 +8264,10 @@ class DocumentController extends Controller
 
                 PdfState::create([
                     'document_id' => $document->id,
-                    'user_email' => null,
-                    'session_id' => $sessionId,
                     'page_number' => $annotation['pageIndex'] ?? null,
                     'annotation_data' => $annotation,
                     'state' => 'saved',
+                    ...$this->pdfStateOwnershipPayload($document, $sessionId),
                 ]);
             }
 
@@ -5972,6 +8281,342 @@ class DocumentController extends Controller
         ]);
     }
 
+    public function stampPdfStatePreview(Request $request)
+    {
+        $validated = $request->validate([
+            'annotation' => 'nullable|array',
+            'annotations' => 'nullable|array',
+            'document_id' => 'nullable|integer|exists:documents,id',
+            'pdf_state_source' => 'nullable|string|in:saved,extracted',
+            'page_width' => 'nullable|numeric|min:1',
+            'page_height' => 'nullable|numeric|min:1',
+            'reuse_url' => 'nullable|boolean',
+            'use_base' => 'nullable|boolean',
+        ]);
+
+        $annotationsPayload = $request->input('annotations', null);
+        $singleAnnotationPayload = $request->input('annotation', null);
+        $documentIdFilter = isset($validated['document_id']) ? (int) $validated['document_id'] : 0;
+        $pdfStateSource = (string) ($validated['pdf_state_source'] ?? 'saved');
+        $useBase = $request->has('use_base')
+            ? (bool) ($validated['use_base'] ?? false)
+            : ($documentIdFilter > 0);
+        $pdfStateIdInput = $request->input('pdf_state_id', null);
+        $pdfStateIds = [];
+        if (is_array($pdfStateIdInput)) {
+            foreach ($pdfStateIdInput as $value) {
+                if (is_numeric($value)) {
+                    $pdfStateIds[] = (int) $value;
+                }
+            }
+        } elseif (is_numeric($pdfStateIdInput)) {
+            $pdfStateIds[] = (int) $pdfStateIdInput;
+        }
+        $pdfStateIds = array_values(array_unique(array_filter($pdfStateIds, static fn ($value) => $value > 0)));
+
+        $annotations = [];
+        $source = null;
+        $usingDocumentStateSource = false;
+
+        if (is_array($annotationsPayload)) {
+            $annotations = array_values(array_filter($annotationsPayload, static fn ($annotation) => is_array($annotation)));
+            $source = 'annotations';
+        } elseif (is_array($singleAnnotationPayload)) {
+            $annotations = [$singleAnnotationPayload];
+            $source = 'annotation';
+        } elseif (!empty($pdfStateIds)) {
+            $records = PdfState::query()
+                ->whereIn('id', $pdfStateIds)
+                ->get()
+                ->keyBy(static fn (PdfState $record) => (int) $record->id);
+
+            $missingIds = array_values(array_filter(
+                $pdfStateIds,
+                static fn ($id) => !$records->has((int) $id)
+            ));
+            if (!empty($missingIds)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'One or more requested pdf_state rows were not found.',
+                    'missing_ids' => $missingIds,
+                ], 422);
+            }
+
+            foreach ($pdfStateIds as $pdfStateId) {
+                $record = $records->get((int) $pdfStateId);
+                $annotationData = $record && is_array($record->annotation_data) ? $record->annotation_data : null;
+                if (!$annotationData) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "pdf_state row {$pdfStateId} does not contain an annotation payload.",
+                    ], 422);
+                }
+                $annotationData['documentId'] = (int) ($record->document_id ?? 0);
+                $annotationData['__documentId'] = (int) ($record->document_id ?? 0);
+                $annotations[] = $annotationData;
+            }
+            $source = count($pdfStateIds) === 1 ? 'pdf_state' : 'pdf_state_array';
+        } elseif ($documentIdFilter > 0) {
+            $records = PdfState::query()
+                ->where('document_id', $documentIdFilter)
+                ->where('state', $pdfStateSource)
+                ->orderBy('id')
+                ->get();
+
+            if ($records->isEmpty()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "No {$pdfStateSource} pdf_state annotations were found for the requested document.",
+                    'document_id' => $documentIdFilter,
+                    'pdf_state_source' => $pdfStateSource,
+                ], 422);
+            }
+
+            foreach ($records as $record) {
+                $annotationData = is_array($record->annotation_data) ? $record->annotation_data : null;
+                if (!$annotationData) {
+                    continue;
+                }
+                $annotationData['documentId'] = (int) ($record->document_id ?? 0);
+                $annotationData['__documentId'] = (int) ($record->document_id ?? 0);
+                $annotations[] = $annotationData;
+            }
+
+            if (empty($annotations)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "No valid {$pdfStateSource} pdf_state annotation payloads were found for the requested document.",
+                    'document_id' => $documentIdFilter,
+                    'pdf_state_source' => $pdfStateSource,
+                ], 422);
+            }
+
+            $source = 'document_pdf_state_' . $pdfStateSource;
+            $usingDocumentStateSource = true;
+        } else {
+            $rawPayload = $request->all();
+            if (is_array($rawPayload) && isset($rawPayload['type'])) {
+                $annotations = [$rawPayload];
+                $source = 'raw_annotation';
+            } elseif (array_is_list($rawPayload) && !empty($rawPayload) && is_array($rawPayload[0] ?? null)) {
+                $annotations = array_values(array_filter($rawPayload, static fn ($annotation) => is_array($annotation)));
+                $source = 'raw_annotations';
+            }
+        }
+
+        if (empty($annotations)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Provide document_id, pdf_state_id, annotation, or annotations.',
+            ], 422);
+        }
+
+        if ($usingDocumentStateSource) {
+            $useBase = true;
+        }
+
+        $normalizedAnnotations = [];
+        foreach ($annotations as $index => $annotation) {
+            if (!is_array($annotation)) {
+                continue;
+            }
+            $normalizedAnnotation = $annotation;
+            if ($useBase) {
+                $normalizedAnnotation['pageIndex'] = is_numeric($normalizedAnnotation['pageIndex'] ?? null)
+                    ? max(0, (int) $normalizedAnnotation['pageIndex'])
+                    : 0;
+            } else {
+                $normalizedAnnotation['pageIndex'] = 0;
+            }
+            $annotationId = trim((string) ($normalizedAnnotation['id'] ?? ''));
+            if ($annotationId === '') {
+                $normalizedAnnotation['id'] = 'blank_preview_' . ($index + 1);
+            }
+            $normalizedAnnotations[] = $normalizedAnnotation;
+        }
+
+        if (empty($normalizedAnnotations)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No valid annotation payloads were provided.',
+            ], 422);
+        }
+
+        $annotationDocumentIds = [];
+        foreach ($normalizedAnnotations as $annotation) {
+            if (!is_array($annotation)) {
+                continue;
+            }
+            $documentIdValue = $annotation['documentId'] ?? $annotation['__documentId'] ?? null;
+            if (is_numeric($documentIdValue) && (int) $documentIdValue > 0) {
+                $annotationDocumentIds[] = (int) $documentIdValue;
+            }
+        }
+        $annotationDocumentIds = array_values(array_unique($annotationDocumentIds));
+
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+        $scriptPath = base_path('python/pdf-editor/stamp_annotations_on_blank_pdf.py');
+        if (!is_file($scriptPath)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Blank preview stamping script not found.',
+            ], 500);
+        }
+
+        $baseDocumentId = isset($validated['document_id']) ? (int) $validated['document_id'] : 0;
+        $resolvedBasePdfPath = null;
+        $resolvedSourcePdfPath = null;
+        if ($useBase) {
+            if ($baseDocumentId <= 0) {
+                if (count($annotationDocumentIds) === 1) {
+                    $baseDocumentId = $annotationDocumentIds[0];
+                } elseif (count($annotationDocumentIds) > 1) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'use_base requires all annotations to belong to one document, or an explicit document_id.',
+                        'document_ids' => $annotationDocumentIds,
+                    ], 422);
+                }
+            }
+
+            if ($baseDocumentId <= 0) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'use_base requires a document_id or pdf_state rows tied to one document.',
+                ], 422);
+            }
+
+            $baseDocument = Document::query()->find($baseDocumentId);
+            if (!$baseDocument) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Requested base document was not found.',
+                    'document_id' => $baseDocumentId,
+                ], 422);
+            }
+            $this->authorizeDocumentAccess($request, $baseDocument);
+
+            $resolvedBasePdfPath = $this->ensureCleanPdfPath($baseDocument, $pythonBinary);
+            if (!$resolvedBasePdfPath || !is_file($resolvedBasePdfPath)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unable to resolve the clean redacted base PDF for the requested document.',
+                    'document_id' => $baseDocumentId,
+                ], 500);
+            }
+
+            $resolvedSourcePdfPath = Storage::path($baseDocument->path);
+            if ($baseDocument->original_backup_path && Storage::exists($baseDocument->original_backup_path)) {
+                $originalBackupPath = Storage::path($baseDocument->original_backup_path);
+                if (is_file($originalBackupPath)) {
+                    $resolvedSourcePdfPath = $originalBackupPath;
+                }
+            }
+            if (!$resolvedSourcePdfPath || !is_file($resolvedSourcePdfPath)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unable to resolve the original source PDF for the requested document.',
+                    'document_id' => $baseDocumentId,
+                ], 500);
+            }
+        }
+
+        Storage::disk('public')->makeDirectory('debug/pdf-state-stamps');
+        $reuseUrl = (bool) ($validated['reuse_url'] ?? false);
+        $previewModeSuffix = $useBase
+            ? '-base-' . ($baseDocumentId > 0 ? $baseDocumentId : 'doc')
+            : '-blank';
+        $stableArrayScope = count($annotationDocumentIds) === 1
+            ? 'doc-' . $annotationDocumentIds[0]
+            : 'shared';
+        if ($reuseUrl) {
+            if ($usingDocumentStateSource && $documentIdFilter > 0) {
+                $stableFilename = 'pdf-state-document-' . $documentIdFilter . '-' . $pdfStateSource . $previewModeSuffix . '.pdf';
+            } elseif (!empty($pdfStateIds)) {
+                if (count($pdfStateIds) === 1) {
+                    $stableFilename = 'pdf-state-' . $pdfStateIds[0] . $previewModeSuffix . '.pdf';
+                } else {
+                    $stableFilename = 'pdf-state-array-' . $stableArrayScope . $previewModeSuffix . '.pdf';
+                }
+            } else {
+                $stableFilename = 'payload-' . substr(
+                    sha1(
+                        json_encode($normalizedAnnotations, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+                        . $previewModeSuffix
+                    ),
+                    0,
+                    20
+                ) . '.pdf';
+            }
+            $relativeOutputPath = 'debug/pdf-state-stamps/' . $stableFilename;
+        } else {
+            $relativeOutputPath = 'debug/pdf-state-stamps/' . Str::uuid() . '.pdf';
+        }
+        $absoluteOutputPath = Storage::disk('public')->path($relativeOutputPath);
+
+        $tempDir = storage_path('app/temp');
+        if (!is_dir($tempDir)) {
+            @mkdir($tempDir, 0775, true);
+        }
+
+        $annotationsFile = tempnam($tempDir, 'blank_pdf_state_preview_');
+        if ($annotationsFile === false) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unable to allocate temporary annotation file.',
+            ], 500);
+        }
+
+        file_put_contents(
+            $annotationsFile,
+            json_encode($normalizedAnnotations, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+        );
+
+        $command = sprintf(
+            '%s %s %s %s%s%s%s%s 2>&1',
+            escapeshellarg($pythonBinary),
+            escapeshellarg($scriptPath),
+            escapeshellarg($annotationsFile),
+            escapeshellarg($absoluteOutputPath),
+            isset($validated['page_width']) ? ' ' . escapeshellarg((string) $validated['page_width']) : '',
+            isset($validated['page_height']) ? ' ' . escapeshellarg((string) $validated['page_height']) : '',
+            $resolvedBasePdfPath ? ' --base-pdf ' . escapeshellarg($resolvedBasePdfPath) : '',
+            $resolvedSourcePdfPath ? ' --source-pdf ' . escapeshellarg($resolvedSourcePdfPath) : ''
+        );
+
+        $output = [];
+        $returnCode = 1;
+        try {
+            exec($command, $output, $returnCode);
+        } finally {
+            @unlink($annotationsFile);
+        }
+
+        if ($returnCode !== 0 || !is_file($absoluteOutputPath)) {
+            if (is_file($absoluteOutputPath)) {
+                @unlink($absoluteOutputPath);
+            }
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to stamp annotation preview PDF.',
+                'error' => implode("\n", $output),
+            ], 500);
+        }
+
+        return response()->json([
+            'success' => true,
+            'source' => $source,
+            'annotation_count' => count($normalizedAnnotations),
+            'reuse_url' => $reuseUrl,
+            'use_base' => $useBase,
+            'pdf_state_source' => $usingDocumentStateSource ? $pdfStateSource : null,
+            'document_id' => $baseDocumentId > 0 ? $baseDocumentId : null,
+            'file_url' => url(Storage::url($relativeOutputPath)),
+            'relative_path' => $relativeOutputPath,
+            'debug_output' => implode("\n", $output),
+        ]);
+    }
+
     public function markAnnotationsSaved(Request $request, Document $document)
     {
         $validated = $request->validate([
@@ -5981,6 +8626,7 @@ class DocumentController extends Controller
         ]);
 
         $sessionId = $validated['session_id'];
+        $ownership = $this->resolvePdfStateOwnership($document);
         $annotationIds = array_values(array_filter(array_map(
             static fn ($value) => is_string($value) ? trim($value) : '',
             $validated['annotation_ids'] ?? []
@@ -5988,15 +8634,17 @@ class DocumentController extends Controller
 
         if (!empty($annotationIds)) {
             foreach ($annotationIds as $annotationId) {
-                PdfState::where('document_id', $document->id)
-                    ->where('session_id', $sessionId)
+                $updateQuery = PdfState::where('document_id', $document->id)
                     ->whereRaw("JSON_EXTRACT(annotation_data, '$.id') = ?", [$annotationId])
-                    ->update(['state' => 'saved']);
+                    ->where('state', '!=', 'extracted');
+                $this->applyPdfStateOwnershipScope($updateQuery, $ownership['user_id'], $ownership['admin_id'], $sessionId);
+                $updateQuery->update(['state' => 'saved']);
             }
         } else {
-            PdfState::where('document_id', $document->id)
-                ->where('session_id', $sessionId)
-                ->update(['state' => 'saved']);
+            $updateAllQuery = PdfState::where('document_id', $document->id)
+                ->where('state', '!=', 'extracted');
+            $this->applyPdfStateOwnershipScope($updateAllQuery, $ownership['user_id'], $ownership['admin_id'], $sessionId);
+            $updateAllQuery->update(['state' => 'saved']);
         }
 
         return response()->json([
@@ -6016,6 +8664,7 @@ class DocumentController extends Controller
         ]);
 
         $sessionId = trim((string) $validated['session_id']);
+        $ownership = $this->resolvePdfStateOwnership($document);
         $annotationIds = array_values(array_filter(array_map(
             static fn ($v) => is_string($v) ? trim($v) : '',
             $validated['annotation_ids']
@@ -6026,12 +8675,14 @@ class DocumentController extends Controller
                 ? $validated['deleted_promoted_source_keys']
                 : []
         )));
+        $deletedPromotedSourceKeyLookup = array_fill_keys($deletedPromotedSourceKeys, true);
 
         foreach ($annotationIds as $annotationId) {
-            $record = PdfState::where('document_id', $document->id)
-                ->where('session_id', $sessionId)
+            $recordQuery = PdfState::where('document_id', $document->id)
                 ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.id')) = ?", [$annotationId])
-                ->first();
+                ->where('state', '!=', 'extracted');
+            $this->applyPdfStateOwnershipScope($recordQuery, $ownership['user_id'], $ownership['admin_id'], $sessionId);
+            $record = $recordQuery->first();
 
             if (!$record) {
                 continue;
@@ -6039,7 +8690,7 @@ class DocumentController extends Controller
 
             $annotationData = is_array($record->annotation_data) ? $record->annotation_data : [];
             if (!empty($annotationData['promotedFromExtraction']) && !empty($annotationData['promotedSourceKey'])) {
-                $annotationData['_explicitPromotedDelete'] = true;
+                $deletedPromotedSourceKeyLookup[trim((string) $annotationData['promotedSourceKey'])] = true;
             }
 
             $record->annotation_data = $annotationData;
@@ -6047,39 +8698,22 @@ class DocumentController extends Controller
             $record->save();
         }
 
+        $deletedPromotedSourceKeys = array_keys(array_filter(
+            $deletedPromotedSourceKeyLookup,
+            static fn ($enabled, $sourceKey) => $enabled && $sourceKey !== '',
+            ARRAY_FILTER_USE_BOTH
+        ));
+        sort($deletedPromotedSourceKeys);
+
         foreach ($deletedPromotedSourceKeys as $sourceKey) {
-            $existingRecord = PdfState::query()
+            $promotedDeleteQuery = PdfState::query()
                 ->where('document_id', $document->id)
-                ->where('session_id', $sessionId)
-                ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.promotedSourceKey')) = ?", [$sourceKey])
-                ->orderByDesc('updated_at')
-                ->first();
+                ->where('state', '!=', 'deleted')
+                ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.promotedSourceKey')) = ?", [$sourceKey]);
+            $this->applyPdfStateOwnershipScope($promotedDeleteQuery, $ownership['user_id'], $ownership['admin_id'], $sessionId);
+            $promotedDeleteQuery->update(['state' => 'deleted']);
 
-            if ($existingRecord) {
-                $annotationData = is_array($existingRecord->annotation_data) ? $existingRecord->annotation_data : [];
-                $annotationData['promotedFromExtraction'] = true;
-                $annotationData['promotedSourceKey'] = $sourceKey;
-                $annotationData['_explicitPromotedDelete'] = true;
-                $existingRecord->annotation_data = $annotationData;
-                $existingRecord->state = 'deleted';
-                $existingRecord->save();
-                continue;
-            }
-
-            PdfState::create([
-                'document_id' => $document->id,
-                'user_email' => null,
-                'session_id' => $sessionId,
-                'page_number' => $this->parsePromotedSourceKeyPageIndex($sourceKey),
-                'annotation_data' => [
-                    'id' => 'deleted_promoted_' . Str::uuid(),
-                    'type' => 'text',
-                    'promotedFromExtraction' => true,
-                    'promotedSourceKey' => $sourceKey,
-                    '_explicitPromotedDelete' => true,
-                ],
-                'state' => 'deleted',
-            ]);
+            $this->ensurePromotedSuppressionRecordForSession($document, $sessionId, $sourceKey);
         }
 
         return response()->json([
@@ -6096,10 +8730,15 @@ class DocumentController extends Controller
     public function saveAnnotationState(Request $request, Document $document)
     {
         $validated = $request->validate([
-            'annotations' => 'present|array',
-            'annotations.*.type' => 'required|string',
-            'annotations.*.pageIndex' => 'required',
+            'annotations' => 'nullable|array',
+            'annotations.*.type' => 'required_with:annotations|string',
+            'annotations.*.pageIndex' => 'required_with:annotations',
+            'session_annotations' => 'nullable|array',
+            'session_annotations.*.type' => 'required_with:session_annotations|string',
+            'session_annotations.*.pageIndex' => 'required_with:session_annotations',
             'acro_form_entries' => 'nullable|array',
+            'deleted_promoted_source_keys' => 'nullable|array',
+            'deleted_promoted_source_keys.*' => 'string',
             'session_id' => 'nullable|string',
         ]);
 
@@ -6109,6 +8748,15 @@ class DocumentController extends Controller
         }
 
         $annotationsPayload = $this->normalizeAnnotationsForPersistence($document, $annotationsPayload);
+        $sessionAnnotationsPayload = $request->input('session_annotations', null);
+        if ($request->exists('session_annotations')) {
+            if (!is_array($sessionAnnotationsPayload)) {
+                return response()->json(['success' => false, 'message' => 'Invalid session annotations payload.'], 422);
+            }
+            $sessionAnnotationsPayload = $this->normalizeAnnotationsForPersistence($document, $sessionAnnotationsPayload);
+        } else {
+            $sessionAnnotationsPayload = $annotationsPayload;
+        }
         $acroFormEntries = $this->normalizeAcroFormEntriesForPersistence(
             is_array($validated['acro_form_entries'] ?? null) ? $validated['acro_form_entries'] : []
         );
@@ -6116,52 +8764,33 @@ class DocumentController extends Controller
         $sessionId = is_string($validated['session_id'] ?? null)
             ? trim((string) $validated['session_id'])
             : '';
+        $deletedPromotedSourceKeys = $this->mergeDeletedPromotedSourceKeys(
+            $document,
+            $sessionId,
+            is_array($validated['deleted_promoted_source_keys'] ?? null)
+                ? array_values(array_filter($validated['deleted_promoted_source_keys'], 'is_string'))
+                : [],
+            $sessionAnnotationsPayload
+        );
 
         if ($sessionId !== '') {
-            foreach ($annotationsPayload as $annotation) {
-                if (!is_array($annotation)) {
-                    continue;
-                }
-                $annotationId = is_string($annotation['id'] ?? null)
-                    ? trim((string) $annotation['id'])
-                    : '';
-                if ($annotationId === '') {
-                    continue;
-                }
-
-                $existing = PdfState::query()
-                    ->where('document_id', $document->id)
-                    ->where('session_id', $sessionId)
-                    ->whereRaw("JSON_EXTRACT(annotation_data, '$.id') = ?", [$annotationId])
-                    ->first();
-
-                if ($existing) {
-                    $existing->update([
-                        'annotation_data' => $annotation,
-                        'page_number' => $annotation['pageIndex'] ?? null,
-                        'state' => 'saved',
-                    ]);
-                } else {
-                    PdfState::create([
-                        'document_id' => $document->id,
-                        'user_email' => null,
-                        'session_id' => $sessionId,
-                        'page_number' => $annotation['pageIndex'] ?? null,
-                        'annotation_data' => $annotation,
-                        'state' => 'saved',
-                    ]);
-                }
-            }
-
-            // Purge orphans (annotations that were deleted by the user).
-            // Do not purge rows absent from this payload. This endpoint stores the
-            // current material annotation state, not an exhaustive layer snapshot.
+            $this->upsertPdfStateSessionSnapshot(
+                $document,
+                $sessionId,
+                $sessionAnnotationsPayload,
+                'saved'
+            );
+            $this->syncDeletedPromotedSourceKeysForSession(
+                $document,
+                $sessionId,
+                $deletedPromotedSourceKeys
+            );
 
             $this->upsertPdfAcroFormSessionState(
                 $document,
                 $sessionId,
                 $acroFormEntries,
-                Auth::id(),
+                $this->resolvePdfStateOwnership($document),
                 'saved'
             );
         }
@@ -6198,6 +8827,7 @@ class DocumentController extends Controller
             'deleted_promoted_source_keys.*' => 'string',
             'use_clean_pdf' => 'nullable|boolean',
             'use_original_pdf' => 'nullable|boolean',
+            'use_exact_download_path' => 'nullable|boolean',
             'session_id' => 'nullable|string',
         ]);
 
@@ -6238,8 +8868,11 @@ class DocumentController extends Controller
                 : [],
             $annotationsPayload
         );
-        if (empty($renderAnnotationsPayload) && !empty($sessionAnnotationsPayload)) {
-            $renderAnnotationsPayload = $sessionAnnotationsPayload;
+        if (empty($renderAnnotationsPayload) && !empty($sessionAnnotationsPayload) && !empty($redrawPageIndices)) {
+            $renderAnnotationsPayload = $this->filterRenderAnnotationsForSelectiveRedraw(
+                $sessionAnnotationsPayload,
+                $redrawPageIndices
+            );
         }
         if (empty($redrawPageIndices) && !empty($renderAnnotationsPayload)) {
             $redrawPageIndices = $this->collectAnnotationPageIndices($renderAnnotationsPayload);
@@ -6250,18 +8883,45 @@ class DocumentController extends Controller
             $renderAnnotationsPayload,
             $deletedPromotedSourceKeys
         );
+        if (empty($renderAnnotationsPayload) && !empty($redrawPageIndices)) {
+            $renderAnnotationsPayload = $this->filterRenderAnnotationsForSelectiveRedraw(
+                !empty($sessionAnnotationsPayload) ? $sessionAnnotationsPayload : $annotationsPayload,
+                $redrawPageIndices
+            );
+        }
 
         $pdfPath = Storage::path($document->path);
         $useCleanPdf = $request->boolean('use_clean_pdf');
         $useOriginalPdf = $request->boolean('use_original_pdf');
+        $useExactDownloadPath = $request->boolean('use_exact_download_path');
         $editorEmail = $this->resolveEditorEmail();
+        $originalSourcePdfPath = $pdfPath;
+        if ($document->original_backup_path && Storage::exists($document->original_backup_path)) {
+            $originalBackupPath = Storage::path($document->original_backup_path);
+            if (file_exists($originalBackupPath)) {
+                $originalSourcePdfPath = $originalBackupPath;
+            }
+        }
 
         // Select the redraw working source separately from the preserve source
         // used for untouched pages. Clean PDFs are valid redraw bases but cannot
         // be used to preserve untouched pages because their text layer is stripped.
         $sourcePdfPath = $pdfPath;
         $preservePdfPath = $pdfPath;
-        if ($useOriginalPdf && $document->original_backup_path && Storage::exists($document->original_backup_path)) {
+        $useExactCleanRebuild = $useExactDownloadPath && !empty($sessionAnnotationsPayload);
+        if ($useExactCleanRebuild) {
+            $cleanPath = $this->ensureCleanPdfPath(
+                $document,
+                $pythonBinary,
+                $editorEmail,
+                $sessionId !== '' ? $sessionId : null
+            );
+            if (!$cleanPath || !file_exists($cleanPath)) {
+                return response()->json(['success' => false, 'message' => 'Clean PDF source not found.'], 404);
+            }
+            $sourcePdfPath = $cleanPath;
+            $preservePdfPath = $originalSourcePdfPath;
+        } elseif ($useOriginalPdf && $document->original_backup_path && Storage::exists($document->original_backup_path)) {
             $originalPath = Storage::path($document->original_backup_path);
             if (file_exists($originalPath)) {
                 $sourcePdfPath = $originalPath;
@@ -6284,6 +8944,14 @@ class DocumentController extends Controller
             return response()->json(['success' => false, 'message' => 'Source PDF not found.'], 404);
         }
 
+        if ($useExactCleanRebuild) {
+            // Temporary exact-download path: rebuild from the clean/redacted base
+            // using the full session annotation set plus replay from the original
+            // source PDF for unchanged promoted extraction blocks.
+            $redrawPageIndices = [];
+            $renderAnnotationsPayload = [];
+        }
+
         $tempDir = storage_path('app/temp');
         if (!is_dir($tempDir)) {
             @mkdir($tempDir, 0775, true);
@@ -6297,13 +8965,28 @@ class DocumentController extends Controller
 
         // Write annotations payload to a temp JSON file for the Python script.
         $annotationsFile = $tempDir . '/download_ann_' . $document->id . '_' . uniqid('', true) . '.json';
-        $annotationsJson = json_encode($this->prepareAnnotationsForPython($annotationsPayload), JSON_INVALID_UTF8_SUBSTITUTE);
+        $pythonAnnotationsPayload = $useExactCleanRebuild ? $sessionAnnotationsPayload : $annotationsPayload;
+        $preparedAnnotationsForPython = $this->prepareAnnotationsForPython($pythonAnnotationsPayload);
+        if ($useExactCleanRebuild) {
+            $preparedAnnotationsForPython = array_map(static function ($annotation) use ($preservePdfPath) {
+                if (!is_array($annotation)) {
+                    return $annotation;
+                }
+                $annotation['__sourcePdfPath'] = $preservePdfPath;
+                return $annotation;
+            }, $preparedAnnotationsForPython);
+        }
+        $annotationsJson = json_encode($preparedAnnotationsForPython, JSON_INVALID_UTF8_SUBSTITUTE);
         if ($annotationsJson === false || @file_put_contents($annotationsFile, $annotationsJson) === false) {
             @unlink($tempPdfPath);
             return response()->json(['success' => false, 'message' => 'Failed to prepare annotations payload.'], 500);
         }
 
-        $script = base_path('python/pdf-editor/apply_annotations_direct.py');
+        $script = base_path(
+            $useExactDownloadPath
+                ? 'python/pdf-editor/apply_annotations_direct_new.py'
+                : 'python/pdf-editor/apply_annotations_direct.py'
+        );
         $command = sprintf(
             '%s %s %s %s 2>&1',
             escapeshellarg($pythonBinary),
@@ -6373,34 +9056,23 @@ class DocumentController extends Controller
 
         // Save annotation state to DB (same as saveAnnotationState).
         if ($sessionId !== '') {
-            foreach ($sessionAnnotationsPayload as $annotation) {
-                if (!is_array($annotation)) {
-                    continue;
-                }
-                $annotationId = is_string($annotation['id'] ?? null) ? trim((string) $annotation['id']) : '';
-                if ($annotationId === '') {
-                    continue;
-                }
-                $existing = PdfState::query()
-                    ->where('document_id', $document->id)
-                    ->where('session_id', $sessionId)
-                    ->whereRaw("JSON_EXTRACT(annotation_data, '$.id') = ?", [$annotationId])
-                    ->first();
-                if ($existing) {
-                    $existing->update(['annotation_data' => $annotation, 'page_number' => $annotation['pageIndex'] ?? null, 'state' => 'saved']);
-                } else {
-                    PdfState::create(['document_id' => $document->id, 'user_email' => null, 'session_id' => $sessionId, 'page_number' => $annotation['pageIndex'] ?? null, 'annotation_data' => $annotation, 'state' => 'saved']);
-                }
-            }
-
-            // Do not purge rows absent from this payload. Export receives only the
-            // material annotation delta needed to build the download.
+            $this->upsertPdfStateSessionSnapshot(
+                $document,
+                $sessionId,
+                $sessionAnnotationsPayload,
+                'saved'
+            );
+            $this->syncDeletedPromotedSourceKeysForSession(
+                $document,
+                $sessionId,
+                $deletedPromotedSourceKeys
+            );
 
             $this->upsertPdfAcroFormSessionState(
                 $document,
                 $sessionId,
                 $acroFormEntries,
-                Auth::id(),
+                $this->resolvePdfStateOwnership($document),
                 'saved'
             );
         }
@@ -6435,15 +9107,37 @@ class DocumentController extends Controller
             'session_id' => 'nullable|string',
         ]);
 
-        $sessionId = is_string($validated['session_id'] ?? null)
+        $requestedSessionId = is_string($validated['session_id'] ?? null)
             ? trim((string) $validated['session_id'])
             : '';
+        $sessionId = $requestedSessionId;
+        $editorOwnership = $this->resolvePdfStateOwnership($document);
+
+        if ($sessionId === '' && (($editorOwnership['user_id'] ?? null) !== null || ($editorOwnership['admin_id'] ?? null) !== null)) {
+            $sessionLookupQuery = PdfAcroForm::query()
+                ->where('document_id', $document->id)
+                ->orderByDesc('updated_at');
+
+            if (($editorOwnership['user_id'] ?? null) !== null) {
+                $sessionLookupQuery->where('user_id', $editorOwnership['user_id']);
+            } else {
+                $sessionLookupQuery->where('admin_id', $editorOwnership['admin_id']);
+            }
+
+            $sessionId = (string) ($sessionLookupQuery->value('sess_id') ?? '');
+        }
 
         $query = PdfAcroForm::query()
             ->where('document_id', $document->id);
 
         if ($sessionId !== '') {
             $query->where('sess_id', $sessionId);
+
+            if ($requestedSessionId === '' && ($editorOwnership['user_id'] ?? null) !== null) {
+                $query->where('user_id', $editorOwnership['user_id']);
+            } elseif ($requestedSessionId === '' && ($editorOwnership['admin_id'] ?? null) !== null) {
+                $query->where('admin_id', $editorOwnership['admin_id']);
+            }
         } else {
             $query->whereRaw('1 = 0');
         }

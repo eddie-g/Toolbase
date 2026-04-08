@@ -15,6 +15,7 @@ class PdfAcroForm extends Model
     protected $fillable = [
         'document_id',
         'user_id',
+        'admin_id',
         'sess_id',
         'page_num',
         'data',
@@ -33,5 +34,10 @@ class PdfAcroForm extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function admin(): BelongsTo
+    {
+        return $this->belongsTo(Admin::class);
     }
 }

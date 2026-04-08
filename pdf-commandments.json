@@ -32,6 +32,18 @@
     {
       "id": 8,
       "text": "Each TEXT annotation or modification(delete, move, update, change) should trigger a FULL PAGE REDRAW THERE ARE NO EXCEPTIONS TO THIS RULE."
+    },
+    {
+      "id": 9,
+      "text": "show_pdf_page shall be used only for unchanged promoted extraction text when the original source page and clip rectangle are known and the block is geometrically safe to replay as a clipped source rectangle. If the text was edited, the source page is unknown, or the block is a risky long/thin clip-replay case, the system shall use a more precise text replay/redraw path instead."
+    },
+    {
+      "id": 10,
+      "text": "Saved annotations in the pdf_state table are always the source of truth. When a saved annotation exists, the editor shall load and render that saved annotation from the database as authoritative content. Extraction data may enrich geometry or fill gaps, but it shall never override, normalize away, or reinterpret the saved annotation's content or edit state."
+    },
+    {
+      "id": 11,
+      "text": "hydrateSavedPromotedAnnotations() must always be called with extractionPages and savedStandaloneAnnotations. When a prior session has even one saved promoted annotation, shouldPreferSavedPromotedSnapshot() returns true — if extractionPages is omitted, only those saved annotations load and the remaining extraction blocks are skipped entirely. The function already has logic to merge saved edits with freshly-built extraction annotations; it must receive the extraction data to iterate over."
     }
   ]
 }

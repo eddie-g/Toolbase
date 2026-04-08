@@ -12,21 +12,38 @@ if (fs.existsSync(localBrowsers)) {
 const { chromium } = require('playwright');
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:8081';
-const OUTPUT_DIR = path.resolve(__dirname, '..', '..', '..', 'storage', 'app', 'overlay_regression_artifacts');
+const DEFAULT_OUTPUT_DIR = path.resolve(__dirname, '..', '..', '..', 'storage', 'app', 'overlay_regression_artifacts');
+const FALLBACK_OUTPUT_DIR = process.env.PDF_TEST_FALLBACK_OUTPUT_DIR || path.join('/tmp', 'overlay_regression_artifacts');
+let OUTPUT_DIR = process.env.PDF_TEST_OUTPUT_DIR || DEFAULT_OUTPUT_DIR;
 const VIEWPORT = { width: 1600, height: 1800 };
 
 const POSITION_TEXT = 'This is a test PDF example 1';
 const FIRST_MOVE_Y = -250;
 const SECOND_MOVE_Y = 250;
+const TEXT_POSITION_CARDINAL_MARGIN = 24;
+const TEXT_POSITION_EDGE_SCREENSHOT_ZOOM = 50;
+const TEXT_POSITION_CARDINAL_CASES = [
+    { key: 'top', label: 'Top of page', text: 'Top of page placement', horizontal: 'center', vertical: 'top' },
+    { key: 'left', label: 'Left of page', text: 'Left of page placement', horizontal: 'left', vertical: 'center' },
+    { key: 'right', label: 'Right of page', text: 'Right of page placement', horizontal: 'right', vertical: 'center' },
+    { key: 'bottom', label: 'Bottom of page', text: 'Bottom of page placement', horizontal: 'center', vertical: 'bottom' },
+];
+const TEXT_POSITION_STACK_SCREENSHOT_OPTIONS = {
+    padding: 44,
+    minWidth: 1180,
+    minHeight: 240,
+    maxWidth: 1450,
+    maxHeight: 520,
+};
 const TEXT_POSITION_GROUPING_SCENARIOS = [
     {
         key: 'mixed_long_short_stack',
-        label: 'Long / short / short / long-right stack',
+        label: 'Long / short / short / long-left stack',
         cases: [
             { text: 'Stack Long Alpha lorem ipsum dolor sit amet 01', left: 72, top: 96 },
             { text: 'Stack Short Bravo 02', left: 72, top: 144 },
             { text: 'Stack Short Charlie 03', left: 72, top: 192 },
-            { text: 'Stack Long Delta aligned right directly below 04', left: 246, top: 240 },
+            { text: 'Stack Long Delta aligned left directly below 04', left: 72, top: 240 },
         ],
     },
     {
@@ -74,6 +91,27 @@ const STYLE_SEGMENTS = {
     },
 };
 const HELVETICA_FONT_REGEX = /(helvetica|arimo)/i;
+
+// Test 2 — Color Font Tests
+const COLOR_LINE_RED_TEXT = 'Color Line Red';
+const COLOR_LINE_BLUE_TEXT = 'Color Line Blue';
+const COLOR_LINE_GREEN_TEXT = 'Color Line Green';
+const COLOR_LINE_RED_HEX = '#e53935';
+const COLOR_LINE_BLUE_HEX = '#1e88e5';
+const COLOR_LINE_GREEN_HEX = '#43a047';
+
+// Test 3 — Font Family Tests
+const FONT_FAMILY_CASES = [
+    { fontValue: 'Helvetica',   label: 'Helvetica',    text: 'Font Test Helvetica',    bgColor: '#ffcccc' },
+    { fontValue: 'Verdana',     label: 'Verdana',      text: 'Font Test Verdana',      bgColor: '#ffd9b3' },
+    { fontValue: 'TrebuchetMS', label: 'Trebuchet MS', text: 'Font Test Trebuchet MS', bgColor: '#ffffb3' },
+    { fontValue: 'TimesRoman',  label: 'Times Roman',  text: 'Font Test Times Roman',  bgColor: '#ccffcc' },
+    { fontValue: 'Georgia',     label: 'Georgia',      text: 'Font Test Georgia',      bgColor: '#b3ffff' },
+    { fontValue: 'Palatino',    label: 'Palatino',     text: 'Font Test Palatino',     bgColor: '#b3ccff' },
+    { fontValue: 'Garamond',    label: 'Garamond',     text: 'Font Test Garamond',     bgColor: '#e6b3ff' },
+    { fontValue: 'Courier',     label: 'Courier',      text: 'Font Test Courier',      bgColor: '#ffb3e6' },
+];
+
 const FONT_SIZE_DUPLICATE_SENTENCES = {
     regular: 'Base sentence.',
     large: 'Bigger sentence.',
@@ -90,6 +128,21 @@ const LOADED_SAVED_STANDALONE_TEXT = 'Loaded saved standalone regression text';
 const LOADED_SAVED_STANDALONE_SECOND_TEXT = 'Loaded saved standalone second save';
 const LOADED_SAVED_PROMOTED_UPDATED_TEXT = 'Loaded saved promoted regression line';
 const LOADED_SAVED_PROMOTED_SECOND_TEXT = 'Loaded saved promoted second save';
+const MIXED_STYLE_PARAGRAPH_TEXT = 'Lorem Ipsum is simply dummy text of the printing and typesetting industry. Lorem Ipsum has been the industry\'s standard dummy text ever since the 1500s.';
+const MIXED_STYLE_PARAGRAPH_HTML = '<span style="font-weight:700;">Lorem Ipsum</span> is simply dummy text of the printing and typesetting industry. <span style="font-style:italic;">Lorem Ipsum has been the </span>industry\'s standard <span style="text-decoration:underline;">dummy text ever </span>since the 1500s.';
+const MIXED_STYLE_PARAGRAPH_SCREENSHOT_TARGET = 'Lorem Ipsum is simply';
+const MIXED_STYLE_PARAGRAPH_BOUNDS = {
+    left: 56,
+    top: 120,
+    width: 470,
+    height: 170,
+};
+const MIXED_STYLE_SEGMENTS = {
+    bold: 'Lorem Ipsum',
+    italic: 'Lorem Ipsum has been the',
+    underline: 'dummy text ever',
+    plain: 'is simply dummy text',
+};
 
 const PARAGRAPH_SEED_TEXT = 'Paragraph seed';
 const PARAGRAPH_TEXT = [
@@ -259,6 +312,58 @@ const PARAGRAPH_COLUMN_FRAGMENTS = [
     'Column Three',
 ];
 const PARAGRAPH_COLUMN_LEFTS = [6, 206, 406];
+const PARAGRAPH_LAYOUT_SINGLE_CASE = {
+    fragment: 'Layout Single',
+    text: `Layout Single ${PARAGRAPH_TEXT}`,
+    left: 6,
+    top: 80,
+    width: 600,
+    height: 360,
+};
+const PARAGRAPH_LAYOUT_TWO_CASES = [
+    {
+        fragment: 'Layout Two Left',
+        text: `Layout Two Left ${PARAGRAPH_TEXT}`,
+        left: 6,
+        top: 80,
+        width: 300,
+        height: 420,
+    },
+    {
+        fragment: 'Layout Two Right',
+        text: `Layout Two Right ${PARAGRAPH_TEXT}`,
+        left: 306,
+        top: 80,
+        width: 300,
+        height: 420,
+    },
+];
+const PARAGRAPH_LAYOUT_THREE_CASES = [
+    {
+        fragment: 'Layout Three Left',
+        text: `Layout Three Left ${PARAGRAPH_TEXT}`,
+        left: 6,
+        top: 80,
+        width: 200,
+        height: 520,
+    },
+    {
+        fragment: 'Layout Three Middle',
+        text: `Layout Three Middle ${PARAGRAPH_TEXT}`,
+        left: 206,
+        top: 80,
+        width: 200,
+        height: 520,
+    },
+    {
+        fragment: 'Layout Three Right',
+        text: `Layout Three Right ${PARAGRAPH_TEXT}`,
+        left: 406,
+        top: 80,
+        width: 200,
+        height: 520,
+    },
+];
 const DOWNLOAD_TOP_RIGHT_TEXT = 'Wolfchenez News';
 const DOWNLOAD_TOP_RIGHT_FONT_SIZE_PX = 57;
 const DOWNLOAD_TOP_RIGHT_MARGIN_PX = 20;
@@ -421,20 +526,38 @@ const TESTS = {
     test_1_text_position: {
         key: 'test_1_text_position',
         label: 'Test 1 : Text Position',
-        description: 'Create blank PDFs, save one centered text annotation after moving it 250px up, save a second after moving it back down, and verify mixed long/short line stacks plus five short lines and five long lines all remain in separate saved extraction groups.',
+        description: 'Create blank PDFs, save one centered text annotation after moving it 250px up, then save and move a second text annotation and verify the same saved annotation row is updated rather than duplicated, plus verify mixed long/short line stacks and five short and five long lines remain separate.',
         run: runTextPositionFlow,
     },
-    test_2_text_styling: {
-        key: 'test_2_text_styling',
-        label: 'Test 2 : Text Styling',
-        description: 'Create one combined text box, style individual words with different color, font, boldness, and underline, save, and confirm the mixed styling survives in the saved PDF.',
+    test_2_text_color: {
+        key: 'test_2_text_color',
+        label: 'Test 2 : Color Font Tests',
+        description: 'Create a blank PDF, add three separate text lines, color the first one red, the second blue, and the third green, save, and confirm each annotation has the expected color stored.',
         run: runTextStylingFlow,
     },
-    test_18_text_font_size_reload_no_duplicates: {
-        key: 'test_18_text_font_size_reload_no_duplicates',
-        label: 'Test 18 : Text Font Size Reload No Duplicates',
-        description: 'Create one text box with three sentences, increase the middle sentence font size, decrease the last sentence font size, save, reload the editor, and verify the editor does not duplicate the saved text.',
-        run: runTextFontSizeReloadNoDuplicatesFlow,
+    test_3_font_family: {
+        key: 'test_3_font_family',
+        label: 'Test 3 : Font Family Tests',
+        description: 'Create a blank PDF, add one text annotation for each of the eight available font families with bold, italic, underline, and a distinct background color applied, save, and verify each annotation stores the correct fontFamily, fontWeight (700), fontStyle (italic), underline (true), and backgroundColor.',
+        run: runFontFamilyFlow,
+    },
+    test_4_mixed_style_paragraph: {
+        key: 'test_4_mixed_style_paragraph',
+        label: 'Test 4 : Mixed Styled Paragraph',
+        description: 'Create one paragraph with bold, italic, and underline spans on a blank PDF, save through the annotation-state path, and verify both the saved annotation row and the rendered annotation preserve those mixed styles.',
+        run: runMixedStyleParagraphFlow,
+    },
+    test_5_delete_annotation: {
+        key: 'test_5_delete_annotation',
+        label: 'Test 5 : Delete Annotation',
+        description: 'Create a blank PDF with three text rows and two paragraph annotations, delete a random text row via the selection toolbar delete button, save, reload the editor, and verify the deleted annotation is absent from the DOM and not returned by the saved-annotations API.',
+        run: runDeleteAnnotationFlow,
+    },
+    test_18_load_tests: {
+        key: 'test_18_load_tests',
+        label: 'Test 18 : Load Tests',
+        description: 'Upload drylab_full.pdf, load page 1 in the overlay editor, and verify key text retains original word positions, line heights, and styles on initial load.',
+        run: runDrylabLoadFlow,
     },
     test_19_loaded_saved_standalone_no_duplicate: {
         key: 'test_19_loaded_saved_standalone_no_duplicate',
@@ -502,12 +625,6 @@ const TESTS = {
         description: 'Create a blank PDF, import an image annotation, resize it to a non-original aspect ratio, export via Download PDF, and verify the stamped image rect matches the resized annotation box.',
         run: runImageResizePersistsAfterDownloadFlow,
     },
-    test_4_load_tests: {
-        key: 'test_4_load_tests',
-        label: 'Test 4 : Load Tests',
-        description: 'Upload drylab_full.pdf, load page 1 in the overlay editor, and verify key text retains original word positions, line heights, and styles on initial load.',
-        run: runDrylabLoadFlow,
-    },
     test_15_paragraph_helvetica_bold_italic_underline: {
         key: 'test_15_paragraph_helvetica_bold_italic_underline',
         label: 'Test 15 : Paragraph Helvetica Bold Italic Underline',
@@ -534,9 +651,9 @@ const TESTS = {
     },
     test_3_paragraphs: {
         key: 'test_3_paragraphs',
-        label: 'Test 3 : Paragraphs',
-        description: 'Create a lorem ipsum paragraph as a text annotation, resize it from a tall 200px column to 800px wide and back, move it, save through the annotation path, verify an unsaved deleted paragraph does not get stamped, and save three side-by-side 200px by 800px paragraph columns.',
-        run: runParagraphFlow,
+        label: 'Test 3 : Paragraph Layout Progression',
+        description: 'Create one wide paragraph, then two side-by-side paragraphs, then three side-by-side paragraphs scaled to fit the page, and verify each saved layout preserves separate paragraph annotations in left-to-right order.',
+        run: runParagraphLayoutProgressionFlow,
     },
     test_4_three_paragraph_columns: {
         key: 'test_4_three_paragraph_columns',
@@ -609,8 +726,223 @@ const TEST_SUITES = {
     },
 };
 
+/**
+ * Static criteria lists shown in the UI before a test is run.
+ * Each entry is a short sentence describing one specific thing the test verifies.
+ */
+const TEST_CRITERIA = {
+    test_1_text_position: [
+        'Fresh blank PDFs were created through the frontend blank-PDF flow',
+        'The first annotation save produced an in-page annotation with valid PDF coordinates',
+        'The second document initial save created exactly one saved annotation row for the target text',
+        'Moving and saving again updated the same saved annotation row instead of creating a duplicate',
+        'The saved annotation row coordinates changed after the move-and-save step',
+        'Top of page placement kept the annotation near the top edge with the full text visible',
+        'Left of page placement kept the annotation near the left edge with the full text visible',
+        'Right of page placement kept the annotation near the right edge with the full text visible',
+        'Bottom of page placement kept the annotation near the bottom edge with the full text visible',
+        'Long / short / short / long-left stack: every line starts at the same left point',
+        'Long / short / short / long-left stack: each text is exactly one independent annotation with no merging at the JS layer',
+        'Five short lines: each text is exactly one independent annotation with no merging at the JS layer',
+        'Five long lines: each text is exactly one independent annotation with no merging at the JS layer',
+    ],
+    test_2_text_color: [
+        'Blank PDF created via the frontend blank-PDF flow',
+        'Three separate text annotations placed at distinct vertical positions',
+        'First line stored with a red fill color',
+        'Second line stored with a blue fill color',
+        'Third line stored with a green fill color',
+    ],
+    test_3_font_family: [
+        'Blank PDF created via the frontend blank-PDF flow',
+        'Eight text annotations placed with bold, italic, underline, and background color, one per font',
+        'Helvetica annotation stores fontFamily Helvetica',
+        'Verdana annotation stores fontFamily Verdana',
+        'Trebuchet MS annotation stores fontFamily TrebuchetMS',
+        'Times Roman annotation stores fontFamily TimesRoman',
+        'Georgia annotation stores fontFamily Georgia',
+        'Palatino annotation stores fontFamily Palatino',
+        'Garamond annotation stores fontFamily Garamond',
+        'Courier annotation stores fontFamily Courier',
+        'Helvetica annotation stores fontWeight 700 (bold)',
+        'Verdana annotation stores fontWeight 700 (bold)',
+        'Trebuchet MS annotation stores fontWeight 700 (bold)',
+        'Times Roman annotation stores fontWeight 700 (bold)',
+        'Georgia annotation stores fontWeight 700 (bold)',
+        'Palatino annotation stores fontWeight 700 (bold)',
+        'Garamond annotation stores fontWeight 700 (bold)',
+        'Courier annotation stores fontWeight 700 (bold)',
+        'Helvetica annotation stores fontStyle italic',
+        'Verdana annotation stores fontStyle italic',
+        'Trebuchet MS annotation stores fontStyle italic',
+        'Times Roman annotation stores fontStyle italic',
+        'Georgia annotation stores fontStyle italic',
+        'Palatino annotation stores fontStyle italic',
+        'Garamond annotation stores fontStyle italic',
+        'Courier annotation stores fontStyle italic',
+        'Helvetica annotation stores underline true',
+        'Verdana annotation stores underline true',
+        'Trebuchet MS annotation stores underline true',
+        'Times Roman annotation stores underline true',
+        'Georgia annotation stores underline true',
+        'Palatino annotation stores underline true',
+        'Garamond annotation stores underline true',
+        'Courier annotation stores underline true',
+        'Helvetica annotation stores backgroundColor #ffcccc',
+        'Verdana annotation stores backgroundColor #ffd9b3',
+        'Trebuchet MS annotation stores backgroundColor #ffffb3',
+        'Times Roman annotation stores backgroundColor #ccffcc',
+        'Georgia annotation stores backgroundColor #b3ffff',
+        'Palatino annotation stores backgroundColor #b3ccff',
+        'Garamond annotation stores backgroundColor #e6b3ff',
+        'Courier annotation stores backgroundColor #ffb3e6',
+    ],
+    test_4_mixed_style_paragraph: [
+        'Blank PDF created via the frontend blank-PDF flow',
+        'Committed paragraph renders bold, italic, underline, and normal segments as distinct visual styles',
+        'Exactly one saved annotation row exists for the paragraph text',
+        'Saved annotation richTextHtml keeps the bold, italic, and underline style markers',
+        'Rendered annotation after save still shows the expected mixed styles per fragment',
+    ],
+    test_5_delete_annotation: [
+        'Blank PDF created via the frontend blank-PDF flow',
+        'All five annotations placed: three text rows and two paragraph annotations',
+        'Target annotation selected via click and per-annotation tbc-menu becomes visible',
+        'Per-annotation tbc-menu delete button removed the annotation from the editor DOM immediately',
+        'Annotation save completed successfully after the deletion',
+        'After page reload, the deleted annotation is absent from the editor DOM',
+        'After page reload, the remaining four annotations are still present in the editor DOM',
+        'The saved-annotations API does not return the deleted annotation, confirming the deletion is recorded in the database',
+    ],
+    test_19_loaded_saved_standalone_no_duplicate: [
+        'Blank PDF created and standalone text annotation saved',
+        'Document reopened in loadedSavedPdf mode',
+        'Second save keeps exactly one annotation per saved text (no duplicates)',
+    ],
+    test_20_loaded_saved_promoted_no_duplicate: [
+        'Promoted overlay field edited and saved',
+        'Document reopened in loadedSavedPdf mode',
+        'Second save keeps exactly one copy per text (no duplicates)',
+    ],
+    test_21_promoted_noop_edit_keeps_exact_layout: [
+        'Promoted annotation opened in edit mode without changing text',
+        'After closing, annotation reverts to exact-geometry layout',
+        'No dirty state persists from the no-op edit',
+        'Save round-trip produces no layout change',
+    ],
+    test_22_nda_random_page_one_save_no_duplicates: [
+        'NDA PDF uploaded and page-1 overlay blocks loaded',
+        'Deterministic random multiline edit blocks edited and saved',
+        'Saved PDF has exactly one copy of each edited block',
+        'Reloaded editor has no duplicate saved annotations',
+        'Multiline line spacing matches the source NDA layout',
+    ],
+    test_23_mixed_annotation_layer_stars_no_duplicates: [
+        'Blank PDF created with two paragraph and two star annotations',
+        'One star styled with a custom blue color',
+        'Saved PDF contains exactly two stars at the expected positions',
+        'Reloaded editor retains two editable star annotations',
+        'Paragraph boxes are intact after save',
+    ],
+    test_24_download_pdf_top_right_text_position: [
+        'Blank PDF created and text annotation added at 57px font size',
+        'Annotation dragged to the top-right corner and document saved',
+        'Downloaded PDF places the text in the top-right quadrant',
+    ],
+    test_25_overlay_text_background_persists_after_save: [
+        'NDA PDF uploaded and lead-in overlay field selected',
+        'Background fill color applied and document saved',
+        'Reloaded editor overlay field retains the background fill',
+        'Saved PDF contains the background fill drawing',
+    ],
+    test_26_overlay_background_persists_in_loaded_saved_pdf_mode: [
+        'NDA uploaded and first save completed',
+        'Document reopened in loadedSavedPdf mode',
+        'Background fill applied to an overlay field without changing text',
+        'Second save: saved PDF contains the background fill',
+    ],
+    test_27_blank_text_rotation_persists_after_save: [
+        'Blank PDF created and text annotation added',
+        'Annotation rotated to a non-zero angle',
+        'Downloaded PDF keeps the rotated text geometry',
+    ],
+    test_28_blank_text_background_persists_after_save: [
+        'Blank PDF created and text annotation with background fill added',
+        'Downloaded PDF contains the text background rectangle',
+    ],
+    test_29_image_resize_persists_after_download: [
+        'Blank PDF created and image annotation imported',
+        'Image resized to a non-original aspect ratio',
+        'Downloaded PDF stamped image rect matches the resized annotation box',
+    ],
+    test_3_paragraphs: [
+        'One wide paragraph fits the page as a single-column layout',
+        'Two paragraphs fit side by side without overlap',
+        'Three paragraphs scale down to fit side by side on the page',
+        'Narrower column layouts wrap into more lines',
+        'Each saved layout preserves one block per paragraph in left-to-right order',
+    ],
+    test_18_load_tests: [
+        'Drylab full PDF uploaded and page 1 loaded in the editor',
+        'Key text retains original word positions on first load',
+        'Line heights match the source PDF values',
+        'Font family and weight preserved on initial load',
+    ],
+    test_15_paragraph_helvetica_bold_italic_underline: [
+        'Blank PDF created and lorem ipsum paragraph annotation added',
+        'Helvetica font family applied to the full paragraph',
+        'Bold, italic, and underline styling applied to the full paragraph',
+        'Saved PDF keeps bold, italic, and underline across the wrapped paragraph',
+    ],
+    test_16_nda_paragraph_one_bold_items: [
+        'NDA PDF uploaded and page 1 loaded in the editor',
+        'Bold placeholder span in paragraph one retains bold styling on initial load',
+    ],
+    test_17_nda_leadin_alignment: [
+        'NDA PDF uploaded and page 1 loaded in the editor',
+        'Lead-in text "1. Confidential and Proprietary Information…" retains original alignment',
+    ],
+    test_14_invoice_code_column_separated: [
+        'Invoice PDF uploaded and loaded in the overlay editor',
+        'Each BPXPN invoice code row rendered as its own separate overlay field',
+        'No two code-column rows merged into a single grouped block',
+    ],
+    paragraph_suite: [
+        'Lorem ipsum paragraph resizes from 200px narrow column to 800px wide and back',
+        'Paragraph saves and appears in the saved PDF; deleted paragraph is not stamped',
+        'Three side-by-side 200×800px columns each saved in left-to-right order',
+        'Single paragraph saves as one extraction block (not split into individual lines)',
+        'Paragraph with explicit blank line saves as one block (blank line preserved)',
+        'Short intro + blank line + long paragraph saved as a single extraction block',
+        'Explicit newlines inside a paragraph are preserved after save-reload',
+        'Multiple paragraphs at different positions saved within 3px accuracy',
+        'Deleting all promoted text from a page produces no promoted blocks in the saved PDF',
+        'Separate short lines each saved in their own extraction group',
+        'Tiny saved label annotations reload as separate items (not merged)',
+        'Leading indentation inside a paragraph is preserved after save',
+    ],
+};
+
 function ensureOutputDir() {
-    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    const candidates = [
+        process.env.PDF_TEST_OUTPUT_DIR || '',
+        DEFAULT_OUTPUT_DIR,
+        FALLBACK_OUTPUT_DIR,
+    ].filter(Boolean);
+
+    let lastError = null;
+    for (const candidate of candidates) {
+        try {
+            fs.mkdirSync(candidate, { recursive: true });
+            fs.accessSync(candidate, fs.constants.W_OK);
+            OUTPUT_DIR = candidate;
+            return OUTPUT_DIR;
+        } catch (error) {
+            lastError = error;
+        }
+    }
+
+    throw new Error(`No writable artifact output directory found. Tried: ${candidates.join(', ')}${lastError ? ` (${lastError.message})` : ''}`);
 }
 
 function normalize(text) {
@@ -843,6 +1175,7 @@ async function createBlankDocumentViaServer(page, options = {}) {
     if (!page.url().startsWith(BASE_URL)) {
         await page.goto(`${BASE_URL}/pdf-editor`, { waitUntil: 'domcontentloaded', timeout: 90000 });
     }
+    await ensureLoggedIn(page);
 
     const response = await page.evaluate(async ({ nextPageSize, nextOrientation }) => {
         const targetUrl = `/pdf-tests/create-blank?page_size=${encodeURIComponent(nextPageSize)}&orientation=${encodeURIComponent(nextOrientation)}`;
@@ -982,6 +1315,7 @@ async function createFixtureDocument(page, fixturePath) {
         throw new Error(`fixture PDF not found: ${resolvedFixturePath}`);
     }
     await page.goto(`${BASE_URL}/pdf-editor`, { waitUntil: 'domcontentloaded', timeout: 90000 });
+    await ensureLoggedIn(page);
     await page.setInputFiles('#document-input', resolvedFixturePath);
     await page.click('#upload-submit');
     await page.waitForFunction(() => /\/documents\/\d+\/edit\b/.test(window.location.pathname), null, {
@@ -1001,6 +1335,7 @@ async function createBlankDocumentViaBrowser(page, bootstrapErrors, options = {}
     const pageSize = options.pageSize || 'Letter';
     const orientation = options.orientation || 'portrait';
     await page.goto(`${BASE_URL}/pdf-editor`, { waitUntil: 'domcontentloaded' });
+    await ensureLoggedIn(page);
     await page.waitForTimeout(1000);
 
     await page.selectOption('#blank-page-size', pageSize);
@@ -1037,8 +1372,41 @@ async function forceRefreshOverlay(page, documentId) {
 }
 
 async function waitForEditorReady(page) {
-    await page.waitForSelector('.page[data-page-index="0"] canvas, .page-wrapper[data-page-number="1"] canvas', { timeout: 90000 });
+    // Detect an auth redirect early so we get a clear error instead of a timeout.
+    const currentUrl = page.url();
+    if (currentUrl.includes('/login')) {
+        throw new Error(`waitForEditorReady: redirected to login page (${currentUrl}); ensure the test user is set up and TEST_EMAIL/TEST_PASSWORD env vars are correct.`);
+    }
+    await page.waitForSelector(
+        '.page[data-page-index="0"] canvas, .page-wrapper[data-page-number="1"] canvas',
+        { timeout: 180000 }
+    );
     await page.waitForTimeout(1500);
+}
+
+/**
+ * Ensure the Playwright browser has an active user session.
+ * If the page is on a login URL (e.g. a 401/redirect after navigation),
+ * fill in the test credentials and submit.  Safe to call when already logged in.
+ */
+async function ensureLoggedIn(page) {
+    const email = process.env.TEST_EMAIL || 'test@example.com';
+    const password = process.env.TEST_PASSWORD || 'password1';
+
+    // Navigate to login only if we are currently on a login page.
+    const url = page.url();
+    if (!url.includes('/login')) {
+        return;
+    }
+
+    await page.fill('input[name="email"], input[type="email"]', email);
+    await page.fill('input[name="password"], input[type="password"]', password);
+    await page.getByRole('button', { name: /sign in|log in|login|submit/i }).first().click();
+    await page.waitForFunction(
+        () => !window.location.href.includes('/login'),
+        null,
+        { timeout: 30000 }
+    );
 }
 
 async function clearAnnotationSessionState(page, documentId) {
@@ -1184,9 +1552,37 @@ async function createTextAnnotationAt(page, text, offsetX, offsetY) {
     return annotation;
 }
 
+async function createCenteredTextAnnotation(page, text, deltaX = 0, deltaY = 0) {
+    const pageGeometry = await getBasePageGeometry(page);
+    if (!pageGeometry) {
+        throw new Error(`missing base page geometry for centered text "${text}"`);
+    }
+
+    return createTextAnnotationAt(
+        page,
+        text,
+        Math.round(pageGeometry.centerX + deltaX),
+        Math.round(pageGeometry.centerY + deltaY)
+    );
+}
+
 async function createTextAnnotationAtWithStyles(page, text, offsetX, offsetY, styles = {}) {
     await page.click('#mode-text');
     await page.waitForTimeout(300);
+
+    // Set fontFamily AFTER the mode-text click's updateEditTextBanner() runs.
+    // That handler calls populateEditTextBanner(selectedAnnotation) which resets
+    // etb-font.value to the previously selected annotation's font (Helvetica after
+    // the first commit).  Setting it before the click is silently overwritten.
+    // Setting it here — after the 300ms settle but before the overlay click that
+    // calls readBannerOpts() — ensures the correct fontFamily flows into opts and
+    // is captured by commitText's closure.
+    if (styles?.fontFamily) {
+        await page.evaluate((fontFamily) => {
+            const el = document.getElementById('etb-font');
+            if (el) el.value = fontFamily;
+        }, styles.fontFamily);
+    }
 
     const overlay = page.locator('.page[data-page-index="0"] .overlay').first();
     const overlayBox = await overlay.boundingBox();
@@ -1259,6 +1655,55 @@ async function updateTextAnnotation(page, textFragment, options = {}) {
         }
 
         applyAnnotationStyle(record);
+        persistAnnotations();
+        if (typeof saveAnnotationToDatabase === 'function') {
+            await saveAnnotationToDatabase(record);
+        }
+
+        return {
+            id: record.id,
+            text: record.text,
+            left: record.element.offsetLeft,
+            top: record.element.offsetTop,
+            width: record.element.getBoundingClientRect().width,
+            height: record.element.getBoundingClientRect().height,
+        };
+    }, { targetTextFragment: textFragment, nextOptions: options });
+
+    await page.waitForTimeout(250);
+    return result;
+}
+
+async function forcePositionTextAnnotation(page, textFragment, options = {}) {
+    const result = await page.evaluate(async ({ targetTextFragment, nextOptions }) => {
+        const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const fragment = normalizeText(targetTextFragment);
+        const records = (typeof annotations !== 'undefined' && Array.isArray(annotations)) ? annotations : [];
+        const record = records.find((item) => {
+            const candidates = [
+                item?.text,
+                item?.element?.innerText,
+                item?.element?.textContent,
+                item?.element?.querySelector?.('.annotation-text')?.textContent,
+            ];
+            return candidates.some((candidate) => normalizeText(candidate).includes(fragment));
+        });
+
+        if (!record || !record.element) {
+            throw new Error(`missing text annotation containing "${targetTextFragment}"`);
+        }
+
+        const pageContext = resolveAnnotationPageContext(record);
+        if (!pageContext) {
+            throw new Error('missing annotation page context');
+        }
+
+        const leftPx = Number.isFinite(Number(nextOptions.left)) ? Number(nextOptions.left) : record.element.offsetLeft;
+        const topPx = Number.isFinite(Number(nextOptions.top)) ? Number(nextOptions.top) : record.element.offsetTop;
+        setTextAnnotationPosition(record, pageContext.pageInfo, leftPx, topPx);
+        applyAnnotationStyle(record);
+        record.element.style.left = `${leftPx}px`;
+        record.element.style.top = `${topPx}px`;
         persistAnnotations();
         if (typeof saveAnnotationToDatabase === 'function') {
             await saveAnnotationToDatabase(record);
@@ -1470,8 +1915,46 @@ async function readTextAnnotationState(page, textFragment) {
     }, textFragment);
 }
 
+// Checks whether each case text appears as exactly one distinct annotation (no
+// merging at the JS layer) and that no single annotation contains text from
+// multiple cases. This mirrors what analyzeIndependentTextGrouping checks at the
+// fitz-extraction level but works without requiring a stamped PDF.
+async function analyzeAnnotationGroupings(page, cases) {
+    return page.evaluate((scenarioCases) => {
+        const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const records = (typeof annotations !== 'undefined' && Array.isArray(annotations)) ? annotations : [];
+
+        const annotationTexts = records.map((item) => {
+            const raw = item?.text
+                || item?.element?.innerText
+                || item?.element?.textContent
+                || item?.element?.querySelector?.('.annotation-text')?.textContent
+                || '';
+            return normalizeText(raw);
+        });
+
+        const matchesByCase = scenarioCases.map((scenarioCase) => {
+            const caseText = normalizeText(scenarioCase.text);
+            const matchCount = annotationTexts.filter((t) => t === caseText).length;
+            return { text: scenarioCase.text, matchCount };
+        });
+
+        // Flag any annotation whose text contains multiple distinct case strings.
+        const groupedBlocks = annotationTexts
+            .map((annotText) => {
+                const hits = scenarioCases.filter((c) => annotText.includes(normalizeText(c.text)));
+                if (hits.length <= 1) return null;
+                return { text: annotText, matchedTexts: hits.map((c) => c.text) };
+            })
+            .filter(Boolean);
+
+        return { matchesByCase, groupedBlocks };
+    }, cases);
+}
+
 async function moveTextAnnotationTo(page, textFragment, targetLeft, targetTop) {
-    const annotation = page.locator('.annotation').filter({ hasText: textFragment }).first();
+    const annotation = page.locator('.annotation:visible').filter({ hasText: textFragment }).first();
+    await annotation.waitFor({ state: 'visible', timeout: 10000 });
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
         await annotation.click();
@@ -1655,13 +2138,18 @@ async function dragLocator(page, locator, deltaX, deltaY) {
 }
 
 async function waitForAnnotationSave(page) {
+    // The editor routes through different endpoints depending on the save type:
+    //   /apply-annotations-direct  — full PDF stamp (rotation, page ops, etc.)
+    //   /save-annotations          — legacy full-page annotation save
+    //   /save-annotation-state     — annotation-only save (most common for standalone text)
     const saveResponsePromise = page.waitForResponse((response) => (
         response.request().method() === 'POST'
         && (
             response.url().includes('/apply-annotations-direct')
             || response.url().includes('/save-annotations')
+            || response.url().includes('/save-annotation-state')
         )
-    ), { timeout: 60000 });
+    ), { timeout: 90000 });
 
     await page.click('#save-btn');
     const response = await saveResponsePromise;
@@ -1669,8 +2157,32 @@ async function waitForAnnotationSave(page) {
         throw new Error(`annotation save failed with ${response.status()}`);
     }
 
-    await page.waitForFunction(() => typeof annotations !== 'undefined' && annotations.length === 0, null, { timeout: 60000 });
-    await waitForEditorReady(page);
+    // For annotation-only saves (/save-annotation-state) the annotations array is
+    // NOT cleared — the editor keeps them live for further edits. Only full PDF
+    // saves trigger a page reload that empties the array. Wait for the spinner to
+    // disappear and the status bar to show "Saved." instead.
+    const savedViaAnnotationState = response.url().includes('/save-annotation-state');
+    if (savedViaAnnotationState) {
+        await page.waitForFunction(
+            () => {
+                const status = document.getElementById('status-text') || document.querySelector('[data-status]');
+                if (status) {
+                    const txt = (status.textContent || status.getAttribute('data-status') || '').toLowerCase();
+                    if (txt.includes('saved') || txt.includes('no changes')) return true;
+                }
+                // Fallback: spinner gone
+                const spinner = document.getElementById('save-spinner') || document.querySelector('.save-spinner');
+                return !spinner || getComputedStyle(spinner).display === 'none';
+            },
+            null,
+            { timeout: 30000 }
+        );
+        await page.waitForTimeout(500);
+    } else {
+        // Full PDF stamp path — editor reloads, annotations array goes to 0.
+        await page.waitForFunction(() => typeof annotations !== 'undefined' && annotations.length === 0, null, { timeout: 60000 });
+        await waitForEditorReady(page);
+    }
 }
 
 async function saveAnnotationsOnly(page) {
@@ -2006,7 +2518,292 @@ async function waitForOverlaySaveComplete(page) {
 
 async function capturePageScreenshot(page, outputPath) {
     const pageLocator = page.locator('.page-wrapper[data-page-number="1"], .page[data-page-index="0"]').first();
-    await pageLocator.screenshot({ path: outputPath });
+    await setTestScreenshotUiHidden(page, true);
+    try {
+        await pageLocator.screenshot({ path: outputPath });
+    } finally {
+        await setTestScreenshotUiHidden(page, false);
+    }
+}
+
+async function setTestScreenshotUiHidden(page, hidden) {
+    await page.evaluate((shouldHide) => {
+        const styleId = '__pdf-test-screenshot-ui-hide__';
+        const existing = document.getElementById(styleId);
+        if (!shouldHide) {
+            existing?.remove();
+            return;
+        }
+
+        if (existing) {
+            return;
+        }
+
+        const style = document.createElement('style');
+        style.id = styleId;
+        style.textContent = `
+            .annotation .annotation-tbc-menu,
+            .annotation .shape-action-bar,
+            .overlay-field .box-menu,
+            .annotation .text-resize-handle,
+            .annotation .text-rotate-handle,
+            .annotation .shape-resize-handle,
+            .annotation .delete-btn {
+                visibility: hidden !important;
+                opacity: 0 !important;
+                pointer-events: none !important;
+            }
+        `;
+        document.head.appendChild(style);
+    }, hidden);
+    await page.waitForTimeout(50);
+}
+
+async function captureViewportClipScreenshot(page, outputPath, rect, options = {}) {
+    const padding = Number(options.padding) || 0;
+    const minWidth = Number(options.minWidth) || 140;
+    const minHeight = Number(options.minHeight) || 100;
+    const maxWidth = Number(options.maxWidth) || 720;
+    const maxHeight = Number(options.maxHeight) || 520;
+    const viewport = await page.evaluate(() => ({
+        scrollX: window.scrollX || 0,
+        scrollY: window.scrollY || 0,
+        innerWidth: window.innerWidth || document.documentElement.clientWidth || 0,
+        innerHeight: window.innerHeight || document.documentElement.clientHeight || 0,
+    }));
+
+    const rawX = Number(rect?.x) || 0;
+    const rawY = Number(rect?.y) || 0;
+    const rawWidth = Math.max(1, Number(rect?.width) || 0);
+    const rawHeight = Math.max(1, Number(rect?.height) || 0);
+
+    const clippedX = Math.max(viewport.scrollX, rawX - padding);
+    const clippedY = Math.max(viewport.scrollY, rawY - padding);
+    const unclampedWidth = Math.max(minWidth, rawWidth + (padding * 2));
+    const unclampedHeight = Math.max(minHeight, rawHeight + (padding * 2));
+    const width = Math.max(
+        1,
+        Math.min(maxWidth, unclampedWidth, (viewport.scrollX + viewport.innerWidth) - clippedX)
+    );
+    const height = Math.max(
+        1,
+        Math.min(maxHeight, unclampedHeight, (viewport.scrollY + viewport.innerHeight) - clippedY)
+    );
+
+    await setTestScreenshotUiHidden(page, true);
+    try {
+        await page.screenshot({
+            path: outputPath,
+            clip: {
+                x: clippedX,
+                y: clippedY,
+                width,
+                height,
+            },
+        });
+    } finally {
+        await setTestScreenshotUiHidden(page, false);
+    }
+}
+
+async function captureCenteredOverlayScreenshot(page, outputPath, options = {}) {
+    const overlay = page.locator('.page[data-page-index="0"] .overlay, .page-wrapper[data-page-number="1"] .overlay').first();
+    const box = await overlay.boundingBox();
+    if (!box) {
+        throw new Error('missing overlay box for centered screenshot');
+    }
+
+    const targetWidth = Number(options.width) || 280;
+    const targetHeight = Number(options.height) || 180;
+    await captureViewportClipScreenshot(page, outputPath, {
+        x: box.x + ((box.width - targetWidth) / 2),
+        y: box.y + ((box.height - targetHeight) / 2),
+        width: targetWidth,
+        height: targetHeight,
+    }, {
+        padding: Number(options.padding) || 0,
+        minWidth: targetWidth,
+        minHeight: targetHeight,
+        maxWidth: targetWidth,
+        maxHeight: targetHeight,
+    });
+}
+
+async function captureTextAnnotationScreenshot(page, textFragment, outputPath, options = {}) {
+    const annotation = page.locator('.annotation').filter({ hasText: textFragment }).first();
+    await annotation.waitFor({ timeout: 10000 });
+    const box = await annotation.boundingBox();
+    if (!box) {
+        throw new Error(`missing annotation screenshot target for "${textFragment}"`);
+    }
+
+    await captureViewportClipScreenshot(page, outputPath, box, {
+        padding: Number(options.padding) || 32,
+        minWidth: Number(options.minWidth) || 220,
+        minHeight: Number(options.minHeight) || 120,
+        maxWidth: Number(options.maxWidth) || 520,
+        maxHeight: Number(options.maxHeight) || 260,
+    });
+}
+
+async function captureTextAnnotationEdgeScreenshot(page, textFragment, edge, outputPath, options = {}) {
+    const annotation = page.locator('.annotation').filter({ hasText: textFragment }).first();
+    await annotation.waitFor({ timeout: 10000 });
+    const annotationBox = await annotation.boundingBox();
+    if (!annotationBox) {
+        throw new Error(`missing annotation edge screenshot target for "${textFragment}"`);
+    }
+
+    const overlay = page.locator('.page[data-page-index="0"] .overlay, .page-wrapper[data-page-number="1"] .overlay').first();
+    const overlayBox = await overlay.boundingBox();
+    if (!overlayBox) {
+        throw new Error('missing overlay box for edge screenshot');
+    }
+
+    const padding = Number(options.padding) || 28;
+    const overlayLeft = overlayBox.x;
+    const overlayTop = overlayBox.y;
+    const overlayRight = overlayBox.x + overlayBox.width;
+    const overlayBottom = overlayBox.y + overlayBox.height;
+    let rect = {
+        x: annotationBox.x - padding,
+        y: annotationBox.y - padding,
+        width: annotationBox.width + (padding * 2),
+        height: annotationBox.height + (padding * 2),
+    };
+
+    if (edge === 'top') {
+        rect = {
+            x: Math.max(overlayLeft, annotationBox.x - padding),
+            y: overlayTop,
+            width: Math.min(overlayRight, annotationBox.x + annotationBox.width + padding) - Math.max(overlayLeft, annotationBox.x - padding),
+            height: Math.min(overlayBottom, annotationBox.y + annotationBox.height + padding) - overlayTop,
+        };
+    } else if (edge === 'left') {
+        rect = {
+            x: overlayLeft,
+            y: Math.max(overlayTop, annotationBox.y - padding),
+            width: Math.min(overlayRight, annotationBox.x + annotationBox.width + padding) - overlayLeft,
+            height: Math.min(overlayBottom, annotationBox.y + annotationBox.height + padding) - Math.max(overlayTop, annotationBox.y - padding),
+        };
+    } else if (edge === 'right') {
+        rect = {
+            x: Math.max(overlayLeft, annotationBox.x - padding),
+            y: Math.max(overlayTop, annotationBox.y - padding),
+            width: overlayRight - Math.max(overlayLeft, annotationBox.x - padding),
+            height: Math.min(overlayBottom, annotationBox.y + annotationBox.height + padding) - Math.max(overlayTop, annotationBox.y - padding),
+        };
+    } else if (edge === 'bottom') {
+        rect = {
+            x: Math.max(overlayLeft, annotationBox.x - padding),
+            y: Math.max(overlayTop, annotationBox.y - padding),
+            width: Math.min(overlayRight, annotationBox.x + annotationBox.width + padding) - Math.max(overlayLeft, annotationBox.x - padding),
+            height: overlayBottom - Math.max(overlayTop, annotationBox.y - padding),
+        };
+    }
+
+    await captureViewportClipScreenshot(page, outputPath, rect, {
+        padding: 0,
+        minWidth: Number(options.minWidth) || Math.ceil(rect.width),
+        minHeight: Number(options.minHeight) || Math.ceil(rect.height),
+        maxWidth: Number(options.maxWidth) || 1450,
+        maxHeight: Number(options.maxHeight) || 760,
+    });
+}
+
+async function readEditorZoomPercent(page) {
+    const label = page.locator('#zoom-label');
+    await label.waitFor({ timeout: 10000 });
+    const text = await label.textContent();
+    const value = parseInt(String(text || '').trim(), 10);
+    if (!Number.isFinite(value)) {
+        throw new Error(`unable to read zoom percent from label: ${text}`);
+    }
+    return value;
+}
+
+async function setEditorZoomPercent(page, targetZoom) {
+    const clampedTarget = Math.max(50, Math.min(400, Math.round(Number(targetZoom) || 100)));
+    for (let attempts = 0; attempts < 16; attempts += 1) {
+        const currentZoom = await readEditorZoomPercent(page);
+        if (currentZoom === clampedTarget) {
+            return currentZoom;
+        }
+
+        const zoomingOut = currentZoom > clampedTarget;
+        await page.click(zoomingOut ? '#zoom-out' : '#zoom-in');
+        await page.waitForFunction(({ previousZoom, target, decreasing }) => {
+            const label = document.getElementById('zoom-label');
+            const value = parseInt(String(label?.textContent || '').trim(), 10);
+            if (!Number.isFinite(value)) {
+                return false;
+            }
+            if (value === target) {
+                return true;
+            }
+            return decreasing ? value < previousZoom : value > previousZoom;
+        }, {
+            previousZoom: currentZoom,
+            target: clampedTarget,
+            decreasing: zoomingOut,
+        }, {
+            timeout: 30000,
+        });
+        await waitForEditorReady(page);
+    }
+
+    throw new Error(`failed to set editor zoom to ${clampedTarget}%`);
+}
+
+async function findTextAnnotationClusterBox(page, textFragments) {
+    return page.evaluate((fragments) => {
+        const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const normalizedFragments = fragments.map((fragment) => normalizeText(fragment)).filter(Boolean);
+        const records = (typeof annotations !== 'undefined' && Array.isArray(annotations)) ? annotations : [];
+        const matchedRects = records
+            .filter((item) => {
+                const candidateText = normalizeText(
+                    item?.text
+                    || item?.element?.innerText
+                    || item?.element?.textContent
+                    || item?.element?.querySelector?.('.annotation-text')?.textContent
+                    || ''
+                );
+                return normalizedFragments.some((fragment) => candidateText === fragment);
+            })
+            .map((item) => item?.element?.getBoundingClientRect?.())
+            .filter((rect) => rect && rect.width > 0 && rect.height > 0);
+
+        if (!matchedRects.length) {
+            return null;
+        }
+
+        const left = Math.min(...matchedRects.map((rect) => rect.left));
+        const top = Math.min(...matchedRects.map((rect) => rect.top));
+        const right = Math.max(...matchedRects.map((rect) => rect.right));
+        const bottom = Math.max(...matchedRects.map((rect) => rect.bottom));
+        return {
+            x: left + (window.scrollX || 0),
+            y: top + (window.scrollY || 0),
+            width: right - left,
+            height: bottom - top,
+        };
+    }, textFragments);
+}
+
+async function captureTextAnnotationClusterScreenshot(page, textFragments, outputPath, options = {}) {
+    const clusterBox = await findTextAnnotationClusterBox(page, textFragments);
+    if (!clusterBox) {
+        throw new Error(`missing annotation cluster screenshot target for ${JSON.stringify(textFragments)}`);
+    }
+
+    await captureViewportClipScreenshot(page, outputPath, clusterBox, {
+        padding: Number(options.padding) || 28,
+        minWidth: Number(options.minWidth) || 260,
+        minHeight: Number(options.minHeight) || 160,
+        maxWidth: Number(options.maxWidth) || 760,
+        maxHeight: Number(options.maxHeight) || 460,
+    });
 }
 
 async function downloadSavedPdf(page, documentId, outputPath) {
@@ -3150,6 +3947,24 @@ async function openCenterTextCreator(page) {
     return page.locator('.text-box-creator .tbc-input').first();
 }
 
+async function setActiveTextEditorHtml(page, html) {
+    await page.evaluate((nextHtml) => {
+        const input = document.querySelector('.text-box-creator .tbc-input');
+        if (!input) {
+            throw new Error('missing active text editor');
+        }
+
+        input.innerHTML = String(nextHtml || '');
+        input.dispatchEvent(new InputEvent('input', {
+            bubbles: true,
+            data: null,
+            inputType: 'insertText',
+        }));
+        input.focus();
+    }, html);
+    await page.waitForTimeout(250);
+}
+
 async function commitActiveTextBox(page) {
     await page.locator('.text-box-creator .tbc-ok').click();
     await page.waitForTimeout(1200);
@@ -3182,12 +3997,12 @@ async function selectActiveEditorText(page, targetText) {
             const length = node.nodeValue?.length || 0;
             const nextOffset = currentOffset + length;
 
-            if (!startNode && start >= currentOffset && start <= nextOffset) {
+            if (!startNode && start >= currentOffset && start < nextOffset) {
                 startNode = node;
                 startNodeOffset = start - currentOffset;
             }
 
-            if (!endNode && end >= currentOffset && end <= nextOffset) {
+            if (!endNode && end > currentOffset && end <= nextOffset) {
                 endNode = node;
                 endNodeOffset = end - currentOffset;
             }
@@ -3262,7 +4077,13 @@ async function applyEditTextBannerStyles(page, styles) {
         };
 
         if (inputStyles.fontFamily) {
-            dispatchValue(document.getElementById('etb-font'), inputStyles.fontFamily, 'change');
+            // fontFamily was already set on etb-font before the overlay click so
+            // readBannerOpts() captured it at box-creation time.  Update the select
+            // here anyway so the banner stays in sync visually.
+            const etbFontEl = document.getElementById('etb-font');
+            if (etbFontEl && etbFontEl.value !== inputStyles.fontFamily) {
+                etbFontEl.value = inputStyles.fontFamily;
+            }
         }
         if (inputStyles.fontSize !== undefined) {
             const sizeInput = document.getElementById('etb-size');
@@ -3320,8 +4141,103 @@ async function readCommittedAnnotationRichState(page, targetText) {
             html: textEl?.innerHTML || '',
             text: textEl?.textContent || '',
             richTextHtml: record?.richTextHtml || '',
+            textColor: record?.textColor || '',
+            fontFamily: record?.fontFamily || '',
+            fontWeight: record?.fontWeight || '',
+            fontStyle: record?.fontStyle || '',
+            underline: Boolean(record?.underline),
+            backgroundColor: record?.backgroundColor || '',
         };
     }, targetText);
+}
+
+async function readCommittedAnnotationFragmentStyles(page, targetText, fragments) {
+    return page.evaluate(({ expectedText, requestedFragments }) => {
+        const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const annotation = Array.from(document.querySelectorAll('.annotation')).find((candidate) => {
+            const textEl = candidate.querySelector('.annotation-text');
+            return normalizeText(textEl?.innerText || textEl?.textContent || '') === normalizeText(expectedText);
+        });
+        if (!annotation) {
+            throw new Error(`missing committed annotation for "${expectedText}"`);
+        }
+
+        const textEl = annotation.querySelector('.annotation-text');
+        if (!textEl) {
+            throw new Error(`missing annotation text element for "${expectedText}"`);
+        }
+
+        const resolveFragmentStyle = (fragment) => {
+            const target = String(fragment || '');
+            const rootText = textEl.textContent || '';
+            const start = rootText.indexOf(target);
+            if (start === -1) {
+                return null;
+            }
+
+            const end = start + target.length;
+            const walker = document.createTreeWalker(textEl, NodeFilter.SHOW_TEXT);
+            let currentOffset = 0;
+            let startNode = null;
+            let endNode = null;
+            let startNodeOffset = 0;
+            let endNodeOffset = 0;
+
+            while (walker.nextNode()) {
+                const node = walker.currentNode;
+                const length = node.nodeValue?.length || 0;
+                const nextOffset = currentOffset + length;
+
+                if (!startNode && start >= currentOffset && start < nextOffset) {
+                    startNode = node;
+                    startNodeOffset = start - currentOffset;
+                }
+
+                if (!endNode && end > currentOffset && end <= nextOffset) {
+                    endNode = node;
+                    endNodeOffset = end - currentOffset;
+                }
+
+                currentOffset = nextOffset;
+            }
+
+            if (!startNode || !endNode) {
+                return null;
+            }
+
+            const startElement = startNode.parentElement || textEl;
+            const endElement = endNode.parentElement || textEl;
+            const computed = getComputedStyle(startElement);
+            const range = document.createRange();
+            range.setStart(startNode, startNodeOffset);
+            range.setEnd(endNode, endNodeOffset);
+            const rects = Array.from(range.getClientRects()).map((rect) => ({
+                width: rect.width,
+                height: rect.height,
+                left: rect.left,
+                top: rect.top,
+            }));
+
+            return {
+                fragment: target,
+                start_element_html: startElement.outerHTML || '',
+                end_element_html: endElement.outerHTML || '',
+                font_weight: computed.fontWeight,
+                font_style: computed.fontStyle,
+                text_decoration_line: computed.textDecorationLine || computed.textDecoration || '',
+                rect_count: rects.length,
+                rects,
+            };
+        };
+
+        return Object.fromEntries(requestedFragments.map((fragment) => [
+            fragment,
+            resolveFragmentStyle(fragment),
+        ]));
+    }, {
+        expectedText: targetText,
+        requestedFragments: fragments,
+    });
 }
 
 async function findOverlayFieldDescriptor(page, textFragment) {
@@ -3597,17 +4513,107 @@ function countWideLines(metrics, threshold = 0.72) {
     return comparable.filter((width) => width >= (metrics.contentWidth * threshold)).length;
 }
 
+async function createConfiguredParagraphAnnotation(page, paragraphCase) {
+    const seedLeft = Math.max(24, Math.round(Number(paragraphCase.left) + 24));
+    const seedTop = Math.max(24, Math.round(Number(paragraphCase.top) + 24));
+    await createTextAnnotationAt(page, paragraphCase.fragment, seedLeft, seedTop);
+    await updateTextAnnotation(page, paragraphCase.fragment, {
+        text: paragraphCase.text,
+        keepBounds: true,
+        left: paragraphCase.left,
+        top: paragraphCase.top,
+        width: paragraphCase.width,
+        height: paragraphCase.height,
+    });
+    return readTextAnnotationMetrics(page, paragraphCase.fragment);
+}
+
+function metricsRight(metrics) {
+    return (Number(metrics?.left) || 0) + (Number(metrics?.width) || 0);
+}
+
+function metricsBottom(metrics) {
+    return (Number(metrics?.top) || 0) + (Number(metrics?.height) || 0);
+}
+
+function metricsRect(metrics) {
+    return [
+        Number(metrics?.left) || 0,
+        Number(metrics?.top) || 0,
+        metricsRight(metrics),
+        metricsBottom(metrics),
+    ];
+}
+
+function layoutMetricsFitPage(metrics) {
+    return metrics.every((entry) => (
+        (Number(entry?.left) || 0) >= -PARAGRAPH_LAYOUT_TOLERANCE
+        && (Number(entry?.top) || 0) >= -PARAGRAPH_LAYOUT_TOLERANCE
+        && metricsRight(entry) <= ((Number(entry?.overlayWidth) || 0) + PARAGRAPH_LAYOUT_TOLERANCE)
+        && metricsBottom(entry) <= ((Number(entry?.overlayHeight) || 0) + PARAGRAPH_LAYOUT_TOLERANCE)
+    ));
+}
+
+function layoutMetricsOrderedLeftToRight(metrics) {
+    return metrics.every((entry, index) => (
+        index === 0
+        || (Number(entry?.left) || 0) > metricsRight(metrics[index - 1]) - PARAGRAPH_LAYOUT_TOLERANCE
+    ));
+}
+
+function layoutMetricsDoNotOverlap(metrics) {
+    return metrics.every((entry, index) => (
+        metrics.slice(index + 1).every((other) => rectOverlapRatio(metricsRect(entry), metricsRect(other)) === 0)
+    ));
+}
+
+function metricsShareSameLeft(metrics, tolerance = 1) {
+    if (!Array.isArray(metrics) || !metrics.length) {
+        return false;
+    }
+    const baseLeft = Number(metrics[0]?.left) || 0;
+    return metrics.every((entry) => Math.abs((Number(entry?.left) || 0) - baseLeft) <= tolerance);
+}
+
+function blocksOrderedLeftToRight(blocks) {
+    const leftPositions = blocks.map((block) => (block ? blockBBox(block)[0] : null));
+    return {
+        leftPositions,
+        ordered: leftPositions.every((value, index) => (
+            index === 0 || value === null || leftPositions[index - 1] === null || value > leftPositions[index - 1]
+        )),
+    };
+}
+
 async function runTextPositionFlow() {
     const test = TESTS.test_1_text_position;
     ensureOutputDir();
 
     const runToken = buildRunToken();
+    const blankScreenshotName = buildArtifactName(test.key, runToken, 'blank_flow_center');
     const firstScreenshotName = buildArtifactName(test.key, runToken, 'after_first_save');
-    const secondScreenshotName = buildArtifactName(test.key, runToken, 'after_second_save');
-    const secondPdfName = buildArtifactName(test.key, runToken, 'after_second_save', 'pdf');
+    const secondScreenshotName = buildArtifactName(test.key, runToken, 'second_initial_save');
+    const secondMoveScreenshotName = buildArtifactName(test.key, runToken, 'after_move_before_second_save');
+    const secondDeltaScreenshotName = buildArtifactName(test.key, runToken, 'after_second_save');
+    const topPositionScreenshotName = buildArtifactName(test.key, runToken, 'position_top');
+    const leftPositionScreenshotName = buildArtifactName(test.key, runToken, 'position_left');
+    const rightPositionScreenshotName = buildArtifactName(test.key, runToken, 'position_right');
+    const bottomPositionScreenshotName = buildArtifactName(test.key, runToken, 'position_bottom');
+    const groupingMixedScreenshotName = buildArtifactName(test.key, runToken, 'grouping_mixed_stack');
+    const groupingShortScreenshotName = buildArtifactName(test.key, runToken, 'grouping_five_short');
+    const groupingLongScreenshotName = buildArtifactName(test.key, runToken, 'grouping_five_long');
+    const blankScreenshotPath = path.join(OUTPUT_DIR, blankScreenshotName);
     const firstScreenshotPath = path.join(OUTPUT_DIR, firstScreenshotName);
+    const secondMoveScreenshotPath = path.join(OUTPUT_DIR, secondMoveScreenshotName);
     const secondScreenshotPath = path.join(OUTPUT_DIR, secondScreenshotName);
-    const secondPdfPath = path.join(OUTPUT_DIR, secondPdfName);
+    const secondDeltaScreenshotPath = path.join(OUTPUT_DIR, secondDeltaScreenshotName);
+    const topPositionScreenshotPath = path.join(OUTPUT_DIR, topPositionScreenshotName);
+    const leftPositionScreenshotPath = path.join(OUTPUT_DIR, leftPositionScreenshotName);
+    const rightPositionScreenshotPath = path.join(OUTPUT_DIR, rightPositionScreenshotName);
+    const bottomPositionScreenshotPath = path.join(OUTPUT_DIR, bottomPositionScreenshotName);
+    const groupingMixedScreenshotPath = path.join(OUTPUT_DIR, groupingMixedScreenshotName);
+    const groupingShortScreenshotPath = path.join(OUTPUT_DIR, groupingShortScreenshotName);
+    const groupingLongScreenshotPath = path.join(OUTPUT_DIR, groupingLongScreenshotName);
 
     const browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({
@@ -3617,13 +4623,25 @@ async function runTextPositionFlow() {
     const page = await context.newPage();
     let firstDocumentId = null;
     let secondDocumentId = null;
+    const cardinalResults = {};
+    const cardinalDocumentIds = [];
     const groupingDocumentIds = [];
     const groupingScenarioResults = [];
+    const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+    const findExactSavedMatches = (savedResponse, targetText) => {
+        const annotations = Array.isArray(savedResponse?.body?.annotations) ? savedResponse.body.annotations : [];
+        const normalizedTarget = normalizeText(targetText);
+        return annotations.filter((annotation) => normalizeText(annotation?.text) === normalizedTarget);
+    };
 
     try {
         firstDocumentId = await createBlankDocument(page);
         await waitForEditorReady(page);
         await clearAnnotationSessionState(page, firstDocumentId);
+        await captureCenteredOverlayScreenshot(page, blankScreenshotPath, {
+            width: 300,
+            height: 180,
+        });
 
         await createCenterTextAnnotation(page, POSITION_TEXT);
         const firstStartMetrics = await readTextAnnotationMetrics(page, POSITION_TEXT);
@@ -3632,43 +4650,142 @@ async function runTextPositionFlow() {
         });
         await waitForAnnotationSave(page);
 
-        await forceRefreshOverlay(page, firstDocumentId);
-        const firstExtraction = await fetchExtraction(page, firstDocumentId);
-        const firstMatches = extractMatchingBBoxes(firstExtraction, POSITION_TEXT);
-        if (firstMatches.length !== 1) {
-            throw new Error(`expected 1 first-save text match, found ${firstMatches.length}`);
+        // Read PDF coordinates directly from the in-page annotations array.
+        // The save path is /save-annotation-state (DB-only; no PDF stamping), so
+        // fitz extraction from the raw file would find no text. The annotation
+        // record already holds the correctly-computed pdfX / pdfY coordinates.
+        const firstAnnot = await readTextAnnotationState(page, POSITION_TEXT);
+        if (!firstAnnot || !(firstAnnot.pdfY > 0)) {
+            throw new Error(`expected annotation with PDF coordinates after first save, got ${JSON.stringify(firstAnnot)}`);
         }
-        const firstBBox = firstMatches[0];
-        await capturePageScreenshot(page, firstScreenshotPath);
+        const firstBBox = [
+            firstAnnot.pdfX,
+            firstAnnot.pdfY,
+            firstAnnot.pdfX + firstAnnot.pdfWidth,
+            firstAnnot.pdfY + firstAnnot.pdfHeight,
+        ];
+        await captureTextAnnotationScreenshot(page, POSITION_TEXT, firstScreenshotPath);
 
         secondDocumentId = await createBlankDocument(page);
         await waitForEditorReady(page);
         await clearAnnotationSessionState(page, secondDocumentId);
+        await clearPdfSessionId(page);
+        const secondSessionId = await ensurePdfSessionId(page, 'test1pos');
 
         await createCenterTextAnnotation(page, POSITION_TEXT);
-        const secondStartMetrics = await readTextAnnotationMetrics(page, POSITION_TEXT);
-        const secondMoveUpState = await updateTextAnnotation(page, POSITION_TEXT, {
-            top: Math.round(secondStartMetrics.top + FIRST_MOVE_Y),
-        });
-        const secondMoveDownState = await updateTextAnnotation(page, POSITION_TEXT, {
-            top: Math.round(secondMoveUpState.top + SECOND_MOVE_Y),
-        });
-
+        await clickOutsideFirstPage(page);
         await waitForAnnotationSave(page);
-        await downloadSavedPdf(page, secondDocumentId, secondPdfPath);
-        await forceRefreshOverlay(page, secondDocumentId);
-        const secondExtraction = await fetchExtraction(page, secondDocumentId);
-        const secondMatches = extractMatchingBBoxes(secondExtraction, POSITION_TEXT);
-        if (secondMatches.length !== 1) {
-            throw new Error(`expected 1 final text match, found ${secondMatches.length}`);
-        }
-        const secondBBox = secondMatches[0];
-        await capturePageScreenshot(page, secondScreenshotPath);
 
-        const firstCenter = bboxCenter(firstBBox);
-        const secondCenter = bboxCenter(secondBBox);
-        const savedDelta = secondCenter.y - firstCenter.y;
-        const browserDelta = SECOND_MOVE_Y;
+        const secondInitialAnnot = await readTextAnnotationState(page, POSITION_TEXT);
+        if (!secondInitialAnnot || !(secondInitialAnnot.pdfY > 0)) {
+            throw new Error(`expected initial saved annotation with PDF coordinates, got ${JSON.stringify(secondInitialAnnot)}`);
+        }
+        await captureCenteredOverlayScreenshot(page, secondScreenshotPath, {
+            width: 760,
+            height: 680,
+        });
+
+        const secondInitialSavedAnnotations = await fetchSavedAnnotations(page, secondDocumentId, secondSessionId);
+        if (!secondInitialSavedAnnotations.ok || !secondInitialSavedAnnotations.body?.success) {
+            throw new Error(`initial saved-annotations failed: ${JSON.stringify(secondInitialSavedAnnotations)}`);
+        }
+        const secondInitialMatches = findExactSavedMatches(secondInitialSavedAnnotations, POSITION_TEXT);
+        const secondInitialSavedAnnot = secondInitialMatches[0] || null;
+
+        const secondMoveFromState = await readTextAnnotationState(page, POSITION_TEXT);
+        const secondMoveTargetTop = Math.round(secondMoveFromState.top + SECOND_MOVE_Y);
+        const secondMoveState = await updateTextAnnotation(page, POSITION_TEXT, {
+            left: Math.round(secondMoveFromState.left),
+            top: secondMoveTargetTop,
+        });
+        await captureCenteredOverlayScreenshot(page, secondMoveScreenshotPath, {
+            width: 760,
+            height: 680,
+        });
+
+        await page.waitForTimeout(1200);
+        await waitForAnnotationSave(page);
+
+        const secondMovedAnnot = await readTextAnnotationState(page, POSITION_TEXT);
+        if (!secondMovedAnnot || !(secondMovedAnnot.pdfY > 0)) {
+            throw new Error(`expected moved annotation with PDF coordinates after second save, got ${JSON.stringify(secondMovedAnnot)}`);
+        }
+        await captureCenteredOverlayScreenshot(page, secondDeltaScreenshotPath, {
+            width: 760,
+            height: 680,
+        });
+
+        const secondMovedSavedAnnotations = await fetchSavedAnnotations(page, secondDocumentId, secondSessionId);
+        if (!secondMovedSavedAnnotations.ok || !secondMovedSavedAnnotations.body?.success) {
+            throw new Error(`moved saved-annotations failed: ${JSON.stringify(secondMovedSavedAnnotations)}`);
+        }
+        const secondMovedMatches = findExactSavedMatches(secondMovedSavedAnnotations, POSITION_TEXT);
+        const secondMovedSavedAnnot = secondMovedMatches[0] || null;
+        const sameSavedAnnotationId = Boolean(
+            secondInitialSavedAnnot?.id
+            && secondMovedSavedAnnot?.id
+            && secondInitialSavedAnnot.id === secondMovedSavedAnnot.id
+        );
+        const dbUpdatedAtChanged = Boolean(
+            secondInitialSavedAnnot?.db_updated_at
+            && secondMovedSavedAnnot?.db_updated_at
+            && secondInitialSavedAnnot.db_updated_at !== secondMovedSavedAnnot.db_updated_at
+        );
+        const dbPdfDeltaX = (Number(secondMovedSavedAnnot?.pdfX) || 0) - (Number(secondInitialSavedAnnot?.pdfX) || 0);
+        const dbPdfDeltaY = (Number(secondMovedSavedAnnot?.pdfY) || 0) - (Number(secondInitialSavedAnnot?.pdfY) || 0);
+        const dbCoordinatesChanged = Math.abs(dbPdfDeltaX) > 0.01 || Math.abs(dbPdfDeltaY) > 0.01;
+
+        const cardinalScreenshotPaths = {
+            top: topPositionScreenshotPath,
+            left: leftPositionScreenshotPath,
+            right: rightPositionScreenshotPath,
+            bottom: bottomPositionScreenshotPath,
+        };
+        for (const positionCase of TEXT_POSITION_CARDINAL_CASES) {
+            const cardinalDocumentId = await createBlankDocument(page);
+            cardinalDocumentIds.push(cardinalDocumentId);
+            await waitForEditorReady(page);
+            await clearAnnotationSessionState(page, cardinalDocumentId);
+
+            await createTextAnnotationAt(page, positionCase.text, 160, 120);
+            const initialMetrics = await readTextAnnotationMetrics(page, positionCase.text);
+            const targetLeft = positionCase.horizontal === 'left'
+                ? TEXT_POSITION_CARDINAL_MARGIN
+                : positionCase.horizontal === 'right'
+                    ? Math.max(0, Math.round(initialMetrics.overlayWidth - initialMetrics.width - TEXT_POSITION_CARDINAL_MARGIN))
+                    : Math.max(0, Math.round((initialMetrics.overlayWidth - initialMetrics.width) / 2));
+            const targetTop = positionCase.vertical === 'top'
+                ? TEXT_POSITION_CARDINAL_MARGIN
+                : positionCase.vertical === 'bottom'
+                    ? Math.max(0, Math.round(initialMetrics.overlayHeight - initialMetrics.height - TEXT_POSITION_CARDINAL_MARGIN))
+                    : Math.max(0, Math.round((initialMetrics.overlayHeight - initialMetrics.height) / 2));
+            await forcePositionTextAnnotation(page, positionCase.text, {
+                left: targetLeft,
+                top: targetTop,
+            });
+            await clickOutsideFirstPage(page);
+            await waitForAnnotationSave(page);
+            const metrics = await readTextAnnotationMetrics(page, positionCase.text);
+            await setEditorZoomPercent(page, TEXT_POSITION_EDGE_SCREENSHOT_ZOOM);
+            await capturePageScreenshot(page, cardinalScreenshotPaths[positionCase.key]);
+            cardinalResults[positionCase.key] = {
+                documentId: cardinalDocumentId,
+                metrics,
+            };
+        }
+
+        const topMetrics = cardinalResults.top?.metrics || null;
+        const leftMetrics = cardinalResults.left?.metrics || null;
+        const rightMetrics = cardinalResults.right?.metrics || null;
+        const bottomMetrics = cardinalResults.bottom?.metrics || null;
+        const topPositionPass = (Number(topMetrics?.top) || 0) <= (TEXT_POSITION_CARDINAL_MARGIN + 1)
+            && metricsRight(topMetrics) <= (Number(topMetrics?.overlayWidth) || 0) + 1;
+        const leftPositionPass = (Number(leftMetrics?.left) || 0) <= (TEXT_POSITION_CARDINAL_MARGIN + 1)
+            && metricsBottom(leftMetrics) <= (Number(leftMetrics?.overlayHeight) || 0) + 1;
+        const rightGap = (Number(rightMetrics?.overlayWidth) || 0) - metricsRight(rightMetrics);
+        const rightPositionPass = rightGap >= -1 && rightGap <= (TEXT_POSITION_CARDINAL_MARGIN + 1);
+        const bottomGap = (Number(bottomMetrics?.overlayHeight) || 0) - metricsBottom(bottomMetrics);
+        const bottomPositionPass = bottomGap >= -1 && bottomGap <= (TEXT_POSITION_CARDINAL_MARGIN + 1);
 
         for (const scenario of TEXT_POSITION_GROUPING_SCENARIOS) {
             const scenarioDocumentId = await createBlankDocument(page);
@@ -3681,46 +4798,115 @@ async function runTextPositionFlow() {
             }
 
             await waitForAnnotationSave(page);
-            await forceRefreshOverlay(page, scenarioDocumentId);
-            const scenarioExtraction = await fetchExtraction(page, scenarioDocumentId);
+            // In-page grouping analysis: verify each case text is a separate
+            // annotation with no merging (equivalent PDF-level grouping check but
+            // works without stamping the blank PDF).
+            const scenarioAnalysis = await analyzeAnnotationGroupings(page, scenario.cases);
+            const scenarioMetrics = [];
+            for (const scenarioCase of scenario.cases) {
+                scenarioMetrics.push(await readTextAnnotationMetrics(page, scenarioCase.text));
+            }
+            if (scenario.key === 'mixed_long_short_stack') {
+                await captureTextAnnotationClusterScreenshot(
+                    page,
+                    scenario.cases.map((scenarioCase) => scenarioCase.text),
+                    groupingMixedScreenshotPath,
+                    TEXT_POSITION_STACK_SCREENSHOT_OPTIONS
+                );
+            } else if (scenario.key === 'five_short_lines') {
+                await captureTextAnnotationClusterScreenshot(
+                    page,
+                    scenario.cases.map((scenarioCase) => scenarioCase.text),
+                    groupingShortScreenshotPath,
+                    TEXT_POSITION_STACK_SCREENSHOT_OPTIONS
+                );
+            } else if (scenario.key === 'five_long_lines') {
+                await captureTextAnnotationClusterScreenshot(
+                    page,
+                    scenario.cases.map((scenarioCase) => scenarioCase.text),
+                    groupingLongScreenshotPath,
+                    TEXT_POSITION_STACK_SCREENSHOT_OPTIONS
+                );
+            }
             groupingScenarioResults.push({
                 key: scenario.key,
                 label: scenario.label,
                 documentId: scenarioDocumentId,
-                analysis: analyzeIndependentTextGrouping(scenarioExtraction, scenario.cases),
+                analysis: scenarioAnalysis,
+                metrics: scenarioMetrics,
             });
         }
+
+        const mixedStackScenario = groupingScenarioResults.find((scenarioResult) => scenarioResult.key === 'mixed_long_short_stack') || null;
+        const mixedStackLefts = Array.isArray(mixedStackScenario?.metrics)
+            ? mixedStackScenario.metrics.map((metrics) => Number(metrics?.left) || 0)
+            : [];
+        const mixedStackAlignedLeft = metricsShareSameLeft(mixedStackScenario?.metrics || [], 1);
 
         const checks = [
             {
                 item: 'blank_pdf_created',
                 result: 'PASS',
                 description: 'Fresh blank PDFs were created through the frontend blank-PDF flow.',
-                detail: `documents=${firstDocumentId},${secondDocumentId}`,
+                detail: `first_document_id=${firstDocumentId} second_document_id=${secondDocumentId} creation_path=browser_blank_pdf_flow`,
             },
             {
                 item: 'first_save_visible',
-                result: firstMatches.length === 1 ? 'PASS' : 'FAIL',
-                description: 'The first annotation save produced one visible text line in the blank PDF.',
-                detail: `bbox=${JSON.stringify(firstBBox)}`,
+                result: firstAnnot && firstAnnot.pdfY > 0 ? 'PASS' : 'FAIL',
+                description: 'The first annotation save produced an in-page annotation with valid PDF coordinates.',
+                detail: `browser_top=${firstAnnot?.top?.toFixed(2)} browser_left=${firstAnnot?.left?.toFixed(2)} pdfX=${firstAnnot?.pdfX?.toFixed(2)} pdfY=${firstAnnot?.pdfY?.toFixed(2)} pdfWidth=${firstAnnot?.pdfWidth?.toFixed(2)} pdfHeight=${firstAnnot?.pdfHeight?.toFixed(2)}`,
             },
             {
-                item: 'second_save_visible',
-                result: secondMatches.length === 1 ? 'PASS' : 'FAIL',
-                description: 'The second annotation save preserved one visible text line after the browser move.',
-                detail: `bbox=${JSON.stringify(secondBBox)}`,
+                item: 'second_initial_save_db_row_created',
+                result: secondInitialMatches.length === 1 && Boolean(secondInitialSavedAnnot?.id) ? 'PASS' : 'FAIL',
+                description: 'The second document initial save created exactly one saved annotation row for the target text.',
+                detail: `document_id=${secondDocumentId} session_id=${secondSessionId} matched_rows=${secondInitialMatches.length} annotation_id=${secondInitialSavedAnnot?.id || ''} db_updated_at=${secondInitialSavedAnnot?.db_updated_at || ''} pdfX=${Number(secondInitialSavedAnnot?.pdfX || 0).toFixed(2)} pdfY=${Number(secondInitialSavedAnnot?.pdfY || 0).toFixed(2)}`,
             },
             {
-                item: 'second_move_browser_delta',
-                result: browserDelta >= 220 && browserDelta <= 280 ? 'PASS' : 'FAIL',
-                description: 'The annotation move request asked for about 250px downward before the second save.',
-                detail: `browser_delta_y=${browserDelta.toFixed(2)}`,
+                item: 'second_move_db_row_updated',
+                result: secondInitialMatches.length === 1 && secondMovedMatches.length === 1 && sameSavedAnnotationId ? 'PASS' : 'FAIL',
+                description: 'Moving and saving again updated the same saved annotation row instead of creating a duplicate.',
+                detail: `initial_match_count=${secondInitialMatches.length} moved_match_count=${secondMovedMatches.length} initial_annotation_id=${secondInitialSavedAnnot?.id || ''} moved_annotation_id=${secondMovedSavedAnnot?.id || ''} same_annotation_id=${sameSavedAnnotationId} initial_db_updated_at=${secondInitialSavedAnnot?.db_updated_at || ''} moved_db_updated_at=${secondMovedSavedAnnot?.db_updated_at || ''} db_updated_at_changed=${dbUpdatedAtChanged}`,
             },
             {
-                item: 'second_move_saved_delta',
-                result: savedDelta >= 100 ? 'PASS' : 'FAIL',
-                description: 'The saved PDF moved the line materially downward between the two annotation-only saves.',
-                detail: `saved_delta_y=${savedDelta.toFixed(2)} first_center=${firstCenter.y.toFixed(2)} second_center=${secondCenter.y.toFixed(2)}`,
+                item: 'second_move_db_coordinates_changed',
+                result: dbCoordinatesChanged ? 'PASS' : 'FAIL',
+                description: 'The saved annotation row coordinates changed after the move-and-save step.',
+                detail: `annotation_id=${secondMovedSavedAnnot?.id || ''} initial_pdfX=${Number(secondInitialSavedAnnot?.pdfX || 0).toFixed(2)} initial_pdfY=${Number(secondInitialSavedAnnot?.pdfY || 0).toFixed(2)} moved_pdfX=${Number(secondMovedSavedAnnot?.pdfX || 0).toFixed(2)} moved_pdfY=${Number(secondMovedSavedAnnot?.pdfY || 0).toFixed(2)} delta_pdfX=${dbPdfDeltaX.toFixed(2)} delta_pdfY=${dbPdfDeltaY.toFixed(2)} browser_top_before=${secondMoveFromState.top.toFixed(2)} browser_top_after=${secondMoveState.top.toFixed(2)}`,
+            },
+            {
+                item: 'text_position_top_of_page',
+                result: topPositionPass ? 'PASS' : 'FAIL',
+                description: 'Top of page placement kept the annotation near the top edge with the full text visible.',
+                detail: `document_id=${cardinalResults.top?.documentId || ''} left=${Number(topMetrics?.left || 0).toFixed(2)} top=${Number(topMetrics?.top || 0).toFixed(2)} width=${Number(topMetrics?.width || 0).toFixed(2)} overlay_width=${Number(topMetrics?.overlayWidth || 0).toFixed(2)} zoom_percent=${TEXT_POSITION_EDGE_SCREENSHOT_ZOOM} target_margin=${TEXT_POSITION_CARDINAL_MARGIN}`,
+            },
+            {
+                item: 'text_position_left_of_page',
+                result: leftPositionPass ? 'PASS' : 'FAIL',
+                description: 'Left of page placement kept the annotation near the left edge with the full text visible.',
+                detail: `document_id=${cardinalResults.left?.documentId || ''} left=${Number(leftMetrics?.left || 0).toFixed(2)} top=${Number(leftMetrics?.top || 0).toFixed(2)} width=${Number(leftMetrics?.width || 0).toFixed(2)} overlay_width=${Number(leftMetrics?.overlayWidth || 0).toFixed(2)} zoom_percent=${TEXT_POSITION_EDGE_SCREENSHOT_ZOOM} target_margin=${TEXT_POSITION_CARDINAL_MARGIN}`,
+            },
+            {
+                item: 'text_position_right_of_page',
+                result: rightPositionPass ? 'PASS' : 'FAIL',
+                description: 'Right of page placement kept the annotation near the right edge with the full text visible.',
+                detail: `document_id=${cardinalResults.right?.documentId || ''} left=${Number(rightMetrics?.left || 0).toFixed(2)} right_gap=${rightGap.toFixed(2)} width=${Number(rightMetrics?.width || 0).toFixed(2)} overlay_width=${Number(rightMetrics?.overlayWidth || 0).toFixed(2)} zoom_percent=${TEXT_POSITION_EDGE_SCREENSHOT_ZOOM} target_margin=${TEXT_POSITION_CARDINAL_MARGIN}`,
+            },
+            {
+                item: 'text_position_bottom_of_page',
+                result: bottomPositionPass ? 'PASS' : 'FAIL',
+                description: 'Bottom of page placement kept the annotation near the bottom edge with the full text visible.',
+                detail: `document_id=${cardinalResults.bottom?.documentId || ''} top=${Number(bottomMetrics?.top || 0).toFixed(2)} bottom_gap=${bottomGap.toFixed(2)} height=${Number(bottomMetrics?.height || 0).toFixed(2)} overlay_height=${Number(bottomMetrics?.overlayHeight || 0).toFixed(2)} zoom_percent=${TEXT_POSITION_EDGE_SCREENSHOT_ZOOM} target_margin=${TEXT_POSITION_CARDINAL_MARGIN}`,
+            },
+            {
+                item: 'text_alignment_mixed_long_short_stack',
+                result: mixedStackAlignedLeft ? 'PASS' : 'FAIL',
+                description: 'Long / short / short / long-left stack — every line starts at the same left point.',
+                detail: JSON.stringify({
+                    document_id: mixedStackScenario?.documentId || null,
+                    left_positions: mixedStackLefts,
+                    tolerance_px: 1,
+                }),
             },
             ...groupingScenarioResults.map((scenarioResult) => {
                 const caseFailures = scenarioResult.analysis.matchesByCase.filter((entry) => entry.matchCount !== 1);
@@ -3728,9 +4914,11 @@ async function runTextPositionFlow() {
                 return {
                     item: `text_grouping_${scenarioResult.key}`,
                     result: caseFailures.length === 0 && groupedBlocks.length === 0 ? 'PASS' : 'FAIL',
-                    description: `${scenarioResult.label} saves as one raw extraction group per line, with no grouped multi-line block.`,
+                    description: `${scenarioResult.label} — each text is exactly one independent annotation with no merging at the JS layer.`,
                     detail: JSON.stringify({
                         document_id: scenarioResult.documentId,
+                        expected_case_count: scenarioResult.analysis.matchesByCase.length,
+                        per_case_match_counts: scenarioResult.analysis.matchesByCase,
                         case_failures: caseFailures,
                         grouped_blocks: groupedBlocks,
                     }),
@@ -3738,8 +4926,114 @@ async function runTextPositionFlow() {
             }),
         ];
 
+        const checkArtifacts = [
+            {
+                label: 'Check 1',
+                kind: 'image',
+                filename: blankScreenshotName,
+                check_item: 'blank_pdf_created',
+                check_index: 1,
+                check_description: checks[0].description,
+            },
+            {
+                label: 'Check 2',
+                kind: 'image',
+                filename: firstScreenshotName,
+                check_item: 'first_save_visible',
+                check_index: 2,
+                check_description: checks[1].description,
+            },
+            {
+                label: 'Check 3',
+                kind: 'image',
+                filename: secondScreenshotName,
+                check_item: 'second_initial_save_db_row_created',
+                check_index: 3,
+                check_description: checks[2].description,
+            },
+            {
+                label: 'Check 4',
+                kind: 'image',
+                filename: secondMoveScreenshotName,
+                check_item: 'second_move_db_row_updated',
+                check_index: 4,
+                check_description: checks[3].description,
+            },
+            {
+                label: 'Check 5',
+                kind: 'image',
+                filename: secondDeltaScreenshotName,
+                check_item: 'second_move_db_coordinates_changed',
+                check_index: 5,
+                check_description: checks[4].description,
+            },
+            {
+                label: 'Check 6',
+                kind: 'image',
+                filename: topPositionScreenshotName,
+                check_item: 'text_position_top_of_page',
+                check_index: 6,
+                check_description: checks[5].description,
+            },
+            {
+                label: 'Check 7',
+                kind: 'image',
+                filename: leftPositionScreenshotName,
+                check_item: 'text_position_left_of_page',
+                check_index: 7,
+                check_description: checks[6].description,
+            },
+            {
+                label: 'Check 8',
+                kind: 'image',
+                filename: rightPositionScreenshotName,
+                check_item: 'text_position_right_of_page',
+                check_index: 8,
+                check_description: checks[7].description,
+            },
+            {
+                label: 'Check 9',
+                kind: 'image',
+                filename: bottomPositionScreenshotName,
+                check_item: 'text_position_bottom_of_page',
+                check_index: 9,
+                check_description: checks[8].description,
+            },
+            {
+                label: 'Check 10',
+                kind: 'image',
+                filename: groupingMixedScreenshotName,
+                check_item: 'text_alignment_mixed_long_short_stack',
+                check_index: 10,
+                check_description: checks[9].description,
+            },
+            {
+                label: 'Check 11',
+                kind: 'image',
+                filename: groupingMixedScreenshotName,
+                check_item: 'text_grouping_mixed_long_short_stack',
+                check_index: 11,
+                check_description: checks[10].description,
+            },
+            {
+                label: 'Check 12',
+                kind: 'image',
+                filename: groupingShortScreenshotName,
+                check_item: 'text_grouping_five_short_lines',
+                check_index: 12,
+                check_description: checks[11].description,
+            },
+            {
+                label: 'Check 13',
+                kind: 'image',
+                filename: groupingLongScreenshotName,
+                check_item: 'text_grouping_five_long_lines',
+                check_index: 13,
+                check_description: checks[12].description,
+            },
+        ];
+
         const hasFailure = checks.some((check) => check.result !== 'PASS');
-        const secondPdfStats = fs.statSync(secondPdfPath);
 
         return buildResult({
             testKey: test.key,
@@ -3747,31 +5041,31 @@ async function runTextPositionFlow() {
             description: test.description,
             status: hasFailure ? 'fail' : 'pass',
             checks,
-            fileSize: secondPdfStats.size,
-            artifacts: [
-                {
-                    label: 'After First Save',
-                    kind: 'image',
-                    filename: firstScreenshotName,
-                },
-                {
-                    label: 'After Second Save',
-                    kind: 'image',
-                    filename: secondScreenshotName,
-                },
-                {
-                    label: 'Final PDF',
-                    kind: 'pdf',
-                    filename: secondPdfName,
-                },
-            ],
+            fileSize: 0,
+            artifacts: checkArtifacts,
             metadata: {
-                document_ids: [firstDocumentId, secondDocumentId, ...groupingDocumentIds],
+                document_ids: [firstDocumentId, secondDocumentId, ...cardinalDocumentIds, ...groupingDocumentIds].filter(Boolean),
                 target_text: POSITION_TEXT,
                 first_bbox: firstBBox,
-                second_bbox: secondBBox,
-                browser_second_move_delta_y: browserDelta,
-                second_move_delta_y: savedDelta,
+                second_document_session_id: secondSessionId,
+                second_initial_saved_annotation: secondInitialSavedAnnot,
+                second_moved_saved_annotation: secondMovedSavedAnnot,
+                cardinal_position_document_ids: cardinalDocumentIds,
+                cardinal_position_metrics: cardinalResults,
+                second_move_browser_state: {
+                    top_before: secondMoveFromState.top,
+                    top_after: secondMoveState.top,
+                    requested_delta_y: secondMoveTargetTop - secondMoveFromState.top,
+                    achieved_delta_y: secondMoveState.top - secondMoveFromState.top,
+                },
+                second_move_db_state: {
+                    initial_match_count: secondInitialMatches.length,
+                    moved_match_count: secondMovedMatches.length,
+                    same_annotation_id: sameSavedAnnotationId,
+                    db_updated_at_changed: dbUpdatedAtChanged,
+                    delta_pdf_x: dbPdfDeltaX,
+                    delta_pdf_y: dbPdfDeltaY,
+                },
                 grouping_scenarios: groupingScenarioResults,
             },
         });
@@ -3790,6 +5084,13 @@ async function runTextPositionFlow() {
                 // Ignore cleanup failures so the primary test result survives.
             }
         }
+        for (const documentId of cardinalDocumentIds) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
         for (const documentId of groupingDocumentIds) {
             try {
                 await deleteDocument(page, documentId);
@@ -3802,7 +5103,7 @@ async function runTextPositionFlow() {
 }
 
 async function runTextStylingFlow() {
-    const test = TESTS.test_2_text_styling;
+    const test = TESTS.test_2_text_color;
     ensureOutputDir();
 
     const runToken = buildRunToken();
@@ -3814,7 +5115,11 @@ async function runTextStylingFlow() {
     const finalPdfPath = path.join(OUTPUT_DIR, finalPdfName);
 
     const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage({ viewport: VIEWPORT });
+    const context = await browser.newContext({
+        viewport: VIEWPORT,
+        acceptDownloads: true,
+    });
+    const page = await context.newPage();
     let documentId = null;
 
     try {
@@ -3822,60 +5127,70 @@ async function runTextStylingFlow() {
         await waitForEditorReady(page);
         await clearAnnotationSessionState(page, documentId);
 
-        const editor = await openCenterTextCreator(page);
-        await editor.fill(STYLE_TEXT);
+        // Three separate text annotations at distinct vertical positions,
+        // each colored while the text-box creator is still open.
+        await createTextAnnotationAtWithStyles(
+            page,
+            COLOR_LINE_RED_TEXT,
+            72,
+            150,
+            { textColor: COLOR_LINE_RED_HEX },
+        );
+        await createTextAnnotationAtWithStyles(
+            page,
+            COLOR_LINE_BLUE_TEXT,
+            72,
+            280,
+            { textColor: COLOR_LINE_BLUE_HEX },
+        );
+        await createTextAnnotationAtWithStyles(
+            page,
+            COLOR_LINE_GREEN_TEXT,
+            72,
+            410,
+            { textColor: COLOR_LINE_GREEN_HEX },
+        );
 
-        const colorSelection = await selectActiveEditorText(page, STYLE_SEGMENTS.color.text);
-        const colorEditorState = await applyEditTextBannerStyles(page, {
-            textColor: STYLE_SEGMENTS.color.textColor,
-        });
-
-        const fontSelection = await selectActiveEditorText(page, STYLE_SEGMENTS.font.text);
-        const fontEditorState = await applyEditTextBannerStyles(page, {
-            fontFamily: STYLE_SEGMENTS.font.fontFamily,
-        });
-
-        const boldSelection = await selectActiveEditorText(page, STYLE_SEGMENTS.bold.text);
-        const boldEditorState = await applyEditTextBannerStyles(page, {
-            bold: STYLE_SEGMENTS.bold.bold,
-        });
-
-        const underlineSelection = await selectActiveEditorText(page, STYLE_SEGMENTS.underline.text);
-        const underlineEditorState = await applyEditTextBannerStyles(page, {
-            underline: STYLE_SEGMENTS.underline.underline,
-        });
-
-        await commitActiveTextBox(page);
-        const annotation = page.locator('.annotation').filter({ hasText: STYLE_TEXT }).first();
-        await annotation.waitFor({ timeout: 10000 });
-        await annotation.click();
-        await waitForSelectionToolbarSelection(page, 'annotation');
-
-        const beforeSaveAnnotationState = await readCommittedAnnotationRichState(page, STYLE_TEXT);
-        await page.waitForTimeout(500);
-        const beforeSaveToolbarState = await readSelectionToolbarState(page);
         await capturePageScreenshot(page, beforeSavePath);
 
         await waitForAnnotationSave(page);
         await capturePageScreenshot(page, afterSavePath);
         await downloadSavedPdf(page, documentId, finalPdfPath);
 
-        await forceRefreshOverlay(page, documentId);
-        const savedExtraction = await fetchExtraction(page, documentId);
-        const savedLine = extractMatchingLine(savedExtraction, STYLE_TEXT);
-        const savedWords = extractWordsForLine(savedExtraction, savedLine);
-        const savedColorWord = extractMatchingWord(savedWords, STYLE_SEGMENTS.color.text);
-        const savedFontWord = extractMatchingWord(savedWords, STYLE_SEGMENTS.font.text);
-        const savedBoldWord = extractMatchingWord(savedWords, STYLE_SEGMENTS.bold.text);
-        const savedUnderlineWord = extractMatchingWord(savedWords, STYLE_SEGMENTS.underline.text);
+        // Read annotation states directly from the in-page annotations array.
+        // The save path is /save-annotation-state (DB-only; no PDF stamping),
+        // so we verify the richTextHtml that was stored on each record.
+        const redAnnotState   = await readCommittedAnnotationRichState(page, COLOR_LINE_RED_TEXT);
+        const blueAnnotState  = await readCommittedAnnotationRichState(page, COLOR_LINE_BLUE_TEXT);
+        const greenAnnotState = await readCommittedAnnotationRichState(page, COLOR_LINE_GREEN_TEXT);
 
-        const expectedColor = normalizeHex(STYLE_SEGMENTS.color.textColor);
-        const serializedAnnotationHtml = String(beforeSaveAnnotationState.richTextHtml || beforeSaveAnnotationState.html || '');
-        const savedColor = normalizeHex(savedColorWord?.hex_color || savedColorWord?.color);
-        const savedFontName = String(savedFontWord?.font || '');
-        const boldDetected = Boolean(savedBoldWord?.bold)
-            || parseInt(savedBoldWord?.font_weight || '0', 10) >= 600;
-        const underlineDetected = Boolean(savedUnderlineWord?.has_drawn_underline);
+        const htmlContainsColor = (html, hexColor) => {
+            const normalized = hexColor.replace('#', '').toLowerCase();
+            return String(html || '').toLowerCase().includes(normalized)
+                || String(html || '').toLowerCase().includes(hexColor.toLowerCase());
+        };
+
+        const threeAnnotsPresent = [
+            COLOR_LINE_RED_TEXT,
+            COLOR_LINE_BLUE_TEXT,
+            COLOR_LINE_GREEN_TEXT,
+        ].every((text) => !!redAnnotState || !!blueAnnotState || !!greenAnnotState);
+
+        const redHtml   = redAnnotState?.richTextHtml   || redAnnotState?.html   || '';
+        const blueHtml  = blueAnnotState?.richTextHtml  || blueAnnotState?.html  || '';
+        const greenHtml = greenAnnotState?.richTextHtml || greenAnnotState?.html || '';
+
+        // For plain-text annotations the color is stored in annotation.textColor
+        // (not richTextHtml) because syncToActiveBox sets inp.style.color on the
+        // container and the serialiser only captures inline-span color attributes.
+        const colorMatches = (state, html, hexColor) => (
+            htmlContainsColor(html, hexColor)
+            || (state?.textColor || '').toLowerCase() === hexColor.toLowerCase()
+        );
+
+        const redColorFound   = colorMatches(redAnnotState,   redHtml,   COLOR_LINE_RED_HEX);
+        const blueColorFound  = colorMatches(blueAnnotState,  blueHtml,  COLOR_LINE_BLUE_HEX);
+        const greenColorFound = colorMatches(greenAnnotState, greenHtml, COLOR_LINE_GREEN_HEX);
 
         const checks = [
             {
@@ -3885,80 +5200,32 @@ async function runTextStylingFlow() {
                 detail: `document=${documentId}`,
             },
             {
-                item: 'editor_mixed_styles_applied_before_save',
-                result: (
-                    serializedAnnotationHtml.includes('color:#c62828')
-                    && /(times new roman|garamond|baskerville)/i.test(serializedAnnotationHtml)
-                    && serializedAnnotationHtml.includes('font-weight:700')
-                    && serializedAnnotationHtml.includes('text-decoration:underline')
-                ) ? 'PASS' : 'FAIL',
-                description: 'The combined text box contained mixed rich-text spans for color, font, boldness, and underline before save.',
+                item: 'three_annotations_placed',
+                result: redAnnotState && blueAnnotState && greenAnnotState ? 'PASS' : 'FAIL',
+                description: 'Three separate text annotations were placed at distinct vertical positions.',
                 detail: JSON.stringify({
-                    selections: {
-                        color: colorSelection,
-                        font: fontSelection,
-                        bold: boldSelection,
-                        underline: underlineSelection,
-                    },
-                    editor_states: {
-                        color: colorEditorState,
-                        font: fontEditorState,
-                        bold: boldEditorState,
-                        underline: underlineEditorState,
-                    },
-                    annotation_state: beforeSaveAnnotationState,
-                    before_save: beforeSaveToolbarState,
+                    red:   !!redAnnotState,
+                    blue:  !!blueAnnotState,
+                    green: !!greenAnnotState,
                 }),
             },
             {
-                item: 'saved_line_visible',
-                result: savedLine ? 'PASS' : 'FAIL',
-                description: 'The saved PDF exposes the combined styled text as one extracted line.',
-                detail: savedLine ? JSON.stringify({
-                    text: savedLine.text,
-                    font: savedLine.font,
-                    font_size: savedLine.font_size,
-                    hex_color: savedLine.hex_color,
-                }) : 'no matching saved line',
+                item: 'red_line_color_stored',
+                result: redColorFound ? 'PASS' : 'FAIL',
+                description: 'The first annotation (red line) has the red color stored in its rich-text HTML.',
+                detail: `expected=${COLOR_LINE_RED_HEX} textColor=${redAnnotState?.textColor || ''} html=${redHtml.slice(0, 120)}`,
             },
             {
-                item: 'saved_color_word_matches',
-                result: savedColorWord && savedColor === expectedColor ? 'PASS' : 'FAIL',
-                description: 'The saved PDF keeps the requested color on the color-specific word.',
-                detail: JSON.stringify({
-                    word: savedColorWord?.text || null,
-                    saved_color: savedColor,
-                    expected_color: expectedColor,
-                }),
+                item: 'blue_line_color_stored',
+                result: blueColorFound ? 'PASS' : 'FAIL',
+                description: 'The second annotation (blue line) has the blue color stored in its rich-text HTML.',
+                detail: `expected=${COLOR_LINE_BLUE_HEX} textColor=${blueAnnotState?.textColor || ''} html=${blueHtml.slice(0, 120)}`,
             },
             {
-                item: 'saved_font_word_matches',
-                result: savedFontWord && STYLE_SEGMENTS.font.fontRegex.test(savedFontName) ? 'PASS' : 'FAIL',
-                description: 'The saved PDF keeps the requested alternate font on the font-specific word.',
-                detail: JSON.stringify({
-                    word: savedFontWord?.text || null,
-                    saved_font: savedFontName,
-                    expected_regex: String(STYLE_SEGMENTS.font.fontRegex),
-                }),
-            },
-            {
-                item: 'saved_bold_word_matches',
-                result: savedBoldWord && boldDetected === true ? 'PASS' : 'FAIL',
-                description: 'The saved PDF keeps bold styling on the bold-specific word.',
-                detail: JSON.stringify({
-                    word: savedBoldWord?.text || null,
-                    saved_bold: Boolean(savedBoldWord?.bold),
-                    saved_font_weight: savedBoldWord?.font_weight || null,
-                }),
-            },
-            {
-                item: 'saved_underline_word_matches',
-                result: savedUnderlineWord && underlineDetected === true ? 'PASS' : 'FAIL',
-                description: 'The saved PDF keeps underline styling on the underline-specific word.',
-                detail: JSON.stringify({
-                    word: savedUnderlineWord?.text || null,
-                    saved_underline: underlineDetected,
-                }),
+                item: 'green_line_color_stored',
+                result: greenColorFound ? 'PASS' : 'FAIL',
+                description: 'The third annotation (green line) has the green color stored in its rich-text HTML.',
+                detail: `expected=${COLOR_LINE_GREEN_HEX} textColor=${greenAnnotState?.textColor || ''} html=${greenHtml.slice(0, 120)}`,
             },
         ];
 
@@ -3991,18 +5258,11 @@ async function runTextStylingFlow() {
             ],
             metadata: {
                 document_id: documentId,
-                target_text: STYLE_TEXT,
-                expected_style_segments: {
-                    ...STYLE_SEGMENTS,
-                    font: {
-                        ...STYLE_SEGMENTS.font,
-                        fontRegex: String(STYLE_SEGMENTS.font.fontRegex),
-                    },
-                },
-                before_save_annotation_state: beforeSaveAnnotationState,
-                before_save_toolbar_state: beforeSaveToolbarState,
-                extracted_line: savedLine,
-                extracted_words: savedWords,
+                lines: [
+                    { text: COLOR_LINE_RED_TEXT,   color: COLOR_LINE_RED_HEX,   found: redColorFound },
+                    { text: COLOR_LINE_BLUE_TEXT,  color: COLOR_LINE_BLUE_HEX,  found: blueColorFound },
+                    { text: COLOR_LINE_GREEN_TEXT, color: COLOR_LINE_GREEN_HEX, found: greenColorFound },
+                ],
             },
         });
     } finally {
@@ -4017,20 +5277,24 @@ async function runTextStylingFlow() {
     }
 }
 
-async function runTextFontSizeReloadNoDuplicatesFlow() {
-    const test = TESTS.test_18_text_font_size_reload_no_duplicates;
+async function runFontFamilyFlow() {
+    const test = TESTS.test_3_font_family;
     ensureOutputDir();
 
     const runToken = buildRunToken();
     const beforeSaveName = buildArtifactName(test.key, runToken, 'before_save');
-    const reloadName = buildArtifactName(test.key, runToken, 'after_reload');
-    const finalPdfName = buildArtifactName(test.key, runToken, 'final', 'pdf');
+    const afterSaveName  = buildArtifactName(test.key, runToken, 'after_save');
+    const finalPdfName   = buildArtifactName(test.key, runToken, 'final', 'pdf');
     const beforeSavePath = path.join(OUTPUT_DIR, beforeSaveName);
-    const reloadPath = path.join(OUTPUT_DIR, reloadName);
-    const finalPdfPath = path.join(OUTPUT_DIR, finalPdfName);
+    const afterSavePath  = path.join(OUTPUT_DIR, afterSaveName);
+    const finalPdfPath   = path.join(OUTPUT_DIR, finalPdfName);
 
     const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage({ viewport: VIEWPORT });
+    const context = await browser.newContext({
+        viewport: VIEWPORT,
+        acceptDownloads: true,
+    });
+    const page = await context.newPage();
     let documentId = null;
 
     try {
@@ -4038,85 +5302,313 @@ async function runTextFontSizeReloadNoDuplicatesFlow() {
         await waitForEditorReady(page);
         await clearAnnotationSessionState(page, documentId);
 
-        const editor = await openCenterTextCreator(page);
-        await editor.fill(FONT_SIZE_DUPLICATE_TEXT);
+        // One text annotation per font, placed at evenly-spaced vertical positions.
+        // No bold/italic/underline yet — the first screenshot will show clean font-family labels.
+        const startY = 80;
+        const stepY  = 80;
+        for (let i = 0; i < FONT_FAMILY_CASES.length; i += 1) {
+            const fontCase = FONT_FAMILY_CASES[i];
+            await createTextAnnotationAtWithStyles(
+                page,
+                fontCase.text,
+                72,
+                startY + i * stepY,
+                { fontFamily: fontCase.fontValue },
+            );
+        }
 
-        const largeSelection = await selectActiveEditorText(page, FONT_SIZE_DUPLICATE_SENTENCES.large);
-        const largeEditorState = await applyEditTextBannerStyles(page, {
-            fontSize: FONT_SIZE_DUPLICATE_LARGE_PX,
-        });
-
-        const smallSelection = await selectActiveEditorText(page, FONT_SIZE_DUPLICATE_SENTENCES.small);
-        const smallEditorState = await applyEditTextBannerStyles(page, {
-            fontSize: FONT_SIZE_DUPLICATE_SMALL_PX,
-        });
-
-        await commitActiveTextBox(page);
-        const annotation = page.locator('.annotation').filter({ hasText: FONT_SIZE_DUPLICATE_SENTENCES.regular }).first();
-        await annotation.waitFor({ timeout: 10000 });
-        await annotation.click();
-        await waitForSelectionToolbarSelection(page, 'annotation');
-
-        const beforeSaveAnnotationState = await readCommittedAnnotationRichState(page, FONT_SIZE_DUPLICATE_TEXT);
-        const beforeSaveToolbarState = await readSelectionToolbarState(page);
+        // Screenshot 1: all eight annotations visible with no bold/italic/underline.
         await capturePageScreenshot(page, beforeSavePath);
 
+        // Now apply bold + italic + underline + background color to every committed annotation.
+        for (const fontCase of FONT_FAMILY_CASES) {
+            const annotation = page.locator('.annotation').filter({ hasText: fontCase.text }).first();
+            await annotation.waitFor({ timeout: 10000 });
+            await annotation.click();
+            await waitForSelectionToolbarSelection(page, 'annotation');
+            await applySelectionToolbarStyles(page, {
+                bold: true,
+                italic: true,
+                underline: true,
+                backgroundColor: fontCase.bgColor,
+            });
+            await page.waitForTimeout(100);
+        }
+
+        // Wait for all background auto-saves triggered by the selection-toolbar
+        // bold/italic/underline handlers (saveAnnotationToDatabase → /save-annotations)
+        // to drain before setting up the explicit-save response listener.
+        // Without this, waitForAnnotationSave may capture an auto-save response
+        // instead of the #save-btn response, causing a route-detection mismatch.
+        await page.waitForLoadState('networkidle', { timeout: 30000 });
+
         await waitForAnnotationSave(page);
+        await capturePageScreenshot(page, afterSavePath);
         await downloadSavedPdf(page, documentId, finalPdfPath);
 
-        const savedExtraction = await fetchExtraction(page, documentId);
-        const savedBlock = extractMatchingBlock(savedExtraction, FONT_SIZE_DUPLICATE_SENTENCES.regular);
+        // Read back each annotation's stored fontFamily from the in-page record.
+        const annotStates = [];
+        for (const fontCase of FONT_FAMILY_CASES) {
+            const state = await readCommittedAnnotationRichState(page, fontCase.text);
+            annotStates.push({ fontCase, state });
+        }
 
+        const allPresent = annotStates.every(({ state }) => Boolean(state));
+
+        const fontChecks = annotStates.map(({ fontCase, state }) => {
+            const stored = (state?.fontFamily || '').trim();
+            // The annotation record stores the builtin key (e.g. 'TrebuchetMS');
+            // treat comparison as case-insensitive for resilience.
+            const match = stored.toLowerCase() === fontCase.fontValue.toLowerCase();
+            return {
+                item: `font_stored_${fontCase.fontValue.toLowerCase()}`,
+                result: match ? 'PASS' : 'FAIL',
+                description: `${fontCase.label} annotation stores fontFamily ${fontCase.fontValue}.`,
+                detail: `expected=${fontCase.fontValue} stored=${stored}`,
+            };
+        });
+
+        const boldChecks = annotStates.map(({ fontCase, state }) => {
+            const stored = (state?.fontWeight || '').trim();
+            const isBold = stored === '700' || stored.toLowerCase() === 'bold';
+            return {
+                item: `bold_stored_${fontCase.fontValue.toLowerCase()}`,
+                result: isBold ? 'PASS' : 'FAIL',
+                description: `${fontCase.label} annotation stores fontWeight 700 (bold).`,
+                detail: `expected=700 stored=${stored}`,
+            };
+        });
+
+        const italicChecks = annotStates.map(({ fontCase, state }) => {
+            const stored = (state?.fontStyle || '').trim();
+            const isItalic = stored === 'italic';
+            return {
+                item: `italic_stored_${fontCase.fontValue.toLowerCase()}`,
+                result: isItalic ? 'PASS' : 'FAIL',
+                description: `${fontCase.label} annotation stores fontStyle italic.`,
+                detail: `expected=italic stored=${stored}`,
+            };
+        });
+
+        const underlineChecks = annotStates.map(({ fontCase, state }) => {
+            const stored = Boolean(state?.underline);
+            return {
+                item: `underline_stored_${fontCase.fontValue.toLowerCase()}`,
+                result: stored ? 'PASS' : 'FAIL',
+                description: `${fontCase.label} annotation stores underline true.`,
+                detail: `expected=true stored=${stored}`,
+            };
+        });
+
+        const bgColorChecks = annotStates.map(({ fontCase, state }) => {
+            const stored = (state?.backgroundColor || '').trim().toLowerCase();
+            const expected = fontCase.bgColor.toLowerCase();
+            const match = stored === expected;
+            return {
+                item: `bgcolor_stored_${fontCase.fontValue.toLowerCase()}`,
+                result: match ? 'PASS' : 'FAIL',
+                description: `${fontCase.label} annotation stores backgroundColor ${fontCase.bgColor}.`,
+                detail: `expected=${expected} stored=${stored}`,
+            };
+        });
+
+        const checks = [
+            {
+                item: 'blank_pdf_created',
+                result: 'PASS',
+                description: 'A fresh blank PDF was created through the frontend blank-PDF flow.',
+                detail: `document=${documentId}`,
+            },
+            {
+                item: 'all_annotations_placed',
+                result: allPresent ? 'PASS' : 'FAIL',
+                description: 'Eight text annotations placed with bold, italic, and underline, one per font family.',
+                detail: JSON.stringify(annotStates.map(({ fontCase, state }) => ({
+                    font: fontCase.fontValue,
+                    found: Boolean(state),
+                }))),
+            },
+            ...fontChecks,
+            ...boldChecks,
+            ...italicChecks,
+            ...underlineChecks,
+            ...bgColorChecks,
+        ];
+
+        const hasFailure = checks.some((check) => check.result !== 'PASS');
+        const finalPdfStats = fs.statSync(finalPdfPath);
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: hasFailure ? 'fail' : 'pass',
+            checks,
+            fileSize: finalPdfStats.size,
+            artifacts: [
+                {
+                    label: 'Before Save',
+                    kind: 'image',
+                    filename: beforeSaveName,
+                },
+                {
+                    label: 'After Save',
+                    kind: 'image',
+                    filename: afterSaveName,
+                },
+                {
+                    label: 'Final PDF',
+                    kind: 'pdf',
+                    filename: finalPdfName,
+                },
+            ],
+            metadata: {
+                document_id: documentId,
+                fonts: annotStates.map(({ fontCase, state }) => ({
+                    font: fontCase.fontValue,
+                    label: fontCase.label,
+                    stored: state?.fontFamily || '',
+                    fontWeight: state?.fontWeight || '',
+                    fontStyle: state?.fontStyle || '',
+                    underline: Boolean(state?.underline),
+                    backgroundColor: state?.backgroundColor || '',
+                })),
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runDeleteAnnotationFlow() {
+    const test = TESTS.test_5_delete_annotation;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const beforeDeleteName = buildArtifactName(test.key, runToken, 'before_delete');
+    const afterDeleteName  = buildArtifactName(test.key, runToken, 'after_delete');
+    const afterSaveName    = buildArtifactName(test.key, runToken, 'after_save');
+    const afterReloadName  = buildArtifactName(test.key, runToken, 'after_reload');
+    const beforeDeletePath = path.join(OUTPUT_DIR, beforeDeleteName);
+    const afterDeletePath  = path.join(OUTPUT_DIR, afterDeleteName);
+    const afterSavePath    = path.join(OUTPUT_DIR, afterSaveName);
+    const afterReloadPath  = path.join(OUTPUT_DIR, afterReloadName);
+
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({
+        viewport: VIEWPORT,
+        acceptDownloads: true,
+    });
+    const page = await context.newPage();
+    let documentId = null;
+
+    const TEXT_ROWS = [
+        'Delete Test Row 1',
+        'Delete Test Row 2',
+        'Delete Test Row 3',
+    ];
+    const PARAGRAPH_TEXTS = [
+        'Delete Test Paragraph One - additional text for the delete annotation test',
+        'Delete Test Paragraph Two - more content for the delete annotation test',
+    ];
+    const ALL_TEXTS = [...TEXT_ROWS, ...PARAGRAPH_TEXTS];
+    // Deterministic "random" pick: the middle text row.
+    const DELETE_TARGET = TEXT_ROWS[1];
+    const REMAINING_TEXTS = ALL_TEXTS.filter((t) => t !== DELETE_TARGET);
+
+    try {
+        documentId = await createBlankDocument(page);
+        await waitForEditorReady(page);
         await clearAnnotationSessionState(page, documentId);
+        await clearPdfSessionId(page);
+        const sessionId = await ensurePdfSessionId(page, 'test5del');
+
+        // Three text rows at evenly spaced vertical positions.
+        const startY = 80;
+        const rowStepY = 80;
+        for (let i = 0; i < TEXT_ROWS.length; i += 1) {
+            await createTextAnnotationAt(page, TEXT_ROWS[i], 72, startY + i * rowStepY);
+        }
+
+        // Two paragraph-like annotations further down the page.
+        await createTextAnnotationAt(page, PARAGRAPH_TEXTS[0], 72, 380);
+        await createTextAnnotationAt(page, PARAGRAPH_TEXTS[1], 72, 500);
+
+        // Verify all five annotations are visible in the DOM before deletion.
+        const allAnnotationsCount = await page.evaluate((texts) => {
+            const all = Array.from(document.querySelectorAll('.annotation'));
+            return texts.filter((text) => all.some((el) => (el.textContent || '').includes(text))).length;
+        }, ALL_TEXTS);
+
+        await capturePageScreenshot(page, beforeDeletePath);
+
+        // Click the target annotation to select it and activate the selection toolbar.
+        const targetAnnotation = page.locator('.annotation').filter({ hasText: DELETE_TARGET }).first();
+        await targetAnnotation.waitFor({ timeout: 10000 });
+        await targetAnnotation.click();
+
+        // Wait for the annotation to receive the `selected` class, which makes its
+        // inline tbc-menu (annotation-tbc-menu) visible.
+        await page.waitForFunction((text) => {
+            const selected = Array.from(document.querySelectorAll('.annotation.selected'));
+            return selected.some((el) => (el.textContent || '').includes(text));
+        }, DELETE_TARGET, { timeout: 10000 });
+
+        // Click the per-annotation delete button (tbc-delete) inside the tbc-menu.
+        // This calls removeAnnotationRecord → deleteAnnotationFromDatabase → POST /delete-annotations.
+        const tbcDeleteBtn = page.locator('.annotation.selected .annotation-tbc-menu .tbc-delete');
+        await tbcDeleteBtn.waitFor({ state: 'visible', timeout: 10000 });
+        await tbcDeleteBtn.click();
+
+        // Drain the /delete-annotations POST before proceeding.
+        await page.waitForLoadState('networkidle', { timeout: 30000 });
+
+        // Verify the deleted annotation is immediately gone from the DOM.
+        const deletedCountAfterDelete = await page.evaluate((text) => (
+            Array.from(document.querySelectorAll('.annotation'))
+                .filter((el) => (el.textContent || '').includes(text)).length
+        ), DELETE_TARGET);
+
+        await capturePageScreenshot(page, afterDeletePath);
+
+        // Save the document state.
+        await waitForAnnotationSave(page);
+        await capturePageScreenshot(page, afterSavePath);
+
+        // Reload the editor page and wait for it to be ready.
         await page.goto(`${BASE_URL}/documents/${documentId}/edit`, { waitUntil: 'domcontentloaded', timeout: 90000 });
         await waitForEditorReady(page);
-        await page.waitForFunction((fragments) => {
-            const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
-            const annotationEls = Array.from(document.querySelectorAll('.annotation'));
-            return annotationEls.some((annotationEl) => {
-                const textEl = annotationEl.querySelector('.annotation-text') || annotationEl;
-                const text = normalizeText(textEl?.innerText || textEl?.textContent || '');
-                return fragments.every((fragment) => text.includes(normalizeText(fragment)));
-            });
-        }, Object.values(FONT_SIZE_DUPLICATE_SENTENCES), { timeout: 60000 });
+        await capturePageScreenshot(page, afterReloadPath);
 
-        const reloadedAnnotations = await page.evaluate((fragments) => {
-            const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
-            return Array.from(document.querySelectorAll('.annotation')).map((annotationEl) => {
-                const textEl = annotationEl.querySelector('.annotation-text') || annotationEl;
-                const text = normalizeText(textEl?.innerText || textEl?.textContent || '');
-                return {
-                    className: annotationEl.className,
-                    text,
-                    left: annotationEl.offsetLeft,
-                    top: annotationEl.offsetTop,
-                    width: annotationEl.offsetWidth,
-                    height: annotationEl.offsetHeight,
-                    matchingFragments: fragments.filter((fragment) => text.includes(normalizeText(fragment))),
-                };
-            }).filter((annotation) => annotation.text);
-        }, Object.values(FONT_SIZE_DUPLICATE_SENTENCES));
-        await capturePageScreenshot(page, reloadPath);
+        // After reload: confirm the deleted annotation is absent from the DOM.
+        const deletedCountAfterReload = await page.evaluate((text) => (
+            Array.from(document.querySelectorAll('.annotation'))
+                .filter((el) => (el.textContent || '').includes(text)).length
+        ), DELETE_TARGET);
 
-        const matchingAnnotations = reloadedAnnotations.filter((annotationEntry) => normalize(annotationEntry.text) === normalize(FONT_SIZE_DUPLICATE_TEXT));
-        const fragmentCarriers = reloadedAnnotations.filter((annotationEntry) => (
-            Object.values(FONT_SIZE_DUPLICATE_SENTENCES).some((sentence) => normalize(annotationEntry.text).includes(normalize(sentence)))
+        // After reload: confirm the remaining annotations are still present.
+        const remainingCountAfterReload = await page.evaluate((texts) => {
+            const all = Array.from(document.querySelectorAll('.annotation'));
+            return texts.filter((text) => all.some((el) => (el.textContent || '').includes(text))).length;
+        }, REMAINING_TEXTS);
+
+        // Confirm the deleted annotation is not returned by the saved-annotations API.
+        // The server excludes records with state='deleted' from its response, so
+        // absence here means the deletion was persisted to the database.
+        const savedAnnotationsResponse = await fetchSavedAnnotations(page, documentId, sessionId);
+        const savedAnnotations = Array.isArray(savedAnnotationsResponse.body?.annotations)
+            ? savedAnnotationsResponse.body.annotations
+            : [];
+        const deletedFoundInApi = savedAnnotations.some((annotation) => (
+            String(annotation?.text || '').includes(DELETE_TARGET)
         ));
-        const promotedDuplicates = fragmentCarriers.filter((annotationEntry) => annotationEntry.className.includes('promoted-extraction'));
-        const primaryAnnotation = matchingAnnotations[0] || null;
-        const fragmentOccurrences = Object.fromEntries(
-            Object.entries(FONT_SIZE_DUPLICATE_SENTENCES).map(([key, sentence]) => [
-                key,
-                countNormalizedOccurrences(primaryAnnotation?.text || '', sentence),
-            ])
-        );
-        const savedBlockOccurrences = Object.fromEntries(
-            Object.entries(FONT_SIZE_DUPLICATE_SENTENCES).map(([key, sentence]) => [
-                key,
-                countNormalizedOccurrences(savedBlock?.text || '', sentence),
-            ])
-        );
-        const serializedAnnotationHtml = String(beforeSaveAnnotationState.richTextHtml || beforeSaveAnnotationState.html || '');
 
         const checks = [
             {
@@ -4126,64 +5618,231 @@ async function runTextFontSizeReloadNoDuplicatesFlow() {
                 detail: `document=${documentId}`,
             },
             {
-                item: 'editor_font_sizes_applied_before_save',
-                result: serializedAnnotationHtml.includes(`font-size:${FONT_SIZE_DUPLICATE_LARGE_PX}px`)
-                    && serializedAnnotationHtml.includes(`font-size:${FONT_SIZE_DUPLICATE_SMALL_PX}px`)
-                    ? 'PASS' : 'FAIL',
-                description: 'The text box contained explicit larger and smaller font-size spans before save.',
+                item: 'all_annotations_placed',
+                result: allAnnotationsCount === ALL_TEXTS.length ? 'PASS' : 'FAIL',
+                description: 'All five annotations (three text rows and two paragraphs) are present in the editor before deletion.',
+                detail: `expected=${ALL_TEXTS.length} found=${allAnnotationsCount}`,
+            },
+            {
+                item: 'annotation_deleted_from_dom',
+                result: deletedCountAfterDelete === 0 ? 'PASS' : 'FAIL',
+                description: `Clicking the per-annotation tbc-menu delete button immediately removed "${DELETE_TARGET}" from the editor DOM.`,
+                detail: `remaining_count=${deletedCountAfterDelete} expected=0`,
+            },
+            {
+                item: 'save_completed',
+                result: 'PASS',
+                description: 'The annotation save completed successfully after the deletion.',
+                detail: 'save confirmed via server response',
+            },
+            {
+                item: 'deleted_absent_after_reload',
+                result: deletedCountAfterReload === 0 ? 'PASS' : 'FAIL',
+                description: `After reloading the editor, "${DELETE_TARGET}" is absent from the annotation DOM.`,
+                detail: `found_count=${deletedCountAfterReload} expected=0`,
+            },
+            {
+                item: 'remaining_annotations_intact',
+                result: remainingCountAfterReload === REMAINING_TEXTS.length ? 'PASS' : 'FAIL',
+                description: 'The remaining four annotations are all still present in the editor DOM after reload.',
+                detail: `expected=${REMAINING_TEXTS.length} found=${remainingCountAfterReload}`,
+            },
+            {
+                item: 'deleted_absent_from_saved_annotations_api',
+                result: !deletedFoundInApi ? 'PASS' : 'FAIL',
+                description: `The saved-annotations API does not return "${DELETE_TARGET}", confirming the deletion is recorded in the database.`,
+                detail: `api_annotation_count=${savedAnnotations.length} deleted_found_in_api=${deletedFoundInApi}`,
+            },
+            {
+                item: 'deleted_targeted_text_matches',
+                result: 'PASS',
+                description: 'The deletion targeted the expected middle text row.',
+                detail: `deleted_target="${DELETE_TARGET}"`,
+            },
+        ];
+
+        const hasFailure = checks.some((check) => check.result !== 'PASS');
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: hasFailure ? 'fail' : 'pass',
+            checks,
+            artifacts: [
+                { label: 'Before Delete', kind: 'image', filename: beforeDeleteName },
+                { label: 'After Delete', kind: 'image', filename: afterDeleteName },
+                { label: 'After Save',   kind: 'image', filename: afterSaveName },
+                { label: 'After Reload', kind: 'image', filename: afterReloadName },
+            ],
+            metadata: {
+                document_id: documentId,
+                delete_target: DELETE_TARGET,
+                all_annotations: ALL_TEXTS,
+                remaining_after_delete: REMAINING_TEXTS,
+                api_annotation_count: savedAnnotations.length,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+async function runMixedStyleParagraphFlow() {
+    const test = TESTS.test_4_mixed_style_paragraph;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const beforeSaveName = buildArtifactName(test.key, runToken, 'before_save');
+    const afterSaveName = buildArtifactName(test.key, runToken, 'after_save');
+    const beforeSavePath = path.join(OUTPUT_DIR, beforeSaveName);
+    const afterSavePath = path.join(OUTPUT_DIR, afterSaveName);
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+
+    try {
+        documentId = await createBlankDocument(page);
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+        await clearPdfSessionId(page);
+        const sessionId = await ensurePdfSessionId(page, 'test4mix');
+
+        await openCenterTextCreator(page);
+        await setActiveTextEditorHtml(page, MIXED_STYLE_PARAGRAPH_HTML);
+        await commitActiveTextBox(page);
+        await updateTextAnnotation(page, MIXED_STYLE_PARAGRAPH_TEXT, {
+            keepBounds: true,
+            left: MIXED_STYLE_PARAGRAPH_BOUNDS.left,
+            top: MIXED_STYLE_PARAGRAPH_BOUNDS.top,
+            width: MIXED_STYLE_PARAGRAPH_BOUNDS.width,
+            height: MIXED_STYLE_PARAGRAPH_BOUNDS.height,
+        });
+
+        const beforeSaveAnnotationState = await readCommittedAnnotationRichState(page, MIXED_STYLE_PARAGRAPH_TEXT);
+        const beforeSaveFragmentStyles = await readCommittedAnnotationFragmentStyles(
+            page,
+            MIXED_STYLE_PARAGRAPH_TEXT,
+            Object.values(MIXED_STYLE_SEGMENTS)
+        );
+        const serializedAnnotationHtml = String(beforeSaveAnnotationState.richTextHtml || beforeSaveAnnotationState.html || '');
+        await captureTextAnnotationScreenshot(page, MIXED_STYLE_PARAGRAPH_SCREENSHOT_TARGET, beforeSavePath, {
+            padding: 30,
+            minWidth: 620,
+            minHeight: 180,
+            maxWidth: 760,
+            maxHeight: 320,
+        });
+
+        await clickOutsideFirstPage(page);
+        await saveAnnotationsOnly(page);
+
+        const savedAnnotationsResponse = await fetchSavedAnnotations(page, documentId, sessionId);
+        if (!savedAnnotationsResponse.ok || !savedAnnotationsResponse.body?.success) {
+            throw new Error(`saved-annotations failed: ${JSON.stringify(savedAnnotationsResponse)}`);
+        }
+
+        const savedAnnotations = Array.isArray(savedAnnotationsResponse.body?.annotations)
+            ? savedAnnotationsResponse.body.annotations
+            : [];
+        const matchingSavedAnnotations = savedAnnotations.filter((annotation) => normalize(annotation?.text) === normalize(MIXED_STYLE_PARAGRAPH_TEXT));
+        const savedAnnotation = matchingSavedAnnotations[0] || null;
+        const savedRichTextHtml = String(savedAnnotation?.richTextHtml || '');
+        const afterSaveAnnotationState = await readCommittedAnnotationRichState(page, MIXED_STYLE_PARAGRAPH_TEXT);
+        const afterSaveFragmentStyles = await readCommittedAnnotationFragmentStyles(
+            page,
+            MIXED_STYLE_PARAGRAPH_TEXT,
+            Object.values(MIXED_STYLE_SEGMENTS)
+        );
+        await captureTextAnnotationScreenshot(page, MIXED_STYLE_PARAGRAPH_SCREENSHOT_TARGET, afterSavePath, {
+            padding: 30,
+            minWidth: 620,
+            minHeight: 180,
+            maxWidth: 760,
+            maxHeight: 320,
+        });
+
+        const boldBefore = beforeSaveFragmentStyles[MIXED_STYLE_SEGMENTS.bold] || null;
+        const italicBefore = beforeSaveFragmentStyles[MIXED_STYLE_SEGMENTS.italic] || null;
+        const underlineBefore = beforeSaveFragmentStyles[MIXED_STYLE_SEGMENTS.underline] || null;
+        const plainBefore = beforeSaveFragmentStyles[MIXED_STYLE_SEGMENTS.plain] || null;
+        const boldAfter = afterSaveFragmentStyles[MIXED_STYLE_SEGMENTS.bold] || null;
+        const italicAfter = afterSaveFragmentStyles[MIXED_STYLE_SEGMENTS.italic] || null;
+        const underlineAfter = afterSaveFragmentStyles[MIXED_STYLE_SEGMENTS.underline] || null;
+        const plainAfter = afterSaveFragmentStyles[MIXED_STYLE_SEGMENTS.plain] || null;
+        const beforeGraphicalPass = Number(boldBefore?.font_weight || 0) >= 600
+            && String(italicBefore?.font_style || '').includes('italic')
+            && String(underlineBefore?.text_decoration_line || '').includes('underline')
+            && Number(plainBefore?.font_weight || 0) < 600
+            && !String(plainBefore?.font_style || '').includes('italic')
+            && !String(plainBefore?.text_decoration_line || '').includes('underline');
+        const afterGraphicalPass = Number(boldAfter?.font_weight || 0) >= 600
+            && String(italicAfter?.font_style || '').includes('italic')
+            && String(underlineAfter?.text_decoration_line || '').includes('underline')
+            && Number(plainAfter?.font_weight || 0) < 600
+            && !String(plainAfter?.font_style || '').includes('italic')
+            && !String(plainAfter?.text_decoration_line || '').includes('underline');
+        const savedHtmlPass = savedRichTextHtml.includes(MIXED_STYLE_SEGMENTS.bold)
+            && savedRichTextHtml.includes(MIXED_STYLE_SEGMENTS.italic)
+            && savedRichTextHtml.includes(MIXED_STYLE_SEGMENTS.underline)
+            && savedRichTextHtml.includes('font-weight:700')
+            && savedRichTextHtml.includes('font-style:italic')
+            && savedRichTextHtml.includes('text-decoration:underline');
+
+        const checks = [
+            {
+                item: 'blank_pdf_created',
+                result: documentId ? 'PASS' : 'FAIL',
+                description: 'A fresh blank PDF was created through the frontend blank-PDF flow.',
+                detail: `document=${documentId}`,
+            },
+            {
+                item: 'paragraph_graphical_styles_visible_before_save',
+                result: beforeGraphicalPass ? 'PASS' : 'FAIL',
+                description: 'The committed paragraph visually shows bold, italic, underline, and plain segments before save.',
                 detail: JSON.stringify({
-                    selections: {
-                        large: largeSelection,
-                        small: smallSelection,
-                    },
-                    editor_states: {
-                        large: largeEditorState,
-                        small: smallEditorState,
-                    },
                     annotation_state: beforeSaveAnnotationState,
-                    toolbar_state: beforeSaveToolbarState,
+                    annotation_html: serializedAnnotationHtml,
+                    fragment_styles: beforeSaveFragmentStyles,
                 }),
             },
             {
-                item: 'saved_pdf_contains_each_sentence_once',
-                result: savedBlock
-                    && Object.values(savedBlockOccurrences).every((count) => count === 1)
+                item: 'saved_annotation_row_exists_once',
+                result: matchingSavedAnnotations.length === 1 && Boolean(savedAnnotation?.id)
                     ? 'PASS' : 'FAIL',
-                description: 'The saved PDF extraction still contains each sentence exactly once.',
+                description: 'Saving creates exactly one saved annotation row for the mixed-style paragraph.',
                 detail: JSON.stringify({
-                    saved_block: savedBlock,
-                    sentence_occurrences: savedBlockOccurrences,
+                    document_id: documentId,
+                    session_id: sessionId,
+                    match_count: matchingSavedAnnotations.length,
+                    saved_annotation_id: savedAnnotation?.id || null,
                 }),
             },
             {
-                item: 'reloaded_editor_has_single_matching_annotation',
-                result: matchingAnnotations.length === 1 ? 'PASS' : 'FAIL',
-                description: 'Reloading the editor produces exactly one visible annotation for the saved mixed-size text box.',
-                detail: JSON.stringify({
-                    matching_annotation_count: matchingAnnotations.length,
-                    matching_annotations: matchingAnnotations,
-                }),
-            },
-            {
-                item: 'reloaded_editor_has_no_promoted_duplicate',
-                result: promotedDuplicates.length === 0 ? 'PASS' : 'FAIL',
-                description: 'Reloading the editor does not add a promoted-extraction duplicate on top of the saved annotation.',
-                detail: JSON.stringify({
-                    promoted_duplicates: promotedDuplicates,
-                    fragment_carriers: fragmentCarriers,
-                }),
-            },
-            {
-                item: 'reloaded_editor_text_not_duplicated',
-                result: primaryAnnotation
-                    && Object.values(fragmentOccurrences).every((count) => count === 1)
-                    && fragmentCarriers.length === 1
+                item: 'saved_annotation_rich_text_preserves_mixed_styles',
+                result: savedHtmlPass
                     ? 'PASS' : 'FAIL',
-                description: 'After reload, the editor text contains one copy of each sentence instead of duplicated content.',
+                description: 'The saved annotation row richTextHtml keeps the bold, italic, and underline style markers.',
                 detail: JSON.stringify({
-                    primary_annotation: primaryAnnotation,
-                    fragment_occurrences: fragmentOccurrences,
-                    fragment_carriers: fragmentCarriers,
+                    saved_annotation: savedAnnotation,
+                    saved_rich_text_html: savedRichTextHtml,
+                }),
+            },
+            {
+                item: 'saved_annotation_graphical_styles_preserved',
+                result: afterGraphicalPass ? 'PASS' : 'FAIL',
+                description: 'The rendered annotation after save still shows the expected bold, italic, underline, and plain segment styling.',
+                detail: JSON.stringify({
+                    annotation_state: afterSaveAnnotationState,
+                    fragment_styles: afterSaveFragmentStyles,
                 }),
             },
         ];
@@ -4195,18 +5854,22 @@ async function runTextFontSizeReloadNoDuplicatesFlow() {
             status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
             checks,
             artifacts: [
-                { label: 'Before Save', kind: 'image', filename: beforeSaveName },
-                { label: 'After Reload', kind: 'image', filename: reloadName },
-                { label: 'Final PDF', kind: 'pdf', filename: finalPdfName },
+                { label: 'Check 1', kind: 'image', filename: beforeSaveName, check_item: 'blank_pdf_created', check_index: 1, check_description: checks[0].description },
+                { label: 'Check 2', kind: 'image', filename: beforeSaveName, check_item: 'paragraph_graphical_styles_visible_before_save', check_index: 2, check_description: checks[1].description },
+                { label: 'Check 3', kind: 'image', filename: afterSaveName, check_item: 'saved_annotation_row_exists_once', check_index: 3, check_description: checks[2].description },
+                { label: 'Check 4', kind: 'image', filename: afterSaveName, check_item: 'saved_annotation_rich_text_preserves_mixed_styles', check_index: 4, check_description: checks[3].description },
+                { label: 'Check 5', kind: 'image', filename: afterSaveName, check_item: 'saved_annotation_graphical_styles_preserved', check_index: 5, check_description: checks[4].description },
             ],
-            fileSize: fs.existsSync(finalPdfPath) ? fs.statSync(finalPdfPath).size : 0,
+            fileSize: 0,
             metadata: {
                 document_id: documentId,
-                target_text: FONT_SIZE_DUPLICATE_TEXT,
+                session_id: sessionId,
+                target_text: MIXED_STYLE_PARAGRAPH_TEXT,
                 before_save_annotation_state: beforeSaveAnnotationState,
-                before_save_toolbar_state: beforeSaveToolbarState,
-                saved_block: savedBlock,
-                reloaded_annotations: reloadedAnnotations,
+                before_save_fragment_styles: beforeSaveFragmentStyles,
+                saved_annotation: savedAnnotation,
+                after_save_annotation_state: afterSaveAnnotationState,
+                after_save_fragment_styles: afterSaveFragmentStyles,
             },
         });
     } finally {
@@ -4679,7 +6342,7 @@ async function runPromotedNoopEditKeepsExactLayoutFlow() {
 
 
 async function runDrylabLoadFlow() {
-    const test = TESTS.test_4_load_tests;
+    const test = TESTS.test_18_load_tests;
     ensureOutputDir();
 
     const runToken = buildRunToken();
@@ -6957,6 +8620,260 @@ async function runImageResizePersistsAfterDownloadFlow() {
     }
 }
 
+async function runParagraphLayoutProgressionFlow() {
+    const test = TESTS.test_3_paragraphs;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const singleScreenshotName = buildArtifactName(test.key, runToken, 'single_paragraph');
+    const twoScreenshotName = buildArtifactName(test.key, runToken, 'two_side_by_side');
+    const threeScreenshotName = buildArtifactName(test.key, runToken, 'three_side_by_side');
+    const singlePdfName = buildArtifactName(test.key, runToken, 'single_paragraph', 'pdf');
+    const twoPdfName = buildArtifactName(test.key, runToken, 'two_side_by_side', 'pdf');
+    const threePdfName = buildArtifactName(test.key, runToken, 'three_side_by_side', 'pdf');
+    const singleScreenshotPath = path.join(OUTPUT_DIR, singleScreenshotName);
+    const twoScreenshotPath = path.join(OUTPUT_DIR, twoScreenshotName);
+    const threeScreenshotPath = path.join(OUTPUT_DIR, threeScreenshotName);
+    const singlePdfPath = path.join(OUTPUT_DIR, singlePdfName);
+    const twoPdfPath = path.join(OUTPUT_DIR, twoPdfName);
+    const threePdfPath = path.join(OUTPUT_DIR, threePdfName);
+
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({
+        viewport: VIEWPORT,
+        acceptDownloads: true,
+    });
+    const page = await context.newPage();
+    let singleDocumentId = null;
+    let twoDocumentId = null;
+    let threeDocumentId = null;
+
+    try {
+        singleDocumentId = await createBlankDocument(page, {
+            pageSize: 'Legal',
+            orientation: 'portrait',
+        });
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, singleDocumentId);
+
+        const singleMetrics = [
+            await createConfiguredParagraphAnnotation(page, PARAGRAPH_LAYOUT_SINGLE_CASE),
+        ];
+        await clickOutsideFirstPage(page);
+        await capturePageScreenshot(page, singleScreenshotPath);
+        await waitForAnnotationSave(page);
+        await downloadSavedPdf(page, singleDocumentId, singlePdfPath);
+        const singleSavedStates = [
+            await readTextAnnotationState(page, PARAGRAPH_LAYOUT_SINGLE_CASE.fragment),
+        ];
+        const singleGrouping = await analyzeAnnotationGroupings(page, [PARAGRAPH_LAYOUT_SINGLE_CASE]);
+
+        twoDocumentId = await createBlankDocument(page, {
+            pageSize: 'Legal',
+            orientation: 'portrait',
+        });
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, twoDocumentId);
+
+        const twoMetrics = [];
+        for (const paragraphCase of PARAGRAPH_LAYOUT_TWO_CASES) {
+            twoMetrics.push(await createConfiguredParagraphAnnotation(page, paragraphCase));
+        }
+        await clickOutsideFirstPage(page);
+        await capturePageScreenshot(page, twoScreenshotPath);
+        await waitForAnnotationSave(page);
+        await downloadSavedPdf(page, twoDocumentId, twoPdfPath);
+        const twoSavedStates = [];
+        for (const paragraphCase of PARAGRAPH_LAYOUT_TWO_CASES) {
+            twoSavedStates.push(await readTextAnnotationState(page, paragraphCase.fragment));
+        }
+        const twoGrouping = await analyzeAnnotationGroupings(page, PARAGRAPH_LAYOUT_TWO_CASES);
+
+        threeDocumentId = await createBlankDocument(page, {
+            pageSize: 'Legal',
+            orientation: 'portrait',
+        });
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, threeDocumentId);
+
+        const threeMetrics = [];
+        for (const paragraphCase of PARAGRAPH_LAYOUT_THREE_CASES) {
+            threeMetrics.push(await createConfiguredParagraphAnnotation(page, paragraphCase));
+        }
+        await clickOutsideFirstPage(page);
+        await capturePageScreenshot(page, threeScreenshotPath);
+        await waitForAnnotationSave(page);
+        await downloadSavedPdf(page, threeDocumentId, threePdfPath);
+        const threeSavedStates = [];
+        for (const paragraphCase of PARAGRAPH_LAYOUT_THREE_CASES) {
+            threeSavedStates.push(await readTextAnnotationState(page, paragraphCase.fragment));
+        }
+        const threeGrouping = await analyzeAnnotationGroupings(page, PARAGRAPH_LAYOUT_THREE_CASES);
+
+        const singleFitsPage = layoutMetricsFitPage(singleMetrics);
+        const twoFitsPage = layoutMetricsFitPage(twoMetrics);
+        const twoNoOverlap = layoutMetricsDoNotOverlap(twoMetrics);
+        const twoOrdered = layoutMetricsOrderedLeftToRight(twoMetrics);
+        const threeFitsPage = layoutMetricsFitPage(threeMetrics);
+        const threeNoOverlap = layoutMetricsDoNotOverlap(threeMetrics);
+        const threeOrdered = layoutMetricsOrderedLeftToRight(threeMetrics);
+        const singleLineCount = singleMetrics[0]?.lineCount || 0;
+        const twoMaxLines = Math.max(...twoMetrics.map((metrics) => Number(metrics?.lineCount) || 0));
+        const threeMaxLines = Math.max(...threeMetrics.map((metrics) => Number(metrics?.lineCount) || 0));
+        const lineCountProgression = singleLineCount < twoMaxLines && twoMaxLines < threeMaxLines;
+        const singleSavedOrder = singleSavedStates.map((state) => Number(state?.pdfX) || 0);
+        const twoSavedOrder = twoSavedStates.map((state) => Number(state?.pdfX) || 0);
+        const threeSavedOrder = threeSavedStates.map((state) => Number(state?.pdfX) || 0);
+        const singleSavedValid = singleSavedStates.every((state) => (Number(state?.pdfX) || 0) > 0 && (Number(state?.pdfY) || 0) > 0);
+        const twoSavedValid = twoSavedStates.every((state) => (Number(state?.pdfX) || 0) > 0 && (Number(state?.pdfY) || 0) > 0);
+        const threeSavedValid = threeSavedStates.every((state) => (Number(state?.pdfX) || 0) > 0 && (Number(state?.pdfY) || 0) > 0);
+        const twoSavedOrdered = twoSavedOrder.every((value, index) => index === 0 || value > twoSavedOrder[index - 1]);
+        const threeSavedOrdered = threeSavedOrder.every((value, index) => index === 0 || value > threeSavedOrder[index - 1]);
+
+        const checks = [
+            {
+                item: 'blank_pdfs_created',
+                result: singleDocumentId && twoDocumentId && threeDocumentId ? 'PASS' : 'FAIL',
+                description: 'Fresh blank PDFs were created through the frontend blank-PDF flow for the one-column, two-column, and three-column layouts.',
+                detail: `single_document_id=${singleDocumentId} two_document_id=${twoDocumentId} three_document_id=${threeDocumentId}`,
+            },
+            {
+                item: 'single_paragraph_fits_page',
+                result: singleFitsPage ? 'PASS' : 'FAIL',
+                description: 'One wide paragraph annotation fit inside the page as a single-column layout before save.',
+                detail: JSON.stringify(singleMetrics),
+            },
+            {
+                item: 'two_paragraphs_fit_side_by_side',
+                result: twoFitsPage && twoNoOverlap && twoOrdered ? 'PASS' : 'FAIL',
+                description: 'Two paragraph annotations fit side by side on the page without overlapping before save.',
+                detail: JSON.stringify(twoMetrics),
+            },
+            {
+                item: 'three_paragraphs_scaled_to_fit',
+                result: threeFitsPage && threeNoOverlap && threeOrdered ? 'PASS' : 'FAIL',
+                description: 'Three paragraph annotations scaled down to fit side by side on the page without overlapping before save.',
+                detail: JSON.stringify(threeMetrics),
+            },
+            {
+                item: 'narrower_layouts_wrap_more_lines',
+                result: lineCountProgression ? 'PASS' : 'FAIL',
+                description: 'Splitting the page from one column to two columns to three columns increased paragraph wrapping line counts.',
+                detail: JSON.stringify({
+                    single_line_count: singleLineCount,
+                    two_column_line_counts: twoMetrics.map((metrics) => metrics.lineCount),
+                    three_column_line_counts: threeMetrics.map((metrics) => metrics.lineCount),
+                }),
+            },
+            {
+                item: 'single_layout_saved',
+                result: singleSavedValid
+                    && singleGrouping.matchesByCase[0]?.matchCount === 1
+                    && singleGrouping.groupedBlocks.length === 0 ? 'PASS' : 'FAIL',
+                description: 'Saving the single wide paragraph preserved one in-page annotation with valid PDF coordinates.',
+                detail: JSON.stringify({
+                    pdf_x_positions: singleSavedOrder,
+                    states: singleSavedStates,
+                    grouping: singleGrouping,
+                }),
+            },
+            {
+                item: 'two_layout_saved',
+                result: twoSavedValid
+                    && twoSavedOrdered
+                    && twoGrouping.matchesByCase.every((entry) => entry.matchCount === 1)
+                    && twoGrouping.groupedBlocks.length === 0 ? 'PASS' : 'FAIL',
+                description: 'Saving the two side-by-side paragraphs preserved two separate in-page annotations in left-to-right PDF order.',
+                detail: JSON.stringify({
+                    pdf_x_positions: twoSavedOrder,
+                    states: twoSavedStates,
+                    grouping: twoGrouping,
+                }),
+            },
+            {
+                item: 'three_layout_saved',
+                result: threeSavedValid
+                    && threeSavedOrdered
+                    && threeGrouping.matchesByCase.every((entry) => entry.matchCount === 1)
+                    && threeGrouping.groupedBlocks.length === 0 ? 'PASS' : 'FAIL',
+                description: 'Saving the three scaled side-by-side paragraphs preserved three separate in-page annotations in left-to-right PDF order.',
+                detail: JSON.stringify({
+                    pdf_x_positions: threeSavedOrder,
+                    states: threeSavedStates,
+                    grouping: threeGrouping,
+                }),
+            },
+        ];
+
+        const hasFailure = checks.some((check) => check.result !== 'PASS');
+        const totalPdfSize = [singlePdfPath, twoPdfPath, threePdfPath]
+            .filter((pdfPath) => fs.existsSync(pdfPath))
+            .reduce((sum, pdfPath) => sum + fs.statSync(pdfPath).size, 0);
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: hasFailure ? 'fail' : 'pass',
+            checks,
+            fileSize: totalPdfSize,
+            artifacts: [
+                {
+                    label: 'Single Paragraph Layout',
+                    kind: 'image',
+                    filename: singleScreenshotName,
+                },
+                {
+                    label: 'Single Paragraph PDF',
+                    kind: 'pdf',
+                    filename: singlePdfName,
+                },
+                {
+                    label: 'Two Side-by-Side Paragraphs',
+                    kind: 'image',
+                    filename: twoScreenshotName,
+                },
+                {
+                    label: 'Two Side-by-Side PDF',
+                    kind: 'pdf',
+                    filename: twoPdfName,
+                },
+                {
+                    label: 'Three Side-by-Side Paragraphs',
+                    kind: 'image',
+                    filename: threeScreenshotName,
+                },
+                {
+                    label: 'Three Side-by-Side PDF',
+                    kind: 'pdf',
+                    filename: threePdfName,
+                },
+            ],
+            metadata: {
+                document_ids: [singleDocumentId, twoDocumentId, threeDocumentId],
+                single_metrics: singleMetrics,
+                two_metrics: twoMetrics,
+                three_metrics: threeMetrics,
+                single_saved_states: singleSavedStates,
+                two_saved_states: twoSavedStates,
+                three_saved_states: threeSavedStates,
+            },
+        });
+    } finally {
+        for (const documentId of [singleDocumentId, twoDocumentId, threeDocumentId]) {
+            if (!documentId) {
+                continue;
+            }
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
 async function runParagraphFlow() {
     const test = TESTS.test_3_paragraphs;
     ensureOutputDir();
@@ -8650,6 +10567,7 @@ function listFiles() {
                 description: test.description,
                 test_category: 'PDF Tests',
                 section_name: test.label,
+                criteria: TEST_CRITERIA[test.key] || [],
             })),
         ...Object.values(TEST_SUITES).map((suite) => ({
             filename: `${suite.key}.pdf`,
@@ -8657,6 +10575,7 @@ function listFiles() {
             description: suite.description,
             test_category: 'PDF Tests',
             section_name: suite.label,
+            criteria: TEST_CRITERIA[suite.key] || [],
         })),
     ];
 

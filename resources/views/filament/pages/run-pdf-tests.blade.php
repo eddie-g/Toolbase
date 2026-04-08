@@ -1,310 +1,443 @@
 <x-filament-panels::page>
-    <div x-data="pdfTestRunner()" x-init="init()" class="space-y-6">
-        <div class="flex items-center justify-between">
-            <div class="flex items-center gap-4">
-                <x-filament::button
-                    x-on:click="startTests()"
-                    x-bind:disabled="running"
-                    icon="heroicon-o-play"
-                    color="danger"
-                >
-                    <span x-show="!running">Start PDF Tests</span>
-                    <span x-show="running" x-cloak>Running...</span>
-                </x-filament::button>
+    <div x-data="pdfTestRunner()" x-init="init()">
 
-                <a href="{{ \App\Filament\Resources\OverlayEditorTestResource::getUrl() }}">
-                    <x-filament::button color="gray" icon="heroicon-o-arrow-left">
-                        Back to Results
+        {{-- ═══════════════════════════════════════════════════════════
+             LIST SCREEN
+        ═══════════════════════════════════════════════════════════ --}}
+        <div x-show="screen === 'list'" x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100" class="space-y-6">
+
+            {{-- Top bar --}}
+            <div class="flex items-center justify-between gap-4">
+                <div>
+                    <h2 class="text-xl font-bold text-gray-900 dark:text-white">PDF Flow Tests</h2>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+                        Run individual tests or the full suite. Results are saved automatically.
+                    </p>
+                </div>
+                <div class="flex items-center gap-3 shrink-0">
+                    <a href="{{ \App\Filament\Resources\OverlayEditorTestResource::getUrl() }}">
+                        <x-filament::button color="gray" size="sm" icon="heroicon-o-arrow-left">Results</x-filament::button>
+                    </a>
+                    <a href="{{ route('filament.admin.pages.debug-pdf') }}">
+                        <x-filament::button color="gray" size="sm" icon="heroicon-o-bug-ant">Debug PDF</x-filament::button>
+                    </a>
+                    <x-filament::button
+                        x-on:click="startAllTests()"
+                        x-bind:disabled="loading || globalRunning"
+                        icon="heroicon-o-play"
+                        color="danger"
+                        size="sm"
+                    >
+                        <span x-show="!globalRunning">Run All</span>
+                        <span x-show="globalRunning" x-cloak>Running…</span>
                     </x-filament::button>
-                </a>
-            </div>
-
-            <div class="text-sm text-gray-500 dark:text-gray-400" x-show="availableFilesTotal > 0" x-cloak>
-                <template x-if="running || completedCount > 0">
-                    <span><span x-text="completedCount"></span> / <span x-text="totalFiles"></span> tests</span>
-                </template>
-                <template x-if="!running && completedCount === 0">
-                    <span x-text="availableFilesTotal + ' available tests'"></span>
-                </template>
-            </div>
-        </div>
-
-        <div class="bg-danger-50 dark:bg-danger-950/20 border border-danger-200 dark:border-danger-800 rounded-xl p-4">
-            <div class="flex items-start gap-3">
-                <x-heroicon-o-document-text class="h-5 w-5 text-danger-500 mt-0.5 flex-shrink-0" />
-                <div>
-                    <div class="font-medium text-danger-700 dark:text-danger-300">PDF Flow Tests</div>
-                    <div class="text-sm text-danger-600 dark:text-danger-400 mt-1">
-                        `Test 1 : Text Position` creates a fresh blank PDF, adds centered text, moves it, and confirms the saved position. `Test 2 : Text Styling` creates a fresh blank PDF, changes the text through the selection-toolbar, saves it, and confirms the saved style matches. `Test 3 : Paragraphs` creates a lorem ipsum paragraph, resizes it between narrow and wide boxes to confirm reflow, moves it while preserving layout, then deletes it and confirms it is gone. The screenshots below come from those browser runs.
-                    </div>
                 </div>
             </div>
-        </div>
 
-        <div x-show="loadedFromDatabase && results.length > 0" x-cloak
-             class="bg-primary-50 dark:bg-primary-950/20 border border-primary-200 dark:border-primary-800 rounded-xl p-4">
-            <div class="flex items-start gap-3">
-                <x-heroicon-o-clock class="h-5 w-5 text-primary-500 mt-0.5 flex-shrink-0" />
-                <div>
-                    <div class="font-medium text-primary-700 dark:text-primary-300">Latest saved PDF run loaded</div>
-                    <div class="text-sm text-primary-600 dark:text-primary-400 mt-1">
-                        Showing the most recent saved PDF test results from
-                        <span class="font-medium" x-text="formatTimestamp(latestRunCreatedAt)"></span>.
+            {{-- Global progress bar (run-all mode) --}}
+            <template x-if="globalRunning || (globalFinished && allRunResults.length > 0)">
+                <div class="space-y-2">
+                    <div class="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                        <span x-text="globalRunning ? 'Running ' + allRunResults.length + ' of ' + files.length + ' tests…' : 'Run complete'"></span>
+                        <span x-text="allRunPassedCount + ' passed · ' + allRunFailedCount + ' failed · ' + allRunErrorCount + ' errors'"></span>
+                    </div>
+                    <div class="relative w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
+                        <div class="h-full rounded-full transition-all duration-500 ease-out"
+                             x-bind:class="globalRunning ? 'bg-danger-500' : (allRunFailedCount === 0 && allRunErrorCount === 0 ? 'bg-success-500' : 'bg-warning-500')"
+                             x-bind:style="'width: ' + (files.length ? Math.round((allRunResults.length / files.length) * 100) : 0) + '%'">
+                        </div>
                     </div>
                 </div>
-            </div>
-        </div>
+            </template>
 
-        <div x-show="files.length > 0" x-cloak class="bg-white dark:bg-gray-800 rounded-xl shadow-sm ring-1 ring-gray-950/5 dark:ring-white/10 p-4">
-            <div class="flex items-start justify-between gap-4">
-                <div>
-                    <div class="font-semibold text-gray-900 dark:text-white">Available PDF Tests</div>
-                    <div class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                        Run the full suite or execute either PDF flow independently. The latest saved run is shown here when available.
-                    </div>
+            {{-- Loading state --}}
+            <template x-if="loading">
+                <div class="flex items-center gap-3 py-12 justify-center">
+                    <svg class="animate-spin h-5 w-5 text-danger-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span class="text-sm text-gray-500 dark:text-gray-400">Loading tests…</span>
                 </div>
-                <div class="text-sm text-gray-500 dark:text-gray-400" x-text="availableFilesTotal + ' total'"></div>
-            </div>
+            </template>
 
-            <div class="mt-4 space-y-3">
+            {{-- Test cards grid --}}
+            <div x-show="!loading && files.length > 0" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <template x-for="file in files" :key="file.path">
-                    <div class="rounded-xl border border-gray-200 dark:border-gray-700 px-4 py-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                        <div class="min-w-0">
-                            <div class="flex flex-wrap items-center gap-2">
-                                <div class="font-medium text-gray-900 dark:text-white" x-text="file.section_name || file.filename"></div>
+                    <div class="group relative bg-white dark:bg-gray-800 rounded-2xl ring-1 ring-gray-950/5 dark:ring-white/10 overflow-hidden flex flex-col cursor-pointer transition-shadow hover:shadow-md"
+                         x-on:click="openTest(file)">
+
+                        {{-- Status stripe along the top --}}
+                        <div class="h-1 w-full transition-colors duration-300"
+                             x-bind:class="latestResultFor(file.path)
+                                ? (latestResultFor(file.path).status === 'pass' ? 'bg-success-400' : (latestResultFor(file.path).status === 'fail' ? 'bg-danger-500' : 'bg-warning-400'))
+                                : 'bg-gray-200 dark:bg-gray-700'">
+                        </div>
+
+                        <div class="p-5 flex flex-col gap-4 flex-1">
+                            {{-- Header row --}}
+                            <div class="flex items-start justify-between gap-3">
+                                <div class="min-w-0 flex-1">
+                                    <div class="flex items-center gap-2 flex-wrap">
+                                        <span class="text-xs font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500"
+                                              x-text="'Test ' + (files.indexOf(file) + 1)"></span>
+                                        <template x-if="latestResultFor(file.path)">
+                                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold uppercase"
+                                                  x-bind:class="latestResultFor(file.path).status === 'pass'
+                                                      ? 'bg-success-100 text-success-700 dark:bg-success-900/30 dark:text-success-400'
+                                                      : (latestResultFor(file.path).status === 'fail'
+                                                          ? 'bg-danger-100 text-danger-700 dark:bg-danger-900/30 dark:text-danger-400'
+                                                          : 'bg-warning-100 text-warning-700 dark:bg-warning-900/30 dark:text-warning-400')"
+                                                  x-text="latestResultFor(file.path).status">
+                                            </span>
+                                        </template>
+                                    </div>
+                                    <div class="mt-1 font-semibold text-gray-900 dark:text-white text-base leading-snug"
+                                         x-text="file.section_name || file.filename"></div>
+                                    <div class="mt-1 text-sm text-gray-500 dark:text-gray-400 line-clamp-2"
+                                         x-text="file.description || ''"></div>
+                                </div>
+
+                                {{-- Run button --}}
+                                <button type="button"
+                                        x-on:click.stop="openAndRunTest(file)"
+                                        x-bind:disabled="globalRunning"
+                                        class="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-danger-50 text-danger-700 hover:bg-danger-100 dark:bg-danger-950/40 dark:text-danger-400 dark:hover:bg-danger-950/60 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                                    <svg class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                                    Run
+                                </button>
+                            </div>
+
+                            {{-- Criteria list --}}
+                            <template x-if="file.criteria && file.criteria.length">
+                                <ul class="space-y-1.5">
+                                    <template x-for="(criterion, ci) in file.criteria" :key="ci">
+                                        <li class="flex items-start gap-2">
+                                            <template x-if="latestResultFor(file.path) && latestResultFor(file.path).checks && latestResultFor(file.path).checks[ci]">
+                                                {{-- Actual check result icon --}}
+                                                <template x-if="latestResultFor(file.path).checks[ci].result === 'PASS'">
+                                                    <svg class="h-4 w-4 mt-0.5 text-success-500 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+                                                </template>
+                                                <template x-if="latestResultFor(file.path).checks[ci].result !== 'PASS'">
+                                                    <svg class="h-4 w-4 mt-0.5 text-danger-500 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                                </template>
+                                            </template>
+                                            <template x-if="!latestResultFor(file.path) || !latestResultFor(file.path).checks || !latestResultFor(file.path).checks[ci]">
+                                                <svg class="h-4 w-4 mt-0.5 text-gray-300 dark:text-gray-600 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+                                            </template>
+                                            <span class="text-xs text-gray-600 dark:text-gray-400 leading-5" x-text="criterion"></span>
+                                        </li>
+                                    </template>
+                                </ul>
+                            </template>
+
+                            {{-- Footer --}}
+                            <div class="mt-auto pt-3 border-t border-gray-100 dark:border-gray-700/50 flex items-center justify-between text-xs text-gray-400 dark:text-gray-500">
                                 <template x-if="latestResultFor(file.path)">
-                                    <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase"
-                                          x-bind:class="statusBadgeClasses(latestResultFor(file.path)?.status)"
-                                          x-text="latestResultFor(file.path)?.status">
-                                    </span>
+                                    <span x-text="'Last run: ' + formatTimestamp(latestResultFor(file.path).created_at || latestRunCreatedAt)"></span>
+                                </template>
+                                <template x-if="!latestResultFor(file.path)"><span>No runs yet</span></template>
+                                <template x-if="latestResultFor(file.path)">
+                                    <span x-text="latestResultFor(file.path).checks_passed + '/' + latestResultFor(file.path).checks_total + ' checks'"></span>
                                 </template>
                             </div>
-
-                            <div class="text-sm text-gray-500 dark:text-gray-400 mt-1" x-text="file.description || ''"></div>
-
-                            <template x-if="latestResultFor(file.path)">
-                                <div class="text-xs text-gray-500 dark:text-gray-400 mt-2"
-                                     x-text="'Last saved result: ' + formatTimestamp(latestResultFor(file.path)?.created_at || latestRunCreatedAt)">
-                                </div>
-                            </template>
                         </div>
-
-                        <x-filament::button
-                            color="gray"
-                            size="sm"
-                            class="lg:flex-shrink-0"
-                            x-on:click="startSingleTest(file)"
-                            x-bind:disabled="running"
-                        >
-                            <span x-show="!(running && runningTestKey === file.path)">Run This Test</span>
-                            <span x-show="running && runningTestKey === file.path" x-cloak>Running...</span>
-                        </x-filament::button>
                     </div>
                 </template>
             </div>
         </div>
 
-        <div x-show="running || completedCount > 0" x-cloak>
-            <div class="relative w-full bg-gray-200 dark:bg-gray-700 rounded-full h-4 overflow-hidden">
-                <div
-                    class="h-full rounded-full transition-all duration-300 ease-out"
-                    x-bind:class="{
-                        'bg-danger-500': running,
-                        'bg-success-500': !running && failedCount === 0 && errorCount === 0,
-                        'bg-warning-500': !running && (failedCount > 0 || errorCount > 0)
-                    }"
-                    x-bind:style="'width: ' + progressPercent + '%'"
-                ></div>
-                <div class="absolute inset-0 flex items-center justify-center text-xs font-semibold"
-                     x-bind:class="progressPercent > 50 ? 'text-white' : 'text-gray-700 dark:text-gray-300'">
-                    <span x-text="progressPercent + '%'"></span>
+        {{-- ═══════════════════════════════════════════════════════════
+             DETAIL / RUNNING SCREEN
+        ═══════════════════════════════════════════════════════════ --}}
+        <div x-show="screen === 'detail'" x-cloak
+             x-transition:enter="transition ease-out duration-200"
+             x-transition:enter-start="opacity-0 translate-y-1"
+             x-transition:enter-end="opacity-100 translate-y-0"
+             class="space-y-6">
+
+            {{-- Back nav + title --}}
+            <div class="flex items-center gap-4">
+                <button type="button"
+                        x-on:click="closeTest()"
+                        class="inline-flex items-center gap-1.5 text-sm font-medium text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white transition-colors">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+                    All tests
+                </button>
+                <div class="h-4 w-px bg-gray-200 dark:bg-gray-700"></div>
+                <div class="flex items-center gap-2 min-w-0">
+                    <span class="text-xs font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500 shrink-0"
+                          x-text="activeFile ? 'Test ' + (files.indexOf(activeFile) + 1) : ''"></span>
+                    <span class="font-semibold text-gray-900 dark:text-white truncate"
+                          x-text="activeFile ? (activeFile.section_name || activeFile.filename) : ''"></span>
+                </div>
+
+                {{-- Status badge --}}
+                <div class="ml-auto shrink-0 flex items-center gap-3">
+                    <template x-if="detailRunning">
+                        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-danger-50 dark:bg-danger-950/40 text-danger-600 dark:text-danger-400 text-sm font-medium">
+                            <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/></svg>
+                            Running…
+                        </div>
+                    </template>
+                    <template x-if="!detailRunning && detailResult">
+                        <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-semibold uppercase"
+                              x-bind:class="detailResult.status === 'pass'
+                                  ? 'bg-success-100 text-success-700 dark:bg-success-900/30 dark:text-success-400'
+                                  : (detailResult.status === 'fail'
+                                      ? 'bg-danger-100 text-danger-700 dark:bg-danger-900/30 dark:text-danger-400'
+                                      : 'bg-warning-100 text-warning-700 dark:bg-warning-900/30 dark:text-warning-400')"
+                              x-text="detailResult.status">
+                        </span>
+                    </template>
+                    <template x-if="!detailRunning && detailResult">
+                        <button type="button"
+                                x-on:click="runDetailTest()"
+                                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-danger-50 text-danger-700 hover:bg-danger-100 dark:bg-danger-950/40 dark:text-danger-400 dark:hover:bg-danger-950/60 transition-colors">
+                            <svg class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                            Re-run
+                        </button>
+                    </template>
+                    <template x-if="!detailRunning && !detailResult">
+                        <button type="button"
+                                x-on:click="runDetailTest()"
+                                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-danger-600 text-white hover:bg-danger-700 transition-colors">
+                            <svg class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                            Run Test
+                        </button>
+                    </template>
                 </div>
             </div>
-        </div>
 
-        <div x-show="completedCount > 0" x-cloak class="grid grid-cols-4 gap-4">
-            <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm ring-1 ring-gray-950/5 dark:ring-white/10 p-4">
-                <div class="text-sm font-medium text-gray-500 dark:text-gray-400">Total</div>
-                <div class="text-2xl font-bold text-gray-900 dark:text-white" x-text="completedCount"></div>
-            </div>
-            <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm ring-1 ring-gray-950/5 dark:ring-white/10 p-4">
-                <div class="text-sm font-medium text-gray-500 dark:text-gray-400">Passed</div>
-                <div class="text-2xl font-bold text-success-600" x-text="passedCount"></div>
-            </div>
-            <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm ring-1 ring-gray-950/5 dark:ring-white/10 p-4">
-                <div class="text-sm font-medium text-gray-500 dark:text-gray-400">Failed</div>
-                <div class="text-2xl font-bold text-danger-600" x-text="failedCount"></div>
-            </div>
-            <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm ring-1 ring-gray-950/5 dark:ring-white/10 p-4">
-                <div class="text-sm font-medium text-gray-500 dark:text-gray-400">Errors</div>
-                <div class="text-2xl font-bold text-warning-600" x-text="errorCount"></div>
-            </div>
-        </div>
+            {{-- Description --}}
+            <template x-if="activeFile">
+                <p class="text-sm text-gray-500 dark:text-gray-400" x-text="activeFile.description || ''"></p>
+            </template>
 
-        <div x-show="running && currentTest" x-cloak
-             class="bg-danger-50 dark:bg-danger-950/20 border border-danger-200 dark:border-danger-800 rounded-xl p-4 flex items-center gap-3">
-            <svg class="animate-spin h-5 w-5 text-danger-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <div>
-                <div class="font-medium text-danger-700 dark:text-danger-300" x-text="'Running: ' + currentTest"></div>
-                <div class="text-sm text-danger-600 dark:text-danger-400" x-text="currentDescription"></div>
-            </div>
-        </div>
+            {{-- Two-column layout: checklist + artifacts --}}
+            <div class="grid grid-cols-1 xl:grid-cols-5 gap-6 items-start">
 
-        <div x-show="results.length > 0" x-cloak class="space-y-4">
-            <template x-for="(r, idx) in results" :key="idx">
-                <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm ring-1 ring-gray-950/5 dark:ring-white/10 overflow-hidden">
-                    <div class="px-4 py-4 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between gap-4">
-                        <div>
-                            <div class="flex items-center gap-3">
-                                <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase"
-                                      x-bind:class="{
-                                          'bg-success-100 text-success-700 dark:bg-success-900/30 dark:text-success-400': r.status === 'pass',
-                                          'bg-danger-100 text-danger-700 dark:bg-danger-900/30 dark:text-danger-400': r.status === 'fail',
-                                          'bg-warning-100 text-warning-700 dark:bg-warning-900/30 dark:text-warning-400': r.status === 'error'
-                                      }"
-                                      x-text="r.status">
-                                </span>
-                                <div class="font-semibold text-gray-900 dark:text-white" x-text="r.section_name || r.filename"></div>
-                            </div>
-                            <div class="text-sm text-gray-500 dark:text-gray-400 mt-1" x-text="r.description"></div>
-                        </div>
-                        <div class="text-sm text-right">
-                            <div class="font-semibold text-gray-900 dark:text-white" x-text="r.checks_passed + '/' + r.checks_total"></div>
-                            <div class="text-gray-500 dark:text-gray-400">checks passed</div>
-                        </div>
+                {{-- Checklist (left / wider column) --}}
+                <div class="xl:col-span-2 bg-white dark:bg-gray-800 rounded-2xl ring-1 ring-gray-950/5 dark:ring-white/10 overflow-hidden">
+                    <div class="px-5 py-4 border-b border-gray-100 dark:border-gray-700">
+                        <div class="font-semibold text-gray-900 dark:text-white text-sm">Checks</div>
+                        <template x-if="detailResult && !detailRunning">
+                            <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5"
+                                 x-text="detailResult.checks_passed + ' of ' + detailResult.checks_total + ' passed'"></div>
+                        </template>
+                        <template x-if="detailRunning">
+                            <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Running…</div>
+                        </template>
                     </div>
 
-                    <div class="p-4 space-y-4">
-                        <template x-if="r.artifacts && r.artifacts.length">
-                            <div>
-                                <div class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Browser Screenshots</div>
-                                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                                    <template x-for="(artifact, artifactIndex) in r.artifacts" :key="artifactIndex">
-                                        <div class="rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden bg-gray-50 dark:bg-gray-900/40">
-                                            <template x-if="artifact.kind === 'image'">
-                                                <button type="button" class="block w-full text-left" x-on:click="openArtifact(artifact)">
-                                                    <img :src="artifact.url" :alt="artifact.label" class="w-full h-56 object-contain bg-white dark:bg-gray-950" loading="lazy">
-                                                </button>
+                    <ul class="divide-y divide-gray-100 dark:divide-gray-700/50">
+                        {{-- While running — show criteria as pending items, animate current one --}}
+                        <template x-if="detailRunning && activeFile && activeFile.criteria && activeFile.criteria.length">
+                            <template x-for="(criterion, ci) in activeFile.criteria" :key="'pending-' + ci">
+                                <li class="px-5 py-3.5 flex items-start gap-3 transition-colors"
+                                    x-bind:class="ci === fakeProgressIndex ? 'bg-danger-50/50 dark:bg-danger-950/10' : ''">
+                                    <div class="w-10 flex-shrink-0 flex items-start gap-2">
+                                        <div class="mt-0.5 h-5 min-w-[1.25rem] text-right text-xs font-semibold text-gray-400 dark:text-gray-500"
+                                             x-text="ci + 1"></div>
+                                        <div class="mt-0.5 h-5 w-5 flex items-center justify-center">
+                                            <template x-if="ci < fakeProgressIndex">
+                                                <svg class="h-4 w-4 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
                                             </template>
-                                            <template x-if="artifact.kind !== 'image'">
-                                                <div class="p-4">
-                                                    <a :href="artifact.url" target="_blank" class="text-sm text-primary-600 dark:text-primary-400 underline" x-text="artifact.label"></a>
-                                                </div>
+                                            <template x-if="ci === fakeProgressIndex">
+                                                <svg class="animate-spin h-4 w-4 text-danger-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/></svg>
                                             </template>
-                                            <div class="px-3 py-2 text-xs font-medium text-gray-600 dark:text-gray-300 border-t border-gray-200 dark:border-gray-700">
-                                                <span x-text="artifact.label"></span>
-                                            </div>
+                                            <template x-if="ci > fakeProgressIndex">
+                                                <div class="h-4 w-4 rounded-full border-2 border-gray-200 dark:border-gray-700"></div>
+                                            </template>
                                         </div>
-                                    </template>
-                                </div>
-                            </div>
+                                    </div>
+                                    <span class="text-sm leading-snug"
+                                          x-bind:class="ci === fakeProgressIndex ? 'text-gray-900 dark:text-white font-medium' : 'text-gray-400 dark:text-gray-500'"
+                                          x-text="criterion"></span>
+                                </li>
+                            </template>
                         </template>
 
-                        <div>
-                            <div class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Checks</div>
+                        {{-- After run — show actual checks, revealed one by one --}}
+                        <template x-if="!detailRunning && detailResult && detailResult.checks && detailResult.checks.length">
+                            <template x-for="(check, ci) in detailResult.checks" :key="'check-' + ci">
+                                <li class="px-5 py-3.5 flex items-start gap-3 pdf-check-item"
+                                    x-bind:class="ci < revealIndex ? 'pdf-check-revealed' : 'pdf-check-hidden'"
+                                    x-bind:style="'--reveal-delay: ' + (ci * 80) + 'ms'">
+                                    <div class="w-10 flex-shrink-0 flex items-start gap-2">
+                                        <div class="mt-0.5 h-5 min-w-[1.25rem] text-right text-xs font-semibold text-gray-500 dark:text-gray-400"
+                                             x-text="ci + 1"></div>
+                                        <div class="mt-0.5 h-5 w-5 flex items-center justify-center">
+                                            <template x-if="check.result === 'PASS'">
+                                                <svg class="h-4.5 w-4.5 text-success-500" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+                                            </template>
+                                            <template x-if="check.result !== 'PASS'">
+                                                <svg class="h-4.5 w-4.5 text-danger-500" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                            </template>
+                                        </div>
+                                    </div>
+                                    <div class="min-w-0 flex-1">
+                                        <div class="text-sm font-medium leading-snug"
+                                             x-bind:class="check.result === 'PASS' ? 'text-gray-800 dark:text-gray-200' : 'text-danger-700 dark:text-danger-400'"
+                                             x-text="check.description || check.item"></div>
+                                        <template x-if="check.detail">
+                                            <div class="mt-1 text-xs text-gray-400 dark:text-gray-500 font-mono break-all" x-text="check.detail"></div>
+                                        </template>
+                                        <template x-if="checkImageArtifact(check, ci)">
+                                            <button type="button"
+                                                    class="mt-3 block overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40"
+                                                    x-on:click="openArtifact(checkImageArtifact(check, ci))">
+                                                <img :src="checkImageArtifact(check, ci).url"
+                                                     :alt="checkImageArtifact(check, ci).label"
+                                                     class="w-full max-h-44 object-contain bg-white dark:bg-gray-950"
+                                                     loading="lazy">
+                                            </button>
+                                        </template>
+                                    </div>
+                                </li>
+                            </template>
+                        </template>
+
+                        {{-- Idle — no result yet, no run started --}}
+                        <template x-if="!detailRunning && !detailResult && activeFile && activeFile.criteria && activeFile.criteria.length">
+                            <template x-for="(criterion, ci) in activeFile.criteria" :key="'idle-' + ci">
+                                <li class="px-5 py-3.5 flex items-start gap-3">
+                                    <div class="w-10 flex-shrink-0 flex items-start gap-2">
+                                        <div class="mt-0.5 h-5 min-w-[1.25rem] text-right text-xs font-semibold text-gray-400 dark:text-gray-500"
+                                             x-text="ci + 1"></div>
+                                        <div class="mt-0.5 h-5 w-5 flex items-center justify-center">
+                                            <div class="h-4 w-4 rounded-full border-2 border-gray-200 dark:border-gray-700"></div>
+                                        </div>
+                                    </div>
+                                    <span class="text-sm text-gray-400 dark:text-gray-500 leading-snug" x-text="criterion"></span>
+                                </li>
+                            </template>
+                        </template>
+                    </ul>
+
+                    {{-- Error banner --}}
+                    <template x-if="!detailRunning && detailResult && detailResult.error">
+                        <div class="mx-5 mb-5 mt-3 rounded-xl bg-danger-50 dark:bg-danger-950/20 border border-danger-200 dark:border-danger-800 px-4 py-3">
+                            <div class="text-xs font-semibold text-danger-600 dark:text-danger-400 uppercase tracking-wide mb-1">Error</div>
+                            <div class="text-sm text-danger-700 dark:text-danger-300 font-mono break-all"
+                                 x-text="detailResult.error"></div>
+                        </div>
+                    </template>
+                </div>
+
+                {{-- Artifacts + detail (right / larger column) --}}
+                <div class="xl:col-span-3 space-y-5">
+
+                    {{-- Artifacts --}}
+                    <template x-if="!detailRunning && detailResult && detailResult.artifacts && detailResult.artifacts.length">
+                        <div class="bg-white dark:bg-gray-800 rounded-2xl ring-1 ring-gray-950/5 dark:ring-white/10 overflow-hidden">
+                            <div class="px-5 py-4 border-b border-gray-100 dark:border-gray-700">
+                                <div class="font-semibold text-gray-900 dark:text-white text-sm">Artifacts</div>
+                            </div>
+                            <div class="p-4 grid grid-cols-2 gap-3">
+                                <template x-for="(artifact, ai) in detailResult.artifacts" :key="ai">
+                                    <div class="rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden bg-gray-50 dark:bg-gray-900/40">
+                                        <template x-if="artifact.kind === 'image'">
+                                            <button type="button" class="block w-full" x-on:click="openArtifact(artifact)">
+                                                <img :src="artifact.url" :alt="artifact.label" class="w-full h-40 object-contain bg-white dark:bg-gray-950" loading="lazy">
+                                            </button>
+                                        </template>
+                                        <template x-if="artifact.kind !== 'image'">
+                                            <div class="p-4 flex items-center justify-center h-20">
+                                                <a :href="artifact.url" target="_blank" class="text-sm text-primary-600 dark:text-primary-400 underline" x-text="artifact.label"></a>
+                                            </div>
+                                        </template>
+                                        <div class="px-3 py-2 border-t border-gray-200 dark:border-gray-700">
+                                            <div class="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400"
+                                                 x-text="artifact.label"></div>
+                                            <template x-if="artifact.check_description">
+                                                <div class="mt-1 text-xs leading-4 text-gray-600 dark:text-gray-300 line-clamp-3"
+                                                     x-text="artifact.check_description"></div>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </template>
+
+                    {{-- Placeholder while running --}}
+                    <template x-if="detailRunning">
+                        <div class="bg-white dark:bg-gray-800 rounded-2xl ring-1 ring-gray-950/5 dark:ring-white/10 p-8 flex flex-col items-center justify-center gap-3 text-center min-h-[200px]">
+                            <svg class="animate-spin h-8 w-8 text-danger-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/></svg>
+                            <div class="text-sm text-gray-400 dark:text-gray-500">Screenshots and artifacts will appear here after the test completes.</div>
+                        </div>
+                    </template>
+
+                    {{-- Idle placeholder --}}
+                    <template x-if="!detailRunning && !detailResult">
+                        <div class="bg-white dark:bg-gray-800 rounded-2xl ring-1 ring-gray-950/5 dark:ring-white/10 p-8 flex flex-col items-center justify-center gap-3 text-center min-h-[200px]">
+                            <svg class="h-10 w-10 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M10 8l6 4-6 4V8z"/></svg>
+                            <div class="text-sm text-gray-400 dark:text-gray-500">Press <strong class="text-gray-600 dark:text-gray-300">Run Test</strong> to start.</div>
+                        </div>
+                    </template>
+
+                    {{-- Full check detail table (accessible once all checks revealed) --}}
+                    <template x-if="!detailRunning && detailResult && revealIndex >= (detailResult.checks || []).length && detailResult.checks && detailResult.checks.length > 0">
+                        <div class="bg-white dark:bg-gray-800 rounded-2xl ring-1 ring-gray-950/5 dark:ring-white/10 overflow-hidden">
+                            <div class="px-5 py-4 border-b border-gray-100 dark:border-gray-700">
+                                <div class="font-semibold text-gray-900 dark:text-white text-sm">Check Details</div>
+                            </div>
                             <div class="overflow-x-auto">
-                                <table class="w-full text-sm">
+                                <table class="w-full text-xs">
                                     <thead class="bg-gray-50 dark:bg-gray-700/50">
                                         <tr>
-                                            <th class="px-3 py-2 text-left font-medium text-gray-500 dark:text-gray-400">Result</th>
-                                            <th class="px-3 py-2 text-left font-medium text-gray-500 dark:text-gray-400">Check</th>
-                                            <th class="px-3 py-2 text-left font-medium text-gray-500 dark:text-gray-400">Description</th>
-                                            <th class="px-3 py-2 text-left font-medium text-gray-500 dark:text-gray-400">Detail</th>
+                                            <th class="px-4 py-2.5 text-left font-medium text-gray-500 dark:text-gray-400 w-12">#</th>
+                                            <th class="px-4 py-2.5 text-left font-medium text-gray-500 dark:text-gray-400 w-16">Result</th>
+                                            <th class="px-4 py-2.5 text-left font-medium text-gray-500 dark:text-gray-400">Check</th>
+                                            <th class="px-4 py-2.5 text-left font-medium text-gray-500 dark:text-gray-400 hidden md:table-cell">Detail</th>
                                         </tr>
                                     </thead>
                                     <tbody class="divide-y divide-gray-100 dark:divide-gray-700">
-                                        <template x-for="(check, ci) in (r.checks || [])" :key="ci">
-                                            <tr>
-                                                <td class="px-3 py-2">
-                                                    <span class="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold"
-                                                          x-bind:class="{
-                                                              'bg-success-100 text-success-700 dark:bg-success-900/30 dark:text-success-400': check.result === 'PASS',
-                                                              'bg-danger-100 text-danger-700 dark:bg-danger-900/30 dark:text-danger-400': check.result !== 'PASS'
-                                                          }"
+                                        <template x-for="(check, ci) in (detailResult.checks || [])" :key="'row-' + ci">
+                                            <tr x-bind:class="check.result !== 'PASS' ? 'bg-danger-50/30 dark:bg-danger-950/10' : ''">
+                                                <td class="px-4 py-2.5 text-gray-500 dark:text-gray-400 font-semibold" x-text="ci + 1"></td>
+                                                <td class="px-4 py-2.5">
+                                                    <span class="inline-flex px-1.5 py-0.5 rounded text-xs font-semibold"
+                                                          x-bind:class="check.result === 'PASS' ? 'bg-success-100 text-success-700 dark:bg-success-900/30 dark:text-success-400' : 'bg-danger-100 text-danger-700 dark:bg-danger-900/30 dark:text-danger-400'"
                                                           x-text="check.result">
                                                     </span>
                                                 </td>
-                                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300" x-text="check.item"></td>
-                                                <td class="px-3 py-2 text-gray-600 dark:text-gray-400" x-text="check.description"></td>
-                                                <td class="px-3 py-2 text-xs text-gray-500 dark:text-gray-500" x-text="check.detail"></td>
+                                                <td class="px-4 py-2.5 text-gray-700 dark:text-gray-300" x-text="check.description || check.item"></td>
+                                                <td class="px-4 py-2.5 text-gray-400 dark:text-gray-500 font-mono break-all hidden md:table-cell" x-text="check.detail || '—'"></td>
                                             </tr>
                                         </template>
                                     </tbody>
                                 </table>
                             </div>
                         </div>
-
-                        <template x-if="r.error">
-                            <div class="rounded-lg bg-danger-50 dark:bg-danger-950/20 border border-danger-200 dark:border-danger-800 px-4 py-3 text-sm text-danger-700 dark:text-danger-300" x-text="r.error"></div>
-                        </template>
-
-                        <template x-if="r.warnings && r.warnings.length">
-                            <div class="rounded-lg bg-warning-50 dark:bg-warning-950/20 border border-warning-200 dark:border-warning-800 px-4 py-3">
-                                <div class="text-sm font-medium text-warning-700 dark:text-warning-300 mb-2">Warnings</div>
-                                <ul class="space-y-1 text-sm text-warning-700 dark:text-warning-300">
-                                    <template x-for="(warning, warningIndex) in r.warnings" :key="warningIndex">
-                                        <li x-text="warning"></li>
-                                    </template>
-                                </ul>
-                            </div>
-                        </template>
-                    </div>
-                </div>
-            </template>
-        </div>
-
-        <div x-show="!running && results.length === 0 && !loading" class="text-center py-12">
-            <x-heroicon-o-document-text class="mx-auto h-12 w-12 text-gray-400" />
-            <h3 class="mt-2 text-sm font-semibold text-gray-900 dark:text-white">No PDF Tests Run</h3>
-            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                Start the PDF tests to create fresh blank PDFs, run the text-position, text-styling, and paragraph-flow save sequences, and render the browser screenshots here.
-            </p>
-        </div>
-
-        <div x-show="loading" x-cloak class="text-center py-12">
-            <svg class="animate-spin mx-auto h-8 w-8 text-danger-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <p class="mt-3 text-sm text-gray-500 dark:text-gray-400">Loading PDF tests...</p>
-        </div>
-
-        <div x-show="finished && !running" x-cloak x-transition
-             class="rounded-xl p-4"
-             x-bind:class="failedCount === 0 && errorCount === 0
-                 ? 'bg-success-50 dark:bg-success-950/20 border border-success-200 dark:border-success-800'
-                 : 'bg-danger-50 dark:bg-danger-950/20 border border-danger-200 dark:border-danger-800'">
-            <div class="flex items-center gap-3">
-                <template x-if="failedCount === 0 && errorCount === 0">
-                    <x-heroicon-o-check-circle class="h-6 w-6 text-success-500" />
-                </template>
-                <template x-if="failedCount > 0 || errorCount > 0">
-                    <x-heroicon-o-exclamation-triangle class="h-6 w-6 text-danger-500" />
-                </template>
-                <div>
-                    <div class="font-semibold"
-                         x-bind:class="failedCount === 0 && errorCount === 0 ? 'text-success-700 dark:text-success-300' : 'text-danger-700 dark:text-danger-300'"
-                         x-text="'PDF Tests Complete — ' + passedCount + ' passed, ' + failedCount + ' failed, ' + errorCount + ' errors out of ' + completedCount + ' tests'">
-                    </div>
-                    <div class="text-sm mt-1"
-                         x-bind:class="failedCount === 0 && errorCount === 0 ? 'text-success-600 dark:text-success-400' : 'text-danger-600 dark:text-danger-400'">
-                        Latest results are shown below. <a href="{{ \App\Filament\Resources\OverlayEditorTestResource::getUrl() }}" class="underline">View in Test Results</a>
-                    </div>
+                    </template>
                 </div>
             </div>
         </div>
 
-        <div x-show="activeArtifact" x-cloak class="fixed inset-0 z-[100] bg-black/80 p-6 flex items-center justify-center" x-on:click.self="closeArtifact()">
+        {{-- ═══════════════════════════════════════════════════════════
+             LIGHT-BOX (shared across screens)
+        ═══════════════════════════════════════════════════════════ --}}
+        <div x-show="activeArtifact" x-cloak
+             class="fixed inset-0 z-[100] bg-black/80 p-6 flex items-center justify-center"
+             x-on:click.self="closeArtifact()"
+             x-transition:enter="transition ease-out duration-150"
+             x-transition:enter-start="opacity-0"
+             x-transition:enter-end="opacity-100">
             <div class="max-w-6xl w-full bg-white dark:bg-gray-900 rounded-2xl overflow-hidden shadow-2xl">
                 <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
-                    <div class="font-medium text-gray-900 dark:text-white" x-text="activeArtifact?.label || ''"></div>
-                    <x-filament::button color="gray" size="sm" x-on:click="closeArtifact()">Close</x-filament::button>
+                    <div class="font-medium text-gray-900 dark:text-white text-sm" x-text="activeArtifact?.label || ''"></div>
+                    <button type="button" x-on:click="closeArtifact()"
+                            class="text-sm text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white px-3 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+                        Close
+                    </button>
                 </div>
                 <div class="p-4 bg-gray-100 dark:bg-gray-950">
-                    <img x-show="activeArtifact && activeArtifact.kind === 'image'" :src="activeArtifact?.url" :alt="activeArtifact?.label || ''" class="w-full max-h-[80vh] object-contain">
+                    <img x-show="activeArtifact && activeArtifact.kind === 'image'"
+                         :src="activeArtifact?.url"
+                         :alt="activeArtifact?.label || ''"
+                         class="w-full max-h-[80vh] object-contain">
                 </div>
             </div>
         </div>
@@ -312,35 +445,38 @@
 
     <style>
         [x-cloak] { display: none !important; }
+
+        .pdf-check-item { transition: opacity 200ms ease, transform 200ms ease; }
+        .pdf-check-hidden { opacity: 0; transform: translateY(6px); pointer-events: none; }
+        .pdf-check-revealed { opacity: 1; transform: translateY(0); pointer-events: auto; }
     </style>
 
     <script>
         function pdfTestRunner() {
             return {
-                running: false,
+                /* ── shared ── */
                 loading: false,
-                loadedFromDatabase: false,
-                finished: false,
                 files: [],
-                results: [],
-                availableFilesTotal: 0,
-                totalFiles: 0,
-                completedCount: 0,
-                passedCount: 0,
-                failedCount: 0,
-                errorCount: 0,
-                currentTest: '',
-                currentDescription: '',
-                runId: null,
-                runningTestKey: null,
-                latestRunId: null,
                 latestRunCreatedAt: null,
                 activeArtifact: null,
 
-                get progressPercent() {
-                    if (!this.totalFiles) return 0;
-                    return Math.round((this.completedCount / this.totalFiles) * 100);
-                },
+                /* ── list screen ── */
+                screen: 'list',
+                globalRunning: false,
+                globalFinished: false,
+                allRunResults: [],
+                get allRunPassedCount() { return this.allRunResults.filter((r) => r.status === 'pass').length; },
+                get allRunFailedCount() { return this.allRunResults.filter((r) => r.status === 'fail').length; },
+                get allRunErrorCount()  { return this.allRunResults.filter((r) => r.status === 'error').length; },
+
+                /* ── detail screen ── */
+                activeFile: null,
+                detailRunning: false,
+                detailResult: null,
+                fakeProgressIndex: 0,
+                fakeProgressTimer: null,
+                revealIndex: 0,
+                revealTimer: null,
 
                 async init() {
                     this.loading = true;
@@ -350,116 +486,162 @@
                             credentials: 'same-origin',
                         });
                         const data = await response.json();
-                        if (!response.ok || !data.success) {
-                            throw new Error(data.message || 'Failed to load PDF tests');
-                        }
-                        this.runId = data.run_id;
+                        if (!response.ok || !data.success) throw new Error(data.message || 'Failed to load tests');
                         this.files = data.files || [];
-                        this.availableFilesTotal = data.total || this.files.length;
 
                         if (data.latest_run?.results?.length) {
-                            this.loadedFromDatabase = true;
-                            this.latestRunId = data.latest_run.run_id || null;
+                            this.allRunResults = data.latest_run.results.map((r) => this.normalizeResult(r));
                             this.latestRunCreatedAt = data.latest_run.created_at || null;
-                            this.setResults(data.latest_run.results, data.latest_run.total || data.latest_run.results.length);
                         }
-                    } catch (error) {
-                        console.error(error);
+                    } catch (e) {
+                        console.error(e);
                     } finally {
                         this.loading = false;
                     }
-                },
 
-                resetStats() {
-                    this.setResults([], 0);
-                    this.finished = false;
-                    this.loadedFromDatabase = false;
-                    this.currentTest = '';
-                    this.currentDescription = '';
-                    this.runningTestKey = null;
-                    this.activeArtifact = null;
-                },
-
-                async startTests() {
-                    if (this.running || !this.files.length) return;
-                    this.running = true;
-                    this.resetStats();
-                    this.runId = this.nextRunId();
-                    this.totalFiles = this.files.length;
-
-                    for (const file of this.files) {
-                        this.runningTestKey = file.path;
-                        this.currentTest = file.section_name || file.filename;
-                        this.currentDescription = file.description || '';
-                        this.results.push(await this.runTestRequest(file));
-                        this.recalculateStats();
+                    // Check if URL has a test param — open that test's detail screen
+                    const params = new URLSearchParams(window.location.search);
+                    const testParam = params.get('test');
+                    if (testParam && this.files.length) {
+                        const match = this.files.find((f) => f.path === testParam);
+                        if (match) this.openTest(match);
                     }
 
-                    this.running = false;
-                    this.finished = true;
-                    this.runningTestKey = null;
-                    this.completedCount = this.results.length;
-                    this.latestRunId = this.runId;
-                    this.latestRunCreatedAt = this.results
-                        .map((result) => result.created_at)
-                        .filter(Boolean)
-                        .pop() || new Date().toISOString();
-                    this.currentTest = '';
-                    this.currentDescription = '';
+                    // Handle browser back/forward
+                    window.addEventListener('popstate', (event) => {
+                        const state = event.state || {};
+                        if (state.pdfTestScreen === 'detail' && state.testKey) {
+                            const match = this.files.find((f) => f.path === state.testKey);
+                            if (match) { this.activeFile = match; this.screen = 'detail'; return; }
+                        }
+                        this.screen = 'list';
+                        this.activeFile = null;
+                    });
                 },
 
-                async startSingleTest(file) {
-                    if (this.running || !file) return;
-
-                    this.running = true;
-                    this.resetStats();
-                    this.runId = this.nextRunId();
-                    this.totalFiles = 1;
-                    this.runningTestKey = file.path;
-                    this.currentTest = file.section_name || file.filename;
-                    this.currentDescription = file.description || '';
-
-                    const result = await this.runTestRequest(file);
-                    this.setResults([result], 1);
-
-                    this.running = false;
-                    this.finished = true;
-                    this.runningTestKey = null;
-                    this.latestRunId = this.runId;
-                    this.latestRunCreatedAt = result.created_at || new Date().toISOString();
-                    this.currentTest = '';
-                    this.currentDescription = '';
+                /* ── navigation ── */
+                openTest(file) {
+                    this.activeFile = file;
+                    this.detailRunning = false;
+                    this.detailResult = this.latestResultFor(file.path) || null;
+                    this.revealIndex = this.detailResult ? (this.detailResult.checks || []).length : 0;
+                    this.fakeProgressIndex = 0;
+                    this.screen = 'detail';
+                    const url = new URL(window.location.href);
+                    url.searchParams.set('test', file.path);
+                    history.pushState({ pdfTestScreen: 'detail', testKey: file.path }, '', url.toString());
                 },
 
-                setResults(results, total = 0) {
-                    this.results = (results || []).map((result) => this.normalizeResult(result));
-                    this.totalFiles = total || this.results.length;
-                    this.completedCount = this.results.length;
-                    this.recalculateStats();
+                openAndRunTest(file) {
+                    this.openTest(file);
+                    this.detailResult = null;
+                    this.revealIndex = 0;
+                    this.$nextTick(() => this.runDetailTest());
                 },
 
-                recalculateStats() {
-                    this.completedCount = this.results.length;
-                    this.passedCount = this.results.filter((result) => result.status === 'pass').length;
-                    this.failedCount = this.results.filter((result) => result.status === 'fail').length;
-                    this.errorCount = this.results.filter((result) => result.status === 'error').length;
+                closeTest() {
+                    this.stopFakeProgress();
+                    this.stopReveal();
+                    this.screen = 'list';
+                    this.activeFile = null;
+                    const url = new URL(window.location.href);
+                    url.searchParams.delete('test');
+                    history.pushState({ pdfTestScreen: 'list' }, '', url.toString());
                 },
 
-                normalizeResult(result) {
-                    return {
-                        ...result,
-                        test_key: result?.test_key || this.extractTestKey(result?.filename),
-                        checks: Array.isArray(result?.checks) ? result.checks : [],
-                        warnings: Array.isArray(result?.warnings) ? result.warnings : [],
-                        artifacts: Array.isArray(result?.artifacts) ? result.artifacts : [],
-                    };
+                /* ── run all ── */
+                async startAllTests() {
+                    if (this.globalRunning || !this.files.length) return;
+                    this.globalRunning = true;
+                    this.globalFinished = false;
+                    this.allRunResults = [];
+                    const runId = this.nextRunId();
+
+                    for (const file of this.files) {
+                        const result = await this.runTestRequest(file, runId);
+                        this.allRunResults = [...this.allRunResults, result];
+                    }
+
+                    this.globalRunning = false;
+                    this.globalFinished = true;
                 },
 
-                extractTestKey(filename) {
-                    return String(filename || '').replace(/\.pdf$/i, '');
+                /* ── run single on detail screen ── */
+                async runDetailTest() {
+                    if (!this.activeFile || this.detailRunning) return;
+                    this.detailRunning = true;
+                    this.detailResult = null;
+                    this.revealIndex = 0;
+                    this.startFakeProgress();
+
+                    const result = await this.runTestRequest(this.activeFile, this.nextRunId());
+
+                    this.stopFakeProgress();
+                    this.detailResult = result;
+
+                    // Also update allRunResults so list screen reflects new result
+                    const existingIdx = this.allRunResults.findIndex((r) => r.test_key === result.test_key);
+                    if (existingIdx >= 0) {
+                        this.allRunResults = this.allRunResults.map((r, i) => i === existingIdx ? result : r);
+                    } else {
+                        this.allRunResults = [...this.allRunResults, result];
+                    }
+
+                    this.detailRunning = false;
+                    this.startReveal(result.checks || []);
                 },
 
-                async runTestRequest(file) {
+                /* ── fake progress animation ── */
+                startFakeProgress() {
+                    this.fakeProgressIndex = 0;
+                    this.stopFakeProgress();
+                    const total = (this.activeFile?.criteria || []).length || 1;
+                    this.fakeProgressTimer = setInterval(() => {
+                        if (this.fakeProgressIndex < total - 1) {
+                            this.fakeProgressIndex += 1;
+                        }
+                    }, Math.max(600, Math.min(2000, 180000 / total))); // spread across ~3 min max
+                },
+
+                stopFakeProgress() {
+                    if (this.fakeProgressTimer) { clearInterval(this.fakeProgressTimer); this.fakeProgressTimer = null; }
+                },
+
+                /* ── reveal checks one by one ── */
+                startReveal(checks) {
+                    this.revealIndex = 0;
+                    this.stopReveal();
+                    if (!checks.length) return;
+                    this.revealTimer = setInterval(() => {
+                        if (this.revealIndex < checks.length) {
+                            this.revealIndex += 1;
+                        } else {
+                            this.stopReveal();
+                        }
+                    }, 100);
+                },
+
+                stopReveal() {
+                    if (this.revealTimer) { clearInterval(this.revealTimer); this.revealTimer = null; }
+                },
+
+                /* ── helpers ── */
+                latestResultFor(testKey) {
+                    return this.allRunResults.find((r) => r.test_key === testKey) || null;
+                },
+
+                checkImageArtifact(check, checkIndex) {
+                    if (!this.detailResult?.artifacts?.length || !check) return null;
+                    return this.detailResult.artifacts.find((artifact) => (
+                        artifact.kind === 'image'
+                        && (
+                            artifact.check_item === check.item
+                            || Number(artifact.check_index) === (checkIndex + 1)
+                        )
+                    )) || null;
+                },
+
+                async runTestRequest(file, runId) {
                     try {
                         const response = await fetch('{{ route('pdfTests.runSingleTest') }}', {
                             method: 'POST',
@@ -469,16 +651,10 @@
                                 'Content-Type': 'application/json',
                                 'Accept': 'application/json',
                             },
-                            body: JSON.stringify({
-                                test_key: file.path,
-                                run_id: this.runId,
-                            }),
+                            body: JSON.stringify({ test_key: file.path, run_id: runId }),
                         });
                         const data = await response.json();
-                        if (!response.ok || !data.success) {
-                            throw new Error(data.message || 'PDF test failed');
-                        }
-
+                        if (!response.ok || !data.success) throw new Error(data.message || 'Test failed');
                         return this.normalizeResult(data.result || {});
                     } catch (error) {
                         return this.normalizeResult({
@@ -497,53 +673,35 @@
                     }
                 },
 
-                latestResultFor(testKey) {
-                    return this.results.find((result) => result.test_key === testKey) || null;
-                },
-
-                statusBadgeClasses(status) {
-                    if (status === 'pass') {
-                        return 'bg-success-100 text-success-700 dark:bg-success-900/30 dark:text-success-400';
-                    }
-
-                    if (status === 'fail') {
-                        return 'bg-danger-100 text-danger-700 dark:bg-danger-900/30 dark:text-danger-400';
-                    }
-
-                    return 'bg-warning-100 text-warning-700 dark:bg-warning-900/30 dark:text-warning-400';
+                normalizeResult(result) {
+                    const testKey = result?.test_key || String(result?.filename || '').replace(/\.pdf$/i, '');
+                    const artifactBase = '{{ route('pdfTests.artifact', ['filename' => '__FILENAME__']) }}'.replace('__FILENAME__', '');
+                    return {
+                        ...result,
+                        test_key: testKey,
+                        checks: Array.isArray(result?.checks) ? result.checks : [],
+                        warnings: Array.isArray(result?.warnings) ? result.warnings : [],
+                        artifacts: (Array.isArray(result?.artifacts) ? result.artifacts : []).map((a) => ({
+                            ...a,
+                            url: a.url || (artifactBase + encodeURIComponent(a.filename || '')),
+                        })),
+                    };
                 },
 
                 nextRunId() {
-                    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
-                        return window.crypto.randomUUID();
-                    }
-
+                    if (window.crypto?.randomUUID) return window.crypto.randomUUID();
                     return `pdf-run-${Date.now()}-${Math.random().toString(16).slice(2)}`;
                 },
 
                 formatTimestamp(value) {
-                    if (!value) {
-                        return 'an unknown time';
-                    }
-
-                    const timestamp = new Date(value);
-                    if (Number.isNaN(timestamp.getTime())) {
-                        return value;
-                    }
-
-                    return new Intl.DateTimeFormat(undefined, {
-                        dateStyle: 'medium',
-                        timeStyle: 'short',
-                    }).format(timestamp);
+                    if (!value) return 'unknown';
+                    const d = new Date(value);
+                    if (Number.isNaN(d.getTime())) return value;
+                    return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(d);
                 },
 
-                openArtifact(artifact) {
-                    this.activeArtifact = artifact;
-                },
-
-                closeArtifact() {
-                    this.activeArtifact = null;
-                },
+                openArtifact(artifact) { this.activeArtifact = artifact; },
+                closeArtifact()        { this.activeArtifact = null; },
             };
         }
     </script>
