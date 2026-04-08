@@ -40,6 +40,10 @@
     {
       "id": 10,
       "text": "Saved annotations in the pdf_state table are always the source of truth. When a saved annotation exists, the editor shall load and render that saved annotation from the database as authoritative content. Extraction data may enrich geometry or fill gaps, but it shall never override, normalize away, or reinterpret the saved annotation's content or edit state."
+    },
+    {
+      "id": 11,
+      "text": "hydrateSavedPromotedAnnotations() must always be called with extractionPages and savedStandaloneAnnotations. When a prior session has even one saved promoted annotation, shouldPreferSavedPromotedSnapshot() returns true — if extractionPages is omitted, only those saved annotations load and the remaining extraction blocks are skipped entirely. The function already has logic to merge saved edits with freshly-built extraction annotations; it must receive the extraction data to iterate over."
     }
   ]
 }

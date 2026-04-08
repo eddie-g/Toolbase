@@ -45,6 +45,8 @@ Route::post('/documents/create-from-template', [DocumentController::class, 'crea
 Route::post('/documents/create-simple-invoice', [DocumentController::class, 'createSimpleInvoice'])->name('documents.createSimpleInvoice');
 Route::post('/documents/create-guided-template', [DocumentController::class, 'createFromGuidedTemplate'])->name('documents.createFromGuidedTemplate');
 Route::get('/documents/{document}/edit', [DocumentController::class, 'edit'])->name('documents.edit');
+Route::get('/documents/{document}/edit-new', [DocumentController::class, 'editNew'])->name('documents.editNew');
+Route::get('/documents/{document}/edit2', [DocumentController::class, 'edit2'])->name('documents.edit2');
 Route::get('/documents/{document}/ai', [DocumentController::class, 'ai'])->name('documents.ai');
 Route::get('/documents/{document}/guided', [DocumentController::class, 'guided'])->name('documents.guided');
 Route::get('/documents/{document}/fullscreen', [DocumentController::class, 'fullscreen'])->name('documents.fullscreen');
@@ -127,6 +129,10 @@ Route::get('/pdf-tests/test-files', [PdfTestController::class, 'getTestFiles'])-
 Route::post('/pdf-tests/run-single-test', [PdfTestController::class, 'runSingleTest'])->name('pdfTests.runSingleTest');
 Route::match(['GET', 'POST'], '/pdf-tests/create-blank', [PdfTestController::class, 'createBlank'])->name('pdfTests.createBlank');
 Route::get('/pdf-tests/artifacts/{filename}', [PdfTestController::class, 'artifact'])->name('pdfTests.artifact');
+Route::get('/pdf-tests/document/{document}/info', [PdfTestController::class, 'documentInfo'])->name('pdfTests.documentInfo');
+Route::post('/pdf-tests/document/{document}/render-annotations', [PdfTestController::class, 'renderAnnotations'])->name('pdfTests.renderAnnotations');
+Route::post('/pdf-tests/document/{document}/compare-first-annotation', [PdfTestController::class, 'compareFirstAnnotation'])->name('pdfTests.compareFirstAnnotation');
+Route::post('/pdf-tests/document/{document}/compare-written-vs-original', [PdfTestController::class, 'compareWrittenVsOriginal'])->name('pdfTests.compareWrittenVsOriginal');
 
 Route::delete('/documents/{document}', [DocumentController::class, 'destroy'])->name('documents.destroy');
 Route::post('/documents/bulk-destroy', [DocumentController::class, 'bulkDestroy'])->name('documents.bulkDestroy');

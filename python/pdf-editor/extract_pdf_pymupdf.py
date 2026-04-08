@@ -1326,6 +1326,39 @@ def _compact_duplicate_compare_text(text):
     return re.sub(r'\s+', '', sanitize_extracted_text(text or '')).casefold()
 
 
+def _trace_text_can_replace_original_text(original_text, rebuilt_text):
+    original = sanitize_extracted_text(original_text or '')
+    rebuilt = sanitize_extracted_text(rebuilt_text or '')
+    if not original or not rebuilt:
+        return False
+
+    if original == rebuilt:
+        return True
+
+    original_compact = _compact_duplicate_compare_text(original)
+    rebuilt_compact = _compact_duplicate_compare_text(rebuilt)
+    if not original_compact or original_compact != rebuilt_compact:
+        return False
+
+    original_space_runs = re.findall(r'\s+', original)
+    rebuilt_space_runs = re.findall(r'\s+', rebuilt)
+    if len(rebuilt_space_runs) >= len(original_space_runs):
+        return True
+
+    # Allow texttrace to remove a single suspicious intra-word gap like
+    # "w aives", but do not let it collapse genuine sentence spacing.
+    if len(original_space_runs) == 1 and not rebuilt_space_runs:
+        parts = original.split()
+        if (
+            len(parts) == 2
+            and all(re.fullmatch(r'[A-Za-z]+', part or '') for part in parts)
+            and min(len(parts[0]), len(parts[1])) <= 2
+        ):
+            return True
+
+    return False
+
+
 def _entry_bbox(entry, bbox_key='bbox', left_key='left', top_key='top', width_key='width', height_key='height'):
     if not isinstance(entry, dict):
         return None
@@ -1450,6 +1483,13 @@ def _prefer_richer_duplicate_text_entry(
     existing_text = _compact_duplicate_compare_text(existing.get(text_key, ''))
     if len(candidate_text) != len(existing_text):
         return len(candidate_text) > len(existing_text)
+
+    candidate_raw_text = sanitize_extracted_text(candidate.get(text_key, '') or '')
+    existing_raw_text = sanitize_extracted_text(existing.get(text_key, '') or '')
+    candidate_space_count = len(re.findall(r'\s', candidate_raw_text))
+    existing_space_count = len(re.findall(r'\s', existing_raw_text))
+    if candidate_space_count != existing_space_count:
+        return candidate_space_count > existing_space_count
 
     candidate_bbox = _entry_bbox(
         candidate,
@@ -2314,12 +2354,14 @@ def _merge_same_row_lines(line_items, vertical_lines=None, widget_rects=None, dr
             # We want to merge items that are SEQUENTIAL (small positive gap).
             # We do NOT want to merge items that OVERLAP significantly (negative gap).
             
+            _sequential_ltr = True  # item follows the row in natural L-to-R reading order
             if row_x1 <= item_x0:
                 dist = item_x0 - row_x1
                 overlap = 0.0
             elif item_x1 <= row_x0:
                 dist = row_x0 - item_x1
                 overlap = 0.0
+                _sequential_ltr = False  # item is to the LEFT of the current row
                 if not _looks_like_leading_inline_label(_line_item_text(item)):
                     should_merge = False
             else:
@@ -2336,16 +2378,22 @@ def _merge_same_row_lines(line_items, vertical_lines=None, widget_rects=None, dr
                 left_width = max(0.0, row_x1 - row_x0)
                 right_text = item_text
                 right_width = max(0.0, item_x1 - item_x0)
-                detached_row_label_pair = (
-                    _looks_like_detached_row_label(left_text)
-                    and left_width <= max(110.0, avg_size * 6.5)
-                    and len(right_text) >= 24
-                    and right_width >= max(180.0, avg_size * 10.0)
-                    and dist >= max(8.0, avg_size * 0.65)
-                )
-                if detached_row_label_pair:
-                    should_merge = False
-                    continue
+                # Only apply the detached-row-label check when the item follows the
+                # row in natural left-to-right order.  When the item lies to the LEFT
+                # of the current row (_sequential_ltr=False) the left_text/right_text
+                # assignments are spatially reversed and the heuristic gives false
+                # positives – notably it would drop dot-leader characters that happen
+                # to be processed after a right-aligned form label.
+                if _sequential_ltr:
+                    detached_row_label_pair = (
+                        _looks_like_detached_row_label(left_text)
+                        and left_width <= max(110.0, avg_size * 6.5)
+                        and len(right_text) >= 24
+                        and right_width >= max(180.0, avg_size * 10.0)
+                        and dist >= max(8.0, avg_size * 0.65)
+                    )
+                    if detached_row_label_pair:
+                        should_merge = False
                 x_gap_threshold = max(avg_size * 2, 15)
                 if dist > x_gap_threshold:
                     should_merge = False
@@ -3769,18 +3817,11 @@ def extract_text_with_pymupdf(pdf_path):
             # matches painted glyph bounds more closely across viewers.
             accurate_bboxes_flag = getattr(fitz, "TEXT_ACCURATE_BBOXES", 0)
             accurate_ascenders_flag = getattr(fitz, "TEXT_ACCURATE_ASCENDERS", 0)
-            # Suppress PyMuPDF's heuristic space insertion between glyphs whose
-            # advance gap exceeds the threshold.  Some PDFs use TJ kerning arrays
-            # that produce a small inter-glyph gap even inside a single word (e.g.
-            # "waives" is decoded as "w aives").  TEXT_INHIBIT_SPACES removes those
-            # spurious spaces while leaving genuine inter-word spaces intact.
-            inhibit_spaces_flag = getattr(fitz, "TEXT_INHIBIT_SPACES", 0)
             text_flags = (
                 fitz.TEXT_PRESERVE_LIGATURES
                 | fitz.TEXT_PRESERVE_WHITESPACE
                 | accurate_bboxes_flag
                 | accurate_ascenders_flag
-                | inhibit_spaces_flag
             )
             # Use sort parameter to help with better block detection.
             text_dict = page.get_text("dict", flags=text_flags, sort=True)
@@ -3812,11 +3853,11 @@ def extract_text_with_pymupdf(pdf_path):
                     drawn_box_rects=drawn_box_rects,
                 )
 
-            # Pre-fetch PyMuPDF word-level positions (with the same space-inhibit
-            # flag).  Used below to split spans that mix regular text with underscore
+            # Pre-fetch PyMuPDF word-level positions. Used below to split spans
+            # that mix regular text with underscore
             # placeholder runs so each sub-word gets an exact glyph bbox instead of
             # relying on browser font-metric estimates in renderAnchoredUnderscoreSegments.
-            page_pymupdf_words = page.get_text('words', flags=inhibit_spaces_flag)
+            page_pymupdf_words = page.get_text('words')
             
             page_words = []
             page_blocks = []  # Track paragraph blocks
@@ -4047,13 +4088,7 @@ def extract_text_with_pymupdf(pdf_path):
                                 if trace_visible_span:
                                     rebuilt_text = trace_visible_span.get("text") or text
                                     rebuilt_text = _apply_line_direction_text_order(rebuilt_text, line_dir)
-                                    original_compact_text = _compact_duplicate_compare_text(text)
-                                    rebuilt_compact_text = _compact_duplicate_compare_text(rebuilt_text)
-                                    if (
-                                        rebuilt_compact_text
-                                        and original_compact_text
-                                        and rebuilt_compact_text == original_compact_text
-                                    ):
+                                    if _trace_text_can_replace_original_text(text, rebuilt_text):
                                         text = rebuilt_text
                                         rebuilt_bbox = trace_visible_span.get("bbox")
                                         if rebuilt_bbox and len(rebuilt_bbox) >= 4:

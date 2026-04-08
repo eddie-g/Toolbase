@@ -185,6 +185,10 @@
                                 <span class="hidden sm:inline">Load Annotations</span>
                                 <span class="sm:hidden">Load</span>
                             </button>
+                            <a id="open-edit2-btn" href="{{ route('documents.edit2', $document) }}" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-900 font-semibold rounded-lg text-sm transition flex items-center gap-1.5 border border-slate-300" title="Open the exact-text Edit2 viewer">
+                                <span class="hidden sm:inline">Open Edit2</span>
+                                <span class="sm:hidden">Edit2</span>
+                            </a>
                             @if($editorDebug)
                                 <a id="saved-edit-preview-btn" href="{{ $savedEditPreviewUrl ?? route('documents.savedEdit', $document) }}" target="_blank" rel="noopener" class="px-4 py-2 bg-amber-100 hover:bg-amber-200 text-amber-900 font-semibold rounded-lg text-sm transition flex items-center gap-1.5 border border-amber-300">
                                     <span class="hidden sm:inline">Last Redaction</span>
@@ -245,6 +249,11 @@
                                     <option value="left">Left</option>
                                     <option value="center">Center</option>
                                     <option value="right">Right</option>
+                                </select>
+                                <select id="selected-valign" disabled style="min-width:70px;" title="Vertical Alignment">
+                                    <option value="top">Top</option>
+                                    <option value="middle">Middle</option>
+                                    <option value="bottom">Bottom</option>
                                 </select>
                                 <select id="selected-opacity" disabled style="min-width:56px;">
                                     <option value="1">100%</option>
@@ -325,6 +334,11 @@
                         <option value="left">Left</option>
                         <option value="center">Center</option>
                         <option value="right">Right</option>
+                    </select>
+                    <select id="etb-valign" title="Vertical Alignment" style="width: 80px;">
+                        <option value="top">Top</option>
+                        <option value="middle">Middle</option>
+                        <option value="bottom">Bottom</option>
                     </select>
                     <div class="etb-divider"></div>
                     <!-- Copy -->

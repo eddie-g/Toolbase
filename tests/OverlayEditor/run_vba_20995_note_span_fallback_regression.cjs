@@ -47,6 +47,110 @@ async function enableEditTextMode(page) {
     await page.waitForTimeout(2500);
 }
 
+async function saveAnnotationState(page) {
+    const result = await page.evaluate(async () => {
+        if (typeof saveAnnotationStateToDb !== 'function') {
+            return { success: false, message: 'saveAnnotationStateToDb is unavailable' };
+        }
+        try {
+            return await saveAnnotationStateToDb();
+        } catch (error) {
+            return {
+                success: false,
+                message: error && error.message ? error.message : String(error),
+            };
+        }
+    });
+    if (!result || result.success !== true) {
+        throw new Error(`failed to save annotation state: ${JSON.stringify(result)}`);
+    }
+}
+
+async function collectPromotedState(page, expectedLine) {
+    return page.evaluate(({ lineText, expectedNoteFirstLine, expectedSubmitLine }) => {
+        const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const annotations = Array.from(document.querySelectorAll('.annotation.promoted-extraction'));
+        const target = annotations.find((element) => normalize(element.textContent || '').includes(lineText));
+        if (!target) {
+            const normalizedPreviews = annotations.map((element) => (
+                normalize((element.querySelector('.annotation-text') || element).textContent || '')
+            ));
+            return {
+                found: false,
+                annotationPreviewCount: normalizedPreviews.length,
+                annotationPreviews: normalizedPreviews.slice(0, 12),
+                relevantPreviews: normalizedPreviews.filter((text) => (
+                    /supplemental|disagree|decision|higher-level|appeal|note:/i.test(text)
+                )).slice(0, 12),
+            };
+        }
+
+        const textElement = target.querySelector('.annotation-text') || target;
+        const lines = Array.from(textElement.querySelectorAll('.annotation-exact-line')).map((line) => ({
+            text: normalize(line.textContent || ''),
+            rawText: String(line.textContent || ''),
+            spanCount: line.querySelectorAll('.annotation-exact-span').length,
+            spans: Array.from(line.querySelectorAll('.annotation-exact-span')).map((span) => ({
+                text: normalize(span.textContent || ''),
+                rawText: String(span.textContent || ''),
+                transform: span.style.transform || '',
+                fontWeight: window.getComputedStyle(span).fontWeight || '',
+                fontStyle: window.getComputedStyle(span).fontStyle || '',
+            })),
+            height: line.style.height,
+            lineHeight: line.style.lineHeight,
+        }));
+
+        const matchedLine = lines.find((line) => line.text === lineText) || null;
+        const noteLine = lines.find((line) => line.text === expectedNoteFirstLine) || null;
+        const submitLine = lines.find((line) => line.text === expectedSubmitLine) || null;
+
+        return {
+            found: true,
+            annotationText: normalize(textElement.textContent || ''),
+            lineCount: lines.length,
+            lines,
+            matchedLine,
+            noteLine,
+            submitLine,
+        };
+    }, {
+        lineText: expectedLine,
+        expectedNoteFirstLine: EXPECTED_NOTE_FIRST_LINE,
+        expectedSubmitLine: EXPECTED_SUBMIT_LINE,
+    });
+}
+
+async function collectPromotedLineAcrossAnnotations(page, expectedLine) {
+    return page.evaluate((lineText) => {
+        const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const annotations = Array.from(document.querySelectorAll('.annotation.promoted-extraction'));
+        const target = annotations.find((element) => {
+            const textElement = element.querySelector('.annotation-text') || element;
+            const lines = Array.from(textElement.querySelectorAll('.annotation-exact-line'));
+            return lines.some((line) => normalize(line.textContent || '') === lineText);
+        });
+        if (!target) {
+            return null;
+        }
+        const textElement = target.querySelector('.annotation-text') || target;
+        const line = Array.from(textElement.querySelectorAll('.annotation-exact-line')).find((node) => normalize(node.textContent || '') === lineText);
+        if (!line) {
+            return null;
+        }
+        return {
+            text: normalize(line.textContent || ''),
+            spans: Array.from(line.querySelectorAll('.annotation-exact-span')).map((span) => ({
+                text: normalize(span.textContent || ''),
+                rawText: String(span.textContent || ''),
+                transform: span.style.transform || '',
+                fontWeight: window.getComputedStyle(span).fontWeight || '',
+                fontStyle: window.getComputedStyle(span).fontStyle || '',
+            })),
+        };
+    }, expectedLine);
+}
+
 async function main() {
     ensureOutputDir();
 
@@ -56,42 +160,15 @@ async function main() {
     try {
         const documentId = await uploadPdf(page);
         await enableEditTextMode(page);
+        await saveAnnotationState(page);
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: 90000 });
+        await page.waitForTimeout(1500);
+        await enableEditTextMode(page);
 
-        const state = await page.evaluate((expectedLine) => {
-            const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
-            const annotations = Array.from(document.querySelectorAll('.annotation.promoted-extraction'));
-            const target = annotations.find((element) => normalize(element.textContent || '').includes(expectedLine));
-            if (!target) {
-                return { found: false };
-            }
-
-            const textElement = target.querySelector('.annotation-text') || target;
-            const lines = Array.from(textElement.querySelectorAll('.annotation-exact-line')).map((line) => ({
-                text: normalize(line.textContent || ''),
-                spanCount: line.querySelectorAll('.annotation-exact-span').length,
-                spans: Array.from(line.querySelectorAll('.annotation-exact-span')).map((span) => ({
-                    text: normalize(span.textContent || ''),
-                    transform: span.style.transform || '',
-                    fontWeight: window.getComputedStyle(span).fontWeight || '',
-                    fontStyle: window.getComputedStyle(span).fontStyle || '',
-                })),
-                height: line.style.height,
-                lineHeight: line.style.lineHeight,
-            }));
-
-            const matchedLine = lines.find((line) => line.text === expectedLine) || null;
-
-            return {
-                found: true,
-                annotationText: normalize(textElement.textContent || ''),
-                lineCount: lines.length,
-                lines,
-                matchedLine,
-            };
-        }, EXPECTED_LINE);
+        const state = await collectPromotedState(page, EXPECTED_LINE);
 
         if (!state.found) {
-            throw new Error('failed to locate promoted note annotation containing the expected line');
+            throw new Error(`failed to locate promoted note annotation containing the expected line: ${JSON.stringify(state, null, 2)}`);
         }
         if (!state.matchedLine) {
             throw new Error(`expected line missing from annotation: ${JSON.stringify(state, null, 2)}`);
@@ -107,7 +184,7 @@ async function main() {
             throw new Error(`expected bold DISAGREE span on matched line: ${JSON.stringify(state.matchedLine, null, 2)}`);
         }
 
-        const noteLine = state.lines.find((line) => line.text === EXPECTED_NOTE_FIRST_LINE);
+        const noteLine = state.noteLine;
         if (!noteLine) {
             throw new Error(`expected note lead line missing: ${JSON.stringify(state.lines, null, 2)}`);
         }
@@ -117,32 +194,7 @@ async function main() {
             throw new Error(`expected bold Note / supplemental claim spans on note line: ${JSON.stringify(noteLine, null, 2)}`);
         }
 
-        const submitAnnotation = await page.evaluate((expectedLine) => {
-            const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
-            const annotations = Array.from(document.querySelectorAll('.annotation.promoted-extraction'));
-            const target = annotations.find((element) => {
-                const textElement = element.querySelector('.annotation-text') || element;
-                const lines = Array.from(textElement.querySelectorAll('.annotation-exact-line'));
-                return lines.some((line) => normalize(line.textContent || '') === expectedLine);
-            });
-            if (!target) {
-                return null;
-            }
-            const textElement = target.querySelector('.annotation-text') || target;
-            const line = Array.from(textElement.querySelectorAll('.annotation-exact-line')).find((node) => normalize(node.textContent || '') === expectedLine);
-            if (!line) {
-                return null;
-            }
-            return {
-                text: normalize(line.textContent || ''),
-                spans: Array.from(line.querySelectorAll('.annotation-exact-span')).map((span) => ({
-                    text: normalize(span.textContent || ''),
-                    transform: span.style.transform || '',
-                    fontWeight: window.getComputedStyle(span).fontWeight || '',
-                    fontStyle: window.getComputedStyle(span).fontStyle || '',
-                })),
-            };
-        }, EXPECTED_SUBMIT_LINE);
+        const submitAnnotation = await collectPromotedLineAcrossAnnotations(page, EXPECTED_SUBMIT_LINE);
         if (!submitAnnotation) {
             throw new Error(`expected submit line annotation missing: ${EXPECTED_SUBMIT_LINE}`);
         }

@@ -662,9 +662,13 @@
             }
 
             .doc-actions {
-                display: grid;
-                grid-template-columns: repeat(2, minmax(0, 1fr));
+                display: flex;
+                flex-wrap: wrap;
                 gap: 8px;
+            }
+            .doc-actions > * {
+                flex: 1 1 0;
+                min-width: 0;
             }
 
             .doc-link {
@@ -677,6 +681,17 @@
                 color: var(--accent);
                 font-size: 12px;
                 font-weight: 700;
+            }
+
+            .doc-link-outline {
+                background: transparent;
+                border: 1px solid var(--accent);
+                opacity: 0.78;
+            }
+
+            .doc-link-outline:hover {
+                opacity: 1;
+                background: var(--accent-soft);
             }
 
             .doc-empty {
@@ -793,7 +808,7 @@
                 }
 
                 .doc-actions {
-                    grid-template-columns: 1fr;
+                    flex-direction: column;
                 }
             }
         </style>
@@ -1022,6 +1037,9 @@
                                         <div class="doc-meta">Edited {{ strtoupper($updatedLabel) }} &bull; {{ $sizeMb }} MB</div>
                                         <div class="doc-actions">
                                             <a href="{{ $editUrl }}" class="doc-link">Open</a>
+                                            @if(strtolower((string) config('pdf_editor.layout_mode', 'default')) === 'new_writer')
+                                            <a href="{{ route('documents.editNew', $document) }}" target="_blank" class="doc-link doc-link-outline">Open New</a>
+                                            @endif
                                             <form action="{{ route('documents.destroy', $document) }}" method="POST" style="margin:0;">
                                                 @csrf
                                                 @method('DELETE')

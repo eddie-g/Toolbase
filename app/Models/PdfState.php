@@ -14,11 +14,15 @@ class PdfState extends Model
 
     protected $fillable = [
         'document_id',
+        'pdf_extraction_fitz_id',
+        'user_id',
+        'admin_id',
         'user_email',
         'session_id',
         'page_number',
         'annotation_data',
         'state',
+        'alignment',
     ];
 
     protected $casts = [
@@ -31,5 +35,20 @@ class PdfState extends Model
     public function document(): BelongsTo
     {
         return $this->belongsTo(Document::class);
+    }
+
+    public function extraction(): BelongsTo
+    {
+        return $this->belongsTo(PdfExtractionFitz::class, 'pdf_extraction_fitz_id');
+    }
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    public function admin(): BelongsTo
+    {
+        return $this->belongsTo(Admin::class);
     }
 }

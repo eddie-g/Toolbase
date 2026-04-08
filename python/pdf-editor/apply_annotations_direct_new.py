@@ -106,6 +106,13 @@ FONT_FILE_VARIANTS = {
         "italic": os.path.join(FONT_DIR, "Lato-Regular.ttf"),
         "boldItalic": os.path.join(FONT_DIR, "Lato-Bold.ttf"),
     },
+    "Montserrat": {
+        "light": os.path.join(FONT_DIR, "Montserrat-Light.ttf"),
+        "normal": os.path.join(FONT_DIR, "Montserrat-Regular.ttf"),
+        "bold": os.path.join(FONT_DIR, "Montserrat-Bold.ttf"),
+        "italic": os.path.join(FONT_DIR, "Montserrat-Light.ttf"),
+        "boldItalic": os.path.join(FONT_DIR, "Montserrat-Bold.ttf"),
+    },
     "OpenSans": {
         "normal": os.path.join(FONT_DIR, "OpenSans-Regular.ttf"),
         "bold": os.path.join(FONT_DIR, "OpenSans-Bold.ttf"),
@@ -195,6 +202,13 @@ HTML_FONT_FAMILY_ALIASES = {
         "DrhchpLato",
         "DrhchpLato-Regular",
     ],
+    "Montserrat": [
+        "Montserrat",
+        "Montserrat-Regular",
+        "Montserrat-Light",
+        "Montserrat-Thin",
+        "MontserratThin_300wght",
+    ],
     "OpenSans": [
         "Open Sans",
         "OpenSans",
@@ -263,7 +277,6 @@ EMBEDDED_FONT_BYPASS_FAMILIES = {
     "Calibri",
     "Roboto",
     "Lato",
-    "Montserrat",
     "OpenSans",
     "Poppins",
     "Raleway",
@@ -336,7 +349,6 @@ def should_bypass_embedded_font(value: Any) -> bool:
         "calibri",
         "roboto",
         "lato",
-        "montserrat",
         "opensans",
         "poppins",
         "sourcesans",
@@ -441,6 +453,8 @@ def normalize_font_family(value: Any) -> str:
         return "Arimo"
     if "lato" in lower:
         return "Lato"
+    if "montserrat" in lower:
+        return "Montserrat"
     if "opensans" in lower:
         return "OpenSans"
     if "poppins" in lower:
@@ -485,6 +499,8 @@ def css_font_family(value: Any) -> str:
 
     if "lato" in lower:
         return "Lato, Helvetica, Arial, sans-serif"
+    if "montserrat" in lower:
+        return "Montserrat, Helvetica, Arial, sans-serif"
     if "opensans" in lower:
         return "Open Sans, Helvetica, Arial, sans-serif"
     if "poppins" in lower:
@@ -513,6 +529,8 @@ def css_font_family(value: Any) -> str:
         return '"Trebuchet MS", Verdana, Geneva, Arial, sans-serif'
     if family == "Lato":
         return "Lato, Helvetica, Arial, sans-serif"
+    if family == "Montserrat":
+        return "Montserrat, Helvetica, Arial, sans-serif"
     if family == "OpenSans":
         return "Open Sans, Helvetica, Arial, sans-serif"
     if family == "Poppins":
@@ -1040,8 +1058,11 @@ def normalize_exact_source_line_layout(
         and len(normalized_text_lines) > 1
         and len(normalized_text_lines) <= len(raw_boxes)
     ):
-        line_texts = [str(line or "") for line in normalized_text_lines]
-        active_raw_boxes = list(raw_boxes[:len(line_texts)])
+        line_texts, active_raw_boxes, _ = _aligned_dirty_promoted_line_subset(
+            [str(line or "") for line in normalized_text_lines],
+            raw_boxes,
+            source_lines,
+        )
     else:
         reconstructed_line_texts = _reconstruct_flattened_source_lines(
             normalized_text_lines,
@@ -1460,6 +1481,8 @@ def normalize_exact_source_span_layout(
 ) -> list[Dict[str, Any]]:
     raw_boxes = ann.get("sourceLineBBoxes")
     source_spans = ann.get("sourceSpans")
+    raw_source_lines = ann.get("sourceTextLines")
+    source_lines = raw_source_lines if isinstance(raw_source_lines, list) else []
     if not isinstance(source_spans, list) or not source_spans:
         return []
 
@@ -1473,8 +1496,11 @@ def normalize_exact_source_span_layout(
         and isinstance(raw_boxes, list)
         and len(normalized_text_lines) <= len(raw_boxes)
     ):
-        line_texts = [sanitize_pdf_text(line) for line in normalized_text_lines]
-        active_raw_boxes = list(raw_boxes[:len(line_texts)])
+        line_texts, active_raw_boxes, _ = _aligned_dirty_promoted_line_subset(
+            [sanitize_pdf_text(line) for line in normalized_text_lines],
+            raw_boxes,
+            source_lines,
+        )
     else:
         line_texts = []
         active_raw_boxes = list(raw_boxes or [])
@@ -1493,6 +1519,24 @@ def normalize_exact_source_span_layout(
             source_anchor_y = float(raw_source_top)
     except Exception:
         source_anchor_y = None
+
+    if bool(ann.get("promotedDirty")) and active_raw_boxes:
+        try:
+            source_anchor_x = min(
+                float(box[0])
+                for box in active_raw_boxes
+                if isinstance(box, (list, tuple)) and len(box) >= 4
+            )
+        except Exception:
+            pass
+        try:
+            source_anchor_y = min(
+                float(box[1])
+                for box in active_raw_boxes
+                if isinstance(box, (list, tuple)) and len(box) >= 4
+            )
+        except Exception:
+            pass
 
     if source_anchor_x is None or source_anchor_y is None:
         source_rects = []
@@ -1532,6 +1576,24 @@ def normalize_exact_source_span_layout(
             )
     except Exception:
         source_rect = None
+
+    if bool(ann.get("promotedDirty")) and active_raw_boxes:
+        try:
+            merged_source_rect = None
+            for raw_box in active_raw_boxes:
+                if not isinstance(raw_box, (list, tuple)) or len(raw_box) < 4:
+                    continue
+                current_box_rect = fitz.Rect(
+                    float(raw_box[0]),
+                    float(raw_box[1]),
+                    float(raw_box[2]),
+                    float(raw_box[3]),
+                )
+                merged_source_rect = current_box_rect if merged_source_rect is None else (merged_source_rect | current_box_rect)
+            if merged_source_rect is not None:
+                source_rect = merged_source_rect
+        except Exception:
+            pass
 
     translate_x = 0.0
     translate_y = 0.0
@@ -1710,6 +1772,42 @@ def normalize_exact_source_span_layout(
         })
 
     return layout
+
+
+def _aligned_dirty_promoted_line_subset(
+    current_lines: list[str],
+    raw_boxes: Any,
+    raw_source_lines: Any,
+) -> tuple[list[str], list[Any], int]:
+    normalized_current_lines = [
+        sanitize_pdf_text(line)
+        for line in current_lines
+        if sanitize_pdf_text(line)
+    ]
+    source_boxes = list(raw_boxes or []) if isinstance(raw_boxes, list) else []
+    source_lines = (
+        [sanitize_pdf_text(line) for line in raw_source_lines]
+        if isinstance(raw_source_lines, list)
+        else []
+    )
+
+    if not normalized_current_lines or not source_boxes:
+        return normalized_current_lines, source_boxes, 0
+    if len(normalized_current_lines) == len(source_boxes):
+        return normalized_current_lines, source_boxes, 0
+    if not source_lines or len(source_lines) != len(source_boxes):
+        return normalized_current_lines, source_boxes[:len(normalized_current_lines)], 0
+
+    last_possible_start = len(source_lines) - len(normalized_current_lines)
+    for start_index in range(max(0, last_possible_start) + 1):
+        if source_lines[start_index:start_index + len(normalized_current_lines)] == normalized_current_lines:
+            return (
+                normalized_current_lines,
+                source_boxes[start_index:start_index + len(normalized_current_lines)],
+                start_index,
+            )
+
+    return normalized_current_lines, source_boxes[:len(normalized_current_lines)], 0
 
 
 def _style_run_signature(style: Dict[str, Any]) -> tuple[Any, ...]:
@@ -1958,7 +2056,12 @@ def build_dirty_promoted_style_mapped_span_layout(
     if not expected_lines or len(expected_lines) != len(line_layout):
         return []
 
-    active_raw_boxes = list(raw_boxes[:len(expected_lines)])
+    raw_source_lines = ann.get("sourceTextLines")
+    expected_lines, active_raw_boxes, _ = _aligned_dirty_promoted_line_subset(
+        expected_lines,
+        raw_boxes,
+        raw_source_lines if isinstance(raw_source_lines, list) else [],
+    )
     if len(active_raw_boxes) != len(expected_lines):
         return []
 
@@ -2258,6 +2361,8 @@ def draw_text_using_exact_source_spans(
     for line_entry in lines:
         if not isinstance(line_entry, dict):
             continue
+        _prev_span_rect: Optional[fitz.Rect] = None
+        _prev_span_text: Optional[str] = None
         for span_entry in line_entry.get("spans") or []:
             if not isinstance(span_entry, dict):
                 continue
@@ -2301,6 +2406,38 @@ def draw_text_using_exact_source_spans(
                 if span_entry.get("baseline_x") is not None
                 else span_rect.x0
             )
+
+            # Compensation for stripped leading whitespace.
+            # Source PDF extraction sometimes strips leading spaces from a span's text
+            # while keeping the span's bbox/origin at the position of those stripped
+            # spaces.  When the previous span's right edge abuts this span's left edge
+            # (adjacent bboxes), the previous span is a short field-number label
+            # (e.g. "1", "2", "6a", "6b") whose glyph fills its bbox exactly, and the
+            # substitute-font text width is noticeably smaller than the stored bbox
+            # width (≥12 pt, equivalent to ≈5+ spaces at 8pt), the difference
+            # represents whitespace that was present in the original but excluded from
+            # the stored text.  Shift draw_x right by that difference so the first
+            # visible glyph lands where it did in the original PDF, restoring the
+            # visual gap between the field number and its description text.
+            if _prev_span_rect is not None and _prev_span_text is not None:
+                _adj_gap = abs(_prev_span_rect.x1 - span_rect.x0)
+                if _adj_gap < 0.5:
+                    _bbox_w = span_rect.x1 - span_rect.x0
+                    _text_w = span_font.text_length(span_text, fontsize=span_font_size)
+                    _excess = _bbox_w - _text_w
+                    _prev_stripped = _prev_span_text.strip()
+                    _prev_is_field_label = (
+                        1 <= len(_prev_stripped) <= 3
+                        and all(c.isalnum() for c in _prev_stripped.lower())
+                    )
+                    if (
+                        _excess > 12.0
+                        and _prev_is_field_label
+                        and draw_x + _excess + _text_w <= span_rect.x1 + 0.5
+                    ):
+                        draw_x = draw_x + _excess
+            _prev_span_rect = span_rect
+            _prev_span_text = span_text
 
             page.insert_text(
                 fitz.Point(draw_x, baseline_y),
@@ -2359,6 +2496,13 @@ def resolve_text_fontfile(ann: Dict[str, Any]) -> Optional[str]:
         candidate = variants["italic"]
     else:
         candidate = variants["normal"]
+    if family == "Montserrat" and not is_bold and not is_italic:
+        try:
+            weight_value = int(float(resolve_annotation_font_weight(ann)))
+        except Exception:
+            weight_value = 400
+        if weight_value <= 350:
+            candidate = variants.get("light") or candidate
     if family in {"TrebuchetMS", "Verdana"} and is_bold and is_italic:
         bold_italic_candidate = variants.get("boldItalic")
         italic_candidate = variants.get("italic")
@@ -2457,6 +2601,37 @@ def wrap_text_to_width(font: fitz.Font, text: str, font_size: float, max_width: 
             lines.append("")
 
     return lines or [""]
+
+
+def should_drop_preview_side_padding_for_single_line_text(
+    ann: Dict[str, Any],
+    text: str,
+    rect: fitz.Rect,
+    font: fitz.Font,
+    font_size: float,
+    preserve_extracted_lines: bool,
+    use_flush_dirty_promoted_padding: bool,
+) -> bool:
+    if preserve_extracted_lines or use_flush_dirty_promoted_padding:
+        return False
+    if bool(ann.get("promotedFromExtraction")):
+        return False
+    if rect is None or rect.is_empty or rect.width <= 0:
+        return False
+
+    normalized_text = sanitize_pdf_text(text)
+    if normalized_text.strip() == "":
+        return False
+    if len(split_text_preserving_manual_line_breaks(normalized_text)) != 1:
+        return False
+
+    preview_padding_x = min(6.0, max(1.0, rect.width * 0.03))
+    if preview_padding_x <= 0:
+        return False
+
+    raw_text_width = font.text_length(normalized_text, fontsize=font_size)
+    padded_width = max(1.0, rect.width - (preview_padding_x * 2.0))
+    return raw_text_width <= (rect.width + 0.01) and raw_text_width > (padded_width + 0.01)
 
 
 def split_text_preserving_manual_line_breaks(text: str) -> list[str]:
@@ -3075,6 +3250,12 @@ def draw_eraser(page: fitz.Page, ann: Dict[str, Any]) -> None:
 
 
 def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
+    # Skip decorative dot-leader separator annotations — these are visual spacers
+    # extracted from the original PDF form structure that must not be redrawn as
+    # visible text in the reconstruction.
+    _ann_id = str(ann.get("id") or "")
+    if "leader-for-" in _ann_id:
+        return
     text = sanitize_pdf_text(ann.get("text") or "")
     if not text:
         return
@@ -3193,13 +3374,27 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
                 html_archive = None
         preview_font = custom_font or fitz.Font(fontname)
         use_flush_dirty_promoted_padding = bool(ann.get("promotedFromExtraction")) and bool(ann.get("promotedDirty"))
-        preview_padding_x = 0.0 if (preserve_extracted_lines or use_flush_dirty_promoted_padding) else min(6.0, max(1.0, rect.width * 0.03))
-        preview_padding_top = 0.0 if (preserve_extracted_lines or use_flush_dirty_promoted_padding) else min(2.0, max(0.5, rect.height * 0.01))
+        use_flush_single_line_padding = should_drop_preview_side_padding_for_single_line_text(
+            ann,
+            text,
+            rect,
+            preview_font,
+            size,
+            preserve_extracted_lines,
+            use_flush_dirty_promoted_padding,
+        )
+        use_flush_preview_padding = (
+            preserve_extracted_lines
+            or use_flush_dirty_promoted_padding
+            or use_flush_single_line_padding
+        )
+        preview_padding_x = 0.0 if use_flush_preview_padding else min(6.0, max(1.0, rect.width * 0.03))
+        preview_padding_top = 0.0 if use_flush_preview_padding else min(2.0, max(0.5, rect.height * 0.01))
         preview_available_width = max(1.0, rect.width - (preview_padding_x * 2.0))
         explicit_text_lines = split_text_preserving_manual_line_breaks(text)
         preview_lines = (
             explicit_text_lines
-            if (preserve_extracted_lines or len(explicit_text_lines) > 1)
+            if preserve_extracted_lines
             else wrap_text_to_width(preview_font, text, size, preview_available_width)
         )
         ascender, descender = resolve_font_vertical_metrics(preview_font)
@@ -3215,8 +3410,8 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
             padding_bottom=max(1.0, size * descender * 0.35),
         )
         if html_archive is not None:
-            padding_x = 0.0 if (preserve_extracted_lines or use_flush_dirty_promoted_padding) else 6.0
-            padding_y = 0.0 if (preserve_extracted_lines or use_flush_dirty_promoted_padding) else 2.0
+            padding_x = 0.0 if use_flush_preview_padding else 6.0
+            padding_y = 0.0 if use_flush_preview_padding else 2.0
             # For promoted-extraction annotations, text must never be clipped on
             # the right: the CSS uses white-space:pre / no wrapping, so if the
             # render font is slightly wider than the source PDF font the last

@@ -1955,6 +1955,13 @@
                 opacity: 0 !important;
                 pointer-events: none !important;
             }
+            .viewer.overlay-editor-active.bounding-box-edit-mode .annotation,
+            .viewer.overlay-editor-active.bounding-box-edit-mode .annotation-label,
+            .viewer.overlay-view-mode.bounding-box-edit-mode .annotation,
+            .viewer.overlay-view-mode.bounding-box-edit-mode .annotation-label {
+                opacity: 1 !important;
+                pointer-events: auto !important;
+            }
             .overlay-field .resize-handle {
                 position: absolute;
                 background: rgba(66, 133, 244, 0.8);
@@ -2187,6 +2194,54 @@
                 user-select: text;
                 -webkit-user-select: text;
                 overflow: hidden !important;
+            }
+            .viewer.bounding-box-edit-mode .overlay-field[data-layout-mode="bounding_box_edit"] {
+                border-style: dashed !important;
+                border-color: rgba(37, 99, 235, 0.72) !important;
+                background: transparent !important;
+                box-shadow: none !important;
+                isolation: isolate;
+            }
+            .viewer.bounding-box-edit-mode .overlay-field[data-layout-mode="bounding_box_edit"]::before {
+                content: '';
+                position: absolute;
+                inset: -1px;
+                background: transparent;
+                pointer-events: none;
+                z-index: 0;
+            }
+            .viewer.bounding-box-edit-mode .overlay-field[data-layout-mode="bounding_box_edit"]:hover:not(.editing) {
+                border-color: rgba(29, 78, 216, 0.92) !important;
+                background: rgba(37, 99, 235, 0.05) !important;
+            }
+            .viewer.bounding-box-edit-mode .overlay-field[data-layout-mode="bounding_box_edit"].active:not(.editing) {
+                cursor: text;
+            }
+            .viewer.bounding-box-edit-mode .overlay-field[data-layout-mode="bounding_box_edit"].active:not(.editing) [contenteditable] {
+                cursor: text;
+                pointer-events: none;
+                user-select: none;
+            }
+            .viewer.bounding-box-edit-mode .overlay-field[data-layout-mode="bounding_box_edit"]:not(.editing):not([data-has-persisted-edit="1"]) [contenteditable] {
+                opacity: 0;
+            }
+            .viewer.bounding-box-edit-mode .overlay-field[data-layout-mode="bounding_box_edit"][data-mask-source-text="1"]::before,
+            .viewer.bounding-box-edit-mode .overlay-field[data-layout-mode="bounding_box_edit"].editing::before,
+            .viewer.bounding-box-edit-mode .overlay-field[data-layout-mode="bounding_box_edit"][data-has-persisted-edit="1"]::before,
+            .viewer.bounding-box-edit-mode .overlay-field[data-layout-mode="bounding_box_edit"][data-persisting="1"]::before {
+                background: var(--overlay-field-mask-color, #ffffff);
+            }
+            .viewer.bounding-box-edit-mode .overlay-field[data-layout-mode="bounding_box_edit"][data-mask-source-text="1"] [contenteditable],
+            .viewer.bounding-box-edit-mode .overlay-field[data-layout-mode="bounding_box_edit"].editing [contenteditable],
+            .viewer.bounding-box-edit-mode .overlay-field[data-layout-mode="bounding_box_edit"][data-has-persisted-edit="1"] [contenteditable] {
+                opacity: 1;
+                position: relative;
+                z-index: 1;
+            }
+            .viewer.bounding-box-edit-mode .overlay-field[data-layout-mode="bounding_box_edit"] .box-menu .menu-split,
+            .viewer.bounding-box-edit-mode .overlay-field[data-layout-mode="bounding_box_edit"] .box-menu .menu-delete,
+            .viewer.bounding-box-edit-mode .overlay-field[data-layout-mode="bounding_box_edit"] .box-menu .menu-divider {
+                display: none !important;
             }
             /* Ensure word-span container always clips absolutely-positioned spans */
             .overlay-field [contenteditable] {
@@ -2548,6 +2603,16 @@
             .viewer.overlay-hidden .overlay-field .box-menu {
                 display: none !important;
             }
+            /* new_writer mode: writer PNG is the authoritative visual — hide overlay-fields by default */
+            .viewer.layout-new-writer .overlay-field {
+                opacity: 0 !important;
+            }
+            .viewer.layout-new-writer .overlay-field:hover,
+            .viewer.layout-new-writer .overlay-field.active,
+            .viewer.layout-new-writer .overlay-field.selected,
+            .viewer.layout-new-writer .overlay-field.editing {
+                opacity: 1 !important;
+            }
             .annotation {
                 position: absolute;
                 color: #111;
@@ -2725,12 +2790,12 @@
                 bottom: auto;
             }
             .annotation.annotation-menu-below .shape-action-bar {
-                top: calc(100% + 12px) !important;
+                top: calc(100% + 22px) !important;
                 bottom: auto !important;
             }
             .annotation.line-annotation .shape-action-bar,
             .annotation.line-annotation.annotation-menu-below .shape-action-bar {
-                top: -46px !important;
+                top: -60px !important;
                 bottom: auto !important;
             }
             .annotation .annotation-tbc-menu .tbc-menu-btn {
@@ -2866,6 +2931,9 @@
             .annotation.has-bounds .annotation-text {
                 display: block;
                 width: 100%;
+                /* Wrapper already provides padding for has-bounds annotations;
+                   zeroing here prevents a double-offset between display and edit states. */
+                padding: 0;
             }
             .annotation.field-annotation,
             .annotation.field-annotation:hover,
@@ -4158,22 +4226,22 @@
                 }
             }
             
-            /* Annotations Panel */
+            /* Annotations / Layers Panel */
             .annotations-panel {
                 position: fixed;
                 right: 0;
-                top: 114px;
-                width: 280px;
-                height: calc(100vh - 114px);
-                background: var(--panel);
-                border-left: 1px solid rgba(255,255,255,0.08);
+                top: var(--layers-panel-top, 114px);
+                width: 300px;
+                height: calc(100vh - var(--layers-panel-top, 114px));
+                background: #f0f2f7;
+                border-left: 1px solid #e2e6ef;
                 display: flex;
                 flex-direction: column;
                 transition: transform 0.3s ease;
                 z-index: 1000;
             }
             .annotations-panel.collapsed {
-                transform: translateX(280px);
+                transform: translateX(300px);
             }
             .annotations-panel-toggle {
                 position: absolute;
@@ -4182,56 +4250,86 @@
                 transform: translateY(-50%);
                 width: 40px;
                 height: 80px;
-                background: var(--panel);
-                border: 1px solid rgba(255,255,255,0.08);
+                background: #f0f2f7;
+                border: 1px solid #e2e6ef;
                 border-right: none;
                 border-radius: 8px 0 0 8px;
                 display: flex;
                 align-items: center;
                 justify-content: center;
                 cursor: pointer;
-                font-size: 20px;
-                color: var(--muted);
+                font-size: 18px;
+                color: #64748b;
                 transition: color 0.2s;
             }
-            .annotations-panel-toggle:hover {
-                color: var(--accent);
-            }
+            .annotations-panel-toggle:hover { color: #3b82f6; }
             .annotations-panel-header {
-                padding: 20px;
-                border-bottom: 1px solid rgba(255,255,255,0.08);
+                padding: 20px 20px 12px;
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
             }
             .annotations-panel-header h2 {
                 margin: 0;
-                font-size: 18px;
-                font-weight: 600;
+                font-size: 20px;
+                font-weight: 700;
+                color: #1e293b;
             }
             .annotations-panel-header .remove-all-btn {
-                background: transparent;
-                border: none;
-                color: #ff6b6b;
+                background: #ffffff;
+                border: 1px solid #e2e8f0;
+                color: #475569;
                 cursor: pointer;
-                font-size: 14px;
-                padding: 4px 8px;
-                border-radius: 4px;
-                transition: background 0.2s;
+                font-size: 13px;
+                font-weight: 500;
+                padding: 5px 12px;
+                border-radius: 8px;
+                transition: background 0.2s, border-color 0.2s;
             }
             .annotations-panel-header .remove-all-btn:hover {
-                background: rgba(255,107,107,0.1);
+                background: #fee2e2;
+                border-color: #fca5a5;
+                color: #dc2626;
             }
+            .annotations-panel-search {
+                margin: 0 16px 12px;
+                position: relative;
+            }
+            .annotations-panel-search svg {
+                position: absolute;
+                left: 11px;
+                top: 50%;
+                transform: translateY(-50%);
+                color: #94a3b8;
+                pointer-events: none;
+            }
+            .annotations-panel-search input {
+                width: 100%;
+                box-sizing: border-box;
+                padding: 9px 12px 9px 34px;
+                border: 1px solid #e2e8f0;
+                border-radius: 12px;
+                background: #ffffff;
+                font-size: 13px;
+                color: #1e293b;
+                outline: none;
+                transition: border-color 0.2s, box-shadow 0.2s;
+            }
+            .annotations-panel-search input:focus {
+                border-color: #93c5fd;
+                box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
+            }
+            .annotations-panel-search input::placeholder { color: #94a3b8; }
             .annotations-panel-content {
                 flex: 1;
                 overflow-y: auto;
-                padding: 12px;
+                padding: 4px 12px 16px;
             }
             .annotations-panel-content:empty::before {
-                content: 'No annotations yet';
+                content: 'No elements yet';
                 display: block;
                 text-align: center;
-                color: var(--muted);
+                color: #94a3b8;
                 padding: 40px 20px;
                 font-size: 14px;
             }
@@ -4239,47 +4337,58 @@
                 display: flex;
                 align-items: center;
                 gap: 12px;
-                padding: 12px;
-                background: rgba(255,255,255,0.04);
-                border-radius: 8px;
+                padding: 13px 14px;
+                background: #ffffff;
+                border-radius: 14px;
                 margin-bottom: 8px;
-                cursor: grab;
-                transition: background 0.2s;
+                cursor: pointer;
+                box-shadow: 0 1px 3px rgba(15,23,42,0.07);
+                transition: box-shadow 0.2s, background 0.2s;
             }
             .annotation-item:hover {
-                background: rgba(255,255,255,0.08);
+                box-shadow: 0 3px 10px rgba(15,23,42,0.11);
             }
-            .annotation-item.dragging {
-                opacity: 0.5;
-                cursor: grabbing;
+            .annotation-item.selected {
+                box-shadow: 0 0 0 2px #3b82f6, 0 3px 10px rgba(59,130,246,0.15);
             }
+            .annotation-item.dragging { opacity: 0.45; cursor: grabbing; }
             .annotation-item-icon {
-                width: 32px;
-                height: 32px;
+                width: 38px;
+                height: 38px;
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                background: rgba(77, 208, 168, 0.15);
-                border-radius: 6px;
-                font-size: 16px;
+                background: #eef2ff;
+                border-radius: 10px;
                 flex-shrink: 0;
+                color: #6366f1;
             }
+            .annotation-item-icon.type-text    { background: #eff6ff; color: #3b82f6; }
+            .annotation-item-icon.type-shape   { background: #f0fdf4; color: #22c55e; }
+            .annotation-item-icon.type-image   { background: #fff7ed; color: #f97316; }
+            .annotation-item-icon.type-signature { background: #fdf4ff; color: #a855f7; }
+            .annotation-item-icon.type-table   { background: #f0fdfa; color: #14b8a6; }
+            .annotation-item-icon.type-field   { background: #fefce8; color: #eab308; }
+            .annotation-item-icon.type-eraser  { background: #fef2f2; color: #ef4444; }
             .annotation-item-content {
                 flex: 1;
                 min-width: 0;
             }
             .annotation-item-title {
                 font-size: 14px;
-                font-weight: 500;
-                color: var(--ink);
+                font-weight: 600;
+                color: #1e293b;
                 margin-bottom: 2px;
                 overflow: hidden;
                 text-overflow: ellipsis;
                 white-space: nowrap;
             }
             .annotation-item-meta {
-                font-size: 12px;
-                color: var(--muted);
+                font-size: 11px;
+                font-weight: 600;
+                color: #94a3b8;
+                letter-spacing: 0.04em;
+                text-transform: uppercase;
             }
             .annotation-item-actions {
                 display: flex;
@@ -4287,26 +4396,44 @@
                 flex-shrink: 0;
             }
             .annotation-item-action {
-                width: 28px;
-                height: 28px;
+                width: 30px;
+                height: 30px;
                 display: flex;
                 align-items: center;
                 justify-content: center;
                 background: transparent;
                 border: none;
-                border-radius: 4px;
+                border-radius: 7px;
                 cursor: pointer;
-                color: var(--muted);
-                transition: all 0.2s;
-                font-size: 14px;
+                color: #94a3b8;
+                transition: background 0.15s, color 0.15s;
             }
             .annotation-item-action:hover {
-                background: rgba(255,255,255,0.08);
-                color: var(--accent);
+                background: #f1f5f9;
+                color: #3b82f6;
             }
             .annotation-item-action.delete:hover {
-                background: rgba(255,107,107,0.1);
-                color: #ff6b6b;
+                background: #fee2e2;
+                color: #ef4444;
+            }
+            .annotation-item-title {
+                cursor: text;
+            }
+            .annotation-item-title:hover {
+                color: #3b82f6;
+            }
+            .annotation-item-rename-input {
+                width: 100%;
+                box-sizing: border-box;
+                font-size: 14px;
+                font-weight: 600;
+                color: #1e293b;
+                background: #f8fafc;
+                border: 1.5px solid #93c5fd;
+                border-radius: 6px;
+                padding: 2px 6px;
+                outline: none;
+                box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
             }
             /* Image document mode: hide PDF-specific features */
             @if(str_starts_with($document->mime_type ?? 'application/pdf', 'image/'))
@@ -4964,17 +5091,21 @@
             <button type="button" id="page-next" aria-label="Next page">›</button>
         </div>
 
-        <!-- Annotations Panel -->
+        <!-- Layers Panel -->
         <div class="annotations-panel collapsed" id="annotations-panel">
             <div class="annotations-panel-toggle" id="annotations-toggle">
-                📋
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
             </div>
             <div class="annotations-panel-header">
-                <h2>Edit PDF</h2>
+                <h2>Layers</h2>
                 <button class="remove-all-btn" id="remove-all-annotations">Remove all</button>
             </div>
+            <div class="annotations-panel-search">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input type="text" id="annotations-search" placeholder="Search elements...">
+            </div>
             <div class="annotations-panel-content" id="annotations-list">
-                <!-- Annotations will be dynamically populated here -->
+                <!-- Populated dynamically -->
             </div>
         </div>
 
@@ -6285,6 +6416,8 @@
             const overlaySaveMode = @json($pdfSaveMode ?? strtolower((string) config('pdf_editor.save_mode', 'full_page_save')));
             const splitParagraphFullyEnabled = @json((bool) config('pdf_editor.split_paragraph_fully', false));
             const lineGroupingEditorMode = @json((bool) config('pdf_editor.line_grouping_editor_mode', false));
+            const layoutMode = @json(strtolower((string) config('pdf_editor.layout_mode', 'default')));
+            const boundingBoxEditMode = layoutMode === 'bounding_box_edit';
             const liveSaveVerifyMaxAttempts = 5;
             const liveSaveVerifyMismatchThreshold = 0.18;
             const liveSaveVerifyPixelDelta = 32;
@@ -6319,10 +6452,11 @@
             const documentMimeType = @json($document->mime_type);
             const isImageDocument = documentMimeType && documentMimeType.startsWith('image/');
             const viewer = document.getElementById('viewer');
+            if (layoutMode === 'new_writer' && viewer) viewer.classList.add('layout-new-writer');
             const pdfTitleElement = document.getElementById('pdf_title');
             const savedEditPreviewBtn = document.getElementById('saved-edit-preview-btn');
-            const promotedTextAnnotationsEnabled = true;
-            const overlayEditorEnabled = false;
+            const promotedTextAnnotationsEnabled = !boundingBoxEditMode;
+            const overlayEditorEnabled = boundingBoxEditMode;
             let currentDocumentName = @json($document->original_name ?? basename($document->path));
 
             function getStoredPdfSessionRegistry() {
@@ -6362,6 +6496,17 @@
                     ...nextEntry,
                 };
                 writeStoredPdfSessionRegistry(registry);
+            }
+
+            function getRememberedPdfSessionForDocument(documentId = currentDocumentId) {
+                const normalizedDocumentId = String(documentId || '').trim();
+                if (!normalizedDocumentId) {
+                    return '';
+                }
+
+                const registry = getStoredPdfSessionRegistry();
+                const rememberedSessionId = String(registry?.[normalizedDocumentId]?.sessionId || '').trim();
+                return rememberedSessionId;
             }
 
             function getKnownPdfSessionIds() {
@@ -6405,6 +6550,9 @@
                     } catch (error) {
                         console.warn('Failed to read document PDF session id', error);
                     }
+                }
+                if (!sessionId) {
+                    sessionId = getRememberedPdfSessionForDocument();
                 }
                 if (!sessionId && includeLegacyGlobal) {
                     try {
@@ -6519,6 +6667,11 @@
                 if (migratedLegacySessionId) {
                     setStoredPdfSessionId(migratedLegacySessionId);
                 }
+            } else {
+                const rememberedCurrentDocSessionId = getRememberedPdfSessionForDocument();
+                if (rememberedCurrentDocSessionId) {
+                    setStoredPdfSessionId(rememberedCurrentDocSessionId);
+                }
             }
             if (loadedSavedPdfMode) {
                 try {
@@ -6559,6 +6712,28 @@
             }
 
             function shouldUseOriginalBaseForSavedAnnotationLayer(standaloneSavedAnnotations, promotedSavedAnnotations, otherSavedAnnotations, extractionPages) {
+                const hasStandaloneSavedTextAnnotations = Array.isArray(standaloneSavedAnnotations)
+                    && standaloneSavedAnnotations.length > 0;
+
+                if (shouldUseCleanBaseForLoadedSavedPdf(promotedSavedAnnotations, extractionPages)) {
+                    return false;
+                }
+
+                if (loadedSavedPdfMode) {
+                    if (hasStandaloneSavedTextAnnotations) {
+                        return false;
+                    }
+                    return !shouldUseCleanBaseForLoadedSavedPdf(promotedSavedAnnotations, extractionPages);
+                }
+
+                // When the overlay editor is disabled, promoted text annotations should
+                // render on top of the real document PDF. Using the stripped clean PDF
+                // in normal edit mode hides the document's native text content and can
+                // leave AcroForm-heavy documents looking nearly blank.
+                if (!overlayEditorEnabled) {
+                    return true;
+                }
+
                 return false;
             }
 
@@ -6862,7 +7037,7 @@
                         return false;
                     }
 
-                    overlayExtractionData = data.extraction_data;
+                    overlayExtractionData = resolveOverlayExtractionPages(data);
                     if (data.embedded_fonts && typeof data.embedded_fonts === 'object') {
                         overlayEmbeddedFonts = data.embedded_fonts;
                         loadEmbeddedFontFaces(overlayEmbeddedFonts);
@@ -6911,6 +7086,7 @@
             const selectedBg = document.getElementById('selected-bg');
             const selectedBgSwatch = document.getElementById('selected-bg-swatch');
             const selectedAlign = document.getElementById('selected-align');
+            const selectedValign = document.getElementById('selected-valign');
             const selectedOpacity = document.getElementById('selected-opacity');
             const selectedMerge = document.getElementById('selected-merge');
             const selectedDelete = document.getElementById('selected-delete');
@@ -7249,67 +7425,115 @@
             }
 
             // Annotations Panel Management
+            // SVG icons for each annotation type
+            const LAYER_ICONS = {
+                text: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>`,
+                shape: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>`,
+                image: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`,
+                signature: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>`,
+                table: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>`,
+                field: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="6" y1="12" x2="18" y2="12"/></svg>`,
+                eraser: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20H7L3 16l10-10 7 7-2.5 2.5"/><path d="M6.0001 17.9999L10 14"/></svg>`,
+                draw: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17c3-3 6 0 9-3s3-6 6-6"/></svg>`,
+            };
+            const EDIT_ICON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
+            const DELETE_ICON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`;
+
             function updateAnnotationsList() {
                 const annotationsList = document.getElementById('annotations-list');
                 if (!annotationsList) return;
-                
+
+                const searchInput = document.getElementById('annotations-search');
+                const searchQuery = (searchInput ? searchInput.value : '').toLowerCase().trim();
+
                 annotationsList.innerHTML = '';
-                
+
                 annotations.forEach((annotation, index) => {
+                    let iconKey = 'text';
+                    let title = 'Annotation';
+                    if (annotation.type === 'text' || !annotation.type) {
+                        iconKey = 'text';
+                        title = getAnnotationTextPreview(annotation)
+                            || `New Text ${annotations.filter((a, i) => (a.type === 'text' || !a.type) && i <= index).length}`;
+                    } else if (annotation.type === 'field') {
+                        iconKey = 'field';
+                        title = getFieldAnnotationPreview(annotation)
+                            || `${getFieldAnnotationLabel(annotation)} ${annotations.filter((a, i) => a.type === 'field' && i <= index).length}`;
+                    } else if (annotation.type === 'signature') {
+                        iconKey = 'signature';
+                        title = `Authorized Signature ${annotations.filter((a, i) => a.type === 'signature' && i <= index).length}`;
+                    } else if (annotation.type === 'shape') {
+                        iconKey = 'shape';
+                        title = `New ${annotation.shapeType ? annotation.shapeType.charAt(0).toUpperCase() + annotation.shapeType.slice(1) : 'Shape'} ${annotations.filter((a, i) => a.type === 'shape' && i <= index).length}`;
+                    } else if (annotation.type === 'table') {
+                        iconKey = 'table';
+                        title = `Table ${annotation.rows || ''}×${annotation.cols || ''} ${annotations.filter((a, i) => a.type === 'table' && i <= index).length}`;
+                    } else if (annotation.type === 'image') {
+                        iconKey = 'image';
+                        title = `Brand Logo ${annotations.filter((a, i) => a.type === 'image' && i <= index).length}`;
+                    } else if (annotation.type === 'eraser') {
+                        iconKey = 'eraser';
+                        title = `Eraser ${annotations.filter((a, i) => a.type === 'eraser' && i <= index).length}`;
+                    }
+
+                    // Filter by search query (search against display name)
+                    const searchTitle = annotation.customName || title;
+                    if (searchQuery && !searchTitle.toLowerCase().includes(searchQuery)) return;
+
                     const item = document.createElement('div');
                     item.className = 'annotation-item';
                     item.draggable = true;
                     item.dataset.index = index;
-                    
-                    // Icon based on type
-                    let icon = '📝';
-                    let title = 'Annotation';
-                    if (annotation.type === 'text' || !annotation.type) {
-                        icon = 'T';
-                        title = getAnnotationTextPreview(annotation)
-                            || `New Text ${annotations.filter((a, i) => (a.type === 'text' || !a.type) && i <= index).length}`;
-                    } else if (annotation.type === 'field') {
-                        const fieldKind = normalizeFieldKind(annotation.fieldKind);
-                        icon = fieldKind === 'date'
-                            ? '📅'
-                            : fieldKind === 'checkbox'
-                            ? '☑'
-                            : (fieldKind === 'signature' ? '✒' : (fieldKind === 'select' ? '▾' : (fieldKind === 'list' ? '≣' : '⌨')));
-                        title = getFieldAnnotationPreview(annotation)
-                            || `${getFieldAnnotationLabel(annotation)} ${annotations.filter((a, i) => a.type === 'field' && i <= index).length}`;
-                    } else if (annotation.type === 'signature') {
-                        icon = '✒';
-                        title = `New drawing ${annotations.filter((a, i) => a.type === 'signature' && i <= index).length}`;
-                    } else if (annotation.type === 'shape') {
-                        icon = '▭';
-                        title = `New ${annotation.shapeType || 'shape'} ${annotations.filter((a, i) => a.type === 'shape' && i <= index).length}`;
-                    } else if (annotation.type === 'table') {
-                        icon = '⊞';
-                        title = `Table ${annotation.rows || ''}×${annotation.cols || ''} ${annotations.filter((a, i) => a.type === 'table' && i <= index).length}`;
-                    } else if (annotation.type === 'image') {
-                        icon = '🖼';
-                        title = `New Image ${annotations.filter((a, i) => a.type === 'image' && i <= index).length}`;
-                    } else if (annotation.type === 'eraser') {
-                        icon = '🧹';
-                        title = `Eraser ${annotations.filter((a, i) => a.type === 'eraser' && i <= index).length}`;
-                    }
-                    
+                    if (selectedAnnotation === annotation) item.classList.add('selected');
+
                     item.innerHTML = `
-                        <div class="annotation-item-icon">${icon}</div>
+                        <div class="annotation-item-icon type-${iconKey}">${LAYER_ICONS[iconKey] || LAYER_ICONS.text}</div>
                         <div class="annotation-item-content">
                             <div class="annotation-item-title"></div>
                             <div class="annotation-item-meta">Page ${annotation.pageIndex + 1}</div>
                         </div>
                         <div class="annotation-item-actions">
-                            <button class="annotation-item-action edit" title="Edit" data-index="${index}">✎</button>
-                            <button class="annotation-item-action delete" title="Delete" data-index="${index}">🗑</button>
+                            <button class="annotation-item-action edit" title="Edit" data-index="${index}">${EDIT_ICON_SVG}</button>
+                            <button class="annotation-item-action delete" title="Delete" data-index="${index}">${DELETE_ICON_SVG}</button>
                         </div>
                     `;
+                    const displayTitle = annotation.customName || title;
                     const titleElement = item.querySelector('.annotation-item-title');
                     if (titleElement) {
-                        titleElement.textContent = title;
+                        titleElement.textContent = displayTitle;
+                        titleElement.title = 'Double-click to rename';
                     }
-                    
+
+                    // Inline rename on double-click
+                    titleElement?.addEventListener('dblclick', (e) => {
+                        e.stopPropagation();
+                        const current = titleElement.textContent;
+                        const input = document.createElement('input');
+                        input.type = 'text';
+                        input.className = 'annotation-item-rename-input';
+                        input.value = current;
+                        titleElement.replaceWith(input);
+                        input.focus();
+                        input.select();
+
+                        const commit = () => {
+                            const newName = input.value.trim();
+                            if (newName && newName !== (annotation.customName || title)) {
+                                annotation.customName = newName;
+                                persistAnnotations();
+                                saveAnnotationToDatabase(annotation);
+                            }
+                            updateAnnotationsList();
+                        };
+                        const cancel = () => updateAnnotationsList();
+
+                        input.addEventListener('blur', commit);
+                        input.addEventListener('keydown', (ev) => {
+                            if (ev.key === 'Enter') { ev.preventDefault(); input.blur(); }
+                            if (ev.key === 'Escape') { input.removeEventListener('blur', commit); cancel(); }
+                        });
+                    });
+
                     // Edit button
                     item.querySelector('.edit').addEventListener('click', (e) => {
                         e.stopPropagation();
@@ -7347,14 +7571,12 @@
                         })) {
                             return;
                         }
-                        if (confirm('Delete this annotation?')) {
-                            const ann = annotations[index];
-                            deleteAnnotationFromDatabase(ann);
-                            annotations.splice(index, 1);
-                            persistAnnotations();
-                            rerenderPdf();
-                            updateAnnotationsList();
-                        }
+                        const ann = annotations[index];
+                        deleteAnnotationFromDatabase(ann);
+                        annotations.splice(index, 1);
+                        persistAnnotations();
+                        rerenderPdf();
+                        updateAnnotationsList();
                     });
                     
                     // Drag & drop for reordering
@@ -7395,6 +7617,23 @@
             document.getElementById('annotations-toggle')?.addEventListener('click', () => {
                 const panel = document.getElementById('annotations-panel');
                 panel.classList.toggle('collapsed');
+            });
+
+            // Keep the layers panel flush below the mode-bar
+            function syncLayersPanelTop() {
+                const modeBar = document.getElementById('pdf-mode-bar');
+                if (!modeBar) return;
+                const bottom = modeBar.getBoundingClientRect().bottom;
+                document.documentElement.style.setProperty('--layers-panel-top', `${bottom}px`);
+            }
+            syncLayersPanelTop();
+            window.addEventListener('resize', syncLayersPanelTop);
+            // Re-sync after any scroll (mode-bar is sticky so its bottom can change)
+            window.addEventListener('scroll', syncLayersPanelTop, { passive: true });
+
+            // Search filter
+            document.getElementById('annotations-search')?.addEventListener('input', () => {
+                updateAnnotationsList();
             });
 
             // Remove all annotations
@@ -8779,7 +9018,7 @@
                     return [];
                 }
 
-                overlayExtractionData = extractionData.extraction_data;
+                overlayExtractionData = resolveOverlayExtractionPages(extractionData);
                 if (extractionData.embedded_fonts && typeof extractionData.embedded_fonts === 'object') {
                     overlayEmbeddedFonts = extractionData.embedded_fonts;
                     loadEmbeddedFontFaces(overlayEmbeddedFonts);
@@ -8788,6 +9027,470 @@
                 populateFontDropdown();
                 return overlayExtractionData;
             }
+
+            function normalizePromotedDebugSearchText(value, { stripPunctuation = false } = {}) {
+                let normalized = String(value ?? '')
+                    .toLowerCase()
+                    .replace(/\u00A0/g, ' ')
+                    .replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, '')
+                    .replace(/[‘’]/g, '\'')
+                    .replace(/[“”]/g, '"')
+                    .replace(/[–—]/g, '-')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+
+                if (stripPunctuation) {
+                    normalized = normalized
+                        .replace(/[^a-z0-9]+/g, ' ')
+                        .replace(/\s+/g, ' ')
+                        .trim();
+                }
+
+                return normalized;
+            }
+
+            function normalizePromotedDebugQuery(value) {
+                return normalizePromotedDebugSearchText(value);
+            }
+
+            function promotedDebugValueMatchesQuery(value, normalizedQuery) {
+                if (!normalizedQuery) {
+                    return false;
+                }
+
+                const normalizedValue = normalizePromotedDebugSearchText(value);
+                if (normalizedValue.includes(normalizedQuery)) {
+                    return true;
+                }
+
+                const strippedQuery = normalizePromotedDebugSearchText(normalizedQuery, { stripPunctuation: true });
+                if (!strippedQuery) {
+                    return false;
+                }
+
+                const strippedValue = normalizePromotedDebugSearchText(value, { stripPunctuation: true });
+                return strippedValue.includes(strippedQuery);
+            }
+
+            function serializePromotedDebugSpan(span) {
+                if (!span || typeof span !== 'object') {
+                    return null;
+                }
+
+                return {
+                    text: String(span.text || ''),
+                    rawText: String(span.rawText || span.text || ''),
+                    font: String(span.font || ''),
+                    fontSize: Number(span.fontSize ?? span.font_size) || 0,
+                    fontWeight: String(span.fontWeight || span.font_weight || ''),
+                    fontStyle: String(span.fontStyle || ''),
+                    underline: Boolean(span.underline),
+                    color: String(span.color || ''),
+                    bbox: Array.isArray(span.bbox) ? span.bbox.map((value) => Number(value) || 0) : null,
+                    origin: Array.isArray(span.origin) ? span.origin.map((value) => Number(value) || 0) : null,
+                    direction: Array.isArray(span.direction) ? span.direction.map((value) => Number(value) || 0) : null,
+                    writingMode: Number(span.writing_mode ?? span.writingMode) || 0,
+                    rotation: Number(span.rotation) || 0,
+                };
+            }
+
+            function serializePromotedDebugLineEntry(entry) {
+                if (!entry || typeof entry !== 'object') {
+                    return null;
+                }
+
+                return {
+                    index: Number(entry.index) || 0,
+                    text: String(entry.text || ''),
+                    bbox: Array.isArray(entry.bbox) ? entry.bbox.map((value) => Number(value) || 0) : null,
+                    spans: Array.isArray(entry.spans)
+                        ? entry.spans.map((span) => serializePromotedDebugSpan(span)).filter(Boolean)
+                        : [],
+                };
+            }
+
+            function buildPromotedDebugLineReuseDiagnostics(lineEntries) {
+                if (!Array.isArray(lineEntries)) {
+                    return [];
+                }
+
+                const normalizeComparableLineText = (value) => String(value ?? '')
+                    .replace(/\u00A0/g, ' ')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+
+                return lineEntries.map((entry) => {
+                    const geometryConsistent = promotedLineEntryHasConsistentSourceSpanGeometry(entry);
+                    const currentLineText = sanitizePromotedExtractionLine(entry?.originalText || entry?.text || '');
+                    const rebuiltLineText = Array.isArray(entry?.spans) && entry.spans.length > 0
+                        ? buildPromotedLineTextFromSpans(entry)
+                        : sanitizePromotedExtractionLine(entry?.text || '');
+                    const normalizedCurrentLineText = normalizeComparableLineText(currentLineText);
+                    const normalizedRebuiltLineText = normalizeComparableLineText(rebuiltLineText);
+                    const canReuseExactSourceSpans = Boolean(
+                        Array.isArray(entry?.spans)
+                        && entry.spans.length > 0
+                        && geometryConsistent
+                        && (
+                            normalizedCurrentLineText === ''
+                            || normalizedCurrentLineText === normalizedRebuiltLineText
+                        )
+                    );
+
+                    let reuseFailureReason = null;
+                    if (Array.isArray(entry?.spans) && entry.spans.length > 0 && !canReuseExactSourceSpans) {
+                        reuseFailureReason = geometryConsistent ? 'text_mismatch' : 'geometry';
+                    }
+
+                    return {
+                        index: Number(entry?.index) || 0,
+                        text: String(entry?.text || ''),
+                        originalText: String(entry?.originalText || entry?.text || ''),
+                        bbox: Array.isArray(entry?.bbox) ? entry.bbox.map((value) => Number(value) || 0) : null,
+                        spanCount: Array.isArray(entry?.spans) ? entry.spans.length : 0,
+                        geometryConsistent,
+                        canReuseExactSourceSpans,
+                        reuseFailureReason,
+                        rebuiltLineText,
+                        currentLineText,
+                        normalizedRebuiltLineText,
+                        normalizedCurrentLineText,
+                    };
+                });
+            }
+
+            function buildPromotedDebugLineEntriesFromSourceMeta(sourceMeta) {
+                const sourceLineBBoxes = Array.isArray(sourceMeta?.sourceLineBBoxes)
+                    ? sourceMeta.sourceLineBBoxes
+                        .filter((bbox) => Array.isArray(bbox) && bbox.length >= 4)
+                        .map((bbox) => bbox.map((value) => Number(value) || 0))
+                    : [];
+                const sourceTextLines = Array.isArray(sourceMeta?.sourceTextLines)
+                    ? sourceMeta.sourceTextLines.map((line) => String(line ?? ''))
+                    : [];
+                const sourceSpans = Array.isArray(sourceMeta?.sourceSpans)
+                    ? sourceMeta.sourceSpans
+                        .filter((span) => span && Array.isArray(span.bbox) && span.bbox.length >= 4)
+                        .map((span) => ({
+                            ...span,
+                            bbox: span.bbox.map((value) => Number(value) || 0),
+                        }))
+                    : [];
+
+                if (!sourceLineBBoxes.length || sourceLineBBoxes.length !== sourceTextLines.length) {
+                    return [];
+                }
+
+                const lineEntries = sourceLineBBoxes.map((bbox, index) => ({
+                    index,
+                    bbox,
+                    text: sourceTextLines[index] ?? '',
+                    originalText: sourceTextLines[index] ?? '',
+                    spans: [],
+                }));
+
+                assignPromotedSpansToLineEntries(lineEntries, sourceSpans);
+
+                return lineEntries;
+            }
+
+            function serializePromotedDebugExtractedSource(source) {
+                if (!source || typeof source !== 'object') {
+                    return null;
+                }
+
+                return {
+                    blockText: String(source.blockText || ''),
+                    textLines: Array.isArray(source.textLines)
+                        ? source.textLines.map((line) => String(line ?? ''))
+                        : [],
+                    sourceLineBBoxes: Array.isArray(source.sourceLineBBoxes)
+                        ? source.sourceLineBBoxes.map((bbox) => (
+                            Array.isArray(bbox) ? bbox.map((value) => Number(value) || 0) : null
+                        )).filter(Boolean)
+                        : [],
+                    lineEntries: Array.isArray(source.lineEntries)
+                        ? source.lineEntries.map((entry) => serializePromotedDebugLineEntry(entry)).filter(Boolean)
+                        : [],
+                    lineReuseDiagnostics: Array.isArray(source.lineEntries)
+                        ? buildPromotedDebugLineReuseDiagnostics(source.lineEntries)
+                        : [],
+                    sourceSpans: Array.isArray(source.sourceSpans)
+                        ? source.sourceSpans.map((span) => serializePromotedDebugSpan(span)).filter(Boolean)
+                        : [],
+                };
+            }
+
+            function serializePromotedDebugAnnotation(annotation) {
+                const sourceMeta = typeof getPromotedAnnotationSourceMeta === 'function'
+                    ? (getPromotedAnnotationSourceMeta(annotation) || {})
+                    : {};
+
+                return {
+                    id: String(annotation?.id || ''),
+                    key: String(annotation?.promotedSourceKey || ''),
+                    text: String(annotation?.text || ''),
+                    sourceTextLines: Array.isArray(sourceMeta?.sourceTextLines)
+                        ? sourceMeta.sourceTextLines.map((line) => String(line ?? ''))
+                        : [],
+                    sourceLineBBoxes: Array.isArray(sourceMeta?.sourceLineBBoxes)
+                        ? sourceMeta.sourceLineBBoxes.map((bbox) => (
+                            Array.isArray(bbox) ? bbox.map((value) => Number(value) || 0) : null
+                        )).filter(Boolean)
+                        : [],
+                    pageIndex: Number(annotation?.pageIndex) || 0,
+                    pdfX: Number(annotation?.pdfX) || 0,
+                    pdfY: Number(annotation?.pdfY) || 0,
+                    pdfWidth: Number(annotation?.pdfWidth) || 0,
+                    pdfHeight: Number(annotation?.pdfHeight) || 0,
+                };
+            }
+
+            function serializeRuntimeDebugAnnotation(annotation) {
+                const sourceMeta = typeof getPromotedAnnotationSourceMeta === 'function'
+                    ? (getPromotedAnnotationSourceMeta(annotation) || {})
+                    : {};
+                const sourceLineEntries = buildPromotedDebugLineEntriesFromSourceMeta(sourceMeta);
+
+                return {
+                    id: String(annotation?.id || ''),
+                    type: String(annotation?.type || 'text'),
+                    key: String(annotation?.promotedSourceKey || ''),
+                    text: String(annotation?.text || ''),
+                    originalText: String(annotation?.originalText || ''),
+                    pageIndex: Number(annotation?.pageIndex) || 0,
+                    pdfX: Number(annotation?.pdfX) || 0,
+                    pdfY: Number(annotation?.pdfY) || 0,
+                    pdfWidth: Number(annotation?.pdfWidth) || 0,
+                    pdfHeight: Number(annotation?.pdfHeight) || 0,
+                    promotedFromExtraction: Boolean(annotation?.promotedFromExtraction),
+                    promotedDirty: Boolean(annotation?.promotedDirty),
+                    promotedSourcePage: Number(annotation?.promotedSourcePage) || 0,
+                    promotedSourceBlockNum: Number(annotation?.promotedSourceBlockNum) || 0,
+                    savedTextOverlay: Boolean(annotation?.savedTextOverlay),
+                    savedDatabaseAnnotation: Boolean(annotation?.savedDatabaseAnnotation),
+                    sourceTextLines: Array.isArray(sourceMeta?.sourceTextLines)
+                        ? sourceMeta.sourceTextLines.map((line) => String(line ?? ''))
+                        : [],
+                    sourceLineBBoxes: Array.isArray(sourceMeta?.sourceLineBBoxes)
+                        ? sourceMeta.sourceLineBBoxes.map((bbox) => (
+                            Array.isArray(bbox) ? bbox.map((value) => Number(value) || 0) : null
+                        )).filter(Boolean)
+                        : [],
+                    sourceSpans: Array.isArray(sourceMeta?.sourceSpans)
+                        ? sourceMeta.sourceSpans.map((span) => serializePromotedDebugSpan(span)).filter(Boolean)
+                        : [],
+                    lineReuseDiagnostics: buildPromotedDebugLineReuseDiagnostics(sourceLineEntries),
+                };
+            }
+
+            function collectPromotedDebugAnnotationMatchReasons(annotation, normalizedQuery) {
+                const reasons = [];
+                if (promotedDebugValueMatchesQuery(annotation?.id, normalizedQuery)) {
+                    reasons.push('annotation.id');
+                }
+                if (promotedDebugValueMatchesQuery(annotation?.promotedSourceKey, normalizedQuery)) {
+                    reasons.push('annotation.promotedSourceKey');
+                }
+                if (promotedDebugValueMatchesQuery(annotation?.text, normalizedQuery)) {
+                    reasons.push('annotation.text');
+                }
+                return reasons;
+            }
+
+            function collectRuntimeDebugAnnotationMatchReasons(annotation, normalizedQuery) {
+                const reasons = [];
+                if (promotedDebugValueMatchesQuery(annotation?.id, normalizedQuery)) {
+                    reasons.push('annotation.id');
+                }
+                if (promotedDebugValueMatchesQuery(annotation?.promotedSourceKey, normalizedQuery)) {
+                    reasons.push('annotation.promotedSourceKey');
+                }
+                if (promotedDebugValueMatchesQuery(annotation?.text, normalizedQuery)) {
+                    reasons.push('annotation.text');
+                }
+                if (promotedDebugValueMatchesQuery(annotation?.originalText, normalizedQuery)) {
+                    reasons.push('annotation.originalText');
+                }
+                const sourceMeta = typeof getPromotedAnnotationSourceMeta === 'function'
+                    ? getPromotedAnnotationSourceMeta(annotation)
+                    : null;
+                const joinedSourceTextLines = Array.isArray(sourceMeta?.sourceTextLines)
+                    ? sourceMeta.sourceTextLines.map((line) => String(line ?? '')).join(' ')
+                    : '';
+                if ((sourceMeta?.sourceTextLines || []).some((line) => promotedDebugValueMatchesQuery(line, normalizedQuery))) {
+                    reasons.push('annotation.sourceTextLines');
+                }
+                if (promotedDebugValueMatchesQuery(joinedSourceTextLines, normalizedQuery)) {
+                    reasons.push('annotation.joinedSourceTextLines');
+                }
+                return reasons;
+            }
+
+            function collectPromotedDebugBlockMatchReasons(block, rawSource, trimmedSource, normalizedQuery, pageData) {
+                const reasons = [];
+                const blockSourceKey = `block-${Number(pageData?.page_number) || 0}-${Number(block?.block_num) || 0}`;
+
+                if (promotedDebugValueMatchesQuery(blockSourceKey, normalizedQuery)) {
+                    reasons.push('block.sourceKey');
+                }
+                if (promotedDebugValueMatchesQuery(block?.text, normalizedQuery)) {
+                    reasons.push('block.text');
+                }
+                if ((rawSource?.textLines || []).some((line) => promotedDebugValueMatchesQuery(line, normalizedQuery))) {
+                    reasons.push('raw.textLines');
+                }
+                if (promotedDebugValueMatchesQuery((rawSource?.textLines || []).join(' '), normalizedQuery)) {
+                    reasons.push('raw.joinedTextLines');
+                }
+                if ((trimmedSource?.textLines || []).some((line) => promotedDebugValueMatchesQuery(line, normalizedQuery))) {
+                    reasons.push('trimmed.textLines');
+                }
+                if (promotedDebugValueMatchesQuery((trimmedSource?.textLines || []).join(' '), normalizedQuery)) {
+                    reasons.push('trimmed.joinedTextLines');
+                }
+
+                return Array.from(new Set(reasons));
+            }
+
+            function collectRuntimeAnnotationMatches(query, { limit = 50 } = {}) {
+                const normalizedQuery = normalizePromotedDebugQuery(query);
+                if (!normalizedQuery) {
+                    throw new Error('A match string is required.');
+                }
+
+                const matches = [];
+                let truncated = false;
+
+                annotations.some((annotation) => {
+                    const matchReasons = collectRuntimeDebugAnnotationMatchReasons(annotation, normalizedQuery);
+                    if (!matchReasons.length) {
+                        return false;
+                    }
+
+                    matches.push({
+                        ...serializeRuntimeDebugAnnotation(annotation),
+                        matchReasons,
+                    });
+
+                    if (matches.length >= Math.max(1, Number(limit) || 50)) {
+                        truncated = true;
+                        return true;
+                    }
+
+                    return false;
+                });
+
+                return {
+                    totalMatches: matches.length,
+                    truncated,
+                    matches,
+                };
+            }
+
+            function collectFitzExtractionMatchesAgainstPages(extractionPages, query, { limit = 50 } = {}) {
+                const normalizedQuery = normalizePromotedDebugQuery(query);
+                if (!normalizedQuery) {
+                    throw new Error('A match string is required.');
+                }
+
+                const matches = [];
+                let truncated = false;
+
+                (Array.isArray(extractionPages) ? extractionPages : []).some((pageData) => {
+                    const pageBlocks = Array.isArray(pageData?.blocks) ? pageData.blocks : [];
+
+                    return pageBlocks.some((block) => {
+                        const rawSource = buildPromotedLineEntriesFromExtractionBlock(block, []);
+                        const trimmedSource = trimPromotedLeadingBulletLeadInFromSourceBlock(block, pageData, rawSource);
+                        const builtAnnotations = buildTextAnnotationsFromExtractionBlock(block, pageData, [], rawSource);
+                        const built = builtAnnotations.map((annotation) => serializePromotedDebugAnnotation(annotation));
+                        const matchingBuilt = builtAnnotations.reduce((carry, annotation) => {
+                            const matchReasons = collectPromotedDebugAnnotationMatchReasons(annotation, normalizedQuery);
+                            if (matchReasons.length > 0) {
+                                carry.push({
+                                    ...serializePromotedDebugAnnotation(annotation),
+                                    matchReasons,
+                                });
+                            }
+                            return carry;
+                        }, []);
+                        const blockMatchReasons = collectPromotedDebugBlockMatchReasons(
+                            block,
+                            rawSource,
+                            trimmedSource,
+                            normalizedQuery,
+                            pageData
+                        );
+
+                        if (!matchingBuilt.length && !blockMatchReasons.length) {
+                            return false;
+                        }
+
+                        matches.push({
+                            pageNumber: Number(pageData?.page_number) || 0,
+                            blockNum: Number(block?.block_num) || 0,
+                            blockSourceKey: `block-${Number(pageData?.page_number) || 0}-${Number(block?.block_num) || 0}`,
+                            matchReasons: blockMatchReasons,
+                            blockText: String(block?.text || ''),
+                            rawTextLines: Array.isArray(rawSource?.textLines)
+                                ? rawSource.textLines.map((line) => String(line ?? ''))
+                                : [],
+                            trimmedTextLines: Array.isArray(trimmedSource?.textLines)
+                                ? trimmedSource.textLines.map((line) => String(line ?? ''))
+                                : [],
+                            raw: serializePromotedDebugExtractedSource(rawSource),
+                            trimmed: serializePromotedDebugExtractedSource(trimmedSource),
+                            built,
+                            matchingBuilt: matchingBuilt.length ? matchingBuilt : built,
+                        });
+
+                        if (matches.length >= Math.max(1, Number(limit) || 50)) {
+                            truncated = true;
+                            return true;
+                        }
+
+                        return false;
+                    });
+                });
+
+                return {
+                    totalMatches: matches.length,
+                    truncated,
+                    matches,
+                };
+            }
+
+            window.pdfPromotedAnnotationDebugApi = {
+                async getContext() {
+                    const extractionPages = await ensureOverlayExtractionDataLoaded();
+
+                    return {
+                        documentId,
+                        totalPages: Array.isArray(extractionPages) ? extractionPages.length : 0,
+                    };
+                },
+
+                async inspectPromotedAnnotationMatches(query, options = {}) {
+                    await bootstrapPromotedTextAnnotations({ force: false });
+                    const extractionPages = await ensureOverlayExtractionDataLoaded();
+                    const annotationResult = collectRuntimeAnnotationMatches(query, options);
+                    const fitzResult = collectFitzExtractionMatchesAgainstPages(extractionPages, query, options);
+
+                    return {
+                        documentId,
+                        query: String(query ?? ''),
+                        normalizedQuery: normalizePromotedDebugQuery(query),
+                        totalPages: Array.isArray(extractionPages) ? extractionPages.length : 0,
+                        annotationMatchesCount: annotationResult.totalMatches,
+                        fitzMatchesCount: fitzResult.totalMatches,
+                        totalMatches: annotationResult.totalMatches + fitzResult.totalMatches,
+                        truncated: Boolean(annotationResult.truncated || fitzResult.truncated),
+                        annotationMatches: annotationResult.matches,
+                        fitzMatches: fitzResult.matches,
+                    };
+                },
+            };
 
             async function prepareEditablePdfSource({ forceRefresh = true } = {}) {
                 const refreshParam = forceRefresh ? '1' : '0';
@@ -8812,6 +9515,33 @@
                 }
 
                 return prepareResponse.json().catch(() => ({}));
+            }
+
+            async function syncBasePdfForPromotedEditTextMode() {
+                if (loadedSavedPdfMode || overlayEditorActive || isImageDocument) {
+                    return false;
+                }
+
+                const shouldUseCleanBase = annotations.some((annotation) => {
+                    if (!annotation || !isTextAnnotationType(annotation)) {
+                        return false;
+                    }
+                    return Boolean(annotation.promotedFromExtraction || annotation.savedTextOverlay);
+                });
+                const nextBasePdfUrl = shouldUseCleanBase ? cleanPdfUrl : pdfUrl;
+
+                if (basePdfUrl === nextBasePdfUrl) {
+                    return false;
+                }
+
+                if (shouldUseCleanBase) {
+                    await prepareEditablePdfSource({ forceRefresh: true });
+                }
+
+                basePdfUrl = nextBasePdfUrl;
+                pdfVersion = Date.now();
+                await rerenderPdf();
+                return true;
             }
 
             async function materializeSavedPdfSession(loadUrl, sessionId, fallbackEditUrl = '') {
@@ -9710,6 +10440,47 @@
                 return metrics.width || 0;
             };
 
+            let exactTextWidthProbe = null;
+            const ensureExactTextWidthProbe = () => {
+                if (exactTextWidthProbe instanceof HTMLElement && exactTextWidthProbe.isConnected) {
+                    return exactTextWidthProbe;
+                }
+                if (!(document.body instanceof HTMLElement)) {
+                    return null;
+                }
+                const probe = document.createElement('span');
+                probe.setAttribute('aria-hidden', 'true');
+                probe.style.position = 'absolute';
+                probe.style.left = '-100000px';
+                probe.style.top = '-100000px';
+                probe.style.visibility = 'hidden';
+                probe.style.pointerEvents = 'none';
+                probe.style.whiteSpace = 'pre';
+                probe.style.padding = '0';
+                probe.style.margin = '0';
+                probe.style.border = '0';
+                probe.style.transform = 'none';
+                probe.style.transformOrigin = 'left top';
+                document.body.appendChild(probe);
+                exactTextWidthProbe = probe;
+                return exactTextWidthProbe;
+            };
+
+            const measureExactTextDomWidth = (text, fontSizePx, fontFamily, fontWeight, fontStyle, fontStretch = '') => {
+                const probe = ensureExactTextWidthProbe();
+                if (!(probe instanceof HTMLElement)) {
+                    return 0;
+                }
+                probe.textContent = String(text || '');
+                probe.style.fontFamily = fontFamily || '';
+                probe.style.fontSize = `${Math.max(0, Number(fontSizePx) || 0)}px`;
+                probe.style.fontWeight = fontWeight || '400';
+                probe.style.fontStyle = fontStyle || 'normal';
+                probe.style.fontStretch = String(fontStretch || '').trim() || 'normal';
+                const rect = probe.getBoundingClientRect();
+                return rect.width || 0;
+            };
+
             const applyExactTextWidthFit = (element, {
                 text = '',
                 targetWidthPx = 0,
@@ -9740,7 +10511,14 @@
                     return false;
                 }
 
-                const measuredWidth = measureAnnotationTextWidth(
+                const measuredWidth = measureExactTextDomWidth(
+                    sampleText,
+                    effectiveFontSize,
+                    fontFamily,
+                    fontWeight,
+                    fontStyle,
+                    fontStretch
+                ) || measureAnnotationTextWidth(
                     sampleText,
                     effectiveFontSize,
                     fontFamily,
@@ -10194,14 +10972,25 @@
                 const intersectionWidth = Math.max(0, Math.min(leftRight, rightRight) - Math.max(leftLeft, rightLeft));
                 const intersectionHeight = Math.max(0, Math.min(leftBottom, rightBottom) - Math.max(leftTop, rightTop));
                 const intersectionArea = intersectionWidth * intersectionHeight;
-                if (intersectionArea <= 0) {
+                if (intersectionArea > 0) {
+                    const leftArea = Math.max(1, (leftRight - leftLeft) * (leftBottom - leftTop));
+                    const rightArea = Math.max(1, (rightRight - rightLeft) * (rightBottom - rightTop));
+                    const overlapRatio = intersectionArea / Math.max(1, Math.min(leftArea, rightArea));
+                    if (overlapRatio >= overlapTolerance) {
+                        return true;
+                    }
+                }
+
+                const comparableLeftText = sanitizePromotedExtractionLine(leftSpan.rawText ?? leftSpan.text ?? '').replace(/\s+/g, ' ').trim();
+                const comparableRightText = sanitizePromotedExtractionLine(rightSpan.rawText ?? rightSpan.text ?? '').replace(/\s+/g, ' ').trim();
+                if (!comparableLeftText || comparableLeftText !== comparableRightText) {
                     return false;
                 }
 
-                const leftArea = Math.max(1, (leftRight - leftLeft) * (leftBottom - leftTop));
-                const rightArea = Math.max(1, (rightRight - rightLeft) * (rightBottom - rightTop));
-                const overlapRatio = intersectionArea / Math.max(1, Math.min(leftArea, rightArea));
-                return overlapRatio >= overlapTolerance;
+                const verticalAligned = Math.abs(leftTop - rightTop) <= 2.5 && Math.abs(leftBottom - rightBottom) <= 2.5;
+                const leftContainsRight = rightLeft >= (leftLeft - 2.5) && rightRight <= (leftRight + 2.5);
+                const rightContainsLeft = leftLeft >= (rightLeft - 2.5) && leftRight <= (rightRight + 2.5);
+                return verticalAligned && (leftContainsRight || rightContainsLeft);
             }
 
             function parsePromotedSpanHexColor(span) {
@@ -10228,6 +11017,23 @@
 
             function shouldPreferPromotedDuplicateCandidate(existingSpan, candidateSpan) {
                 if (!existingSpan || !candidateSpan) {
+                    return false;
+                }
+
+                const existingRawText = String(existingSpan.rawText ?? existingSpan.text ?? '').replace(/\u00A0/g, ' ');
+                const candidateRawText = String(candidateSpan.rawText ?? candidateSpan.text ?? '').replace(/\u00A0/g, ' ');
+                const existingTrimmedText = sanitizePromotedExtractionLine(existingRawText).replace(/\s+/g, ' ').trim();
+                const candidateTrimmedText = sanitizePromotedExtractionLine(candidateRawText).replace(/\s+/g, ' ').trim();
+                const existingPreservesOuterWhitespace = existingRawText.trim() === existingTrimmedText && existingRawText !== existingTrimmedText
+                    ? true
+                    : existingRawText !== existingRawText.trim();
+                const candidatePreservesOuterWhitespace = candidateRawText !== candidateRawText.trim();
+                if (
+                    existingTrimmedText
+                    && existingTrimmedText === candidateTrimmedText
+                    && existingPreservesOuterWhitespace
+                    && !candidatePreservesOuterWhitespace
+                ) {
                     return false;
                 }
 
@@ -10383,6 +11189,86 @@
                         });
                     }
                 });
+
+                lineEntries.forEach((entry) => {
+                    if (!Array.isArray(entry?.spans) || entry.spans.length < 2) {
+                        return;
+                    }
+                    entry.spans = dedupePromotedLineEntrySpans(entry.spans);
+                });
+            }
+
+            function dedupePromotedLineEntrySpans(spans) {
+                if (!Array.isArray(spans) || spans.length < 2) {
+                    return Array.isArray(spans) ? spans.slice() : [];
+                }
+
+                const normalizeComparableText = (span) => sanitizePromotedExtractionLine(span?.rawText ?? span?.text ?? '')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                const getBox = (span) => (
+                    Array.isArray(span?.bbox) && span.bbox.length >= 4
+                        ? span.bbox.map((value) => Number(value) || 0)
+                        : null
+                );
+                const preservesOuterWhitespace = (span) => {
+                    const rawText = String(span?.rawText ?? span?.text ?? '').replace(/\u00A0/g, ' ');
+                    return rawText !== rawText.trim();
+                };
+                const shouldPreferCandidate = (existingSpan, candidateSpan) => {
+                    const existingPreservesWhitespace = preservesOuterWhitespace(existingSpan);
+                    const candidatePreservesWhitespace = preservesOuterWhitespace(candidateSpan);
+                    if (existingPreservesWhitespace !== candidatePreservesWhitespace) {
+                        return candidatePreservesWhitespace && !existingPreservesWhitespace;
+                    }
+
+                    const existingBox = getBox(existingSpan);
+                    const candidateBox = getBox(candidateSpan);
+                    if (!existingBox || !candidateBox) {
+                        return false;
+                    }
+                    const existingArea = Math.max(1, (existingBox[2] - existingBox[0]) * (existingBox[3] - existingBox[1]));
+                    const candidateArea = Math.max(1, (candidateBox[2] - candidateBox[0]) * (candidateBox[3] - candidateBox[1]));
+                    return candidateArea + 0.5 < existingArea;
+                };
+                const spansLookDuplicate = (leftSpan, rightSpan) => {
+                    const leftText = normalizeComparableText(leftSpan);
+                    const rightText = normalizeComparableText(rightSpan);
+                    if (!leftText || leftText !== rightText) {
+                        return false;
+                    }
+
+                    const leftBox = getBox(leftSpan);
+                    const rightBox = getBox(rightSpan);
+                    if (!leftBox || !rightBox) {
+                        return false;
+                    }
+
+                    const [leftX1, leftY1, leftX2, leftY2] = leftBox;
+                    const [rightX1, rightY1, rightX2, rightY2] = rightBox;
+                    const intersectionWidth = Math.max(0, Math.min(leftX2, rightX2) - Math.max(leftX1, rightX1));
+                    const intersectionHeight = Math.max(0, Math.min(leftY2, rightY2) - Math.max(leftY1, rightY1));
+                    const leftArea = Math.max(1, (leftX2 - leftX1) * (leftY2 - leftY1));
+                    const rightArea = Math.max(1, (rightX2 - rightX1) * (rightY2 - rightY1));
+                    const overlapRatio = (intersectionWidth * intersectionHeight) / Math.max(1, Math.min(leftArea, rightArea));
+                    const verticalAligned = Math.abs(leftY1 - rightY1) <= 2.5 && Math.abs(leftY2 - rightY2) <= 2.5;
+                    const leftContainsRight = rightX1 >= (leftX1 - 3) && rightX2 <= (leftX2 + 3);
+                    const rightContainsLeft = leftX1 >= (rightX1 - 3) && leftX2 <= (rightX2 + 3);
+                    return overlapRatio >= 0.75 || (verticalAligned && (leftContainsRight || rightContainsLeft));
+                };
+
+                return spans.reduce((deduped, span) => {
+                    const duplicateIndex = deduped.findIndex((existingSpan) => spansLookDuplicate(existingSpan, span));
+                    if (duplicateIndex === -1) {
+                        deduped.push(span);
+                        return deduped;
+                    }
+
+                    if (shouldPreferCandidate(deduped[duplicateIndex], span)) {
+                        deduped[duplicateIndex] = span;
+                    }
+                    return deduped;
+                }, []);
             }
 
             function buildPromotedLineTextFromSpans(entry) {
@@ -10543,7 +11429,11 @@
                         if (previousVisibleRight !== null && spanLeft < (previousVisibleRight - 1.5)) {
                             return false;
                         }
-                        if (index > 0 && spanWidth >= (lineWidth * 0.9)) {
+                        if (
+                            index > 0
+                            && spanWidth >= (lineWidth * 0.9)
+                            && spanLeft <= (lineLeft + 1.5)
+                        ) {
                             return false;
                         }
                         previousVisibleRight = spanRight;
@@ -10566,7 +11456,13 @@
                     return true;
                 }
 
-                return buildPromotedLineTextFromSpans(entry) === currentLineText;
+                const normalizeComparableLineText = (value) => String(value ?? '')
+                    .replace(/\u00A0/g, ' ')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+
+                return normalizeComparableLineText(buildPromotedLineTextFromSpans(entry))
+                    === normalizeComparableLineText(currentLineText);
             }
 
             function renderPromotedInlineSourceSpans(lineEl, entry, annotation, options = {}) {
@@ -10581,14 +11477,82 @@
                     return null;
                 }
 
+                const expectedLineText = String(entry.text || entry.originalText || '').replace(/\u00A0/g, ' ');
+                let textCursor = 0;
+                let previousRenderedText = '';
+
                 let maxLineHeightPx = 0;
                 let renderedSpanCount = 0;
                 lineEl.textContent = '';
+
+                const appendGapSegment = (gapText) => {
+                    const normalizedGapText = String(gapText || '').replace(/\u00A0/g, ' ');
+                    if (!normalizedGapText) {
+                        return;
+                    }
+                    const gapSeg = document.createElement('span');
+                    gapSeg.className = 'annotation-exact-span';
+                    gapSeg.textContent = normalizedGapText;
+                    gapSeg.style.position = 'static';
+                    gapSeg.style.display = 'inline';
+                    gapSeg.style.whiteSpace = 'pre';
+                    gapSeg.style.padding = '0';
+                    gapSeg.style.margin = '0';
+                    gapSeg.style.fontFamily = resolveAnnotationCssFontFamily(annotation.fontFamily, {
+                        preferExact: true,
+                        exactFontName: annotation.fontSourceName || annotation.fontFamily,
+                    });
+                    gapSeg.style.fontSize = `${Math.max(1, Number(annotation.fontSize) || 12) * scale}px`;
+                    gapSeg.style.fontWeight = String(annotation.fontWeight || '400');
+                    gapSeg.style.fontStyle = String(annotation.fontStyle || 'normal');
+                    gapSeg.style.color = annotation.textColor || '#000000';
+                    gapSeg.style.textDecoration = annotation.underline ? 'underline' : 'none';
+                    gapSeg.style.transform = 'none';
+                    gapSeg.style.lineHeight = `${Math.max(1, (Math.max(1, Number(annotation.fontSize) || 12) * scale) * 1.05)}px`;
+                    lineEl.appendChild(gapSeg);
+                    previousRenderedText += normalizedGapText;
+                };
+
+                const shouldInsertImplicitGap = (leftText, rightText) => {
+                    const leftTrimmed = String(leftText || '').replace(/\u00A0/g, ' ');
+                    const rightTrimmed = String(rightText || '').replace(/\u00A0/g, ' ');
+                    if (!leftTrimmed || !rightTrimmed || /\s$/.test(leftTrimmed) || /^\s/.test(rightTrimmed)) {
+                        return false;
+                    }
+
+                    const leftChar = leftTrimmed.slice(-1);
+                    const rightChar = rightTrimmed.charAt(0);
+                    if (!leftChar || !rightChar) {
+                        return false;
+                    }
+
+                    if (/[A-Za-z0-9)]/.test(leftChar) && /[A-Za-z0-9(]/.test(rightChar)) {
+                        return true;
+                    }
+                    if (/[,:;•]/.test(leftChar) && /[A-Za-z0-9(]/.test(rightChar)) {
+                        return true;
+                    }
+                    return false;
+                };
 
                 inlineSpans.forEach((sourceSpan) => {
                     const spanText = getPromotedSourceSpanDisplayText(sourceSpan);
                     if (spanText === '') {
                         return;
+                    }
+
+                    if (expectedLineText) {
+                        const matchIndex = expectedLineText.indexOf(spanText, textCursor);
+                        if (matchIndex > textCursor) {
+                            appendGapSegment(expectedLineText.slice(textCursor, matchIndex));
+                        } else if (shouldInsertImplicitGap(previousRenderedText, spanText)) {
+                            appendGapSegment(' ');
+                        }
+                        if (matchIndex >= 0) {
+                            textCursor = matchIndex + spanText.length;
+                        }
+                    } else if (shouldInsertImplicitGap(previousRenderedText, spanText)) {
+                        appendGapSegment(' ');
                     }
 
                     const seg = document.createElement('span');
@@ -10631,9 +11595,14 @@
                     seg.style.transform = 'none';
                     seg.style.lineHeight = `${Math.max(1, sourceLineHeightPx)}px`;
                     lineEl.appendChild(seg);
+                    previousRenderedText += spanText;
                     renderedSpanCount += 1;
                     maxLineHeightPx = Math.max(maxLineHeightPx, sourceLineHeightPx);
                 });
+
+                if (expectedLineText && textCursor < expectedLineText.length) {
+                    appendGapSegment(expectedLineText.slice(textCursor));
+                }
 
                 if (!renderedSpanCount) {
                     return null;
@@ -10750,6 +11719,81 @@
 
             function buildPromotedSplitLayoutArtifactText(sourceMeta) {
                 return buildPromotedSplitLayoutArtifactTexts(sourceMeta)[0] || '';
+            }
+
+            function trimDirtyPromotedSourceMetaToCurrentLines(annotationLike, sourceMeta) {
+                if (!annotationLike?.promotedFromExtraction || !annotationLike?.promotedDirty || !sourceMeta) {
+                    return sourceMeta;
+                }
+
+                const currentLines = getNormalizedPromotedAnnotationTextLines(annotationLike.text || '');
+                const sourceTextLines = Array.isArray(sourceMeta.sourceTextLines)
+                    ? sourceMeta.sourceTextLines.map((line) => sanitizePromotedExtractionLine(line)).filter((line) => line.length > 0)
+                    : [];
+                const sourceLineBBoxes = Array.isArray(sourceMeta.sourceLineBBoxes)
+                    ? sourceMeta.sourceLineBBoxes
+                        .filter((bbox) => Array.isArray(bbox) && bbox.length >= 4)
+                        .map((bbox) => bbox.map((value) => Number(value) || 0))
+                    : [];
+                const sourceSpans = Array.isArray(sourceMeta.sourceSpans) ? sourceMeta.sourceSpans : [];
+
+                if (
+                    currentLines.length < 1
+                    || sourceTextLines.length <= currentLines.length
+                    || sourceTextLines.length !== sourceLineBBoxes.length
+                ) {
+                    return sourceMeta;
+                }
+
+                let matchStartIndex = -1;
+                const lastPossibleStart = sourceTextLines.length - currentLines.length;
+                for (let startIndex = 0; startIndex <= lastPossibleStart; startIndex += 1) {
+                    let matches = true;
+                    for (let lineIndex = 0; lineIndex < currentLines.length; lineIndex += 1) {
+                        if (sourceTextLines[startIndex + lineIndex] !== currentLines[lineIndex]) {
+                            matches = false;
+                            break;
+                        }
+                    }
+                    if (matches) {
+                        matchStartIndex = startIndex;
+                        break;
+                    }
+                }
+
+                if (matchStartIndex <= 0) {
+                    return sourceMeta;
+                }
+
+                const keptLineBBoxes = sourceLineBBoxes.slice(matchStartIndex, matchStartIndex + currentLines.length);
+                const lineEntries = keptLineBBoxes.map((bbox, index) => ({
+                    index,
+                    bbox,
+                    text: currentLines[index] || '',
+                    originalText: currentLines[index] || '',
+                    spans: [],
+                }));
+                assignPromotedSpansToLineEntries(lineEntries, sourceSpans);
+                const keptSpans = lineEntries.flatMap((entry) => Array.isArray(entry.spans) ? entry.spans : []);
+
+                const minLeft = Math.min(...keptLineBBoxes.map((bbox) => Number(bbox[0]) || 0));
+                const minTop = Math.min(...keptLineBBoxes.map((bbox) => Number(bbox[1]) || 0));
+                const maxRight = Math.max(...keptLineBBoxes.map((bbox) => Number(bbox[2]) || 0));
+                const maxBottom = Math.max(...keptLineBBoxes.map((bbox) => Number(bbox[3]) || 0));
+
+                const trimmedMeta = {
+                    ...sourceMeta,
+                    sourceBlockLeft: minLeft,
+                    sourceBlockTop: minTop,
+                    sourceBlockWidth: Math.max(0, maxRight - minLeft),
+                    sourceBlockHeight: Math.max(0, maxBottom - minTop),
+                    sourceTextLines: currentLines,
+                    sourceLineBBoxes: keptLineBBoxes,
+                    sourceSpans: keptSpans,
+                };
+
+                setPromotedAnnotationSourceMeta(annotationLike, trimmedMeta);
+                return trimmedMeta;
             }
 
             function repairSavedPromotedAnnotationCorruption(annotationLike, sourceMeta) {
@@ -11338,6 +12382,198 @@
                 return splitAnnotations.length ? splitAnnotations : [];
             }
 
+            function buildPromotedInlineRightLabelSpanSplitAnnotations(block, pageData, extractedSource) {
+                const lineEntries = Array.isArray(extractedSource?.lineEntries) ? extractedSource.lineEntries : [];
+                if (lineEntries.length !== 1) {
+                    return [];
+                }
+
+                const lineEntry = lineEntries[0];
+                const lineBBox = Array.isArray(lineEntry?.bbox) && lineEntry.bbox.length >= 4
+                    ? lineEntry.bbox.map((value) => Number(value) || 0)
+                    : null;
+                const sortedSpans = (Array.isArray(lineEntry?.spans) ? lineEntry.spans : [])
+                    .filter((span) => Array.isArray(span?.bbox) && span.bbox.length >= 4)
+                    .slice()
+                    .sort((leftSpan, rightSpan) => (Number(leftSpan?.bbox?.[0]) || 0) - (Number(rightSpan?.bbox?.[0]) || 0));
+                if (!lineBBox || sortedSpans.length < 3) {
+                    return [];
+                }
+
+                const lineLeft = Number(lineBBox[0]) || 0;
+                const lineRight = Number(lineBBox[2]) || lineLeft;
+                const lineWidth = lineRight - lineLeft;
+                const lineText = sanitizePromotedExtractionLine(lineEntry?.text || '');
+                if (lineWidth < 180 || !/[A-Za-z]/.test(lineText) || !/[.]{3,}/.test(lineText.replace(/\s+/g, ''))) {
+                    return [];
+                }
+
+                const normalizeSpanText = (span) => sanitizePromotedExtractionLine(span?.rawText ?? span?.text ?? '');
+                const looksLikeLeaderSpan = (span) => {
+                    const compact = normalizeSpanText(span).replace(/\s+/g, '');
+                    return compact.length > 0 && /^[._\-]+$/.test(compact);
+                };
+                const looksLikeLabelSpan = (span) => promotedLineEntryLooksLikeRightAlignedFormLabel({
+                    text: normalizeSpanText(span),
+                });
+                const spansShareRow = (leftSpan, rightSpan) => {
+                    const leftBox = Array.isArray(leftSpan?.bbox) ? leftSpan.bbox : [0, 0, 0, 0];
+                    const rightBox = Array.isArray(rightSpan?.bbox) ? rightSpan.bbox : [0, 0, 0, 0];
+                    const leftTop = Number(leftBox[1]) || 0;
+                    const leftBottom = Number(leftBox[3]) || leftTop;
+                    const rightTop = Number(rightBox[1]) || 0;
+                    const rightBottom = Number(rightBox[3]) || rightTop;
+                    const overlap = Math.max(0, Math.min(leftBottom, rightBottom) - Math.max(leftTop, rightTop));
+                    const minHeight = Math.max(1, Math.min(leftBottom - leftTop, rightBottom - rightTop));
+                    return overlap / minHeight >= 0.35 || Math.abs(leftTop - rightTop) <= 6;
+                };
+                const unionBBox = (spans) => {
+                    const validSpans = spans.filter((span) => Array.isArray(span?.bbox) && span.bbox.length >= 4);
+                    if (!validSpans.length) {
+                        return null;
+                    }
+                    return [
+                        Math.min(...validSpans.map((span) => Number(span.bbox[0]) || 0)),
+                        Math.min(...validSpans.map((span) => Number(span.bbox[1]) || 0)),
+                        Math.max(...validSpans.map((span) => Number(span.bbox[2]) || 0)),
+                        Math.max(...validSpans.map((span) => Number(span.bbox[3]) || 0)),
+                    ];
+                };
+                const buildSpanClusterAnnotation = (spans, suffix, textResolver = null) => {
+                    const bbox = unionBBox(spans);
+                    if (!bbox) {
+                        return null;
+                    }
+                    const text = typeof textResolver === 'function'
+                        ? textResolver(spans)
+                        : sanitizePromotedExtractionLine(spans.map((span) => normalizeSpanText(span)).join(' '));
+                    if (!text) {
+                        return null;
+                    }
+                    return buildPromotedTextAnnotationFromSource(block, pageData, {
+                        textLines: [text],
+                        sourceLineBBoxes: [bbox],
+                        sourceSpans: spans,
+                        sourceKeySuffix: suffix,
+                    });
+                };
+
+                let labelCandidate = null;
+                for (let endIndex = sortedSpans.length - 1; endIndex >= 1; endIndex -= 1) {
+                    const endSpan = sortedSpans[endIndex];
+                    const endBox = endSpan?.bbox;
+                    const endLeft = Number(endBox?.[0]) || 0;
+                    const endRight = Number(endBox?.[2]) || endLeft;
+                    if (endLeft < lineLeft + (lineWidth * 0.58) || (lineRight - endRight) > Math.max(80, lineWidth * 0.18)) {
+                        continue;
+                    }
+
+                    for (let startIndex = endIndex; startIndex >= Math.max(0, endIndex - 3); startIndex -= 1) {
+                        const candidateSpans = sortedSpans.slice(startIndex, endIndex + 1);
+                        if (
+                            !candidateSpans.length
+                            || candidateSpans.some((span) => looksLikeLeaderSpan(span))
+                            || !candidateSpans.every((span) => spansShareRow(span, endSpan))
+                        ) {
+                            continue;
+                        }
+
+                        let spansStayCompact = true;
+                        for (let index = 1; index < candidateSpans.length; index += 1) {
+                            const previousRight = Number(candidateSpans[index - 1]?.bbox?.[2]) || 0;
+                            const currentLeft = Number(candidateSpans[index]?.bbox?.[0]) || previousRight;
+                            if ((currentLeft - previousRight) > 18) {
+                                spansStayCompact = false;
+                                break;
+                            }
+                        }
+                        if (!spansStayCompact) {
+                            continue;
+                        }
+
+                        const candidateText = normalizePromotedRightAlignedFormLabelText(
+                            candidateSpans.map((span) => normalizeSpanText(span)).join(' ')
+                        );
+                        if (!candidateText || !promotedLineEntryLooksLikeRightAlignedFormLabel({ text: candidateText })) {
+                            continue;
+                        }
+
+                        labelCandidate = {
+                            startIndex,
+                            endIndex,
+                            text: candidateText,
+                        };
+                        break;
+                    }
+
+                    if (labelCandidate) {
+                        break;
+                    }
+                }
+
+                if (!labelCandidate) {
+                    return [];
+                }
+
+                const labelStartIndex = labelCandidate.startIndex;
+                const labelEndIndex = labelCandidate.endIndex;
+                const labelSpans = sortedSpans.slice(labelStartIndex, labelEndIndex + 1);
+                const labelText = labelCandidate.text;
+
+                const leaderBeforeSpans = [];
+                for (let index = labelStartIndex - 1; index >= 0; index -= 1) {
+                    const span = sortedSpans[index];
+                    if (!looksLikeLeaderSpan(span)) {
+                        break;
+                    }
+                    leaderBeforeSpans.unshift(span);
+                }
+                const leaderAfterSpans = [];
+                for (let index = labelEndIndex + 1; index < sortedSpans.length; index += 1) {
+                    const span = sortedSpans[index];
+                    if (!looksLikeLeaderSpan(span)) {
+                        break;
+                    }
+                    leaderAfterSpans.push(span);
+                }
+                const leaderSpans = leaderBeforeSpans.length ? leaderBeforeSpans : leaderAfterSpans;
+                if (!leaderSpans.length) {
+                    return [];
+                }
+
+                const leftSpanEndIndex = leaderBeforeSpans.length ? (labelStartIndex - leaderBeforeSpans.length) : labelStartIndex;
+                const leftSpans = sortedSpans.slice(0, leftSpanEndIndex).filter((span) => !looksLikeLeaderSpan(span));
+                const trailingTextSpans = sortedSpans
+                    .slice(labelEndIndex + leaderAfterSpans.length + 1)
+                    .filter((span) => /[A-Za-z0-9]/.test(normalizeSpanText(span)));
+                if (!leftSpans.length || trailingTextSpans.length) {
+                    return [];
+                }
+
+                const leftText = sanitizePromotedExtractionLine(leftSpans.map((span) => normalizeSpanText(span)).join(' '));
+                if (!leftText || !/[A-Za-z]/.test(leftText)) {
+                    return [];
+                }
+
+                const leftBBox = unionBBox(leftSpans);
+                const labelBBox = unionBBox(labelSpans);
+                if (!leftBBox || !labelBBox) {
+                    return [];
+                }
+                const gap = (Number(labelBBox[0]) || 0) - (Number(leftBBox[2]) || 0);
+                if (gap < 36) {
+                    return [];
+                }
+
+                const splitAnnotations = [
+                    buildSpanClusterAnnotation(leftSpans, `inline-right-label-left-${Number(lineEntry?.index) || 0}`, () => leftText),
+                    buildSpanClusterAnnotation(labelSpans, `inline-right-label-label-${Number(lineEntry?.index) || 0}`, () => labelText),
+                    buildSpanClusterAnnotation(leaderSpans, `inline-right-label-leader-${Number(lineEntry?.index) || 0}`),
+                ].filter(Boolean);
+
+                return splitAnnotations.length >= 2 ? splitAnnotations : [];
+            }
+
             function findPromotedSiblingMarkerLineForTextEntry(textEntry, sourceBlock, pageBlocks) {
                 const textBox = Array.isArray(textEntry?.bbox) ? textEntry.bbox : [0, 0, 0, 0];
                 const textLeft = Number(textBox[0]) || 0;
@@ -11415,6 +12651,108 @@
                 return bestMatch;
             }
 
+            function findPromotedSiblingTextLineForRightAlignedLabelEntry(labelEntry, sourceBlock, pageBlocks) {
+                if (!promotedLineEntryLooksLikeRightAlignedFormLabel(labelEntry)) {
+                    return null;
+                }
+
+                const labelBox = Array.isArray(labelEntry?.bbox) ? labelEntry.bbox : [0, 0, 0, 0];
+                const labelLeft = Number(labelBox[0]) || 0;
+                let bestMatch = null;
+
+                (Array.isArray(pageBlocks) ? pageBlocks : []).forEach((candidateBlock) => {
+                    if (!candidateBlock || candidateBlock === sourceBlock) {
+                        return;
+                    }
+
+                    buildPromotedComparableLineEntriesForBlock(candidateBlock).forEach((candidateEntry) => {
+                        const candidateText = String(candidateEntry?.text || '').trim();
+                        if (
+                            !candidateText
+                            || promotedLineEntryLooksLikeLeaderOnly(candidateEntry)
+                            || promotedLineEntryLooksLikeRightAlignedFormLabel(candidateEntry)
+                        ) {
+                            return;
+                        }
+                        if (!promotedEntriesShareVisualRow(candidateEntry, labelEntry)) {
+                            return;
+                        }
+
+                        const candidateBox = Array.isArray(candidateEntry?.bbox) ? candidateEntry.bbox : [0, 0, 0, 0];
+                        const candidateRight = Number(candidateBox[2]) || 0;
+                        const gap = labelLeft - candidateRight;
+                        if (gap < 24 || gap > 220) {
+                            return;
+                        }
+
+                        if (!bestMatch || gap < bestMatch.gap) {
+                            bestMatch = {
+                                block: candidateBlock,
+                                entry: candidateEntry,
+                                gap,
+                            };
+                        }
+                    });
+                });
+
+                return bestMatch;
+            }
+
+            function buildPromotedSyntheticLeaderAnnotationForRightAlignedLabelBlock(block, pageData, extractedSource) {
+                const lineEntries = Array.isArray(extractedSource?.lineEntries) ? extractedSource.lineEntries : [];
+                if (lineEntries.length !== 1) {
+                    return null;
+                }
+
+                const labelEntry = lineEntries[0];
+                if (!promotedLineEntryLooksLikeRightAlignedFormLabel(labelEntry)) {
+                    return null;
+                }
+
+                const siblingMatch = findPromotedSiblingTextLineForRightAlignedLabelEntry(labelEntry, block, pageData?.blocks || []);
+                if (!siblingMatch?.entry) {
+                    return null;
+                }
+
+                const textBox = Array.isArray(siblingMatch.entry?.bbox) ? siblingMatch.entry.bbox : [0, 0, 0, 0];
+                const labelBox = Array.isArray(labelEntry?.bbox) ? labelEntry.bbox : [0, 0, 0, 0];
+                const textRight = Number(textBox[2]) || 0;
+                const labelLeft = Number(labelBox[0]) || textRight;
+                const gap = labelLeft - textRight;
+                if (gap < 80) {
+                    return null;
+                }
+
+                const lineTop = Math.min(Number(textBox[1]) || 0, Number(labelBox[1]) || 0);
+                const lineHeight = Math.max(
+                    1,
+                    Number(textBox[3]) - Number(textBox[1]) || 0,
+                    Number(labelBox[3]) - Number(labelBox[1]) || 0
+                );
+                const leaderTop = lineTop + (lineHeight * 0.705);
+                const leaderHeight = Math.max(0.888, lineHeight * 0.111);
+                const leaderLeft = textRight + 10;
+                const leaderRight = labelLeft - 10;
+                if ((leaderRight - leaderLeft) < 80) {
+                    return null;
+                }
+
+                const leaderDotCount = Math.max(12, Math.min(32, Math.round((leaderRight - leaderLeft) / 12)));
+                const leaderText = Array.from({ length: leaderDotCount }, () => '.').join(' ');
+                const leaderBBox = [leaderLeft, leaderTop, leaderRight, leaderTop + leaderHeight];
+                const leaderSpan = buildSyntheticPromotedSpanFromBlockLine(block, leaderText, leaderBBox);
+                if (!leaderSpan) {
+                    return null;
+                }
+
+                return buildPromotedTextAnnotationFromSource(block, pageData, {
+                    textLines: [leaderText],
+                    sourceLineBBoxes: [leaderBBox],
+                    sourceSpans: [leaderSpan],
+                    sourceKeySuffix: `leader-for-${normalizePromotedRightAlignedFormLabelText(labelEntry?.text || '').replace(/[^a-z0-9_-]+/gi, '_') || 'label'}`,
+                });
+            }
+
             function buildPromotedSiblingCompactLabelAlignedLineSplitAnnotations(block, pageData, extractedSource) {
                 const lineEntries = Array.isArray(extractedSource?.lineEntries) ? extractedSource.lineEntries : [];
                 if (lineEntries.length < 2) {
@@ -11472,6 +12810,145 @@
                     sourceSpans: Array.isArray(entry?.spans) ? entry.spans : [],
                     sourceKeySuffix: `marker-aligned-line-${Number(entry?.index) || 0}`,
                 })).filter(Boolean);
+            }
+
+            function buildPromotedRightLabelLeaderLineSplitAnnotations(block, pageData, extractedSource) {
+                const lineEntries = Array.isArray(extractedSource?.lineEntries) ? extractedSource.lineEntries : [];
+                if (lineEntries.length < 2) {
+                    return [];
+                }
+
+                const nonEmptyEntries = lineEntries.filter((entry) => String(entry?.text || '').trim() !== '');
+                if (nonEmptyEntries.length < 2) {
+                    return [];
+                }
+
+                const hasBulletRow = nonEmptyEntries.some((entry) => /^(?:•|●|◦|▪|■|○)\s+\S/.test(String(entry?.text || '').trim()));
+                const hasRightLabel = nonEmptyEntries.some((entry) => promotedLineEntryLooksLikeRightAlignedFormLabel(entry));
+                const hasLeaderOnlyLine = nonEmptyEntries.some((entry) => promotedLineEntryLooksLikeLeaderOnly(entry));
+                if (!hasBulletRow || !hasRightLabel || !hasLeaderOnlyLine) {
+                    return [];
+                }
+
+                const splitAnnotations = [];
+                let currentTextCluster = [];
+                const flushTextCluster = () => {
+                    if (!currentTextCluster.length) {
+                        return;
+                    }
+                    const clusterStartIndex = Number(currentTextCluster[0]?.index) || 0;
+                    const clusterEndIndex = Number(currentTextCluster[currentTextCluster.length - 1]?.index) || clusterStartIndex;
+                    const clusterExtractedSource = {
+                        blockText: currentTextCluster.map((entry) => entry.text).join('\n'),
+                        textLines: currentTextCluster.map((entry) => entry.text),
+                        sourceLineBBoxes: currentTextCluster.map((entry) => entry.bbox),
+                        sourceSpans: currentTextCluster.flatMap((entry) => Array.isArray(entry?.spans) ? entry.spans : []),
+                        lineEntries: currentTextCluster.map((entry, entryIndex) => ({
+                            index: entryIndex,
+                            text: entry.text,
+                            bbox: entry.bbox,
+                            spans: Array.isArray(entry?.spans) ? entry.spans : [],
+                        })),
+                        excludedLineEntries: [],
+                        transferredMarkerEntries: [],
+                        sourceKeySuffix: `label-leader-text-lines-${clusterStartIndex}-${clusterEndIndex}`,
+                    };
+                    splitAnnotations.push(...buildTextAnnotationsFromExtractionBlock(block, pageData, [], clusterExtractedSource));
+                    currentTextCluster = [];
+                };
+
+                nonEmptyEntries.forEach((entry) => {
+                    if (promotedLineEntryLooksLikeRightAlignedFormLabel(entry) || promotedLineEntryLooksLikeLeaderOnly(entry)) {
+                        flushTextCluster();
+                        const annotation = buildPromotedTextAnnotationFromSource(block, pageData, {
+                            textLines: [entry.text],
+                            sourceLineBBoxes: [entry.bbox],
+                            sourceSpans: Array.isArray(entry?.spans) ? entry.spans : [],
+                            sourceKeySuffix: promotedLineEntryLooksLikeRightAlignedFormLabel(entry)
+                                ? `label-line-${Number(entry?.index) || 0}`
+                                : `leader-line-${Number(entry?.index) || 0}`,
+                        });
+                        if (annotation) {
+                            splitAnnotations.push(annotation);
+                        }
+                        return;
+                    }
+                    currentTextCluster.push(entry);
+                });
+                flushTextCluster();
+
+                return splitAnnotations.length > 1 ? splitAnnotations : [];
+            }
+
+            function buildPromotedInlineBulletRowSplitAnnotations(block, pageData, extractedSource) {
+                const lineEntries = Array.isArray(extractedSource?.lineEntries) ? extractedSource.lineEntries : [];
+                if (lineEntries.length < 2) {
+                    return [];
+                }
+
+                const nonEmptyEntries = lineEntries.filter((entry) => String(entry?.text || '').trim() !== '');
+                if (nonEmptyEntries.length < 2) {
+                    return [];
+                }
+
+                const bulletRowStartIndexes = lineEntries
+                    .map((entry) => {
+                        const text = String(entry?.text || '').replace(/\u00A0/g, ' ').trim();
+                        if (!text || promotedLineEntryLooksLikeLeaderOnly(entry) || promotedLineEntryLooksLikeRightAlignedFormLabel(entry)) {
+                            return -1;
+                        }
+                        return /^(?:\(?\d+[A-Za-z]?\)?[.)]?\s+)?(?:•|●|◦|▪|■|○)\s+\S/.test(text)
+                            ? (Number(entry?.index) || 0)
+                            : -1;
+                    })
+                    .filter((index) => index >= 0);
+                if (bulletRowStartIndexes.length < 2) {
+                    return [];
+                }
+
+                const clusters = [];
+                const firstStartIndex = bulletRowStartIndexes[0];
+                if (firstStartIndex > 0) {
+                    const leadingCluster = lineEntries
+                        .slice(0, firstStartIndex)
+                        .filter((entry) => String(entry?.text || '').trim() !== '');
+                    if (leadingCluster.length > 0) {
+                        clusters.push(leadingCluster);
+                    }
+                }
+
+                bulletRowStartIndexes.forEach((startIndex, index) => {
+                    const nextStartIndex = index + 1 < bulletRowStartIndexes.length ? bulletRowStartIndexes[index + 1] : lineEntries.length;
+                    const cluster = lineEntries
+                        .slice(startIndex, nextStartIndex)
+                        .filter((entry) => String(entry?.text || '').trim() !== '');
+                    if (cluster.length > 0) {
+                        clusters.push(cluster);
+                    }
+                });
+                if (clusters.length < 2) {
+                    return [];
+                }
+
+                const expectedIndexes = nonEmptyEntries.map((entry) => Number(entry?.index) || 0);
+                const actualIndexes = clusters.flatMap((cluster) => cluster.map((entry) => Number(entry?.index) || 0));
+                if (
+                    actualIndexes.length !== expectedIndexes.length
+                    || actualIndexes.some((value, index) => value !== expectedIndexes[index])
+                ) {
+                    return [];
+                }
+
+                return clusters.map((cluster, clusterIndex) => {
+                    const clusterStartIndex = Number(cluster[0]?.index) || 0;
+                    const clusterEndIndex = Number(cluster[cluster.length - 1]?.index) || 0;
+                    return buildPromotedTextAnnotationFromSource(block, pageData, {
+                        textLines: cluster.map((entry) => entry.text),
+                        sourceLineBBoxes: cluster.map((entry) => entry.bbox),
+                        sourceSpans: cluster.flatMap((entry) => Array.isArray(entry?.spans) ? entry.spans : []),
+                        sourceKeySuffix: `inline-bullet-lines-${clusterIndex}-${clusterStartIndex}-${clusterEndIndex}`,
+                    });
+                }).filter(Boolean);
             }
 
             function buildPromotedNumberedItemSplitAnnotations(block, pageData, extractedSource) {
@@ -11704,6 +13181,23 @@
                 return /^[A-Za-z]+$/.test(normalized);
             }
 
+            function normalizePromotedRightAlignedFormLabelText(value) {
+                return String(value || '')
+                    .replace(/\u00A0/g, ' ')
+                    .replace(/^[.\s]+/, '')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+            }
+
+            function promotedLineEntryLooksLikeRightAlignedFormLabel(entry) {
+                const normalized = normalizePromotedRightAlignedFormLabelText(entry?.text || '');
+                if (!normalized || normalized.length > 18) {
+                    return false;
+                }
+
+                return /^(?:[A-Za-z0-9/-]+(?:\s+or\s+[A-Za-z0-9/-]+)?)$/.test(normalized);
+            }
+
             function promotedLineEntryLooksLikeStackedScalarValue(entry) {
                 const normalized = String(entry?.text || '')
                     .replace(/\u00A0/g, ' ')
@@ -11846,6 +13340,117 @@
                         bbox,
                     };
                 }).filter(Boolean);
+            }
+
+            function getPromotedMeaningfulBlockLines(block) {
+                return Array.isArray(block?.text_lines)
+                    ? block.text_lines
+                        .map((line) => sanitizePromotedExtractionLine(line))
+                        .filter((line) => line.length > 0)
+                    : [];
+            }
+
+            function promotedBlockLooksLikeDecorativeCalloutSymbol(block) {
+                const lines = getPromotedMeaningfulBlockLines(block);
+                if (lines.length !== 1) {
+                    return false;
+                }
+
+                const text = String(lines[0] || '').replace(/\s+/g, '');
+                if (!/^(?:!|¡|‼|▲|△|▼|▽|◆|◇|■|□|●|○|◦|▪|▶|►)$/.test(text)) {
+                    return false;
+                }
+
+                const width = Math.max(0, Number(block?.width) || 0);
+                const height = Math.max(0, Number(block?.height) || 0);
+                return width > 0
+                    && height > 0
+                    && width <= 42
+                    && height <= 60;
+            }
+
+            function promotedBlockLooksLikeCompactCalloutCaption(block) {
+                const lines = getPromotedMeaningfulBlockLines(block);
+                if (lines.length !== 1) {
+                    return false;
+                }
+
+                const text = String(lines[0] || '').trim();
+                if (!/^[A-Z][A-Z0-9/& -]{2,14}$/.test(text)) {
+                    return false;
+                }
+
+                const width = Math.max(0, Number(block?.width) || 0);
+                const height = Math.max(0, Number(block?.height) || 0);
+                return width > 0
+                    && height > 0
+                    && width <= 80
+                    && height <= 20;
+            }
+
+            function blockBelongsToDecorativeCalloutIconCluster(block, pageBlocks) {
+                if (!block || typeof block !== 'object') {
+                    return false;
+                }
+
+                const blockIsSymbol = promotedBlockLooksLikeDecorativeCalloutSymbol(block);
+                const blockIsCaption = promotedBlockLooksLikeCompactCalloutCaption(block);
+                if (!blockIsSymbol && !blockIsCaption) {
+                    return false;
+                }
+
+                const blockLeft = Number(block?.left) || 0;
+                const blockTop = Number(block?.top) || 0;
+                const blockWidth = Math.max(0, Number(block?.width) || 0);
+                const blockHeight = Math.max(0, Number(block?.height) || 0);
+                const blockRight = blockLeft + blockWidth;
+                const blockBottom = blockTop + blockHeight;
+                const blockCenterX = blockLeft + (blockWidth / 2);
+
+                let sawSymbol = blockIsSymbol;
+                let sawCaption = blockIsCaption;
+
+                (Array.isArray(pageBlocks) ? pageBlocks : []).forEach((otherBlock) => {
+                    if (!otherBlock || otherBlock === block) {
+                        return;
+                    }
+
+                    const otherIsSymbol = promotedBlockLooksLikeDecorativeCalloutSymbol(otherBlock);
+                    const otherIsCaption = promotedBlockLooksLikeCompactCalloutCaption(otherBlock);
+                    if (!otherIsSymbol && !otherIsCaption) {
+                        return;
+                    }
+
+                    const otherLeft = Number(otherBlock?.left) || 0;
+                    const otherTop = Number(otherBlock?.top) || 0;
+                    const otherWidth = Math.max(0, Number(otherBlock?.width) || 0);
+                    const otherHeight = Math.max(0, Number(otherBlock?.height) || 0);
+                    const otherRight = otherLeft + otherWidth;
+                    const otherBottom = otherTop + otherHeight;
+                    const otherCenterX = otherLeft + (otherWidth / 2);
+
+                    const horizontalOverlap = Math.max(0, Math.min(blockRight, otherRight) - Math.max(blockLeft, otherLeft));
+                    const minWidth = Math.max(1, Math.min(blockWidth, otherWidth));
+                    const overlapRatio = horizontalOverlap / minWidth;
+                    const sameNarrowColumn = overlapRatio >= 0.55
+                        || Math.abs(blockCenterX - otherCenterX) <= 12;
+                    if (!sameNarrowColumn) {
+                        return;
+                    }
+
+                    const verticalGap = Math.max(
+                        0,
+                        Math.max(otherTop - blockBottom, blockTop - otherBottom)
+                    );
+                    if (verticalGap > 12) {
+                        return;
+                    }
+
+                    sawSymbol = sawSymbol || otherIsSymbol;
+                    sawCaption = sawCaption || otherIsCaption;
+                });
+
+                return sawSymbol && sawCaption;
             }
 
             function promotedEntriesShareVisualRow(leftEntry, rightEntry) {
@@ -12135,6 +13740,20 @@
                 };
             }
 
+            function mergePromotedExcludedLineIndexes(...sets) {
+                const merged = new Set();
+                sets.forEach((value) => {
+                    if (value instanceof Set) {
+                        value.forEach((entry) => merged.add(Number(entry)));
+                        return;
+                    }
+                    if (Array.isArray(value)) {
+                        value.forEach((entry) => merged.add(Number(entry)));
+                    }
+                });
+                return merged.size > 0 ? merged : null;
+            }
+
             function promotedLineEntryDominantFontWeight(entry) {
                 const spanWeights = (Array.isArray(entry?.spans) ? entry.spans : [])
                     .map((span) => Number(span?.fontWeight ?? span?.font_weight) || 0)
@@ -12315,11 +13934,17 @@
                     return [];
                 }
 
-                const sortedEntries = lineEntries.slice().sort(comparePromotedLineEntryVisualPosition);
+                const normalizeLineText = (entry) => String(entry?.text || '').trim();
+                const sortedEntries = lineEntries
+                    .slice()
+                    .filter((entry) => normalizeLineText(entry) !== '')
+                    .sort(comparePromotedLineEntryVisualPosition);
+                if (!sortedEntries.length) {
+                    return [];
+                }
                 const clusters = [];
                 let currentCluster = [sortedEntries[0]];
 
-                const normalizeLineText = (entry) => String(entry?.text || '').trim();
                 const isNumberedLine = (entry) => /^\(?\d+\)?[.)]/.test(normalizeLineText(entry));
                 const isFooterLine = (entry) => /^The form of this addendum/i.test(normalizeLineText(entry));
                 const shouldSplitCluster = (previousEntry, nextEntry) => {
@@ -12382,6 +14007,13 @@
                         promotedLineEntryLooksLikeCompactLabel(previousEntry)
                         && !promotedLineEntryLooksLikeCompactLabel(nextEntry)
                         && (nextTop - prevTop) >= Math.max(6, prevHeight * 0.8)
+                    ) {
+                        return true;
+                    }
+                    if (
+                        promotedLineEntryLooksLikeRightAlignedFormLabel(nextEntry)
+                        && !promotedLineEntryLooksLikeRightAlignedFormLabel(previousEntry)
+                        && (nextLeft - previousRight) >= 120
                     ) {
                         return true;
                     }
@@ -12487,11 +14119,44 @@
                         (Number(block?.left) || 0) + (Number(block?.width) || 0),
                         (Number(block?.top) || 0) + (Number(block?.height) || 0),
                     ]];
+                const allLinesAreLeaderOnly = normalizedLines.length > 0
+                    && normalizedLines.every((line) => /^[.\s]+$/.test(String(line || '').trim()));
+                const annotationBBoxSource = (() => {
+                    if (!allLinesAreLeaderOnly || bboxSource.length !== 1) {
+                        return bboxSource;
+                    }
 
-                const left = Math.min(...bboxSource.map((bbox) => Number(bbox?.[0]) || 0));
-                const top = Math.min(...bboxSource.map((bbox) => Number(bbox?.[1]) || 0));
-                const right = Math.max(...bboxSource.map((bbox) => Number(bbox?.[2]) || left));
-                const bottom = Math.max(...bboxSource.map((bbox) => Number(bbox?.[3]) || top));
+                    const rawBBox = bboxSource[0];
+                    const rawTop = Number(rawBBox?.[1]) || 0;
+                    const rawBottom = Number(rawBBox?.[3]) || rawTop;
+                    const rawHeight = Math.max(0.25, rawBottom - rawTop);
+                    const relevantSpans = (Array.isArray(sourceSpans) ? sourceSpans : []).filter((span) => span);
+                    const avgAscender = relevantSpans.length > 0
+                        ? relevantSpans.reduce((sum, span) => sum + (Number(span?.ascender) || 0.8), 0) / relevantSpans.length
+                        : 0.8;
+                    const avgDescender = relevantSpans.length > 0
+                        ? relevantSpans.reduce((sum, span) => sum + (Number(span?.descender) || -0.2), 0) / relevantSpans.length
+                        : -0.2;
+                    const avgFontSize = relevantSpans.length > 0
+                        ? relevantSpans.reduce((sum, span) => sum + (Number(span?.fontSize ?? span?.font_size) || Number(block?.font_size) || 12), 0) / relevantSpans.length
+                        : (Number(block?.font_size) || 12);
+                    const desiredHeight = Math.max(rawHeight, avgFontSize * Math.max(0.6, avgAscender - avgDescender), 6);
+                    if (desiredHeight <= rawHeight + 0.25) {
+                        return bboxSource;
+                    }
+
+                    return [[
+                        Number(rawBBox?.[0]) || 0,
+                        rawBottom - desiredHeight,
+                        Number(rawBBox?.[2]) || Number(rawBBox?.[0]) || 0,
+                        rawBottom,
+                    ]];
+                })();
+
+                const left = Math.min(...annotationBBoxSource.map((bbox) => Number(bbox?.[0]) || 0));
+                const top = Math.min(...annotationBBoxSource.map((bbox) => Number(bbox?.[1]) || 0));
+                const right = Math.max(...annotationBBoxSource.map((bbox) => Number(bbox?.[2]) || left));
+                const bottom = Math.max(...annotationBBoxSource.map((bbox) => Number(bbox?.[3]) || top));
                 const width = right - left;
                 const height = bottom - top;
                 const pageHeight = Number(pageData?.height) || 0;
@@ -12567,6 +14232,150 @@
                 }
                 const rect = rectLike.slice(0, 4).map((value) => Number(value));
                 return rect.every((value) => Number.isFinite(value)) ? rect : null;
+            }
+
+            function getExtractionBlockRect(block) {
+                const directRect = normalizeExtractionRect(block?.bbox);
+                if (directRect) {
+                    return directRect;
+                }
+
+                const left = Number(block?.left);
+                const top = Number(block?.top);
+                const width = Number(block?.width);
+                const height = Number(block?.height);
+                if (![left, top, width, height].every(Number.isFinite)) {
+                    return null;
+                }
+
+                return [left, top, left + Math.max(0, width), top + Math.max(0, height)];
+            }
+
+            function extractionRectOverlapSmaller(rectA, rectB) {
+                const a = normalizeExtractionRect(rectA);
+                const b = normalizeExtractionRect(rectB);
+                if (!a || !b) {
+                    return 0;
+                }
+
+                const interW = Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0]));
+                const interH = Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1]));
+                const inter = interW * interH;
+                if (inter <= 0) {
+                    return 0;
+                }
+
+                const areaA = Math.max(0, a[2] - a[0]) * Math.max(0, a[3] - a[1]);
+                const areaB = Math.max(0, b[2] - b[0]) * Math.max(0, b[3] - b[1]);
+                const smaller = Math.min(areaA, areaB);
+                return smaller > 0 ? (inter / smaller) : 0;
+            }
+
+            function mergeBoundingBoxExtractionPages(rawPages, groupedPages) {
+                const safeRawPages = Array.isArray(rawPages) ? rawPages : [];
+                const safeGroupedPages = Array.isArray(groupedPages) ? groupedPages : [];
+                if (!boundingBoxEditMode || safeGroupedPages.length === 0) {
+                    return safeRawPages;
+                }
+
+                const rawByPage = new Map(
+                    safeRawPages
+                        .filter((page) => page && Number.isFinite(Number(page.page_number)))
+                        .map((page) => [Number(page.page_number), page])
+                );
+                const groupedByPage = new Map(
+                    safeGroupedPages
+                        .filter((page) => page && Number.isFinite(Number(page.page_number)))
+                        .map((page) => [Number(page.page_number), page])
+                );
+                const pageNumbers = Array.from(new Set([
+                    ...rawByPage.keys(),
+                    ...groupedByPage.keys(),
+                ])).sort((left, right) => left - right);
+
+                return pageNumbers.map((pageNumber) => {
+                    const rawPage = rawByPage.get(pageNumber) || {};
+                    const groupedPage = groupedByPage.get(pageNumber) || {};
+                    const groupedBlocks = Array.isArray(groupedPage.blocks) ? groupedPage.blocks.slice() : [];
+                    const rawBlocks = Array.isArray(rawPage.blocks) ? rawPage.blocks : [];
+                    const mergedBlocks = groupedBlocks.slice();
+
+                    rawBlocks.forEach((rawBlock) => {
+                        const rawRect = getExtractionBlockRect(rawBlock);
+                        if (!rawRect) {
+                            return;
+                        }
+
+                        const rawText = sanitizeOverlayText(rawBlock?.text || '').replace(/\s+/g, ' ').trim();
+                        const coveredByGroupedBlock = groupedBlocks.some((groupedBlock) => {
+                            const groupedRect = getExtractionBlockRect(groupedBlock);
+                            if (!groupedRect) {
+                                return false;
+                            }
+
+                            if (pdfRectContainsRect(groupedRect, rawRect, 0.75)) {
+                                return true;
+                            }
+
+                            if (extractionRectOverlapSmaller(rawRect, groupedRect) >= 0.72) {
+                                return true;
+                            }
+
+                            const groupedText = sanitizeOverlayText(groupedBlock?.text || '').replace(/\s+/g, ' ').trim();
+                            return !!rawText
+                                && !!groupedText
+                                && (rawText === groupedText || rawText.includes(groupedText) || groupedText.includes(rawText))
+                                && pdfRectsIntersect(rawRect, groupedRect, 0.75);
+                        });
+
+                        if (!coveredByGroupedBlock) {
+                            mergedBlocks.push(rawBlock);
+                        }
+                    });
+
+                    mergedBlocks.sort((leftBlock, rightBlock) => {
+                        const leftTop = Number(leftBlock?.top) || 0;
+                        const rightTop = Number(rightBlock?.top) || 0;
+                        if (leftTop !== rightTop) {
+                            return leftTop - rightTop;
+                        }
+                        const leftValue = Number(leftBlock?.left) || 0;
+                        const rightValue = Number(rightBlock?.left) || 0;
+                        if (leftValue !== rightValue) {
+                            return leftValue - rightValue;
+                        }
+                        return (Number(leftBlock?.block_num) || 0) - (Number(rightBlock?.block_num) || 0);
+                    });
+
+                    return {
+                        ...rawPage,
+                        ...groupedPage,
+                        page_number: pageNumber,
+                        width: Math.max(Number(rawPage?.width) || 0, Number(groupedPage?.width) || 0),
+                        height: Math.max(Number(rawPage?.height) || 0, Number(groupedPage?.height) || 0),
+                        blocks: mergedBlocks,
+                        words: Array.isArray(rawPage.words) ? rawPage.words : (Array.isArray(groupedPage.words) ? groupedPage.words : []),
+                    };
+                }).filter((page) => {
+                    const hasBlocks = Array.isArray(page?.blocks) && page.blocks.length > 0;
+                    const hasWords = Array.isArray(page?.words) && page.words.length > 0;
+                    return hasBlocks || hasWords;
+                });
+            }
+
+            function tagBoundingBoxLiteralPages(pages) {
+                const safePages = Array.isArray(pages) ? pages : [];
+                return safePages.map((page) => ({
+                    ...page,
+                    _overlayLiteralBlocks: true,
+                }));
+            }
+
+            function resolveOverlayExtractionPages(extractionPayload) {
+                const rawExtractionData = Array.isArray(extractionPayload?.extraction_data)
+                    ? extractionPayload.extraction_data
+                    : [];
+                return rawExtractionData;
             }
 
             function pdfRectsIntersect(rectA, rectB, padding = 0) {
@@ -12824,16 +14633,34 @@
             }
 
             function buildTextAnnotationsFromExtractionBlock(block, pageData, absorbedInlineBlocks = [], prebuiltExtractedSource = null) {
+                if (blockBelongsToDecorativeCalloutIconCluster(block, pageData?.blocks || [])) {
+                    return [];
+                }
+
                 const rawExtractedSource = prebuiltExtractedSource || buildPromotedLineEntriesFromExtractionBlock(block, absorbedInlineBlocks);
                 const extractedSource = trimPromotedLeadingBulletLeadInFromSourceBlock(block, pageData, rawExtractedSource);
                 if (!extractedSource) {
                     return [];
                 }
+                const {
+                    lineEntries = [],
+                    sourceLineBBoxes = [],
+                    sourceSpans = [],
+                } = extractedSource;
                 const detachedMarkerAnnotations = buildPromotedDetachedMarkerAnnotations(block, pageData, extractedSource);
+                const syntheticLeaderAnnotation = buildPromotedSyntheticLeaderAnnotationForRightAlignedLabelBlock(block, pageData, extractedSource);
 
                 const compactFormLabelSplitAnnotations = buildPromotedCompactFormLabelSplitAnnotations(block, pageData, extractedSource);
                 if (compactFormLabelSplitAnnotations.length > 0) {
-                    return compactFormLabelSplitAnnotations.concat(detachedMarkerAnnotations);
+                    return (syntheticLeaderAnnotation
+                        ? [syntheticLeaderAnnotation, ...compactFormLabelSplitAnnotations]
+                        : compactFormLabelSplitAnnotations
+                    ).concat(detachedMarkerAnnotations);
+                }
+
+                const inlineRightLabelSpanSplitAnnotations = buildPromotedInlineRightLabelSpanSplitAnnotations(block, pageData, extractedSource);
+                if (inlineRightLabelSpanSplitAnnotations.length > 1) {
+                    return detachedMarkerAnnotations.concat(inlineRightLabelSpanSplitAnnotations);
                 }
 
                 const bulletListSplitAnnotations = buildPromotedBulletListSplitAnnotations(block, pageData, extractedSource);
@@ -12846,6 +14673,16 @@
                     return detachedMarkerAnnotations.concat(markerAlignedLineSplitAnnotations);
                 }
 
+                const rightLabelLeaderLineSplitAnnotations = buildPromotedRightLabelLeaderLineSplitAnnotations(block, pageData, extractedSource);
+                if (rightLabelLeaderLineSplitAnnotations.length > 1) {
+                    return detachedMarkerAnnotations.concat(rightLabelLeaderLineSplitAnnotations);
+                }
+
+                const inlineBulletRowSplitAnnotations = buildPromotedInlineBulletRowSplitAnnotations(block, pageData, extractedSource);
+                if (inlineBulletRowSplitAnnotations.length > 1) {
+                    return detachedMarkerAnnotations.concat(inlineBulletRowSplitAnnotations);
+                }
+
                 const compactLabelAlignedLineSplitAnnotations = buildPromotedSiblingCompactLabelAlignedLineSplitAnnotations(block, pageData, extractedSource);
                 if (compactLabelAlignedLineSplitAnnotations.length > 1) {
                     return detachedMarkerAnnotations.concat(compactLabelAlignedLineSplitAnnotations);
@@ -12856,9 +14693,15 @@
                     return detachedMarkerAnnotations.concat(numberedItemSplitAnnotations);
                 }
 
-                const columnSplitAnnotations = buildPromotedColumnSplitAnnotationsFromSourceBlock(block, pageData, extractedSource);
-                if (columnSplitAnnotations.length > 1) {
-                    return detachedMarkerAnnotations.concat(columnSplitAnnotations);
+                const shouldPreferRowSplitOverColumnSplit = lineEntries.some((entry) => (
+                    promotedLineEntryLooksLikeLeaderOnly(entry)
+                    || promotedLineEntryLooksLikeRightAlignedFormLabel(entry)
+                ));
+                if (!shouldPreferRowSplitOverColumnSplit) {
+                    const columnSplitAnnotations = buildPromotedColumnSplitAnnotationsFromSourceBlock(block, pageData, extractedSource);
+                    if (columnSplitAnnotations.length > 1) {
+                        return detachedMarkerAnnotations.concat(columnSplitAnnotations);
+                    }
                 }
 
                 const embeddedHeadingSplitAnnotations = buildPromotedEmbeddedHeadingSplitAnnotations(block, pageData, extractedSource);
@@ -12873,12 +14716,15 @@
 
                 const baseAnnotation = buildPromotedTextAnnotationFromSource(block, pageData, extractedSource);
                 if (!baseAnnotation) {
-                    return detachedMarkerAnnotations;
+                    return syntheticLeaderAnnotation
+                        ? [syntheticLeaderAnnotation, ...detachedMarkerAnnotations]
+                        : detachedMarkerAnnotations;
                 }
 
-                const { lineEntries, sourceLineBBoxes, sourceSpans } = extractedSource;
                 if (!lineEntries.length || sourceLineBBoxes.length < 2) {
-                    return [baseAnnotation, ...detachedMarkerAnnotations];
+                    return syntheticLeaderAnnotation
+                        ? [syntheticLeaderAnnotation, baseAnnotation, ...detachedMarkerAnnotations]
+                        : [baseAnnotation, ...detachedMarkerAnnotations];
                 }
 
                 const clusters = clusterPromotedExtractionLineEntries(lineEntries);
@@ -12886,7 +14732,9 @@
                 const forceSemanticClusterSplit = shouldForcePromotedSemanticClusterSplit(lineEntries, clusters);
                 const forceGapClusterSplit = shouldForcePromotedGapClusterSplit(lineEntries, clusters);
                 if ((!lineGroupingEditorMode && !forceFormRowSplit && !forceSemanticClusterSplit && !forceGapClusterSplit) || clusters.length <= 1) {
-                    return [baseAnnotation, ...detachedMarkerAnnotations];
+                    return syntheticLeaderAnnotation
+                        ? [syntheticLeaderAnnotation, baseAnnotation, ...detachedMarkerAnnotations]
+                        : [baseAnnotation, ...detachedMarkerAnnotations];
                 }
 
                 const splitAnnotations = clusters.map((cluster) => {
@@ -12902,8 +14750,15 @@
                     });
                 }).filter(Boolean);
 
-                return splitAnnotations.length
-                    ? splitAnnotations.concat(detachedMarkerAnnotations)
+                if (splitAnnotations.length) {
+                    return (syntheticLeaderAnnotation
+                        ? [syntheticLeaderAnnotation, ...splitAnnotations]
+                        : splitAnnotations
+                    ).concat(detachedMarkerAnnotations);
+                }
+
+                return syntheticLeaderAnnotation
+                    ? [syntheticLeaderAnnotation, baseAnnotation, ...detachedMarkerAnnotations]
                     : [baseAnnotation, ...detachedMarkerAnnotations];
             }
 
@@ -13285,12 +15140,13 @@
                     delete normalized.sourceSpans;
                 }
 
-                const promotedSourceMeta = legacySourceMeta || getPromotedAnnotationSourceMeta(normalized);
+                let promotedSourceMeta = legacySourceMeta || getPromotedAnnotationSourceMeta(normalized);
                 repairSavedPromotedAnnotationCorruption(normalized, promotedSourceMeta);
                 if (normalized.promotedFromExtraction && savedHasMaterialEdits) {
                     normalized.text = savedTextSnapshot || normalized.text;
                     normalized.originalText = savedOriginalTextSnapshot || normalized.originalText || normalized.text;
                     normalized.promotedDirty = true;
+                    promotedSourceMeta = trimDirtyPromotedSourceMetaToCurrentLines(normalized, promotedSourceMeta) || promotedSourceMeta;
                 }
                 if (normalized.promotedFromExtraction) {
                     const lineBoxes = Array.isArray(promotedSourceMeta?.sourceLineBBoxes)
@@ -13486,6 +15342,147 @@
                 clearSavedNonTextDatabaseAnnotations();
                 hydrated.forEach((annotation) => { registerAnnotationId(annotation); annotations.push(annotation); });
                 return hydrated.length;
+            }
+
+            function collectExistingDirtyBoundingBoxPromotedAnnotations() {
+                const existingBySourceKey = new Map();
+
+                annotations.forEach((annotation) => {
+                    if (!annotation?.promotedFromExtraction || !annotation?.promotedSourceKey) {
+                        return;
+                    }
+                    if (!annotation.promotedDirty && !annotation.promotedReflowEnabled) {
+                        return;
+                    }
+
+                    existingBySourceKey.set(String(annotation.promotedSourceKey), annotation);
+                });
+
+                return existingBySourceKey;
+            }
+
+            function hydrateBoundingBoxEditPromotedAnnotations(savedAnnotations, extractionPages = []) {
+                const hydrated = [];
+                const seenIds = new Set();
+                const seenSourceKeys = new Set();
+                const existingDirtyBySourceKey = collectExistingDirtyBoundingBoxPromotedAnnotations();
+                const normalizedPages = Array.isArray(extractionPages) ? extractionPages : [];
+
+                const pushAnnotation = (annotation) => {
+                    if (!annotation?.promotedFromExtraction) {
+                        return;
+                    }
+
+                    const sourceKey = String(annotation.promotedSourceKey || '').trim();
+                    if (!sourceKey || deletedPromotedSourceKeys.has(sourceKey) || seenSourceKeys.has(sourceKey)) {
+                        return;
+                    }
+
+                    const annotationId = String(annotation.id || '').trim();
+                    if (annotationId && seenIds.has(annotationId)) {
+                        return;
+                    }
+
+                    seenSourceKeys.add(sourceKey);
+                    if (annotationId) {
+                        seenIds.add(annotationId);
+                    }
+                    hydrated.push(annotation);
+                };
+
+                const normalizedSavedAnnotations = Array.isArray(savedAnnotations) ? savedAnnotations : [];
+                if (normalizedSavedAnnotations.length > 0) {
+                    normalizedSavedAnnotations.forEach((annotationData) => {
+                        const savedAnnotation = buildTextAnnotationFromSavedState(annotationData);
+                        if (!savedAnnotation?.promotedFromExtraction || !savedAnnotation?.promotedSourceKey) {
+                            return;
+                        }
+
+                        const sourceKey = String(savedAnnotation.promotedSourceKey || '').trim();
+                        const dirtyAnnotation = existingDirtyBySourceKey.get(sourceKey);
+                        pushAnnotation(dirtyAnnotation || savedAnnotation);
+                    });
+                } else {
+                    normalizedPages.forEach((pageData) => {
+                        const pageBlocks = Array.isArray(pageData?.blocks) ? pageData.blocks : [];
+                        pageBlocks.forEach((block) => {
+                            const pageNumber = Number(pageData?.page_number) || 1;
+                            const blockNumber = Number(block?.block_num) || 0;
+                            const sourceKey = `block-${pageNumber}-${blockNumber}`;
+                            if (deletedPromotedSourceKeys.has(sourceKey)) {
+                                return;
+                            }
+
+                            const dirtyAnnotation = existingDirtyBySourceKey.get(sourceKey);
+                            if (dirtyAnnotation) {
+                                pushAnnotation(dirtyAnnotation);
+                                return;
+                            }
+
+                            const annotation = buildPromotedTextAnnotationFromSource(block, pageData, {
+                                textLines: Array.isArray(block?.text_lines) ? block.text_lines : [],
+                                sourceLineBBoxes: Array.isArray(block?.line_bboxes) ? block.line_bboxes : [],
+                                sourceSpans: Array.isArray(block?.spans)
+                                    ? block.spans
+                                        .filter((span) => span && Array.isArray(span.bbox) && span.bbox.length >= 4)
+                                        .map((span) => ({
+                                            ...span,
+                                            bbox: span.bbox.map((value) => Number(value) || 0),
+                                        }))
+                                    : [],
+                                explicitSourceKey: sourceKey,
+                            });
+
+                            pushAnnotation(annotation);
+                        });
+                    });
+                }
+
+                existingDirtyBySourceKey.forEach((annotation, sourceKey) => {
+                    if (!seenSourceKeys.has(String(sourceKey)) && !deletedPromotedSourceKeys.has(String(sourceKey))) {
+                        pushAnnotation(annotation);
+                    }
+                });
+
+                clearPromotedExtractionAnnotations();
+                hydrated.forEach((annotation) => {
+                    registerAnnotationId(annotation);
+                    annotations.push(annotation);
+                });
+                promotedExtractionHydrated = hydrated.length > 0;
+
+                return hydrated.length;
+            }
+
+            async function bootstrapBoundingBoxEditAnnotationLayer({ force = false } = {}) {
+                if (!boundingBoxEditMode || isImageDocument) {
+                    return 0;
+                }
+
+                if (
+                    !force
+                    && annotations.some((annotation) => annotation?.promotedFromExtraction)
+                    && annotations.some((annotation) => annotation?.savedDatabaseAnnotation)
+                ) {
+                    return annotations.filter((annotation) => annotation?.promotedFromExtraction).length;
+                }
+
+                const {
+                    standaloneSavedAnnotations,
+                    promotedSavedAnnotations,
+                    otherSavedAnnotations,
+                } = await loadSavedTextAnnotationsFromDatabase();
+                const extractionPages = Array.isArray(overlayExtractionData) ? overlayExtractionData : [];
+
+                basePdfUrl = cleanPdfUrl;
+                pdfVersion = Date.now();
+
+                const standaloneSavedAnnotationCount = hydrateSavedTextAnnotations(standaloneSavedAnnotations);
+                const promotedAnnotationCount = hydrateBoundingBoxEditPromotedAnnotations(promotedSavedAnnotations, extractionPages);
+                const otherSavedAnnotationCount = hydrateSavedNonTextAnnotations(otherSavedAnnotations, extractionPages);
+                const autoDetectedCheckboxCount = buildAutoDetectedDrawnCheckboxAnnotations(extractionPages);
+
+                return standaloneSavedAnnotationCount + promotedAnnotationCount + otherSavedAnnotationCount + autoDetectedCheckboxCount;
             }
 
             async function loadSavedTextAnnotationsFromDatabase() {
@@ -13798,7 +15795,9 @@
                         }
                         const absorbedInlineBlocks = absorbedByParent.get(blockNum) || [];
                         const extractedSource = buildPromotedLineEntriesFromExtractionBlock(block, absorbedInlineBlocks, {
-                            excludedLineIndexes: excludedLineIndexesBySourceBlock.get(blockNum) || null,
+                            excludedLineIndexes: mergePromotedExcludedLineIndexes(
+                                excludedLineIndexesBySourceBlock.get(blockNum)
+                            ),
                             transferredMarkerEntries: transfersByTargetBlock.get(blockNum) || [],
                         });
                         if (!extractedSource) {
@@ -14055,7 +16054,9 @@
                         }
                         const absorbedInlineBlocks = absorbedByParent.get(blockNum) || [];
                         const extractedSource = buildPromotedLineEntriesFromExtractionBlock(block, absorbedInlineBlocks, {
-                            excludedLineIndexes: excludedLineIndexesBySourceBlock.get(blockNum) || null,
+                            excludedLineIndexes: mergePromotedExcludedLineIndexes(
+                                excludedLineIndexesBySourceBlock.get(blockNum)
+                            ),
                             transferredMarkerEntries: transfersByTargetBlock.get(blockNum) || [],
                         });
                         if (!extractedSource) {
@@ -14136,7 +16137,9 @@
                             }
                             const absorbedInlineBlocks = absorbedByParent.get(blockNum) || [];
                             const extractedSource = buildPromotedLineEntriesFromExtractionBlock(block, absorbedInlineBlocks, {
-                                excludedLineIndexes: excludedLineIndexesBySourceBlock.get(blockNum) || null,
+                                excludedLineIndexes: mergePromotedExcludedLineIndexes(
+                                    excludedLineIndexesBySourceBlock.get(blockNum)
+                                ),
                                 transferredMarkerEntries: transfersByTargetBlock.get(blockNum) || [],
                             });
                             return pageCount + buildTextAnnotationsFromExtractionBlock(block, pageData, absorbedInlineBlocks, extractedSource).length;
@@ -14147,13 +16150,10 @@
 
             function shouldPreferSavedPromotedSnapshot(savedPromotedAnnotations, extractionPages) {
                 const savedCount = Array.isArray(savedPromotedAnnotations) ? savedPromotedAnnotations.length : 0;
-                const extractedCount = countPromotedExtractionBlocks(extractionPages);
-
-                // If extraction is available, prefer rebuilding promoted annotations
-                // from extraction and then layering saved edits back by source key.
-                // Saved promoted snapshots can contain duplicated split-layout text
-                // artifacts like "meetingsmeetings" or "NY · SFNY · SF".
-                return extractedCount <= 0 && savedCount > 0;
+                // Saved sessions are authoritative for promoted text. If a promoted
+                // snapshot exists for the active session, reload it directly instead
+                // of rebuilding from extraction and reconciling the two states.
+                return savedCount > 0;
             }
 
             async function bootstrapPromotedTextAnnotations({ force = false } = {}) {
@@ -14170,7 +16170,12 @@
                     const extractionPages = await ensureOverlayExtractionDataLoaded();
                     const extractionBlocksAvailable = countPromotedExtractionBlocks(extractionPages) > 0;
                     const hasSavedPromotedAnnotations = Array.isArray(promotedSavedAnnotations) && promotedSavedAnnotations.length > 0;
-                    basePdfUrl = cleanPdfUrl;
+                    basePdfUrl = shouldUseOriginalBaseForSavedAnnotationLayer(
+                        standaloneSavedAnnotations,
+                        promotedSavedAnnotations,
+                        otherSavedAnnotations,
+                        extractionPages
+                    ) ? originalPdfUrl : cleanPdfUrl;
                     pdfVersion = Date.now();
                     const standaloneSavedAnnotationCount = hydrateSavedTextAnnotations(standaloneSavedAnnotations);
                     const promotedAnnotationCount = hasSavedPromotedAnnotations
@@ -14180,7 +16185,6 @@
                         })
                         : (extractionBlocksAvailable
                             ? hydratePromotedAnnotationsFromExtraction(extractionPages, {
-                                savedPromotedAnnotations: promotedSavedAnnotations,
                                 savedStandaloneAnnotations: standaloneSavedAnnotations,
                             })
                             : 0);
@@ -14211,7 +16215,7 @@
                         throw new Error(extractionData?.message || `Failed to load extracted text data (${extractionResponse.status})`);
                     }
 
-                    overlayExtractionData = extractionData.extraction_data;
+                    overlayExtractionData = resolveOverlayExtractionPages(extractionData);
                     if (extractionData.embedded_fonts && typeof extractionData.embedded_fonts === 'object') {
                         overlayEmbeddedFonts = extractionData.embedded_fonts;
                         loadEmbeddedFontFaces(overlayEmbeddedFonts);
@@ -14233,7 +16237,10 @@
                     pdfVersion = Date.now();
                     const standaloneSavedAnnotationCount = hydrateSavedTextAnnotations(standaloneSavedAnnotations);
                     const promotedAnnotationCount = shouldPreferSavedPromotedSnapshot(promotedSavedAnnotations, overlayExtractionData)
-                        ? hydrateSavedPromotedAnnotations(promotedSavedAnnotations)
+                        ? hydrateSavedPromotedAnnotations(promotedSavedAnnotations, {
+                            extractionPages: overlayExtractionData,
+                            savedStandaloneAnnotations: standaloneSavedAnnotations,
+                        })
                         : hydratePromotedAnnotationsFromExtraction(overlayExtractionData, {
                             savedPromotedAnnotations: promotedSavedAnnotations,
                             savedStandaloneAnnotations: standaloneSavedAnnotations,
@@ -14581,7 +16588,11 @@
                     && new Set(liveOverlayFields.map((field) => String(field?.dataset?.pageNumber || ''))).size === 1;
                 if (!selectedAnnotation && !selectedOverlayField) {
                     console.log('No selection, disabling toolbar');
-                    if (selectionLabel) selectionLabel.textContent = overlayEditorActive ? 'Click a text block to edit' : 'No text selected';
+                    if (selectionLabel) {
+                        selectionLabel.textContent = overlayEditorActive
+                            ? (boundingBoxEditMode ? 'Click a text annotation to edit' : 'Click a text block to edit')
+                            : 'No text selected';
+                    }
                     if (selectionControls) selectionControls.classList.add('disabled');
                     if (selectedFont) {
                         selectedFont.value = 'Helvetica';
@@ -14631,6 +16642,7 @@
                     if (selectedColor) selectedColor.disabled = !isText;
                     if (selectedBg) selectedBg.disabled = !isText;
                     if (selectedAlign) selectedAlign.disabled = !isText;
+                    if (selectedValign) selectedValign.disabled = !isText;
                     if (selectedOpacity) selectedOpacity.disabled = !isText;
                     if (selectedDelete) selectedDelete.disabled = false;
                     if (isText) {
@@ -14650,6 +16662,7 @@
                             selectedBg.value = background === 'transparent' ? '#ffffff' : background;
                         }
                         if (selectedAlign) selectedAlign.value = selectedAnnotation.textAlign || 'left';
+                        if (selectedValign) selectedValign.value = selectedAnnotation.verticalAlign || 'top';
                         if (selectedOpacity) {
                             const opacityValue = String(selectedAnnotation.opacity ?? 1);
                             if ([...selectedOpacity.options].some((option) => option.value === opacityValue)) {
@@ -14698,6 +16711,34 @@
                 return selectedOverlayField ? [selectedOverlayField] : [];
             }
 
+            let restoreOverlayFieldSourceGeometry = () => false;
+
+            function syncBoundingBoxFieldMaskState(field) {
+                if (!boundingBoxEditMode || !field || field.dataset.layoutMode !== 'bounding_box_edit') {
+                    return;
+                }
+                const editKey = String(field.dataset.wordIndex || '');
+                const textSpan = field.querySelector('[contenteditable]');
+                const resolvedMaskColor = colorToHex(
+                    field.dataset.backgroundColor
+                    || textSpan?.style?.backgroundColor
+                    || 'transparent'
+                );
+                field.style.setProperty(
+                    '--overlay-field-mask-color',
+                    resolvedMaskColor && resolvedMaskColor !== 'transparent' ? resolvedMaskColor : '#ffffff'
+                );
+                const shouldMaskSourceText = field.classList.contains('editing')
+                    || field.dataset.hasPersistedEdit === '1'
+                    || field.dataset.persisting === '1'
+                    || (!!editKey && overlayEditedFields.has(editKey));
+                if (shouldMaskSourceText) {
+                    field.dataset.maskSourceText = '1';
+                } else {
+                    delete field.dataset.maskSourceText;
+                }
+            }
+
             function deactivateOverlayField(field, options = {}) {
                 if (!field) return;
                 const keepSelected = options.keepSelected === true;
@@ -14710,13 +16751,17 @@
                     ce.classList.remove('editable');
                     ce.contentEditable = false;
                     const fieldKey = String(field.dataset.wordIndex || '');
-                    if (field.dataset.exactGeometry === '1' && !overlayEditedFields.has(fieldKey)) {
+                    const preserveBoundingBoxEditContent = boundingBoxEditMode
+                        && field.dataset.layoutMode === 'bounding_box_edit'
+                        && field.dataset.hasPersistedEdit === '1';
+                    if (field.dataset.exactGeometry === '1' && !overlayEditedFields.has(fieldKey) && !preserveBoundingBoxEditContent) {
                         restoreOverlayFieldSourceGeometry(field, ce);
                     }
                 }
                 if (field.dataset.originalZIndex) {
                     field.style.zIndex = field.dataset.originalZIndex;
                 }
+                syncBoundingBoxFieldMaskState(field);
             }
 
             function activateOverlayField(field) {
@@ -14726,6 +16771,7 @@
                     field.dataset.originalZIndex = field.style.zIndex || '1';
                 }
                 field.style.zIndex = '9999';
+                syncBoundingBoxFieldMaskState(field);
             }
 
             function clearOverlaySelection() {
@@ -18142,26 +20188,28 @@
                     .replace(/\s+/g, '')
                     .trim();
 
-                if (lower.includes('annothelvetica') || lower.includes('arial')) {
+                // Explicit Helvetica substitutes — check FIRST so they always win.
+                if (lower.includes('annothelvetica') || lower.includes('arimo') || lower.includes('nimbussans')) {
                     return 'Helvetica';
                 }
-                if (lower.includes('arimo') || lower.includes('helvetica') || lower.includes('nimbussans')) {
-                    return 'Helvetica';
+                // TrebuchetMS must come before Verdana: its CSS fallback stack includes
+                // Verdana, so processing Verdana first would misidentify TrebuchetMS.
+                if (lower.includes('trebuchet')) {
+                    return 'TrebuchetMS';
                 }
                 if (lower.includes('verdana') || lower.includes('geneva')) {
                     return 'Verdana';
                 }
-                if (lower.includes('trebuchet')) {
-                    return 'TrebuchetMS';
-                }
-                if (lower.includes('gelasio')) {
-                    return 'Georgia';
-                }
-                if (lower.includes('georgia')) {
+                if (lower.includes('gelasio') || lower.includes('georgia')) {
                     return 'Georgia';
                 }
                 if (lower.includes('annotpalatino') || lower.includes('palatino') || lower.includes('bookantiqua')) {
                     return 'Palatino';
+                }
+                // 'timesroman'/'times' must come before 'tinos': TimesRoman's CSS fallback
+                // stack includes "Tinos", so checking 'tinos' first would return Garamond.
+                if (lower.includes('timesroman') || lower.includes('times')) {
+                    return 'TimesRoman';
                 }
                 if (lower.includes('tinos')) {
                     return 'Garamond';
@@ -18169,11 +20217,13 @@
                 if (lower.includes('annotgaramond') || lower.includes('garamond') || lower.includes('baskerville')) {
                     return 'Garamond';
                 }
-                if (lower.includes('times')) {
-                    return 'TimesRoman';
-                }
                 if (lower.includes('courier') || lower.includes('cousine') || lower.includes('mono')) {
                     return 'Courier';
+                }
+                // Generic sans-serif fallbacks (Arial, Helvetica) are checked LAST so
+                // they don't shadow specific fonts whose CSS stacks include Arial.
+                if (lower.includes('arial') || lower.includes('helvetica')) {
+                    return 'Helvetica';
                 }
                 return 'Helvetica';
             }
@@ -18439,6 +20489,43 @@
                 }
             }
 
+            function serializeExactPromotedGeometryLineRichText(lineEl) {
+                if (!(lineEl instanceof HTMLElement)) {
+                    return '';
+                }
+
+                let html = '';
+                const fullLineText = extractAnnotationNodePlainText(lineEl).replace(/\u00A0/g, ' ');
+                let textCursor = 0;
+                const childNodes = Array.from(lineEl.childNodes || []);
+
+                childNodes.forEach((child) => {
+                    const childHtml = serializeAnnotationRichTextNode(child);
+                    if (!childHtml) {
+                        return;
+                    }
+
+                    const childText = extractAnnotationNodePlainText(child).replace(/\u00A0/g, ' ');
+                    if (childText) {
+                        const matchIndex = fullLineText.indexOf(childText, textCursor);
+                        if (matchIndex > textCursor) {
+                            html += escapeAnnotationHtml(fullLineText.slice(textCursor, matchIndex));
+                        }
+                        if (matchIndex >= 0) {
+                            textCursor = matchIndex + childText.length;
+                        }
+                    }
+
+                    html += childHtml;
+                });
+
+                if (textCursor < fullLineText.length) {
+                    html += escapeAnnotationHtml(fullLineText.slice(textCursor));
+                }
+
+                return html;
+            }
+
             function getExactPromotedGeometryLineElements(textEl) {
                 if (!(textEl instanceof HTMLElement) || textEl.dataset?.exactPromotedGeometry !== '1') {
                     return [];
@@ -18469,9 +20556,7 @@
                 lineElements.forEach((lineEl, lineIndex) => {
                     const clonedLine = lineEl.cloneNode(true);
                     trimTrailingWhitespaceFromRichTextNode(clonedLine);
-                    clonedLine.childNodes.forEach((child) => {
-                        html += serializeAnnotationRichTextNode(child);
-                    });
+                    html += serializeExactPromotedGeometryLineRichText(clonedLine);
                     if (lineIndex < lineElements.length - 1) {
                         html += '<br>';
                     }
@@ -18884,6 +20969,33 @@
 
             function getEditorDefaultLineHeightPx(input, fallbackFontSizePx = defaultTextSize, fallbackPageScale = currentScale) {
                 return Math.max(1, getEditorDisplayFontSizePx(input, fallbackFontSizePx, fallbackPageScale) * 1.2);
+            }
+
+            function getStandaloneAnnotationDefaultLineHeightPx(annotation, pageScale = currentScale) {
+                return Math.max(1, getAnnotationDisplayFontSizePx(annotation, pageScale) * 1.2);
+            }
+
+            function normalizeStandaloneTextAnnotationResizeMetrics(annotation, pageScale = currentScale) {
+                if (!annotation || (annotation.type && annotation.type !== 'text') || annotation.promotedFromExtraction) {
+                    return false;
+                }
+
+                let changed = false;
+                const normalizedScale = Math.max(0.0001, Number(pageScale) || currentScale || 1);
+                const defaultLineHeightPdf = getStandaloneAnnotationDefaultLineHeightPx(annotation, normalizedScale) / normalizedScale;
+                const storedLineHeightPdf = Number(annotation.lineHeight) || 0;
+
+                if (!(storedLineHeightPdf > 0) || storedLineHeightPdf > (defaultLineHeightPdf + 0.01)) {
+                    annotation.lineHeight = defaultLineHeightPdf;
+                    changed = true;
+                }
+
+                if ((annotation.verticalAlign || 'top') !== 'top') {
+                    annotation.verticalAlign = 'top';
+                    changed = true;
+                }
+
+                return changed;
             }
 
             function readRichEditorBaseStyles(input, fallback = {}) {
@@ -19530,7 +21642,7 @@
                         target.style.height = '100%';
                         target.style.padding = '0';
                         target.style.whiteSpace = 'normal';
-                        target.style.overflow = 'visible';
+                        target.style.overflow = 'hidden';
 
                         const fragment = document.createDocumentFragment();
                         lineEntries.forEach((entry) => {
@@ -19548,6 +21660,8 @@
                             lineEl.style.lineHeight = `${Math.max(1, (lineBottom - lineTop) * currentScale)}px`;
                             lineEl.style.padding = '0';
                             lineEl.style.margin = '0';
+                            lineEl.style.maxWidth = '100%';
+                            lineEl.style.overflow = 'hidden';
 
                             if (Array.isArray(entry.richSegments) && entry.richSegments.length) {
                                 entry.richSegments.forEach((richSegment) => {
@@ -19828,7 +21942,16 @@
                         annotation.element.style.backgroundColor = hasBounds ? annotationContainerBackgroundColor : 'transparent';
                     }
                     if (textWrapper) {
-                        textWrapper.style.display = hasBounds ? 'block' : 'inline-block';
+                        if (hasBounds && !promotedExtraction) {
+                            const vAlign = annotation.verticalAlign || 'top';
+                            textWrapper.style.display = 'flex';
+                            textWrapper.style.flexDirection = 'column';
+                            textWrapper.style.justifyContent = vAlign === 'bottom' ? 'flex-end' : (vAlign === 'middle' ? 'center' : 'flex-start');
+                        } else {
+                            textWrapper.style.display = hasBounds ? 'block' : 'inline-block';
+                            textWrapper.style.flexDirection = '';
+                            textWrapper.style.justifyContent = '';
+                        }
                         textWrapper.style.width = hasBounds ? '100%' : 'auto';
                         textWrapper.style.height = hasBounds ? '100%' : 'auto';
                         textWrapper.style.padding = hasBounds
@@ -20189,6 +22312,49 @@
                 );
             }
 
+            function getRenderedPageCssDimension(overlay, canvas, dimension, fallbackValue = 0) {
+                const overlayDimension = dimension === 'width'
+                    ? Number(overlay?.clientWidth)
+                    : Number(overlay?.clientHeight);
+                if (overlayDimension > 0) {
+                    return overlayDimension;
+                }
+
+                const canvasStyleDimension = parseFloat(
+                    dimension === 'width'
+                        ? String(canvas?.style?.width || '')
+                        : String(canvas?.style?.height || '')
+                );
+                if (canvasStyleDimension > 0) {
+                    return canvasStyleDimension;
+                }
+
+                if (canvas instanceof HTMLElement) {
+                    const rect = canvas.getBoundingClientRect();
+                    const rectDimension = dimension === 'width' ? Number(rect.width) : Number(rect.height);
+                    if (rectDimension > 0) {
+                        return rectDimension;
+                    }
+                }
+
+                const backingDimension = dimension === 'width'
+                    ? Number(canvas?.width)
+                    : Number(canvas?.height);
+                if (backingDimension > 0) {
+                    return backingDimension / Math.max(1, Number(window.devicePixelRatio) || 1);
+                }
+
+                return Math.max(0, Number(fallbackValue) || 0);
+            }
+
+            function buildPageInfoForRender(overlay, canvas, { scale = currentScale, fallbackWidth = 0, fallbackHeight = 0 } = {}) {
+                return {
+                    scale,
+                    canvasWidth: getRenderedPageCssDimension(overlay, canvas, 'width', fallbackWidth),
+                    canvasHeight: getRenderedPageCssDimension(overlay, canvas, 'height', fallbackHeight),
+                };
+            }
+
             function getTextAnnotationTopPx(annotation, pageInfo) {
                 if (annotationHasBounds(annotation)) {
                     return pageInfo.canvasHeight - ((annotation.pdfY + annotation.pdfHeight) * pageInfo.scale);
@@ -20248,6 +22414,41 @@
                 const measuredHeight = probe.getBoundingClientRect().height || lineHeightPx;
                 probe.remove();
                 return Math.max(1, Math.round(measuredHeight / Math.max(lineHeightPx, 1)));
+            }
+
+            /**
+             * Measures the natural (unconstrained) rendered height of the content inside
+             * a tbc-input contenteditable div by cloning its styles and HTML into a
+             * probe element with no min-height / height constraints.
+             * Used so the annotation bounding box always collapses to fit the text.
+             */
+            function measureInputContentHeight(input) {
+                if (!input) return 0;
+                const cs = window.getComputedStyle(input);
+                const probe = document.createElement('div');
+                probe.style.position = 'absolute';
+                probe.style.visibility = 'hidden';
+                probe.style.pointerEvents = 'none';
+                probe.style.left = '-99999px';
+                probe.style.top = '-99999px';
+                probe.style.width = `${Math.max(1, input.offsetWidth || 1)}px`;
+                probe.style.boxSizing = 'border-box';
+                probe.style.padding = cs.padding;
+                probe.style.fontFamily = cs.fontFamily;
+                probe.style.fontSize = cs.fontSize;
+                probe.style.fontWeight = cs.fontWeight;
+                probe.style.fontStyle = cs.fontStyle;
+                probe.style.letterSpacing = cs.letterSpacing;
+                probe.style.lineHeight = cs.lineHeight;
+                probe.style.textAlign = cs.textAlign;
+                probe.style.whiteSpace = cs.whiteSpace || 'pre-wrap';
+                probe.style.overflowWrap = cs.overflowWrap || 'break-word';
+                probe.style.wordBreak = cs.wordBreak || 'normal';
+                probe.innerHTML = input.innerHTML;
+                document.body.appendChild(probe);
+                const h = probe.getBoundingClientRect().height;
+                probe.remove();
+                return Math.max(1, h);
             }
 
             function shouldKeepTextAnnotationBounds({ text, input, dragW, dragH, editAnnotation }) {
@@ -20825,10 +23026,9 @@
                         pendingPageData.scale = currentScale;
                         pendingPageData.overlay = overlay;
                         
-                        const pageInfo = {
+                        const pageInfo = buildPageInfoForRender(overlay, blankCanvas, {
                             scale: currentScale,
-                            canvasHeight: blankCanvas.height,
-                        };
+                        });
                         
                         // Click handler for deselect when not in text mode
                         overlay.addEventListener('click', (event) => {
@@ -21025,7 +23225,10 @@
                             addAnnotationElement(blankPageEl, annotation, pageInfo);
                             pendingDrawingShape.element.remove();
                             pendingDrawingShape = null;
+                            toolMode = 'edit-text';
                             setTimeout(() => {
+                                updateModeButtons();
+                                updateEditTextBanner();
                                 setSelection(annotation);
                                 setStatus('Shape added to new page. Click Save to keep changes.', 'ok');
                             }, 10);
@@ -21100,8 +23303,9 @@
                             addAnnotationElement(blankPageEl, annotation, pageInfo);
                             pendingDrawingTable.element.remove();
                             pendingDrawingTable = null;
-                            toolMode = 'select';
+                            toolMode = 'edit-text';
                             updateModeButtons();
+                            updateEditTextBanner();
                             setSelection(annotation);
                             setStatus('Table added to new page. Click Save to keep changes.', 'ok');
                         });
@@ -21385,10 +23589,16 @@
                 annotations.push(annotation);
                 persistAnnotations();
                 updateAnnotationsList();
-                addAnnotationElement(wrapper, annotation, {
-                    scale: currentScale,
-                    canvasHeight: canvas.height,
-                });
+                addAnnotationElement(
+                    wrapper,
+                    annotation,
+                    buildPageInfoForRender(overlay, canvas, { scale: currentScale })
+                );
+                if (annotationInteractionsRequireEditTextMode({ type })) {
+                    toolMode = 'edit-text';
+                    updateModeButtons();
+                    updateEditTextBanner();
+                }
                 setSelection(annotation);
                 saveAnnotationToDatabase(annotation);
                 setStatus(statusMessage, 'ok');
@@ -21463,6 +23673,11 @@
                 persistAnnotations();
                 updateAnnotationsList();
                 addAnnotationElement(wrapper, annotation, pageInfo);
+                if (annotationInteractionsRequireEditTextMode(annotation)) {
+                    toolMode = 'edit-text';
+                    updateModeButtons();
+                    updateEditTextBanner();
+                }
                 setSelection(annotation);
                 saveAnnotationToDatabase(annotation);
                 setStatus(statusMessage, 'ok');
@@ -22530,6 +24745,18 @@
                 if (!annotation?.promotedFromExtraction || annotation?.promotedReflowEnabled) {
                     return false;
                 }
+                // When the annotation text has been changed from the original source text, skip
+                // exact geometry rendering entirely — the source span positions no longer match
+                // the edited content and would render the original text instead of the edit.
+                // Compare against annotation.originalText (not getCanonicalPromotedAnnotationSourceText)
+                // because syncPromotedAnnotationSourceTextLines mutates sourceTextLines to the new text
+                // after an edit, making the canonical source text equal the edited text — defeating the guard.
+                if (
+                    annotation.promotedDirty
+                    && sanitizePromotedExtractionText(annotation.text || '') !== sanitizePromotedExtractionText(annotation.originalText || '')
+                ) {
+                    return false;
+                }
                 if (!annotationHasBounds(annotation)) {
                     return false;
                 }
@@ -22583,6 +24810,9 @@
                             updateAnnotationsList();
                         }
                         console.log('Annotation saved to database:', annotation.id);
+                        if (layoutMode === 'new_writer' && annotation.db_id) {
+                            renderWithNewWriter(annotation.pageIndex);
+                        }
                     } else {
                         console.error('Failed to save annotation to database', result?.message || response.statusText);
                     }
@@ -22627,6 +24857,81 @@
                 }).catch(e => console.warn('Failed to bulk-delete annotations from DB:', e));
             }
 
+            // ── new_writer: server-side render a page using the Python annotation writer ──
+            // Called after annotations with db_id are saved/loaded. Paints the
+            // writer-rendered PNG over the PDF.js canvas so the editor shows
+            // pixel-accurate writer output when layoutMode === 'new_writer'.
+            let _writerRenderPending = {};
+            async function renderWithNewWriter(pageIndex) {
+                if (layoutMode !== 'new_writer') return;
+
+                const pi = Number(pageIndex) || 0;
+                // Debounce: multiple rapid saves on the same page collapse into one fetch
+                if (_writerRenderPending[pi]) return;
+                _writerRenderPending[pi] = true;
+                await new Promise(r => setTimeout(r, 80));
+                _writerRenderPending[pi] = false;
+
+                const ids = annotations
+                    .filter(a => (Number(a.pageIndex) || 0) === pi && a.db_id)
+                    .map(a => a.db_id);
+
+                if (ids.length === 0) return;
+
+                try {
+                    const url = '{{ route('pdfTests.renderAnnotations', $document) }}';
+                    const resp = await fetch(url, {
+                        method: 'POST',
+                        headers: {
+                            Accept: 'application/json',
+                            'X-CSRF-TOKEN': csrfToken,
+                        },
+                        credentials: 'same-origin',
+                        body: new URLSearchParams({
+                            state_ids: ids.join(','),
+                            page_index: String(pi),
+                            dpi: '150',
+                        }),
+                    });
+                    const data = await resp.json().catch(() => ({}));
+                    if (!data.success || !data.image) return;
+
+                    const wrapper = viewer.querySelector(`.page[data-page-index="${pi}"]`);
+                    if (!wrapper) return;
+                    const canvas = wrapper.querySelector('canvas');
+                    if (!canvas) return;
+
+                    const img = new Image();
+                    img.onload = () => {
+                        // Scale writer PNG to existing canvas size so HTML annotation
+                        // overlay positions remain accurate (do not resize the canvas).
+                        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+                    };
+                    img.src = 'data:image/png;base64,' + data.image;
+                } catch (e) {
+                    console.warn('renderWithNewWriter failed:', e);
+                }
+            }
+
+            // Ensures all annotations on a page have db_ids by saving unsaved ones,
+            // then fires renderWithNewWriter. Used on initial page load in new_writer mode
+            // so the writer renders all annotations, not just those already in DB.
+            async function flushPageAnnotationsForNewWriter(pageIndex) {
+                if (layoutMode !== 'new_writer') return;
+                const pi = Number(pageIndex) || 0;
+                const unsaved = annotations.filter(a => (Number(a.pageIndex) || 0) === pi && !a.db_id);
+                if (unsaved.length > 0) {
+                    await Promise.all(unsaved.map(a => saveAnnotationToDatabase(a, { markPromotedDirty: false, markAnnotationPageDirty: false })));
+                }
+                renderWithNewWriter(pi);
+            }
+
+            async function flushAllAnnotationsForNewWriter() {
+                if (layoutMode !== 'new_writer') return;
+                const pages = [...new Set(annotations.map(a => Number(a.pageIndex) || 0))];
+                await Promise.all(pages.map(pi => flushPageAnnotationsForNewWriter(pi)));
+            }
+
             function isPdfJsRenderingCancelledError(error) {
                 if (!error || typeof error !== 'object') {
                     return false;
@@ -22649,6 +24954,9 @@
                     await renderPdf();
                     // Re-apply gridlines after re-render
                     if (typeof renderGridlines === 'function') renderGridlines();
+                    if (layoutMode === 'new_writer') {
+                        flushAllAnnotationsForNewWriter();
+                    }
                 } catch (err) {
                     if (isPdfJsRenderingCancelledError(err)) {
                         console.debug('rerenderPdf cancelled by a newer render', err);
@@ -22748,6 +25056,7 @@
                 const etbItalic = document.getElementById('etb-italic');
                 const etbUnderline = document.getElementById('etb-underline');
                 const etbAlign = document.getElementById('etb-align');
+                const etbValign = document.getElementById('etb-valign');
                 return {
                     fontFamily: etbFont ? etbFont.value : defaultTextFont,
                     fontSizePx: etbSize ? bannerSliderValueToFontSizePx(etbSize.value || editTextBannerSliderMid) : defaultTextSize,
@@ -22758,6 +25067,7 @@
                     fontStyle: (etbItalic && etbItalic.classList.contains('active')) ? 'italic' : 'normal',
                     underline: etbUnderline ? etbUnderline.classList.contains('active') : false,
                     textAlign: etbAlign ? etbAlign.value : 'left',
+                    verticalAlign: etbValign ? etbValign.value : 'top',
                 };
             }
 
@@ -22868,7 +25178,7 @@
                         input.style.height = '100%';
                     }
                 }
-                if (editingPromotedExtraction && preservePromotedLinesInEditor) {
+                if (editingPromotedExtraction && preservePromotedLinesInEditor && editAnnotation?.promotedReflowEnabled) {
                     input.style.padding = '0';
                     input.style.whiteSpace = 'pre';
                     input.style.overflowWrap = 'normal';
@@ -22916,9 +25226,18 @@
                     input.style.transform = sourceWrapper?.style.transform || '';
                     input.style.transformOrigin = sourceWrapper?.style.transformOrigin || 'center center';
                     if (sourceWrapperComputedStyle) {
-                        input.style.display = sourceWrapperComputedStyle.display || input.style.display;
+                        // Do NOT copy display from the wrapper — it may be 'flex' (used for vertical
+                        // alignment) which would break text layout inside a contenteditable div.
+                        input.style.display = 'block';
                         input.style.boxSizing = sourceWrapperComputedStyle.boxSizing || input.style.boxSizing;
                         input.style.overflow = sourceWrapperComputedStyle.overflow || input.style.overflow;
+                        // The wrapper's padding is the true inset for has-bounds annotations.
+                        // Use it for the editor input so text sits at the same position in
+                        // both display state and edit state (no jump on enter/exit).
+                        const wrapperPad = sourceWrapperComputedStyle.padding;
+                        if (wrapperPad && wrapperPad !== '0px') {
+                            input.style.padding = wrapperPad;
+                        }
                     }
                 }
                 const buildSplitPromotedAnnotationEditorLayout = () => {
@@ -23471,6 +25790,73 @@
                 if (editAnnotation) {
                     if (!appliedSplitLayout) {
                         setRichEditableContent(input, editAnnotation.text, editAnnotation.richTextHtml || '', editAnnotation);
+                        // For promoted annotations where some source lines have a significant
+                        // x-offset from the block left edge (e.g. dot-leader continuation lines
+                        // that sit at 55-95% of the line width), convert the flat BR-based
+                        // content into per-line <p> blocks with CSS margin-left so these offset
+                        // lines appear at their correct visual position in the TBC editor.
+                        //
+                        // margin-left on <p>/<div> elements is NOT captured by
+                        // serializeAnnotationRichTextNode (which only extracts span-level
+                        // color/font styling), so this visual indentation does not bleed into
+                        // the committed annotation.richTextHtml.  The committed text is read
+                        // back via getOverlayExplicitText → innerText, which reflects the
+                        // visual text without the margin offset.
+                        if (
+                            editingPromotedExtraction
+                            && editAnnotation?.promotedFromExtraction
+                            && !editAnnotation.richTextHtml
+                            && !editAnnotation.promotedDirty
+                        ) {
+                            const sourceMeta = getPromotedAnnotationSourceMeta(editAnnotation);
+                            const sourceLineBBoxes = Array.isArray(sourceMeta?.sourceLineBBoxes)
+                                ? sourceMeta.sourceLineBBoxes
+                                    .filter((bbox) => Array.isArray(bbox) && bbox.length >= 4)
+                                    .map((bbox) => bbox.map((v) => Number(v) || 0))
+                                : [];
+                            if (sourceLineBBoxes.length > 0) {
+                                const blockLeft = Number(sourceMeta?.sourceBlockLeft ?? editAnnotation.pdfX)
+                                    || (sourceLineBBoxes[0][0] || 0);
+                                const lineOffsets = sourceLineBBoxes.map(
+                                    (bbox) => Math.max(0, (bbox[0] - blockLeft) * editorPageScale)
+                                );
+                                if (lineOffsets.some((offset) => offset > 8)) {
+                                    // Split flat BR content into per-source-line node batches.
+                                    // setRichEditableContent produces: textNode, BR, textNode, BR, ...
+                                    // (one BR per line boundary, no textNode for empty lines).
+                                    const lineNodeBatches = [];
+                                    let nodeBatch = [];
+                                    Array.from(input.childNodes).forEach((node) => {
+                                        if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'BR') {
+                                            lineNodeBatches.push(nodeBatch);
+                                            nodeBatch = [];
+                                        } else {
+                                            nodeBatch.push(node);
+                                        }
+                                    });
+                                    lineNodeBatches.push(nodeBatch);
+                                    // Rebuild as <p> blocks; lines with a significant left offset
+                                    // receive a margin-left to match their extracted x position.
+                                    input.innerHTML = '';
+                                    lineNodeBatches.forEach((lineNodes, idx) => {
+                                        const p = document.createElement('p');
+                                        p.style.margin = '0';
+                                        p.style.padding = '0';
+                                        const offset = lineOffsets[idx] || 0;
+                                        if (offset > 8) {
+                                            p.style.marginLeft = `${offset}px`;
+                                        }
+                                        if (lineNodes.length === 0) {
+                                            // Empty source line: a lone <br> keeps the line height.
+                                            p.appendChild(document.createElement('br'));
+                                        } else {
+                                            lineNodes.forEach((node) => p.appendChild(node));
+                                        }
+                                        input.appendChild(p);
+                                    });
+                                }
+                            }
+                        }
                     }
                 }
                 
@@ -23966,7 +26352,9 @@
                         const boxLeft = parseFloat(box.style.left);
                         const boxTop = parseFloat(box.style.top);
                         const boxW = box.offsetWidth;
-                        const boxH = box.offsetHeight;
+                        // Use the natural content height (not the possibly-larger editor box
+                        // height) so the annotation bounding box always collapses to fit the text.
+                        const boxH = measureInputContentHeight(input);
                         const baseStyles = readRichEditorBaseStyles(input, {
                             fontFamily,
                             fontSizePx,
@@ -24149,6 +26537,7 @@
                                 fontStyle: baseStyles.fontStyle,
                                 underline: baseStyles.underline,
                                 textAlign: baseStyles.textAlign,
+                                verticalAlign: baseStyles.verticalAlign || 'top',
                                 opacity: baseStyles.opacityVal,
                                 rotation: 0,
                                 ...(normalizedLineHeight > 0 ? { lineHeight: normalizedLineHeight } : {}),
@@ -24166,7 +26555,9 @@
                             updateAnnotationsList();
                             addAnnotationElement(wrapper, annotation, pageInfo);
                             saveAnnotationToDatabase(annotation);
-                            maybeExitTextPlacementMode();
+                            toolMode = 'edit-text';
+                            updateModeButtons();
+                            updateEditTextBanner();
                             setSelection(annotation);
                             setStatus('Text added. Click Save to keep changes.', 'ok');
                         }
@@ -24485,6 +26876,7 @@
                 let fieldSelectCaret = null;
                 let fieldListItems = null;
                 let fieldSelectConfigPanel = null;
+                const pageCanvas = wrapper.querySelector('canvas');
                 if (isImageBackedAnnotationType(annotation.type)) {
                     annotationImage = document.createElement('img');
                     annotationImage.src = getAnnotationImageDataUrl(annotation);
@@ -24915,7 +27307,7 @@
                     // Create action bar with 4 buttons
                     const actionBar = document.createElement('div');
                     actionBar.className = 'shape-action-bar';
-                    actionBar.style.cssText = 'position: absolute; top: -34px; left: 50%; transform: translateX(-50%); background: rgba(11, 19, 32, 0.95); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; padding: 4px; display: none; gap: 4px; z-index: 20; box-shadow: 0 4px 12px rgba(0,0,0,0.4);';
+                    actionBar.style.cssText = 'position: absolute; top: -54px; left: 50%; transform: translateX(-50%); background: rgba(11, 19, 32, 0.95); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; padding: 4px; display: none; gap: 4px; z-index: 20; box-shadow: 0 4px 12px rgba(0,0,0,0.4);';
                     
                     const createActionButton = (icon, title, color) => {
                         const btn = document.createElement('button');
@@ -25808,6 +28200,9 @@
                             e.stopPropagation();
                             e.preventDefault();
                             label.dataset.resizing = 'true';
+                            if (normalizeStandaloneTextAnnotationResizeMetrics(annotation)) {
+                                applyAnnotationStyle(annotation);
+                            }
                             if (annotation.promotedFromExtraction && !annotation.promotedReflowEnabled) {
                                 annotation.promotedReflowEnabled = true;
                                 annotation.text = toPromotedReflowText(annotation.text);
@@ -25821,21 +28216,70 @@
                             const startLeft = label.offsetLeft;
                             const startTop = label.offsetTop;
                             const dir = pos.dir;
+
+                            // Measure the natural height of the annotation text content
+                            // at a given label width — used to auto-expand height on horizontal resize.
+                            const probeContentHeightAtWidth = (widthPx) => {
+                                const wrapperEl = label.querySelector('.text-content-wrapper');
+                                const textEl = label.querySelector('.annotation-text') || wrapperEl;
+                                if (!textEl) return 16;
+                                const wcs = window.getComputedStyle(wrapperEl || textEl);
+                                const tcs = window.getComputedStyle(textEl);
+                                const probe = document.createElement('div');
+                                probe.style.position = 'absolute';
+                                probe.style.visibility = 'hidden';
+                                probe.style.pointerEvents = 'none';
+                                probe.style.left = '-99999px';
+                                probe.style.top = '-99999px';
+                                probe.style.width = `${Math.max(1, widthPx)}px`;
+                                probe.style.padding = wcs.padding;
+                                probe.style.boxSizing = 'border-box';
+                                probe.style.fontFamily = tcs.fontFamily;
+                                probe.style.fontSize = tcs.fontSize;
+                                probe.style.fontWeight = tcs.fontWeight;
+                                probe.style.fontStyle = tcs.fontStyle;
+                                probe.style.letterSpacing = tcs.letterSpacing;
+                                probe.style.lineHeight = (!annotation.promotedFromExtraction && (!annotation.type || annotation.type === 'text'))
+                                    ? `${getStandaloneAnnotationDefaultLineHeightPx(annotation)}px`
+                                    : tcs.lineHeight;
+                                probe.style.textAlign = tcs.textAlign;
+                                probe.style.whiteSpace = tcs.whiteSpace || 'pre-wrap';
+                                probe.style.overflowWrap = tcs.overflowWrap || 'break-word';
+                                probe.style.wordBreak = tcs.wordBreak || 'normal';
+                                probe.innerHTML = textEl.innerHTML;
+                                document.body.appendChild(probe);
+                                const h = probe.getBoundingClientRect().height;
+                                probe.remove();
+                                return Math.max(16, h);
+                            };
                             
                             const onResizeMove = (me) => {
                                 const dx = me.clientX - startX;
                                 const dy = me.clientY - startY;
                                 let nw = startW, nh = startH, nl = startLeft, nt = startTop;
+                                const minStartHeight = probeContentHeightAtWidth(startW);
                                 if (dir.includes('e')) nw = Math.max(30, startW + dx);
                                 if (dir.includes('w')) {
                                     nw = Math.max(30, startW - dx);
                                     nl = startLeft + (startW - nw);
                                 }
                                 if (dir.includes('n')) {
-                                    nh = Math.max(16, startH - dy);
+                                    nh = Math.max(minStartHeight, startH - dy);
                                     nt = startTop + (startH - nh);
                                 }
-                                if (dir.includes('s')) nh = Math.max(16, startH + dy);
+                                if (dir.includes('s')) nh = Math.max(minStartHeight, startH + dy);
+
+                                // For purely horizontal resizes (E or W), auto-expand the height
+                                // to contain all the text and collapse spare whitespace.
+                                const contentH = probeContentHeightAtWidth(nw);
+                                if (dir === 'e' || dir === 'w') {
+                                    nh = contentH;
+                                } else if (dir === 'n' && nh < contentH) {
+                                    nh = contentH;
+                                    nt = startTop + (startH - nh);
+                                } else if (dir === 's' && nh < contentH) {
+                                    nh = contentH;
+                                }
 
                                 // Keep text bounds fully inside page overlay.
                                 const maxW = overlay.clientWidth;
@@ -25877,6 +28321,7 @@
                                 label.style.top = nt + 'px';
                                 annotation.keepBounds = true;
                                 setTextAnnotationBounds(annotation, pageInfo, nl, nt, nw, nh);
+                                normalizeStandaloneTextAnnotationResizeMetrics(annotation);
                             };
                             const onResizeUp = () => {
                                 delete label.dataset.resizing;
@@ -25884,6 +28329,7 @@
                                 label.classList.toggle('has-bounds', annotationHasBounds(annotation));
                                 window.removeEventListener('pointermove', onResizeMove);
                                 window.removeEventListener('pointerup', onResizeUp);
+                                applyAnnotationStyle(annotation);
                                 persistAnnotations();
                                 saveAnnotationToDatabase(annotation);
                                 setStatus('Text resized. Click Save to keep changes.', 'ok');
@@ -25913,14 +28359,42 @@
                 }
 
                 const updatePosition = () => {
+                    const resolvedPageWidth = getRenderedPageCssDimension(overlay, pageCanvas, 'width', pageInfo?.canvasWidth);
+                    const resolvedPageHeight = getRenderedPageCssDimension(overlay, pageCanvas, 'height', pageInfo?.canvasHeight);
+                    const applyRenderedBounds = (leftPx, topPx, widthPx = null, heightPx = null) => {
+                        let nextLeft = Number(leftPx) || 0;
+                        let nextTop = Number(topPx) || 0;
+                        let nextWidth = Number(widthPx);
+                        let nextHeight = Number(heightPx);
+
+                        if (resolvedPageWidth > 0 && Number.isFinite(nextWidth)) {
+                            nextWidth = Math.max(1, Math.min(nextWidth, resolvedPageWidth));
+                            nextLeft = Math.max(0, Math.min(nextLeft, Math.max(0, resolvedPageWidth - nextWidth)));
+                        }
+                        if (resolvedPageHeight > 0 && Number.isFinite(nextHeight)) {
+                            nextHeight = Math.max(1, Math.min(nextHeight, resolvedPageHeight));
+                            nextTop = Math.max(0, Math.min(nextTop, Math.max(0, resolvedPageHeight - nextHeight)));
+                        }
+
+                        label.style.left = `${nextLeft}px`;
+                        label.style.top = `${nextTop}px`;
+                        if (Number.isFinite(nextWidth)) {
+                            label.style.width = `${nextWidth}px`;
+                        }
+                        if (Number.isFinite(nextHeight)) {
+                            label.style.height = `${nextHeight}px`;
+                        }
+                    };
                     const x = annotation.pdfX * pageInfo.scale;
                     if (isImageBackedAnnotationType(annotation.type)) {
                         const width = annotation.pdfWidth * pageInfo.scale;
                         const height = annotation.pdfHeight * pageInfo.scale;
-                        label.style.left = x + 'px';
-                        label.style.top = (pageInfo.canvasHeight - (annotation.pdfY + annotation.pdfHeight) * pageInfo.scale) + 'px';
-                        label.style.width = width + 'px';
-                        label.style.height = height + 'px';
+                        applyRenderedBounds(
+                            x,
+                            pageInfo.canvasHeight - (annotation.pdfY + annotation.pdfHeight) * pageInfo.scale,
+                            width,
+                            height
+                        );
                         if (annotationImage) {
                             annotationImage.style.width = '100%';
                             annotationImage.style.height = '100%';
@@ -25929,10 +28403,7 @@
                         const width = annotation.pdfWidth * pageInfo.scale;
                         const height = annotation.pdfHeight * pageInfo.scale;
                         const y = pageInfo.canvasHeight - (annotation.pdfY + annotation.pdfHeight) * pageInfo.scale;
-                        label.style.left = x + 'px';
-                        label.style.top = y + 'px';
-                        label.style.width = width + 'px';
-                        label.style.height = height + 'px';
+                        applyRenderedBounds(x, y, width, height);
                         // Apply rotation to SVG only, not the label
                         if (annotation.shapeSvg) {
                             annotation.shapeSvg.style.transform = annotation.rotation ? `rotate(${annotation.rotation}deg)` : '';
@@ -25947,35 +28418,29 @@
                         const width = annotation.pdfWidth * pageInfo.scale;
                         const height = annotation.pdfHeight * pageInfo.scale;
                         const y = pageInfo.canvasHeight - (annotation.pdfY + annotation.pdfHeight) * pageInfo.scale;
-                        label.style.left = x + 'px';
-                        label.style.top = y + 'px';
-                        label.style.width = width + 'px';
-                        label.style.height = height + 'px';
+                        applyRenderedBounds(x, y, width, height);
                     } else if (annotation.type === 'field') {
                         const width = annotation.pdfWidth * pageInfo.scale;
                         const height = annotation.pdfHeight * pageInfo.scale;
                         const y = pageInfo.canvasHeight - (annotation.pdfY + annotation.pdfHeight) * pageInfo.scale;
-                        label.style.left = x + 'px';
-                        label.style.top = y + 'px';
-                        label.style.width = width + 'px';
-                        label.style.height = height + 'px';
+                        applyRenderedBounds(x, y, width, height);
                     } else if (annotation.type === 'eraser') {
                         const width = annotation.pdfWidth * pageInfo.scale;
                         const height = annotation.pdfHeight * pageInfo.scale;
                         const y = pageInfo.canvasHeight - (annotation.pdfY + annotation.pdfHeight) * pageInfo.scale;
-                        label.style.left = x + 'px';
-                        label.style.top = y + 'px';
-                        label.style.width = width + 'px';
-                        label.style.height = height + 'px';
+                        applyRenderedBounds(x, y, width, height);
                     } else {
                         const y = getTextAnnotationTopPx(annotation, pageInfo);
-                        label.style.left = x + 'px';
-                        label.style.top = y + 'px';
+                        applyRenderedBounds(x, y);
                         label.style.fontSize = getAnnotationDisplayFontSizePx(annotation, pageInfo.scale) + 'px';
                         // Apply bounding box if present
                         if (annotationHasBounds(annotation)) {
-                            label.style.width = (annotation.pdfWidth * pageInfo.scale) + 'px';
-                            label.style.height = (annotation.pdfHeight * pageInfo.scale) + 'px';
+                            applyRenderedBounds(
+                                x,
+                                y,
+                                annotation.pdfWidth * pageInfo.scale,
+                                annotation.pdfHeight * pageInfo.scale
+                            );
                         } else {
                             label.style.width = '';
                             label.style.height = '';
@@ -26009,6 +28474,7 @@
                 let dragStart = null;
                 let dragMoved = false;
                 let dragFromMenu = false;
+                let wasAlreadySelectedAtPointerDown = false;
 
                 const onPointerMove = (event) => {
                     if (!dragStart) {
@@ -26058,7 +28524,20 @@
                         setSelection(annotation);
                         setStatus(`${getAnnotationTypeLabel(annotation)} moved. Click Save to keep changes.`, 'ok');
                     } else {
+                        // In edit-text mode: first click selects (move/resize), second click
+                        // on an already-selected annotation enters edit mode.
                         setSelection(annotation);
+                        if (
+                            toolMode === 'edit-text'
+                            && isTextAnnotationType(annotation)
+                            && wasAlreadySelectedAtPointerDown
+                            && (!activeEditor || activeEditor._annotationId !== annotation.id)
+                        ) {
+                            startInlineEdit(wrapper, annotation, {
+                                caretClientX: upEvent.clientX,
+                                caretClientY: upEvent.clientY,
+                            });
+                        }
                     }
                     queueSelectedAnnotationMenuPlacement();
                 };
@@ -26128,6 +28607,9 @@
 
                 label.addEventListener('pointerdown', (event) => {
                     const moveButtonRequested = Boolean(event.target.closest('[title="Move"]'));
+                    // Capture BEFORE any setSelection() calls below so onPointerUp
+                    // can distinguish a first-click (select) from a second-click (edit).
+                    wasAlreadySelectedAtPointerDown = selectedAnnotation === annotation;
                     if (event.target === deleteBtn) {
                         return;
                     }
@@ -26192,26 +28674,22 @@
 
                     if (isTextAnnotationType(annotation) && !moveButtonRequested) {
                         if (selectedAnnotation !== annotation) {
-                            setSelection(annotation);
-                        }
-                        startAnnotationDrag(event);
-                        return;
-                    }
-
-                    // For shape-like annotations: check if in ACTIVE state (action bar visible = selected)
-                    if (isDraggableOverlayAnnotation(annotation)) {
-                        const actionBar = label.querySelector('.shape-action-bar');
-                        const isActive = actionBar && actionBar.style.display === 'flex';
-                        
-                        if (!isActive) {
-                            // Annotation is INACTIVE - just select it, don't start dragging
                             event.preventDefault();
                             setSelection(annotation);
                             return;
                         }
-                        // Annotation is ACTIVE - allow dragging to proceed
+                        return;
                     }
-                    
+
+                    // For shape-like annotations: select first if not already active,
+                    // but still begin the drag immediately so a fast click-drag works.
+                    if (isDraggableOverlayAnnotation(annotation)) {
+                        if (selectedAnnotation !== annotation) {
+                            setSelection(annotation);
+                        }
+                        // Fall through to startAnnotationDrag below
+                    }
+
                     startAnnotationDrag(event);
                 });
 
@@ -26334,10 +28812,9 @@
                     labels.forEach(label => label.remove());
                     
                     // Build pageInfo from canvas
-                    const pageInfo = {
+                    const pageInfo = buildPageInfoForRender(overlay, canvas, {
                         scale: currentScale,
-                        canvasHeight: canvas.height,
-                    };
+                    });
                     
                     // Re-add them in order
                     const pageAnnotations = annotations.filter(a => a.pageIndex === pageIndex);
@@ -26450,10 +28927,9 @@
                 updatePageControls();
                 addPageThumbnail(1, canvas);
 
-                const pageInfo = {
+                const pageInfo = buildPageInfoForRender(overlay, canvas, {
                     scale: currentScale,
-                    canvasHeight: canvas.height,
-                };
+                });
 
                 // Render existing annotations
                 annotations
@@ -26664,7 +29140,10 @@
                         updateAnnotationsList();
                         drawingShape.wrapper.remove();
                         addAnnotationElement(wrapper, ann, pageInfo);
+                        toolMode = 'edit-text';
                         setTimeout(() => {
+                            updateModeButtons();
+                            updateEditTextBanner();
                             setSelection(ann);
                             setStatus('Shape added. Click Save to keep changes.', 'ok');
                         }, 10);
@@ -27317,10 +29796,9 @@
                             }
                             addPageThumbnail(pageNumber, canvas);
 
-                    const pageInfo = {
+                    const pageInfo = buildPageInfoForRender(overlay, canvas, {
                         scale: currentScale,
-                        canvasHeight: canvas.height,
-                    };
+                    });
 
                     annotations
                         .filter((annotation) => annotation.pageIndex === pageNumber - 1)
@@ -27562,7 +30040,10 @@
                         drawingShape.element.remove();
                         drawingShape = null;
                         // Auto-select the newly created shape to show handles and action bar
+                        toolMode = 'edit-text';
                         setTimeout(() => {
+                            updateModeButtons();
+                            updateEditTextBanner();
                             setSelection(annotation);
                             setStatus('Shape added. Click Save to keep changes.', 'ok');
                         }, 10);
@@ -27640,9 +30121,10 @@
                         addAnnotationElement(wrapper, annotation, pageInfo);
                         drawingTable.element.remove();
                         drawingTable = null;
-                        toolMode = 'select';
+                        toolMode = 'edit-text';
                         setTimeout(() => {
                             updateModeButtons();
+                            updateEditTextBanner();
                             setSelection(annotation);
                             setStatus('Table added. Click Save to keep changes.', 'ok');
                         }, 10);
@@ -27796,7 +30278,7 @@
                             statusMessage: 'Drawing added. Click Save to keep changes.',
                         });
 
-                        toolMode = 'select';
+                        toolMode = 'edit-text';
                         updateModeButtons();
                         updateEditTextBanner();
                         if (annotation) {
@@ -30690,6 +33172,19 @@
                 });
             }
 
+            if (selectedValign) {
+                selectedValign.addEventListener('change', () => {
+                    if (!isTextSelection()) return;
+                    if (selectedAnnotation) {
+                        selectedAnnotation.verticalAlign = selectedValign.value;
+                        applyAnnotationStyle(selectedAnnotation);
+                        persistAnnotations();
+                        saveAnnotationToDatabase(selectedAnnotation);
+                        syncSelectedAnnotationEditState();
+                    }
+                });
+            }
+
             if (selectedOpacity) {
                 selectedOpacity.addEventListener('change', () => {
                     if (!isTextSelection()) {
@@ -31312,6 +33807,16 @@
                     persistAnnotations();
                     saveAnnotationToDatabase(selectedAnnotation);
                     if (selectedAlign) selectedAlign.value = etbAlign.value;
+                });
+
+                const etbValign = document.getElementById('etb-valign');
+                if (etbValign) etbValign.addEventListener('change', () => {
+                    if (!selectedAnnotation || (selectedAnnotation.type !== 'text' && selectedAnnotation.type)) return;
+                    selectedAnnotation.verticalAlign = etbValign.value;
+                    applyAnnotationStyle(selectedAnnotation);
+                    persistAnnotations();
+                    saveAnnotationToDatabase(selectedAnnotation);
+                    if (selectedValign) selectedValign.value = etbValign.value;
                 });
                 
                 if (etbCopy) etbCopy.addEventListener('click', () => {
@@ -34377,10 +36882,9 @@
                             pendingPageData.scale = currentScale;
                             pendingPageData.overlay = overlay;
                             
-                            const pageInfo = {
+                            const pageInfo = buildPageInfoForRender(overlay, blankCanvas, {
                                 scale: currentScale,
-                                canvasHeight: blankCanvas.height,
-                            };
+                            });
                             
                             // Click handler for deselect when not in text mode
                             overlay.addEventListener('click', (event) => {
@@ -34578,7 +37082,10 @@
                                 addAnnotationElement(blankPageEl, annotation, pageInfo);
                                 organizeDrawingShape.element.remove();
                                 organizeDrawingShape = null;
+                                toolMode = 'edit-text';
                                 setTimeout(() => {
+                                    updateModeButtons();
+                                    updateEditTextBanner();
                                     setSelection(annotation);
                                     setStatus('Shape added to new page. Click Save to keep changes.', 'ok');
                                 }, 10);
@@ -34865,6 +37372,7 @@
             const updateOverlayUiState = () => {
                 const overlayOn = Boolean(overlayEditorActive);
                 if (viewer) viewer.classList.toggle('overlay-editor-active', overlayOn);
+                if (viewer) viewer.classList.toggle('bounding-box-edit-mode', boundingBoxEditMode);
                 if (modeBar) modeBar.classList.toggle('overlay-active', overlayOn);
                 if (modeOverlayChip) modeOverlayChip.classList.toggle('overlay-active', overlayOn);
                 if (overlayStateIndicator) overlayStateIndicator.classList.toggle('active', overlayOn);
@@ -34901,7 +37409,7 @@
             }
 
             if (modeEditText) {
-                modeEditText.addEventListener('click', () => {
+                modeEditText.addEventListener('click', async () => {
                     if (overlayEditorActive) {
                         setStatus('Turn off Overlay Editor first to use Edit Text.', 'warn');
                         return;
@@ -34917,6 +37425,11 @@
                         closeTextEditPopup();
                         updateModeButtons();
                         updateEditTextBanner();
+                        try {
+                            await syncBasePdfForPromotedEditTextMode();
+                        } catch (error) {
+                            console.warn('Failed to restore the standard PDF base after leaving Edit Text mode', error);
+                        }
                         setStatus('Edit Text mode exited.', 'ok');
                         return;
                     }
@@ -34925,6 +37438,13 @@
                     closeTextEditPopup();
                     updateModeButtons();
                     updateEditTextBanner();
+                    try {
+                        await syncBasePdfForPromotedEditTextMode();
+                    } catch (error) {
+                        console.warn('Failed to switch to the clean PDF base for Edit Text mode', error);
+                        setStatus('Failed to prepare the clean PDF base for Edit Text mode.', 'err');
+                        return;
+                    }
                     setStatus('Edit Text mode active. Double-click a text annotation or use the floating edit button to edit.', 'ok');
                 });
             }
@@ -35080,6 +37600,8 @@
                 setToggleButtonPressedState(italic, annotation.fontStyle === 'italic');
                 setToggleButtonPressedState(underline, Boolean(annotation.underline));
                 if (align) align.value = annotation.textAlign || 'left';
+                const valign = document.getElementById('etb-valign');
+                if (valign) valign.value = annotation.verticalAlign || 'top';
             }
             
             function populateEditTextBannerDefaults() {
@@ -35103,6 +37625,8 @@
                 setToggleButtonPressedState(italic, false);
                 setToggleButtonPressedState(underline, false);
                 if (align) align.value = 'left';
+                const valignDefault = document.getElementById('etb-valign');
+                if (valignDefault) valignDefault.value = 'top';
             }
 
             function openFieldModal() {
@@ -36134,8 +38658,8 @@
                     updateModeButtons();
                     updateOverlayUiState();
                     setStatus('Overlay editor closed. Text preserved.', 'ok');
-                    // Reset basePdfUrl to original PDF (not clean PDF)
-                    basePdfUrl = pdfUrl;
+                    // Reset basePdfUrl to the preferred source for the active layout mode
+                    basePdfUrl = boundingBoxEditMode ? cleanPdfUrl : pdfUrl;
                     if (overlayExtractionData) {
                         renderPdfWithOverlay(true).then(() => {
                             if (typeof renderGridlines === 'function') renderGridlines();
@@ -36185,45 +38709,57 @@
                 });
 
                 updateOverlayShowOriginalToggle();
-                toolMode = 'overlay';
+                toolMode = boundingBoxEditMode ? 'edit-text' : 'overlay';
                 updateModeButtons();
                 updateOverlayUiState();
-                setStatus('Loading overlay editor...', 'loading');
+                setStatus(
+                    boundingBoxEditMode
+                        ? 'Loading positioned annotation editor...'
+                        : 'Loading overlay editor...',
+                    'loading'
+                );
                 const shouldShowOverlayModal = (Number(pdfjsDocument?.numPages || totalPages || 0) > 5);
                 hideOverlayLoadingModal();
 
                 try {
                     viewer.classList.remove('overlay-hidden');
-                    // Always regenerate the clean PDF when enabling overlay mode.
-                    // Reusing a previous clean_{documentId}.pdf can preserve stale
-                    // glyph artifacts after extraction/scrub logic changes.
-                    // First, ensure clean PDF is created by calling the overlay editor endpoint
-                    // Add cache-busting parameter to force regeneration after PDF changes
-                    const prepareResponse = await fetch('{{ route("documents.prepareOverlay", $document) }}?force_refresh=1&v=' + Date.now(), { 
-                        method: 'POST', 
-                        headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content } 
-                    });
                     let prepareData = null;
-                    if (!prepareResponse.ok) {
-                        const errorText = await prepareResponse.text();
-                        let errorData;
-                        try {
-                            errorData = JSON.parse(errorText);
-                        } catch (e) {
-                            errorData = { error: errorText };
+                    if (!boundingBoxEditMode) {
+                        // Always regenerate the clean PDF when enabling overlay mode.
+                        // Reusing a previous clean_{documentId}.pdf can preserve stale
+                        // glyph artifacts after extraction/scrub logic changes.
+                        // First, ensure clean PDF is created by calling the overlay editor endpoint
+                        // Add cache-busting parameter to force regeneration after PDF changes
+                        const prepareResponse = await fetch('{{ route("documents.prepareOverlay", $document) }}?force_refresh=1&v=' + Date.now(), {
+                            method: 'POST',
+                            headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content }
+                        });
+                        if (!prepareResponse.ok) {
+                            const errorText = await prepareResponse.text();
+                            let errorData;
+                            try {
+                                errorData = JSON.parse(errorText);
+                            } catch (e) {
+                                errorData = { error: errorText };
+                            }
+                            console.error('Prepare overlay response:', errorData);
+
+                            // Provide helpful error message for corrupted PDFs
+                            if (errorData.error && errorData.error.includes('Failed to prepare PDF')) {
+                                throw new Error('The PDF file appears to be corrupted. This can happen after saving annotations. Please try refreshing the page. If the issue persists, you may need to re-upload the original PDF file.');
+                            }
+                            throw new Error('Failed to prepare clean PDF: ' + prepareResponse.statusText);
+                        } else {
+                            try {
+                                prepareData = await prepareResponse.clone().json();
+                            } catch (e) {
+                                prepareData = null;
+                            }
                         }
-                        console.error('Prepare overlay response:', errorData);
-                        
-                        // Provide helpful error message for corrupted PDFs
-                        if (errorData.error && errorData.error.includes('Failed to prepare PDF')) {
-                            throw new Error('The PDF file appears to be corrupted. This can happen after saving annotations. Please try refreshing the page. If the issue persists, you may need to re-upload the original PDF file.');
-                        }
-                        throw new Error('Failed to prepare clean PDF: ' + prepareResponse.statusText);
                     } else {
-                        try {
-                            prepareData = await prepareResponse.clone().json();
-                        } catch (e) {
-                            prepareData = null;
+                        await prepareEditablePdfSource({ forceRefresh: true });
+                        if (initialDocumentLoadPending) {
+                            updateDocumentLoadingProgress(76, 'Loading extraction data...');
                         }
                     }
                     if (!overlayEditorActive || loadToken !== overlayLoadToken) {
@@ -36247,10 +38783,26 @@
                     const hasImmediateData = !!(data && data.success && Array.isArray(data.extraction_data));
 
                     if (!hasImmediateData) {
+                        if (boundingBoxEditMode) {
+                            try {
+                                await fetch(processFitzUrl, {
+                                    method: 'POST',
+                                    headers: {
+                                        'X-CSRF-TOKEN': csrfToken,
+                                        'Accept': 'application/json'
+                                    }
+                                });
+                            } catch (_fitzStartError) {
+                                // Poll path below still handles an already-running extraction.
+                            }
+                        }
                         // Only show modal on original load when data is not ready yet.
                         if (shouldShowOverlayModal) {
-                            showOverlayLoadingModal('Preparing clean PDF and waiting for extraction data...');
-                            updateOverlayLoadingProgress(8, 'Preparing clean PDF and waiting for extraction data...');
+                            const overlayPrepMessage = boundingBoxEditMode
+                                ? 'Loading annotation positions and waiting for extraction data...'
+                                : 'Preparing clean PDF and waiting for extraction data...';
+                            showOverlayLoadingModal(overlayPrepMessage);
+                            updateOverlayLoadingProgress(8, overlayPrepMessage);
                         }
                         data = await waitForOverlayExtractionData({
                             showModal: shouldShowOverlayModal,
@@ -36267,7 +38819,7 @@
                         return;
                     }
 
-                    overlayExtractionData = data.extraction_data;
+                    overlayExtractionData = resolveOverlayExtractionPages(data);
 
                     // Load embedded fonts from PDF if available
                     if (data.embedded_fonts && typeof data.embedded_fonts === 'object') {
@@ -36276,7 +38828,11 @@
                         console.log('Loaded embedded fonts:', Object.keys(overlayEmbeddedFonts));
                     }
 
-                    loadOverlayEdits();
+                    await loadOverlayEdits();
+                    if (boundingBoxEditMode) {
+                        await bootstrapBoundingBoxEditAnnotationLayer({ force: true });
+                        updateAnnotationsList();
+                    }
 
                     // Populate font dropdown with fonts from PDF
                     populateFontDropdown();
@@ -36326,7 +38882,10 @@
                         });
                     }
 
-                    // Load clean PDF
+                    if (initialDocumentLoadPending) {
+                        updateDocumentLoadingProgress(82, boundingBoxEditMode ? 'Positioning annotations...' : 'Rendering bounded text boxes...');
+                    }
+
                     await renderPdfWithOverlay();
                     overlayRendered = true;
                     if (!overlayEditorActive || loadToken !== overlayLoadToken) {
@@ -36335,7 +38894,16 @@
                     // Re-apply gridlines after overlay render
                     if (typeof renderGridlines === 'function') renderGridlines();
                     
-                    setStatus('Overlay editor active. Edit text positions and content.', 'ok');
+                    setStatus(
+                        boundingBoxEditMode
+                            ? 'Positioned annotation editor active. Click text to edit.'
+                            : 'Overlay editor active. Edit text positions and content.',
+                        'ok'
+                    );
+                    if (initialDocumentLoadPending) {
+                        updateDocumentLoadingProgress(99, 'Finalizing viewer...');
+                        hideDocumentLoadingScreen();
+                    }
                     
                     // Google Fonts are loaded asynchronously via <link> tags
                     // added during renderOverlayFields.  The initial render uses
@@ -36393,8 +38961,11 @@
                         modeOverlayToggle.checked = false;
                     }
                     viewer.classList.add('overlay-hidden');
-                    basePdfUrl = pdfUrl;
+                    basePdfUrl = boundingBoxEditMode ? cleanPdfUrl : pdfUrl;
                     updateOverlayUiState();
+                    if (initialDocumentLoadPending) {
+                        hideDocumentLoadingScreen({ immediate: true });
+                    }
                     rerenderPdf();
                 }
             };
@@ -36417,13 +38988,15 @@
                         return;
                     }
                     try {
+                        if (initialDocumentLoadPending) {
+                            updateDocumentLoadingProgress(84, 'Preparing page renderer...');
+                        }
                         // Destroy old overlay PDF document to free memory
                         if (overlayPdfDoc) {
                             overlayPdfDoc.destroy();
                             overlayPdfDoc = null;
                         }
-                        // Always load clean PDF (with text removed)
-                        const loadingTask = pdfjsLib.getDocument(`${cleanPdfUrl}?v=${Date.now()}`);
+                        const loadingTask = pdfjsLib.getDocument(pdfUrlWithVersion());
                         const pdf = await loadingTask.promise;
                         if (!isCurrentViewerRenderRequest(renderRequestId)) {
                             try {
@@ -36442,6 +39015,9 @@
                         totalPages = pdf.numPages;
                         updatePageControls();
                         renderedPages = 0;
+                        if (initialDocumentLoadPending) {
+                            updateDocumentLoadingProgress(88, `Rendering ${pdf.numPages} page${pdf.numPages === 1 ? '' : 's'}...`);
+                        }
                         
                         // Render all pages with overlay
                         const totalMainPages = pdf.numPages;
@@ -36464,6 +39040,10 @@
                             if (!isCurrentViewerRenderRequest(renderRequestId)) {
                                 return;
                             }
+                            if (initialDocumentLoadPending) {
+                                const renderPercent = 88 + ((pageNumber - 1) / Math.max(1, totalMainPages)) * 10;
+                                updateDocumentLoadingProgress(renderPercent, `Rendering page ${pageNumber} of ${totalMainPages}...`);
+                            }
                             await renderPageWithOverlay(pdf, pageNumber);
                             if (!isCurrentViewerRenderRequest(renderRequestId)) {
                                 return;
@@ -36473,6 +39053,9 @@
                             if (pagesToInsert[pageNumber - 1]) {
                                  for (const pendingPage of pagesToInsert[pageNumber - 1]) renderPendingPageOverlay(pendingPage);
                             }
+                        }
+                        if (initialDocumentLoadPending) {
+                            updateDocumentLoadingProgress(98, boundingBoxEditMode ? 'Finalizing annotations...' : 'Finalizing bounding boxes...');
                         }
                     } catch (error) {
                         if (isPdfJsRenderingCancelledError(error)) {
@@ -36536,10 +39119,9 @@
                     }
                 });
 
-                const pageInfo = {
+                const pageInfo = buildPageInfoForRender(overlay, canvas, {
                     scale: currentScale,
-                    canvasHeight: canvas.height,
-                };
+                });
                 
                 (function setupPendingTextDrag(ov, pid, cv, wr, pi) {
                     let dragState = null;
@@ -36668,10 +39250,11 @@
                 });
                 
                 // Define pageInfo before using it in IIFEs
-                const pageInfo = {
+                const pageInfo = buildPageInfoForRender(overlay, canvas, {
                     scale: currentScale,
-                    canvasHeight: viewport.height,
-                };
+                    fallbackWidth: viewport.width,
+                    fallbackHeight: viewport.height,
+                });
                 
                 // Drag-to-create text box for load-more pages
                 (function setupLMTextDrag(ov, pn, cv, wr, pi) {
@@ -36793,10 +39376,9 @@
                     shapeWrapper.appendChild(svg);
                     overlay.appendChild(shapeWrapper);
 
-                    const pageInfo = {
+                    const pageInfo = buildPageInfoForRender(overlay, canvas, {
                         scale: currentScale,
-                        canvasHeight: canvas.height,
-                    };
+                    });
 
                     drawingShape = {
                         startX,
@@ -36915,7 +39497,10 @@
                     addAnnotationElement(wrapper, annotation, pageInfo);
                     // Save to database immediately
                     saveAnnotationToDatabase(annotation);
+                    toolMode = 'edit-text';
                     setTimeout(() => {
+                        updateModeButtons();
+                        updateEditTextBanner();
                         setSelection(annotation);
                         setStatus('Shape added. Click Save to keep changes.', 'ok');
                     }, 10);
@@ -36990,9 +39575,10 @@
                     addAnnotationElement(wrapper, annotation, pageInfo);
                     lmDrawingTable.element.remove();
                     lmDrawingTable = null;
-                    toolMode = 'select';
+                    toolMode = 'edit-text';
                     setTimeout(() => {
                         updateModeButtons();
+                        updateEditTextBanner();
                         setSelection(annotation);
                         setStatus('Table added. Click Save to keep changes.', 'ok');
                     }, 10);
@@ -37020,7 +39606,7 @@
                         }
                     }
                 }
-                if (pageData && pageData.words) {
+                if (pageData && ((Array.isArray(pageData.words) && pageData.words.length > 0) || (Array.isArray(pageData.blocks) && pageData.blocks.length > 0))) {
                     renderOverlayFields(overlay, pageData, viewport, canvas);
                 }
                 if (!overlayEditorActive && basePdfHasAcroForm) {
@@ -37032,7 +39618,9 @@
                 overlayEditedFields.get(key) || overlayPersistedEdits.get(key);
 
             function renderOverlayFields(overlay, pageData, viewport, canvas) {
-                if (!pageData.words || pageData.words.length === 0) return;
+                const hasPageWords = Array.isArray(pageData?.words) && pageData.words.length > 0;
+                const hasPageBlocks = Array.isArray(pageData?.blocks) && pageData.blocks.length > 0;
+                if (!hasPageWords && !hasPageBlocks) return;
                 // Defensive cleanup in case this page overlay is re-rendered.
                 overlay.querySelectorAll('.overlay-field').forEach((el) => el.remove());
 
@@ -37203,7 +39791,7 @@
                     });
                 };
 
-                loadOverlayFonts(pageData.words);
+                loadOverlayFonts(Array.isArray(pageData.words) ? pageData.words : []);
 
                 const measureCtx = document.createElement('canvas').getContext('2d');
                 const measureTextWidth = (text, fontSizePx, fontFamily, fontWeight, fontStyle) => {
@@ -39046,7 +41634,7 @@
                     field.dataset.flowNormalized = '1';
                 };
 
-                function restoreOverlayFieldSourceGeometry(field, textSpan) {
+                restoreOverlayFieldSourceGeometry = function(field, textSpan) {
                     if (!field || !textSpan || field.dataset.exactGeometry !== '1') {
                         return false;
                     }
@@ -39091,7 +41679,7 @@
                     delete field.dataset.forceFlowText;
                     delete textSpan.dataset.editLayout;
                     return true;
-                }
+                };
 
                 const convertSplitParagraphLayoutToFlowText = (field, textSpan) => {
                     if (!field || !textSpan || field.dataset.splitParagraphFullyActive !== '1') {
@@ -39218,6 +41806,7 @@
                     renderOverlayUnderlineMasks();
                     const scaleX = pageData.width ? effectiveWidth / pageData.width : 1;
                     const scaleY = pageData.height ? effectiveHeight / pageData.height : 1;
+                    const literalBoundingBoxBlocks = boundingBoxEditMode && pageData?._overlayLiteralBlocks === true;
                     const overlayWidthPx = Math.max(1, overlay.clientWidth || effectiveWidth);
                     const overlayHeightPx = Math.max(1, overlay.clientHeight || effectiveHeight);
                     const clampRectToOverlay = (left, top, width, height) => {
@@ -39364,6 +41953,10 @@
                                 ? Number(block._overlayOriginalHeight)
                                 : Math.max(1, Number(block?.height) || 0),
                         }));
+                        if (literalBoundingBoxBlocks) {
+                            expandedBlocks = pageData.blocks.slice();
+                            pageData._overlayBlocksPrepared = true;
+                        } else {
                         let nextSyntheticBlockNum = pageData.blocks.reduce((m, b) => Math.max(m, b.block_num), 0) + 1;
                         expandedBlocks = [];
                         const consumedByFormMerge = new Set();
@@ -39836,8 +42429,10 @@
                         // blocks with matching word block_num values.
                         pageData.blocks = expandedBlocks;
                         pageData._overlayBlocksPrepared = true;
+                        }
                     }
 
+                    if (!literalBoundingBoxBlocks) {
                     // Final pass: split tiny stacked value blocks after all client-side
                     // merges so each short line becomes its own editable field.
                     const finalSplitNarrowStackedBlocks = [];
@@ -40024,6 +42619,7 @@
                     });
                     expandedBlocks = separatedUnderlineTailBlocks;
                     pageData.blocks = expandedBlocks;
+                    }
 
                     // Sort blocks by vertical position (top to bottom) then horizontal (left to right)
                     const sortedBlocks = [...expandedBlocks].sort((a, b) => {
@@ -40142,44 +42738,46 @@
                         return false;
                     };
 
-                    const dedupedBlocks = [];
-                    const seenBlockSigs = new Set();
-                    sortedBlocks.forEach((blk) => {
-                        blk._textSig = getBlockTextSig(blk);
-                        blk._rect = getRect(blk);
+                    const dedupedBlocks = literalBoundingBoxBlocks ? sortedBlocks.slice() : [];
+                    if (!literalBoundingBoxBlocks) {
+                        const seenBlockSigs = new Set();
+                        sortedBlocks.forEach((blk) => {
+                            blk._textSig = getBlockTextSig(blk);
+                            blk._rect = getRect(blk);
 
-                        const sig = [
-                            blk._textSig,
-                            Math.round((blk.left || 0) / BLOCK_GEOM_EPS),
-                            Math.round((blk.top || 0) / BLOCK_GEOM_EPS),
-                            Math.round((blk.width || 0) / BLOCK_GEOM_EPS),
-                            Math.round((blk.height || 0) / BLOCK_GEOM_EPS),
-                        ].join('|');
-                        if (seenBlockSigs.has(sig)) {
-                            return;
-                        }
-
-                        let duplicateIndex = -1;
-                        for (let i = 0; i < dedupedBlocks.length; i++) {
-                            if (isLikelyDuplicateBlock(blk, dedupedBlocks[i])) {
-                                duplicateIndex = i;
-                                break;
+                            const sig = [
+                                blk._textSig,
+                                Math.round((blk.left || 0) / BLOCK_GEOM_EPS),
+                                Math.round((blk.top || 0) / BLOCK_GEOM_EPS),
+                                Math.round((blk.width || 0) / BLOCK_GEOM_EPS),
+                                Math.round((blk.height || 0) / BLOCK_GEOM_EPS),
+                            ].join('|');
+                            if (seenBlockSigs.has(sig)) {
+                                return;
                             }
-                        }
-                        if (duplicateIndex >= 0) {
-                            // Keep the richer candidate when two blocks look duplicated.
-                            const existing = dedupedBlocks[duplicateIndex];
-                            const existingScore = ((existing._textSig || '').length * 1000) + ((existing.width || 0) * (existing.height || 0));
-                            const candidateScore = ((blk._textSig || '').length * 1000) + ((blk.width || 0) * (blk.height || 0));
-                            if (candidateScore > existingScore) {
-                                dedupedBlocks[duplicateIndex] = blk;
-                            }
-                            return;
-                        }
 
-                        seenBlockSigs.add(sig);
-                        dedupedBlocks.push(blk);
-                    });
+                            let duplicateIndex = -1;
+                            for (let i = 0; i < dedupedBlocks.length; i++) {
+                                if (isLikelyDuplicateBlock(blk, dedupedBlocks[i])) {
+                                    duplicateIndex = i;
+                                    break;
+                                }
+                            }
+                            if (duplicateIndex >= 0) {
+                                // Keep the richer candidate when two blocks look duplicated.
+                                const existing = dedupedBlocks[duplicateIndex];
+                                const existingScore = ((existing._textSig || '').length * 1000) + ((existing.width || 0) * (existing.height || 0));
+                                const candidateScore = ((blk._textSig || '').length * 1000) + ((blk.width || 0) * (blk.height || 0));
+                                if (candidateScore > existingScore) {
+                                    dedupedBlocks[duplicateIndex] = blk;
+                                }
+                                return;
+                            }
+
+                            seenBlockSigs.add(sig);
+                            dedupedBlocks.push(blk);
+                        });
+                    }
 
                     const mergeVerticallyAdjacentBlocks = (blocks) => {
                         if (!Array.isArray(blocks) || blocks.length < 2) return Array.isArray(blocks) ? blocks : [];
@@ -40590,7 +43188,9 @@
                             return (Number(a.left) || 0) - (Number(b.left) || 0);
                         });
                     };
-                    const mergedAdjacentBlocks = mergeVerticallyAdjacentBlocks(dedupedBlocks);
+                    const mergedAdjacentBlocks = literalBoundingBoxBlocks
+                        ? dedupedBlocks
+                        : mergeVerticallyAdjacentBlocks(dedupedBlocks);
                     pageData.blocks = mergedAdjacentBlocks;
 
                     const isLikelyOrphanTinyBlock = (block, textValue, allBlocks) => {
@@ -40657,7 +43257,7 @@
                             : [];
 
                         let bL = blk.left, bT = blk.top, bW = blk.width, bH = blk.height;
-                        if (!blkEdit && blkWords.length > 0) {
+                        if (!literalBoundingBoxBlocks && !blkEdit && blkWords.length > 0) {
                             const bounds = getWordBounds(blkWords);
                             if (bounds) { bL = bounds.left; bT = bounds.top; bW = bounds.width; bH = Math.max(bH, bounds.height); }
                         }
@@ -40666,7 +43266,7 @@
                         const baseT = blkEdit ? blkEdit.bbox[1] : bT;
                         const baseW = blkEdit ? (blkEdit.bbox[2] - blkEdit.bbox[0]) : bW;
                         const baseH = blkEdit ? (blkEdit.bbox[3] - blkEdit.bbox[1]) : bH;
-                        const desired = blkEdit ? 0 : computeOverlayPaddingPdf(blk);
+                        const desired = (literalBoundingBoxBlocks || blkEdit) ? 0 : computeOverlayPaddingPdf(blk);
                         return { baseL, baseT, baseW, baseH, desired };
                     });
 
@@ -41034,7 +43634,7 @@
                         let blockTop = block.top;
                         let blockWidth = block.width;
                         let blockHeight = block.height;
-                        if (!storedEdit && trimmedBlockDisplay.bounds) {
+                        if (!literalBoundingBoxBlocks && !storedEdit && trimmedBlockDisplay.bounds) {
                             blockLeft = trimmedBlockDisplay.bounds.left;
                             blockTop = trimmedBlockDisplay.bounds.top;
                             blockWidth = trimmedBlockDisplay.bounds.width;
@@ -41046,7 +43646,7 @@
                             && block.line_bboxes.length > 1
                             && Array.isArray(block?.spans)
                             && block.spans.length > 0;
-                        if (!sourceGeometryLockedBlock && blockYAdjustments.has(block.block_num)) {
+                        if (!literalBoundingBoxBlocks && !sourceGeometryLockedBlock && blockYAdjustments.has(block.block_num)) {
                             const originalTop = blockTop;
                             blockTop = blockYAdjustments.get(block.block_num);
                             // Keep the height adjustment so bottom edge doesn't shift
@@ -41056,6 +43656,7 @@
 
                         const field = document.createElement('div');
                         field.className = 'overlay-field';
+                        field.dataset.layoutMode = layoutMode;
                         field.style.position = 'absolute';
                         field.style.background = 'transparent';
                         field.style.pointerEvents = 'auto';
@@ -41063,6 +43664,7 @@
                         field.style.minWidth = '20px';
                         field.style.minHeight = '10px';
                         field.style.boxSizing = 'border-box';
+                        field.style.setProperty('--overlay-field-mask-color', '#ffffff');
 
                         // Render the text content
                         const textSpan = document.createElement('div');
@@ -41162,6 +43764,7 @@
                         field.dataset.originalFontWeight = fontWeight;
                         field.dataset.originalFontStyle = fontStyle;
                         field.dataset.underline = storedEdit?.underline ? 'true' : 'false';
+                        field.dataset.hasPersistedEdit = hasStoredEdit ? '1' : '0';
                         if (storedBackgroundColor !== 'transparent') {
                             textSpan.style.backgroundColor = storedBackgroundColor;
                             field.dataset.backgroundColor = storedBackgroundColor;
@@ -41169,6 +43772,7 @@
                             delete field.dataset.backgroundColor;
                             textSpan.style.backgroundColor = 'transparent';
                         }
+                        syncBoundingBoxFieldMaskState(field);
 
                         const rawBlockWords = pageData.words
                             ? pageData.words.filter((word) => word.block_num === block.block_num)
@@ -41206,18 +43810,18 @@
                             && preferredFlowText.length > 0
                             && preferredFlowText.length > (wordDerivedFlowText.length + 3));
 
-                        if (!storedEdit && isLikelyOrphanTinyBlock(block, safeBlockText, mergedAdjacentBlocks)) {
+                        if (!literalBoundingBoxBlocks && !storedEdit && isLikelyOrphanTinyBlock(block, safeBlockText, mergedAdjacentBlocks)) {
                             return;
                         }
-                        if (!storedEdit && isValueShadowOfCompositeField(block, safeBlockText, mergedAdjacentBlocks)) {
-                            return;
-                        }
-
-                        if (!storedEdit && blockWords.length === 0 && !hasMeaningfulOverlayText(safeBlockText)) {
+                        if (!literalBoundingBoxBlocks && !storedEdit && isValueShadowOfCompositeField(block, safeBlockText, mergedAdjacentBlocks)) {
                             return;
                         }
 
-                        if (!storedEdit && blockWords.length > 0 && !flowNeedsBlockBounds && !exactGeometryEligible) {
+                        if (!literalBoundingBoxBlocks && !storedEdit && blockWords.length === 0 && !hasMeaningfulOverlayText(safeBlockText)) {
+                            return;
+                        }
+
+                        if (!literalBoundingBoxBlocks && !storedEdit && blockWords.length > 0 && !flowNeedsBlockBounds && !exactGeometryEligible) {
                             const bounds = getWordBounds(blockWords);
                             if (bounds) {
                                 blockLeft = bounds.left;
@@ -41227,17 +43831,17 @@
                             }
                         }
 
-                        if (!storedEdit && hasEquivalentSavedStandaloneTextAnnotation(safeBlockText, blockLeft, blockWidth, block.font_size)) {
+                        if (!literalBoundingBoxBlocks && !storedEdit && hasEquivalentSavedStandaloneTextAnnotation(safeBlockText, blockLeft, blockWidth, block.font_size)) {
                             return;
                         }
-                        if (!storedEdit && hasEquivalentPromotedAnnotation(block, safeBlockText, blockLeft, blockTop, blockWidth, blockHeight, block.font_size)) {
+                        if (!literalBoundingBoxBlocks && !storedEdit && hasEquivalentPromotedAnnotation(block, safeBlockText, blockLeft, blockTop, blockWidth, blockHeight, block.font_size)) {
                             return;
                         }
 
                         // Skip synthetic/duplicate blocks that don't map to any words and
                         // also don't have a user edit record. These are a common source of
                         // stray duplicated glyph fragments in overlay mode.
-                        if (!storedEdit && blockWords.length === 0) {
+                        if (!literalBoundingBoxBlocks && !storedEdit && blockWords.length === 0 && !exactGeometryEligible && !hasMeaningfulOverlayText(safeBlockText)) {
                             return;
                         }
 
@@ -41266,7 +43870,7 @@
                             };
                         const candidateFormComposite = looksLikeFormCompositeText(safeBlockText);
                         const candidateFilledValue = looksLikeFilledValueText(candidateTextSig);
-                        const isDuplicateField = renderedFieldFingerprints.some((prev) => {
+                        const isDuplicateField = !literalBoundingBoxBlocks && renderedFieldFingerprints.some((prev) => {
                             const overlapSmaller = rectOverlapSmaller(candidateRect, prev.rect);
                             const preserveFormCompositePair = overlapSmaller >= 0.25 && (
                                 (candidateFormComposite && prev.valueOnly && candidateTextSig.includes(prev.text))
@@ -41302,13 +43906,15 @@
                         if (isDuplicateField) {
                             return;
                         }
-                        renderedFieldFingerprints.push({
-                            text: candidateTextSig,
-                            words: candidateWordSig,
-                            rect: candidateRect,
-                            formComposite: candidateFormComposite,
-                            valueOnly: candidateFilledValue,
-                        });
+                        if (!literalBoundingBoxBlocks) {
+                            renderedFieldFingerprints.push({
+                                text: candidateTextSig,
+                                words: candidateWordSig,
+                                rect: candidateRect,
+                                formComposite: candidateFormComposite,
+                                valueOnly: candidateFilledValue,
+                            });
+                        }
 
                         const renderedStoredRichHtml = hasStoredEdit
                             ? applyStoredOverlayRichHtml(textSpan, field, storedEdit.rich_html)
@@ -41372,7 +43978,8 @@
                             (Number(block.font_size) || 0) >= 40 &&
                             sanitizeOverlayText(safeBlockText).length > 0 &&
                             sanitizeOverlayText(safeBlockText).length <= 40;
-                        const paddingPdf = exactGeometryEligible
+                        const useLiteralBlockBounds = literalBoundingBoxBlocks && !storedEdit;
+                        const paddingPdf = (useLiteralBlockBounds || exactGeometryEligible)
                             ? 0
                             : storedEdit
                             ? 0
@@ -41395,7 +44002,7 @@
                         // The buffer must also cover residual overflow from letter-spacing
                         // clamping when web fonts are wider than PDF-embedded fonts.
                         const fontSizeScaled = block.font_size * scaleY;
-                        const baseWidthBuffer = exactGeometryEligible
+                        const baseWidthBuffer = (useLiteralBlockBounds || exactGeometryEligible)
                             ? 0
                             : block._client_vertical_merge
                             ? 4 + Math.max(2, fontSizeScaled * 0.08)
@@ -41403,13 +44010,13 @@
                         // Add a small right-edge glyph safety margin. Some fallback font
                         // combinations render final glyph stems slightly outside measured
                         // advances, which can clip characters at the box edge.
-                        const glyphEdgeSafetyPx = exactGeometryEligible
+                        const glyphEdgeSafetyPx = (useLiteralBlockBounds || exactGeometryEligible)
                             ? 0
                             : block._client_vertical_merge
                             ? Math.max(1, Math.min(4, fontSizeScaled * 0.08))
                             : Math.max(2, Math.min(8, fontSizeScaled * 0.2));
                         const rawWidthBuffer = baseWidthBuffer + glyphEdgeSafetyPx;
-                        const rightGapLimitPdf = (!exactGeometryEligible && !storedEdit)
+                        const rightGapLimitPdf = (!useLiteralBlockBounds && !exactGeometryEligible && !storedEdit)
                             ? blockRightGapLimit[blockIndex]
                             : null;
                         const widthBuffer = rightGapLimitPdf !== null
@@ -41417,7 +44024,7 @@
                             : rawWidthBuffer;
                         // Height buffer: 4px for border (2 top + 2 bottom) plus a small
                         // descender‐safety margin so glyphs like g/p/y are not clipped.
-                        const heightBuffer = exactGeometryEligible
+                        const heightBuffer = (useLiteralBlockBounds || exactGeometryEligible)
                             ? 0
                             : block._client_vertical_merge
                             ? (
@@ -41510,10 +44117,15 @@
                         }
 
                         field.dataset.originalText = safeBlockText;
+                        field.dataset.sourceOriginalText = storedEdit?.original_text || safeBlockText;
                         field.dataset.originalLeft = blockLeft;
                         field.dataset.originalTop = blockTop;
                         field.dataset.originalWidth = blockWidth;
                         field.dataset.originalHeight = blockHeight;
+                        field.dataset.sourceOriginalLeft = blockLeft;
+                        field.dataset.sourceOriginalTop = blockTop;
+                        field.dataset.sourceOriginalWidth = blockWidth;
+                        field.dataset.sourceOriginalHeight = blockHeight;
                         field.dataset.originalOriginX = blockLeft;
                         field.dataset.originalOriginY = blockTop + blockHeight;
                         // Keep a stable, block-level text snapshot for edit-entry.
@@ -41537,6 +44149,11 @@
                         field.dataset.pageNumber = pageData.page_number;
                         field.dataset.wordIndex = key;
                         field.dataset.blockNum = block.block_num;
+                        if (storedEdit?.annotation_id) {
+                            field.dataset.annotationId = storedEdit.annotation_id;
+                        } else {
+                            delete field.dataset.annotationId;
+                        }
                         field.dataset.font = resolvedBlockFont;
                         if (storedEdit?.embedded_font_name || block.embedded_font_name) {
                             field.dataset.embeddedFontName = storedEdit?.embedded_font_name || block.embedded_font_name;
@@ -41669,15 +44286,26 @@
 
                             const wordStylesArr = buildOverlayWordStylesForSave(field, inputResolvedFont, inputFieldWeight, field.dataset.fontStyle || fontStyle);
 
+                            const persistedOriginalText = sanitizeOverlayText(String(field.dataset.originalText || safeBlockText));
+                            const persistedOriginalLeft = Number(field.dataset.originalLeft || blockLeft);
+                            const persistedOriginalTop = Number(field.dataset.originalTop || blockTop);
+                            const persistedOriginalWidth = Number(field.dataset.originalWidth || blockWidth);
+                            const persistedOriginalHeight = Number(field.dataset.originalHeight || blockHeight);
+
                             overlayEditedFields.set(editKey, {
                                 page_number: pageData.page_number,
                                 block_num: block.block_num,
-                                original_text: safeBlockText,       // ORIGINAL PDF TEXT
+                                original_text: persistedOriginalText, // ORIGINAL PDF TEXT
                                 new_text: userTypedText,            // USER TYPED TEXT
                                 rich_html: richHtml,
                                 word_styles: wordStylesArr,          // PER-WORD FORMATTING
                                 bbox: [currentLeft, currentTop, currentLeft + currentWidth, currentTop + currentHeight],
-                                original_bbox: [blockLeft, blockTop, blockLeft + blockWidth, blockTop + blockHeight],
+                                original_bbox: [
+                                    persistedOriginalLeft,
+                                    persistedOriginalTop,
+                                    persistedOriginalLeft + persistedOriginalWidth,
+                                    persistedOriginalTop + persistedOriginalHeight,
+                                ],
                                 // Raw block bounds in PDF space — used by live_save as the hard redaction boundary
                                 paragraph_bbox: [block.left, block.top, block.left + block.width, block.top + block.height],
                                 origin_x: currentOriginX,           // CURRENT POSITION X
@@ -41692,6 +44320,7 @@
                                 color: field.dataset.textColor || '#000000',  // TEXT COLOR
                                 background_color: currentBackgroundColor && currentBackgroundColor !== 'transparent' ? currentBackgroundColor : null
                             });
+                            syncBoundingBoxFieldMaskState(field);
                             
                             persistOverlayEdits();
                             updateOverlaySaveButton();
@@ -41806,33 +44435,17 @@
                             }
                         });
 
-                        // ── ilovepdf-style interaction ──
-                        // Single click = SELECT (show handles, enable drag, no text editing)
-                        field.addEventListener('mousedown', function(e) {
-                            if (e.target.closest('.box-menu') || e.target.classList.contains('resize-handle')) return;
-                            if (field.classList.contains('editing') && textSpan.contains(e.target)) {
-                                return;
-                            }
-                            field.dataset.overlayWasSelectedBeforeMouseDown = selectedOverlayFields.has(field) ? '1' : '0';
-                            setOverlaySelection(field, { additive: e.shiftKey });
-                            e.stopPropagation();
-                        });
-
-                        // Double click = EDIT (enable text cursor)
-                        field.addEventListener('dblclick', function(e) {
+                        const enterOverlayFieldEditing = () => {
                             if (!overlayEditorActive) return;
-                            if (!ensureEditTextModeEnabled()) return;
-                            if (e.target.closest('.box-menu') || e.target.classList.contains('resize-handle')) return;
+                            if (!boundingBoxEditMode && !ensureEditTextModeEnabled()) return;
                             if (getSelectedOverlayFields().length > 1) {
                                 setOverlaySelection(field);
                             }
                             field.classList.add('active', 'editing', 'editable');
                             textSpan.classList.add('editable');
+                            syncBoundingBoxFieldMaskState(field);
 
                             const preserveUnderscores = field.dataset.preserveUnderscores === '1';
-
-                            // Normalize immediately on edit-entry so caret and typing
-                            // behave predictably and preserve line ordering.
                             field.dataset.flowNormalized = '0';
                             if (!preserveUnderscores) {
                                 field.dataset.forceFlowText = '1';
@@ -41842,8 +44455,6 @@
                                 delete field.dataset.forceFlowText;
                             }
 
-                            // For underscore-preserved form fields, allow editing but
-                            // keep absolute-span layout (no flow-text normalization).
                             if (preserveUnderscores) {
                                 textSpan.contentEditable = true;
                                 textSpan.focus();
@@ -41856,6 +44467,37 @@
                             textSpan.focus();
                             selectAllEditableContents(textSpan);
                             setOverlaySelection(field);
+                        };
+
+                        // ── ilovepdf-style interaction ──
+                        // Single click = SELECT (show handles, enable drag, no text editing)
+                        field.addEventListener('mousedown', function(e) {
+                            if (e.target.closest('.box-menu') || e.target.classList.contains('resize-handle')) return;
+                            if (field.classList.contains('editing') && textSpan.contains(e.target)) {
+                                return;
+                            }
+                            field.dataset.overlayWasSelectedBeforeMouseDown = selectedOverlayFields.has(field) ? '1' : '0';
+                            setOverlaySelection(field, { additive: e.shiftKey });
+                            e.stopPropagation();
+                        });
+
+                        field.addEventListener('click', function(e) {
+                            if (!boundingBoxEditMode) return;
+                            if (!overlayEditorActive) return;
+                            if (e.target.closest('.box-menu') || e.target.classList.contains('resize-handle')) return;
+                            if (field.classList.contains('editing')) return;
+                            setOverlaySelection(field);
+                            enterOverlayFieldEditing();
+                            e.stopPropagation();
+                        });
+
+                        // Double click = EDIT (enable text cursor)
+                        field.addEventListener('dblclick', function(e) {
+                            if (boundingBoxEditMode) return;
+                            if (!overlayEditorActive) return;
+                            if (!ensureEditTextModeEnabled()) return;
+                            if (e.target.closest('.box-menu') || e.target.classList.contains('resize-handle')) return;
+                            enterOverlayFieldEditing();
                         });
 
                         textSpan.addEventListener('dblclick', function(e) {
@@ -41870,13 +44512,20 @@
 
                         textSpan.addEventListener('blur', function(e) {
                             // Delay to allow button clicks to register
-                            setTimeout(() => {
+                            setTimeout(async () => {
                                 if (!field.contains(document.activeElement) && !field.matches(':hover')) {
                                     field.classList.remove('editing', 'editable');
                                     textSpan.classList.remove('editable');
                                     textSpan.contentEditable = false;
+                                    syncBoundingBoxFieldMaskState(field);
+                                    if (boundingBoxEditMode) {
+                                        await persistBoundingBoxFieldIfNeeded(field);
+                                    }
                                     const fieldKey = String(field.dataset.wordIndex || '');
-                                    if (selectedOverlayField === field && field.dataset.exactGeometry === '1' && !overlayEditedFields.has(fieldKey)) {
+                                    const preserveBoundingBoxEditContent = boundingBoxEditMode
+                                        && field.dataset.layoutMode === 'bounding_box_edit'
+                                        && field.dataset.hasPersistedEdit === '1';
+                                    if (selectedOverlayField === field && field.dataset.exactGeometry === '1' && !overlayEditedFields.has(fieldKey) && !preserveBoundingBoxEditContent) {
                                         restoreOverlayFieldSourceGeometry(field, textSpan);
                                     }
                                     if (selectedOverlayField !== field) {
@@ -41892,7 +44541,7 @@
                             let dragPending = false;
                             let dragMoved = false;
                             let dragStart = { x: 0, y: 0 };
-                            
+
                             // Create box menu toolbar at top-right
                             const boxMenu = document.createElement('div');
                             boxMenu.className = 'box-menu';
@@ -42532,7 +45181,7 @@
                 // "meetingsmeetings" / "NY · SFNY · SF" on top of the cleaned
                 // promoted annotation layer. AcroForm widgets are handled separately
                 // by the passive widget preview path.
-                const shouldRenderOverlayBlocks = !promotedExtractionHydrated;
+                const shouldRenderOverlayBlocks = !boundingBoxEditMode && !promotedExtractionHydrated;
                 if (shouldRenderOverlayBlocks) {
                     renderOverlayBlocks();
                 }
@@ -43255,7 +45904,7 @@
                     if (atomicEdits.length === 0) {
                         _liveSavedKeys.add(editKey);
                         if (field) field.dataset.liveSaveState = 'saved';
-                        return;
+                        return { success: true, skipped_noop: true };
                     }
                     let lastResult = null;
 
@@ -43278,7 +45927,10 @@
                         if (!resp.ok || !result.success) {
                             if (field) field.dataset.liveSaveState = 'error';
                             console.warn(`[live-save] ✗ key=${editKey}`, result.error || resp.status);
-                            return;
+                            return {
+                                success: false,
+                                message: result.error || result.message || `Live save failed (${resp.status})`,
+                            };
                         }
                         lastResult = result;
                     }
@@ -43287,9 +45939,17 @@
                     if (field) field.dataset.liveSaveState = 'saved';
                     updateSavedEditPreviewLink(lastResult?.saved_preview_url || savedEditPreviewUrl);
                     console.log(`[live-save] ✓ key=${editKey}`);
+                    return {
+                        success: true,
+                        saved_preview_url: lastResult?.saved_preview_url || savedEditPreviewUrl,
+                    };
                 } catch (err) {
                     if (field) field.dataset.liveSaveState = 'error';
                     console.warn('[live-save] network error', err);
+                    return {
+                        success: false,
+                        message: err?.message || 'Live save failed.',
+                    };
                 } finally {
                     _lsInflight.delete(editKey);
                     updateOverlaySaveButton();
@@ -43527,13 +46187,102 @@
                 }
             }
 
-            function loadOverlayEdits() {
+            function buildOverlayEditRecordFromSavedPromotedAnnotation(annotationData) {
+                const annotation = buildTextAnnotationFromSavedState(annotationData);
+                if (!annotation?.promotedFromExtraction || !annotation?.promotedSourceKey) {
+                    return null;
+                }
+
+                const sourceMeta = getPromotedAnnotationSourceMeta(annotation) || {};
+                const pageNumber = Number(annotation.promotedSourcePage) || ((Number(annotation.pageIndex) || 0) + 1);
+                const sourcePageHeight = Number(sourceMeta.sourcePageHeight)
+                    || (Array.isArray(overlayExtractionData)
+                        ? (overlayExtractionData.find((page) => Number(page?.page_number) === pageNumber)?.height || 0)
+                        : 0);
+                const pdfWidth = Math.max(0, Number(annotation.pdfWidth) || 0);
+                const pdfHeight = Math.max(0, Number(annotation.pdfHeight) || 0);
+                const pdfX = Number(annotation.pdfX) || 0;
+                const pdfY = Number(annotation.pdfY) || 0;
+                const pdfTop = sourcePageHeight > 0
+                    ? Math.max(0, sourcePageHeight - (pdfY + pdfHeight))
+                    : Math.max(0, Number(sourceMeta.sourceBlockTop) || 0);
+                const bbox = [pdfX, pdfTop, pdfX + pdfWidth, pdfTop + pdfHeight];
+
+                const sourceLeft = Number(sourceMeta.sourceBlockLeft);
+                const sourceTop = Number(sourceMeta.sourceBlockTop);
+                const sourceWidth = Number(sourceMeta.sourceBlockWidth);
+                const sourceHeight = Number(sourceMeta.sourceBlockHeight);
+                const originalBbox = [
+                    Number.isFinite(sourceLeft) ? sourceLeft : bbox[0],
+                    Number.isFinite(sourceTop) ? sourceTop : bbox[1],
+                    Number.isFinite(sourceLeft) && Number.isFinite(sourceWidth) ? (sourceLeft + sourceWidth) : bbox[2],
+                    Number.isFinite(sourceTop) && Number.isFinite(sourceHeight) ? (sourceTop + sourceHeight) : bbox[3],
+                ];
+
+                return {
+                    key: String(annotation.promotedSourceKey),
+                    value: {
+                        page_number: pageNumber,
+                        block_num: Number(annotation.promotedSourceBlockNum) || undefined,
+                        original_text: String(annotation.originalText || annotation.text || ''),
+                        new_text: String(annotation.text || ''),
+                        rich_html: typeof annotation.richTextHtml === 'string' ? annotation.richTextHtml : null,
+                        bbox,
+                        original_bbox: originalBbox,
+                        origin_x: bbox[0],
+                        origin_y: bbox[3],
+                        font: String(annotation.fontSourceName || annotation.fontFamily || 'Helvetica'),
+                        font_size: Number(annotation.fontSize) || 12,
+                        font_weight: String(annotation.fontWeight || '400'),
+                        font_style: String(annotation.fontStyle || 'normal'),
+                        underline: Boolean(annotation.underline),
+                        line_height: Number(annotation.lineHeight) || null,
+                        color: annotation.textColor || '#000000',
+                        background_color: annotation.backgroundColor && annotation.backgroundColor !== 'transparent'
+                            ? annotation.backgroundColor
+                            : null,
+                        annotation_id: String(annotation.id || ''),
+                        promoted_source_key: String(annotation.promotedSourceKey || ''),
+                    },
+                };
+            }
+
+            async function mergeBoundingBoxAnnotationStateIntoOverlayEdits() {
+                if (!boundingBoxEditMode) {
+                    return;
+                }
+
+                try {
+                    const { promotedSavedAnnotations } = await loadSavedTextAnnotationsFromDatabase();
+                    (Array.isArray(promotedSavedAnnotations) ? promotedSavedAnnotations : []).forEach((annotationData) => {
+                        const built = buildOverlayEditRecordFromSavedPromotedAnnotation(annotationData);
+                        if (!built?.key || !built?.value) {
+                            return;
+                        }
+                        if (overlayEditedFields.has(built.key)) {
+                            return;
+                        }
+                        const existing = overlayPersistedEdits.get(built.key) || {};
+                        overlayPersistedEdits.set(built.key, {
+                            ...clonePlainData(built.value),
+                            ...clonePlainData(existing),
+                            annotation_id: existing.annotation_id || built.value.annotation_id || '',
+                            promoted_source_key: existing.promoted_source_key || built.value.promoted_source_key || built.key,
+                        });
+                    });
+                } catch (error) {
+                    console.warn('Failed to load bounding-box annotation state', error);
+                }
+            }
+
+            async function loadOverlayEdits() {
                 overlayEditedFields.clear();
                 overlayPersistedEdits.clear();
                 clearStaleOverlayEditStorage();
                 try {
                     const stored = sessionStorage.getItem(overlayEditsStorageKey);
                     if (!stored) {
+                        await mergeBoundingBoxAnnotationStateIntoOverlayEdits();
                         updateUndoRedoButtons();
                         return;
                     }
@@ -43542,6 +46291,7 @@
                         ? parsed
                         : (Array.isArray(parsed?.edits) ? parsed.edits : []);
                     if (!Array.isArray(edits)) {
+                        await mergeBoundingBoxAnnotationStateIntoOverlayEdits();
                         updateUndoRedoButtons();
                         return;
                     }
@@ -43555,11 +46305,317 @@
                 } catch (err) {
                     console.warn('Failed to load overlay edits', err);
                 }
+                await mergeBoundingBoxAnnotationStateIntoOverlayEdits();
                 updateUndoRedoButtons();
             }
-            
-            // Overlay edits are client-side only for now (no server persistence).
 
+            async function persistSingleOverlayEdit(editKey, editData) {
+                if (!editKey || !editData) {
+                    return { success: false, message: 'Missing overlay edit payload.' };
+                }
+
+                if (overlaySaveMode === 'live_save') {
+                    return await _executeLiveSave(editKey, editData);
+                }
+
+                const edits = [editData].filter((candidate) => isMaterialOverlaySaveEdit(candidate, { honorForceReinsert: true }));
+                if (edits.length === 0) {
+                    return { success: true, skipped_noop: true };
+                }
+
+                const response = await fetch('{{ route("documents.saveEdits", $document) }}', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: {
+                        'X-CSRF-TOKEN': csrfToken,
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify({ edits })
+                });
+
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok || !result.success) {
+                    return {
+                        success: false,
+                        message: result.error || result.message || `Overlay save failed (${response.status})`,
+                    };
+                }
+
+                updateSavedEditPreviewLink(result.saved_preview_url || savedEditPreviewUrl);
+                return {
+                    success: true,
+                    saved_preview_url: result.saved_preview_url || savedEditPreviewUrl,
+                };
+            }
+
+            function buildBoundingBoxAnnotationPayload(field, editKey, editData) {
+                if (!field || !editKey || !editData) {
+                    return null;
+                }
+
+                const bbox = Array.isArray(editData.bbox) && editData.bbox.length >= 4
+                    ? editData.bbox.map((value) => Number(value) || 0)
+                    : null;
+                if (!bbox) {
+                    return null;
+                }
+
+                const pageNumber = Number(editData.page_number || field.dataset.pageNumber || 0);
+                const pageIndex = Math.max(0, pageNumber - 1);
+                const pageHeight = Number(field.dataset.pageHeight || 0)
+                    || (Array.isArray(overlayExtractionData)
+                        ? (overlayExtractionData.find((page) => Number(page?.page_number) === pageNumber)?.height || 0)
+                        : 0);
+                const left = Number(bbox[0]) || 0;
+                const top = Number(bbox[1]) || 0;
+                const right = Number(bbox[2]) || left;
+                const bottom = Number(bbox[3]) || top;
+                const width = Math.max(0, right - left);
+                const height = Math.max(0, bottom - top);
+                const sourceOriginalText = String(
+                    field.dataset.sourceOriginalText
+                    || editData.original_text
+                    || field.dataset.originalText
+                    || ''
+                );
+                const sourceLeft = Number(field.dataset.sourceOriginalLeft || field.dataset.originalLeft || editData.original_bbox?.[0] || left);
+                const sourceTop = Number(field.dataset.sourceOriginalTop || field.dataset.originalTop || editData.original_bbox?.[1] || top);
+                const sourceWidth = Number(field.dataset.sourceOriginalWidth || field.dataset.originalWidth || ((editData.original_bbox?.[2] ?? left) - (editData.original_bbox?.[0] ?? left)) || width);
+                const sourceHeight = Number(field.dataset.sourceOriginalHeight || field.dataset.originalHeight || ((editData.original_bbox?.[3] ?? top) - (editData.original_bbox?.[1] ?? top)) || height);
+                const sourceBlock = field._overlaySourceBlock || null;
+                const backgroundColor = colorToHex(
+                    editData.background_color
+                    || field.dataset.backgroundColor
+                    || '#ffffff'
+                );
+                const annotation = {
+                    id: String(field.dataset.annotationId || editData.annotation_id || `bbox_${String(editKey).replace(/[^a-z0-9_-]+/gi, '_')}`),
+                    type: 'text',
+                    text: String(editData.new_text ?? ''),
+                    originalText: sourceOriginalText,
+                    pageIndex,
+                    pdfX: left,
+                    pdfY: pageHeight > 0 ? Math.max(0, pageHeight - bottom) : Math.max(0, Number(editData.origin_y || bottom) - height),
+                    pdfWidth: width,
+                    pdfHeight: height,
+                    keepBounds: true,
+                    fontSize: Number(editData.font_size) || 12,
+                    fontFamily: normalizePdfEditableFontFamily(editData.font || field.dataset.font || 'Helvetica')
+                        || normalizeBuiltinAnnotationFontFamily(editData.font || field.dataset.font || 'Helvetica'),
+                    fontSourceName: String(field.dataset.embeddedFontName || editData.font || field.dataset.font || ''),
+                    lineHeight: Number(editData.line_height) || null,
+                    textColor: editData.color || field.dataset.textColor || '#000000',
+                    backgroundColor: backgroundColor && backgroundColor !== 'transparent' ? backgroundColor : '#ffffff',
+                    fontWeight: String(editData.font_weight || field.dataset.fontWeight || '400'),
+                    fontStyle: String(editData.font_style || field.dataset.fontStyle || 'normal'),
+                    underline: Boolean(editData.underline),
+                    textAlign: 'left',
+                    opacity: 1,
+                    rotation: 0,
+                    promotedFromExtraction: true,
+                    promotedDirty: true,
+                    promotedSourceKey: String(editKey),
+                    promotedSourceBlockNum: Number(editData.block_num || field.dataset.blockNum || 0),
+                    promotedSourcePage: pageNumber,
+                    richTextHtml: typeof editData.rich_html === 'string' ? editData.rich_html : '',
+                };
+
+                setPromotedAnnotationSourceMeta(annotation, {
+                    sourceBlockLeft: sourceLeft,
+                    sourceBlockTop: sourceTop,
+                    sourceBlockWidth: sourceWidth,
+                    sourceBlockHeight: sourceHeight,
+                    sourcePageHeight: pageHeight,
+                    sourceTextLines: Array.isArray(sourceBlock?.text_lines) && sourceBlock.text_lines.length
+                        ? sourceBlock.text_lines.map((line) => sanitizePromotedExtractionLine(line))
+                        : sourceOriginalText.split('\n').map((line) => sanitizePromotedExtractionLine(line)).filter((line) => line.length > 0),
+                    sourceLineBBoxes: Array.isArray(sourceBlock?.line_bboxes)
+                        ? sourceBlock.line_bboxes
+                            .filter((bboxEntry) => Array.isArray(bboxEntry) && bboxEntry.length >= 4)
+                            .map((bboxEntry) => bboxEntry.map((value) => Number(value) || 0))
+                        : (Array.isArray(editData.original_bbox) && editData.original_bbox.length >= 4
+                            ? [editData.original_bbox.map((value) => Number(value) || 0)]
+                            : []),
+                    sourceSpans: Array.isArray(sourceBlock?.spans)
+                        ? sourceBlock.spans
+                            .filter((span) => span && Array.isArray(span.bbox) && span.bbox.length >= 4)
+                            .map((span) => ({
+                                ...span,
+                                bbox: span.bbox.map((value) => Number(value) || 0),
+                            }))
+                        : [],
+                });
+
+                return stripInternalAnnotationFields(annotation);
+            }
+
+            async function persistSingleBoundingBoxAnnotation(field, editKey, editData) {
+                const annotationPayload = buildBoundingBoxAnnotationPayload(field, editKey, editData);
+                if (!annotationPayload) {
+                    return { success: false, message: 'Failed to build bounding-box annotation payload.' };
+                }
+
+                const sessionId = getStoredPdfSessionId() || generateSessionId();
+                setStoredPdfSessionId(sessionId);
+
+                const response = await fetch('{{ route("documents.saveAnnotations", $document) }}', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: {
+                        'X-CSRF-TOKEN': csrfToken,
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        annotations: [annotationPayload],
+                        session_id: sessionId,
+                        user_email: null,
+                        annotation_id: annotationPayload.id,
+                    }),
+                });
+
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok || !result.success) {
+                    return {
+                        success: false,
+                        message: result.error || result.message || `Bounding-box annotation save failed (${response.status})`,
+                    };
+                }
+
+                const savedAnnotation = result.annotation && typeof result.annotation === 'object'
+                    ? result.annotation
+                    : annotationPayload;
+                const overlayRecord = buildOverlayEditRecordFromSavedPromotedAnnotation(savedAnnotation);
+
+                return {
+                    success: true,
+                    annotation: savedAnnotation,
+                    overlayEdit: overlayRecord?.value || {
+                        ...clonePlainData(editData),
+                        annotation_id: annotationPayload.id,
+                        promoted_source_key: editKey,
+                    },
+                };
+            }
+
+            function updateOverlayFieldOriginalStateFromEdit(field, editData) {
+                if (!field || !editData) {
+                    return;
+                }
+
+                const nextText = String(editData.new_text ?? '');
+                field.dataset.originalText = nextText;
+                field.dataset.hasPersistedEdit = nextText.trim() !== '' ? '1' : '0';
+                if (boundingBoxEditMode && field.dataset.layoutMode === 'bounding_box_edit' && field.dataset.hasPersistedEdit === '1') {
+                    delete field.dataset.exactGeometry;
+                }
+
+                const nextBBox = Array.isArray(editData.bbox) && editData.bbox.length >= 4
+                    ? editData.bbox.map((value) => Number(value))
+                    : null;
+                const nextPdfX = Number(editData.pdf_x ?? nextBBox?.[0]);
+                const nextPdfY = Number(editData.pdf_y ?? nextBBox?.[1]);
+                const nextPdfWidth = Number(editData.pdf_width ?? ((nextBBox?.[2] ?? 0) - (nextBBox?.[0] ?? 0)));
+                const nextPdfHeight = Number(editData.pdf_height ?? ((nextBBox?.[3] ?? 0) - (nextBBox?.[1] ?? 0)));
+                if (Number.isFinite(nextPdfX)) field.dataset.originalLeft = String(nextPdfX);
+                if (Number.isFinite(nextPdfY)) field.dataset.originalTop = String(nextPdfY);
+                if (Number.isFinite(nextPdfWidth)) field.dataset.originalWidth = String(nextPdfWidth);
+                if (Number.isFinite(nextPdfHeight)) field.dataset.originalHeight = String(nextPdfHeight);
+                if (Number.isFinite(Number(editData.origin_x))) field.dataset.originalOriginX = String(editData.origin_x);
+                if (Number.isFinite(Number(editData.origin_y))) field.dataset.originalOriginY = String(editData.origin_y);
+                if (editData.annotation_id) field.dataset.annotationId = String(editData.annotation_id);
+                const nextBackgroundColor = colorToHex(editData.background_color || 'transparent');
+                if (nextBackgroundColor && nextBackgroundColor !== 'transparent') {
+                    field.dataset.backgroundColor = nextBackgroundColor;
+                } else {
+                    delete field.dataset.backgroundColor;
+                }
+                syncBoundingBoxFieldMaskState(field);
+            }
+
+            function upsertBoundingBoxAnnotationIntoLocalState(annotationData) {
+                const annotation = buildTextAnnotationFromSavedState(annotationData);
+                if (!annotation?.promotedFromExtraction || !annotation?.promotedSourceKey) {
+                    return;
+                }
+
+                annotation.promotedDirty = true;
+                const sourceKey = String(annotation.promotedSourceKey || '');
+                const existingIndex = annotations.findIndex((candidate) => (
+                    candidate?.promotedFromExtraction
+                    && String(candidate?.promotedSourceKey || '') === sourceKey
+                ));
+
+                if (existingIndex >= 0) {
+                    const existingAnnotation = annotations[existingIndex];
+                    if (existingAnnotation?.element?.parentNode) {
+                        existingAnnotation.element.parentNode.removeChild(existingAnnotation.element);
+                    }
+                    annotations.splice(existingIndex, 1, annotation);
+                } else {
+                    registerAnnotationId(annotation);
+                    annotations.push(annotation);
+                }
+
+                persistAnnotations();
+                updateAnnotationsList();
+            }
+
+            async function persistBoundingBoxFieldIfNeeded(field) {
+                if (!boundingBoxEditMode || !field) {
+                    return;
+                }
+
+                const editKey = String(field.dataset.wordIndex || '');
+                if (!editKey || field.dataset.persisting === '1') {
+                    return;
+                }
+
+                const editData = overlayEditedFields.get(editKey);
+                if (!editData) {
+                    field.dataset.hasPersistedEdit = overlayPersistedEdits.has(editKey) ? '1' : '0';
+                    syncBoundingBoxFieldMaskState(field);
+                    return;
+                }
+
+                field.dataset.persisting = '1';
+                field.dataset.liveSaveState = 'saving';
+                syncBoundingBoxFieldMaskState(field);
+                updateOverlaySaveButton();
+
+                try {
+                    const result = await persistSingleBoundingBoxAnnotation(field, editKey, editData);
+                    if (!result?.success) {
+                        field.dataset.liveSaveState = 'error';
+                        syncBoundingBoxFieldMaskState(field);
+                        setStatus(result?.message || 'Failed to persist text box.', 'err');
+                        return;
+                    }
+
+                    const persistedEdit = result?.overlayEdit
+                        ? clonePlainData(result.overlayEdit)
+                        : clonePlainData(editData);
+                    overlayPersistedEdits.set(editKey, persistedEdit);
+                    overlayEditedFields.delete(editKey);
+                    _liveSavedKeys.add(editKey);
+                    field.dataset.liveSaveState = 'saved';
+                    updateOverlayFieldOriginalStateFromEdit(field, persistedEdit);
+                    upsertBoundingBoxAnnotationIntoLocalState(result.annotation || buildBoundingBoxAnnotationPayload(field, editKey, persistedEdit));
+                    persistOverlayEdits();
+                    updateOverlaySaveButton();
+                    setStatus('Text box saved.', 'ok');
+                } catch (error) {
+                    field.dataset.liveSaveState = 'error';
+                    syncBoundingBoxFieldMaskState(field);
+                    setStatus(error?.message || 'Failed to persist text box.', 'err');
+                } finally {
+                    delete field.dataset.persisting;
+                    syncBoundingBoxFieldMaskState(field);
+                }
+            }
             const ZOOM_MIN_PERCENT = 50;
             const ZOOM_MAX_PERCENT = 400;
             const ZOOM_STEP_PERCENT = 30;
@@ -43583,7 +46639,7 @@
                     return;
                 }
 
-                if (overlayEditorActive && basePdfUrl === cleanPdfUrl && overlayExtractionData) {
+                if (overlayEditorActive && overlayExtractionData) {
                     renderPdfWithOverlay(true);
                 } else {
                     rerenderPdf();
@@ -43738,8 +46794,28 @@
                 updateSelectionBar();
                 updateDocumentLoadingProgress(72, 'Rendering document pages...');
 
+                if (boundingBoxEditMode && !isImageDocument) {
+                    overlayToggleHandler(true)
+                        .then(() => resumePendingDownloadAfterSaveIfNeeded())
+                        .catch((error) => {
+                            if (isPdfJsRenderingCancelledError(error)) {
+                                console.debug('Initial bounding-box render cancelled by a newer render', error);
+                                return;
+                            }
+                            hideDocumentLoadingScreen({ immediate: true });
+                            console.error('Initial bounding-box render failed', error);
+                            setStatus('Failed to load positioned annotation editor.', 'err');
+                        });
+                    return;
+                }
+
                 renderPdf()
-                    .then(() => resumePendingDownloadAfterSaveIfNeeded())
+                    .then(async () => {
+                        if (layoutMode === 'new_writer') {
+                            await flushAllAnnotationsForNewWriter();
+                        }
+                        return resumePendingDownloadAfterSaveIfNeeded();
+                    })
                     .catch((error) => {
                         if (isPdfJsRenderingCancelledError(error)) {
                             console.debug('Initial renderPdf cancelled by a newer render', error);

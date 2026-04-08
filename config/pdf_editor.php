@@ -3,6 +3,18 @@
 return [
     /*
     |--------------------------------------------------------------------------
+    | PDF Materialization Mode
+    |--------------------------------------------------------------------------
+    |
+    | fitz_extraction: use raw Fitz extraction JSON as the redraw/export source
+    | annotation_base: materialize Fitz extraction into pdf_state/pdf_groups and
+    |                  reconstruct redraw/export blocks from those tables
+    |
+    */
+    'mode' => env('PDF_MODE', env('PDF_mode', 'fitz_extraction')),
+
+    /*
+    |--------------------------------------------------------------------------
     | PDF Save Mode
     |--------------------------------------------------------------------------
     |
@@ -14,6 +26,18 @@ return [
     |
     */
     'save_mode' => env('PDF_SAVE_MODE', 'full_page_save'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Editor Layout Mode
+    |--------------------------------------------------------------------------
+    |
+    | default: existing promoted-annotation/editor behavior
+    | bounding_box_edit: render the source PDF first, then place extraction
+    |                    bounding boxes over it and edit/persist one box at a time
+    |
+    */
+    'layout_mode' => env('LAYOUT_MODE', 'default'),
 
     /*
     |--------------------------------------------------------------------------

@@ -17,16 +17,13 @@ const BASE_URL = process.env.BASE_URL || 'http://localhost:8081';
 const PDF_PATH = path.resolve(__dirname, '..', '..', 'public', 'fw8ben.pdf');
 const OUTPUT_DIR = path.resolve(__dirname, '..', '..', 'storage', 'app', 'overlay_regression_artifacts');
 const VIEWPORT = { width: 1440, height: 1600 };
+const PDF_PAGE_WIDTH = 612;
 
 const LEFT_FRAGMENT = 'You are NOT an individual';
+const SECOND_ROW_FRAGMENT = 'You are a U.S. citizen or other U.S. person';
+const THIRD_ROW_FRAGMENT = 'You are a beneficial owner claiming that income is effectively connected';
 const RIGHT_FRAGMENT = 'W-8BEN-E';
 const POSITION_TOLERANCE_PX = 5;
-const KNOWN_DUPLICATED_ARTIFACT_MULTILINE_TEXT =
-    `• You are NOT an individual . . W-8BEN-E
-. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
-. W-8BEN-E`;
-const KNOWN_DUPLICATED_ARTIFACT_TEXT = normalize(KNOWN_DUPLICATED_ARTIFACT_MULTILINE_TEXT);
-
 function ensureOutputDir() {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 }
@@ -134,6 +131,13 @@ async function waitForEditorReady(page) {
     await page.waitForTimeout(1500);
 }
 
+async function getRenderedPageWidth(page) {
+    return page.evaluate(() => {
+        const pageRoot = document.querySelector('.page-wrapper[data-page-number="1"], .page[data-page-index="0"]');
+        return pageRoot?.getBoundingClientRect()?.width || 0;
+    });
+}
+
 function loadExpectedRowGeometry() {
     const pythonCode = `
 import contextlib
@@ -156,37 +160,57 @@ with contextlib.redirect_stdout(io.StringIO()):
     result = module.extract_text_with_pymupdf(str(pdf_path))
 
 page = result['extraction_data'][0]
-target_block = None
-for block in page.get('blocks', []):
-    text = normalize(block.get('text') or '')
-    if 'You are NOT an individual' in text and 'W-8BEN-E' in text:
-        target_block = block
-        break
-
-if target_block is None:
-    raise SystemExit('Could not find target fw8ben row block')
-
+target_line = None
+citizen_line = None
 label_span = None
-for span in target_block.get('spans') or []:
-    if 'W-8BEN-E' in str(span.get('text') or ''):
-        label_span = span
-        break
+label_line = None
+for block in page.get('blocks', []):
+    text_lines = [normalize(line) for line in (block.get('text_lines') or [])]
+    line_bboxes = block.get('line_bboxes') or []
+    for index, line in enumerate(text_lines):
+        line_bbox = line_bboxes[index] if index < len(line_bboxes) else [block.get('left') or 0.0, block.get('top') or 0.0, (block.get('left') or 0.0) + (block.get('width') or 0.0), (block.get('top') or 0.0) + (block.get('height') or 0.0)]
+        if 'You are NOT an individual' in line and 'W-8BEN-E' not in line:
+            target_line = {
+                'text': line,
+                'left': float(line_bbox[0] or 0.0),
+                'top': float(line_bbox[1] or 0.0),
+                'width': max(0.0, float(line_bbox[2] or 0.0) - float(line_bbox[0] or 0.0)),
+                'height': max(0.0, float(line_bbox[3] or 0.0) - float(line_bbox[1] or 0.0)),
+            }
+        if 'You are a U.S. citizen or other U.S. person' in line:
+            citizen_line = {
+                'text': line,
+                'left': float(line_bbox[0] or 0.0),
+                'top': float(line_bbox[1] or 0.0),
+                'width': max(0.0, float(line_bbox[2] or 0.0) - float(line_bbox[0] or 0.0)),
+                'height': max(0.0, float(line_bbox[3] or 0.0) - float(line_bbox[1] or 0.0)),
+            }
+        if 'W-8BEN-E' in line:
+            label_line = {
+                'text': line,
+                'left': float(line_bbox[0] or 0.0),
+                'top': float(line_bbox[1] or 0.0),
+                'width': max(0.0, float(line_bbox[2] or 0.0) - float(line_bbox[0] or 0.0)),
+                'height': max(0.0, float(line_bbox[3] or 0.0) - float(line_bbox[1] or 0.0)),
+            }
+    if label_span is None and any('W-8BEN-E' in line for line in text_lines):
+        for span in block.get('spans') or []:
+            if 'W-8BEN-E' in str(span.get('text') or ''):
+                label_span = span
+                break
 
-if label_span is None:
-    raise SystemExit('Could not find W-8BEN-E span in target block')
+if target_line is None:
+    raise SystemExit('Could not find target fw8ben left row')
+if label_span is None or label_line is None:
+    raise SystemExit('Could not find W-8BEN-E label span/line')
 
-block_text = normalize(target_block.get('text') or '')
-block_bbox = {
-    'left': float(target_block.get('left') or 0.0),
-    'top': float(target_block.get('top') or 0.0),
-    'width': float(target_block.get('width') or 0.0),
-    'height': float(target_block.get('height') or 0.0),
-}
 span_bbox = label_span.get('bbox') or [0, 0, 0, 0]
 
 print(json.dumps({
-    'block_text': block_text,
-    'block_bbox': block_bbox,
+    'page_width': float(page.get('width') or 0.0),
+    'left_line': target_line,
+    'citizen_line': citizen_line,
+    'label_line': label_line,
     'label_span': {
         'text': normalize(label_span.get('text') or ''),
         'left': float(span_bbox[0] or 0.0),
@@ -194,7 +218,7 @@ print(json.dumps({
         'width': max(0.0, float(span_bbox[2] or 0.0) - float(span_bbox[0] or 0.0)),
         'height': max(0.0, float(span_bbox[3] or 0.0) - float(span_bbox[1] or 0.0)),
     },
-    'text_lines': [normalize(line) for line in target_block.get('text_lines') or []],
+    'text_lines': [target_line['text']],
 }))
 `;
 
@@ -209,40 +233,43 @@ print(json.dumps({
 
 async function waitForTargetRow(page) {
     await page.waitForFunction(
-        ({ leftFragment, rightFragment }) => {
+        ({ leftFragment, secondRowFragment, rightFragment }) => {
             const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
             const promotedAnnotations = typeof annotations !== 'undefined' && Array.isArray(annotations)
                 ? annotations.filter((annotation) => annotation?.promotedFromExtraction && annotation?.element)
                 : [];
 
-            return promotedAnnotations.some((annotation) => {
-                const text = normalizeText(annotation.text || annotation.element?.innerText || '');
-                return text.includes(leftFragment) && text.includes(rightFragment);
+            const hasLeftRow = promotedAnnotations.some((annotation) => {
+                const textEl = annotation.element.querySelector('.annotation-text') || annotation.element;
+                const text = normalizeText(annotation.text || textEl?.innerText || textEl?.textContent || '');
+                return text.includes(leftFragment);
             });
+            const hasExactLabel = promotedAnnotations.some((annotation) => {
+                const textEl = annotation.element.querySelector('.annotation-text') || annotation.element;
+                if (textEl?.dataset?.exactPromotedGeometry !== '1') {
+                    return false;
+                }
+                const exactLines = Array.from(textEl.querySelectorAll('.annotation-exact-line')).map((lineEl) => (
+                    normalizeText(lineEl.textContent || '')
+                ));
+                return exactLines.some((lineText) => lineText.includes(rightFragment));
+            });
+            const hasCitizenRow = promotedAnnotations.some((annotation) => {
+                const textEl = annotation.element.querySelector('.annotation-text') || annotation.element;
+                const text = normalizeText(annotation.text || textEl?.innerText || textEl?.textContent || '');
+                return text.includes(secondRowFragment);
+            });
+
+            return hasLeftRow && hasExactLabel && hasCitizenRow;
         },
-        { leftFragment: LEFT_FRAGMENT, rightFragment: RIGHT_FRAGMENT },
+        { leftFragment: LEFT_FRAGMENT, secondRowFragment: SECOND_ROW_FRAGMENT, rightFragment: RIGHT_FRAGMENT },
         { timeout: 90000 }
     );
 }
 
-async function collectRowState(page) {
-    return page.evaluate(({ leftFragment, rightFragment }) => {
+async function collectRowState(page, expectedRowBox, expectedCitizenBox) {
+    return page.evaluate(({ leftFragment, secondRowFragment, rightFragment, expectedRowBox, expectedCitizenBox }) => {
         const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
-        const countOccurrences = (haystack, needle) => {
-            const source = normalizeText(haystack);
-            const target = normalizeText(needle);
-            if (!source || !target) return 0;
-            let count = 0;
-            let offset = 0;
-            while (offset <= source.length) {
-                const index = source.indexOf(target, offset);
-                if (index === -1) break;
-                count += 1;
-                offset = index + target.length;
-            }
-            return count;
-        };
-
         const pageRoot = document.querySelector('.page-wrapper[data-page-number="1"], .page[data-page-index="0"]');
         const pageRect = pageRoot?.getBoundingClientRect() || null;
         const relativeRect = (element) => {
@@ -274,107 +301,75 @@ async function collectRowState(page) {
             };
         });
 
-        const targetAnnotation = pageAnnotations.find((entry) => (
-            entry.text.includes(leftFragment) && entry.text.includes(rightFragment)
-        )) || null;
-        if (!targetAnnotation) {
-            return null;
-        }
-
-        const targetBandTop = targetAnnotation.rect.top - 8;
-        const targetBandBottom = targetAnnotation.rect.top + targetAnnotation.rect.height + 8;
-
-        const exactSpans = Array.from(targetAnnotation.element.querySelectorAll('.annotation-exact-span')).map((spanEl) => ({
-            text: normalizeText(spanEl.textContent || ''),
-            ...relativeRect(spanEl),
-        }));
-        const targetLabelSpans = exactSpans.filter((span) => span.text.includes(rightFragment));
+        const targetBandTop = (expectedRowBox?.top || 0) - 12;
+        const targetBandBottom = (expectedRowBox?.top || 0) + Math.max(expectedRowBox?.height || 0, 18) + 12;
+        const citizenBandTop = (expectedCitizenBox?.top || 0) - 12;
+        const citizenBandBottom = (expectedCitizenBox?.top || 0) + Math.max(expectedCitizenBox?.height || 0, 18) + 12;
 
         const rowAnnotationsWithLabel = pageAnnotations.filter((entry) => (
             entry.text.includes(rightFragment)
             && entry.rect.top >= targetBandTop
             && entry.rect.top <= targetBandBottom
         )).map((entry) => ({
-            text: entry.text,
-            ...entry.rect,
-        }));
+                text: entry.text,
+                ...entry.rect,
+            }));
 
-        const rowLabelSpans = Array.from(document.querySelectorAll('.annotation-exact-span'))
-            .map((spanEl) => ({
-                text: normalizeText(spanEl.textContent || ''),
-                ...relativeRect(spanEl),
+        const rowLabelLines = Array.from(document.querySelectorAll('.annotation-exact-line'))
+            .map((lineEl) => ({
+                text: normalizeText(lineEl.textContent || ''),
+                ...relativeRect(lineEl),
             }))
-            .filter((span) => (
-                span.text.includes(rightFragment)
-                && span.top >= targetBandTop
-                && span.top <= targetBandBottom
+            .filter((line) => (
+                line.text.includes(rightFragment)
+                && line.top >= targetBandTop
+                && line.top <= targetBandBottom
             ));
 
         return {
-            annotation: {
-                text: targetAnnotation.text,
-                renderedText: targetAnnotation.renderedText,
-                annotationStateText: targetAnnotation.annotationStateText,
-                exactGeometry: targetAnnotation.textEl.dataset.exactPromotedGeometry === '1',
-                rightFragmentOccurrences: countOccurrences(targetAnnotation.text, rightFragment),
-                leftFragmentOccurrences: countOccurrences(targetAnnotation.text, leftFragment),
-                ...targetAnnotation.rect,
-            },
-            targetLabelSpans,
-            rowAnnotationsWithLabel,
-            rowLabelSpans,
-            textLines: Array.from(targetAnnotation.element.querySelectorAll('.annotation-exact-line')).map((lineEl) => ({
-                text: normalizeText(lineEl.textContent || ''),
-                ...relativeRect(lineEl),
+            rowAnnotationsWithBothFragments: pageAnnotations.filter((entry) => (
+                entry.text.includes(leftFragment)
+                && entry.text.includes(rightFragment)
+                && entry.rect.top >= targetBandTop
+                && entry.rect.top <= targetBandBottom
+            )).map((entry) => ({
+                text: entry.text,
+                ...entry.rect,
             })),
-        };
-    }, { leftFragment: LEFT_FRAGMENT, rightFragment: RIGHT_FRAGMENT });
-}
-
-async function injectKnownDuplicatedArtifact(page) {
-    const result = await page.evaluate(({ artifactText, leftFragment, rightFragment }) => {
-        const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
-        const promotedAnnotations = typeof annotations !== 'undefined' && Array.isArray(annotations)
-            ? annotations.filter((annotation) => annotation?.promotedFromExtraction && annotation?.element)
-            : [];
-        const target = promotedAnnotations.find((annotation) => {
-            const textEl = annotation.element.querySelector('.annotation-text') || annotation.element;
-            const text = normalizeText(annotation.text || textEl.innerText || textEl.textContent || '');
-            return text.includes(leftFragment) && text.includes(rightFragment);
-        }) || null;
-        if (!target) {
-            return { found: false };
-        }
-
-        target.text = artifactText;
-        target.originalText = artifactText;
-        target.promotedDirty = false;
-        delete target.promotedReflowEnabled;
-        delete target.richTextHtml;
-
-        if (typeof applyAnnotationStyle === 'function') {
-            applyAnnotationStyle(target);
-        } else if (typeof rerenderAnnotations === 'function') {
-            rerenderAnnotations();
-        }
-
-        return {
-            found: true,
-            id: target.id || null,
-            annotationStateText: normalizeText(target.text || ''),
+            rowAnnotationsWithLabel,
+            rowLeftFragmentAnnotations: pageAnnotations.filter((entry) => (
+                entry.text.includes(leftFragment)
+                && entry.rect.top >= targetBandTop
+                && entry.rect.top <= targetBandBottom
+            )).map((entry) => ({
+                text: entry.text,
+                renderedText: entry.renderedText,
+                exactGeometry: entry.textEl.dataset.exactPromotedGeometry === '1',
+                ...entry.rect,
+            })),
+            rowLabelLines,
+            citizenRowAnnotations: pageAnnotations.filter((entry) => (
+                entry.text.includes(secondRowFragment)
+                && entry.rect.top >= citizenBandTop
+                && entry.rect.top <= citizenBandBottom
+            )).map((entry) => ({
+                text: entry.text,
+                renderedText: entry.renderedText,
+                exactGeometry: entry.textEl.dataset.exactPromotedGeometry === '1',
+                ...entry.rect,
+            })),
+            page: {
+                width: pageRect?.width || 0,
+                height: pageRect?.height || 0,
+            },
         };
     }, {
-        artifactText: KNOWN_DUPLICATED_ARTIFACT_MULTILINE_TEXT,
         leftFragment: LEFT_FRAGMENT,
+        secondRowFragment: SECOND_ROW_FRAGMENT,
         rightFragment: RIGHT_FRAGMENT,
+        expectedRowBox,
+        expectedCitizenBox,
     });
-
-    if (!result?.found) {
-        throw new Error('Could not inject the known duplicated artifact into the fw8ben target row');
-    }
-
-    await page.waitForTimeout(250);
-    return result;
 }
 
 function buildExpectedRect(entry, scale) {
@@ -390,92 +385,38 @@ async function main() {
     ensureOutputDir();
     const runToken = buildRunToken();
     const expected = loadExpectedRowGeometry();
+    if (!expected.citizen_line) {
+        throw new Error('Could not find the fw8ben W-9 row text in extractor output.');
+    }
 
     const browser = await chromium.launch({ headless: true });
     const page = await browser.newPage({ viewport: VIEWPORT });
 
     try {
         const documentId = await uploadPdf(page);
-        await forceRefreshOverlay(page, documentId);
-        await clearAnnotationSessionState(page, documentId);
-
-        await page.goto(`${BASE_URL}/documents/${documentId}/edit`, { waitUntil: 'domcontentloaded', timeout: 90000 });
         await waitForEditorReady(page);
-        await waitForTargetRow(page);
-        await page.waitForTimeout(1500);
+        await clearAnnotationSessionState(page, documentId);
+        await forceRefreshOverlay(page, documentId);
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: 90000 });
+        await waitForEditorReady(page);
+        await clearAnnotationSessionState(page, documentId);
+        await page.waitForTimeout(10000);
 
-        const baselineActual = await collectRowState(page);
-        if (!baselineActual) {
-            throw new Error('Could not locate fw8ben W-8BEN-E target row in promoted annotations');
-        }
+        const renderedPageWidth = await getRenderedPageWidth(page);
+        const pageScale = Number(renderedPageWidth || 0) / Math.max(1, Number(expected.page_width || PDF_PAGE_WIDTH));
+        const expectedRowBox = buildExpectedRect(expected.left_line, pageScale);
+        const expectedCitizenBox = buildExpectedRect(expected.citizen_line, pageScale);
+        const actual = await collectRowState(page, expectedRowBox, expectedCitizenBox);
 
-        const injectedArtifact = await injectKnownDuplicatedArtifact(page);
-        const actual = await collectRowState(page);
-        if (!actual) {
-            throw new Error('Could not locate fw8ben W-8BEN-E target row after injecting the duplicated artifact');
-        }
-
-        const scale = Number(actual.annotation.width || 0) / Math.max(1, Number(expected.block_bbox.width || 0));
-        const expectedLabelRect = buildExpectedRect(expected.label_span, scale);
-        const targetLabelSpan = actual.targetLabelSpans[0] || null;
+        const scale = Number(actual.page.width || 0) / Math.max(1, Number(expected.page_width || PDF_PAGE_WIDTH));
+        const expectedLabelRect = buildExpectedRect(expected.label_line, scale);
+        const rowLabelLine = actual.rowLabelLines[0] || null;
 
         const checks = [
             {
-                item: 'baseline_row_was_present_before_artifact_injection',
-                pass: Boolean(baselineActual),
-                detail: {
-                    renderedText: baselineActual.annotation.renderedText,
-                    annotationStateText: baselineActual.annotation.annotationStateText,
-                },
-            },
-            {
-                item: 'artifact_injection_used_known_duplicate_text',
-                pass: normalize(injectedArtifact.annotationStateText) === KNOWN_DUPLICATED_ARTIFACT_TEXT,
-                detail: {
-                    actual: injectedArtifact.annotationStateText,
-                    expected: KNOWN_DUPLICATED_ARTIFACT_TEXT,
-                },
-            },
-            {
-                item: 'target_annotation_uses_exact_geometry',
-                pass: actual.annotation.exactGeometry === true,
-                detail: { exactGeometry: actual.annotation.exactGeometry },
-            },
-            {
-                item: 'target_annotation_contains_single_left_fragment',
-                pass: actual.annotation.leftFragmentOccurrences === 1,
-                detail: { occurrences: actual.annotation.leftFragmentOccurrences, text: actual.annotation.renderedText },
-            },
-            {
-                item: 'target_annotation_contains_single_w8bene',
-                pass: actual.annotation.rightFragmentOccurrences === 1,
-                detail: { occurrences: actual.annotation.rightFragmentOccurrences, text: actual.annotation.renderedText },
-            },
-            {
-                item: 'target_annotation_text_matches_expected_block_text',
-                pass: normalize(actual.annotation.renderedText) === normalize(expected.block_text),
-                detail: {
-                    actual: actual.annotation.renderedText,
-                    expected: expected.block_text,
-                },
-            },
-            {
-                item: 'target_annotation_text_is_not_known_duplicate_artifact',
-                pass: normalize(actual.annotation.renderedText) !== KNOWN_DUPLICATED_ARTIFACT_TEXT,
-                detail: {
-                    actual: actual.annotation.renderedText,
-                    artifact: KNOWN_DUPLICATED_ARTIFACT_TEXT,
-                },
-            },
-            {
-                item: 'target_row_has_single_label_span',
-                pass: actual.targetLabelSpans.length === 1,
-                detail: { count: actual.targetLabelSpans.length, spans: actual.targetLabelSpans },
-            },
-            {
-                item: 'page_row_has_single_w8bene_span',
-                pass: actual.rowLabelSpans.length === 1,
-                detail: { count: actual.rowLabelSpans.length, spans: actual.rowLabelSpans },
+                item: 'page_row_has_single_w8bene_exact_line',
+                pass: actual.rowLabelLines.length === 1,
+                detail: { count: actual.rowLabelLines.length, lines: actual.rowLabelLines },
             },
             {
                 item: 'page_row_has_single_annotation_with_w8bene',
@@ -483,47 +424,59 @@ async function main() {
                 detail: { count: actual.rowAnnotationsWithLabel.length, annotations: actual.rowAnnotationsWithLabel },
             },
             {
-                item: 'target_row_line_texts_match_expected_source_lines',
-                pass: JSON.stringify(actual.textLines.map((line) => normalizeDotLeaderLine(line.text))) === JSON.stringify(expected.text_lines.map((line) => normalizeDotLeaderLine(line))),
+                item: 'page_row_has_no_annotation_with_both_fragments',
+                pass: actual.rowAnnotationsWithBothFragments.length === 0,
+                detail: { count: actual.rowAnnotationsWithBothFragments.length, annotations: actual.rowAnnotationsWithBothFragments },
+            },
+            {
+                item: 'page_row_left_fragment_never_inlines_w8bene',
+                pass: actual.rowLeftFragmentAnnotations.every((entry) => !normalize(entry.text).includes(RIGHT_FRAGMENT)),
                 detail: {
-                    actual: actual.textLines.map((line) => line.text),
-                    expected: expected.text_lines,
+                    annotations: actual.rowLeftFragmentAnnotations,
                 },
             },
             {
-                item: 'target_row_first_line_does_not_contain_w8bene',
-                pass: !normalize(actual.textLines[0]?.text || '').includes(RIGHT_FRAGMENT),
+                item: 'page_row_has_left_fragment_annotation',
+                pass: actual.rowLeftFragmentAnnotations.length >= 1,
                 detail: {
-                    firstLine: actual.textLines[0]?.text || '',
+                    count: actual.rowLeftFragmentAnnotations.length,
+                    annotations: actual.rowLeftFragmentAnnotations,
                 },
             },
             {
-                item: 'target_row_last_line_is_w8bene_label',
-                pass: normalize(actual.textLines[actual.textLines.length - 1]?.text || '') === normalize(expected.text_lines[expected.text_lines.length - 1] || ''),
+                item: 'page_row_left_fragment_never_inlines_following_beneficial_owner_row',
+                pass: actual.rowLeftFragmentAnnotations.every((entry) => !normalize(entry.text).includes(THIRD_ROW_FRAGMENT)),
                 detail: {
-                    actual: actual.textLines[actual.textLines.length - 1]?.text || '',
-                    expected: expected.text_lines[expected.text_lines.length - 1] || '',
+                    annotations: actual.rowLeftFragmentAnnotations,
+                },
+            },
+            {
+                item: 'page_has_us_citizen_w9_row_annotation',
+                pass: actual.citizenRowAnnotations.length >= 1,
+                detail: {
+                    count: actual.citizenRowAnnotations.length,
+                    annotations: actual.citizenRowAnnotations,
                 },
             },
         ];
 
-        if (targetLabelSpan) {
+        if (rowLabelLine) {
             checks.push({
-                item: 'target_label_left_matches_expected_row',
-                pass: Math.abs(targetLabelSpan.left - expectedLabelRect.left) <= POSITION_TOLERANCE_PX,
+                item: 'row_label_left_matches_expected_row',
+                pass: Math.abs(rowLabelLine.left - expectedLabelRect.left) <= POSITION_TOLERANCE_PX,
                 detail: {
-                    actual: round(targetLabelSpan.left),
+                    actual: round(rowLabelLine.left),
                     expected: round(expectedLabelRect.left),
-                    delta: round(Math.abs(targetLabelSpan.left - expectedLabelRect.left)),
+                    delta: round(Math.abs(rowLabelLine.left - expectedLabelRect.left)),
                 },
             });
             checks.push({
-                item: 'target_label_top_matches_expected_row',
-                pass: Math.abs(targetLabelSpan.top - expectedLabelRect.top) <= POSITION_TOLERANCE_PX,
+                item: 'row_label_top_matches_expected_row',
+                pass: Math.abs(rowLabelLine.top - expectedLabelRect.top) <= POSITION_TOLERANCE_PX,
                 detail: {
-                    actual: round(targetLabelSpan.top),
+                    actual: round(rowLabelLine.top),
                     expected: round(expectedLabelRect.top),
-                    delta: round(Math.abs(targetLabelSpan.top - expectedLabelRect.top)),
+                    delta: round(Math.abs(rowLabelLine.top - expectedLabelRect.top)),
                 },
             });
         }

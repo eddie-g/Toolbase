@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class PdfExtractionFitz extends Model
 {
@@ -26,5 +27,20 @@ class PdfExtractionFitz extends Model
     public function document()
     {
         return $this->belongsTo(Document::class);
+    }
+
+    public function pages(): HasMany
+    {
+        return $this->hasMany(PdfExtractionPage::class, 'pdf_extraction_fitz_id');
+    }
+
+    public function blocks(): HasMany
+    {
+        return $this->hasMany(PdfExtractionBlock::class, 'pdf_extraction_fitz_id');
+    }
+
+    public function spans(): HasMany
+    {
+        return $this->hasMany(PdfExtractionSpan::class, 'pdf_extraction_fitz_id');
     }
 }
