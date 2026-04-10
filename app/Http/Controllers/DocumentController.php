@@ -9,6 +9,7 @@ use App\Models\PdfGroup;
 use App\Models\PdfState;
 use App\Services\PdfAnnotationAssetService;
 use App\Services\PdfFitzExtractionNormalizer;
+use App\Support\PdfAnnotationSuppression;
 use App\Models\User;
 use App\Models\UserActivity;
 use App\Models\UserPdfMonthlyUsage;
@@ -1203,55 +1204,10 @@ class DocumentController extends Controller
             static fn ($ann) => is_array($ann) ? (string) ($ann['id'] ?? '') : '',
             $prepared
         )));
-        $parentsToSuppress = [];
-        foreach (array_keys($allIds) as $annId) {
-            if (preg_match('/^(.+?)_lines-\d+-\d+$/', $annId, $m) && isset($allIds[$m[1]])) {
-                $parentsToSuppress[$m[1]] = true;
-            }
-        }
-
-        // Also suppress simple _lines-N-M variants when modifier-qualified siblings exist
-        // for the same base (e.g. A_inline-bullet-lines-* is more specific than A_lines-N-M).
-        $baseToSimpleLines = [];
-        foreach (array_keys($allIds) as $annId) {
-            if (preg_match('/^(.+?)_lines-\d+-\d+$/', $annId, $m)) {
-                $baseToSimpleLines[$m[1]][] = $annId;
-            }
-        }
-        foreach ($baseToSimpleLines as $base => $simpleVariants) {
-            $prefix = $base . '_';
-            $found = false;
-            foreach (array_keys($allIds) as $annId) {
-                if (str_starts_with($annId, $prefix)
-                    && str_contains($annId, '-lines-')
-                    && !preg_match('/^(.+?)_lines-\d+-\d+$/', $annId)) {
-                    $found = true;
-                    break;
-                }
-            }
-            if ($found) {
-                foreach ($simpleVariants as $v) {
-                    $parentsToSuppress[$v] = true;
-                }
-            }
-        }
-
-        // Rule 3: Suppress A when any A_<suffix> child exists where the suffix contains '-line'.
-        // Catches parents whose children use _label-line-*, _leader-line-*,
-        // _inline-bullet-lines-* etc. (Rules 1 & 2 only fire on plain _lines-N-M children).
-        foreach (array_keys($allIds) as $annId) {
-            if (isset($parentsToSuppress[$annId])) {
-                continue;
-            }
-            $prefix = $annId . '_';
-            foreach (array_keys($allIds) as $otherId) {
-                if (str_starts_with($otherId, $prefix)
-                    && str_contains(substr($otherId, strlen($annId)), '-line')) {
-                    $parentsToSuppress[$annId] = true;
-                    break;
-                }
-            }
-        }
+        $parentsToSuppress = array_fill_keys(
+            PdfAnnotationSuppression::suppressedIds(array_keys($allIds)),
+            true
+        );
 
         if (!empty($parentsToSuppress)) {
             $prepared = array_values(array_filter(
@@ -1745,6 +1701,40 @@ class DocumentController extends Controller
         if ($resolvedFontFamily === '') {
             $resolvedFontFamily = $this->normalizeBuiltinAnnotationFontFamilyForMaterialization($fontSourceName ?: 'Helvetica');
         }
+        $sourceSpans = array_values(array_filter(
+            is_array($block['spans'] ?? null) ? $block['spans'] : [],
+            function ($span) use ($normalizedLineBBoxes) {
+                if (!is_array($span)) {
+                    return false;
+                }
+
+                $spanBBox = is_array($span['bbox'] ?? null) ? array_slice($span['bbox'], 0, 4) : null;
+                if (!is_array($spanBBox) || count($spanBBox) < 4) {
+                    return false;
+                }
+
+                if (empty($normalizedLineBBoxes)) {
+                    return true;
+                }
+
+                $spanRect = array_map('floatval', $spanBBox);
+                foreach ($normalizedLineBBoxes as $lineBBox) {
+                    if (!is_array($lineBBox) || count($lineBBox) < 4) {
+                        continue;
+                    }
+
+                    if ($this->annotationBaseRectsIntersect(
+                        array_map('floatval', array_slice($lineBBox, 0, 4)),
+                        $spanRect,
+                        0.25
+                    )) {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+        ));
 
         return [
             'id' => 'promoted_' . $pageNumber . '_' . ((int) ($block['block_num'] ?? 0)) . ($sourceKeySuffix !== '' ? '_' . preg_replace('/[^a-z0-9_-]+/i', '_', $sourceKeySuffix) : ''),
@@ -1786,7 +1776,7 @@ class DocumentController extends Controller
                     explode("\n", $blockText)
                 ), static fn ($line) => $line !== '')),
             'sourceLineBBoxes' => $normalizedLineBBoxes,
-            'sourceSpans' => is_array($block['spans'] ?? null) ? array_values($block['spans']) : [],
+            'sourceSpans' => $sourceSpans,
         ];
     }
 
@@ -4021,10 +4011,24 @@ class DocumentController extends Controller
         }
 
         $file = $validated['document'];
+        Storage::makeDirectory('documents');
         $storedPath = $file->storeAs(
             'documents',
             Str::uuid()->toString() . '.pdf'
         );
+        if (!$storedPath || !Storage::exists($storedPath)) {
+            Log::error('Failed to persist uploaded PDF before document creation', [
+                'original_name' => $file->getClientOriginalName(),
+                'mime_type' => $file->getClientMimeType(),
+                'size_bytes' => $file->getSize(),
+                'stored_path' => $storedPath,
+            ]);
+
+            return back()
+                ->withErrors(['document' => 'Failed to store the uploaded PDF. Please try again.'])
+                ->withInput();
+        }
+
         $backupPath = $this->createOriginalBackup($storedPath);
 
         $documentMode = is_string($validated['document_mode'] ?? null)

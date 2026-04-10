@@ -130,6 +130,8 @@ Route::post('/pdf-tests/run-single-test', [PdfTestController::class, 'runSingleT
 Route::match(['GET', 'POST'], '/pdf-tests/create-blank', [PdfTestController::class, 'createBlank'])->name('pdfTests.createBlank');
 Route::get('/pdf-tests/artifacts/{filename}', [PdfTestController::class, 'artifact'])->name('pdfTests.artifact');
 Route::get('/pdf-tests/document/{document}/info', [PdfTestController::class, 'documentInfo'])->name('pdfTests.documentInfo');
+Route::get('/pdf-tests/document/{document}/annotation-debug', [PdfTestController::class, 'annotationDebug'])->name('pdfTests.annotationDebug');
+Route::post('/pdf-tests/document/{document}/flag-annotation', [PdfTestController::class, 'flagAnnotation'])->name('pdfTests.flagAnnotation');
 Route::post('/pdf-tests/document/{document}/render-annotations', [PdfTestController::class, 'renderAnnotations'])->name('pdfTests.renderAnnotations');
 Route::post('/pdf-tests/document/{document}/compare-first-annotation', [PdfTestController::class, 'compareFirstAnnotation'])->name('pdfTests.compareFirstAnnotation');
 Route::post('/pdf-tests/document/{document}/compare-written-vs-original', [PdfTestController::class, 'compareWrittenVsOriginal'])->name('pdfTests.compareWrittenVsOriginal');

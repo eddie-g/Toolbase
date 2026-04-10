@@ -12973,13 +12973,37 @@
                     return [];
                 }
 
-                const clusters = startIndexes.map((startIndex, index) => {
+                const clusters = [];
+                const firstStartIndex = startIndexes[0];
+                if (firstStartIndex > 0) {
+                    const leadingCluster = lineEntries
+                        .slice(0, firstStartIndex)
+                        .filter((entry) => String(entry?.text || '').trim() !== '');
+                    if (leadingCluster.length > 0) {
+                        clusters.push(leadingCluster);
+                    }
+                }
+
+                startIndexes.forEach((startIndex, index) => {
                     const nextStartIndex = index + 1 < startIndexes.length ? startIndexes[index + 1] : lineEntries.length;
-                    return lineEntries
+                    const cluster = lineEntries
                         .slice(startIndex, nextStartIndex)
                         .filter((entry) => String(entry?.text || '').trim() !== '');
-                }).filter((cluster) => cluster.length > 0);
+                    if (cluster.length > 0) {
+                        clusters.push(cluster);
+                    }
+                });
                 if (clusters.length < 2) {
+                    return [];
+                }
+
+                const nonEmptyEntries = lineEntries.filter((entry) => String(entry?.text || '').trim() !== '');
+                const expectedIndexes = nonEmptyEntries.map((entry) => Number(entry?.index) || 0);
+                const actualIndexes = clusters.flatMap((cluster) => cluster.map((entry) => Number(entry?.index) || 0));
+                if (
+                    actualIndexes.length !== expectedIndexes.length
+                    || actualIndexes.some((value, index) => value !== expectedIndexes[index])
+                ) {
                     return [];
                 }
 
@@ -14817,6 +14841,40 @@
                 return promotedAnnotationDominantFontWeight(annotation) >= 600;
             }
 
+            function promotedAnnotationLineHasTerminalSentencePunctuation(line) {
+                const normalizedLine = String(line || '').replace(/\u00A0/g, ' ').trim();
+                if (!normalizedLine) {
+                    return false;
+                }
+
+                const trimmedLine = normalizedLine.replace(/[\s)\]}'"”’]+$/g, '');
+                return /[.!?:;]$/.test(trimmedLine);
+            }
+
+            function promotedAnnotationIsSyntheticMerge(annotation) {
+                if (!annotation?.promotedFromExtraction) {
+                    return false;
+                }
+
+                return String(annotation?.id || '').includes('_merge_')
+                    || String(annotation?.promotedSourceKey || '').includes('__merge__');
+            }
+
+            function promotedSavedAnnotationHasMaterialEdits(annotation) {
+                if (!annotation?.promotedFromExtraction) {
+                    return false;
+                }
+                if (annotation.promotedDirty || annotation.promotedReflowEnabled) {
+                    return true;
+                }
+                return sanitizePromotedExtractionText(annotation.text || '') !== sanitizePromotedExtractionText(annotation.originalText || '');
+            }
+
+            function shouldDiscardLegacySyntheticMergedPromotedAnnotation(annotation) {
+                return promotedAnnotationIsSyntheticMerge(annotation)
+                    && !promotedSavedAnnotationHasMaterialEdits(annotation);
+            }
+
             function promotedAnnotationShouldUseTransparentMask(annotation) {
                 if (!annotation) {
                     return false;
@@ -14881,8 +14939,11 @@
                     return true;
                 }
 
+                if (promotedAnnotationLineHasTerminalSentencePunctuation(previousLastLine)) {
+                    return false;
+                }
+
                 return previousLastLine.length >= 16
-                    && !/[.!?:;]$/.test(previousLastLine)
                     && /^[a-z]/.test(nextFirstLine);
             }
 
@@ -15616,7 +15677,10 @@
                 const standaloneTextAnnotationsForSuppression = collectStandaloneTextAnnotationsForPromotedSuppression(savedStandaloneAnnotations);
                 const hydratedSavedPromotedAnnotations = (Array.isArray(savedPromotedAnnotations) ? savedPromotedAnnotations : [])
                     .map((annotation) => buildTextAnnotationFromSavedState(annotation))
-                    .filter((annotation) => annotation?.promotedFromExtraction);
+                    .filter((annotation) => (
+                        annotation?.promotedFromExtraction
+                        && !shouldDiscardLegacySyntheticMergedPromotedAnnotation(annotation)
+                    ));
                 const hydratedSavedPromotedBySourceKey = new Map(
                     hydratedSavedPromotedAnnotations
                         .filter((annotation) => annotation?.promotedSourceKey)
@@ -15627,15 +15691,6 @@
                         .filter((annotation) => annotation?.promotedFromExtraction && annotation?.promotedDirty && annotation?.promotedSourceKey)
                         .map((annotation) => [annotation.promotedSourceKey, annotation])
                 );
-                const savedPromotedAnnotationHasMaterialEdits = (annotation) => {
-                    if (!annotation?.promotedFromExtraction) {
-                        return false;
-                    }
-                    if (annotation.promotedDirty || annotation.promotedReflowEnabled) {
-                        return true;
-                    }
-                    return sanitizePromotedExtractionText(annotation.text || '') !== sanitizePromotedExtractionText(annotation.originalText || '');
-                };
                 const normalizePromotedComparableText = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
                 const estimateStandaloneTextBounds = (annotation) => {
                     const fontSize = Math.max(1, Number(annotation?.fontSize) || 12);
@@ -15927,15 +15982,6 @@
             } = {}) {
                 const hydrated = [];
                 const seenIds = new Set();
-                const savedPromotedAnnotationHasMaterialEdits = (annotation) => {
-                    if (!annotation?.promotedFromExtraction) {
-                        return false;
-                    }
-                    if (annotation.promotedDirty || annotation.promotedReflowEnabled) {
-                        return true;
-                    }
-                    return sanitizePromotedExtractionText(annotation.text || '') !== sanitizePromotedExtractionText(annotation.originalText || '');
-                };
                 const unregisterHydratedAnnotation = (annotation) => {
                     if (!annotation) {
                         return;
@@ -15956,7 +16002,7 @@
 
                 (Array.isArray(savedAnnotations) ? savedAnnotations : []).forEach((annotationData) => {
                     const annotation = buildTextAnnotationFromSavedState(annotationData);
-                    if (!annotation || !annotation.promotedFromExtraction) {
+                    if (!annotation || !annotation.promotedFromExtraction || shouldDiscardLegacySyntheticMergedPromotedAnnotation(annotation)) {
                         return;
                     }
                     const annotationId = String(annotation.id || '');

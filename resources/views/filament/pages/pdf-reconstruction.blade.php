@@ -17,6 +17,51 @@
         </div>
 
         {{-- ═══════════════════════════════════════════════════════════
+             ADMIN: ALL DOCUMENTS LIST
+        ═══════════════════════════════════════════════════════════ --}}
+        <div class="bg-white dark:bg-gray-800 rounded-2xl ring-1 ring-gray-950/5 dark:ring-white/10 mb-6 overflow-hidden">
+            <div class="px-5 py-3 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between gap-3">
+                <span class="text-sm font-semibold text-gray-900 dark:text-white">All Documents</span>
+                <span class="text-xs text-gray-400 dark:text-gray-500">{{ $documents->count() }} total · click a row to load</span>
+            </div>
+            <div class="overflow-x-auto" style="max-height: 260px; overflow-y: auto;">
+                <table class="w-full text-sm">
+                    <thead class="sticky top-0 bg-gray-50 dark:bg-gray-900 z-10">
+                        <tr>
+                            <th class="text-left text-xs font-medium text-gray-500 dark:text-gray-400 px-4 py-2">ID</th>
+                            <th class="text-left text-xs font-medium text-gray-500 dark:text-gray-400 px-4 py-2">Name</th>
+                            <th class="text-left text-xs font-medium text-gray-500 dark:text-gray-400 px-4 py-2">User</th>
+                            <th class="text-left text-xs font-medium text-gray-500 dark:text-gray-400 px-4 py-2">Created</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100 dark:divide-gray-700">
+                        @forelse($documents as $doc)
+                            <tr
+                                class="cursor-pointer hover:bg-primary-50 dark:hover:bg-primary-900/20 transition-colors"
+                                x-on:click="docIdInput = {{ $doc->id }}; loadDocument()"
+                            >
+                                <td class="px-4 py-2 font-mono text-xs text-gray-600 dark:text-gray-400 whitespace-nowrap">#{{ $doc->id }}</td>
+                                <td class="px-4 py-2 text-gray-900 dark:text-white max-w-xs truncate" title="{{ $doc->original_name }}">{{ $doc->original_name }}</td>
+                                <td class="px-4 py-2 text-gray-500 dark:text-gray-400 whitespace-nowrap text-xs">
+                                    @if($doc->user)
+                                        {{ $doc->user->name }}
+                                    @else
+                                        <span class="text-gray-300 dark:text-gray-600">—</span>
+                                    @endif
+                                </td>
+                                <td class="px-4 py-2 text-gray-400 dark:text-gray-500 whitespace-nowrap text-xs">{{ $doc->created_at->format('Y-m-d') }}</td>
+                            </tr>
+                        @empty
+                            <tr>
+                                <td colspan="4" class="px-4 py-6 text-center text-sm text-gray-400 dark:text-gray-500">No documents found.</td>
+                            </tr>
+                        @endforelse
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        {{-- ═══════════════════════════════════════════════════════════
              DOCUMENT LOAD BAR
         ═══════════════════════════════════════════════════════════ --}}
         <div class="bg-white dark:bg-gray-800 rounded-2xl ring-1 ring-gray-950/5 dark:ring-white/10 p-5 mb-6">
@@ -171,6 +216,14 @@
                                     class="text-xs text-danger-500 hover:text-danger-700 dark:text-danger-400 dark:hover:text-danger-300 transition-colors">
                                     Clear
                                 </button>
+                                <button type="button"
+                                    x-on:click="toggleDrawAcro()"
+                                    x-bind:class="drawAcro
+                                        ? 'bg-blue-600 text-white hover:bg-blue-700'
+                                        : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'"
+                                    class="text-xs font-semibold px-2.5 py-1 rounded-lg transition-colors whitespace-nowrap">
+                                    <span x-text="drawAcro ? 'Draw Acro ✓' : 'Draw Acro'"></span>
+                                </button>
                             </div>
 
                             {{-- Pan toggle --}}
@@ -185,21 +238,58 @@
                                     <path stroke-linecap="round" stroke-linejoin="round" d="M7 11.5V14m0-2.5v-6a1.5 1.5 0 013 0m-3 6a1.5 1.5 0 00-3 0v2a7.5 7.5 0 0015 0v-5a1.5 1.5 0 00-3 0m-6-3V11m0-5.5v-1a1.5 1.5 0 013 0v1m0 0V11m0-5.5a1.5 1.5 0 013 0v3m0 0V11"/>
                                 </svg>
                             </button>
+
+                            {{-- Compare original overlay toggle --}}
+                            <button type="button"
+                                x-on:click="toggleOriginalOverlay()"
+                                x-bind:class="splitView
+                                    ? 'bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-400 ring-1 ring-primary-400'
+                                    : 'text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'"
+                                class="p-1 rounded transition-colors"
+                                title="Toggle original PDF overlay">
+                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 0v10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"/></svg>
+                            </button>
                         </div>
 
                         {{-- Status strip --}}
-                        <template x-if="drawnCount > 0 || splitView">
-                            <div class="px-4 py-1.5 bg-success-50 dark:bg-success-900/20 border-b border-success-100 dark:border-success-800 text-xs text-success-600 dark:text-success-400 flex items-center gap-2">
+                        <template x-if="drawnCount > 0 || splitView || (drawAcro && pageAcroWidgets.length > 0) || acroLoading || acroError">
+                            <div class="px-4 py-1.5 bg-success-50 dark:bg-success-900/20 border-b border-success-100 dark:border-success-800 text-xs text-success-600 dark:text-success-400 flex items-center gap-2 flex-wrap">
                                 <svg class="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
-                                <span x-text="drawnCount"></span> annotation(s) as text overlay
+                                <template x-if="drawnCount > 0">
+                                    <span x-text="drawnCount + ' annotation(s) as text overlay'"></span>
+                                </template>
+                                <template x-if="drawAcro && pageAcroWidgets.length > 0">
+                                    <span class="text-blue-600 dark:text-blue-400 font-medium" x-text="(drawnCount > 0 ? '· ' : '') + pageAcroWidgets.length + ' Acro field(s)'"></span>
+                                </template>
+                                <template x-if="drawAcro && acroLoading">
+                                    <span class="text-blue-600 dark:text-blue-400 font-medium" x-text="(drawnCount > 0 || pageAcroWidgets.length > 0 ? '· ' : '') + 'Loading AcroForm fields…'"></span>
+                                </template>
+                                <template x-if="acroError">
+                                    <span class="text-danger-600 dark:text-danger-400 font-medium" x-text="((drawnCount > 0 || pageAcroWidgets.length > 0 || acroLoading) ? '· ' : '') + 'Acro error: ' + acroError"></span>
+                                </template>
                                 <template x-if="splitView">
-                                    <span class="ml-2 text-primary-600 dark:text-primary-400 font-medium">· Comparing vs original</span>
+                                    <span class="text-primary-600 dark:text-primary-400 font-medium" x-text="((drawnCount > 0 || pageAcroWidgets.length > 0 || acroLoading || acroError) ? '· ' : '') + 'Overlay: original PDF'"></span>
+                                </template>
+                                <template x-if="splitView">
+                                    <span class="flex items-center gap-1.5 ml-1">
+                                        <button type="button"
+                                                x-on:click="origVisible = !origVisible"
+                                                x-bind:class="origVisible ? 'text-primary-600 dark:text-primary-400' : 'text-gray-400 dark:text-gray-500'"
+                                                class="transition-colors text-xs font-medium" title="Toggle original visibility">
+                                            <span x-text="origVisible ? '👁 Visible' : '👁 Hidden'"></span>
+                                        </button>
+                                        <input type="range" min="0" max="100" step="5"
+                                               x-model="origOpacity"
+                                               class="w-24 h-1.5 accent-primary-600 cursor-pointer"
+                                               title="Original PDF opacity">
+                                        <span class="text-primary-700 dark:text-primary-300 tabular-nums w-8 text-right" x-text="origOpacity + '%'"></span>
+                                    </span>
                                 </template>
                                 <template x-if="splitView">
                                     <button type="button"
                                             x-on:click="splitView = false"
                                             class="ml-auto text-xs font-medium text-danger-500 hover:text-danger-700 dark:text-danger-400 dark:hover:text-danger-300 transition-colors">
-                                        Close comparison
+                                        Close overlay
                                     </button>
                                 </template>
                             </div>
@@ -215,15 +305,13 @@
                         </template>
 
                         <div x-ref="pdfScroll"
-                             class="relative overflow-auto bg-gray-100 dark:bg-gray-950 flex justify-center items-start flex-wrap py-4 px-4 gap-6"
+                             class="relative overflow-auto bg-gray-100 dark:bg-gray-950 flex justify-center items-start py-4 px-4"
                              x-bind:class="panMode ? (_panDragging ? 'cursor-grabbing' : 'cursor-grab') : ''"
                              x-on:pointerdown="panStart($event)"
                              x-on:pointermove="panMove($event)"
                              x-on:pointerup="panEnd()"
                              x-on:pointercancel="panEnd()">
-                            {{-- LEFT: clean PDF + annotation text overlay --}}
                             <div class="flex-shrink-0">
-                                <div x-show="splitView" class="text-center text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Clean + annotation overlay</div>
                                 <div class="relative inline-block" x-bind:style="'width:' + canvasWidth + 'px; height:' + canvasHeight + 'px;'">
                                     <canvas x-ref="pdfCanvas"
                                             class="block shadow-lg"
@@ -233,16 +321,15 @@
                                     <div x-ref="annOverlay"
                                          style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:visible;">
                                     </div>
+                                    {{-- Original PDF overlay canvas --}}
+                                    <canvas x-ref="origCanvas"
+                                            x-show="splitView"
+                                            x-cloak
+                                            x-bind:style="'position:absolute;top:0;left:0;pointer-events:none;opacity:' + (origVisible ? origOpacity / 100 : 0)"
+                                            x-bind:width="canvasWidth"
+                                            x-bind:height="canvasHeight">
+                                    </canvas>
                                 </div>
-                            </div>
-                            {{-- RIGHT: original annotated PDF (shown when comparing) --}}
-                            <div class="flex-shrink-0" x-show="splitView" x-cloak>
-                                <div class="text-center text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Original PDF</div>
-                                <canvas x-ref="origCanvas"
-                                        class="block shadow-lg"
-                                        x-bind:width="splitCanvasWidth"
-                                        x-bind:height="splitCanvasHeight">
-                                </canvas>
                             </div>
                         </div>
                     </div>
@@ -264,10 +351,15 @@
                         {{-- List header --}}
                         <div class="px-4 py-3 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between gap-2">
                             <span class="text-sm font-semibold text-gray-900 dark:text-white">Annotations</span>
-                            <div class="flex items-center gap-2">
+                            <div class="flex items-center gap-2 flex-wrap justify-end">
                                 <label class="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none">
                                     <input type="checkbox" x-model="filterCurrentPage" class="rounded text-primary-600">
-                                    <span>This page only</span>
+                                    <span>This page</span>
+                                </label>
+                                <label class="flex items-center gap-1.5 text-xs cursor-pointer select-none"
+                                       x-bind:class="filterFlagged ? 'text-red-500 dark:text-red-400' : 'text-gray-500 dark:text-gray-400'">
+                                    <input type="checkbox" x-model="filterFlagged" class="rounded text-red-500">
+                                    <span>⚑ Flagged</span>
                                 </label>
                                 <span class="text-xs text-gray-400 dark:text-gray-500"
                                       x-text="filteredAnnotations.length + '/' + annotations.length">
@@ -310,6 +402,9 @@
                                             <span class="inline-flex px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400"
                                                   x-text="'p.' + ((Number(ann.pageIndex) || 0) + 1)">
                                             </span>
+                                            <span class="inline-flex px-1.5 py-0.5 rounded text-xs font-mono text-gray-400 dark:text-gray-500 select-all"
+                                                  x-text="ann.id || ann.db_id || ''">
+                                            </span>
                                             <span x-show="ann.db_state === 'saved'"
                                                   class="inline-flex px-1.5 py-0.5 rounded text-xs font-medium bg-success-100 text-success-700 dark:bg-success-900/30 dark:text-success-400">
                                                 saved
@@ -334,17 +429,29 @@
                                     <p class="mt-1 text-xs text-gray-400 dark:text-gray-500 font-mono"
                                        x-text="positionSummary(ann)">
                                     </p>
-                                    <div class="mt-2">
+                                    <div class="mt-2 flex items-center gap-2 flex-wrap">
                                         <button type="button"
-                                            x-on:click="compareToOriginal(ann)"
-                                            x-bind:class="splitView && splitAnn && splitAnn._uid === ann._uid
-                                                ? 'text-primary-700 dark:text-primary-300 font-semibold'
-                                                : 'text-primary-600 dark:text-primary-400 hover:text-primary-800 dark:hover:text-primary-300'"
-                                            class="inline-flex items-center gap-1 text-xs font-medium transition-colors">
-                                            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 0v10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"/></svg>
-                                            Compare vs original
+                                            x-on:click="openDebugModal(ann)"
+                                            class="text-xs px-2 py-0.5 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/60 font-medium transition-colors">
+                                            Inspect
                                         </button>
+                                        <button type="button"
+                                            x-on:click="openFlagModal(ann)"
+                                            x-bind:class="ann._flagged
+                                                ? 'bg-red-100 text-red-600 hover:bg-red-200 dark:bg-red-900/40 dark:text-red-400 dark:hover:bg-red-900/70'
+                                                : 'bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-600'"
+                                            class="text-xs px-2 py-0.5 rounded font-medium transition-colors">
+                                            <span x-text="ann._flagged ? '⚑ Flagged' : 'Flag'"></span>
+                                        </button>
+                                        <template x-if="ann._flagged">
+                                            <a :href="'{{ url('/documents') }}/' + document.id + '/edit'"
+                                               target="_blank"
+                                               class="text-xs px-2 py-0.5 rounded bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-900/60 font-medium transition-colors">
+                                                Fix in Editor →
+                                            </a>
+                                        </template>
                                     </div>
+
                                 </div>
                             </template>
                         </div>
@@ -365,6 +472,210 @@
             </div>
         </template>
 
+    {{-- ────────────────────────────────────────────────────────── --}}
+    {{-- ANNOTATION INSPECT DRAWER (slides in from right)          --}}
+    {{-- ────────────────────────────────────────────────────────── --}}
+    <template x-if="debugModal">
+        <div class="fixed inset-0 z-[200] flex justify-end"
+             x-on:keydown.escape.window="debugModal = false">
+            {{-- Backdrop --}}
+            <div class="absolute inset-0 bg-black/40"
+                 x-on:click="debugModal = false"></div>
+            {{-- Drawer — full viewport height, scrolls independently --}}
+            <div class="relative z-10 w-full max-w-xl h-screen flex flex-col bg-white dark:bg-gray-900 shadow-2xl">
+                {{-- Header --}}
+                <div class="shrink-0 flex items-center justify-between px-5 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60">
+                    <div>
+                        <h2 class="text-sm font-semibold text-gray-900 dark:text-white">Inspect</h2>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 font-mono mt-0.5"
+                           x-text="'db_id ' + (debugModalAnn?.db_id || (debugModalAnn?.id || '?'))"></p>
+                    </div>
+                    <button type="button"
+                        x-on:click="debugModal = false"
+                        class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1 rounded-lg transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+                {{-- Body — grows to fill remaining height and scrolls --}}
+                <div class="grow overflow-y-auto p-5 space-y-3">
+                    <template x-if="debugLoading">
+                        <div class="flex items-center justify-center py-12 text-sm text-gray-500 dark:text-gray-400">
+                            <svg class="animate-spin h-5 w-5 mr-2 text-primary-500" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z"/>
+                            </svg>
+                            Loading…
+                        </div>
+                    </template>
+                    <template x-if="debugError">
+                        <div class="rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-4 text-sm text-red-600 dark:text-red-400"
+                             x-text="debugError">
+                        </div>
+                    </template>
+                    <template x-if="!debugLoading && !debugError && debugData">
+                        <div class="space-y-3">
+                            <template x-for="[section, value] in Object.entries(debugData)" :key="section">
+                                <div class="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+                                    <div class="flex items-center gap-2 px-3 py-1.5 bg-gray-100 dark:bg-gray-800 cursor-pointer select-none"
+                                         x-on:click="$el.nextElementSibling.classList.toggle('hidden')">
+                                        <span class="text-xs font-semibold font-mono text-gray-600 dark:text-gray-300"
+                                              x-text="section"></span>
+                                        <span class="ml-auto text-xs text-gray-400"
+                                              x-text="Array.isArray(value) ? value.length + ' items' : (typeof value === 'object' && value ? Object.keys(value).length + ' keys' : '')"></span>
+                                    </div>
+                                    <div class="p-3 bg-white dark:bg-gray-900">
+                                        <pre class="text-xs font-mono text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words leading-relaxed"
+                                             x-text="JSON.stringify(value, null, 2)"></pre>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    {{-- ────────────────────────────────────────────────────────── --}}
+    {{-- FLAG ANNOTATION MODAL (inside x-data scope)               --}}
+    {{-- ────────────────────────────────────────────────────────── --}}
+    <template x-if="flagModal">
+        <div class="fixed inset-0 z-[200] flex items-center justify-center p-4"
+             x-on:keydown.escape.window="flagModal = false">
+            <div class="absolute inset-0 bg-black/60 backdrop-blur-sm"
+                 x-on:click="flagModal = false"></div>
+            <div class="relative z-10 w-full max-w-lg bg-white dark:bg-gray-900 rounded-2xl shadow-2xl overflow-hidden">
+                {{-- Header --}}
+                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60">
+                    <div>
+                        <h2 class="text-base font-semibold text-gray-900 dark:text-white">Flag Annotation</h2>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 font-mono mt-0.5"
+                           x-text="flagModalAnn?.id || flagModalAnn?.db_id || ''">
+                        </p>
+                    </div>
+                    <button type="button" x-on:click="flagModal = false"
+                        class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1 rounded-lg transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+                {{-- Body --}}
+                <div class="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+                    <template x-if="flagModalAnn?._flagged">
+                        <div class="rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 px-4 py-3 flex items-center gap-2 text-sm text-red-600 dark:text-red-400">
+                            <span>⚑</span>
+                            <span>This annotation is currently flagged as a potential mismatch.</span>
+                        </div>
+                    </template>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+                            Reason for flagging
+                            <span class="text-gray-400 font-normal">(optional)</span>
+                        </label>
+                        <textarea
+                            x-model="flagReason"
+                            rows="4"
+                            placeholder="Describe the mismatch or issue…"
+                            class="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm text-gray-900 dark:text-gray-100 px-3 py-2 focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none resize-none placeholder:text-gray-400 dark:placeholder:text-gray-500">
+                        </textarea>
+                    </div>
+
+                    {{-- ── Image upload / paste zone ── --}}
+                    <div>
+                        <div class="flex items-center justify-between mb-1.5">
+                            <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                                Screenshots
+                                <span class="text-gray-400 font-normal">(optional, paste or upload)</span>
+                            </label>
+                            <label class="cursor-pointer text-xs text-primary-600 dark:text-primary-400 hover:underline">
+                                + Add file
+                                <input type="file" accept="image/*" multiple class="sr-only"
+                                    x-on:change="Array.from($event.target.files).forEach(f => _addImgFile(f)); $event.target.value = ''">
+                            </label>
+                        </div>
+                        {{-- Paste drop zone --}}
+                        <div
+                            tabindex="0"
+                            x-on:paste.window="
+                                if (!flagModal) return;
+                                const items = Array.from($event.clipboardData?.items || []);
+                                items.filter(i => i.type.startsWith('image/')).forEach(i => {
+                                    const f = i.getAsFile();
+                                    if (f) _addImgFile(f);
+                                });
+                            "
+                            class="rounded-lg border-2 border-dashed border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/40 px-4 py-3 text-center text-xs text-gray-400 dark:text-gray-500 select-none">
+                            Ctrl+V / ⌘V to paste a screenshot here
+                        </div>
+                        {{-- Thumbnail grid --}}
+                        <template x-if="flagImages.length > 0">
+                            <div class="mt-2 grid grid-cols-3 gap-2">
+                                <template x-for="(img, idx) in flagImages" :key="idx">
+                                    <div class="relative group rounded-lg overflow-hidden border border-gray-200 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 aspect-video">
+                                        <img :src="img.dataUrl" class="w-full h-full object-cover">
+                                        <button type="button"
+                                            x-on:click="removeFlagImage(idx)"
+                                            class="absolute top-1 right-1 hidden group-hover:flex items-center justify-center w-5 h-5 rounded-full bg-black/60 text-white text-xs leading-none hover:bg-black/80 transition-colors">
+                                            ×
+                                        </button>
+                                    </div>
+                                </template>
+                            </div>
+                        </template>
+                    </div>
+                    {{-- ── end image zone ── --}}
+
+                    <template x-if="flagError">
+                        <p class="text-sm text-red-500 dark:text-red-400" x-text="flagError"></p>
+                    </template>
+                </div>
+                {{-- Footer --}}
+                <div class="flex items-center justify-between gap-3 px-6 py-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60">
+                    <template x-if="flagModalAnn?._flagged">
+                        <div class="flex items-center gap-2">
+                            <button type="button"
+                                x-on:click="submitFlag(false)"
+                                x-bind:disabled="flagSaving"
+                                class="text-sm px-4 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50">
+                                Clear flag
+                            </button>
+                            <a :href="'{{ url('/documents') }}/' + document?.id + '/edit'"
+                               target="_blank"
+                               class="text-sm px-4 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 font-medium transition-colors">
+                                Fix in Editor →
+                            </a>
+                        </div>
+                    </template>
+                    <template x-if="!flagModalAnn?._flagged">
+                        <div></div>
+                    </template>
+                    <div class="flex items-center gap-2">
+                        <button type="button"
+                            x-on:click="flagModal = false"
+                            class="text-sm px-4 py-1.5 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+                            Cancel
+                        </button>
+                        <button type="button"
+                            x-on:click="submitFlag(true)"
+                            x-bind:disabled="flagSaving"
+                            class="text-sm px-4 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 font-medium transition-colors disabled:opacity-50 flex items-center gap-1.5">
+                            <template x-if="flagSaving">
+                                <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z"/>
+                                </svg>
+                            </template>
+                            <span>⚑ Flag as mismatch</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </template>
+
     </div>{{-- /x-data pdfRecon --}}
 
     <style>
@@ -373,6 +684,10 @@
         .recon-ann {
             position: absolute;
             box-sizing: border-box;
+        }
+
+        .recon-acro {
+            box-shadow: inset 0 0 0 0.5px rgba(37, 99, 235, 0.25);
         }
     </style>
 
@@ -397,6 +712,7 @@
             let _renderTask  = null;
             let _origPdfDoc  = null;
             let _origRenderTask = null;
+            let _acroPdfDoc  = null;
             let _exactTextWidthProbe = null;
 
             const _FONT_MAP = {
@@ -523,7 +839,16 @@
                 return probe;
             }
 
-            function _measureExactTextDomWidth(text, fontSizePx, fontFamily, fontWeight, fontStyle, fontStretch = '') {
+            function _measureExactTextDomWidth(
+                text,
+                fontSizePx,
+                fontFamily,
+                fontWeight,
+                fontStyle,
+                fontStretch = '',
+                letterSpacing = '',
+                wordSpacing = ''
+            ) {
                 const probe = _ensureExactTextWidthProbe();
                 if (!(probe instanceof HTMLElement)) return 0;
                 probe.textContent = String(text || '');
@@ -532,8 +857,21 @@
                 probe.style.fontWeight = fontWeight || '400';
                 probe.style.fontStyle = fontStyle || 'normal';
                 probe.style.fontStretch = String(fontStretch || '').trim() || 'normal';
+                probe.style.letterSpacing = String(letterSpacing || '').trim();
+                probe.style.wordSpacing = String(wordSpacing || '').trim();
                 const rect = probe.getBoundingClientRect();
                 return rect.width || 0;
+            }
+
+            function _applyPdfTextCss(element) {
+                if (!(element instanceof HTMLElement)) return;
+                element.style.fontKerning = 'none';
+                element.style.fontVariantLigatures = 'none';
+                element.style.fontFeatureSettings = '"kern" 0, "liga" 0, "clig" 0, "calt" 0';
+                element.style.fontSynthesis = 'none';
+                element.style.textRendering = 'geometricPrecision';
+                element.style.setProperty('-webkit-font-smoothing', 'antialiased');
+                element.style.setProperty('-moz-osx-font-smoothing', 'grayscale');
             }
 
             function _applyExactTextWidthFit(element, {
@@ -552,9 +890,11 @@
                 const targetWidth = Number(targetWidthPx) || 0;
                 const effectiveFontSize = Number(fontSizePx) || 0;
                 const sampleText = String(text ?? '');
+                element.style.letterSpacing = '';
+                element.style.wordSpacing = '';
+                element.style.transform = '';
+                element.style.transformOrigin = '';
                 if (targetWidth <= 0 || effectiveFontSize <= 0 || !sampleText) {
-                    element.style.transform = '';
-                    element.style.transformOrigin = '';
                     return false;
                 }
 
@@ -567,30 +907,87 @@
                     fontStretch
                 );
                 if (!Number.isFinite(measuredWidth) || measuredWidth <= 0) {
-                    element.style.transform = '';
-                    element.style.transformOrigin = '';
                     return false;
                 }
 
                 const rawRatio = targetWidth / measuredWidth;
                 if (!Number.isFinite(rawRatio) || rawRatio <= 0) {
-                    element.style.transform = '';
-                    element.style.transformOrigin = '';
                     return false;
                 }
 
-                // Reconstruction should only correct overflow. Expanding text to fill
-                // a larger extracted bbox stretches lines that were already visually right.
-                if (rawRatio >= 0.985) {
-                    element.style.transform = '';
-                    element.style.transformOrigin = '';
+                const widthDelta = targetWidth - measuredWidth;
+                if (Math.abs(widthDelta) <= 0.25) {
                     return false;
+                }
+
+                const glyphCount = Array.from(sampleText).filter((ch) => ch !== '\n' && ch !== '\r').length;
+                const wordGapCount = (sampleText.match(/ /g) || []).length;
+                let appliedWordSpacingPx = 0;
+                let measuredWithSpacing = measuredWidth;
+
+                // PDF lines that look "too short" are usually underfilling at word gaps,
+                // not because each glyph needs horizontal scaling.
+                if (wordGapCount > 0) {
+                    const idealWordSpacingPx = widthDelta / wordGapCount;
+                    const clampedWordSpacingPx = Math.max(-0.75, Math.min(1.5, idealWordSpacingPx));
+                    if (Math.abs(clampedWordSpacingPx) >= 0.01) {
+                        const nextMeasuredWidth = _measureExactTextDomWidth(
+                            sampleText,
+                            effectiveFontSize,
+                            fontFamily,
+                            fontWeight,
+                            fontStyle,
+                            fontStretch,
+                            '',
+                            `${clampedWordSpacingPx}px`
+                        );
+                        if (Number.isFinite(nextMeasuredWidth) && nextMeasuredWidth > 0) {
+                            appliedWordSpacingPx = clampedWordSpacingPx;
+                            measuredWithSpacing = nextMeasuredWidth;
+                        }
+                    }
+                }
+
+                const remainingDelta = targetWidth - measuredWithSpacing;
+                if (glyphCount > 1) {
+                    const idealLetterSpacingPx = remainingDelta / Math.max(1, glyphCount - 1);
+                    const clampedLetterSpacingPx = Math.max(-0.45, Math.min(0.65, idealLetterSpacingPx));
+                    if (Math.abs(clampedLetterSpacingPx) >= 0.01) {
+                        const nextMeasuredWidth = _measureExactTextDomWidth(
+                            sampleText,
+                            effectiveFontSize,
+                            fontFamily,
+                            fontWeight,
+                            fontStyle,
+                            fontStretch,
+                            `${clampedLetterSpacingPx}px`,
+                            appliedWordSpacingPx ? `${appliedWordSpacingPx}px` : ''
+                        );
+                        if (Number.isFinite(nextMeasuredWidth) && nextMeasuredWidth > 0) {
+                            element.style.wordSpacing = appliedWordSpacingPx ? `${appliedWordSpacingPx.toFixed(3)}px` : '';
+                            element.style.letterSpacing = `${clampedLetterSpacingPx.toFixed(3)}px`;
+                            if (Math.abs(targetWidth - nextMeasuredWidth) <= 0.75 || rawRatio >= 1) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+
+                if (appliedWordSpacingPx) {
+                    element.style.wordSpacing = `${appliedWordSpacingPx.toFixed(3)}px`;
+                    if (Math.abs(remainingDelta) <= 0.75 || rawRatio >= 1) {
+                        return true;
+                    }
+                }
+
+                // Prefer spacing adjustments for widening. Only use scaleX as a
+                // last resort when shrinking overflow.
+                if (rawRatio >= 1) {
+                    return appliedWordSpacingPx !== 0;
                 }
 
                 const clampedRatio = Math.max(minRatio, Math.min(maxRatio, rawRatio));
-                if (Math.abs(clampedRatio - 1) <= 0.015) {
-                    element.style.transform = '';
-                    element.style.transformOrigin = '';
+                if (Math.abs(clampedRatio - 1) <= 0.03) {
                     return false;
                 }
 
@@ -633,14 +1030,20 @@
                 /* ── annotations ── */
                 annotations: [],
                 drawnIds:    {},   // {[uid]: true}
+                acroFormEntries: [],
+                acroFieldLookup: {},
+                acroWidgetsByPage: {},
+                drawAcro: false,
+                acroLoading: false,
+                acroError: null,
                 renderLoading: false,
                 /* ── split-view comparison ── */
                 splitView:         false,
                 splitLoading:      false,
                 splitError:        null,
-                splitCanvasWidth:  0,
-                splitCanvasHeight: 0,
                 splitAnn:          null,   // annotation currently being compared
+                origOpacity:       50,     // 0–100 slider value
+                origVisible:       true,   // toggle original layer on/off
 
                 /* ── zoom ── */
                 zoomLevel: 1.5,
@@ -653,6 +1056,22 @@
 
                 /* ── filter ── */
                 filterCurrentPage: false,
+                filterFlagged: false,
+
+                /* ── annotation debug modal ── */
+                debugModal: false,
+                debugModalAnn: null,
+                debugData: null,
+                debugLoading: false,
+                debugError: null,
+
+                /* ── flag modal ── */
+                flagModal: false,
+                flagModalAnn: null,
+                flagReason: '',
+                flagImages: [],   // [{dataUrl, name}] — pending (not yet saved)
+                flagSaving: false,
+                flagError: null,
 
                 /* ── inits ── */
                 init() {},
@@ -669,12 +1088,17 @@
                 },
 
                 get filteredAnnotations() {
-                    if (this.filterCurrentPage) return this.pageAnnotations;
-                    return this.annotations;
+                    let list = this.filterCurrentPage ? this.pageAnnotations : this.annotations;
+                    if (this.filterFlagged) list = list.filter(a => a._flagged);
+                    return list;
                 },
 
                 get drawnCount() {
                     return this.pageAnnotations.filter((a) => this.isDrawn(a)).length;
+                },
+
+                get pageAcroWidgets() {
+                    return this.acroWidgetsByPage[String(this.currentPage)] || [];
                 },
 
                 get scale() {
@@ -713,6 +1137,32 @@
                     this._panDragging = false;
                 },
 
+                normalizePromotedComparableText(value) {
+                    return String(value || '')
+                        .replace(/\u00A0/g, ' ')
+                        .replace(/\s+/g, ' ')
+                        .trim()
+                        .toLowerCase();
+                },
+
+                promotedAnnotationIsSyntheticMerge(annotation) {
+                    if (!annotation?.promotedFromExtraction) return false;
+                    return String(annotation?.id || '').includes('_merge_')
+                        || String(annotation?.promotedSourceKey || '').includes('__merge__');
+                },
+
+                promotedSavedAnnotationHasMaterialEdits(annotation) {
+                    if (!annotation?.promotedFromExtraction) return false;
+                    if (annotation.promotedDirty || annotation.promotedReflowEnabled) return true;
+                    return this.normalizePromotedComparableText(annotation.text || '')
+                        !== this.normalizePromotedComparableText(annotation.originalText || '');
+                },
+
+                shouldDiscardLegacySyntheticMergedPromotedAnnotation(annotation) {
+                    return this.promotedAnnotationIsSyntheticMerge(annotation)
+                        && !this.promotedSavedAnnotationHasMaterialEdits(annotation);
+                },
+
                 /* ─────────────────────────────────────────────── */
                 /* LOAD DOCUMENT                                   */
                 /* ─────────────────────────────────────────────── */
@@ -725,10 +1175,17 @@
                     this.error        = null;
                     this.document     = null;
                     _pdfDoc           = null;
+                    _acroPdfDoc       = null;
                     this.pdfLoaded    = false;
                     this.activeSrc    = 'clean';
                     this.annotations  = [];
                     this.drawnIds     = {};
+                    this.acroFormEntries = [];
+                    this.acroFieldLookup = {};
+                    this.acroWidgetsByPage = {};
+                    this.drawAcro = false;
+                    this.acroLoading = false;
+                    this.acroError = null;
                     this.pageCount    = 0;
                     this.currentPage  = 1;
 
@@ -751,10 +1208,17 @@
                         if (!data.success) throw new Error(data.message || 'Failed to load document info.');
 
                         this.document    = data.document;
-                        this.annotations = (data.annotations || []).map((a, i) => ({
-                            ...a,
-                            _uid: String(a.id || a.db_id || '') + '_' + i,
-                        }));
+                        this.annotations = (data.annotations || [])
+                            .filter((a) => !this.shouldDiscardLegacySyntheticMergedPromotedAnnotation(a))
+                            .map((a, i) => ({
+                                ...a,
+                                _uid:        String(a.id || a.db_id || '') + '_' + i,
+                                _flagged:    !!(a.db_flagged),
+                                _flagReason: a.db_flag_reason || '',
+                                _flagImages: Array.isArray(a.db_flag_images) ? a.db_flag_images : [],
+                            }));
+                        this.acroFormEntries = Array.isArray(data.acro_form_entries) ? data.acro_form_entries : [];
+                        this.acroFieldLookup = this.buildAcroFieldLookup(this.acroFormEntries);
 
                         // Inject @font-face CSS for embedded fonts from the PDF,
                         // then wait until the browser has parsed/loaded them before rendering.
@@ -840,6 +1304,9 @@
                     _renderTask = page.render({ canvasContext: ctx, viewport });
                     await _renderTask.promise.catch(() => {});
                     _renderTask = null;
+                    if (this.drawAcro) {
+                        await this.ensureAcroWidgetsForPage(this.currentPage);
+                    }
                     this.redrawAnnotationsOnOverlay();
                     if (this.splitView) await this.renderOriginalPage();
                 },
@@ -851,26 +1318,16 @@
                     if (!canvas) return;
                     const page     = await _origPdfDoc.getPage(this.currentPage);
                     const viewport = page.getViewport({ scale: this.zoomLevel });
-                    this.splitCanvasWidth  = Math.round(viewport.width);
-                    this.splitCanvasHeight = Math.round(viewport.height);
-                    await this.$nextTick();
-                    canvas.width  = this.splitCanvasWidth;
-                    canvas.height = this.splitCanvasHeight;
+                    canvas.width  = Math.round(viewport.width);
+                    canvas.height = Math.round(viewport.height);
                     _origRenderTask = page.render({ canvasContext: canvas.getContext('2d'), viewport });
                     await _origRenderTask.promise.catch(() => {});
                     _origRenderTask = null;
                 },
 
-                async compareToOriginal(ann) {
+                async toggleOriginalOverlay() {
                     if (!this.document) return;
-                    // Navigate to annotation's page
-                    const targetPage = (Number(ann.pageIndex) || 0) + 1;
-                    if (targetPage !== this.currentPage) await this.goToPage(targetPage);
-                    // Ensure this annotation is drawn
-                    this.drawnIds = { ...this.drawnIds, [ann._uid]: true };
-                    this.redrawAnnotationsOnOverlay();
-                    this.splitAnn = ann;
-                    // Load the original annotated PDF lazily
+                    if (this.splitView) { this.splitView = false; return; }
                     if (!_origPdfDoc) {
                         this.splitLoading = true;
                         this.splitError   = null;
@@ -952,6 +1409,15 @@
                     this.redrawAnnotationsOnOverlay();
                 },
 
+                async toggleDrawAcro() {
+                    this.drawAcro = !this.drawAcro;
+                    this.acroError = null;
+                    if (this.drawAcro) {
+                        await this.ensureAcroWidgetsForPage(this.currentPage);
+                    }
+                    this.redrawAnnotationsOnOverlay();
+                },
+
                 /* ─────────────────────────────────────────────── */
                 /* COORDINATE MAPPING                             */
                 /* ─────────────────────────────────────────────── */
@@ -966,6 +1432,17 @@
                     const pw = Number(ann.pdfWidth), ph = Number(ann.pdfHeight);
                     if ([px, py, pw, ph].every(Number.isFinite) && pw > 0 && ph > 0) {
                         return { x: px, y: py, w: pw, h: ph };
+                    }
+                    // When pdfWidth==0 but pdfHeight>0 (unbounded-width promoted annotation),
+                    // synthesise the width from the union x-extents of all sourceLineBBoxes so
+                    // the multi-line rendering path has a valid box to work with.
+                    if (pw === 0 && ph > 0 && Number.isFinite(px) && Number.isFinite(py)
+                            && Array.isArray(ann.sourceLineBBoxes) && ann.sourceLineBBoxes.length > 0) {
+                        const bbs = ann.sourceLineBBoxes.filter(b => Array.isArray(b) && b.length >= 4);
+                        if (bbs.length > 0) {
+                            const synW = Math.max(...bbs.map(b => Number(b[2]))) - Math.min(...bbs.map(b => Number(b[0])));
+                            if (synW > 0) return { x: px, y: py, w: synW, h: ph };
+                        }
                     }
                     // Fallback: top-origin source coords → convert to bottom-origin
                     const sL = Number(ann.sourceBlockLeft),  sT = Number(ann.sourceBlockTop);
@@ -990,6 +1467,198 @@
                             this.drawAnnotationElement(ann, overlayEl, scale);
                         }
                     });
+                    if (this.drawAcro) {
+                        this.pageAcroWidgets.forEach((widget) => {
+                            this.drawAcroWidgetElement(widget, overlayEl, scale);
+                        });
+                    }
+                },
+
+                buildAcroFieldLookup(entries) {
+                    const lookup = {};
+                    (Array.isArray(entries) ? entries : []).forEach((entry) => {
+                        const keys = [
+                            String(entry?.key || '').trim(),
+                            String(entry?.fieldName || '').trim(),
+                        ].filter(Boolean);
+                        keys.forEach((key) => {
+                            lookup[key] = entry;
+                        });
+                    });
+                    return lookup;
+                },
+
+                normalizeAcroRect(rectLike) {
+                    if (!Array.isArray(rectLike) || rectLike.length < 4) return null;
+                    const rect = rectLike.slice(0, 4).map((value) => Number(value));
+                    return rect.every((value) => Number.isFinite(value)) ? rect : null;
+                },
+
+                normalizeAcroTextColor(colorLike) {
+                    if (typeof colorLike === 'string') {
+                        const value = colorLike.trim();
+                        if (!value) return null;
+                        if (/^#[0-9a-f]{6}$/i.test(value)) return value.toLowerCase();
+                        if (/^[0-9a-f]{6}$/i.test(value)) return `#${value.toLowerCase()}`;
+                        return null;
+                    }
+
+                    if (Array.isArray(colorLike) && colorLike.length > 0) {
+                        const values = colorLike.slice(0, 3).map((value) => Number(value));
+                        if (!values.every((value) => Number.isFinite(value))) return null;
+                        const rgb = values.map((value) => (
+                            value <= 1
+                                ? Math.max(0, Math.min(255, Math.round(value * 255)))
+                                : Math.max(0, Math.min(255, Math.round(value)))
+                        ));
+                        while (rgb.length < 3) rgb.push(rgb[0]);
+                        return `#${rgb.map((value) => value.toString(16).padStart(2, '0')).join('')}`;
+                    }
+
+                    return null;
+                },
+
+                acroFieldKey(annotation) {
+                    return String(annotation?.fieldName || annotation?.id || annotation?.fullName || '').trim();
+                },
+
+                async ensureAcroPdfLoaded() {
+                    if (_acroPdfDoc || !this.document?.file_url) return;
+                    _acroPdfDoc = await pdfjsLib.getDocument(this.document.file_url).promise;
+                },
+
+                normalizeAcroWidget(annotation, pageNumber) {
+                    const fieldKey = this.acroFieldKey(annotation);
+                    const dbEntry = this.acroFieldLookup[fieldKey] || null;
+                    const rect = this.normalizeAcroRect(dbEntry?.rect || annotation?.rect);
+                    if (!rect) return null;
+
+                    const [x0, y0, x1, y1] = rect;
+                    const left = Math.min(x0, x1);
+                    const right = Math.max(x0, x1);
+                    const bottom = Math.min(y0, y1);
+                    const top = Math.max(y0, y1);
+
+                    return {
+                        key: fieldKey || `acro-${pageNumber}-${Math.random().toString(36).slice(2)}`,
+                        pageIndex: pageNumber - 1,
+                        fieldName: String(dbEntry?.fieldName || annotation?.fieldName || fieldKey || '').trim(),
+                        fieldType: String(dbEntry?.fieldType || annotation?.fieldType || '').trim().toUpperCase(),
+                        value: dbEntry?.value ?? annotation?.fieldValue ?? '',
+                        exportValue: String(dbEntry?.exportValue || annotation?.exportValue || '').trim(),
+                        checkBox: Boolean(dbEntry?.checkBox ?? annotation?.checkBox),
+                        radioButton: Boolean(dbEntry?.radioButton ?? annotation?.radioButton),
+                        combo: Boolean(dbEntry?.combo ?? annotation?.combo),
+                        multiLine: Boolean(dbEntry?.multiLine ?? annotation?.multiLine),
+                        multiSelect: Boolean(dbEntry?.multiSelect ?? annotation?.multiSelect),
+                        readOnly: Boolean(annotation?.readOnly),
+                        textColor: this.normalizeAcroTextColor(
+                            dbEntry?.textColor
+                            ?? annotation?.textColor
+                            ?? annotation?.fontColor
+                            ?? annotation?.color
+                            ?? annotation?.defaultAppearanceData?.fontColor
+                        ) || '#0f172a',
+                        rect: [left, bottom, right, top],
+                    };
+                },
+
+                async ensureAcroWidgetsForPage(pageNumber) {
+                    const pageKey = String(pageNumber);
+                    if (Array.isArray(this.acroWidgetsByPage[pageKey])) {
+                        return this.acroWidgetsByPage[pageKey];
+                    }
+                    if (!this.document) return [];
+
+                    this.acroLoading = true;
+                    this.acroError = null;
+
+                    try {
+                        await this.ensureAcroPdfLoaded();
+                        if (!_acroPdfDoc) return [];
+
+                        const page = await _acroPdfDoc.getPage(pageNumber);
+                        const widgets = await page.getAnnotations({ intent: 'display' });
+                        const normalized = (Array.isArray(widgets) ? widgets : [])
+                            .filter((annotation) => (
+                                annotation
+                                && annotation.subtype === 'Widget'
+                                && !annotation.hidden
+                            ))
+                            .map((annotation) => this.normalizeAcroWidget(annotation, pageNumber))
+                            .filter(Boolean);
+
+                        this.acroWidgetsByPage = {
+                            ...this.acroWidgetsByPage,
+                            [pageKey]: normalized,
+                        };
+
+                        return normalized;
+                    } catch (error) {
+                        this.acroError = error?.message || String(error);
+                        return [];
+                    } finally {
+                        this.acroLoading = false;
+                    }
+                },
+
+                drawAcroWidgetElement(widget, overlayEl, scale) {
+                    if (!widget || !Array.isArray(widget.rect) || widget.rect.length < 4) return;
+
+                    const [leftPdf, bottomPdf, rightPdf, topPdf] = widget.rect;
+                    const cssLeft = leftPdf * scale;
+                    const cssTop = this.canvasHeight - (topPdf * scale);
+                    const cssWidth = Math.max(3, (rightPdf - leftPdf) * scale);
+                    const cssHeight = Math.max(3, (topPdf - bottomPdf) * scale);
+                    const fieldType = String(widget.fieldType || '').toUpperCase();
+
+                    const el = document.createElement('div');
+                    el.className = 'recon-ann recon-acro';
+                    el.style.left = `${cssLeft.toFixed(2)}px`;
+                    el.style.top = `${cssTop.toFixed(2)}px`;
+                    el.style.width = `${cssWidth.toFixed(2)}px`;
+                    el.style.height = `${cssHeight.toFixed(2)}px`;
+                    el.style.border = '1.5px solid #2563eb';
+                    el.style.background = 'rgba(37,99,235,0.08)';
+                    el.style.borderRadius = '2px';
+                    el.style.boxSizing = 'border-box';
+                    el.title = widget.fieldName || widget.key || 'AcroForm field';
+
+                    if (fieldType === 'BTN' && (widget.checkBox || widget.radioButton)) {
+                        const mark = document.createElement('div');
+                        mark.style.position = 'absolute';
+                        mark.style.inset = '0';
+                        mark.style.display = 'flex';
+                        mark.style.alignItems = 'center';
+                        mark.style.justifyContent = 'center';
+                        mark.style.color = '#2563eb';
+                        mark.style.fontSize = `${Math.max(10, Math.min(cssHeight, cssWidth) * 0.7).toFixed(1)}px`;
+                        mark.style.fontWeight = '700';
+                        mark.textContent = widget.radioButton
+                            ? ((String(widget.value || '') !== '' && String(widget.value || '') === String(widget.exportValue || '')) ? '●' : '')
+                            : (widget.value ? '✓' : '');
+                        el.appendChild(mark);
+                    } else {
+                        const label = document.createElement('div');
+                        label.style.position = 'absolute';
+                        label.style.left = '0';
+                        label.style.right = '0';
+                        label.style.top = '0';
+                        label.style.bottom = '0';
+                        label.style.display = 'flex';
+                        label.style.alignItems = 'center';
+                        label.style.padding = '0 4px';
+                        label.style.overflow = 'hidden';
+                        label.style.whiteSpace = 'nowrap';
+                        label.style.textOverflow = 'ellipsis';
+                        label.style.fontFamily = 'ui-monospace, SFMono-Regular, Menlo, monospace';
+                        label.style.fontSize = `${Math.max(8, Math.min(11, cssHeight * 0.45)).toFixed(1)}px`;
+                        label.style.color = widget.textColor || '#0f172a';
+                        label.textContent = String(widget.value ?? '').trim() || `[${fieldType || 'ACRO'}] ${widget.fieldName || widget.key || ''}`.trim();
+                        el.appendChild(label);
+                    }
+
+                    overlayEl.appendChild(el);
                 },
 
                 drawAnnotationElement(ann, overlayEl, scale) {
@@ -1111,7 +1780,25 @@
                         // Prefer the first sourceSpan's embedded_font_name for resolution —
                         // annotation.fontSourceName is sometimes truncated (e.g. "ITCFranklinGothicStd-Dem"
                         // vs the full "ITCFranklinGothicStd-Demi" in the span).
-                        const _srcSpansRaw = Array.isArray(ann.sourceSpans) ? ann.sourceSpans : [];
+                        const _srcLineBBoxesRaw = Array.isArray(ann.sourceLineBBoxes) ? ann.sourceLineBBoxes : [];
+                        const _srcLineBBoxes = _srcLineBBoxesRaw
+                            .filter((bbox) => Array.isArray(bbox) && bbox.length >= 4)
+                            .map((bbox) => bbox.slice(0, 4).map((value) => Number(value)));
+                        const _srcSpansRaw = (Array.isArray(ann.sourceSpans) ? ann.sourceSpans : []).filter((span) => {
+                            if (!ann.promotedFromExtraction || !_srcLineBBoxes.length) return true;
+                            const spanBBox = Array.isArray(span?.bbox) && span.bbox.length >= 4
+                                ? span.bbox.slice(0, 4).map((value) => Number(value))
+                                : null;
+                            if (!spanBBox || spanBBox.some((value) => !Number.isFinite(value))) return false;
+                            return _srcLineBBoxes.some((lineBBox) => {
+                                if (lineBBox.some((value) => !Number.isFinite(value))) return false;
+                                const xi = Math.max(spanBBox[0], lineBBox[0] - 0.25);
+                                const yi = Math.max(spanBBox[1], lineBBox[1] - 0.25);
+                                const xa = Math.min(spanBBox[2], lineBBox[2] + 0.25);
+                                const ya = Math.min(spanBBox[3], lineBBox[3] + 0.25);
+                                return (xa - xi) > 0 && (ya - yi) > 0;
+                            });
+                        });
                         const _primarySpanSrcName = _srcSpansRaw.length > 0
                             ? String(_srcSpansRaw[0].embedded_font_name || _srcSpansRaw[0].font || '').trim()
                             : '';
@@ -1157,6 +1844,24 @@
                             const bbox = getSpanBBox(span);
                             return bbox ? Math.max(0, Number(bbox[2]) - Number(bbox[0])) : 0;
                         };
+                        const getSourceSpanDisplayText = (span) => {
+                            if (span && span.render_text !== undefined && span.render_text !== null) {
+                                return String(span.render_text);
+                            }
+                            return String(span?.text ?? span?.rawText ?? '');
+                        };
+                        const getSpanLineOverlapArea = (span, lineBBox, tolerancePts = 0) => {
+                            const bbox = getSpanBBox(span);
+                            if (!bbox || !Array.isArray(lineBBox) || lineBBox.length < 4) return 0;
+                            const xi = Math.max(Number(bbox[0]), Number(lineBBox[0]) - tolerancePts);
+                            const yi = Math.max(Number(bbox[1]), Number(lineBBox[1]) - tolerancePts);
+                            const xa = Math.min(Number(bbox[2]), Number(lineBBox[2]) + tolerancePts);
+                            const ya = Math.min(Number(bbox[3]), Number(lineBBox[3]) + tolerancePts);
+                            return Math.max(0, xa - xi) * Math.max(0, ya - yi);
+                        };
+                        const spanOverlapsLineBBox = (span, lineBBox, tolerancePts = 0) => (
+                            getSpanLineOverlapArea(span, lineBBox, tolerancePts) > 0
+                        );
                         const resolveLineSourceStyle = (lineBBox = null) => {
                             const defaultStyle = {
                                 fontFamily,
@@ -1169,14 +1874,8 @@
 
                             let candidates = _srcSpansRaw.filter((span) => getSpanBBox(span));
                             if (lineBBox && Array.isArray(lineBBox) && lineBBox.length >= 4) {
-                                const lineTop = Number(lineBBox[1]);
-                                const lineBottom = Number(lineBBox[3]);
                                 candidates = candidates.filter((span) => {
-                                    const bbox = getSpanBBox(span);
-                                    if (!bbox) return false;
-                                    const spanTop = Number(bbox[1]);
-                                    const spanBottom = Number(bbox[3]);
-                                    return spanBottom >= lineTop - 1 && spanTop <= lineBottom + 1;
+                                    return spanOverlapsLineBBox(span, lineBBox, 1);
                                 });
                             }
                             if (!candidates.length) return defaultStyle;
@@ -1216,7 +1915,6 @@
                             lineEl.style.fontWeight  = style.fontWeight;
                             lineEl.style.fontStyle   = style.fontStyle;
                             lineEl.style.fontStretch = style.fontStretch;
-                            lineEl.style.fontKerning = 'none';
                             lineEl.style.color       = ann.textColor || '#000000';
                             lineEl.style.background  = 'transparent';
                             lineEl.style.padding     = '0';
@@ -1224,6 +1922,7 @@
                             lineEl.style.whiteSpace  = 'pre';
                             lineEl.style.overflow    = 'visible';
                             lineEl.style.lineHeight  = lineHeightPx.toFixed(2) + 'px';
+                            _applyPdfTextCss(lineEl);
                         };
 
                         // ── Positioning principle ──
@@ -1238,9 +1937,9 @@
                         // place each line at its exact extracted position — NOT uniform lineHeight.
                         // The translation Python applies: translate_y = rect.y0 - min(bboxes[i][1])
                         // simplifies to: line_i top = rect.y0_css + (bbox[i][1] - bbox[0][1]) * scale
-                        const srcLines  = Array.isArray(ann.sourceTextLines)  ? ann.sourceTextLines  : null;
+                        let srcLines  = Array.isArray(ann.sourceTextLines)  ? ann.sourceTextLines  : null;
                         const srcBBoxesRaw = Array.isArray(ann.sourceLineBBoxes) ? ann.sourceLineBBoxes : null;
-                        const srcBBoxes = (() => {
+                        let srcBBoxes = (() => {
                             if (!srcBBoxesRaw) return null;
                             if (!srcLines || srcBBoxesRaw.length === srcLines.length) return srcBBoxesRaw;
                             const filtered = srcBBoxesRaw.filter((bbox) => (
@@ -1251,12 +1950,172 @@
                             return filtered.length === srcLines.length ? filtered : srcBBoxesRaw;
                         })();
 
+                        const synthesizeVisualLinesFromSpans = () => {
+                            const positionedSpans = _srcSpansRaw
+                                .filter((span) => getSpanBBox(span))
+                                .slice()
+                                .sort((leftSpan, rightSpan) => {
+                                    const leftBox = getSpanBBox(leftSpan) || [0, 0, 0, 0];
+                                    const rightBox = getSpanBBox(rightSpan) || [0, 0, 0, 0];
+                                    const topDelta = Number(leftBox[1]) - Number(rightBox[1]);
+                                    if (Math.abs(topDelta) > 1) {
+                                        return topDelta;
+                                    }
+                                    return Number(leftBox[0]) - Number(rightBox[0]);
+                                });
+
+                            if (positionedSpans.length < 2) {
+                                return null;
+                            }
+
+                            const groups = [];
+                            positionedSpans.forEach((span) => {
+                                const bbox = getSpanBBox(span);
+                                if (!bbox) return;
+
+                                const top = Number(bbox[1]) || 0;
+                                const bottom = Number(bbox[3]) || top;
+                                const height = Math.max(1, bottom - top);
+                                const centerY = top + (height / 2);
+                                const currentGroup = groups[groups.length - 1] || null;
+
+                                if (!currentGroup) {
+                                    groups.push({
+                                        spans: [span],
+                                        bbox: bbox.map((value) => Number(value) || 0),
+                                        centerY,
+                                    });
+                                    return;
+                                }
+
+                                const groupBox = currentGroup.bbox;
+                                const groupTop = Number(groupBox[1]) || 0;
+                                const groupBottom = Number(groupBox[3]) || groupTop;
+                                const groupHeight = Math.max(1, groupBottom - groupTop);
+                                const groupCenterY = currentGroup.centerY;
+                                const verticalOverlap = Math.max(0, Math.min(bottom, groupBottom) - Math.max(top, groupTop));
+                                const sameVisualBand = verticalOverlap >= Math.min(height, groupHeight) * 0.45
+                                    || Math.abs(centerY - groupCenterY) <= Math.max(1.5, Math.min(height, groupHeight) * 0.45);
+
+                                if (sameVisualBand) {
+                                    currentGroup.spans.push(span);
+                                    currentGroup.bbox = [
+                                        Math.min(Number(groupBox[0]) || 0, Number(bbox[0]) || 0),
+                                        Math.min(groupTop, top),
+                                        Math.max(Number(groupBox[2]) || 0, Number(bbox[2]) || 0),
+                                        Math.max(groupBottom, bottom),
+                                    ];
+                                    currentGroup.centerY = ((Number(currentGroup.bbox[1]) || 0) + (Number(currentGroup.bbox[3]) || 0)) / 2;
+                                    return;
+                                }
+
+                                groups.push({
+                                    spans: [span],
+                                    bbox: bbox.map((value) => Number(value) || 0),
+                                    centerY,
+                                });
+                            });
+
+                            if (groups.length <= 1) {
+                                return null;
+                            }
+
+                            const synthesizedLineBBoxes = groups.map((group) => group.bbox);
+                            const synthesizedLines = groups.map((group) => {
+                                const lineSpans = group.spans.slice().sort((leftSpan, rightSpan) => {
+                                    const leftOriginX = Array.isArray(leftSpan?.origin) ? Number(leftSpan.origin[0]) || 0 : (Number(getSpanBBox(leftSpan)?.[0]) || 0);
+                                    const rightOriginX = Array.isArray(rightSpan?.origin) ? Number(rightSpan.origin[0]) || 0 : (Number(getSpanBBox(rightSpan)?.[0]) || 0);
+                                    return leftOriginX - rightOriginX;
+                                });
+                                return lineSpans.map((span) => getSourceSpanDisplayText(span)).join('');
+                            });
+
+                            return synthesizedLines.length === synthesizedLineBBoxes.length
+                                ? {
+                                    lines: synthesizedLines,
+                                    boxes: synthesizedLineBBoxes,
+                                }
+                                : null;
+                        };
+
+                        if (
+                            (!srcLines || !srcBBoxes || srcBBoxes.length !== srcLines.length || srcBBoxes.length <= 1)
+                            && _srcSpansRaw.length > 1
+                        ) {
+                            const synthesizedVisualLines = synthesizeVisualLinesFromSpans();
+                            if (synthesizedVisualLines) {
+                                srcLines = synthesizedVisualLines.lines;
+                                srcBBoxes = synthesizedVisualLines.boxes;
+                            }
+                        }
+
+                        // Any annotation with extracted per-line text + bboxes should be
+                        // reconstructed line-by-line. Falling back to a single wrapped DOM
+                        // block lets the browser choose line breaks and spacing, which can
+                        // never exactly match the PDF paragraph layout.
                         if (box && srcBBoxes && srcLines &&
-                            srcBBoxes.length > 1 && srcBBoxes.length === srcLines.length &&
-                            ann.promotedFromExtraction) {
+                            srcBBoxes.length > 1 && srcBBoxes.length === srcLines.length) {
 
                             const rect_y0_css = this.canvasHeight - (box.y + box.h) * scale;
                             const refY = Number(srcBBoxes[0][1]);  // y0 of first line bbox
+
+                            // Compute exclusive span-to-line assignments based on maximum bbox
+                            // intersection area.  Each span is assigned to exactly one line
+                            // (the one with the greatest overlap), preventing duplication when
+                            // two source-line bboxes share the same top-Y — e.g. a form label
+                            // "11" whose tall bbox straddles every sub-line, where Y-range
+                            // overlap alone would assign the span to every line.
+                            // Ties (equal area) resolve to the FIRST matching line index so that
+                            // side-by-side sub-fields (e.g. "a" overlapping both line[0] and
+                            // line[1] equally) are placed on the earlier/wider line rather than
+                            // being hoisted to a separate line below.
+                            const _spanLineAssignments = _srcSpansRaw.map((span) => {
+                                const sb = span && (span.bbox || span.bBox);
+                                if (!Array.isArray(sb) || sb.length < 4) return -1;
+                                let bestLine = -1, bestArea = 0;
+                                srcBBoxes.forEach((lineBbox, li) => {
+                                    if (!Array.isArray(lineBbox) || lineBbox.length < 4) return;
+                                    const area = getSpanLineOverlapArea(span, lineBbox, 1);
+                                    if (area > bestArea) {
+                                        bestArea = area;
+                                        bestLine = li;
+                                    }
+                                });
+                                return bestArea > 0 ? bestLine : -1;
+                            });
+
+                            // Helpers needed before single-line path definitions
+                            const _mlGetSpanText = (span) => {
+                                const displayText = getSourceSpanDisplayText(span);
+                                return displayText !== '' ? displayText : String(span?.text ?? span?.rawText ?? '');
+                            };
+                            const _mlGetSpanColor = (span, fallback = '#000000') => {
+                                if (span?.hex_color) return String(span.hex_color);
+                                if (span?.color !== undefined && span?.color !== null) {
+                                    if (typeof span.color === 'number') return '#' + span.color.toString(16).padStart(6, '0');
+                                    const raw = String(span.color).trim();
+                                    if (raw) return raw;
+                                }
+                                return fallback;
+                            };
+                            // Resolve CSS font-weight for a span, consulting _embeddedFonts for
+                            // fonts whose weight is encoded only in the font name (e.g. -Bd, -Lt).
+                            const _mlGetSpanWeight = (span) => {
+                                if (!span) return 'normal';
+                                if (span.font_weight) return String(span.font_weight);
+                                if (span.fontWeight)  return String(span.fontWeight);
+                                if (span.bold)        return '700';
+                                const srcName = String(span.embedded_font_name || span.font || '').trim();
+                                if (srcName && _embeddedFonts) {
+                                    for (const [k, fd] of Object.entries(_embeddedFonts)) {
+                                        if (String(fd.clean_name || k).trim().toLowerCase() === srcName.toLowerCase()) {
+                                            return fd.css_weight || 'normal';
+                                        }
+                                    }
+                                }
+                                return 'normal';
+                            };
+                            const _mlNormFont = (n) => String(n || '').trim().replace(/PSMT$/i, '').replace(/PS(-\w+MT)$/i, '$1').toLowerCase();
 
                             for (let i = 0; i < srcLines.length; i++) {
                                 const bbox = srcBBoxes[i];
@@ -1269,16 +2128,145 @@
                                 lineEl.style.top   = (rect_y0_css + (Number(bbox[1]) - refY) * scale).toFixed(2) + 'px';
                                 lineEl.style.width = Math.max(2, (Number(bbox[2]) - Number(bbox[0])) * scale).toFixed(2) + 'px';
                                 applyTextStyle(lineEl, lineH, lineStyle);
-                                lineEl.textContent = srcLines[i];
-                                _applyExactTextWidthFit(lineEl, {
-                                    text: srcLines[i],
-                                    targetWidthPx: (Number(bbox[2]) - Number(bbox[0])) * scale,
-                                    fontSizePx: lineStyle.fontSizePx,
-                                    fontFamily: lineStyle.fontFamily,
-                                    fontWeight: lineStyle.fontWeight,
-                                    fontStyle: lineStyle.fontStyle,
-                                    fontStretch: lineStyle.fontStretch,
+
+                                // Use the pre-computed exclusive span-to-line assignments so each
+                                // span appears in exactly one line.  This replaces the previous
+                                // Y-range overlap filter, which could assign the same span to
+                                // multiple lines when two source-line bboxes share the same Y-top
+                                // (e.g. a form field whose tall label bbox encompasses a sub-line).
+                                const lineSpans = _srcSpansRaw.filter((span, si) => _spanLineAssignments[si] === i);
+                                // If no spans land on this line, skip it entirely — the span
+                                // content will already appear within the line that claimed those
+                                // spans via the assignment step above (e.g. "a" in "11a").
+                                if (lineSpans.length === 0) continue;
+
+                                // Override annotation-level textColor with this line's primary
+                                // span color.  ann.textColor reflects one span's color (often the
+                                // last) and may differ from the color of spans on this line — e.g.
+                                // when a multi-line block mixes white (background-section) text
+                                // with dark visible text on individual lines.
+                                lineEl.style.color = _mlGetSpanColor(lineSpans[0], ann.textColor || '#000000');
+
+                                // Detect mixed fonts/weights/sizes/colors within this line
+                                const lineHasMixed = lineSpans.length > 1 && lineSpans.some((s) => {
+                                    const sf = _mlNormFont(s.embedded_font_name || s.font || '');
+                                    const f0 = _mlNormFont(lineSpans[0].embedded_font_name || lineSpans[0].font || '');
+                                    if (sf !== f0) return true;
+                                    // Per-span color differences (e.g. colored bullet before black text)
+                                    const sc = _mlGetSpanColor(s, ann.textColor || '#000000');
+                                    const c0 = _mlGetSpanColor(lineSpans[0], ann.textColor || '#000000');
+                                    if (sc.toLowerCase() !== c0.toLowerCase()) return true;
+                                    // Font-size differences (e.g. superscripts/subscripts using same font family)
+                                    const sz  = Number(s.font_size ?? s.fontSize) || 0;
+                                    const sz0 = Number(lineSpans[0].font_size ?? lineSpans[0].fontSize) || 0;
+                                    return sz0 > 0 && sz > 0 && Math.abs(sz - sz0) > 0.5;
                                 });
+                                // Detect significant positional X-gaps between spans (e.g. multi-column table cells)
+                                const lineHasPositionalGaps = lineSpans.length > 1
+                                    && lineSpans.every((s) => Array.isArray(s.origin) && s.origin.length >= 2)
+                                    && lineSpans.some((s, i) => {
+                                        if (i === 0) return false;
+                                        const prevBbox = Array.isArray(lineSpans[i - 1].bbox) ? lineSpans[i - 1].bbox : null;
+                                        if (!prevBbox || prevBbox.length < 3) return false;
+                                        return Number(s.origin[0]) - Number(prevBbox[2]) > 4.0;
+                                    });
+
+                                if ((lineHasMixed || lineHasPositionalGaps) && lineSpans.every((s) => Array.isArray(s.origin) && s.origin.length >= 2)) {
+                                    // Per-span rendering with individual font-weight/family
+                                    lineEl.style.overflow = 'visible';
+                                    const lineLeft = Number(bbox[0]);
+                                    const lineText = (Array.isArray(srcLines) && srcLines[i]) ? String(srcLines[i]) : '';
+                                    // Cursor into lineText so repeated words don't match the wrong occurrence.
+                                    let lineTextCursor = 0;
+                                    lineSpans.forEach((span, si) => {
+                                        const spanEl       = document.createElement('span');
+                                        const spanSrcName  = String(span.embedded_font_name || span.font || '').trim();
+                                        const spanFontPx   = (Number(span.font_size ?? span.fontSize) || lineStyle.fontSizePx / scale) * scale;
+                                        const spanFamily   = _resolveCssFont(spanSrcName, span.embedded_font_family || span.fontFamily || spanSrcName);
+                                        const spanWeight   = _mlGetSpanWeight(span);
+                                        const spanStyleVal = span.fontStyle || (span.italic ? 'italic' : lineStyle.fontStyle);
+                                        let spanStretch    = 'normal';
+                                        if (_embeddedFonts && spanSrcName) {
+                                            for (const [k, fd] of Object.entries(_embeddedFonts)) {
+                                                if (String(fd.clean_name || k).trim().toLowerCase() === spanSrcName.toLowerCase()) {
+                                                    spanStretch = fd.css_stretch || 'normal';
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        spanEl.style.position             = 'absolute';
+                                        spanEl.style.left                 = ((Number(span.origin[0]) - lineLeft) * scale).toFixed(2) + 'px';
+                                        spanEl.style.top                  = '0px';
+                                        spanEl.style.fontFamily           = spanFamily;
+                                        spanEl.style.fontSize             = spanFontPx.toFixed(2) + 'px';
+                                        spanEl.style.fontWeight           = spanWeight;
+                                        spanEl.style.fontStyle            = spanStyleVal;
+                                        spanEl.style.fontStretch          = spanStretch;
+                                        spanEl.style.letterSpacing        = '0';
+                                        spanEl.style.lineHeight           = lineH.toFixed(2) + 'px';
+                                        spanEl.style.whiteSpace           = 'pre';
+                                        spanEl.style.color                = _mlGetSpanColor(span, ann.textColor || '#000000');
+                                        _applyPdfTextCss(spanEl);
+                                        // Recover inter-span trailing chars (spaces) from the source line.
+                                        // When bbox[2] of this span == origin[0] of the next span (0 gap),
+                                        // the word space is encoded in the bbox advance. Slicing the full
+                                        // line text from this span to the next recovers that space as a
+                                        // real character, bypassing the width-fit and rendering it naturally.
+                                        // lineTextCursor advances forward so repeated words in the same line
+                                        // don't cause the wrong occurrence to be matched.
+                                        const coreText = _mlGetSpanText(span);
+                                        let spanDisplayText = coreText;
+                                        if (lineText) {
+                                            const thisIdx = lineText.indexOf(coreText, lineTextCursor);
+                                            if (thisIdx >= 0) {
+                                                if (si < lineSpans.length - 1) {
+                                                    const nextCore = _mlGetSpanText(lineSpans[si + 1]);
+                                                    if (nextCore) {
+                                                        const nextIdx = lineText.indexOf(nextCore, thisIdx + coreText.length);
+                                                        if (nextIdx > thisIdx + coreText.length) {
+                                                            spanDisplayText = lineText.slice(thisIdx, nextIdx);
+                                                            lineTextCursor = nextIdx;
+                                                        } else {
+                                                            lineTextCursor = thisIdx + coreText.length;
+                                                        }
+                                                    } else {
+                                                        lineTextCursor = thisIdx + coreText.length;
+                                                    }
+                                                } else {
+                                                    lineTextCursor = thisIdx + coreText.length;
+                                                }
+                                            }
+                                        }
+                                        // Strip trailing whitespace: absolute span positions encode inter-span gaps;
+                                        // keeping trailing spaces at a smaller font size (e.g. superscript) causes
+                                        // the element to overflow into the next span's absolute position.
+                                        spanEl.textContent = spanDisplayText.replace(/\s+$/, '') || spanDisplayText;
+                                        const spanBBox = Array.isArray(span.bbox) ? span.bbox : null;
+                                        if (spanBBox && spanBBox.length >= 4 && spanEl.textContent && !/^\s|\s$/.test(spanEl.textContent)) {
+                                            _applyExactTextWidthFit(spanEl, {
+                                                text: spanEl.textContent,
+                                                targetWidthPx: (Number(spanBBox[2]) - Number(spanBBox[0])) * scale,
+                                                fontSizePx: spanFontPx,
+                                                fontFamily: spanFamily,
+                                                fontWeight: spanWeight,
+                                                fontStyle: spanStyleVal,
+                                                fontStretch: spanStretch,
+                                            });
+                                        }
+                                        lineEl.appendChild(spanEl);
+                                    });
+                                } else {
+                                    lineEl.textContent = srcLines[i];
+                                    _applyExactTextWidthFit(lineEl, {
+                                        text: srcLines[i],
+                                        targetWidthPx: (Number(bbox[2]) - Number(bbox[0])) * scale,
+                                        fontSizePx: lineStyle.fontSizePx,
+                                        fontFamily: lineStyle.fontFamily,
+                                        fontWeight: lineStyle.fontWeight,
+                                        fontStyle: lineStyle.fontStyle,
+                                        fontStretch: lineStyle.fontStretch,
+                                    });
+                                }
                                 overlayEl.appendChild(lineEl);
                             }
                             return;  // skip appending main el
@@ -1300,14 +2288,29 @@
                         // the browser uses actual font advance-widths for spacing — exactly like the PDF.
                         // Absolute-per-span positioning created gaps because the bbox width includes
                         // advance space that our font renders slightly shorter than the PDF measured.
-                        const srcSpans = _srcSpansRaw;
-                        const NUMBERED_FIELD_GUTTER_PTS = 14.4;
-                        const getSpanDisplayText = (span) => {
-                            if (span && span.render_text !== undefined && span.render_text !== null) {
-                                return String(span.render_text);
+
+                        // Filter source spans to only those whose Y bounding box overlaps this
+                        // annotation's line.  The extractor occasionally groups spans from adjacent
+                        // rows (e.g. row above and row below) into a single annotation, then only
+                        // stores the LAST row's bbox in sourceLineBBoxes.  Rendering every span at
+                        // top:0 inside the single positioned element stacks them all at the same
+                        // Y coordinate — producing the "horrid overlap" visible in the viewer.
+                        const srcSpans = (() => {
+                            const lineBBox = Array.isArray(srcBBoxes) && srcBBoxes.length
+                                ? srcBBoxes[0] : null;
+                            if (!lineBBox || !Array.isArray(lineBBox) || lineBBox.length < 4) {
+                                return _srcSpansRaw;
                             }
-                            return String(span?.text ?? span?.rawText ?? '');
-                        };
+                            const TOL = 1; // 1pt tolerance — same as multi-line path uses
+                            const filtered = _srcSpansRaw.filter((span) => {
+                                const sb = Array.isArray(span?.bbox) && span.bbox.length >= 4
+                                    ? span.bbox : null;
+                                if (!sb) return true; // no positional data — keep
+                                return spanOverlapsLineBBox(span, lineBBox, TOL);
+                            });
+                            return filtered;
+                        })();
+                        const getSpanDisplayText = (span) => getSourceSpanDisplayText(span);
                         const isPureNumericText = (text) => /^\d+$/.test(String(text || '').trim());
                         const isNumberedFieldMarker = (span) => /^\d+[A-Za-z]?$/.test(getSpanDisplayText(span).trim());
                         const isNumberedFieldRow = srcSpans.length > 1
@@ -1324,31 +2327,40 @@
                         const reconstructedAbsoluteSpanTexts = isNumberedFieldRow
                             ? srcSpans.map(getSpanDisplayText)
                             : (hasCanonicalRenderedSpans ? srcSpans.map(getSpanDisplayText) : (() => {
+                            // Cursor-based trailing-space recovery.
+                            // For each absolutely-positioned span, include any inter-span characters
+                            // (spaces, punctuation) as TRAILING content on the current span rather
+                            // than as leading content on the next span.  Leading content on an
+                            // absolutely-positioned span shifts its text rightward past its PDF
+                            // origin, creating a visible extra gap.
                             let remaining = String(ann.text || '');
-                            const rendered = srcSpans.map((span) => {
-                                const coreText = String(span.text || span.rawText || '');
+                            return srcSpans.map((span, si) => {
+                                const coreText = getSpanDisplayText(span);
                                 if (!coreText) return '';
-                                const idx = remaining.indexOf(coreText);
-                                if (idx < 0) return coreText;
-                                const prefix = remaining.slice(0, idx);
-                                remaining = remaining.slice(idx + coreText.length);
-                                if (/^\s+$/.test(prefix) && coreText.trim() !== '.') {
-                                    return prefix + coreText;
+                                const coreIdx = remaining.indexOf(coreText);
+                                if (coreIdx < 0) return coreText;
+                                // Skip any prefix before coreText (shouldn't normally occur)
+                                remaining = remaining.slice(coreIdx);
+                                // remaining now starts with coreText
+                                if (si === srcSpans.length - 1) {
+                                    remaining = '';
+                                    return coreText; // last span: no trailing chars needed
                                 }
+                                // Look ahead: find where the next span's text starts so we can
+                                // include any chars between this span and the next as trailing content.
+                                const nextCoreText = getSpanDisplayText(srcSpans[si + 1]);
+                                if (nextCoreText) {
+                                    const nextIdx = remaining.indexOf(nextCoreText, coreText.length);
+                                    if (nextIdx > coreText.length) {
+                                        const chunkText = remaining.slice(0, nextIdx); // coreText + trailing chars
+                                        remaining = remaining.slice(nextIdx); // advance to next span's start
+                                        return chunkText;
+                                    }
+                                }
+                                // No gap or next span not found: advance past coreText only
+                                remaining = remaining.slice(coreText.length);
                                 return coreText;
                             });
-                            for (let i = 1; i < rendered.length; i++) {
-                                const current = rendered[i];
-                                const leading = current.match(/^\s+/)?.[0] || '';
-                                if (!leading) continue;
-                                const previousCore = String(srcSpans[i - 1]?.text || srcSpans[i - 1]?.rawText || '').trim();
-                                const currentCore = String(srcSpans[i]?.text || srcSpans[i]?.rawText || '').trim();
-                                const previousLooksLikeFieldMarker = /^\d+[A-Za-z]?$/.test(previousCore);
-                                if (!previousLooksLikeFieldMarker || currentCore === '.') continue;
-                                rendered[i] = current.slice(leading.length);
-                                reconstructedAbsoluteSpanLeadingShiftTexts[i] = leading;
-                            }
-                            return rendered;
                         })());
                         const dotLeaderText = String(ann.text || '');
                         const isDotLeaderRun = srcSpans.length > 1
@@ -1377,34 +2389,21 @@
                             const origin = Array.isArray(span.origin) ? span.origin : null;
                             return origin && origin.length >= 2 && Number.isFinite(Number(origin[0]));
                         });
+                        // Significant X gaps between adjacent spans (e.g. chapter number + large indent + title)
+                        const hasPositionalGaps = canPositionMixedSpansAbsolutely && srcSpans.length > 1 && srcSpans.some((span, i) => {
+                            if (i === 0) return false;
+                            const prevBbox = Array.isArray(srcSpans[i - 1].bbox) ? srcSpans[i - 1].bbox : null;
+                            const currOrigin = Array.isArray(span.origin) ? span.origin : null;
+                            if (!prevBbox || prevBbox.length < 3 || !currOrigin) return false;
+                            return Number(currOrigin[0]) - Number(prevBbox[2]) > 5.0;
+                        });
                         const hasInlineLeaderSpans = srcSpans.length > 2
                             && srcSpans.some((span) => getSpanDisplayText(span).trim() === '.')
                             && srcSpans.some((span) => {
                                 const text = getSpanDisplayText(span).trim();
                                 return text && text !== '.';
                             });
-                        const getNumberedFieldGutterShiftPx = (index) => {
-                            if (index < 1) return 0;
-                            const previousSpan = srcSpans[index - 1];
-                            const currentSpan = srcSpans[index];
-                            const previousText = getSpanDisplayText(previousSpan).trim();
-                            const currentText = getSpanDisplayText(currentSpan).trim();
-                            if (!/^\d+[A-Za-z]?$/.test(previousText) || !currentText || currentText === '.' || isPureNumericText(currentText)) {
-                                return 0;
-                            }
-                            const previousBBox = Array.isArray(previousSpan?.bbox) ? previousSpan.bbox : null;
-                            const currentOrigin = Array.isArray(currentSpan?.origin) ? currentSpan.origin : null;
-                            if (!previousBBox || previousBBox.length < 4 || !currentOrigin || currentOrigin.length < 2) {
-                                return 0;
-                            }
-                            const contiguousGapPts = Number(currentOrigin[0]) - Number(previousBBox[2]);
-                            if (contiguousGapPts > 1.0) {
-                                return 0;
-                            }
-                            // Numbered field labels on this form use a fixed extraction gutter
-                            // of 14.4pt between the marker and the label text.
-                            return NUMBERED_FIELD_GUTTER_PTS * scale;
-                        };
+                        const getNumberedFieldGutterShiftPx = (_index) => 0;
                         if (isDotLeaderRun) {
                             const baseLeftPts = box
                                 ? Number(box.x)
@@ -1436,10 +2435,10 @@
                                 spanEl.style.fontWeight  = span.fontWeight || fontWeight;
                                 spanEl.style.fontStyle   = span.fontStyle || fontStyle;
                                 spanEl.style.fontStretch = spanStretch;
-                                spanEl.style.fontKerning = 'none';
                                 spanEl.style.lineHeight  = spanFontPx.toFixed(2) + 'px';
                                 spanEl.style.whiteSpace  = 'pre';
                                 spanEl.style.color       = ann.textColor || '#000000';
+                                _applyPdfTextCss(spanEl);
                                 const renderedSpanText = reconstructedAbsoluteSpanTexts[index] || getSpanDisplayText(span);
                                 spanEl.textContent = renderedSpanText;
                                 const spanBBox = Array.isArray(span.bbox) ? span.bbox : null;
@@ -1461,7 +2460,7 @@
                                 }
                                 el.appendChild(spanEl);
                             });
-                        } else if (canPositionMixedSpansAbsolutely && (hasPerSpanColors || hasMixedSpans || hasInlineLeaderSpans)) {
+                        } else if (canPositionMixedSpansAbsolutely && (hasPerSpanColors || hasMixedSpans || hasInlineLeaderSpans || hasPositionalGaps)) {
                             const baseLeftPts = box
                                 ? Number(box.x)
                                 : Number(ann.pdfX ?? srcSpans[0]?.origin?.[0] ?? 0);
@@ -1496,10 +2495,10 @@
                                 spanEl.style.fontWeight  = String(spanWeight);
                                 spanEl.style.fontStyle   = spanStyle;
                                 spanEl.style.fontStretch = spanStretch;
-                                spanEl.style.fontKerning = 'none';
                                 spanEl.style.lineHeight  = spanFontPx.toFixed(2) + 'px';
                                 spanEl.style.whiteSpace  = 'pre';
                                 spanEl.style.color       = spanColor;
+                                _applyPdfTextCss(spanEl);
                                 const renderedSpanText = reconstructedAbsoluteSpanTexts[index] || getSpanDisplayText(span);
                                 const shiftedLeadingWhitespace = reconstructedAbsoluteSpanLeadingShiftTexts[index] || '';
                                 const shiftedLeftPx = (() => {
@@ -1571,9 +2570,9 @@
                                 spanEl.style.fontWeight  = spanWeight;
                                 spanEl.style.fontStyle   = spanStyle;
                                 spanEl.style.fontStretch = spanStretch;
-                                spanEl.style.fontKerning = 'none';
                                 spanEl.style.color       = getSpanColorValue(span, ann.textColor || '#000000');
                                 spanEl.style.whiteSpace  = 'pre';
+                                _applyPdfTextCss(spanEl);
                                 // Take everything from annTextRemaining up to where the
                                 // next span's text starts, so trailing spaces/gaps are kept.
                                 const nextSpanText = si + 1 < srcSpans.length
@@ -1610,20 +2609,25 @@
                                 rotatedSpan.style.fontWeight = singleLineStyle.fontWeight;
                                 rotatedSpan.style.fontStyle = singleLineStyle.fontStyle;
                                 rotatedSpan.style.fontStretch = singleLineStyle.fontStretch;
-                                rotatedSpan.style.fontKerning = 'none';
                                 rotatedSpan.style.lineHeight = singleLineStyle.fontSizePx.toFixed(2) + 'px';
                                 rotatedSpan.style.color = ann.textColor || '#000000';
                                 rotatedSpan.style.transformOrigin = 'left top';
+                                _applyPdfTextCss(rotatedSpan);
                                 rotatedSpan.style.transform = primaryRotation < 0
                                     ? `translate(0px, ${box.h.toFixed(2)}px) rotate(${primaryRotation}deg)`
                                     : `translate(${box.w.toFixed(2)}px, 0px) rotate(${primaryRotation}deg)`;
                                 el.style.overflow = 'visible';
                                 el.appendChild(rotatedSpan);
                             } else {
-                            el.textContent = ann.text || '';
+                            // Prefer the span's render_text (which preserves PDF word/char spacing
+                            // as literal space characters) over ann.text which is the compact form.
+                            const _singleSpanText = srcSpans.length === 1 && srcSpans[0]?.render_text != null
+                                ? String(srcSpans[0].render_text)
+                                : (ann.text || '');
+                            el.textContent = _singleSpanText;
                             if (cssWidth !== null) {
                                 _applyExactTextWidthFit(el, {
-                                    text: ann.text || '',
+                                    text: _singleSpanText,
                                     targetWidthPx: cssWidth,
                                     fontSizePx: singleLineStyle.fontSizePx,
                                     fontFamily: singleLineStyle.fontFamily,
@@ -1786,6 +2790,120 @@
                     };
                     return map[String(type || 'text').toLowerCase()]
                         || 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400';
+                },
+
+                /* ── Annotation debug modal ── */
+                async openDebugModal(ann) {
+                    this.debugModalAnn = ann;
+                    this.debugData     = null;
+                    this.debugError    = null;
+                    this.debugLoading  = true;
+                    this.debugModal    = true;
+
+                    try {
+                        const docId = this.document?.id;
+                        if (!docId) throw new Error('No document loaded.');
+                        const base = '{{ route('pdfTests.annotationDebug', ['document' => '__ID__']) }}'
+                            .replace('__ID__', encodeURIComponent(docId));
+                        const params = ann.db_id
+                            ? '?db_id=' + encodeURIComponent(ann.db_id)
+                            : '?ann_id=' + encodeURIComponent(ann.id || '');
+                        const resp = await fetch(base + params, {
+                            headers: { Accept: 'application/json' },
+                            credentials: 'same-origin',
+                        });
+                        const json = await resp.json();
+                        if (!json.success) throw new Error(json.message || 'Failed to load debug data.');
+                        this.debugData = json.data;
+                    } catch (e) {
+                        this.debugError = e.message || String(e);
+                    } finally {
+                        this.debugLoading = false;
+                    }
+                },
+
+                /* ── Flag annotation modal ── */
+                openFlagModal(ann) {
+                    this.flagModalAnn = ann;
+                    this.flagReason   = ann._flagReason || '';
+                    this.flagImages   = (ann._flagImages || []).map(url => ({ dataUrl: url, name: '' }));
+                    this.flagError    = null;
+                    this.flagSaving   = false;
+                    this.flagModal    = true;
+                },
+
+                // Compress a base64 data URL to max maxW wide, returns Promise<string>
+                _compressImg(dataUrl, maxW = 900) {
+                    return new Promise(resolve => {
+                        const img = new Image();
+                        img.onload = () => {
+                            let w = img.width, h = img.height;
+                            if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
+                            const c = document.createElement('canvas');
+                            c.width = w; c.height = h;
+                            c.getContext('2d').drawImage(img, 0, 0, w, h);
+                            resolve(c.toDataURL('image/jpeg', 0.82));
+                        };
+                        img.onerror = () => resolve(dataUrl); // fallback uncompressed
+                        img.src = dataUrl;
+                    });
+                },
+
+                async _addImgFile(file) {
+                    const reader = new FileReader();
+                    reader.onload = async e => {
+                        const compressed = await this._compressImg(e.target.result);
+                        this.flagImages = [...this.flagImages, { dataUrl: compressed, name: file.name }];
+                    };
+                    reader.readAsDataURL(file);
+                },
+
+                removeFlagImage(idx) {
+                    this.flagImages = this.flagImages.filter((_, i) => i !== idx);
+                },
+
+                async submitFlag(flagged) {
+                    if (!this.flagModalAnn || !this.flagModalAnn.db_id) {
+                        this.flagError = 'No db_id for this annotation — cannot flag.';
+                        return;
+                    }
+                    this.flagSaving = true;
+                    this.flagError  = null;
+                    try {
+                        const docId = this.document?.id;
+                        const url = '{{ route('pdfTests.flagAnnotation', ['document' => '__ID__']) }}'
+                            .replace('__ID__', encodeURIComponent(docId));
+                        const resp = await fetch(url, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Accept': 'application/json',
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+                            },
+                            credentials: 'same-origin',
+                            body: JSON.stringify({
+                                db_id: this.flagModalAnn.db_id,
+                                flagged,
+                                flag_reason: this.flagReason || null,
+                                flag_images: flagged ? this.flagImages.map(img => img.dataUrl) : [],
+                            }),
+                        });
+                        const json = await resp.json();
+                        if (!json.success) throw new Error(json.message || 'Save failed.');
+                        // Update the annotation in the list reactively
+                        const uid = this.flagModalAnn._uid;
+                        const ann = this.annotations.find(a => a._uid === uid);
+                        if (ann) {
+                            ann._flagged    = json.flagged;
+                            ann._flagReason = json.flag_reason || '';
+                            ann._flagImages = json.flag_images || [];
+                        }
+                        this.flagModal = false;
+                    } catch (e) {
+                        this.flagError = e.message || String(e);
+                    } finally {
+                        this.flagSaving = false;
+                    }
                 },
 
             };

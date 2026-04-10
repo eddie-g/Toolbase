@@ -2,6 +2,7 @@
 
 namespace App\Filament\Pages;
 
+use App\Models\Document;
 use Filament\Pages\Page;
 
 class PdfReconstruction extends Page
@@ -17,4 +18,13 @@ class PdfReconstruction extends Page
     protected static ?int $navigationSort = 3;
 
     protected static string $view = 'filament.pages.pdf-reconstruction';
+
+    public function getViewData(): array
+    {
+        $documents = Document::with('user')
+            ->orderBy('id', 'desc')
+            ->get(['id', 'user_id', 'original_name', 'created_at']);
+
+        return ['documents' => $documents];
+    }
 }

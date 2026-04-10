@@ -12,6 +12,7 @@ import math
 import re
 import statistics
 import time
+from urllib.parse import urlparse
 from pathlib import Path
 import fitz  # PyMuPDF
 import mysql.connector
@@ -64,7 +65,7 @@ def _collect_page_link_regions(page):
     except Exception:
         return regions
 
-    for link in raw_links:
+    for index, link in enumerate(raw_links):
         link_rect = link.get('from')
         if not link_rect:
             continue
@@ -75,6 +76,7 @@ def _collect_page_link_regions(page):
         if rect.width <= 0 or rect.height <= 0:
             continue
         regions.append({
+            'index': index,
             'rect': rect,
             'uri': str(link.get('uri') or '').strip(),
             'kind': str(link.get('kind') or '').strip(),
@@ -114,6 +116,26 @@ def _find_link_region_for_bbox(bbox, link_regions):
             best_region = link_region
 
     return best_region if best_overlap_area > 0 else None
+
+
+def _link_region_display_text(link_region):
+    if not isinstance(link_region, dict):
+        return ''
+
+    uri = sanitize_extracted_text(link_region.get('uri') or '').strip()
+    if not uri:
+        return ''
+
+    parsed = urlparse(uri)
+    if parsed.scheme in ('http', 'https'):
+        host = parsed.netloc.strip()
+        path = parsed.path or ''
+        query = f'?{parsed.query}' if parsed.query else ''
+        fragment = f'#{parsed.fragment}' if parsed.fragment else ''
+        display = f'{host}{path}{query}{fragment}'.strip()
+        return display.rstrip('/') if display else ''
+
+    return uri.rstrip('/')
 
 
 def cff_raw_to_otf(cff_data: bytes, font_name: str = 'UnknownFont',
@@ -287,6 +309,10 @@ _EXTRACTION_PRIVATE_USE_RE = re.compile(r'[\uE000-\uF8FF]')
 _EXTRACTION_CONTROL_RE = re.compile(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]')
 _EXTRACTION_UNDERLINE_RUN_RE = re.compile(r'_{3,}')
 _EXTRACTION_LARGE_GAP_RE = re.compile(r' {8,}')
+_EXTRACTION_URLISH_RE = re.compile(
+    r'(?:https?://|www\.)\S+|[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:/[A-Za-z0-9._~:/?#\[\]@!$&\'()*+,;=%-]*)?',
+    re.IGNORECASE,
+)
 _PDF_TEXT_SHOW_OP_RE = re.compile(
     rb'BT\b|ET\b|'
     rb'[-\d.]+\s+[-\d.]+\s+[-\d.]+\s+[-\d.]+\s+[-\d.]+\s+[-\d.]+\s+Tm\b|'
@@ -1224,6 +1250,72 @@ def _collect_widget_rects(page):
     return rects
 
 
+# Map Wingdings/Symbol PUA codepoints to their Unicode semantic equivalents.
+# Wingdings encodes glyphs at U+F000 + ASCII code. Only map visually meaningful
+# characters that appear in passport/government forms.
+_SYMBOL_PUA_TO_UNICODE = {
+    '\uf0fc': '\u2713',  # Wingdings 0xFC → ✓ CHECK MARK
+    '\uf0fb': '\u2714',  # Wingdings 0xFB → ✔ HEAVY CHECK MARK
+    '\uf0fe': '\u2611',  # Wingdings 0xFE → ☑ BALLOT BOX WITH CHECK
+    '\uf0fd': '\u2612',  # Wingdings 0xFD → ☒ BALLOT BOX WITH X
+    '\uf0e7': '\u2718',  # Wingdings 0xE7 → ✘ HEAVY BALLOT X
+    '\uf0e8': '\u2717',  # Wingdings 0xE8 → ✗ BALLOT X
+    '\uf06e': '\u25cf',  # Wingdings 0x6E → ● BLACK CIRCLE (bullet)
+    '\uf0a7': '\u2022',  # Wingdings 0xA7 → • BULLET
+    '\uf0b7': '\u2022',  # Symbol/Wingdings bullet variant
+}
+
+_SYMBOL_FONT_TOKENS = ('wingdings', 'symbol', 'dingbat', 'zapfdingbat', 'webdings')
+
+
+def _collect_symbol_char_spans(page):
+    """
+    Collect individual characters from symbol/dingbat fonts (Wingdings, etc.)
+    that are stripped by sanitize_extracted_text due to being in the PUA range.
+    Returns a list of dicts with keys: x, y, x1, y1, char, font, font_size, color.
+    Coordinates are in PDF/fitz page space (y increasing downward).
+    """
+    result = []
+    try:
+        text_data = page.get_text("rawdict", flags=fitz.TEXT_PRESERVE_WHITESPACE)
+    except Exception:
+        return result
+
+    for block in text_data.get("blocks", []):
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                font_name = (span.get("font") or "").lower()
+                if not any(tok in font_name for tok in _SYMBOL_FONT_TOKENS):
+                    continue
+                for char in span.get("chars", []):
+                    c = char.get("c", "")
+                    if not c:
+                        continue
+                    mapped = _SYMBOL_PUA_TO_UNICODE.get(c)
+                    if not mapped:
+                        continue
+                    bbox = char.get("bbox")
+                    if not bbox or len(bbox) < 4:
+                        continue
+                    x0, y0, x1, y1 = (
+                        float(bbox[0]), float(bbox[1]),
+                        float(bbox[2]), float(bbox[3]),
+                    )
+                    result.append({
+                        "x":         x0,
+                        "y":         y0,
+                        "x1":        x1,
+                        "y1":        y1,
+                        "char":      mapped,
+                        "font":      span.get("font", ""),
+                        "font_size": float(span.get("size") or 10),
+                        "color":     int(span.get("color") or 0),
+                    })
+    return result
+
+
 def _collect_drawn_box_rects(page):
     """Collect small drawn rectangle outlines such as checkbox boxes."""
     rects = []
@@ -1281,6 +1373,186 @@ def _rect_intersects_widget(rect, widget_rects, padding=0.0):
             continue
         return True
     return False
+
+
+def _best_intersecting_widget_rect(rect, widget_rects, padding=0.0):
+    if not rect or len(rect) < 4 or not widget_rects:
+        return None
+
+    x0, y0, x1, y1 = [float(value) for value in rect[:4]]
+    best_rect = None
+    best_overlap = 0.0
+    for widget_rect in widget_rects:
+        wx0, wy0, wx1, wy1 = [float(value) for value in widget_rect[:4]]
+        if x1 < (wx0 - padding) or x0 > (wx1 + padding) or y1 < (wy0 - padding) or y0 > (wy1 + padding):
+            continue
+        overlap = _rect_intersection_area((x0, y0, x1, y1), (wx0, wy0, wx1, wy1))
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best_rect = (wx0, wy0, wx1, wy1)
+    return best_rect
+
+
+def _should_skip_widget_intersecting_span(text, rect, widget_rects):
+    widget_rect = _best_intersecting_widget_rect(rect, widget_rects, padding=0.35)
+    if not widget_rect:
+        return False
+
+    x0, y0, x1, y1 = [float(value) for value in rect[:4]]
+    wx0, wy0, wx1, wy1 = widget_rect
+    span_area = max(1.0, (x1 - x0) * (y1 - y0))
+    widget_width = max(0.0, wx1 - wx0)
+    widget_height = max(0.0, wy1 - wy0)
+    overlap_area = _rect_intersection_area((x0, y0, x1, y1), widget_rect)
+    overlap_ratio = overlap_area / span_area
+
+    normalized_text = sanitize_extracted_text(text or '')
+    compact_text = re.sub(r'\s+', ' ', normalized_text).strip()
+    word_count = len(compact_text.split()) if compact_text else 0
+
+    # Real document text is more important than avoiding a phantom widget artifact.
+    # Preserve URL-like spans even when a broad widget rect overlaps them. These
+    # broad rects can come from hidden widgets or malformed form metadata and
+    # previously caused content loss in inline printed URLs.
+    if compact_text:
+        if _EXTRACTION_URLISH_RE.search(compact_text):
+            return False
+
+    # Only suppress when the widget covers essentially the whole span and the span
+    # still looks like compact field/widget text rather than authored body copy.
+    if overlap_ratio < 0.92:
+        return False
+
+    if widget_width <= 96.0 or widget_height >= 14.0:
+        return True
+
+    return len(compact_text) <= 12
+
+
+def _line_expects_inline_link_text(line_text):
+    compact_text = re.sub(r'\s+', ' ', sanitize_extracted_text(line_text or '')).strip()
+    if not compact_text:
+        return False
+    compact_text = compact_text.rstrip(' .,:;')
+    return bool(re.search(r'(?:\b(?:at|visit|see|go to|online at|available at|found at))$', compact_text, re.IGNORECASE))
+
+
+def _build_missing_link_span_for_line(
+    line_text,
+    line_bbox,
+    line_spans,
+    line_style,
+    link_regions,
+    used_link_region_ids,
+):
+    if not _line_expects_inline_link_text(line_text):
+        return None
+    if not line_bbox or len(line_bbox) < 4:
+        return None
+    if any(bool(span.get('is_link')) for span in (line_spans or []) if isinstance(span, dict)):
+        return None
+
+    line_rect = tuple(float(value) for value in line_bbox[:4])
+    best_region = None
+    best_score = None
+
+    for link_region in link_regions or []:
+        region_id = link_region.get('index')
+        if region_id in (used_link_region_ids or set()):
+            continue
+        display_text = _link_region_display_text(link_region)
+        if not _EXTRACTION_URLISH_RE.search(display_text or ''):
+            continue
+
+        rect = link_region.get('rect')
+        if rect is None:
+            continue
+        link_rect = (float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1))
+        vertical_overlap = max(
+            0.0,
+            min(line_rect[3], link_rect[3]) - max(line_rect[1], link_rect[1]),
+        )
+        min_height = max(1.0, min(line_rect[3] - line_rect[1], link_rect[3] - link_rect[1]))
+        overlap_ratio = vertical_overlap / min_height
+        if overlap_ratio < 0.45:
+            continue
+
+        intersects_existing_span = False
+        for span in line_spans or []:
+            span_bbox = span.get('bbox') if isinstance(span, dict) else None
+            if not isinstance(span_bbox, (list, tuple)) or len(span_bbox) < 4:
+                continue
+            normalized_span_bbox = tuple(float(value) for value in span_bbox[:4])
+            overlap_area = _rect_intersection_area(normalized_span_bbox, link_rect)
+            if overlap_area <= 0:
+                continue
+            span_area = max(
+                1.0,
+                (normalized_span_bbox[2] - normalized_span_bbox[0]) * (normalized_span_bbox[3] - normalized_span_bbox[1]),
+            )
+            link_area = max(1.0, (link_rect[2] - link_rect[0]) * (link_rect[3] - link_rect[1]))
+            overlap_ratio = overlap_area / min(span_area, link_area)
+            if overlap_ratio >= 0.35:
+                intersects_existing_span = True
+                break
+        if intersects_existing_span:
+            continue
+
+        # Prefer links that start inside the current line bounds and nearest to the
+        # existing trailing text. This catches the common "found at <url>" layout.
+        score = abs(link_rect[1] - line_rect[1]) * 10.0 + max(0.0, link_rect[0] - line_rect[2])
+        if best_score is None or score < best_score:
+            best_score = score
+            best_region = link_region
+
+    if not best_region:
+        return None
+
+    rect = best_region['rect']
+    bbox = [float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)]
+    base_style = dict(line_style or {})
+    font_name = str(base_style.get('font') or '')
+    font_size = float(base_style.get('font_size') or 0) or max(1.0, bbox[3] - bbox[1])
+    font_weight = base_style.get('font_weight')
+    if font_weight is None:
+        font_weight = '700' if base_style.get('bold') else '400'
+    display_text = _link_region_display_text(best_region)
+    return {
+        'text': display_text,
+        'render_text': display_text,
+        'suppress_drawn_underline': False,
+        'has_drawn_underline': False,
+        'font': font_name,
+        'font_xref': base_style.get('font_xref'),
+        'font_size': font_size,
+        'font_weight': font_weight,
+        'color': base_style.get('color', 0),
+        'hex_color': base_style.get('hex_color', '#0000EE'),
+        'bold': bool(base_style.get('bold')),
+        'italic': bool(base_style.get('italic')),
+        'flags': 0,
+        'bbox': bbox,
+        'ascender': base_style.get('ascender'),
+        'descender': base_style.get('descender'),
+        'origin': [bbox[0], bbox[3]],
+        'direction': base_style.get('direction'),
+        'writing_mode': int(base_style.get('writing_mode', 0) or 0),
+        'rotation': float(base_style.get('rotation', 0) or 0),
+        'line_width': None,
+        'render_type': None,
+        'space_width': None,
+        'source_content_ops': [],
+        'uses_embedded_font': bool(base_style.get('uses_embedded_font')),
+        'embedded_font_name': base_style.get('embedded_font_name'),
+        'embedded_font_family': base_style.get('embedded_font_family'),
+        'embedded_font_xref': base_style.get('embedded_font_xref'),
+        'is_link': True,
+        'link_uri': best_region.get('uri') or None,
+        'link_kind': best_region.get('kind') or None,
+        'link_page': best_region.get('page'),
+        '_synthetic_missing_link': True,
+        '_link_region_index': best_region.get('index'),
+    }
 
 
 def _rects_have_drawn_box_barrier(left_rect, right_rect, drawn_box_rects):
@@ -3836,7 +4108,9 @@ def extract_text_with_pymupdf(pdf_path):
             horizontal_lines = _collect_horizontal_lines(page)
             vertical_lines = _collect_vertical_lines(page)
             drawn_box_rects = _collect_drawn_box_rects(page)
+            symbol_char_spans = _collect_symbol_char_spans(page)
             page_link_regions = _collect_page_link_regions(page)
+            used_link_region_ids = set()
 
             if _page_requires_synthetic_form_grouping(
                 blocks,
@@ -4096,7 +4370,7 @@ def extract_text_with_pymupdf(pdf_path):
                                         rebuilt_origin = trace_visible_span.get("origin")
                                         if rebuilt_origin:
                                             origin = rebuilt_origin
-                                elif _rect_intersects_widget(bbox, widget_rects, padding=0.35):
+                                elif _should_skip_widget_intersecting_span(text, bbox, widget_rects):
                                     continue
 
                                 if not text or not text.strip():
@@ -4210,6 +4484,7 @@ def extract_text_with_pymupdf(pdf_path):
                                 }
                                 link_region = _find_link_region_for_bbox(bbox, page_link_regions)
                                 if link_region:
+                                    used_link_region_ids.add(link_region.get('index'))
                                     span_data['is_link'] = True
                                     if link_region.get('uri'):
                                         span_data['link_uri'] = link_region['uri']
@@ -4347,6 +4622,8 @@ def extract_text_with_pymupdf(pdf_path):
 
                                 if split_entries:
                                     for se in split_entries:
+                                        if se.get('is_link'):
+                                            used_link_region_ids.add(se.get('_link_region_index'))
                                         page_words.append(se)
                                         block_word_bboxes.append((
                                             se['left'], se['top'],
@@ -4354,10 +4631,85 @@ def extract_text_with_pymupdf(pdf_path):
                                         ))
                                     line_text += " ".join(se['text'] for se in split_entries) + " "
                                 else:
+                                    if word_data.get('is_link'):
+                                        used_link_region_ids.add(word_data.get('_link_region_index'))
                                     page_words.append(word_data)
                                     block_word_bboxes.append(bbox)
                                     line_text += text + " "
                                 total_words += len(text.split())
+
+                            synthetic_link_span = None
+                            if line_text.strip():
+                                effective_line_style = dict(line_style or {})
+                                if line_dir:
+                                    effective_line_style['direction'] = list(line_dir)
+                                effective_line_style['writing_mode'] = line_wmode
+                                effective_line_style['rotation'] = line_rotation
+                                synthetic_link_span = _build_missing_link_span_for_line(
+                                    line_text,
+                                    line_bbox,
+                                    line_spans,
+                                    effective_line_style,
+                                    page_link_regions,
+                                    used_link_region_ids,
+                                )
+                            if synthetic_link_span:
+                                line_spans.append(synthetic_link_span)
+                                block_spans.append(synthetic_link_span)
+                                used_link_region_ids.add(synthetic_link_span.get('_link_region_index'))
+                                link_bbox = synthetic_link_span.get('bbox') or line_bbox
+                                if isinstance(link_bbox, (list, tuple)) and len(link_bbox) >= 4:
+                                    block_word_bboxes.append(tuple(float(value) for value in link_bbox[:4]))
+                                synthetic_word = {
+                                    'text': synthetic_link_span['text'],
+                                    'render_text': synthetic_link_span['render_text'],
+                                    'suppress_drawn_underline': False,
+                                    'has_drawn_underline': False,
+                                    'left': link_bbox[0],
+                                    'top': link_bbox[1],
+                                    'width': link_bbox[2] - link_bbox[0],
+                                    'height': link_bbox[3] - link_bbox[1],
+                                    'origin_x': synthetic_link_span['origin'][0],
+                                    'origin_y': synthetic_link_span['origin'][1],
+                                    'font': synthetic_link_span['font'],
+                                    'font_xref': synthetic_link_span.get('font_xref'),
+                                    'font_size': synthetic_link_span['font_size'],
+                                    'font_weight': synthetic_link_span['font_weight'],
+                                    'color': synthetic_link_span['color'],
+                                    'hex_color': synthetic_link_span['hex_color'],
+                                    'bold': synthetic_link_span['bold'],
+                                    'italic': synthetic_link_span['italic'],
+                                    'block_num': block_counter,
+                                    'line_num': item['line_num'],
+                                    'span_num': len(line_spans) - 1,
+                                    'ascender': synthetic_link_span.get('ascender'),
+                                    'descender': synthetic_link_span.get('descender'),
+                                    'direction': synthetic_link_span.get('direction'),
+                                    'writing_mode': synthetic_link_span.get('writing_mode'),
+                                    'rotation': synthetic_link_span.get('rotation'),
+                                    'line_width': None,
+                                    'render_type': None,
+                                    'space_width': None,
+                                    'source_content_ops': [],
+                                    'is_link': True,
+                                    'link_uri': synthetic_link_span.get('link_uri'),
+                                    'link_kind': synthetic_link_span.get('link_kind'),
+                                    'link_page': synthetic_link_span.get('link_page'),
+                                }
+                                _attach_embedded_font_fields(synthetic_word, {
+                                    'clean_name': synthetic_link_span.get('embedded_font_name'),
+                                    'family': synthetic_link_span.get('embedded_font_family'),
+                                    'font_xref': synthetic_link_span.get('embedded_font_xref'),
+                                } if synthetic_link_span.get('embedded_font_name') else None)
+                                page_words.append(synthetic_word)
+                                sorted_line_spans = sorted(
+                                    [span for span in line_spans if isinstance(span, dict)],
+                                    key=lambda span: (
+                                        float((span.get('bbox') or [0, 0, 0, 0])[1]),
+                                        float((span.get('bbox') or [0, 0, 0, 0])[0]),
+                                    ),
+                                )
+                                line_text = ''.join(str(span.get('text') or '') for span in sorted_line_spans)
 
                             if line_text.strip():
                                 visible_line_bboxes = [
@@ -4533,6 +4885,7 @@ def extract_text_with_pymupdf(pdf_path):
                 'words': page_words,
                 'drawn_box_rects': [list(rect[:4]) for rect in (drawn_box_rects or [])],
                 'widget_rects': [list(rect[:4]) for rect in (widget_rects or [])],
+                'symbol_char_spans': symbol_char_spans,
                 'text': page_full_text,
                 'word_count': len(page_words)
             }

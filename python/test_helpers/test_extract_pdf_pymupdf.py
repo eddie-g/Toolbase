@@ -185,6 +185,112 @@ class ExtractPdfPyMuPdfTests(unittest.TestCase):
         self.assertEqual(len(groups), 1)
         self.assertEqual(len(groups[0]), 3)
 
+    def test_widget_overlap_preserves_url_like_span_on_wide_widget_rect(self):
+        self.assertFalse(
+            self.module._should_skip_widget_intersecting_span(
+                "www.irs.gov/businesses/get-a-business-tax-transcript",
+                (360.0, 372.0, 548.0, 380.0),
+                [(356.4, 370.8, 550.8, 381.6)],
+            )
+        )
+
+    def test_widget_overlap_still_skips_short_compact_widget_ghost_text(self):
+        self.assertTrue(
+            self.module._should_skip_widget_intersecting_span(
+                "X",
+                (100.0, 100.0, 112.0, 112.0),
+                [(99.0, 99.0, 113.0, 113.0)],
+            )
+        )
+
+    def test_build_missing_link_span_for_line_uses_link_annotation_uri(self):
+        link_regions = [{
+            "index": 0,
+            "rect": fitz.Rect(356.4, 370.8, 550.8, 381.6),
+            "uri": "https://www.irs.gov/businesses/get-a-business-tax-transcript",
+            "kind": "2",
+            "page": None,
+        }]
+        synthetic = self.module._build_missing_link_span_for_line(
+            "list of the tax return transcripts that are available for a business can be found at .",
+            (64.7, 372.3, 556.5, 379.7),
+            [{
+                "bbox": [64.7, 372.3, 359.3, 379.7],
+                "text": "list of the tax return transcripts that are available for a business can be found at ",
+            }, {
+                "bbox": [552.1, 377.2, 556.5, 378.1],
+                "text": ". ",
+            }],
+            {
+                "font": "HelveticaNeueLTStd-Roman",
+                "font_size": 8,
+                "font_weight": "400",
+                "color": 0,
+                "hex_color": "#000000",
+                "direction": [1, 0],
+                "writing_mode": 0,
+                "rotation": 0,
+            },
+            link_regions,
+            set(),
+        )
+
+        self.assertIsNotNone(synthetic)
+        self.assertEqual(
+            synthetic["text"],
+            "www.irs.gov/businesses/get-a-business-tax-transcript",
+        )
+        self.assertTrue(synthetic["is_link"])
+        self.assertEqual(
+            synthetic["link_uri"],
+            "https://www.irs.gov/businesses/get-a-business-tax-transcript",
+        )
+
+    def test_build_missing_link_span_for_line_requires_inline_link_trigger_phrase(self):
+        synthetic = self.module._build_missing_link_span_for_line(
+            "Transcript. Available for current year and 3 prior tax years.",
+            (64.7, 372.3, 556.5, 379.7),
+            [{
+                "bbox": [64.7, 372.3, 320.0, 379.7],
+                "text": "Transcript. Available for current year and 3 prior tax years.",
+            }],
+            {
+                "font": "HelveticaNeueLTStd-Roman",
+                "font_size": 8,
+            },
+            [{
+                "index": 0,
+                "rect": fitz.Rect(356.4, 370.8, 550.8, 381.6),
+                "uri": "https://www.irs.gov/businesses/get-a-business-tax-transcript",
+            }],
+            set(),
+        )
+
+        self.assertIsNone(synthetic)
+
+    def test_build_missing_link_span_for_line_skips_when_line_already_has_link_span(self):
+        synthetic = self.module._build_missing_link_span_for_line(
+            "list of the tax return transcripts can be found at .",
+            (64.7, 372.3, 556.5, 379.7),
+            [{
+                "bbox": [356.4, 370.8, 550.8, 381.6],
+                "text": "www.irs.gov/businesses/get-a-business-tax-transcript",
+                "is_link": True,
+            }],
+            {
+                "font": "HelveticaNeueLTStd-Roman",
+                "font_size": 8,
+            },
+            [{
+                "index": 0,
+                "rect": fitz.Rect(356.4, 370.8, 550.8, 381.6),
+                "uri": "https://www.irs.gov/businesses/get-a-business-tax-transcript",
+            }],
+            set(),
+        )
+
+        self.assertIsNone(synthetic)
+
     def test_trace_rebuild_dedupes_overlapped_footer_glyph_layers(self):
         doc = fitz.open(DRYLAB_FIXTURE_PATH)
         page = doc[0]
