@@ -11,6 +11,7 @@ import io
 import json
 import math
 import os
+import re
 import sys
 from html.parser import HTMLParser
 from typing import Any, Dict, Optional, Tuple

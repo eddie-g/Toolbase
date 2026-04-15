@@ -12,6 +12,7 @@ import math
 import re
 import statistics
 import time
+from urllib.parse import urlparse
 from pathlib import Path
 import fitz  # PyMuPDF
 import mysql.connector
@@ -64,7 +65,7 @@ def _collect_page_link_regions(page):
     except Exception:
         return regions
 
-    for link in raw_links:
+    for index, link in enumerate(raw_links):
         link_rect = link.get('from')
         if not link_rect:
             continue
@@ -75,6 +76,7 @@ def _collect_page_link_regions(page):
         if rect.width <= 0 or rect.height <= 0:
             continue
         regions.append({
+            'index': index,
             'rect': rect,
             'uri': str(link.get('uri') or '').strip(),
             'kind': str(link.get('kind') or '').strip(),
@@ -114,6 +116,26 @@ def _find_link_region_for_bbox(bbox, link_regions):
             best_region = link_region
 
     return best_region if best_overlap_area > 0 else None
+
+
+def _link_region_display_text(link_region):
+    if not isinstance(link_region, dict):
+        return ''
+
+    uri = sanitize_extracted_text(link_region.get('uri') or '').strip()
+    if not uri:
+        return ''
+
+    parsed = urlparse(uri)
+    if parsed.scheme in ('http', 'https'):
+        host = parsed.netloc.strip()
+        path = parsed.path or ''
+        query = f'?{parsed.query}' if parsed.query else ''
+        fragment = f'#{parsed.fragment}' if parsed.fragment else ''
+        display = f'{host}{path}{query}{fragment}'.strip()
+        return display.rstrip('/') if display else ''
+
+    return uri.rstrip('/')
 
 
 def cff_raw_to_otf(cff_data: bytes, font_name: str = 'UnknownFont',
@@ -282,17 +304,336 @@ def cff_raw_to_otf(cff_data: bytes, font_name: str = 'UnknownFont',
     return out.getvalue()
 
 
+def _glyph_name_to_unicode(glyph_name):
+    if not glyph_name:
+        return None
+
+    base = str(glyph_name).split('.', 1)[0]
+    if base in _GLYPH_NAME_TO_UNICODE:
+        return _GLYPH_NAME_TO_UNICODE[base]
+
+    match = re.match(r'^uni([0-9A-Fa-f]{4})$', base)
+    if match:
+        return int(match.group(1), 16)
+
+    match = re.match(r'^u([0-9A-Fa-f]{4,6})$', base)
+    if match:
+        return int(match.group(1), 16)
+
+    return None
+
+
+def _build_doc_font_unicode_maps(doc):
+    """
+    Build gid->unicode maps from PyMuPDF text traces.
+    PDF subset TrueType fonts often omit a browser-usable cmap table, but
+    page.get_texttrace() exposes both the decoded Unicode codepoint and the
+    glyph id used to paint that character. We use that to reconstruct a cmap.
+    """
+    font_maps = {}
+
+    for page in doc:
+        try:
+            traces = page.get_texttrace() or []
+        except Exception:
+            continue
+
+        for trace in traces:
+            trace_font = str(trace.get('font') or '').strip()
+            if not trace_font:
+                continue
+
+            candidate_keys = [
+                trace_font,
+                _strip_pdf_font_subset_prefix(trace_font),
+                _normalize_font_name(trace_font),
+                _normalize_font_name(_strip_pdf_font_subset_prefix(trace_font)),
+            ]
+            candidate_keys = [key for key in candidate_keys if key]
+            if not candidate_keys:
+                continue
+
+            for ch in trace.get('chars') or []:
+                if not ch or len(ch) < 2:
+                    continue
+
+                codepoint = ch[0]
+                glyph_id = ch[1]
+                if not isinstance(codepoint, int) or not isinstance(glyph_id, int):
+                    continue
+                if codepoint <= 0 or glyph_id < 0:
+                    continue
+
+                for key in candidate_keys:
+                    mapping = font_maps.setdefault(key, {})
+                    existing = mapping.get(glyph_id)
+                    if existing is None or existing == codepoint:
+                        mapping[glyph_id] = codepoint
+
+    return font_maps
+
+
+def _lookup_doc_font_unicode_map(font_maps, font_name):
+    if not font_name or not font_maps:
+        return {}
+
+    candidates = [
+        str(font_name).strip(),
+        _strip_pdf_font_subset_prefix(font_name),
+        _normalize_font_name(font_name),
+        _normalize_font_name(_strip_pdf_font_subset_prefix(font_name)),
+    ]
+    for key in candidates:
+        if key and key in font_maps and font_maps[key]:
+            return font_maps[key]
+
+    return {}
+
+
+def _needs_truetype_web_repair(ttf_data: bytes) -> bool:
+    try:
+        from io import BytesIO
+        from fontTools.ttLib import TTFont
+        font = TTFont(BytesIO(ttf_data))
+    except Exception:
+        return False
+
+    required_tables = {'head', 'hhea', 'maxp', 'hmtx', 'name', 'OS/2', 'cmap'}
+    return any(table not in font for table in required_tables)
+
+
+def repair_truetype_for_web(ttf_data: bytes, font_name: str = 'UnknownFont',
+                            gid_to_unicode=None, css_weight: int = 400,
+                            css_stretch: str = 'normal') -> bytes:
+    """
+    Re-save an extracted TrueType subset as a browser-safe webfont.
+    Adds a synthetic cmap and fills in required metadata tables when they are
+    missing. This is specifically for PDF embedded subsets that are valid for
+    PDF rendering but rejected by browsers via @font-face.
+    """
+    try:
+        from io import BytesIO
+        from fontTools.ttLib import TTFont
+        from fontTools.ttLib.tables._h_e_a_d import table__h_e_a_d
+        from fontTools.ttLib.tables._h_h_e_a import table__h_h_e_a
+        from fontTools.ttLib.tables._m_a_x_p import table__m_a_x_p
+        from fontTools.ttLib.tables.O_S_2f_2 import table_O_S_2f_2, Panose
+        from fontTools.ttLib.tables._n_a_m_e import table__n_a_m_e, NameRecord
+        from fontTools.ttLib.tables._c_m_a_p import table__c_m_a_p, cmap_format_4, cmap_format_12
+        from fontTools.ttLib.tables._p_o_s_t import table__p_o_s_t
+        from fontTools.ttLib.tables._h_m_t_x import table__h_m_t_x
+    except ImportError as e:
+        raise RuntimeError(f'fontTools not available for TrueType repair: {e}') from e
+
+    font = TTFont(BytesIO(ttf_data))
+    glyph_order = font.getGlyphOrder()
+    if not glyph_order:
+        raise RuntimeError('TrueType repair failed: extracted font has no glyph order')
+
+    mac_ts = int(time.time()) + 2082844800
+    upm = int(getattr(font.get('head'), 'unitsPerEm', 1000) or 1000)
+
+    if 'maxp' not in font:
+        maxp = table__m_a_x_p()
+        maxp.tableVersion = 0x00010000
+        maxp.numGlyphs = len(glyph_order)
+        font['maxp'] = maxp
+    else:
+        font['maxp'].numGlyphs = len(glyph_order)
+
+    if 'hmtx' not in font:
+        hmtx = table__h_m_t_x()
+        hmtx.metrics = {glyph: (upm, 0) for glyph in glyph_order}
+        font['hmtx'] = hmtx
+
+    metrics = getattr(font['hmtx'], 'metrics', {}) or {}
+    advance_values = [int(width) for width, _lsb in metrics.values()] or [upm]
+    lsb_values = [int(lsb) for _width, lsb in metrics.values()] or [0]
+
+    if 'head' not in font:
+        head = table__h_e_a_d()
+        head.tableVersion = 1.0
+        head.fontRevision = 1.0
+        head.checkSumAdjustment = 0
+        head.magicNumber = 0x5F0F3CF5
+        head.flags = 0x000B
+        head.unitsPerEm = upm
+        head.created = mac_ts
+        head.modified = mac_ts
+        head.xMin = 0
+        head.yMin = -200
+        head.xMax = max(advance_values)
+        head.yMax = int(upm * 0.8)
+        head.macStyle = 0x0001 if css_weight >= 700 else 0
+        head.lowestRecPPEM = 8
+        head.fontDirectionHint = 2
+        head.indexToLocFormat = 0
+        head.glyphDataFormat = 0
+        font['head'] = head
+    else:
+        font['head'].macStyle = 0x0001 if css_weight >= 700 else 0
+
+    if 'hhea' not in font:
+        hhea = table__h_h_e_a()
+        hhea.tableVersion = 0x00010000
+        hhea.ascent = int(upm * 0.8)
+        hhea.descent = -int(upm * 0.2)
+        hhea.lineGap = 0
+        hhea.advanceWidthMax = max(advance_values)
+        hhea.minLeftSideBearing = min(lsb_values)
+        hhea.minRightSideBearing = 0
+        hhea.xMaxExtent = max(advance_values)
+        hhea.caretSlopeRise = 1
+        hhea.caretSlopeRun = 0
+        hhea.caretOffset = 0
+        hhea.reserved0 = hhea.reserved1 = hhea.reserved2 = hhea.reserved3 = 0
+        hhea.metricDataFormat = 0
+        hhea.numberOfHMetrics = len(metrics)
+        font['hhea'] = hhea
+    else:
+        font['hhea'].advanceWidthMax = max(advance_values)
+        font['hhea'].minLeftSideBearing = min(lsb_values)
+        font['hhea'].numberOfHMetrics = len(metrics)
+
+    if 'OS/2' not in font:
+        os2 = table_O_S_2f_2()
+        os2.version = 4
+        os2.xAvgCharWidth = int(sum(advance_values) / max(1, len(advance_values)))
+        os2.usWeightClass = css_weight
+        os2.usWidthClass = 3 if css_stretch == 'condensed' else 5
+        os2.fsType = 0
+        os2.ySubscriptXSize = 650
+        os2.ySubscriptYSize = 600
+        os2.ySubscriptXOffset = 0
+        os2.ySubscriptYOffset = 75
+        os2.ySuperscriptXSize = 650
+        os2.ySuperscriptYSize = 600
+        os2.ySuperscriptXOffset = 0
+        os2.ySuperscriptYOffset = 350
+        os2.yStrikeoutSize = 80
+        os2.yStrikeoutPosition = 300
+        os2.sFamilyClass = 0
+        os2.panose = Panose()
+        os2.ulUnicodeRange1 = 3
+        os2.ulUnicodeRange2 = os2.ulUnicodeRange3 = os2.ulUnicodeRange4 = 0
+        os2.achVendID = 'UNKN'
+        os2.fsSelection = 0x0020 if css_weight >= 700 else 0x0040
+        os2.firstCharIndex = 32
+        os2.lastCharIndex = 126
+        os2.sTypoAscender = getattr(font['hhea'], 'ascent', int(upm * 0.8))
+        os2.sTypoDescender = getattr(font['hhea'], 'descent', -int(upm * 0.2))
+        os2.sTypoLineGap = getattr(font['hhea'], 'lineGap', 0)
+        os2.usWinAscent = max(0, os2.sTypoAscender)
+        os2.usWinDescent = abs(min(0, os2.sTypoDescender))
+        os2.ulCodePageRange1 = 1
+        os2.ulCodePageRange2 = 0
+        os2.sxHeight = int(upm * 0.5)
+        os2.sCapHeight = int(upm * 0.7)
+        os2.usDefaultChar = 0
+        os2.usBreakChar = 32
+        os2.usMaxContext = 0
+        font['OS/2'] = os2
+    else:
+        font['OS/2'].usWeightClass = css_weight
+        font['OS/2'].usWidthClass = 3 if css_stretch == 'condensed' else 5
+
+    if 'name' not in font:
+        name_table = table__n_a_m_e()
+        name_table.names = []
+        family = font_name.split('-')[0]
+        style_name = 'Bold' if css_weight >= 700 else 'Regular'
+        for nid, s in [(1, family), (2, style_name), (4, font_name), (6, font_name)]:
+            nr = NameRecord()
+            nr.nameID = nid
+            nr.platformID = 3
+            nr.platEncID = 1
+            nr.langID = 0x0409
+            nr.string = s.encode('utf-16-be')
+            name_table.names.append(nr)
+        font['name'] = name_table
+
+    cmap_entries = {}
+    if gid_to_unicode:
+        for glyph_id, codepoint in sorted(gid_to_unicode.items()):
+            if not isinstance(glyph_id, int) or not isinstance(codepoint, int):
+                continue
+            if glyph_id < 0 or glyph_id >= len(glyph_order):
+                continue
+            if codepoint <= 0 or codepoint > 0x10FFFF:
+                continue
+            glyph_name = glyph_order[glyph_id]
+            if glyph_name == '.notdef':
+                continue
+            cmap_entries.setdefault(codepoint, glyph_name)
+
+    if not cmap_entries:
+        for glyph_name in glyph_order:
+            codepoint = _glyph_name_to_unicode(glyph_name)
+            if codepoint is None:
+                continue
+            if glyph_name == '.notdef':
+                continue
+            cmap_entries.setdefault(codepoint, glyph_name)
+
+    if not cmap_entries:
+        fallback_codepoints = list(range(32, 127))
+        for codepoint, glyph_name in zip(fallback_codepoints, [g for g in glyph_order if g != '.notdef']):
+            cmap_entries.setdefault(codepoint, glyph_name)
+
+    cmap_t = table__c_m_a_p()
+    cmap_t.tableVersion = 0
+    cmap_t.tables = []
+
+    bmp_entries = {cp: g for cp, g in cmap_entries.items() if cp <= 0xFFFF}
+    if bmp_entries:
+        fmt4 = cmap_format_4(4)
+        fmt4.platformID = 3
+        fmt4.platEncID = 1
+        fmt4.language = 0
+        fmt4.cmap = bmp_entries
+        cmap_t.tables.append(fmt4)
+
+    astral_entries = {cp: g for cp, g in cmap_entries.items() if cp > 0xFFFF}
+    if astral_entries:
+        fmt12 = cmap_format_12(12)
+        fmt12.platformID = 3
+        fmt12.platEncID = 10
+        fmt12.language = 0
+        fmt12.cmap = astral_entries
+        cmap_t.tables.append(fmt12)
+
+    font['cmap'] = cmap_t
+
+    if 'post' not in font:
+        post = table__p_o_s_t()
+        post.formatType = 3.0
+        post.italicAngle = 0
+        post.underlinePosition = -100
+        post.underlineThickness = 50
+        post.isFixedPitch = 0
+        post.minMemType42 = post.maxMemType42 = post.minMemType1 = post.maxMemType1 = 0
+        font['post'] = post
+
+    out = BytesIO()
+    font.save(out)
+    return out.getvalue()
+
+
 _EXTRACTION_ZERO_WIDTH_RE = re.compile(r'[\u200B\u200C\u200D\u2060\uFEFF]')
 _EXTRACTION_PRIVATE_USE_RE = re.compile(r'[\uE000-\uF8FF]')
 _EXTRACTION_CONTROL_RE = re.compile(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]')
 _EXTRACTION_UNDERLINE_RUN_RE = re.compile(r'_{3,}')
 _EXTRACTION_LARGE_GAP_RE = re.compile(r' {8,}')
+_EXTRACTION_URLISH_RE = re.compile(
+    r'(?:https?://|www\.)\S+|[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:/[A-Za-z0-9._~:/?#\[\]@!$&\'()*+,;=%-]*)?',
+    re.IGNORECASE,
+)
 _PDF_TEXT_SHOW_OP_RE = re.compile(
     rb'BT\b|ET\b|'
     rb'[-\d.]+\s+[-\d.]+\s+[-\d.]+\s+[-\d.]+\s+[-\d.]+\s+[-\d.]+\s+Tm\b|'
     rb'[-\d.]+\s+[-\d.]+\s+T[dD]\b|'
     rb'\((?:\\.|[^\\)])*\)\s*Tj\b|'
-    rb'\[(?:\\.|[^\]])*\]\s*TJ\b',
+    rb'\[(?:\\.|[^\\\]])*\]\s*TJ\b',
     re.DOTALL,
 )
 
@@ -1015,6 +1356,7 @@ def extract_embedded_fonts(pdf_path, document_id, output_dir=None):
     doc = fitz.open(pdf_path)
     embedded_fonts = {}
     seen_xrefs = set()
+    font_unicode_maps = _build_doc_font_unicode_maps(doc)
 
     for page in doc:
         page_fonts = page.get_fonts(full=True)
@@ -1056,7 +1398,13 @@ def extract_embedded_fonts(pdf_path, document_id, output_dir=None):
             # Check suffix tokens (split on - _ ,) so abbreviations like "BlkCn" are isolated
             _suffix_tokens = [p for p in re.split(r'[-_,]', lower_name)[1:] if p]
             _suffix_str = '-'.join(_suffix_tokens)
-            if 'bold' in lower_name and ('extra' in lower_name or 'ultra' in lower_name):
+            # Explicit numeric weight suffix takes highest priority: e.g. "Font_700wght" → 700
+            _explicit_weight = re.search(r'[_-](\d{3})(?:wght|w)?$', lower_name)
+            if _explicit_weight:
+                _w = int(_explicit_weight.group(1))
+                if 100 <= _w <= 900:
+                    css_weight = str(_w)
+            elif 'bold' in lower_name and ('extra' in lower_name or 'ultra' in lower_name):
                 css_weight = '800'
             elif 'semibold' in lower_name or 'demibold' in lower_name:
                 css_weight = '600'
@@ -1064,10 +1412,16 @@ def extract_embedded_fonts(pdf_path, document_id, output_dir=None):
                   or any(t.startswith('blk') or t == 'hvy' for t in _suffix_tokens)):
                 # Covers: "Black", "Heavy", "BlkCn", "BlkCond", "Hvy" suffix tokens
                 css_weight = '900'
-            elif re.search(r'\bbd\b|bold', _suffix_str):
+            elif (any(t == 'bd' or t.startswith('bd') for t in _suffix_tokens)
+                  or re.search(r'\bbold\b|bold', _suffix_str)):
+                # Covers: "Bd", "BdIt" (bold-italic), "BdOu" (bold-outline),
+                # "BdCn" (bold-condensed), "Bold", "BoldItalic", etc.
                 css_weight = '700'
             elif 'bold' in lower_name:
                 css_weight = '700'
+            elif 'demi' in lower_name:
+                # "Demi" is semi-bold (e.g. ITCFranklinGothicStd-Demi)
+                css_weight = '600'
             elif 'medium' in lower_name or re.search(r'\bmd\b|\bmed\b', _suffix_str):
                 css_weight = '500'
             elif 'light' in lower_name or re.search(r'\blt\b|\bltc[nd]?$', _suffix_str):
@@ -1098,14 +1452,33 @@ def extract_embedded_fonts(pdf_path, document_id, output_dir=None):
 
             # Save font file
             safe_name = clean_name.replace(',', '_').replace('+', '_').replace(' ', '_')
-            filename = f"{safe_name}.{ext}"
+            actual_ext = ext
+            actual_content = content
+
+            if ext == 'ttf' and _needs_truetype_web_repair(content):
+                gid_to_unicode = _lookup_doc_font_unicode_map(font_unicode_maps, font_name)
+                if not gid_to_unicode:
+                    gid_to_unicode = _lookup_doc_font_unicode_map(font_unicode_maps, clean_name)
+                try:
+                    actual_content = repair_truetype_for_web(
+                        content,
+                        font_name=clean_name,
+                        gid_to_unicode=gid_to_unicode,
+                        css_weight=int(css_weight),
+                        css_stretch=css_stretch,
+                    )
+                    print(f"    ↳ Rebuilt TTF for web use: {clean_name}")
+                except Exception as ttf_err:
+                    actual_content = content
+                    print(f"    ⚠ TrueType web repair failed for {clean_name}: {ttf_err}")
+
+            filename = f"{safe_name}.{actual_ext}"
             filepath = os.path.join(output_dir, filename)
             with open(filepath, 'wb') as f:
-                f.write(content)
+                f.write(actual_content)
 
             # For raw CFF data (browsers cannot load bare CFF): wrap in OTF container.
             # Saves a companion .otf file and updates file_path/ext to point at it.
-            actual_ext = ext
             actual_path = filepath
             web_path = f"/fonts/runtime-extracted/{document_id}/{filename}"
             if ext == 'cff':
@@ -1224,6 +1597,72 @@ def _collect_widget_rects(page):
     return rects
 
 
+# Map Wingdings/Symbol PUA codepoints to their Unicode semantic equivalents.
+# Wingdings encodes glyphs at U+F000 + ASCII code. Only map visually meaningful
+# characters that appear in passport/government forms.
+_SYMBOL_PUA_TO_UNICODE = {
+    '\uf0fc': '\u2713',  # Wingdings 0xFC → ✓ CHECK MARK
+    '\uf0fb': '\u2714',  # Wingdings 0xFB → ✔ HEAVY CHECK MARK
+    '\uf0fe': '\u2611',  # Wingdings 0xFE → ☑ BALLOT BOX WITH CHECK
+    '\uf0fd': '\u2612',  # Wingdings 0xFD → ☒ BALLOT BOX WITH X
+    '\uf0e7': '\u2718',  # Wingdings 0xE7 → ✘ HEAVY BALLOT X
+    '\uf0e8': '\u2717',  # Wingdings 0xE8 → ✗ BALLOT X
+    '\uf06e': '\u25cf',  # Wingdings 0x6E → ● BLACK CIRCLE (bullet)
+    '\uf0a7': '\u2022',  # Wingdings 0xA7 → • BULLET
+    '\uf0b7': '\u2022',  # Symbol/Wingdings bullet variant
+}
+
+_SYMBOL_FONT_TOKENS = ('wingdings', 'symbol', 'dingbat', 'zapfdingbat', 'webdings')
+
+
+def _collect_symbol_char_spans(page):
+    """
+    Collect individual characters from symbol/dingbat fonts (Wingdings, etc.)
+    that are stripped by sanitize_extracted_text due to being in the PUA range.
+    Returns a list of dicts with keys: x, y, x1, y1, char, font, font_size, color.
+    Coordinates are in PDF/fitz page space (y increasing downward).
+    """
+    result = []
+    try:
+        text_data = page.get_text("rawdict", flags=fitz.TEXT_PRESERVE_WHITESPACE)
+    except Exception:
+        return result
+
+    for block in text_data.get("blocks", []):
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                font_name = (span.get("font") or "").lower()
+                if not any(tok in font_name for tok in _SYMBOL_FONT_TOKENS):
+                    continue
+                for char in span.get("chars", []):
+                    c = char.get("c", "")
+                    if not c:
+                        continue
+                    mapped = _SYMBOL_PUA_TO_UNICODE.get(c)
+                    if not mapped:
+                        continue
+                    bbox = char.get("bbox")
+                    if not bbox or len(bbox) < 4:
+                        continue
+                    x0, y0, x1, y1 = (
+                        float(bbox[0]), float(bbox[1]),
+                        float(bbox[2]), float(bbox[3]),
+                    )
+                    result.append({
+                        "x":         x0,
+                        "y":         y0,
+                        "x1":        x1,
+                        "y1":        y1,
+                        "char":      mapped,
+                        "font":      span.get("font", ""),
+                        "font_size": float(span.get("size") or 10),
+                        "color":     int(span.get("color") or 0),
+                    })
+    return result
+
+
 def _collect_drawn_box_rects(page):
     """Collect small drawn rectangle outlines such as checkbox boxes."""
     rects = []
@@ -1281,6 +1720,186 @@ def _rect_intersects_widget(rect, widget_rects, padding=0.0):
             continue
         return True
     return False
+
+
+def _best_intersecting_widget_rect(rect, widget_rects, padding=0.0):
+    if not rect or len(rect) < 4 or not widget_rects:
+        return None
+
+    x0, y0, x1, y1 = [float(value) for value in rect[:4]]
+    best_rect = None
+    best_overlap = 0.0
+    for widget_rect in widget_rects:
+        wx0, wy0, wx1, wy1 = [float(value) for value in widget_rect[:4]]
+        if x1 < (wx0 - padding) or x0 > (wx1 + padding) or y1 < (wy0 - padding) or y0 > (wy1 + padding):
+            continue
+        overlap = _rect_intersection_area((x0, y0, x1, y1), (wx0, wy0, wx1, wy1))
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best_rect = (wx0, wy0, wx1, wy1)
+    return best_rect
+
+
+def _should_skip_widget_intersecting_span(text, rect, widget_rects):
+    widget_rect = _best_intersecting_widget_rect(rect, widget_rects, padding=0.35)
+    if not widget_rect:
+        return False
+
+    x0, y0, x1, y1 = [float(value) for value in rect[:4]]
+    wx0, wy0, wx1, wy1 = widget_rect
+    span_area = max(1.0, (x1 - x0) * (y1 - y0))
+    widget_width = max(0.0, wx1 - wx0)
+    widget_height = max(0.0, wy1 - wy0)
+    overlap_area = _rect_intersection_area((x0, y0, x1, y1), widget_rect)
+    overlap_ratio = overlap_area / span_area
+
+    normalized_text = sanitize_extracted_text(text or '')
+    compact_text = re.sub(r'\s+', ' ', normalized_text).strip()
+    word_count = len(compact_text.split()) if compact_text else 0
+
+    # Real document text is more important than avoiding a phantom widget artifact.
+    # Preserve URL-like spans even when a broad widget rect overlaps them. These
+    # broad rects can come from hidden widgets or malformed form metadata and
+    # previously caused content loss in inline printed URLs.
+    if compact_text:
+        if _EXTRACTION_URLISH_RE.search(compact_text):
+            return False
+
+    # Only suppress when the widget covers essentially the whole span and the span
+    # still looks like compact field/widget text rather than authored body copy.
+    if overlap_ratio < 0.92:
+        return False
+
+    if widget_width <= 96.0 or widget_height >= 14.0:
+        return True
+
+    return len(compact_text) <= 12
+
+
+def _line_expects_inline_link_text(line_text):
+    compact_text = re.sub(r'\s+', ' ', sanitize_extracted_text(line_text or '')).strip()
+    if not compact_text:
+        return False
+    compact_text = compact_text.rstrip(' .,:;')
+    return bool(re.search(r'(?:\b(?:at|visit|see|go to|online at|available at|found at))$', compact_text, re.IGNORECASE))
+
+
+def _build_missing_link_span_for_line(
+    line_text,
+    line_bbox,
+    line_spans,
+    line_style,
+    link_regions,
+    used_link_region_ids,
+):
+    if not _line_expects_inline_link_text(line_text):
+        return None
+    if not line_bbox or len(line_bbox) < 4:
+        return None
+    if any(bool(span.get('is_link')) for span in (line_spans or []) if isinstance(span, dict)):
+        return None
+
+    line_rect = tuple(float(value) for value in line_bbox[:4])
+    best_region = None
+    best_score = None
+
+    for link_region in link_regions or []:
+        region_id = link_region.get('index')
+        if region_id in (used_link_region_ids or set()):
+            continue
+        display_text = _link_region_display_text(link_region)
+        if not _EXTRACTION_URLISH_RE.search(display_text or ''):
+            continue
+
+        rect = link_region.get('rect')
+        if rect is None:
+            continue
+        link_rect = (float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1))
+        vertical_overlap = max(
+            0.0,
+            min(line_rect[3], link_rect[3]) - max(line_rect[1], link_rect[1]),
+        )
+        min_height = max(1.0, min(line_rect[3] - line_rect[1], link_rect[3] - link_rect[1]))
+        overlap_ratio = vertical_overlap / min_height
+        if overlap_ratio < 0.45:
+            continue
+
+        intersects_existing_span = False
+        for span in line_spans or []:
+            span_bbox = span.get('bbox') if isinstance(span, dict) else None
+            if not isinstance(span_bbox, (list, tuple)) or len(span_bbox) < 4:
+                continue
+            normalized_span_bbox = tuple(float(value) for value in span_bbox[:4])
+            overlap_area = _rect_intersection_area(normalized_span_bbox, link_rect)
+            if overlap_area <= 0:
+                continue
+            span_area = max(
+                1.0,
+                (normalized_span_bbox[2] - normalized_span_bbox[0]) * (normalized_span_bbox[3] - normalized_span_bbox[1]),
+            )
+            link_area = max(1.0, (link_rect[2] - link_rect[0]) * (link_rect[3] - link_rect[1]))
+            overlap_ratio = overlap_area / min(span_area, link_area)
+            if overlap_ratio >= 0.35:
+                intersects_existing_span = True
+                break
+        if intersects_existing_span:
+            continue
+
+        # Prefer links that start inside the current line bounds and nearest to the
+        # existing trailing text. This catches the common "found at <url>" layout.
+        score = abs(link_rect[1] - line_rect[1]) * 10.0 + max(0.0, link_rect[0] - line_rect[2])
+        if best_score is None or score < best_score:
+            best_score = score
+            best_region = link_region
+
+    if not best_region:
+        return None
+
+    rect = best_region['rect']
+    bbox = [float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)]
+    base_style = dict(line_style or {})
+    font_name = str(base_style.get('font') or '')
+    font_size = float(base_style.get('font_size') or 0) or max(1.0, bbox[3] - bbox[1])
+    font_weight = base_style.get('font_weight')
+    if font_weight is None:
+        font_weight = '700' if base_style.get('bold') else '400'
+    display_text = _link_region_display_text(best_region)
+    return {
+        'text': display_text,
+        'render_text': display_text,
+        'suppress_drawn_underline': False,
+        'has_drawn_underline': False,
+        'font': font_name,
+        'font_xref': base_style.get('font_xref'),
+        'font_size': font_size,
+        'font_weight': font_weight,
+        'color': base_style.get('color', 0),
+        'hex_color': base_style.get('hex_color', '#0000EE'),
+        'bold': bool(base_style.get('bold')),
+        'italic': bool(base_style.get('italic')),
+        'flags': 0,
+        'bbox': bbox,
+        'ascender': base_style.get('ascender'),
+        'descender': base_style.get('descender'),
+        'origin': [bbox[0], bbox[3]],
+        'direction': base_style.get('direction'),
+        'writing_mode': int(base_style.get('writing_mode', 0) or 0),
+        'rotation': float(base_style.get('rotation', 0) or 0),
+        'line_width': None,
+        'render_type': None,
+        'space_width': None,
+        'source_content_ops': [],
+        'uses_embedded_font': bool(base_style.get('uses_embedded_font')),
+        'embedded_font_name': base_style.get('embedded_font_name'),
+        'embedded_font_family': base_style.get('embedded_font_family'),
+        'embedded_font_xref': base_style.get('embedded_font_xref'),
+        'is_link': True,
+        'link_uri': best_region.get('uri') or None,
+        'link_kind': best_region.get('kind') or None,
+        'link_page': best_region.get('page'),
+        '_synthetic_missing_link': True,
+        '_link_region_index': best_region.get('index'),
+    }
 
 
 def _rects_have_drawn_box_barrier(left_rect, right_rect, drawn_box_rects):
@@ -2385,12 +3004,17 @@ def _merge_same_row_lines(line_items, vertical_lines=None, widget_rects=None, dr
                 # positives – notably it would drop dot-leader characters that happen
                 # to be processed after a right-aligned form label.
                 if _sequential_ltr:
+                    left_looks_like_inline_label = _looks_like_leading_inline_label(left_text)
                     detached_row_label_pair = (
                         _looks_like_detached_row_label(left_text)
                         and left_width <= max(110.0, avg_size * 6.5)
                         and len(right_text) >= 24
                         and right_width >= max(180.0, avg_size * 10.0)
-                        and dist >= max(8.0, avg_size * 0.65)
+                        and dist >= (
+                            max(15.0, avg_size * 1.25)
+                            if left_looks_like_inline_label
+                            else max(8.0, avg_size * 0.65)
+                        )
                     )
                     if detached_row_label_pair:
                         should_merge = False
@@ -2579,7 +3203,10 @@ def _looks_like_leading_inline_label(text):
     normalized = ' '.join(str(text or '').split())
     if not normalized:
         return False
-    return re.match(r'^(?:\d{1,2}[A-Za-z]?|[A-Za-z]\)|\([A-Za-z0-9]{1,2}\)|[•◦▪■▶▲])$', normalized) is not None
+    return re.match(
+        r'^(?:\d{1,2}[A-Za-z]?|[A-Za-z]|[A-Za-z]\)|\([A-Za-z0-9]{1,2}\)|[•◦▪■▶▲])$',
+        normalized,
+    ) is not None
 
 
 def _is_standalone_list_item_marker(text):
@@ -3836,7 +4463,9 @@ def extract_text_with_pymupdf(pdf_path):
             horizontal_lines = _collect_horizontal_lines(page)
             vertical_lines = _collect_vertical_lines(page)
             drawn_box_rects = _collect_drawn_box_rects(page)
+            symbol_char_spans = _collect_symbol_char_spans(page)
             page_link_regions = _collect_page_link_regions(page)
+            used_link_region_ids = set()
 
             if _page_requires_synthetic_form_grouping(
                 blocks,
@@ -4096,7 +4725,7 @@ def extract_text_with_pymupdf(pdf_path):
                                         rebuilt_origin = trace_visible_span.get("origin")
                                         if rebuilt_origin:
                                             origin = rebuilt_origin
-                                elif _rect_intersects_widget(bbox, widget_rects, padding=0.35):
+                                elif _should_skip_widget_intersecting_span(text, bbox, widget_rects):
                                     continue
 
                                 if not text or not text.strip():
@@ -4128,8 +4757,10 @@ def extract_text_with_pymupdf(pdf_path):
                                 font_lower = font.lower()
                                 _span_suffix_tokens = [p for p in re.split(r'[-_,]', font_lower) if p][1:]
                                 _span_has_blk = any(t.startswith('blk') or t == 'hvy' for t in _span_suffix_tokens)
+                                _span_has_bd = any(t == 'bd' or t.startswith('bd') for t in _span_suffix_tokens)
                                 is_bold_from_name = ('bold' in font_lower or 'black' in font_lower
-                                                     or 'heavy' in font_lower or _span_has_blk)
+                                                     or 'heavy' in font_lower or _span_has_blk
+                                                     or _span_has_bd)
                                 is_italic_from_name = 'italic' in font_lower or 'oblique' in font_lower
                                 
                                 # Determine weight - first try to parse explicit weight from font name
@@ -4154,11 +4785,15 @@ def extract_text_with_pymupdf(pdf_path):
                                         font_weight = 500
                                     elif 'semibold' in font_lower or 'demibold' in font_lower:
                                         font_weight = 600
+                                    elif 'demi' in font_lower:
+                                        # "Demi" weight (e.g. ITCFranklinGothicStd-Demi) → semi-bold
+                                        font_weight = 600
                                     elif 'extrabold' in font_lower or 'ultrabold' in font_lower:
                                         font_weight = 800
                                     elif 'black' in font_lower or 'heavy' in font_lower or _span_has_blk:
                                         font_weight = 900
-                                    elif is_bold_from_name or is_bold_from_flags:
+                                    elif _span_has_bd or is_bold_from_name or is_bold_from_flags:
+                                        # Covers compound tokens like "bdit" (Bold Italic), "bdou" (Bold Outline)
                                         font_weight = 700
                                     else:
                                         font_weight = 400
@@ -4210,6 +4845,7 @@ def extract_text_with_pymupdf(pdf_path):
                                 }
                                 link_region = _find_link_region_for_bbox(bbox, page_link_regions)
                                 if link_region:
+                                    used_link_region_ids.add(link_region.get('index'))
                                     span_data['is_link'] = True
                                     if link_region.get('uri'):
                                         span_data['link_uri'] = link_region['uri']
@@ -4347,6 +4983,8 @@ def extract_text_with_pymupdf(pdf_path):
 
                                 if split_entries:
                                     for se in split_entries:
+                                        if se.get('is_link'):
+                                            used_link_region_ids.add(se.get('_link_region_index'))
                                         page_words.append(se)
                                         block_word_bboxes.append((
                                             se['left'], se['top'],
@@ -4354,10 +4992,85 @@ def extract_text_with_pymupdf(pdf_path):
                                         ))
                                     line_text += " ".join(se['text'] for se in split_entries) + " "
                                 else:
+                                    if word_data.get('is_link'):
+                                        used_link_region_ids.add(word_data.get('_link_region_index'))
                                     page_words.append(word_data)
                                     block_word_bboxes.append(bbox)
                                     line_text += text + " "
                                 total_words += len(text.split())
+
+                            synthetic_link_span = None
+                            if line_text.strip():
+                                effective_line_style = dict(line_style or {})
+                                if line_dir:
+                                    effective_line_style['direction'] = list(line_dir)
+                                effective_line_style['writing_mode'] = line_wmode
+                                effective_line_style['rotation'] = line_rotation
+                                synthetic_link_span = _build_missing_link_span_for_line(
+                                    line_text,
+                                    line_bbox,
+                                    line_spans,
+                                    effective_line_style,
+                                    page_link_regions,
+                                    used_link_region_ids,
+                                )
+                            if synthetic_link_span:
+                                line_spans.append(synthetic_link_span)
+                                block_spans.append(synthetic_link_span)
+                                used_link_region_ids.add(synthetic_link_span.get('_link_region_index'))
+                                link_bbox = synthetic_link_span.get('bbox') or line_bbox
+                                if isinstance(link_bbox, (list, tuple)) and len(link_bbox) >= 4:
+                                    block_word_bboxes.append(tuple(float(value) for value in link_bbox[:4]))
+                                synthetic_word = {
+                                    'text': synthetic_link_span['text'],
+                                    'render_text': synthetic_link_span['render_text'],
+                                    'suppress_drawn_underline': False,
+                                    'has_drawn_underline': False,
+                                    'left': link_bbox[0],
+                                    'top': link_bbox[1],
+                                    'width': link_bbox[2] - link_bbox[0],
+                                    'height': link_bbox[3] - link_bbox[1],
+                                    'origin_x': synthetic_link_span['origin'][0],
+                                    'origin_y': synthetic_link_span['origin'][1],
+                                    'font': synthetic_link_span['font'],
+                                    'font_xref': synthetic_link_span.get('font_xref'),
+                                    'font_size': synthetic_link_span['font_size'],
+                                    'font_weight': synthetic_link_span['font_weight'],
+                                    'color': synthetic_link_span['color'],
+                                    'hex_color': synthetic_link_span['hex_color'],
+                                    'bold': synthetic_link_span['bold'],
+                                    'italic': synthetic_link_span['italic'],
+                                    'block_num': block_counter,
+                                    'line_num': item['line_num'],
+                                    'span_num': len(line_spans) - 1,
+                                    'ascender': synthetic_link_span.get('ascender'),
+                                    'descender': synthetic_link_span.get('descender'),
+                                    'direction': synthetic_link_span.get('direction'),
+                                    'writing_mode': synthetic_link_span.get('writing_mode'),
+                                    'rotation': synthetic_link_span.get('rotation'),
+                                    'line_width': None,
+                                    'render_type': None,
+                                    'space_width': None,
+                                    'source_content_ops': [],
+                                    'is_link': True,
+                                    'link_uri': synthetic_link_span.get('link_uri'),
+                                    'link_kind': synthetic_link_span.get('link_kind'),
+                                    'link_page': synthetic_link_span.get('link_page'),
+                                }
+                                _attach_embedded_font_fields(synthetic_word, {
+                                    'clean_name': synthetic_link_span.get('embedded_font_name'),
+                                    'family': synthetic_link_span.get('embedded_font_family'),
+                                    'font_xref': synthetic_link_span.get('embedded_font_xref'),
+                                } if synthetic_link_span.get('embedded_font_name') else None)
+                                page_words.append(synthetic_word)
+                                sorted_line_spans = sorted(
+                                    [span for span in line_spans if isinstance(span, dict)],
+                                    key=lambda span: (
+                                        float((span.get('bbox') or [0, 0, 0, 0])[1]),
+                                        float((span.get('bbox') or [0, 0, 0, 0])[0]),
+                                    ),
+                                )
+                                line_text = ''.join(str(span.get('text') or '') for span in sorted_line_spans)
 
                             if line_text.strip():
                                 visible_line_bboxes = [
@@ -4533,6 +5246,7 @@ def extract_text_with_pymupdf(pdf_path):
                 'words': page_words,
                 'drawn_box_rects': [list(rect[:4]) for rect in (drawn_box_rects or [])],
                 'widget_rects': [list(rect[:4]) for rect in (widget_rects or [])],
+                'symbol_char_spans': symbol_char_spans,
                 'text': page_full_text,
                 'word_count': len(page_words)
             }
