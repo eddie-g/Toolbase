@@ -158,6 +158,114 @@ class ExtractPdfPyMuPdfTests(unittest.TestCase):
             ["9", "I certify that the beneficial owner is a resident of"],
         )
 
+    def test_merge_same_row_lines_merges_close_bare_subitem_label_with_row_text(self):
+        line_items = [
+            {
+                "line_num": 0,
+                "line": {
+                    "spans": [
+                        {"text": "a", "bbox": (40.0, 100.0, 45.0, 110.0), "size": 10},
+                    ],
+                },
+                "bbox": (40.0, 100.0, 45.0, 110.0),
+                "x0": 40.0,
+                "y0": 100.0,
+                "max_size": 10,
+            },
+            {
+                "line_num": 1,
+                "line": {
+                    "spans": [
+                        {"text": "General business credit. Attach Form 3800", "bbox": (59.0, 100.2, 258.0, 110.2), "size": 10},
+                    ],
+                },
+                "bbox": (59.0, 100.2, 258.0, 110.2),
+                "x0": 59.0,
+                "y0": 100.2,
+                "max_size": 10,
+            },
+        ]
+
+        merged = self.module._merge_same_row_lines(line_items, [], [])
+
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(
+            [span["text"] for span in merged[0]["line"]["spans"]],
+            ["a", "General business credit. Attach Form 3800"],
+        )
+
+    def test_merge_same_row_lines_keeps_bare_subitem_label_separate_across_wide_gutter(self):
+        line_items = [
+            {
+                "line_num": 0,
+                "line": {
+                    "spans": [
+                        {"text": "b", "bbox": (170.3, 100.0, 178.6, 113.5), "size": 10},
+                    ],
+                },
+                "bbox": (170.3, 100.0, 178.6, 113.5),
+                "x0": 170.3,
+                "y0": 100.0,
+                "max_size": 10,
+            },
+            {
+                "line_num": 1,
+                "line": {
+                    "spans": [
+                        {"text": "Household employee wages not reported on Form(s) W-2", "bbox": (195.3, 100.1, 518.0, 113.6), "size": 10},
+                    ],
+                },
+                "bbox": (195.3, 100.1, 518.0, 113.6),
+                "x0": 195.3,
+                "y0": 100.1,
+                "max_size": 10,
+            },
+        ]
+
+        merged = self.module._merge_same_row_lines(line_items, [], [])
+
+        self.assertEqual(len(merged), 2)
+        self.assertEqual(
+            [''.join(span["text"] for span in item["line"]["spans"]) for item in merged],
+            ["b", "Household employee wages not reported on Form(s) W-2"],
+        )
+
+    def test_merge_same_row_lines_merges_bare_subitem_label_when_text_y_sorts_first(self):
+        line_items = [
+            {
+                "line_num": 0,
+                "line": {
+                    "spans": [
+                        {"text": "District of Columbia first-time homebuyer credit", "bbox": (60.0, 100.0, 292.0, 110.0), "size": 10},
+                    ],
+                },
+                "bbox": (60.0, 100.0, 292.0, 110.0),
+                "x0": 60.0,
+                "y0": 100.0,
+                "max_size": 10,
+            },
+            {
+                "line_num": 1,
+                "line": {
+                    "spans": [
+                        {"text": "h", "bbox": (42.0, 100.2, 47.0, 110.2), "size": 10},
+                    ],
+                },
+                "bbox": (42.0, 100.2, 47.0, 110.2),
+                "x0": 42.0,
+                "y0": 100.2,
+                "max_size": 10,
+            },
+        ]
+
+        merged = self.module._merge_same_row_lines(line_items, [], [])
+
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(
+            [span["text"] for span in merged[0]["line"]["spans"]],
+            ["h", "District of Columbia first-time homebuyer credit"],
+        )
+
     def test_same_row_barrier_split_keeps_dot_leader_row_together(self):
         group_items = [
             {

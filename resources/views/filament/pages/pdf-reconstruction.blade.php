@@ -11,9 +11,14 @@
                     Load a document by ID, then draw individual annotations at their absolute positions.
                 </p>
             </div>
-            <a href="{{ route('filament.admin.pages.run-pdf-tests') }}">
-                <x-filament::button color="gray" size="sm" icon="heroicon-o-arrow-left">PDF Tests</x-filament::button>
-            </a>
+            <div class="flex items-center gap-2">
+                <a href="{{ route('filament.admin.pages.pdf-reconstruction-2') }}">
+                    <x-filament::button color="gray" size="sm" icon="heroicon-o-sparkles">Reconstruction 2</x-filament::button>
+                </a>
+                <a href="{{ route('filament.admin.pages.run-pdf-tests') }}">
+                    <x-filament::button color="gray" size="sm" icon="heroicon-o-arrow-left">PDF Tests</x-filament::button>
+                </a>
+            </div>
         </div>
 
         {{-- ═══════════════════════════════════════════════════════════
@@ -307,6 +312,7 @@
                         <div x-ref="pdfScroll"
                              class="relative overflow-auto bg-gray-100 dark:bg-gray-950 flex justify-center items-start py-4 px-4"
                              x-bind:class="panMode ? (_panDragging ? 'cursor-grabbing' : 'cursor-grab') : ''"
+                             x-bind:style="panMode ? 'max-height:75vh;user-select:none;touch-action:none;' : 'max-height:75vh;'"
                              x-on:pointerdown="panStart($event)"
                              x-on:pointermove="panMove($event)"
                              x-on:pointerup="panEnd()"
@@ -714,10 +720,18 @@
             let _origRenderTask = null;
             let _acroPdfDoc  = null;
             let _exactTextWidthProbe = null;
+            const _loadedWebFonts = new Set();
+            let _embeddedFontsBySource = {};
 
             const _FONT_MAP = {
                 Helvetica:     '"AnnotHelvetica","Arimo",Arial,sans-serif',
                 Arial:         '"AnnotHelvetica","Arimo",Arial,sans-serif',
+                ArialMT:       '"AnnotHelvetica","Arimo",Arial,sans-serif',
+                ArialBoldMT:   '"AnnotHelvetica","Arimo",Arial,sans-serif',
+                ArialBoldItalicMT: '"AnnotHelvetica","Arimo",Arial,sans-serif',
+                FreeSans:      '"Liberation Sans","Arimo",Arial,Helvetica,sans-serif',
+                FreeSerif:     '"Liberation Serif","Times New Roman",Times,serif',
+                FreeMono:      '"Liberation Mono","Courier New",Courier,monospace',
                 Verdana:       'Verdana,Geneva,Arial,sans-serif',
                 Tahoma:        '"Arimo",Tahoma,Arial,Verdana,sans-serif',
                 TahomaUnicode: '"Arimo",Tahoma,Arial,Verdana,sans-serif',
@@ -733,13 +747,178 @@
                 Roboto:        '"Roboto",Arial,Helvetica,sans-serif',
                 Lato:          '"Lato",Arial,Helvetica,sans-serif',
                 Montserrat:    '"Montserrat",Arial,Helvetica,sans-serif',
+                DejaVuSans:    '"DejaVu Sans","Liberation Sans",Arial,Helvetica,sans-serif',
+                DejaVuSerif:   '"DejaVu Serif","Liberation Serif","Times New Roman",Times,serif',
+                DejaVuSansMono:'"DejaVu Sans Mono","Liberation Mono","Courier New",monospace',
             };
             // ── Embedded font registry (populated per-document from the API) ──
             let _embeddedFonts = null;  // { cleanName: { family, css_weight, css_style, css_stretch, file_path, file_ext } }
+            let _disabledEmbeddedFonts = new Set();
+            const _allowEmbeddedReconstructionFonts = false;
+
+            function _normalizeEmbeddedFontName(fontName) {
+                let cleaned = String(fontName || '').trim().replace(/^PDF_/i, '');
+                if (!cleaned) return '';
+                cleaned = cleaned.replace(/PSMT$/i, '').replace(/PS(-\w+MT)$/i, '$1').trim();
+                if (cleaned.includes('+')) {
+                    const parts = cleaned.split('+', 2);
+                    if (parts[0].length === 6) {
+                        cleaned = parts[1];
+                    }
+                }
+                if (/^[A-Z]{6}[A-Z]/.test(cleaned) && cleaned.length > 7) {
+                    const withoutPrefix = cleaned.substring(6);
+                    if (/^[A-Z][a-z]/.test(withoutPrefix)) {
+                        cleaned = withoutPrefix;
+                    }
+                }
+                return cleaned.replace(/[,\s]+$/g, '').trim();
+            }
 
             // Inject @font-face rules for all embedded fonts in the document.
             // Each font is registered under 'PDF_{clean_name}' so it can be used
             // in CSS without conflicting with system fonts.
+            function _shouldBypassEmbeddedFont(fontName, family = '') {
+                const rawName = _normalizeEmbeddedFontName(fontName);
+                const rawFamily = String(family || '').trim();
+                if (!rawName && !rawFamily) return false;
+                if (!_allowEmbeddedReconstructionFonts) return true;
+                if (_disabledEmbeddedFonts.has(rawName.toLowerCase())) return true;
+
+                // Some runtime-extracted GNU FreeFont subsets render malformed glyphs
+                // in browsers/FreeType (e.g. "ff" paints as "ffff"). Use stable
+                // fallback families for reconstruction instead of the extracted file.
+                // Some extracted ArialMT subsets also ship broken browser cmaps
+                // (e.g. "/" -> "F", digits missing). Prefer the stable system
+                // Arial/Helvetica stack over the embedded browser font.
+                return /^Free(?:Sans|Serif|Mono)/i.test(rawName)
+                    || /^Free(?:Sans|Serif|Mono)/i.test(rawFamily)
+                    || /^ArialMT$/i.test(rawName);
+            }
+
+            function _collectEmbeddedFontValidationSamples(embeddedFonts, annotations) {
+                const sampleMap = new Map();
+                if (!embeddedFonts || typeof embeddedFonts !== 'object') return sampleMap;
+
+                const available = new Set(
+                    Object.entries(embeddedFonts)
+                        .map(([fontKey, fontData]) => _normalizeEmbeddedFontName(fontData?.clean_name || fontKey || ''))
+                        .filter(Boolean)
+                        .map((name) => name.toLowerCase())
+                );
+
+                (Array.isArray(annotations) ? annotations : []).forEach((annotation) => {
+                    const spans = Array.isArray(annotation?.sourceSpans) ? annotation.sourceSpans : [];
+                    spans.forEach((span) => {
+                        const fontName = _normalizeEmbeddedFontName(span?.embedded_font_name || span?.font || '');
+                        if (!fontName || !available.has(fontName.toLowerCase())) return;
+
+                        const bbox = Array.isArray(span?.bbox) && span.bbox.length >= 4 ? span.bbox : null;
+                        const text = String(span?.render_text ?? span?.text ?? '').replace(/\r/g, '');
+                        const fontSizePx = Number(span?.font_size ?? span?.fontSize);
+                        if (!bbox || !Number.isFinite(fontSizePx) || fontSizePx <= 0) return;
+                        if (!text || !text.trim()) return;
+
+                        const targetWidthPx = Number(bbox[2]) - Number(bbox[0]);
+                        if (!Number.isFinite(targetWidthPx) || targetWidthPx <= 0.5) return;
+
+                        const key = fontName.toLowerCase();
+                        const samples = sampleMap.get(key) || [];
+                        if (samples.some((sample) => sample.text === text && Math.abs(sample.targetWidthPx - targetWidthPx) <= 0.25)) {
+                            return;
+                        }
+
+                        const visibleChars = Array.from(text.replace(/\s+/g, ''));
+                        samples.push({
+                            text,
+                            targetWidthPx,
+                            fontSizePx,
+                            fontWeight: String(span?.font_weight || span?.fontWeight || (span?.bold ? '700' : '400')),
+                            fontStyle: span?.fontStyle || (span?.italic ? 'italic' : 'normal'),
+                            fontStretch: 'normal',
+                            score: new Set(visibleChars).size,
+                        });
+                        samples.sort((left, right) => {
+                            if (right.score !== left.score) return right.score - left.score;
+                            return right.text.length - left.text.length;
+                        });
+                        sampleMap.set(key, samples.slice(0, 8));
+                    });
+                });
+
+                return sampleMap;
+            }
+
+            function _validateEmbeddedFontsAgainstSamples(embeddedFonts, annotations) {
+                if (!embeddedFonts || typeof embeddedFonts !== 'object') return;
+
+                const samplesByFont = _collectEmbeddedFontValidationSamples(embeddedFonts, annotations);
+                for (const [fontKey, fontData] of Object.entries(embeddedFonts)) {
+                    const cleanName = _normalizeEmbeddedFontName(fontData?.clean_name || fontKey || '');
+                    if (!cleanName) continue;
+                    if (_shouldBypassEmbeddedFont(cleanName, fontData?.family || '')) {
+                        _disabledEmbeddedFonts.add(cleanName.toLowerCase());
+                        continue;
+                    }
+
+                    const samples = samplesByFont.get(cleanName.toLowerCase()) || [];
+                    if (!samples.length) continue;
+
+                    const embeddedFamily = `'PDF_${cleanName}'`;
+                    const fallbackFamily = _fontMapFallback(fontData?.family || cleanName);
+                    let passCount = 0;
+                    let failCount = 0;
+
+                    samples.forEach((sample) => {
+                        const measuredEmbeddedWidth = _measureExactTextDomWidth(
+                            sample.text,
+                            sample.fontSizePx,
+                            embeddedFamily,
+                            sample.fontWeight,
+                            sample.fontStyle,
+                            sample.fontStretch
+                        );
+                        const measuredFallbackWidth = _measureExactTextDomWidth(
+                            sample.text,
+                            sample.fontSizePx,
+                            fallbackFamily,
+                            sample.fontWeight,
+                            sample.fontStyle,
+                            sample.fontStretch
+                        );
+
+                        if (!Number.isFinite(measuredEmbeddedWidth) || measuredEmbeddedWidth <= 0) {
+                            failCount++;
+                            return;
+                        }
+
+                        const targetWidth = Math.max(1, sample.targetWidthPx);
+                        const embeddedError = Math.abs(measuredEmbeddedWidth - targetWidth) / targetWidth;
+                        const fallbackError = Number.isFinite(measuredFallbackWidth) && measuredFallbackWidth > 0
+                            ? Math.abs(measuredFallbackWidth - targetWidth) / targetWidth
+                            : Number.POSITIVE_INFINITY;
+
+                        const materiallyWorseThanFallback = fallbackError + 0.08 < embeddedError;
+                        const materiallyWrong = embeddedError > 0.22;
+                        if (materiallyWrong && materiallyWorseThanFallback) {
+                            failCount++;
+                            return;
+                        }
+
+                        passCount++;
+                    });
+
+                    if (failCount >= 2 && failCount > passCount) {
+                        _disabledEmbeddedFonts.add(cleanName.toLowerCase());
+                        console.warn('Bypassing malformed embedded font in reconstruction', {
+                            font: cleanName,
+                            fails: failCount,
+                            passes: passCount,
+                        });
+                    }
+                }
+            }
+
             function _loadEmbeddedFontFaces(embeddedFonts) {
                 _embeddedFonts = null;
                 const existing = document.getElementById('recon-embedded-fonts');
@@ -750,6 +929,7 @@
                 for (const [fontKey, fontData] of Object.entries(embeddedFonts)) {
                     const cleanName = String(fontData.clean_name || fontKey || '').trim();
                     if (!cleanName) continue;
+                    if (_shouldBypassEmbeddedFont(cleanName, fontData.family || '')) continue;
                     let filePath = String(fontData.file_path || '').trim();
                     if (!filePath) continue;
                     let ext = String(fontData.file_ext || 'otf').toLowerCase();
@@ -772,31 +952,57 @@
                 document.head.appendChild(style);
             }
 
+            function _resolveEmbeddedFontsForSource(sourceKey) {
+                const normalized = String(sourceKey || '').trim().toLowerCase();
+                if (normalized && _embeddedFontsBySource && _embeddedFontsBySource[normalized]) {
+                    return _embeddedFontsBySource[normalized];
+                }
+                return (_embeddedFontsBySource && (_embeddedFontsBySource.file || _embeddedFontsBySource.clean)) || null;
+            }
+
+            async function _applyEmbeddedFontsForSource(sourceKey, annotations = []) {
+                const embeddedFonts = _resolveEmbeddedFontsForSource(sourceKey);
+                _disabledEmbeddedFonts = new Set();
+                _loadEmbeddedFontFaces(embeddedFonts);
+                if ((embeddedFonts && _allowEmbeddedReconstructionFonts) || _loadedWebFonts.size > 0) {
+                    try { await document.fonts.ready; } catch (_) {}
+                }
+                if (embeddedFonts && _allowEmbeddedReconstructionFonts) {
+                    _validateEmbeddedFontsAgainstSamples(embeddedFonts, annotations);
+                }
+            }
+
             function _resolveCssFont(sourceName, family) {
+                const normalizedSource = _normalizePdfFontFamily(sourceName);
+                const normalizedFamily = _normalizePdfFontFamily(family);
+
                 // Normalize PostScript suffixes: TimesNewRomanPSMT → TimesNewRoman.
                 // PDF fonts with PSMT / PS-<Variant>MT suffixes are identical to
                 // the base font and must resolve to the same embedded font entry.
-                const _normPsName = (n) => String(n || '').trim()
-                    .replace(/PSMT$/i, '')
-                    .replace(/PS(-\w+MT)$/i, '$1')
-                    .trim();
                 // 1. Try embedded font by exact source name (fontSourceName)
-                const rawExact = _normPsName(sourceName || family || '');
+                const rawExact = _normalizeEmbeddedFontName(sourceName || family || '');
                 if (rawExact && _embeddedFonts) {
                     for (const [fontKey, fontData] of Object.entries(_embeddedFonts)) {
-                        const cleanName = String(fontData.clean_name || fontKey || '').trim();
+                        const cleanName = _normalizeEmbeddedFontName(fontData.clean_name || fontKey || '');
+                        const embeddedFamily = _normalizePdfFontFamily(fontData.family || fontKey || '');
+                        if (_shouldBypassEmbeddedFont(cleanName, embeddedFamily)) {
+                            continue;
+                        }
                         if (cleanName.toLowerCase() === rawExact.toLowerCase()) {
-                            const fallback = _fontMapFallback(String(fontData.family || rawExact));
+                            const fallback = _fontMapFallback(embeddedFamily || rawExact);
                             return `'PDF_${cleanName}', ${fallback}`;
                         }
                     }
                     // Try family-level match
-                    const rawFamily = _normPsName(family || '');
+                    const rawFamily = normalizedFamily || _normalizePdfFontFamily(rawExact);
                     if (rawFamily) {
                         for (const [fontKey, fontData] of Object.entries(_embeddedFonts)) {
-                            const embFamily = String(fontData.family || fontKey || '').trim();
+                            const embFamily = _normalizePdfFontFamily(fontData.family || fontKey || '');
+                            const cleanName = _normalizeEmbeddedFontName(fontData.clean_name || fontKey || '');
+                            if (_shouldBypassEmbeddedFont(cleanName, embFamily)) {
+                                continue;
+                            }
                             if (embFamily.toLowerCase() === rawFamily.toLowerCase()) {
-                                const cleanName = String(fontData.clean_name || fontKey || '').trim();
                                 const fallback = _fontMapFallback(embFamily);
                                 return `'PDF_${cleanName}', ${fallback}`;
                             }
@@ -804,17 +1010,111 @@
                     }
                 }
                 // 2. Fall back to static font map
-                return _fontMapFallback(rawExact || '');
+                return _fontMapFallback(normalizedSource || normalizedFamily || rawExact || '');
             }
 
             function _fontMapFallback(name) {
                 if (!name) return _FONT_MAP.Helvetica;
-                const k = String(name).replace(/['"]/g, '').trim()
+                const normalized = _normalizePdfFontFamily(name);
+                const k = String(normalized || name).replace(/['"]/g, '').trim()
                     .replace(/[-_ ]?(regular|bold|italic|oblique|light|medium|condensed|narrow|unicode)$/i, '');
                 for (const [key, val] of Object.entries(_FONT_MAP)) {
                     if (key.toLowerCase() === k.toLowerCase()) return val;
                 }
+                if (_shouldPreferWebFontFamily(normalized)) {
+                    _ensureWebFontFamilyLoaded(normalized);
+                    return `"${normalized}", ${_FONT_MAP.Helvetica}`;
+                }
                 return _FONT_MAP.Helvetica;
+            }
+
+            function _normalizePdfFontFamily(fontName) {
+                if (!fontName) return '';
+                let cleaned = String(fontName).replace(/['"]/g, '').trim();
+
+                if (cleaned.includes('+')) {
+                    const parts = cleaned.split('+', 2);
+                    if (parts[0].length === 6) {
+                        cleaned = parts[1];
+                    }
+                }
+
+                if (/^[A-Z]{6}[A-Z]/.test(cleaned) && cleaned.length > 7) {
+                    const withoutPrefix = cleaned.substring(6);
+                    if (/^[A-Z][a-z]/.test(withoutPrefix)) {
+                        cleaned = withoutPrefix;
+                    }
+                }
+
+                const basePart = cleaned.split(/[-_,]/)[0] || cleaned;
+                const weightSuffixes = [
+                    'Thin', 'Hairline', 'ExtraLight', 'UltraLight', 'Light',
+                    'Regular', 'Medium', 'SemiBold', 'DemiBold', 'Bold',
+                    'ExtraBold', 'UltraBold', 'Black', 'Heavy',
+                ];
+                let family = basePart;
+                for (const suffix of weightSuffixes) {
+                    if (family.endsWith(suffix) && family.length > suffix.length) {
+                        family = family.substring(0, family.length - suffix.length);
+                        break;
+                    }
+                }
+
+                return family.replace(/[,\s]+$/g, '').trim();
+            }
+
+            function _shouldPreferWebFontFamily(fontName) {
+                const normalized = _normalizePdfFontFamily(fontName);
+                if (!normalized) return false;
+                return new Set([
+                    'Roboto',
+                    'OpenSans',
+                    'Lato',
+                    'Montserrat',
+                    'Poppins',
+                    'Raleway',
+                    'Nunito',
+                    'Inter',
+                    'Oswald',
+                    'SourceSansPro',
+                    'PlayfairDisplay',
+                    'Merriweather',
+                ]).has(normalized);
+            }
+
+            function _ensureWebFontFamilyLoaded(fontName) {
+                const family = _normalizePdfFontFamily(fontName);
+                if (!family || _loadedWebFonts.has(family)) return;
+                _loadedWebFonts.add(family);
+                const link = document.createElement('link');
+                link.rel = 'stylesheet';
+                link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap`;
+                document.head.appendChild(link);
+            }
+
+            function _preloadAnnotationFontFamilies(annotations) {
+                (Array.isArray(annotations) ? annotations : []).forEach((annotation) => {
+                    [
+                        annotation?.fontFamily,
+                        annotation?.fontSourceName,
+                    ].forEach((fontName) => {
+                        if (_shouldPreferWebFontFamily(fontName)) {
+                            _ensureWebFontFamilyLoaded(fontName);
+                        }
+                    });
+                    (Array.isArray(annotation?.sourceSpans) ? annotation.sourceSpans : []).forEach((span) => {
+                        [
+                            span?.embedded_font_name,
+                            span?.embedded_font_family,
+                            span?.font,
+                            span?.fontFamily,
+                        ].forEach((fontName) => {
+                            if (_shouldPreferWebFontFamily(fontName)) {
+                                _ensureWebFontFamilyLoaded(fontName);
+                            }
+                        });
+                    });
+                });
             }
 
             function _ensureExactTextWidthProbe() {
@@ -1176,10 +1476,13 @@
                     this.document     = null;
                     _pdfDoc           = null;
                     _acroPdfDoc       = null;
+                    _origPdfDoc       = null;
+                    this.splitView    = false;
                     this.pdfLoaded    = false;
                     this.activeSrc    = 'clean';
                     this.annotations  = [];
                     this.drawnIds     = {};
+                    _embeddedFontsBySource = {};
                     this.acroFormEntries = [];
                     this.acroFieldLookup = {};
                     this.acroWidgetsByPage = {};
@@ -1220,12 +1523,16 @@
                         this.acroFormEntries = Array.isArray(data.acro_form_entries) ? data.acro_form_entries : [];
                         this.acroFieldLookup = this.buildAcroFieldLookup(this.acroFormEntries);
 
-                        // Inject @font-face CSS for embedded fonts from the PDF,
-                        // then wait until the browser has parsed/loaded them before rendering.
-                        _loadEmbeddedFontFaces(data.embedded_fonts || null);
-                        if (data.embedded_fonts) {
-                            try { await document.fonts.ready; } catch (_) {}
-                        }
+                        _preloadAnnotationFontFamilies(this.annotations);
+                        _embeddedFontsBySource = (data.embedded_fonts_by_source && typeof data.embedded_fonts_by_source === 'object')
+                            ? data.embedded_fonts_by_source
+                            : {
+                                file: data.embedded_fonts || null,
+                                clean: data.embedded_fonts || null,
+                            };
+
+                        // Load the font set for the PDF source we are about to render.
+                        await _applyEmbeddedFontsForSource(this.activeSrc, this.annotations);
 
                         await this.loadPdf(this.activePdfUrl());
                     } catch (e) {
@@ -1253,6 +1560,7 @@
                         this.renderedPage = null;
                     }
                     try {
+                        await _applyEmbeddedFontsForSource(key, this.annotations);
                         await this.loadPdf(this.activePdfUrl());
                         // Overlay is redrawn by renderCurrentPage → redrawAnnotationsOnOverlay
                     } catch (e) {
@@ -1774,17 +2082,20 @@
                         // text annotation — exact match to written annotation properties
                         const fontSize      = Number(ann.fontSize) || 12;
                         const fontSizePx    = fontSize * scale;
-                        const fontWeight    = ann.fontWeight || 'normal';
                         const fontStyle     = ann.fontStyle  || 'normal';
 
                         // Prefer the first sourceSpan's embedded_font_name for resolution —
                         // annotation.fontSourceName is sometimes truncated (e.g. "ITCFranklinGothicStd-Dem"
                         // vs the full "ITCFranklinGothicStd-Demi" in the span).
+                        const _isExtractedLineFragment = Boolean(ann.promotedFromExtraction)
+                            && /-lines-\d+-\d+$/.test(String(ann.promotedSourceKey || '').trim())
+                            && Array.isArray(ann.sourceLineBBoxes)
+                            && ann.sourceLineBBoxes.length <= 1;
                         const _srcLineBBoxesRaw = Array.isArray(ann.sourceLineBBoxes) ? ann.sourceLineBBoxes : [];
                         const _srcLineBBoxes = _srcLineBBoxesRaw
                             .filter((bbox) => Array.isArray(bbox) && bbox.length >= 4)
                             .map((bbox) => bbox.slice(0, 4).map((value) => Number(value)));
-                        const _srcSpansRaw = (Array.isArray(ann.sourceSpans) ? ann.sourceSpans : []).filter((span) => {
+                        const _srcSpansRaw = (_isExtractedLineFragment ? [] : (Array.isArray(ann.sourceSpans) ? ann.sourceSpans : [])).filter((span) => {
                             if (!ann.promotedFromExtraction || !_srcLineBBoxes.length) return true;
                             const spanBBox = Array.isArray(span?.bbox) && span.bbox.length >= 4
                                 ? span.bbox.slice(0, 4).map((value) => Number(value))
@@ -1806,6 +2117,23 @@
                             _primarySpanSrcName || ann.fontSourceName,
                             ann.fontFamily
                         );
+
+                        // Resolve font-weight from embedded font metadata when available —
+                        // the embedded font css_weight uses full name-pattern analysis
+                        // (catches Demi→600, BdIt/BdOu→700 etc.) which is more accurate
+                        // than the stored ann.fontWeight from an older extraction.
+                        const _resolveAnnFontWeight = (srcName) => {
+                            if (!_embeddedFonts || !srcName) return null;
+                            const raw = String(srcName).trim().toLowerCase();
+                            for (const [k, fd] of Object.entries(_embeddedFonts)) {
+                                if (String(fd.clean_name || k).trim().toLowerCase() === raw) {
+                                    return fd.css_weight || null;
+                                }
+                            }
+                            return null;
+                        };
+                        const fontWeight = _resolveAnnFontWeight(_primarySpanSrcName || ann.fontSourceName)
+                            || ann.fontWeight || 'normal';
 
                         // Resolve font-stretch from embedded font metadata (e.g. condensed)
                         const resolveFontStretch = (srcName) => {
@@ -1843,6 +2171,61 @@
                         const getSpanWidth = (span) => {
                             const bbox = getSpanBBox(span);
                             return bbox ? Math.max(0, Number(bbox[2]) - Number(bbox[0])) : 0;
+                        };
+                        const getSpanPreferredTopPts = (span, fallbackFontSize = fontSize) => {
+                            const bbox = getSpanBBox(span);
+                            const bboxTop = bbox ? Number(bbox[1]) : null;
+                            const bboxHeight = bbox ? Math.max(0, Number(bbox[3]) - Number(bbox[1])) : 0;
+                            const size = Number(span?.font_size ?? span?.fontSize) || fallbackFontSize;
+                            const origin = Array.isArray(span?.origin) && span.origin.length >= 2
+                                ? Number(span.origin[1])
+                                : null;
+                            const asc = Number(span?.ascender);
+                            const desc = Number(span?.descender);
+
+                            const typoTop = (
+                                Number.isFinite(origin) && Number.isFinite(asc) && size > 0
+                            )
+                                ? (origin - asc * size)
+                                : null;
+
+                            if (!Number.isFinite(bboxTop)) {
+                                return Number.isFinite(typoTop) ? typoTop : 0;
+                            }
+                            if (!Number.isFinite(typoTop)) {
+                                return bboxTop;
+                            }
+
+                            const expectedTypoHeight = (
+                                Number.isFinite(asc) && Number.isFinite(desc) && size > 0
+                            )
+                                ? (asc + Math.abs(desc)) * size
+                                : null;
+
+                            // Tight MuPDF glyph bboxes often sit several points below the
+                            // typographic top. In those cases, using bbox[1] matches the
+                            // visible painted text better than origin - ascender * size.
+                            if (
+                                Number.isFinite(expectedTypoHeight)
+                                && expectedTypoHeight > 0
+                                && bboxHeight > 0
+                                && (bboxHeight / expectedTypoHeight) < 0.82
+                            ) {
+                                return bboxTop;
+                            }
+
+                            if (Math.abs(typoTop - bboxTop) > Math.max(1.25, size * 0.18)) {
+                                return bboxTop;
+                            }
+
+                            return typoTop;
+                        };
+                        const getSpanTopOffsetPx = (span, referenceTopPts) => {
+                            const refTop = Number(referenceTopPts);
+                            if (!Number.isFinite(refTop)) return 0;
+                            const top = getSpanPreferredTopPts(span);
+                            if (!Number.isFinite(top)) return 0;
+                            return (top - refTop) * scale;
                         };
                         const getSourceSpanDisplayText = (span) => {
                             if (span && span.render_text !== undefined && span.render_text !== null) {
@@ -1926,12 +2309,20 @@
                         };
 
                         // ── Positioning principle ──
-                        // Python places each line's baseline at: rect.y0 + size * font.ascender
                         // CSS places baseline at: el.style.top + fontBoundingBoxAscent
-                        // Since fontBoundingBoxAscent ≈ size * font.ascender for correctly-loaded fonts,
-                        // setting el.style.top = rect.y0_css cancels to place the baseline correctly.
-                        // rect.y0_css = canvasHeight - (pdfY + pdfHeight) * scale
-                        //             = the INITIAL cssTop already computed above for this element.
+                        // where fontBoundingBoxAscent ≈ font.ascender × font_size for
+                        // correctly-loaded embedded fonts.
+                        // Therefore el.style.top should be: origin_y − ascender × size
+                        // (the typographic top of the line), so that:
+                        //   top + fontBoundingBoxAscent = origin_y − asc×size + asc×size = origin_y  ✓
+                        //
+                        // Legacy annotations were extracted with MuPDF producing tight glyph
+                        // bboxes (bbox top ≈ origin_y − glyph_ascent, where glyph_ascent < asc).
+                        // Current MuPDF (≥1.24) produces typographic bboxes (bbox top =
+                        // origin_y − asc×size exactly).
+                        // Both cases are handled by recomputing el.style.top from span origin:
+                        //   typographic_top = origin_y − span.ascender × span.font_size
+                        // which is computed above for single-line and for rect_y0_css (multi-line).
 
                         // For multi-line promoted annotations, Python uses sourceLineBBoxes to
                         // place each line at its exact extracted position — NOT uniform lineHeight.
@@ -2056,8 +2447,29 @@
                         if (box && srcBBoxes && srcLines &&
                             srcBBoxes.length > 1 && srcBBoxes.length === srcLines.length) {
 
-                            const rect_y0_css = this.canvasHeight - (box.y + box.h) * scale;
-                            const refY = Number(srcBBoxes[0][1]);  // y0 of first line bbox
+                            // Compute the CSS top of the first line using the TYPOGRAPHIC top
+                            // (baseline − ascender × size) rather than the stored bbox top.
+                            // Legacy annotations were extracted with MuPDF producing tight glyph
+                            // bboxes (height ≈ font_size) while current MuPDF produces typographic
+                            // bboxes (height ≈ ascender × size + |descender| × size).
+                            // Using span origin data gives the correct position for both styles.
+                            const _computeLineTop = (candidateSpans) => {
+                                const s = Array.isArray(candidateSpans) && candidateSpans.length > 0
+                                    ? candidateSpans[0] : null;
+                                if (!s) return null;
+                                const preferredTop = getSpanPreferredTopPts(s, fontSize);
+                                return Number.isFinite(preferredTop) ? (preferredTop * scale) : null;
+                            };
+                            const _firstLineSpansForTop = _srcSpansRaw.filter(
+                                (s) => spanOverlapsLineBBox(s, srcBBoxes[0], 1)
+                            );
+                            const _lineY0 = _computeLineTop(
+                                _firstLineSpansForTop.length > 0 ? _firstLineSpansForTop : _srcSpansRaw
+                            );
+                            const rect_y0_css = _lineY0 !== null
+                                ? _lineY0
+                                : this.canvasHeight - (box.y + box.h) * scale;
+                            const refY = Number(srcBBoxes[0][1]);  // y0 of first line bbox (used for relative offsets)
 
                             // Compute exclusive span-to-line assignments based on maximum bbox
                             // intersection area.  Each span is assigned to exactly one line
@@ -2099,12 +2511,12 @@
                                 return fallback;
                             };
                             // Resolve CSS font-weight for a span, consulting _embeddedFonts for
-                            // fonts whose weight is encoded only in the font name (e.g. -Bd, -Lt).
+                            // fonts whose weight is encoded only in the font name (e.g. -Bd, -Lt,
+                            // -Demi, -BdIt, -BdOu).  The embedded font's css_weight is preferred
+                            // over the span's stored font_weight because it uses more complete
+                            // name-pattern analysis (compound tokens like BdIt/BdOu, Demi, etc.).
                             const _mlGetSpanWeight = (span) => {
                                 if (!span) return 'normal';
-                                if (span.font_weight) return String(span.font_weight);
-                                if (span.fontWeight)  return String(span.fontWeight);
-                                if (span.bold)        return '700';
                                 const srcName = String(span.embedded_font_name || span.font || '').trim();
                                 if (srcName && _embeddedFonts) {
                                     for (const [k, fd] of Object.entries(_embeddedFonts)) {
@@ -2113,6 +2525,9 @@
                                         }
                                     }
                                 }
+                                if (span.font_weight) return String(span.font_weight);
+                                if (span.fontWeight)  return String(span.fontWeight);
+                                if (span.bold)        return '700';
                                 return 'normal';
                             };
                             const _mlNormFont = (n) => String(n || '').trim().replace(/PSMT$/i, '').replace(/PS(-\w+MT)$/i, '$1').toLowerCase();
@@ -2139,6 +2554,18 @@
                                 // content will already appear within the line that claimed those
                                 // spans via the assignment step above (e.g. "a" in "11a").
                                 if (lineSpans.length === 0) continue;
+
+                                // Override lineEl.style.top with the per-line typographic top
+                                // when span origin data is available.  This gives perfect baseline
+                                // alignment for every line individually, even when different lines
+                                // have different tight-ascent characters (e.g. all-caps vs. ascenders).
+                                (() => {
+                                    const s = lineSpans[0];
+                                    if (!s) return;
+                                    const preferredTop = getSpanPreferredTopPts(s, lineStyle.fontSizePx / scale);
+                                    if (!Number.isFinite(preferredTop)) return;
+                                    lineEl.style.top = (preferredTop * scale).toFixed(2) + 'px';
+                                })();
 
                                 // Override annotation-level textColor with this line's primary
                                 // span color.  ann.textColor reflects one span's color (often the
@@ -2196,7 +2623,7 @@
                                         }
                                         spanEl.style.position             = 'absolute';
                                         spanEl.style.left                 = ((Number(span.origin[0]) - lineLeft) * scale).toFixed(2) + 'px';
-                                        spanEl.style.top                  = '0px';
+                                        spanEl.style.top                  = `${getSpanTopOffsetPx(span, Number(bbox[1])).toFixed(2)}px`;
                                         spanEl.style.fontFamily           = spanFamily;
                                         spanEl.style.fontSize             = spanFontPx.toFixed(2) + 'px';
                                         spanEl.style.fontWeight           = spanWeight;
@@ -2272,7 +2699,21 @@
                             return;  // skip appending main el
                         }
 
-                        // Single-element (single-line or wrapped) — top = rect.y0_css (already set above).
+                        // Single-element (single-line or wrapped).
+                        // Adjust el.style.top to the TYPOGRAPHIC top of the primary span when
+                        // span origin data is available — this compensates for legacy annotations
+                        // stored with tight glyph bbox tops (height ≈ font_size) vs current MuPDF
+                        // typographic bboxes (height ≈ (ascender + |descender|) × size).
+                        // The formula  top = origin_y − ascender × font_size  gives the correct
+                        // CSS top regardless of which bbox style was stored.
+                        (() => {
+                            const s = _srcSpansRaw.length > 0 ? _srcSpansRaw[0] : null;
+                            if (!s) return;
+                            const preferredTop = getSpanPreferredTopPts(s, fontSize);
+                            if (!Number.isFinite(preferredTop)) return;
+                            el.style.top = (preferredTop * scale).toFixed(2) + 'px';
+                        })();
+
                         const singleLineStyle = resolveLineSourceStyle(
                             Array.isArray(srcBBoxes) && srcBBoxes.length ? srcBBoxes[0] : null
                         );
@@ -2403,6 +2844,19 @@
                                 const text = getSpanDisplayText(span).trim();
                                 return text && text !== '.';
                             });
+                        const singleLineSourceTopPts = (() => {
+                            const primarySpan = srcSpans[0] || _srcSpansRaw[0] || null;
+                            if (primarySpan) {
+                                const preferredTop = getSpanPreferredTopPts(primarySpan, fontSize);
+                                if (Number.isFinite(preferredTop)) return preferredTop;
+                            }
+                            const lineBBox = Array.isArray(srcBBoxes) && srcBBoxes.length ? srcBBoxes[0] : null;
+                            if (Array.isArray(lineBBox) && lineBBox.length >= 4) {
+                                const top = Number(lineBBox[1]);
+                                if (Number.isFinite(top)) return top;
+                            }
+                            return null;
+                        })();
                         const getNumberedFieldGutterShiftPx = (_index) => 0;
                         if (isDotLeaderRun) {
                             const baseLeftPts = box
@@ -2429,7 +2883,7 @@
 
                                 spanEl.style.position    = 'absolute';
                                 spanEl.style.left        = ((Number(origin[0]) - baseLeftPts) * scale).toFixed(2) + 'px';
-                                spanEl.style.top         = '0px';
+                                spanEl.style.top         = `${getSpanTopOffsetPx(span, singleLineSourceTopPts).toFixed(2)}px`;
                                 spanEl.style.fontFamily  = _resolveCssFont(spanSrcName, span.fontFamily || spanSrcName);
                                 spanEl.style.fontSize    = spanFontPx.toFixed(2) + 'px';
                                 spanEl.style.fontWeight  = span.fontWeight || fontWeight;
@@ -2489,7 +2943,7 @@
 
                                 spanEl.style.position    = 'absolute';
                                 spanEl.style.left        = ((Number(origin[0]) - baseLeftPts) * scale).toFixed(2) + 'px';
-                                spanEl.style.top         = '0px';
+                                spanEl.style.top         = `${getSpanTopOffsetPx(span, singleLineSourceTopPts).toFixed(2)}px`;
                                 spanEl.style.fontFamily  = spanFamily;
                                 spanEl.style.fontSize    = spanFontPx.toFixed(2) + 'px';
                                 spanEl.style.fontWeight  = String(spanWeight);
@@ -2621,9 +3075,13 @@
                             } else {
                             // Prefer the span's render_text (which preserves PDF word/char spacing
                             // as literal space characters) over ann.text which is the compact form.
-                            const _singleSpanText = srcSpans.length === 1 && srcSpans[0]?.render_text != null
-                                ? String(srcSpans[0].render_text)
-                                : (ann.text || '');
+                            const _singleSpanText = _isExtractedLineFragment
+                                ? String((Array.isArray(srcLines) && srcLines.length ? srcLines[0] : ann.text) || '')
+                                : (
+                                    srcSpans.length === 1 && srcSpans[0]?.render_text != null
+                                        ? String(srcSpans[0].render_text)
+                                        : (ann.text || '')
+                                );
                             el.textContent = _singleSpanText;
                             if (cssWidth !== null) {
                                 _applyExactTextWidthFit(el, {

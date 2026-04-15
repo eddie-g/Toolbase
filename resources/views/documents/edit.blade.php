@@ -2667,16 +2667,28 @@
                 position: relative;
                 z-index: 1;
             }
-            .viewer.edit-text-mode .annotation.edit-mode-region:not(.dragging)::before {
-                opacity: 1;
+            .viewer.edit-text-mode .annotation.edit-mode-region {
+                cursor: text;
             }
-            .viewer.edit-text-mode .annotation.edit-mode-region.selected::before {
-                border-color: rgba(37, 99, 235, 0.95);
-                box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.16);
+            .viewer.edit-text-mode .annotation.edit-mode-region::before {
+                opacity: 0;
             }
-            .viewer.edit-text-mode .annotation.edit-mode-region:not(.selected):not(.dragging):hover::before {
-                background: transparent;
-                border-color: rgba(37, 99, 235, 0.95);
+            .viewer.edit-text-mode .annotation.edit-mode-region.selected {
+                outline: 1.5px dashed #2563eb;
+                outline-offset: 0;
+                box-shadow: inset 0 0 0 9999px rgba(37, 99, 235, 0.08);
+            }
+            .viewer.edit-text-mode .annotation.edit-mode-region:not(.selected):not(.dragging):hover {
+                outline: 1px dashed rgba(37, 99, 235, 0.55);
+                outline-offset: 0;
+                box-shadow: inset 0 0 0 9999px rgba(37, 99, 235, 0.05);
+            }
+            .viewer.edit-text-mode .annotation.edit-mode-region.selected.has-bounds {
+                border: none;
+            }
+            .viewer.edit-text-mode .annotation.edit-mode-region .text-resize-handle,
+            .viewer.edit-text-mode .annotation.edit-mode-region .text-rotate-handle {
+                display: none !important;
             }
             .annotation.has-bounds {
                 display: block;
@@ -6869,44 +6881,9 @@
                 }, 300);
             });
 
-            // Only trigger extraction if no extraction data exists yet
-            // This prevents overwriting extraction data when page reloads after saving shapes
-            // Extraction data should ONLY be updated by overlay editor's save-overlay-btn
-            if (!isImageDocument) {
-            fetch(fitzExtractionDataUrl)
-            .then(response => response.json())
-            .then(data => {
-                if (!data.success) {
-                    // No extraction exists, trigger it
-                    fetch(processFitzUrl, {
-                        method: 'POST',
-                        headers: {
-                            'X-CSRF-TOKEN': csrfToken,
-                            'Accept': 'application/json'
-                        }
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        console.log('✓ PyMuPDF extraction started:', data.message);
-                    })
-                    .catch(err => console.log('PyMuPDF processing started'));
-
-                    // Also trigger OCR as fallback for scanned PDFs
-                    fetch(processOcrUrl, {
-                        method: 'POST',
-                        headers: {
-                            'X-CSRF-TOKEN': csrfToken,
-                            'Accept': 'application/json'
-                        }
-                    }).catch(err => console.log('OCR processing started'));
-                } else {
-                    console.log('✓ Extraction data already exists, skipping auto-extraction');
-                }
-            })
-            .catch(err => {
-                console.log('Error checking extraction data, will not auto-extract');
-            });
-            } // end if (!isImageDocument)
+            // Extraction is loaded on demand through the overlay/extraction endpoints.
+            // Avoid eager startup here because initial page boot already fetches the
+            // same data and can otherwise spawn redundant extraction work.
 
 
             let basePdfUrl = loadedSavedPdfMode ? cleanPdfUrl : pdfUrl;
@@ -9492,7 +9469,7 @@
                 },
             };
 
-            async function prepareEditablePdfSource({ forceRefresh = true } = {}) {
+            async function prepareEditablePdfSource({ forceRefresh = false } = {}) {
                 const refreshParam = forceRefresh ? '1' : '0';
                 const prepareResponse = await fetch(
                     `${prepareOverlayUrl}?force_refresh=${refreshParam}&v=${Date.now()}`,
@@ -9522,20 +9499,16 @@
                     return false;
                 }
 
-                const shouldUseCleanBase = annotations.some((annotation) => {
-                    if (!annotation || !isTextAnnotationType(annotation)) {
-                        return false;
-                    }
-                    return Boolean(annotation.promotedFromExtraction || annotation.savedTextOverlay);
-                });
-                const nextBasePdfUrl = shouldUseCleanBase ? cleanPdfUrl : pdfUrl;
+                const nextBasePdfUrl = toolMode === 'edit-text'
+                    ? cleanPdfUrl
+                    : pdfUrl;
 
                 if (basePdfUrl === nextBasePdfUrl) {
                     return false;
                 }
 
-                if (shouldUseCleanBase) {
-                    await prepareEditablePdfSource({ forceRefresh: true });
+                if (nextBasePdfUrl === cleanPdfUrl) {
+                    await prepareEditablePdfSource({ forceRefresh: false });
                 }
 
                 basePdfUrl = nextBasePdfUrl;
@@ -16207,7 +16180,7 @@
                     return 0;
                 }
                 if (loadedSavedPdfMode) {
-                    await prepareEditablePdfSource({ forceRefresh: true });
+                    await prepareEditablePdfSource({ forceRefresh: false });
                     const {
                         standaloneSavedAnnotations,
                         promotedSavedAnnotations,
@@ -16250,7 +16223,7 @@
                 }
 
                 promotedExtractionBootstrapPromise = (async () => {
-                    await prepareEditablePdfSource({ forceRefresh: true });
+                    await prepareEditablePdfSource({ forceRefresh: false });
 
                     const extractionResponse = await fetch(`${fitzExtractionDataUrl}?v=${Date.now()}`, {
                         credentials: 'same-origin',
@@ -16458,10 +16431,19 @@
                 return true;
             }
 
+            function textAnnotationUsesReconSelection(annotation) {
+                return toolMode === 'edit-text' && isTextAnnotationType(annotation);
+            }
+
             function setSelection(annotation, options = {}) {
                 const bypassInteractionGuard = options.bypassInteractionGuard === true;
                 if (annotation && !bypassInteractionGuard && !ensureAnnotationInteractionsEnabled(annotation, { notify: false })) {
                     return false;
+                }
+                const activeEditorAnnotationId = String(activeEditor?._annotationId || '');
+                const nextAnnotationId = String(annotation?.id || '');
+                if (activeEditor && activeEditorAnnotationId !== nextAnnotationId) {
+                    removeActiveEditor();
                 }
                 if (selectedAnnotation && selectedAnnotation.element) {
                     selectedAnnotation.closeFieldConfigPanel?.();
@@ -21875,7 +21857,8 @@
                     // the document — both DB-loaded (savedDatabaseAnnotation) and freshly
                     // hydrated from extraction (promotedExtraction) in loadedSavedPdfMode.
                     const shouldMaskUnderlyingPageText = Boolean(
-                        hasBounds
+                        toolMode !== 'edit-text'
+                        && hasBounds
                         && (annotation.savedTextOverlay || promotedExtraction || annotation.savedDatabaseAnnotation)
                         && (
                             (loadedSavedPdfMode && basePdfHasBakedAnnotationText)
@@ -24903,13 +24886,24 @@
                 }).catch(e => console.warn('Failed to bulk-delete annotations from DB:', e));
             }
 
+            function shouldRenderWriterCanvasOverlay() {
+                if (layoutMode !== 'new_writer') {
+                    return false;
+                }
+
+                // Edit Text should behave like the reconstruction editor: render the
+                // live HTML annotation layer against the plain page, not against a
+                // writer-baked canvas that would duplicate the same text underneath.
+                return toolMode !== 'edit-text';
+            }
+
             // ── new_writer: server-side render a page using the Python annotation writer ──
             // Called after annotations with db_id are saved/loaded. Paints the
             // writer-rendered PNG over the PDF.js canvas so the editor shows
             // pixel-accurate writer output when layoutMode === 'new_writer'.
             let _writerRenderPending = {};
             async function renderWithNewWriter(pageIndex) {
-                if (layoutMode !== 'new_writer') return;
+                if (!shouldRenderWriterCanvasOverlay()) return;
 
                 const pi = Number(pageIndex) || 0;
                 // Debounce: multiple rapid saves on the same page collapse into one fetch
@@ -24963,7 +24957,7 @@
             // then fires renderWithNewWriter. Used on initial page load in new_writer mode
             // so the writer renders all annotations, not just those already in DB.
             async function flushPageAnnotationsForNewWriter(pageIndex) {
-                if (layoutMode !== 'new_writer') return;
+                if (!shouldRenderWriterCanvasOverlay()) return;
                 const pi = Number(pageIndex) || 0;
                 const unsaved = annotations.filter(a => (Number(a.pageIndex) || 0) === pi && !a.db_id);
                 if (unsaved.length > 0) {
@@ -24973,7 +24967,7 @@
             }
 
             async function flushAllAnnotationsForNewWriter() {
-                if (layoutMode !== 'new_writer') return;
+                if (!shouldRenderWriterCanvasOverlay()) return;
                 const pages = [...new Set(annotations.map(a => Number(a.pageIndex) || 0))];
                 await Promise.all(pages.map(pi => flushPageAnnotationsForNewWriter(pi)));
             }
@@ -25000,7 +24994,7 @@
                     await renderPdf();
                     // Re-apply gridlines after re-render
                     if (typeof renderGridlines === 'function') renderGridlines();
-                    if (layoutMode === 'new_writer') {
+                    if (shouldRenderWriterCanvasOverlay()) {
                         flushAllAnnotationsForNewWriter();
                     }
                 } catch (err) {
@@ -28520,7 +28514,6 @@
                 let dragStart = null;
                 let dragMoved = false;
                 let dragFromMenu = false;
-                let wasAlreadySelectedAtPointerDown = false;
 
                 const onPointerMove = (event) => {
                     if (!dragStart) {
@@ -28555,7 +28548,9 @@
                         return;
                     }
                     label.classList.remove('dragging');
-                    if (isDraggableOverlayAnnotation(annotation)) {
+                    if (textAnnotationUsesReconSelection(annotation)) {
+                        label.style.cursor = 'text';
+                    } else if (isDraggableOverlayAnnotation(annotation)) {
                         label.style.cursor = 'pointer';
                     }
                     dragStart = null;
@@ -28570,20 +28565,7 @@
                         setSelection(annotation);
                         setStatus(`${getAnnotationTypeLabel(annotation)} moved. Click Save to keep changes.`, 'ok');
                     } else {
-                        // In edit-text mode: first click selects (move/resize), second click
-                        // on an already-selected annotation enters edit mode.
                         setSelection(annotation);
-                        if (
-                            toolMode === 'edit-text'
-                            && isTextAnnotationType(annotation)
-                            && wasAlreadySelectedAtPointerDown
-                            && (!activeEditor || activeEditor._annotationId !== annotation.id)
-                        ) {
-                            startInlineEdit(wrapper, annotation, {
-                                caretClientX: upEvent.clientX,
-                                caretClientY: upEvent.clientY,
-                            });
-                        }
                     }
                     queueSelectedAnnotationMenuPlacement();
                 };
@@ -28653,9 +28635,6 @@
 
                 label.addEventListener('pointerdown', (event) => {
                     const moveButtonRequested = Boolean(event.target.closest('[title="Move"]'));
-                    // Capture BEFORE any setSelection() calls below so onPointerUp
-                    // can distinguish a first-click (select) from a second-click (edit).
-                    wasAlreadySelectedAtPointerDown = selectedAnnotation === annotation;
                     if (event.target === deleteBtn) {
                         return;
                     }
@@ -28737,6 +28716,26 @@
                     }
 
                     startAnnotationDrag(event);
+                });
+
+                label.addEventListener('click', (event) => {
+                    if (!textAnnotationUsesReconSelection(annotation)) {
+                        return;
+                    }
+                    if (event.target === deleteBtn) {
+                        return;
+                    }
+                    if (
+                        event.target.closest('.annotation-tbc-menu')
+                        || event.target.closest('.text-rotate-handle')
+                        || event.target.closest('.text-resize-handle')
+                    ) {
+                        return;
+                    }
+                    if (!ensureEditTextModeEnabled()) {
+                        return;
+                    }
+                    setSelection(annotation);
                 });
 
                 if (lineHitTarget) {
@@ -37472,7 +37471,10 @@
                         updateModeButtons();
                         updateEditTextBanner();
                         try {
-                            await syncBasePdfForPromotedEditTextMode();
+                            const baseSynced = await syncBasePdfForPromotedEditTextMode();
+                            if (layoutMode === 'new_writer' && !baseSynced) {
+                                await rerenderPdf();
+                            }
                         } catch (error) {
                             console.warn('Failed to restore the standard PDF base after leaving Edit Text mode', error);
                         }
@@ -37485,13 +37487,16 @@
                     updateModeButtons();
                     updateEditTextBanner();
                     try {
-                        await syncBasePdfForPromotedEditTextMode();
+                        const baseSynced = await syncBasePdfForPromotedEditTextMode();
+                        if (layoutMode === 'new_writer' && !baseSynced) {
+                            await rerenderPdf();
+                        }
                     } catch (error) {
                         console.warn('Failed to switch to the clean PDF base for Edit Text mode', error);
                         setStatus('Failed to prepare the clean PDF base for Edit Text mode.', 'err');
                         return;
                     }
-                    setStatus('Edit Text mode active. Double-click a text annotation or use the floating edit button to edit.', 'ok');
+                    setStatus('Edit Text mode active. Click to select, drag from Move, double-click to edit.', 'ok');
                 });
             }
 
@@ -37610,7 +37615,7 @@
                     }
                 });
             }
-            
+
             function populateEditTextBanner(annotation) {
                 const font = document.getElementById('etb-font');
                 const size = document.getElementById('etb-size');
@@ -38803,7 +38808,7 @@
                             }
                         }
                     } else {
-                        await prepareEditablePdfSource({ forceRefresh: true });
+                        await prepareEditablePdfSource({ forceRefresh: false });
                         if (initialDocumentLoadPending) {
                             updateDocumentLoadingProgress(76, 'Loading extraction data...');
                         }
@@ -46857,7 +46862,7 @@
 
                 renderPdf()
                     .then(async () => {
-                        if (layoutMode === 'new_writer') {
+                        if (shouldRenderWriterCanvasOverlay()) {
                             await flushAllAnnotationsForNewWriter();
                         }
                         return resumePendingDownloadAfterSaveIfNeeded();

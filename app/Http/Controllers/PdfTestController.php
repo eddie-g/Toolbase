@@ -131,8 +131,46 @@ class PdfTestController extends Controller
             return true;
         }
 
+        if ($this->promotedAnnotationHasMaterialGeometryEdits($annotation)) {
+            return true;
+        }
+
         return $this->normalizePromotedComparableText($annotation['text'] ?? '')
             !== $this->normalizePromotedComparableText($annotation['originalText'] ?? '');
+    }
+
+    private function promotedAnnotationHasMaterialGeometryEdits(array $annotation): bool
+    {
+        if (empty($annotation['promotedFromExtraction'])) {
+            return false;
+        }
+
+        $sourceBlockLeft = isset($annotation['sourceBlockLeft']) ? (float) $annotation['sourceBlockLeft'] : null;
+        $sourceBlockTop = isset($annotation['sourceBlockTop']) ? (float) $annotation['sourceBlockTop'] : null;
+        $sourceBlockWidth = isset($annotation['sourceBlockWidth']) ? (float) $annotation['sourceBlockWidth'] : null;
+        $sourceBlockHeight = isset($annotation['sourceBlockHeight']) ? (float) $annotation['sourceBlockHeight'] : null;
+        $sourcePageHeight = isset($annotation['sourcePageHeight']) ? (float) $annotation['sourcePageHeight'] : null;
+
+        if ($sourceBlockLeft === null || $sourceBlockTop === null || $sourceBlockWidth === null || $sourceBlockHeight === null || !($sourcePageHeight > 0)) {
+            return false;
+        }
+
+        $pdfX = isset($annotation['pdfX']) ? (float) $annotation['pdfX'] : null;
+        $pdfY = isset($annotation['pdfY']) ? (float) $annotation['pdfY'] : null;
+        $pdfWidth = isset($annotation['pdfWidth']) ? (float) $annotation['pdfWidth'] : null;
+        $pdfHeight = isset($annotation['pdfHeight']) ? (float) $annotation['pdfHeight'] : null;
+
+        if ($pdfX === null || $pdfY === null || $pdfWidth === null || $pdfHeight === null) {
+            return false;
+        }
+
+        $currentTop = $sourcePageHeight - ($pdfY + $pdfHeight);
+        $geometryTolerance = 0.75;
+
+        return abs($pdfX - $sourceBlockLeft) > $geometryTolerance
+            || abs($currentTop - $sourceBlockTop) > $geometryTolerance
+            || abs($pdfWidth - $sourceBlockWidth) > $geometryTolerance
+            || abs($pdfHeight - $sourceBlockHeight) > $geometryTolerance;
     }
 
     private function shouldDiscardLegacySyntheticMergedPromotedAnnotation(array $annotation): bool
@@ -159,6 +197,69 @@ class PdfTestController extends Controller
             }
         }
         return 'python3';
+    }
+
+    private function embeddedFontsCachePath(int $documentId, string $sourceKey): string
+    {
+        $normalized = preg_replace('/[^A-Za-z0-9_\-]/', '_', strtolower(trim($sourceKey))) ?: 'file';
+        if ($normalized === 'file') {
+            return storage_path("app/temp/embedded_fonts_{$documentId}.json");
+        }
+
+        return storage_path("app/temp/embedded_fonts_{$documentId}_{$normalized}.json");
+    }
+
+    private function resolveFontExtractionSourcePath(Document $document, string $sourceKey): ?string
+    {
+        $normalized = strtolower(trim($sourceKey));
+
+        $filePath = Storage::path($document->path);
+        $originalPath = null;
+        if ($document->original_backup_path && Storage::exists($document->original_backup_path)) {
+            $candidate = Storage::path($document->original_backup_path);
+            if (is_file($candidate)) {
+                $originalPath = $candidate;
+            }
+        }
+
+        return match ($normalized) {
+            'clean', 'original' => $originalPath ?: (is_file($filePath) ? $filePath : null),
+            default => is_file($filePath) ? $filePath : ($originalPath ?: null),
+        };
+    }
+
+    private function extractEmbeddedFontsForSource(Document $document, string $sourceKey): ?array
+    {
+        $pdfPath = $this->resolveFontExtractionSourcePath($document, $sourceKey);
+        if (!$pdfPath || !is_file($pdfPath)) {
+            return null;
+        }
+
+        $cachePath = $this->embeddedFontsCachePath($document->id, $sourceKey);
+        if (!file_exists($cachePath)) {
+            $python = $this->resolvePythonBinary();
+            $scriptDir = base_path('python/pdf-editor');
+            $tmpScript = storage_path(
+                'app/temp/font_extract_' . $document->id . '_' . Str::uuid()->toString() . '.py'
+            );
+            $scriptWritten = file_put_contents($tmpScript, implode("\n", [
+                'import sys, json',
+                'sys.path.insert(0, ' . json_encode($scriptDir, JSON_UNESCAPED_SLASHES) . ')',
+                'from extract_pdf_pymupdf import extract_embedded_fonts',
+                'fonts = extract_embedded_fonts(' . json_encode($pdfPath, JSON_UNESCAPED_SLASHES) . ', ' . (int) $document->id . ')',
+                'open(' . json_encode($cachePath, JSON_UNESCAPED_SLASHES) . ', "w").write(json.dumps(fonts, indent=2)) if fonts else None',
+            ]));
+            if ($scriptWritten !== false) {
+                exec(sprintf('timeout 30 %s %s 2>&1', escapeshellarg($python), escapeshellarg($tmpScript)));
+            }
+            @unlink($tmpScript);
+        }
+
+        if (!file_exists($cachePath)) {
+            return null;
+        }
+
+        return json_decode(file_get_contents($cachePath), true) ?: null;
     }
 
     public function getTestFiles(Request $request)
@@ -1265,7 +1366,8 @@ PYTHON;
         $pageHeight = isset($annotation['sourcePageHeight']) && is_numeric($annotation['sourcePageHeight'])
             ? (float) $annotation['sourcePageHeight']
             : 0.0;
-        if ($pageHeight > 0.0) {
+        $preserveSavedGeometry = $this->promotedAnnotationHasMaterialGeometryEdits($annotation);
+        if ($pageHeight > 0.0 && !$preserveSavedGeometry) {
             $annotation['pdfX'] = $left;
             $annotation['pdfWidth'] = $width;
             $annotation['pdfHeight'] = $height;
@@ -1273,6 +1375,17 @@ PYTHON;
         }
 
         return $annotation;
+    }
+
+    private function isPromotedSuppressionAnnotation(array $annotation): bool
+    {
+        if (empty($annotation['promotedFromExtraction'])) {
+            return false;
+        }
+
+        return !empty($annotation['_promotedSuppression'])
+            || !empty($annotation['_explicitPromotedDelete'])
+            || str_starts_with(trim((string) ($annotation['id'] ?? '')), '__deleted_promoted__');
     }
 
     private function enrichAnnotationFromDb(array $annotation, int $fitzId): array
@@ -1421,8 +1534,9 @@ PYTHON;
         if ($page) {
             $pageHeight = (float) $page->height;
             $annotation['sourcePageHeight'] = $pageHeight;
+            $preserveSavedGeometry = $this->promotedAnnotationHasMaterialGeometryEdits($annotation);
 
-            if ($canonicalBlock && !$hasDerivedSourceKey) {
+            if ($canonicalBlock && !$hasDerivedSourceKey && !$preserveSavedGeometry) {
                 $annotation['pdfX'] = (float) $canonicalBlock->left;
                 $annotation['pdfWidth'] = max(0.0, (float) $canonicalBlock->width);
                 $annotation['pdfHeight'] = max(0.0, (float) $canonicalBlock->height);
@@ -1555,7 +1669,10 @@ PYTHON;
     public function documentInfo(Request $request, Document $document)
     {
         $ownership = $this->resolveDocumentOwnership($document);
-        $sessionId = $request->session()->getId();
+        $sessionId = trim((string) $request->query('session_id', ''));
+        if ($sessionId === '') {
+            $sessionId = $request->session()->getId();
+        }
 
         $statesQuery = PdfState::where('document_id', $document->id);
         $this->applyOwnershipScope(
@@ -1565,6 +1682,18 @@ PYTHON;
             $sessionId
         );
         $states = $statesQuery->orderBy('id')->get();
+        $deletedPromotedSourceKeys = [];
+        foreach ($states as $state) {
+            if ((string) $state->state !== 'deleted') {
+                continue;
+            }
+            $annotationData = is_array($state->annotation_data) ? $state->annotation_data : [];
+            $sourceKey = trim((string) ($annotationData['promotedSourceKey'] ?? ''));
+            if ($sourceKey === '' || !$this->isPromotedSuppressionAnnotation($annotationData)) {
+                continue;
+            }
+            $deletedPromotedSourceKeys[$sourceKey] = true;
+        }
 
         // Resolve the fitz extraction id for this document once (used as fallback when
         // individual pdf_state rows don't have pdf_extraction_fitz_id set).
@@ -1584,19 +1713,7 @@ PYTHON;
                 return null;
             }
             $annId = $data['id'] ?? null;
-            if ($annId !== null) {
-                $seen[$annId] = array_merge([
-                    'db_id'          => $state->id,
-                    'db_page_number' => $state->page_number,
-                    'db_state'       => $state->state,
-                    'db_updated_at'  => optional($state->updated_at)->toIso8601String(),
-                    'db_flagged'     => (bool) $state->flagged,
-                    'db_flag_reason' => $state->flag_reason,
-                    'db_flag_images' => $state->flag_images ?? [],
-                ], $data);
-                return null; // placeholder, replaced below
-            }
-            return array_merge([
+            $dbFields = [
                 'db_id'          => $state->id,
                 'db_page_number' => $state->page_number,
                 'db_state'       => $state->state,
@@ -1604,7 +1721,13 @@ PYTHON;
                 'db_flagged'     => (bool) $state->flagged,
                 'db_flag_reason' => $state->flag_reason,
                 'db_flag_images' => $state->flag_images ?? [],
-            ], $data);
+            ];
+            if ($annId !== null) {
+                // db_* fields always override any stale values in annotation_data JSON
+                $seen[$annId] = array_merge($data, $dbFields);
+                return null; // placeholder, replaced below
+            }
+            return array_merge($data, $dbFields);
         })->filter(fn($item) => $item !== null)->values();
 
         // Suppress parent annotations whose line-split children are also present.
@@ -1620,6 +1743,17 @@ PYTHON;
 
         // Merge deduplicated keyed annotations
         $annotations = $annotations->merge(array_values($seen))->values();
+        if (!empty($deletedPromotedSourceKeys)) {
+            $annotations = $annotations
+                ->reject(function ($annotation) use ($deletedPromotedSourceKeys) {
+                    if (!is_array($annotation)) {
+                        return false;
+                    }
+                    $sourceKey = trim((string) ($annotation['promotedSourceKey'] ?? ''));
+                    return $sourceKey !== '' && isset($deletedPromotedSourceKeys[$sourceKey]);
+                })
+                ->values();
+        }
 
         // Synthesize annotations for symbol-font characters (Wingdings checkmarks etc.)
         // that could not be captured during normal text extraction due to PUA stripping.
@@ -1632,12 +1766,14 @@ PYTHON;
             }
         }
 
-        // Load embedded font metadata if available (same JSON produced by extract_pdf_pymupdf)
-        $embeddedFonts = null;
-        $embeddedFontsPath = storage_path("app/temp/embedded_fonts_{$document->id}.json");
-        if (file_exists($embeddedFontsPath)) {
-            $embeddedFonts = json_decode(file_get_contents($embeddedFontsPath), true) ?: null;
-        }
+        // Load embedded font metadata per source. Reconstruction can render either the
+        // current file PDF or the clean/original-backed PDF, and each source may carry
+        // different font programs even when the extracted annotations are the same.
+        $embeddedFontsBySource = [
+            'file' => $this->extractEmbeddedFontsForSource($document, 'file'),
+            'clean' => $this->extractEmbeddedFontsForSource($document, 'clean'),
+        ];
+        $embeddedFonts = $embeddedFontsBySource['file'] ?: $embeddedFontsBySource['clean'];
 
         $acroFormQuery = PdfAcroForm::query()
             ->where('document_id', $document->id);
@@ -1687,6 +1823,7 @@ PYTHON;
             'count'          => $annotations->count(),
             'acro_form_entries' => $acroFormEntries,
             'embedded_fonts' => $embeddedFonts,
+            'embedded_fonts_by_source' => $embeddedFontsBySource,
         ]);
     }
 

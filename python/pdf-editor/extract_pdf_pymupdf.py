@@ -304,6 +304,321 @@ def cff_raw_to_otf(cff_data: bytes, font_name: str = 'UnknownFont',
     return out.getvalue()
 
 
+def _glyph_name_to_unicode(glyph_name):
+    if not glyph_name:
+        return None
+
+    base = str(glyph_name).split('.', 1)[0]
+    if base in _GLYPH_NAME_TO_UNICODE:
+        return _GLYPH_NAME_TO_UNICODE[base]
+
+    match = re.match(r'^uni([0-9A-Fa-f]{4})$', base)
+    if match:
+        return int(match.group(1), 16)
+
+    match = re.match(r'^u([0-9A-Fa-f]{4,6})$', base)
+    if match:
+        return int(match.group(1), 16)
+
+    return None
+
+
+def _build_doc_font_unicode_maps(doc):
+    """
+    Build gid->unicode maps from PyMuPDF text traces.
+    PDF subset TrueType fonts often omit a browser-usable cmap table, but
+    page.get_texttrace() exposes both the decoded Unicode codepoint and the
+    glyph id used to paint that character. We use that to reconstruct a cmap.
+    """
+    font_maps = {}
+
+    for page in doc:
+        try:
+            traces = page.get_texttrace() or []
+        except Exception:
+            continue
+
+        for trace in traces:
+            trace_font = str(trace.get('font') or '').strip()
+            if not trace_font:
+                continue
+
+            candidate_keys = [
+                trace_font,
+                _strip_pdf_font_subset_prefix(trace_font),
+                _normalize_font_name(trace_font),
+                _normalize_font_name(_strip_pdf_font_subset_prefix(trace_font)),
+            ]
+            candidate_keys = [key for key in candidate_keys if key]
+            if not candidate_keys:
+                continue
+
+            for ch in trace.get('chars') or []:
+                if not ch or len(ch) < 2:
+                    continue
+
+                codepoint = ch[0]
+                glyph_id = ch[1]
+                if not isinstance(codepoint, int) or not isinstance(glyph_id, int):
+                    continue
+                if codepoint <= 0 or glyph_id < 0:
+                    continue
+
+                for key in candidate_keys:
+                    mapping = font_maps.setdefault(key, {})
+                    existing = mapping.get(glyph_id)
+                    if existing is None or existing == codepoint:
+                        mapping[glyph_id] = codepoint
+
+    return font_maps
+
+
+def _lookup_doc_font_unicode_map(font_maps, font_name):
+    if not font_name or not font_maps:
+        return {}
+
+    candidates = [
+        str(font_name).strip(),
+        _strip_pdf_font_subset_prefix(font_name),
+        _normalize_font_name(font_name),
+        _normalize_font_name(_strip_pdf_font_subset_prefix(font_name)),
+    ]
+    for key in candidates:
+        if key and key in font_maps and font_maps[key]:
+            return font_maps[key]
+
+    return {}
+
+
+def _needs_truetype_web_repair(ttf_data: bytes) -> bool:
+    try:
+        from io import BytesIO
+        from fontTools.ttLib import TTFont
+        font = TTFont(BytesIO(ttf_data))
+    except Exception:
+        return False
+
+    required_tables = {'head', 'hhea', 'maxp', 'hmtx', 'name', 'OS/2', 'cmap'}
+    return any(table not in font for table in required_tables)
+
+
+def repair_truetype_for_web(ttf_data: bytes, font_name: str = 'UnknownFont',
+                            gid_to_unicode=None, css_weight: int = 400,
+                            css_stretch: str = 'normal') -> bytes:
+    """
+    Re-save an extracted TrueType subset as a browser-safe webfont.
+    Adds a synthetic cmap and fills in required metadata tables when they are
+    missing. This is specifically for PDF embedded subsets that are valid for
+    PDF rendering but rejected by browsers via @font-face.
+    """
+    try:
+        from io import BytesIO
+        from fontTools.ttLib import TTFont
+        from fontTools.ttLib.tables._h_e_a_d import table__h_e_a_d
+        from fontTools.ttLib.tables._h_h_e_a import table__h_h_e_a
+        from fontTools.ttLib.tables._m_a_x_p import table__m_a_x_p
+        from fontTools.ttLib.tables.O_S_2f_2 import table_O_S_2f_2, Panose
+        from fontTools.ttLib.tables._n_a_m_e import table__n_a_m_e, NameRecord
+        from fontTools.ttLib.tables._c_m_a_p import table__c_m_a_p, cmap_format_4, cmap_format_12
+        from fontTools.ttLib.tables._p_o_s_t import table__p_o_s_t
+        from fontTools.ttLib.tables._h_m_t_x import table__h_m_t_x
+    except ImportError as e:
+        raise RuntimeError(f'fontTools not available for TrueType repair: {e}') from e
+
+    font = TTFont(BytesIO(ttf_data))
+    glyph_order = font.getGlyphOrder()
+    if not glyph_order:
+        raise RuntimeError('TrueType repair failed: extracted font has no glyph order')
+
+    mac_ts = int(time.time()) + 2082844800
+    upm = int(getattr(font.get('head'), 'unitsPerEm', 1000) or 1000)
+
+    if 'maxp' not in font:
+        maxp = table__m_a_x_p()
+        maxp.tableVersion = 0x00010000
+        maxp.numGlyphs = len(glyph_order)
+        font['maxp'] = maxp
+    else:
+        font['maxp'].numGlyphs = len(glyph_order)
+
+    if 'hmtx' not in font:
+        hmtx = table__h_m_t_x()
+        hmtx.metrics = {glyph: (upm, 0) for glyph in glyph_order}
+        font['hmtx'] = hmtx
+
+    metrics = getattr(font['hmtx'], 'metrics', {}) or {}
+    advance_values = [int(width) for width, _lsb in metrics.values()] or [upm]
+    lsb_values = [int(lsb) for _width, lsb in metrics.values()] or [0]
+
+    if 'head' not in font:
+        head = table__h_e_a_d()
+        head.tableVersion = 1.0
+        head.fontRevision = 1.0
+        head.checkSumAdjustment = 0
+        head.magicNumber = 0x5F0F3CF5
+        head.flags = 0x000B
+        head.unitsPerEm = upm
+        head.created = mac_ts
+        head.modified = mac_ts
+        head.xMin = 0
+        head.yMin = -200
+        head.xMax = max(advance_values)
+        head.yMax = int(upm * 0.8)
+        head.macStyle = 0x0001 if css_weight >= 700 else 0
+        head.lowestRecPPEM = 8
+        head.fontDirectionHint = 2
+        head.indexToLocFormat = 0
+        head.glyphDataFormat = 0
+        font['head'] = head
+    else:
+        font['head'].macStyle = 0x0001 if css_weight >= 700 else 0
+
+    if 'hhea' not in font:
+        hhea = table__h_h_e_a()
+        hhea.tableVersion = 0x00010000
+        hhea.ascent = int(upm * 0.8)
+        hhea.descent = -int(upm * 0.2)
+        hhea.lineGap = 0
+        hhea.advanceWidthMax = max(advance_values)
+        hhea.minLeftSideBearing = min(lsb_values)
+        hhea.minRightSideBearing = 0
+        hhea.xMaxExtent = max(advance_values)
+        hhea.caretSlopeRise = 1
+        hhea.caretSlopeRun = 0
+        hhea.caretOffset = 0
+        hhea.reserved0 = hhea.reserved1 = hhea.reserved2 = hhea.reserved3 = 0
+        hhea.metricDataFormat = 0
+        hhea.numberOfHMetrics = len(metrics)
+        font['hhea'] = hhea
+    else:
+        font['hhea'].advanceWidthMax = max(advance_values)
+        font['hhea'].minLeftSideBearing = min(lsb_values)
+        font['hhea'].numberOfHMetrics = len(metrics)
+
+    if 'OS/2' not in font:
+        os2 = table_O_S_2f_2()
+        os2.version = 4
+        os2.xAvgCharWidth = int(sum(advance_values) / max(1, len(advance_values)))
+        os2.usWeightClass = css_weight
+        os2.usWidthClass = 3 if css_stretch == 'condensed' else 5
+        os2.fsType = 0
+        os2.ySubscriptXSize = 650
+        os2.ySubscriptYSize = 600
+        os2.ySubscriptXOffset = 0
+        os2.ySubscriptYOffset = 75
+        os2.ySuperscriptXSize = 650
+        os2.ySuperscriptYSize = 600
+        os2.ySuperscriptXOffset = 0
+        os2.ySuperscriptYOffset = 350
+        os2.yStrikeoutSize = 80
+        os2.yStrikeoutPosition = 300
+        os2.sFamilyClass = 0
+        os2.panose = Panose()
+        os2.ulUnicodeRange1 = 3
+        os2.ulUnicodeRange2 = os2.ulUnicodeRange3 = os2.ulUnicodeRange4 = 0
+        os2.achVendID = 'UNKN'
+        os2.fsSelection = 0x0020 if css_weight >= 700 else 0x0040
+        os2.firstCharIndex = 32
+        os2.lastCharIndex = 126
+        os2.sTypoAscender = getattr(font['hhea'], 'ascent', int(upm * 0.8))
+        os2.sTypoDescender = getattr(font['hhea'], 'descent', -int(upm * 0.2))
+        os2.sTypoLineGap = getattr(font['hhea'], 'lineGap', 0)
+        os2.usWinAscent = max(0, os2.sTypoAscender)
+        os2.usWinDescent = abs(min(0, os2.sTypoDescender))
+        os2.ulCodePageRange1 = 1
+        os2.ulCodePageRange2 = 0
+        os2.sxHeight = int(upm * 0.5)
+        os2.sCapHeight = int(upm * 0.7)
+        os2.usDefaultChar = 0
+        os2.usBreakChar = 32
+        os2.usMaxContext = 0
+        font['OS/2'] = os2
+    else:
+        font['OS/2'].usWeightClass = css_weight
+        font['OS/2'].usWidthClass = 3 if css_stretch == 'condensed' else 5
+
+    if 'name' not in font:
+        name_table = table__n_a_m_e()
+        name_table.names = []
+        family = font_name.split('-')[0]
+        style_name = 'Bold' if css_weight >= 700 else 'Regular'
+        for nid, s in [(1, family), (2, style_name), (4, font_name), (6, font_name)]:
+            nr = NameRecord()
+            nr.nameID = nid
+            nr.platformID = 3
+            nr.platEncID = 1
+            nr.langID = 0x0409
+            nr.string = s.encode('utf-16-be')
+            name_table.names.append(nr)
+        font['name'] = name_table
+
+    cmap_entries = {}
+    if gid_to_unicode:
+        for glyph_id, codepoint in sorted(gid_to_unicode.items()):
+            if not isinstance(glyph_id, int) or not isinstance(codepoint, int):
+                continue
+            if glyph_id < 0 or glyph_id >= len(glyph_order):
+                continue
+            if codepoint <= 0 or codepoint > 0x10FFFF:
+                continue
+            glyph_name = glyph_order[glyph_id]
+            if glyph_name == '.notdef':
+                continue
+            cmap_entries.setdefault(codepoint, glyph_name)
+
+    if not cmap_entries:
+        for glyph_name in glyph_order:
+            codepoint = _glyph_name_to_unicode(glyph_name)
+            if codepoint is None:
+                continue
+            if glyph_name == '.notdef':
+                continue
+            cmap_entries.setdefault(codepoint, glyph_name)
+
+    if not cmap_entries:
+        fallback_codepoints = list(range(32, 127))
+        for codepoint, glyph_name in zip(fallback_codepoints, [g for g in glyph_order if g != '.notdef']):
+            cmap_entries.setdefault(codepoint, glyph_name)
+
+    cmap_t = table__c_m_a_p()
+    cmap_t.tableVersion = 0
+    cmap_t.tables = []
+
+    bmp_entries = {cp: g for cp, g in cmap_entries.items() if cp <= 0xFFFF}
+    if bmp_entries:
+        fmt4 = cmap_format_4(4)
+        fmt4.platformID = 3
+        fmt4.platEncID = 1
+        fmt4.language = 0
+        fmt4.cmap = bmp_entries
+        cmap_t.tables.append(fmt4)
+
+    astral_entries = {cp: g for cp, g in cmap_entries.items() if cp > 0xFFFF}
+    if astral_entries:
+        fmt12 = cmap_format_12(12)
+        fmt12.platformID = 3
+        fmt12.platEncID = 10
+        fmt12.language = 0
+        fmt12.cmap = astral_entries
+        cmap_t.tables.append(fmt12)
+
+    font['cmap'] = cmap_t
+
+    if 'post' not in font:
+        post = table__p_o_s_t()
+        post.formatType = 3.0
+        post.italicAngle = 0
+        post.underlinePosition = -100
+        post.underlineThickness = 50
+        post.isFixedPitch = 0
+        post.minMemType42 = post.maxMemType42 = post.minMemType1 = post.maxMemType1 = 0
+        font['post'] = post
+
+    out = BytesIO()
+    font.save(out)
+    return out.getvalue()
+
+
 _EXTRACTION_ZERO_WIDTH_RE = re.compile(r'[\u200B\u200C\u200D\u2060\uFEFF]')
 _EXTRACTION_PRIVATE_USE_RE = re.compile(r'[\uE000-\uF8FF]')
 _EXTRACTION_CONTROL_RE = re.compile(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]')
@@ -318,7 +633,7 @@ _PDF_TEXT_SHOW_OP_RE = re.compile(
     rb'[-\d.]+\s+[-\d.]+\s+[-\d.]+\s+[-\d.]+\s+[-\d.]+\s+[-\d.]+\s+Tm\b|'
     rb'[-\d.]+\s+[-\d.]+\s+T[dD]\b|'
     rb'\((?:\\.|[^\\)])*\)\s*Tj\b|'
-    rb'\[(?:\\.|[^\]])*\]\s*TJ\b',
+    rb'\[(?:\\.|[^\\\]])*\]\s*TJ\b',
     re.DOTALL,
 )
 
@@ -1041,6 +1356,7 @@ def extract_embedded_fonts(pdf_path, document_id, output_dir=None):
     doc = fitz.open(pdf_path)
     embedded_fonts = {}
     seen_xrefs = set()
+    font_unicode_maps = _build_doc_font_unicode_maps(doc)
 
     for page in doc:
         page_fonts = page.get_fonts(full=True)
@@ -1082,7 +1398,13 @@ def extract_embedded_fonts(pdf_path, document_id, output_dir=None):
             # Check suffix tokens (split on - _ ,) so abbreviations like "BlkCn" are isolated
             _suffix_tokens = [p for p in re.split(r'[-_,]', lower_name)[1:] if p]
             _suffix_str = '-'.join(_suffix_tokens)
-            if 'bold' in lower_name and ('extra' in lower_name or 'ultra' in lower_name):
+            # Explicit numeric weight suffix takes highest priority: e.g. "Font_700wght" → 700
+            _explicit_weight = re.search(r'[_-](\d{3})(?:wght|w)?$', lower_name)
+            if _explicit_weight:
+                _w = int(_explicit_weight.group(1))
+                if 100 <= _w <= 900:
+                    css_weight = str(_w)
+            elif 'bold' in lower_name and ('extra' in lower_name or 'ultra' in lower_name):
                 css_weight = '800'
             elif 'semibold' in lower_name or 'demibold' in lower_name:
                 css_weight = '600'
@@ -1090,10 +1412,16 @@ def extract_embedded_fonts(pdf_path, document_id, output_dir=None):
                   or any(t.startswith('blk') or t == 'hvy' for t in _suffix_tokens)):
                 # Covers: "Black", "Heavy", "BlkCn", "BlkCond", "Hvy" suffix tokens
                 css_weight = '900'
-            elif re.search(r'\bbd\b|bold', _suffix_str):
+            elif (any(t == 'bd' or t.startswith('bd') for t in _suffix_tokens)
+                  or re.search(r'\bbold\b|bold', _suffix_str)):
+                # Covers: "Bd", "BdIt" (bold-italic), "BdOu" (bold-outline),
+                # "BdCn" (bold-condensed), "Bold", "BoldItalic", etc.
                 css_weight = '700'
             elif 'bold' in lower_name:
                 css_weight = '700'
+            elif 'demi' in lower_name:
+                # "Demi" is semi-bold (e.g. ITCFranklinGothicStd-Demi)
+                css_weight = '600'
             elif 'medium' in lower_name or re.search(r'\bmd\b|\bmed\b', _suffix_str):
                 css_weight = '500'
             elif 'light' in lower_name or re.search(r'\blt\b|\bltc[nd]?$', _suffix_str):
@@ -1124,14 +1452,33 @@ def extract_embedded_fonts(pdf_path, document_id, output_dir=None):
 
             # Save font file
             safe_name = clean_name.replace(',', '_').replace('+', '_').replace(' ', '_')
-            filename = f"{safe_name}.{ext}"
+            actual_ext = ext
+            actual_content = content
+
+            if ext == 'ttf' and _needs_truetype_web_repair(content):
+                gid_to_unicode = _lookup_doc_font_unicode_map(font_unicode_maps, font_name)
+                if not gid_to_unicode:
+                    gid_to_unicode = _lookup_doc_font_unicode_map(font_unicode_maps, clean_name)
+                try:
+                    actual_content = repair_truetype_for_web(
+                        content,
+                        font_name=clean_name,
+                        gid_to_unicode=gid_to_unicode,
+                        css_weight=int(css_weight),
+                        css_stretch=css_stretch,
+                    )
+                    print(f"    ↳ Rebuilt TTF for web use: {clean_name}")
+                except Exception as ttf_err:
+                    actual_content = content
+                    print(f"    ⚠ TrueType web repair failed for {clean_name}: {ttf_err}")
+
+            filename = f"{safe_name}.{actual_ext}"
             filepath = os.path.join(output_dir, filename)
             with open(filepath, 'wb') as f:
-                f.write(content)
+                f.write(actual_content)
 
             # For raw CFF data (browsers cannot load bare CFF): wrap in OTF container.
             # Saves a companion .otf file and updates file_path/ext to point at it.
-            actual_ext = ext
             actual_path = filepath
             web_path = f"/fonts/runtime-extracted/{document_id}/{filename}"
             if ext == 'cff':
@@ -2657,12 +3004,17 @@ def _merge_same_row_lines(line_items, vertical_lines=None, widget_rects=None, dr
                 # positives – notably it would drop dot-leader characters that happen
                 # to be processed after a right-aligned form label.
                 if _sequential_ltr:
+                    left_looks_like_inline_label = _looks_like_leading_inline_label(left_text)
                     detached_row_label_pair = (
                         _looks_like_detached_row_label(left_text)
                         and left_width <= max(110.0, avg_size * 6.5)
                         and len(right_text) >= 24
                         and right_width >= max(180.0, avg_size * 10.0)
-                        and dist >= max(8.0, avg_size * 0.65)
+                        and dist >= (
+                            max(15.0, avg_size * 1.25)
+                            if left_looks_like_inline_label
+                            else max(8.0, avg_size * 0.65)
+                        )
                     )
                     if detached_row_label_pair:
                         should_merge = False
@@ -2851,7 +3203,10 @@ def _looks_like_leading_inline_label(text):
     normalized = ' '.join(str(text or '').split())
     if not normalized:
         return False
-    return re.match(r'^(?:\d{1,2}[A-Za-z]?|[A-Za-z]\)|\([A-Za-z0-9]{1,2}\)|[•◦▪■▶▲])$', normalized) is not None
+    return re.match(
+        r'^(?:\d{1,2}[A-Za-z]?|[A-Za-z]|[A-Za-z]\)|\([A-Za-z0-9]{1,2}\)|[•◦▪■▶▲])$',
+        normalized,
+    ) is not None
 
 
 def _is_standalone_list_item_marker(text):
@@ -4402,8 +4757,10 @@ def extract_text_with_pymupdf(pdf_path):
                                 font_lower = font.lower()
                                 _span_suffix_tokens = [p for p in re.split(r'[-_,]', font_lower) if p][1:]
                                 _span_has_blk = any(t.startswith('blk') or t == 'hvy' for t in _span_suffix_tokens)
+                                _span_has_bd = any(t == 'bd' or t.startswith('bd') for t in _span_suffix_tokens)
                                 is_bold_from_name = ('bold' in font_lower or 'black' in font_lower
-                                                     or 'heavy' in font_lower or _span_has_blk)
+                                                     or 'heavy' in font_lower or _span_has_blk
+                                                     or _span_has_bd)
                                 is_italic_from_name = 'italic' in font_lower or 'oblique' in font_lower
                                 
                                 # Determine weight - first try to parse explicit weight from font name
@@ -4428,11 +4785,15 @@ def extract_text_with_pymupdf(pdf_path):
                                         font_weight = 500
                                     elif 'semibold' in font_lower or 'demibold' in font_lower:
                                         font_weight = 600
+                                    elif 'demi' in font_lower:
+                                        # "Demi" weight (e.g. ITCFranklinGothicStd-Demi) → semi-bold
+                                        font_weight = 600
                                     elif 'extrabold' in font_lower or 'ultrabold' in font_lower:
                                         font_weight = 800
                                     elif 'black' in font_lower or 'heavy' in font_lower or _span_has_blk:
                                         font_weight = 900
-                                    elif is_bold_from_name or is_bold_from_flags:
+                                    elif _span_has_bd or is_bold_from_name or is_bold_from_flags:
+                                        # Covers compound tokens like "bdit" (Bold Italic), "bdou" (Bold Outline)
                                         font_weight = 700
                                     else:
                                         font_weight = 400
