@@ -1161,6 +1161,80 @@
         document.head.appendChild(style);
     };
 
+    // Inject a "PDF Embedded Fonts" section at the top of the font-family picker.
+    // Embedded font names use the PDF's clean_name (e.g. "TahomaUnicode"). When the
+    // user selects one, `ann.fontFamily` is set to that name and `fallbackFontFamily`
+    // resolves it to the `PDF_<clean_name>` CSS family which is registered via
+    // @font-face by `loadEmbeddedFontFaces` — so glyphs render with the correct
+    // (embedded) outlines instead of a system substitute.
+    const populateFontDropdown = () => {
+        const fontSelect = document.getElementById('afb-font');
+        if (!fontSelect) return;
+
+        // Collect embedded font names from the loaded PDF. Exclude subset fonts
+        // (pdf_font_name like "AAAAAA+Arial-BoldMT") because they only contain the
+        // glyphs used in the original document — typing new text with them produces
+        // garbage for missing characters.
+        const embeddedSet = new Set();
+        const SUBSET_PREFIX_RE = /^[A-Z]{6}\+/;
+        if (overlayEmbeddedFonts && typeof overlayEmbeddedFonts === 'object') {
+            Object.entries(overlayEmbeddedFonts).forEach(([fontKey, fontData]) => {
+                const cleanName = String(fontData?.clean_name || fontKey || '').trim();
+                if (!cleanName) return;
+                if (shouldBypassEmbeddedFont(cleanName, String(fontData?.family || ''))) return;
+                const pdfName = String(fontData?.pdf_font_name || '').trim();
+                if (SUBSET_PREFIX_RE.test(pdfName)) return;
+                embeddedSet.add(cleanName);
+            });
+        }
+        const embeddedFonts = Array.from(embeddedSet).sort((a, b) => a.localeCompare(b));
+
+        // Snapshot the static built-in options (anything not marked pdfDynamic) and
+        // preserve the currently-selected value so we can restore it afterwards.
+        const staticOptions = Array.from(fontSelect.options)
+            .filter((o) => o.dataset.pdfDynamic !== '1')
+            .map((o) => o.cloneNode(true));
+        const currentValue = String(fontSelect.value || '').trim();
+
+        fontSelect.replaceChildren();
+
+        if (embeddedFonts.length > 0) {
+            const header = document.createElement('option');
+            header.disabled = true;
+            header.dataset.pdfDynamic = '1';
+            header.textContent = '───── PDF Embedded Fonts ─────';
+            fontSelect.appendChild(header);
+
+            embeddedFonts.forEach((name) => {
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                opt.dataset.pdfDynamic = '1';
+                opt.dataset.pdfFont = '1';
+                // Do NOT preview option text in the embedded font — embedded PDF fonts
+                // are usually subsets containing only the glyphs used in the original
+                // document, so the font name itself would render as gibberish.
+                fontSelect.appendChild(opt);
+            });
+
+            if (staticOptions.length > 0) {
+                const builtinHeader = document.createElement('option');
+                builtinHeader.disabled = true;
+                builtinHeader.dataset.pdfDynamic = '1';
+                builtinHeader.textContent = '───── Built-in Fonts ─────';
+                fontSelect.appendChild(builtinHeader);
+            }
+        }
+
+        staticOptions.forEach((o) => fontSelect.appendChild(o));
+
+        // Restore selection if the previous value is still available.
+        const available = Array.from(fontSelect.options)
+            .filter((o) => !o.disabled && String(o.value || '').trim());
+        const match = available.find((o) => o.value.toLowerCase() === currentValue.toLowerCase());
+        fontSelect.value = match?.value || available[0]?.value || '';
+    };
+
     const systemFallbackFontFamily = (name, family = '') => {
         const raw = normalizeFontName(name || family);
         if (!raw) return FONT_MAP['Helvetica'];
@@ -1205,6 +1279,25 @@
         }
 
         return systemFallbackFontFamily(name, family);
+    };
+
+    // When an annotation has white/near-white text on a missing/transparent background,
+    // it becomes invisible against the page. This happens with PDFs that render white
+    // text over a colored background bar — extraction captures the text color but not
+    // the bar. Substitute a dark placeholder background so the text is readable in the
+    // editor. This does NOT mutate ann.backgroundColor (which remains transparent for
+    // export); it only affects the visual rendering.
+    const _WHITE_TEXT_RE = /^#?f(?:ff|[e-f]{2})(?:f(?:ff|[e-f]{2})){0,2}$/i;
+    const resolveDisplayBgColor = (ann) => {
+        const bgRaw = String(ann?.backgroundColor || '').trim();
+        const bg = (bgRaw && bgRaw.toLowerCase() !== '#ffffff' && bgRaw.toLowerCase() !== 'transparent')
+            ? bgRaw : 'transparent';
+        if (bg !== 'transparent') return bg;
+        const textColor = String(ann?.textColor || '').trim();
+        if (textColor && _WHITE_TEXT_RE.test(textColor.replace(/\s/g, ''))) {
+            return '#2c3e50'; // dark slate placeholder for white-on-missing-bg text
+        }
+        return 'transparent';
     };
 
     const ensureMeasureCtx = () => {
@@ -1523,10 +1616,53 @@
     }
 
     function setAnnotationBox(ann, b) {
+        const oldW = Number(ann.pdfWidth);
+        const oldH = Number(ann.pdfHeight);
         ann.pdfX = b.x; ann.pdfY = b.y; ann.pdfWidth = b.w; ann.pdfHeight = b.h;
         if (ann.annotation_data && typeof ann.annotation_data === 'object') {
             ann.annotation_data.pdfX = b.x; ann.annotation_data.pdfY = b.y;
             ann.annotation_data.pdfWidth = b.w; ann.annotation_data.pdfHeight = b.h;
+        }
+        // One-way conversion to user-authored on resize (dimension change).
+        // Pure moves (same w/h) don't trigger conversion — only an actual resize does.
+        if (Number.isFinite(oldW) && Number.isFinite(oldH)
+            && (Math.abs(oldW - b.w) > 0.25 || Math.abs(oldH - b.h) > 0.25)) {
+            markUserAuthored(ann);
+        }
+    }
+
+    // ── User-authored annotation flag ──────────────────────────────────────────
+    // Approach-1 model: a promoted-from-extraction annotation is rendered using
+    // the exact original PDF geometry (sourceBlock*, sourceSpans, sourceLineBBoxes)
+    // UNTIL the user makes a meaningful modification (resize, text edit, style
+    // change, rich formatting). After that, the annotation is permanently treated
+    // as a simple user-authored text box: reflow to box bounds, annotation-level
+    // font/size/color, no exact-preserve fallback.
+    //
+    // Triggers that flip `_userAuthored = true` (one way — never reset in session):
+    //   - setAnnotationBox on a width/height change (resize)
+    //   - ae input event (text change)
+    //   - applyFormatProperty / applySelectionFormat (style change)
+    //
+    // Persistence: flagged onto `userAuthored` in the saved payload; the load
+    // hydrator restores `_userAuthored` from `userAuthored` OR `promotedDirty`
+    // (legacy flag already persisted).
+    function isUserAuthoredAnnotation(ann) {
+        if (!ann) return false;
+        if (ann._userAuthored) return true;
+        if (ann.userAuthored) return true;
+        if (ann.promotedDirty) return true;
+        if (!ann.promotedFromExtraction) return true;
+        return false;
+    }
+
+    function markUserAuthored(ann) {
+        if (!ann || ann._userAuthored) return;
+        ann._userAuthored = true;
+        ann.promotedDirty = true;
+        if (ann.annotation_data && typeof ann.annotation_data === 'object') {
+            ann.annotation_data.userAuthored = true;
+            ann.annotation_data.promotedDirty = true;
         }
     }
 
@@ -2061,7 +2197,15 @@
             .replace(/\n/g, ' ')
             .replace(/\x00/g, '\n');
         const paragraphs = normalized.split('\n');
-        const lineBBoxes = renderableSourceLines(ann).map((line) => line.bbox).filter(Array.isArray);
+        // For user-authored (edited/resized) annotations, ignore the original per-line
+        // source bboxes: they were captured from the *wide* pre-resize layout with tight
+        // per-line spacing, which produces uneven rows when the text reflows into a
+        // narrower box. Lay out every wrapped line uniformly from box.y using the
+        // annotation-level line height instead.
+        const userAuthoredLayout = isUserAuthoredAnnotation(ann);
+        const lineBBoxes = userAuthoredLayout
+            ? []
+            : renderableSourceLines(ann).map((line) => line.bbox).filter(Array.isArray);
         const lines = [];
         const maxWidthPx = Math.max(10, box.w * scale);
         let cursorTopPts = lineBBoxes.length > 0
@@ -2082,6 +2226,7 @@
                     ? Number(sourceBBox[1]) + offset.dy
                     : (cursorTopPts + ((wi === 0 && pi === 0 && lines.length === 0) ? 0 : (lineHeightPx / scale)));
                 const baselinePts = (() => {
+                    if (userAuthoredLayout) return topPts + (lineHeightPx / scale) * 0.82;
                     const sp = lineSpans(ann, si)[0] || null;
                     if (Array.isArray(sp?.origin) && sp.origin.length >= 2) return Number(sp.origin[1]) + offset.dy;
                     return topPts + (lineHeightPx / scale) * 0.82;
@@ -2121,7 +2266,10 @@
         // styleChanged: user changed a visual property (color, background) via format bar.
         // Forces the "edited" drawing path so the canvas reflects the new style even when
         // the annotation text hasn't been changed.
-        const annBgColor = String(ann.backgroundColor || '').trim();
+        // Use resolveDisplayBgColor so white-text-on-missing-bar annotations get a dark
+        // placeholder background in the rendered overlay (without mutating the stored
+        // ann.backgroundColor, which stays transparent for export).
+        const annBgColor = resolveDisplayBgColor(ann);
         const annOpacity = Math.min(1, Math.max(0, parseFloat(ann.opacity ?? 1)));
         // styleChanged: only force the "edited" redraw path for properties that
         // drawOriginalSource cannot handle (bg color, sub-1 opacity, underline strokes).
@@ -2135,7 +2283,15 @@
         );
         const { dx: posDx, dy: posDy } = annotationOffset(ann);
         const positionChanged = Math.abs(posDx) > 0.25 || Math.abs(posDy) > 0.25;
-        if (!editedInSession && !savedDiffersFromPdf && !dimensionsChanged && !styleChanged && !ann._richHtml) {
+        // Exact-preserve path: use drawOriginalSource ONLY when the annotation is a
+        // pristine promoted-from-extraction annotation with no user modifications.
+        // Once an annotation has been flipped to user-authored (via markUserAuthored,
+        // see setAnnotationBox / ae.input / applyFormatProperty / applySelectionFormat),
+        // it always reflows to box bounds using annotation-level styling. This is the
+        // one-way "approach 1" conversion \u2014 collapses the preserve-vs-reflow fork to
+        // a single check per annotation.
+        const userAuthored = isUserAuthoredAnnotation(ann);
+        if (!userAuthored && !editedInSession && !savedDiffersFromPdf && !dimensionsChanged && !styleChanged && !ann._richHtml) {
             // When only position changed, erase old source area before drawing at new position
             if (positionChanged) {
                 const sL = Number(ann.sourceBlockLeft), sT = Number(ann.sourceBlockTop);
@@ -2220,7 +2376,11 @@
             // erases the background and paints the opaque bg color — the rich-html-layer
             // DIV renders the styled text on top so the canvas and editor use the same
             // DOM layout. Skip fillText here to avoid doubling up.
-            if (!ann._richHtml) {
+            // Same for any user-authored text annotation: it is rendered via the
+            // rich-html-layer to keep wrapping consistent with the active editor.
+            const renderedByDom = !!ann._richHtml
+                || ((ann.type || 'text') === 'text' && (ann.userCreated || isUserAuthoredAnnotation(ann)));
+            if (!renderedByDom) {
                 ctx.fillText(line.text, drawX, drawY);
                 if (ann.underline && line.text) {
                     const fontSize = line.style.fontSizePt * scale;
@@ -2246,7 +2406,14 @@
         const { scale, canvasHeight, annotations } = data;
         layer.innerHTML = '';
         annotations.forEach((ann) => {
-            if (!ann._richHtml) return;
+            const hasRichHtml = !!ann._richHtml;
+            // Also render user-authored text annotations even without _richHtml.
+            // The rich-html-layer is the source of truth for wrapping — canvas
+            // measureText and CSS text layout wrap at different boundaries, so
+            // mirroring the editor DOM here keeps view and edit mode identical.
+            const userAuthoredText = (ann.type || 'text') === 'text'
+                && (ann.userCreated || isUserAuthoredAnnotation(ann));
+            if (!hasRichHtml && !userAuthoredText) return;
             if (ann._uid === activeState.uid) return; // shown via active editor
             const box = resolveAnnBox(ann);
             if (!box) return;
@@ -2257,8 +2424,7 @@
             const height = rect ? Math.max(2, rect.height) : Math.max(2, box.h * scale);
             const style0 = editableLineStyle(ann, 0);
             const lineHeightPx = blockLineHeightPx(ann, 0, scale, style0);
-            const bg = String(ann.backgroundColor || '').trim();
-            const bgCss = (bg && bg !== '#ffffff' && bg !== 'transparent') ? bg : 'transparent';
+            const bgCss = resolveDisplayBgColor(ann);
             const vAlign = (() => {
                 const v = String(ann.verticalAlign || 'top').toLowerCase();
                 if (v === 'middle' || v === 'center') return 'center';
@@ -2283,7 +2449,12 @@
                 `text-align:${ann.textAlign || 'left'}`,
                 `opacity:${parseFloat(ann.opacity ?? 1)}`,
             ].join(';');
-            item.innerHTML = ann._richHtml;
+            if (hasRichHtml) {
+                item.innerHTML = ann._richHtml;
+            } else {
+                const currentText = String(editedTexts[ann._uid] ?? ann.text ?? '');
+                item.innerHTML = renderPlainEditorHTML(ann, currentText, scale);
+            }
             layer.appendChild(item);
         });
     }
@@ -2633,8 +2804,6 @@
         const style = editableLineStyle(ann, 0);
         const lineHeightPx = blockLineHeightPx(ann, 0, scale, style);
         const topShiftPx = editorLineTopShiftPx(ann, 0, scale, style);
-        const renderWeight = ann.fontWeight || style.fontWeight;
-        const renderFontStyle = ann.fontStyle || style.fontStyle;
         const lineAlign = ann.textAlign || 'left';
         // Normalize extracted/user newlines so the box width drives wrap:
         //   \n\n+ → hard paragraph break (visible <br>)
@@ -2652,7 +2821,14 @@
             .join('<br><br>');
         // Suppress maxSourceIndex lint noise — retained for future per-line overrides.
         void maxSourceIndex;
-        return `<div data-line-index="0" style="font-family:${style.fontFamily};font-size:${(style.fontSizePt * scale).toFixed(2)}px;font-weight:${renderWeight};font-style:${renderFontStyle};text-decoration:${ann.underline ? 'underline' : 'none'};line-height:${lineHeightPx.toFixed(2)}px;min-height:${lineHeightPx.toFixed(2)}px;color:${style.fillStyle};text-align:${lineAlign};transform:translateY(-${topShiftPx.toFixed(2)}px);transform-origin:top left;padding:0;margin:0;white-space:normal;overflow-wrap:break-word;word-break:break-word;">${innerHtml}</div>`;
+        // Critical: do NOT hardcode font-family, font-size, color, font-weight, or
+        // font-style here. They must inherit from the outer container (ae or
+        // rich-html-item) — that container's style is rebuilt on every format-bar
+        // change via syncActiveEditor/renderRichHtmlLayer. If we bake those
+        // properties in here they'd override the outer container and format-bar
+        // changes (font family / size / color) wouldn't take effect once this
+        // HTML has been persisted into ann._richHtml.
+        return `<div data-line-index="0" style="text-decoration:${ann.underline ? 'underline' : 'none'};line-height:${lineHeightPx.toFixed(2)}px;min-height:${lineHeightPx.toFixed(2)}px;text-align:${lineAlign};transform:translateY(-${topShiftPx.toFixed(2)}px);transform-origin:top left;padding:0;margin:0;white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word;">${innerHtml}</div>`;
     }
 
     function measureEditedTextHeightPts(ann, text, scale) {
@@ -2767,10 +2943,7 @@
         const lineHeightPx = blockLineHeightPx(ann, 0, scale, style0);
         const sourceRotation = annotationSourceRotationDegrees(ann);
 
-        const aeBgColor = (() => {
-            const bg = String(ann.backgroundColor || '').trim();
-            return (bg && bg !== '#ffffff' && bg !== 'transparent') ? bg : 'transparent';
-        })();
+        const aeBgColor = resolveDisplayBgColor(ann);
         // Vertical alignment: use flex on the outer container so inner content is pushed
         // to top / middle / bottom of the annotation box. The editor HTML remains a single
         // block inside, so flex vertically positions the whole block without disrupting
@@ -3350,6 +3523,8 @@
         if (ann.promotedFromExtraction) {
             payload.promotedDirty = shouldPersistPromotedDirty(ann, currentText);
         }
+        const userAuthoredFlag = !!(ann._userAuthored || ann.userAuthored || payload.promotedDirty);
+        payload.userAuthored = userAuthoredFlag;
         if (payload.annotation_data && typeof payload.annotation_data === 'object') {
             payload.annotation_data = Object.assign({}, payload.annotation_data, {
                 text: currentText,
@@ -3357,6 +3532,7 @@
                 pdfY: payload.pdfY,
                 pdfWidth: payload.pdfWidth,
                 pdfHeight: payload.pdfHeight,
+                userAuthored: userAuthoredFlag,
             });
             if (ann.promotedFromExtraction) {
                 payload.annotation_data.promotedDirty = payload.promotedDirty;
@@ -3366,6 +3542,7 @@
         delete payload._originalPdfBox;
         delete payload._styleDirty;
         delete payload._richHtml;
+        delete payload._userAuthored;
         return payload;
     }
 
@@ -3413,6 +3590,18 @@
             .flatMap((data) => Array.isArray(data?.annotations) ? data.annotations : [])
             .map((ann) => buildPersistedAnnotationPayload(ann));
     }
+    // Test hook: expose on window for headless download tool + inspection.
+    try {
+        window.collectSessionAnnotations = collectSessionAnnotations;
+        Object.defineProperty(window, 'pendingDeletedPromotedSourceKeys', {
+            get: () => pendingDeletedPromotedSourceKeys,
+            configurable: true,
+        });
+        Object.defineProperty(window, 'acroFormEntries', {
+            get: () => (typeof acroFormEntries !== 'undefined' ? acroFormEntries : []),
+            configurable: true,
+        });
+    } catch (_e) {}
 
     async function downloadReadyPdf() {
         if (isSaving || isDownloadingPdf) return;
@@ -3981,6 +4170,7 @@
             const ann  = data?.annotations.find(a => a._uid === activeState.uid);
             if (!ann) return;
             const nextText = getEditorPlainText(e.currentTarget);
+            if (nextText !== String(ann.text ?? '')) markUserAuthored(ann);
             editedTexts[ann._uid] = nextText;
             resizeAnnotationForEditedText(ann, nextText, pi);
             if (ann._richHtml) {
@@ -3993,6 +4183,11 @@
                 if (selection) {
                     setEditorSelectionOffsets(e.currentTarget, selection.start, selection.end);
                 }
+                // Persist the rendered HTML so the rich-html-layer uses the exact same
+                // DOM for non-edit view as the active editor does — canvas measureText
+                // and browser CSS layout wrap at slightly different boundaries, which
+                // previously produced a different line break in view vs. edit mode.
+                ann._richHtml = e.currentTarget.innerHTML;
             }
             markDirty();
             syncActiveEditor();
@@ -4281,6 +4476,7 @@
     function persistRichEditorHtml(active, ae) {
         active.ann._richHtml = ae.innerHTML;
         active.ann._styleDirty = true;
+        markUserAuthored(active.ann);
         markDirty();
     }
 
@@ -4295,6 +4491,7 @@
             sel.addRange(info.range);
         }
         pushUndo();
+        if (info.active?.ann) markUserAuthored(info.active.ann);
         const beforeHtml = info.ae.innerHTML;
         document.execCommand('styleWithCSS', false, true);
         document.execCommand(command, false, valueArg);
@@ -4358,6 +4555,7 @@
         pushUndo();
         update(ann, pi);
         ann._styleDirty = true;
+        markUserAuthored(ann);
         redrawOverlay(pi);
         syncActiveEditor(true);
         markDirty();
@@ -4385,34 +4583,88 @@
             });
         });
     }
-    if (afbTextColor) {
-        // 'input' fires live while dragging in picker; 'change' fires on close and pushes undo
-        afbTextColor.addEventListener('input', () => {
-            // If there is a highlighted selection, recolor just that selection live.
-            if (applySelectionFormat('foreColor', afbTextColor.value)) return;
+    // Color pickers (`<input type="color">`) fire 'input' during drag for live
+    // preview, then 'change' when the user commits (or even when they dismiss
+    // on some browsers). Mutating the annotation directly from 'input' is
+    // destructive: if the user cancels, the last intermediate color sticks —
+    // this is the "I changed font and got a random red box" bug.
+    //
+    // Pattern used here:
+    //   • On first 'input' after the picker was idle, snapshot the current ann
+    //     value so we can revert.
+    //   • Live preview via CSS only (no ann mutation, no markUserAuthored,
+    //     no markDirty).
+    //   • 'change' commits the value through applyFormatProperty (undo +
+    //     markUserAuthored + markDirty). If no 'change' fires after the
+    //     'input' burst (dismissed), the preview is cleared on blur.
+    function setupColorPicker(input, property, { applySelectionMode } = {}) {
+        if (!input) return;
+        const state = { active: false, originalValue: null };
+
+        const beginPreviewIfNeeded = () => {
+            if (state.active) return;
             const active = getActiveAnnAndPage();
             if (!active) return;
-            active.ann.textColor = afbTextColor.value;
-            redrawOverlay(active.pi);
-            syncActiveEditor(true);
-        });
-        afbTextColor.addEventListener('change', () => {
-            if (applySelectionFormat('foreColor', afbTextColor.value)) return;
-            applyFormatProperty(ann => { ann.textColor = afbTextColor.value; });
-        });
-    }
-    if (afbBgColor) {
-        afbBgColor.addEventListener('input', () => {
+            state.active = true;
+            state.originalValue = active.ann[property];
+        };
+
+        const clearPreview = () => {
+            state.active = false;
+            state.originalValue = null;
+        };
+
+        input.addEventListener('input', () => {
+            if (applySelectionMode && applySelectionFormat('foreColor', input.value)) {
+                // A text selection was restyled directly — no ann-level preview
+                // state needed.
+                return;
+            }
+            beginPreviewIfNeeded();
             const active = getActiveAnnAndPage();
             if (!active) return;
-            active.ann.backgroundColor = afbBgColor.value;
-            redrawOverlay(active.pi);
-            syncActiveEditor(true);
+            // Apply a transient preview to the active editor element only.
+            const ae = document.getElementById('ae-' + (active.pi + 1));
+            if (ae) {
+                if (property === 'backgroundColor') {
+                    ae.style.background = input.value;
+                } else if (property === 'textColor') {
+                    ae.style.color = input.value;
+                }
+            }
         });
-        afbBgColor.addEventListener('change', () => {
-            applyFormatProperty(ann => { ann.backgroundColor = afbBgColor.value; });
+
+        input.addEventListener('change', () => {
+            if (applySelectionMode && applySelectionFormat('foreColor', input.value)) {
+                clearPreview();
+                return;
+            }
+            // Commit via the normal formatting path (undo + markUserAuthored + markDirty).
+            applyFormatProperty(ann => { ann[property] = input.value; });
+            clearPreview();
+        });
+
+        input.addEventListener('blur', () => {
+            if (!state.active) return;
+            // If we still have live preview state here, the user dismissed the
+            // picker without committing via 'change'. Restore the previous
+            // value on the editor so no visual drift is left behind, and
+            // re-sync so the preview clears.
+            const active = getActiveAnnAndPage();
+            if (active) {
+                const ae = document.getElementById('ae-' + (active.pi + 1));
+                if (ae) {
+                    if (property === 'backgroundColor') ae.style.background = '';
+                    else if (property === 'textColor') ae.style.color = '';
+                }
+                syncActiveEditor(true);
+            }
+            clearPreview();
         });
     }
+
+    setupColorPicker(afbTextColor, 'textColor', { applySelectionMode: true });
+    setupColorPicker(afbBgColor, 'backgroundColor');
     if (afbOpacity) {
         afbOpacity.addEventListener('change', () => {
             applyFormatProperty(ann => { ann.opacity = parseFloat(afbOpacity.value); });
@@ -4528,6 +4780,7 @@
                 ? embeddedFontsBySource.file
                 : ((data.embedded_fonts && typeof data.embedded_fonts === 'object') ? data.embedded_fonts : null);
         loadEmbeddedFontFaces(preferredEmbeddedFonts);
+        populateFontDropdown();
 
         acroFormEntries = Array.isArray(data.acro_form_entries) ? data.acro_form_entries : [];
         acroFieldLookup = buildAcroFieldLookup(acroFormEntries);
@@ -4566,6 +4819,11 @@
                 && Math.abs(storedBox.w - sourceBox.w) <= TOL
                 && Math.abs(storedBox.h - sourceBox.h) <= TOL;
             hydrated._originalPdfBox = roughlyEqual ? storedBox : (sourceBox || storedBox || null);
+            // Restore user-authored flag from any persisted signal (new `userAuthored`,
+            // legacy `promotedDirty`, or a previously-resized box). Once set, the
+            // annotation is rendered via the reflow path instead of drawOriginalSource.
+            const adUserAuthored = !!(hydrated.annotation_data && hydrated.annotation_data.userAuthored);
+            hydrated._userAuthored = !!(hydrated.userAuthored || adUserAuthored || hydrated.promotedDirty || !roughlyEqual);
             return hydrated;
         });
         allAnnotations.forEach(ann => { editedTexts[ann._uid] = String(ann.text || ''); });

@@ -1,18 +1,14 @@
 #!/usr/bin/env node
 /**
- * Download the annotated PDF for a document without triggering a browser download popup.
- *
- *   node tools/download_annotated_pdf.cjs <document_id> [output_path]
- *
- * Defaults: document_id=2855, output_path=/tmp/doc<id>_download.pdf
- * Env: BASE_URL, ADMIN_EMAIL, ADMIN_PASSWORD
+ * Test: download doc 2855 with the "5. I will notify the DSO..." annotation
+ * programmatically resized to a narrow box, to reproduce the user's reported
+ * "PDF adds line breaks" bug and verify fixes.
  */
 const fs = require('fs');
 const path = require('path');
 
 const localBrowsers = path.resolve(__dirname, '..', 'node_modules', 'playwright-core', '.local-browsers');
 if (fs.existsSync(localBrowsers)) process.env.PLAYWRIGHT_BROWSERS_PATH = localBrowsers;
-
 const { chromium } = require('playwright');
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:8081';
@@ -20,7 +16,7 @@ const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'eddie.gray.biz@gmail.com';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'codex-test-admin-2861';
 
 const docId = Number(process.argv[2] || 2855);
-const outPath = process.argv[3] || `/tmp/doc${docId}_download.pdf`;
+const outPath = process.argv[3] || `/tmp/doc${docId}_resized.pdf`;
 
 (async () => {
     const browser = await chromium.launch({ headless: true });
@@ -28,7 +24,6 @@ const outPath = process.argv[3] || `/tmp/doc${docId}_download.pdf`;
     const page = await ctx.newPage();
 
     try {
-        // Login
         await page.goto(`${BASE_URL}/admin/login`, { waitUntil: 'domcontentloaded' });
         await page.fill('#data\\.email', ADMIN_EMAIL);
         await page.fill('#data\\.password', ADMIN_PASSWORD);
@@ -37,25 +32,27 @@ const outPath = process.argv[3] || `/tmp/doc${docId}_download.pdf`;
             page.getByRole('button', { name: 'Sign in' }).click(),
         ]);
 
-        // Land on edit-new and let it fully load so pageData/annotations hydrate.
         await page.goto(`${BASE_URL}/documents/${docId}/edit-new`, { waitUntil: 'domcontentloaded' });
-        // Wait for at least one page canvas to render before collecting annotations.
         await page.waitForSelector('canvas.pdf-canvas, canvas[data-page-index]', { timeout: 20000 }).catch(() => {});
         await page.waitForTimeout(3500);
 
-        // POST to the download endpoint from within the page, using the page's
-        // own collected session annotations so the Python renderer has the
-        // current (saved) state to apply.
         const b64 = await page.evaluate(async (id) => {
             const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
-            const collect = (typeof window.collectSessionAnnotations === 'function')
-                ? window.collectSessionAnnotations
-                : null;
-            const sessionAnnotations = collect ? collect() : [];
-            const acroFormEntries = Array.isArray(window.acroFormEntries) ? window.acroFormEntries : [];
-            const deletedKeys = (window.pendingDeletedPromotedSourceKeys instanceof Set)
-                ? Array.from(window.pendingDeletedPromotedSourceKeys)
-                : [];
+            const collected = window.collectSessionAnnotations();
+
+            // Mutate the "5." annotation: narrow resize + user-authored flags.
+            const modified = collected.map((ann) => {
+                const text = String(ann?.text || '');
+                if (!text.startsWith('5. I will notify the DSO at the earliest')) return ann;
+                const out = { ...ann };
+                out.pdfWidth = 269.55;
+                // Keep height short; the export should REFLOW to multiple lines.
+                out.pdfHeight = 75.33;
+                out.userAuthored = true;
+                out.promotedDirty = true;
+                return out;
+            });
+
             const r = await fetch(`/documents/${id}/download-annotated-pdf`, {
                 method: 'POST',
                 headers: {
@@ -65,12 +62,12 @@ const outPath = process.argv[3] || `/tmp/doc${docId}_download.pdf`;
                 },
                 credentials: 'same-origin',
                 body: JSON.stringify({
-                    annotations: sessionAnnotations,
-                    session_annotations: sessionAnnotations,
-                    acro_form_entries: acroFormEntries,
-                    deleted_promoted_source_keys: deletedKeys,
+                    annotations: modified,
+                    session_annotations: modified,
+                    acro_form_entries: (window.acroFormEntries || []),
+                    deleted_promoted_source_keys: Array.from(window.pendingDeletedPromotedSourceKeys || []),
                     use_exact_download_path: true,
-                    session_id: 'cli-download-' + Date.now(),
+                    session_id: 'cli-resize-test-' + Date.now(),
                 }),
             });
             if (!r.ok) throw new Error(`status=${r.status} body=${(await r.text()).slice(0, 400)}`);
@@ -78,18 +75,17 @@ const outPath = process.argv[3] || `/tmp/doc${docId}_download.pdf`;
             const bytes = new Uint8Array(buf);
             let bin = '';
             for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-            return { b64: btoa(bin), count: sessionAnnotations.length };
+            return btoa(bin);
         }, docId);
-        console.log(`[download] session annotations collected: ${b64.count}`);
 
-        const pdfBytes = Buffer.from(b64.b64, 'base64');
+        const pdfBytes = Buffer.from(b64, 'base64');
         fs.writeFileSync(outPath, pdfBytes);
-        console.log(`[download] wrote ${pdfBytes.length} bytes to ${outPath}`);
+        console.log(`[resize-test] wrote ${pdfBytes.length} bytes to ${outPath}`);
     } finally {
         await ctx.close();
         await browser.close();
     }
 })().catch((err) => {
-    console.error('[download] FATAL:', err.message);
+    console.error('[resize-test] FATAL:', err.message);
     process.exit(1);
 });

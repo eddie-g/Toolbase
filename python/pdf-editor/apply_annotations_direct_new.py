@@ -2853,8 +2853,23 @@ def normalized_opacity(value: Any) -> float:
 
 
 def wrap_text_to_width(font: fitz.Font, text: str, font_size: float, max_width: float) -> list[str]:
+    # Mirror the edit-new.blade.php renderer (buildEditedLines / renderPlainEditorHTML):
+    # single "\n" is a soft break that reflows to a space; only "\n\n+" is a hard
+    # paragraph break that yields a visible blank line. Otherwise the downloaded PDF
+    # shows paragraph gaps between every wrapped source line.
     safe_text = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
-    paragraphs = safe_text.split("\n")
+    normalized = (
+        safe_text
+        .replace("\n\n", "\x00")  # mark hard breaks
+    )
+    # Collapse any remaining 2+ consecutive \n (already caught by the 2-char replace
+    # but handle 3+ explicitly in case of e.g. "\n\n\n").
+    while "\n\x00" in normalized:
+        normalized = normalized.replace("\n\x00", "\x00")
+    while "\x00\n" in normalized:
+        normalized = normalized.replace("\x00\n", "\x00")
+    normalized = normalized.replace("\n", " ").replace("\x00", "\n")
+    paragraphs = normalized.split("\n")
     lines: list[str] = []
 
     def push_wrapped_word(word: str) -> None:

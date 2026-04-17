@@ -3253,6 +3253,79 @@ def _looks_like_detached_row_label(text):
     return re.match(r"^[A-Za-z0-9&()/'’.·\- ]+$", normalized) is not None
 
 
+def _line_item_dominant_color(line_item):
+    """Return the span color (24-bit int) that covers the most characters on a line.
+
+    Used by _split_group_by_color_change to detect paragraph breaks caused by
+    color transitions within a single PyMuPDF text block (e.g. a form with
+    dark-grey body text and a white-on-colored-bar note that PyMuPDF emits as
+    one block because they touch vertically).
+    """
+    line = line_item.get('line') or {}
+    color_char_counts = {}
+    for span in line.get('spans', []) or []:
+        text = str(span.get('text') or '')
+        stripped = text.strip()
+        if not stripped:
+            continue
+        color = span.get('color')
+        if color is None:
+            continue
+        try:
+            color_int = int(color)
+        except (TypeError, ValueError):
+            continue
+        color_char_counts[color_int] = color_char_counts.get(color_int, 0) + len(stripped)
+    if not color_char_counts:
+        return None
+    return max(color_char_counts.items(), key=lambda kv: kv[1])[0]
+
+
+def _colors_differ_significantly(a, b):
+    """True iff two 24-bit sRGB colors differ by more than a small tolerance.
+
+    Uses max-channel distance so pure-white vs. very-dark-grey (e.g. #231F20)
+    is clearly separated from anti-alias jitter between near-black variants.
+    """
+    if a is None or b is None:
+        return False
+    if a == b:
+        return False
+    ar, ag, ab = (a >> 16) & 0xFF, (a >> 8) & 0xFF, a & 0xFF
+    br, bg, bb = (b >> 16) & 0xFF, (b >> 8) & 0xFF, b & 0xFF
+    return max(abs(ar - br), abs(ag - bg), abs(ab - bb)) >= 64
+
+
+def _split_group_by_color_change(group_items):
+    """Split a group of line_items whenever two adjacent lines use distinctly
+    different text colors.
+
+    PyMuPDF's get_text("dict") sometimes emits multiple conceptually-distinct
+    paragraphs inside a single block when they happen to be near each other
+    vertically — even if the colors differ (e.g. dark-grey body text stacked
+    against a white-on-colored-bar note). Those should be separate annotations
+    so the editor can assign each the correct color and the right bounding box.
+    """
+    if len(group_items) <= 1:
+        return [group_items]
+
+    ordered = sorted(group_items, key=lambda it: (it['bbox'][1], it['bbox'][0]))
+    split_groups = [[ordered[0]]]
+    prev_color = _line_item_dominant_color(ordered[0])
+    for item in ordered[1:]:
+        item_color = _line_item_dominant_color(item)
+        if prev_color is not None and item_color is not None and _colors_differ_significantly(prev_color, item_color):
+            split_groups.append([item])
+        else:
+            split_groups[-1].append(item)
+        # Track the dominant color of the most-recent line in the current group
+        # so a run of same-colored lines continues to anchor to that color.
+        if item_color is not None:
+            prev_color = item_color
+
+    return split_groups
+
+
 def _split_stacked_form_header_groups(group_items):
     if len(group_items) <= 1:
         return [group_items]
@@ -4618,6 +4691,23 @@ def extract_text_with_pymupdf(pdf_path):
                     for group_items in groups:
                         form_split_groups.extend(_split_stacked_form_header_groups(group_items))
                     groups = form_split_groups if form_split_groups else groups
+
+                    # Color-change split: PyMuPDF can emit one block that mixes
+                    # paragraphs of very different colors (e.g. dark-grey body
+                    # text stacked against a white-on-colored-bar note). Separate
+                    # those so each annotation carries the correct color and its
+                    # own tight bounding box.
+                    color_split_groups = []
+                    for group_items in groups:
+                        split = _split_group_by_color_change(group_items)
+                        if len(split) > 1:
+                            for sub in split:
+                                for it in sub:
+                                    it['_from_xgap_split'] = True
+                            color_split_groups.extend(split)
+                        else:
+                            color_split_groups.append(group_items)
+                    groups = color_split_groups if color_split_groups else groups
 
                     groups = sorted(groups, key=lambda items: min(item['y0'] for item in items) if items else 0)
 
