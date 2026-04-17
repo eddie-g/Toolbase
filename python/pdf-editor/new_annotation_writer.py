@@ -594,8 +594,34 @@ def build_html_font_face_css() -> str:
 HTML_FONT_FACE_CSS = build_html_font_face_css()
 
 
+def _promoted_annotation_was_resized(ann: Dict[str, Any]) -> bool:
+    """True if the annotation's current PDF box differs meaningfully from its
+    extracted source block — i.e. the user dragged a resize handle.
+    """
+    try:
+        cur_w = float(ann.get("pdfWidth") or 0)
+        cur_h = float(ann.get("pdfHeight") or 0)
+        src_w = float(ann.get("sourceBlockWidth") or 0)
+        src_h = float(ann.get("sourceBlockHeight") or 0)
+    except Exception:
+        return False
+    if cur_w <= 0 or src_w <= 0:
+        return False
+    if abs(cur_w - src_w) > 2.0:
+        return True
+    if cur_h > 0 and src_h > 0 and abs(cur_h - src_h) > 2.0:
+        return True
+    return False
+
+
 def should_preserve_promoted_source_lines(ann: Dict[str, Any], text: str) -> bool:
     if not bool(ann.get("promotedFromExtraction")):
+        return False
+
+    # If the user resized the annotation box the export must reflow into the new
+    # bounds. Preserving the original PDF layout here causes text to spread
+    # horizontally past the new box.
+    if bool(ann.get("promotedDirty")) and _promoted_annotation_was_resized(ann):
         return False
 
     normalized_text_lines = str(text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")

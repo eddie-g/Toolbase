@@ -560,10 +560,35 @@ def build_html_font_face_css() -> str:
 HTML_FONT_FACE_CSS = build_html_font_face_css()
 
 
+def _promoted_annotation_was_resized(ann: Dict[str, Any]) -> bool:
+    """True if the annotation's current PDF box differs meaningfully from its
+    extracted source block — i.e. the user dragged a resize handle.
+    """
+    try:
+        cur_w = float(ann.get("pdfWidth") or 0)
+        cur_h = float(ann.get("pdfHeight") or 0)
+        src_w = float(ann.get("sourceBlockWidth") or 0)
+        src_h = float(ann.get("sourceBlockHeight") or 0)
+    except Exception:
+        return False
+    if cur_w <= 0 or src_w <= 0:
+        return False
+    if abs(cur_w - src_w) > 2.0:
+        return True
+    if cur_h > 0 and src_h > 0 and abs(cur_h - src_h) > 2.0:
+        return True
+    return False
+
+
 def should_preserve_promoted_source_lines(ann: Dict[str, Any], text: str) -> bool:
     if not bool(ann.get("promotedFromExtraction")):
         return False
     if bool(ann.get("promotedReflowEnabled")):
+        return False
+    # If the user resized the annotation box the export must reflow into the new
+    # bounds. Preserving the original PDF layout here causes text to spread
+    # horizontally past the new box.
+    if bool(ann.get("promotedDirty")) and _promoted_annotation_was_resized(ann):
         return False
 
     normalized_text_lines = str(text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
@@ -1094,6 +1119,8 @@ def normalize_exact_source_line_layout(
     annotation_text_color = str(ann.get("textColor") or "#000000").strip() or "#000000"
     raw_annotation_font_family = str(ann.get("fontFamily") or "").strip()
     raw_annotation_font_source_name = str(ann.get("fontSourceName") or "").strip()
+    raw_annotation_font_weight = str(ann.get("fontWeight") or "").strip()
+    raw_annotation_font_style = str(ann.get("fontStyle") or "").strip()
     annotation_font_family = raw_annotation_font_family or "Helvetica"
     annotation_font_source_name = (
         raw_annotation_font_source_name
@@ -1145,6 +1172,8 @@ def normalize_exact_source_line_layout(
                 "font_style": str(span.get("fontStyle") or span.get("font_style") or ann.get("fontStyle") or "normal"),
                 "color": str(span.get("color") or ann.get("textColor") or "#000000"),
                 "underline": bool(span.get("underline")),
+                "rotation": span.get("rotation"),
+                "direction": span.get("direction"),
             })
     visible_source_anchor_x = None
     if normalized_source_spans:
@@ -1230,12 +1259,12 @@ def normalize_exact_source_line_layout(
         and annotation_text_color.lower() != dominant_source_color.lower()
     )
     force_annotation_font_weight = (
-        bool(annotation_font_weight)
+        bool(raw_annotation_font_weight)
         and bool(dominant_source_font_weight)
         and annotation_font_weight.lower() != dominant_source_font_weight.lower()
     )
     force_annotation_font_style = (
-        bool(annotation_font_style)
+        bool(raw_annotation_font_style)
         and bool(dominant_source_font_style)
         and annotation_font_style.lower() != dominant_source_font_style.lower()
     )
@@ -1378,9 +1407,9 @@ def normalize_exact_source_line_layout(
             line_style = {
                 "font_family": annotation_font_family if force_annotation_font_family else (dominant_span.get("font") or annotation_font_family),
                 "font_source_name": annotation_font_source_name if force_annotation_font_family else (dominant_span.get("font") or annotation_font_source_name),
-                "font_size": float(font_size or 0) if force_annotation_font_size else float(dominant_span.get("font_size") or font_size or 0),
-                "font_weight": annotation_font_weight if force_annotation_font_weight else (dominant_span.get("font_weight") or annotation_font_weight),
-                "font_style": annotation_font_style if force_annotation_font_style else (dominant_span.get("font_style") or annotation_font_style),
+                "font_size": float(font_size or 0) if force_annotation_font_size else float(dominant_span.get("font_size") or dominant_span.get("fontSize") or font_size or 0),
+                "font_weight": annotation_font_weight if force_annotation_font_weight else (dominant_span.get("font_weight") or dominant_span.get("fontWeight") or annotation_font_weight),
+                "font_style": annotation_font_style if force_annotation_font_style else (dominant_span.get("font_style") or dominant_span.get("fontStyle") or annotation_font_style),
                 "color": annotation_text_color if force_annotation_text_color else (dominant_span.get("color") or annotation_text_color),
                 "underline": annotation_underline if force_annotation_underline else any(bool(span.get("underline")) for span in line_spans),
             }
@@ -1401,6 +1430,7 @@ def normalize_exact_source_line_layout(
             "baseline_x": baseline_x,
             "baseline_y": baseline_y,
             "align": _infer_line_align(rect),
+            "rotation": infer_exact_source_line_rotation(line_spans, rect),
             "font_family": line_style.get("font_family") or ann.get("fontFamily"),
             "font_source_name": line_style.get("font_source_name") or ann.get("fontSourceName") or ann.get("fontFamily"),
             "font_size": float(line_style.get("font_size") or font_size or 0),
@@ -1411,6 +1441,179 @@ def normalize_exact_source_line_layout(
         })
 
     return layout
+
+
+def compute_exact_source_line_scale_x(text_width: float, target_width: float) -> float:
+    try:
+        measured_width = float(text_width or 0.0)
+        available_width = float(target_width or 0.0)
+    except Exception:
+        return 1.0
+
+    if measured_width <= 0 or available_width <= 0:
+        return 1.0
+
+    raw_ratio = available_width / measured_width
+    if not math.isfinite(raw_ratio) or raw_ratio <= 0:
+        return 1.0
+
+    clamped_ratio = max(0.7, min(1.3, raw_ratio))
+    return 1.0 if abs(clamped_ratio - 1.0) <= 0.015 else clamped_ratio
+
+
+def normalize_quarter_turn_degrees(value: Any) -> float:
+    try:
+        raw_rotation = float(value or 0.0)
+    except Exception:
+        return 0.0
+    normalized = (((raw_rotation % 360.0) + 540.0) % 360.0) - 180.0
+    if abs(normalized - 90.0) <= 12.0:
+        return 90.0
+    if abs(normalized + 90.0) <= 12.0:
+        return -90.0
+    return 0.0
+
+
+def infer_exact_source_rotation(
+    raw_rotation: Any,
+    direction: Any = None,
+    rect: Optional[fitz.Rect] = None,
+) -> float:
+    normalized_rotation = normalize_quarter_turn_degrees(raw_rotation)
+    if normalized_rotation:
+        return normalized_rotation
+
+    if isinstance(direction, (list, tuple)) and len(direction) >= 2:
+        try:
+            dx = float(direction[0])
+            dy = float(direction[1])
+        except Exception:
+            dx = 0.0
+            dy = 0.0
+        if abs(dy) > 0.75 and abs(dx) <= 0.35:
+            return -90.0 if dy < 0.0 else 90.0
+
+    if rect is not None and not rect.is_empty and rect.height > rect.width * 1.2:
+        if isinstance(direction, (list, tuple)) and len(direction) >= 2:
+            try:
+                dy = float(direction[1])
+            except Exception:
+                dy = 0.0
+            if abs(dy) > 0.75:
+                return -90.0 if dy < 0.0 else 90.0
+
+    return 0.0
+
+
+def infer_exact_source_line_rotation(
+    spans: list[Dict[str, Any]],
+    rect: Optional[fitz.Rect] = None,
+) -> float:
+    positive_weight = 0.0
+    negative_weight = 0.0
+
+    for span in spans or []:
+        if not isinstance(span, dict):
+            continue
+        span_bbox = span.get("bbox")
+        span_rect = None
+        if isinstance(span_bbox, (list, tuple)) and len(span_bbox) >= 4:
+            try:
+                span_rect = fitz.Rect(
+                    float(span_bbox[0]),
+                    float(span_bbox[1]),
+                    float(span_bbox[2]),
+                    float(span_bbox[3]),
+                )
+            except Exception:
+                span_rect = None
+        rotation = infer_exact_source_rotation(
+            span.get("rotation"),
+            span.get("direction"),
+            span_rect,
+        )
+        if not rotation:
+            continue
+        weight = max(
+            1.0,
+            float(span_rect.width) if isinstance(span_rect, fitz.Rect) else 0.0,
+            float(span_rect.height) if isinstance(span_rect, fitz.Rect) else 0.0,
+            float(len(str(span.get("text") or "").replace(" ", ""))),
+        )
+        if rotation > 0:
+            positive_weight += weight
+        else:
+            negative_weight += weight
+
+    if positive_weight or negative_weight:
+        return 90.0 if positive_weight >= negative_weight else -90.0
+
+    return infer_exact_source_rotation(None, None, rect)
+
+
+def _apply_linear_matrix(matrix: fitz.Matrix, x: float, y: float) -> tuple[float, float]:
+    return (
+        (float(getattr(matrix, "a", 1.0) or 0.0) * x) + (float(getattr(matrix, "c", 0.0) or 0.0) * y),
+        (float(getattr(matrix, "b", 0.0) or 0.0) * x) + (float(getattr(matrix, "d", 1.0) or 0.0) * y),
+    )
+
+
+def combine_morphs(
+    first: Optional[Tuple[fitz.Point, fitz.Matrix]],
+    second: Optional[Tuple[fitz.Point, fitz.Matrix]],
+) -> Optional[Tuple[fitz.Point, fitz.Matrix]]:
+    if first is None:
+        return second
+    if second is None:
+        return first
+
+    first_pivot, first_matrix = first
+    second_pivot, second_matrix = second
+
+    composed_a = (second_matrix.a * first_matrix.a) + (second_matrix.c * first_matrix.b)
+    composed_b = (second_matrix.b * first_matrix.a) + (second_matrix.d * first_matrix.b)
+    composed_c = (second_matrix.a * first_matrix.c) + (second_matrix.c * first_matrix.d)
+    composed_d = (second_matrix.b * first_matrix.c) + (second_matrix.d * first_matrix.d)
+
+    first_offset = (
+        float(first_pivot.x) - ((first_matrix.a * float(first_pivot.x)) + (first_matrix.c * float(first_pivot.y))),
+        float(first_pivot.y) - ((first_matrix.b * float(first_pivot.x)) + (first_matrix.d * float(first_pivot.y))),
+    )
+    transformed_first_offset = _apply_linear_matrix(second_matrix, first_offset[0], first_offset[1])
+    second_offset = (
+        float(second_pivot.x) - ((second_matrix.a * float(second_pivot.x)) + (second_matrix.c * float(second_pivot.y))),
+        float(second_pivot.y) - ((second_matrix.b * float(second_pivot.x)) + (second_matrix.d * float(second_pivot.y))),
+    )
+    combined_offset = (
+        transformed_first_offset[0] + second_offset[0],
+        transformed_first_offset[1] + second_offset[1],
+    )
+
+    coeff_a = 1.0 - composed_a
+    coeff_b = -composed_c
+    coeff_c = -composed_b
+    coeff_d = 1.0 - composed_d
+    determinant = (coeff_a * coeff_d) - (coeff_b * coeff_c)
+
+    if abs(determinant) <= 1e-9:
+        if (
+            abs(composed_a - 1.0) <= 1e-9
+            and abs(composed_b) <= 1e-9
+            and abs(composed_c) <= 1e-9
+            and abs(composed_d - 1.0) <= 1e-9
+            and abs(combined_offset[0]) <= 1e-6
+            and abs(combined_offset[1]) <= 1e-6
+        ):
+            return None
+        return second
+
+    pivot_x = ((coeff_d * combined_offset[0]) - (coeff_b * combined_offset[1])) / determinant
+    pivot_y = ((-coeff_c * combined_offset[0]) + (coeff_a * combined_offset[1])) / determinant
+
+    return (
+        fitz.Point(pivot_x, pivot_y),
+        fitz.Matrix(composed_a, composed_b, composed_c, composed_d, 0.0, 0.0),
+    )
 
 
 def draw_text_using_exact_source_lines(
@@ -1468,6 +1671,7 @@ def draw_text_using_exact_source_lines(
         line_align = line_entry.get("align")
         if line_align is None:
             line_align = align
+        line_rotation = normalize_quarter_turn_degrees(line_entry.get("rotation"))
 
         text_width = line_font.text_length(line_text, fontsize=line_font_size)
         line_font_ascender = float(getattr(line_font, "ascender", 0.0) or 0.0)
@@ -1490,10 +1694,28 @@ def draw_text_using_exact_source_lines(
             else line_rect.x0
         )
         if line_entry.get("baseline_x") is None:
+            target_extent = line_rect.height if line_rotation else line_rect.width
+            scaled_text_width = text_width * compute_exact_source_line_scale_x(text_width, target_extent)
             if line_align == 1:
-                draw_x = ((line_rect.x0 + line_rect.x1) / 2.0) - (text_width / 2.0)
+                draw_x = ((line_rect.x0 + line_rect.x1) / 2.0) - (scaled_text_width / 2.0)
             elif line_align == 2:
-                draw_x = line_rect.x1 - text_width
+                draw_x = line_rect.x1 - scaled_text_width
+
+        target_extent = line_rect.height if line_rotation else line_rect.width
+        scale_x = compute_exact_source_line_scale_x(text_width, target_extent)
+        line_morph: Optional[Tuple[fitz.Point, fitz.Matrix]] = None
+        if scale_x != 1.0:
+            scale_morph = (
+                fitz.Point(draw_x, baseline_y),
+                fitz.Matrix(scale_x, 0.0, 0.0, 1.0, 0.0, 0.0),
+            )
+            line_morph = scale_morph
+        if line_rotation:
+            line_morph = combine_morphs(
+                line_morph,
+                build_rotation_morph(line_rotation, fitz.Point(draw_x, baseline_y)),
+            )
+        line_morph = combine_morphs(line_morph, morph)
 
         page.insert_text(
             fitz.Point(draw_x, baseline_y),
@@ -1504,19 +1726,20 @@ def draw_text_using_exact_source_lines(
             overlay=True,
             fill_opacity=opacity,
             stroke_opacity=opacity,
-            morph=morph,
+            morph=line_morph,
         )
 
         if resolve_annotation_underline(line_ann):
             underline_y = line_rect.y1 - max(0.5, line_font_size * 0.08)
+            underline_width = text_width * scale_x
             draw_rotated_line(
                 page,
                 fitz.Point(draw_x, underline_y),
-                fitz.Point(draw_x + text_width, underline_y),
+                fitz.Point(draw_x + underline_width, underline_y),
                 color=line_color,
                 width=max(0.5, line_font_size * 0.06),
                 opacity=opacity,
-                morph=morph,
+                morph=line_morph,
             )
 
     return True

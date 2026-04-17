@@ -166,6 +166,25 @@
             z-index: 3;
         }
 
+        /* Rich-HTML display layer — non-active annotations with per-selection formatting
+         * (ann._richHtml) are rendered as positioned DIVs so the canvas and editor use the
+         * same DOM layout. The layer is pointer-events:none so clicks still hit the canvas
+         * for selection. z-index sits above the overlay canvas but below the active editor. */
+        .rich-html-layer {
+            position: absolute; top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 4;
+        }
+        .rich-html-item {
+            position: absolute;
+            box-sizing: border-box;
+            padding: 0; margin: 0;
+            overflow: visible;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
         .edit-new-acro {
             position: absolute;
             box-sizing: border-box;
@@ -478,6 +497,141 @@
             text-align: center;
             font-weight: 600;
         }
+
+        /* ── Text Format Bar ─────────────────────────────────────────────────── */
+        .ann-format-bar {
+            position: fixed;
+            top: 134px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: none;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: nowrap;
+            padding: 6px 10px;
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.10), 0 1px 4px rgba(0,0,0,0.06);
+            z-index: 38;
+            white-space: nowrap;
+            font-size: 13px;
+            color: #1a202c;
+            overflow-x: auto;
+            max-width: calc(100vw - 32px);
+        }
+        .ann-format-bar.is-visible { display: flex; }
+        .afb-divider {
+            width: 1px;
+            height: 22px;
+            background: #e5e7eb;
+            margin: 0 2px;
+            flex-shrink: 0;
+        }
+        .ann-format-bar select {
+            background: #f3f4f6;
+            border: 1px solid #e5e7eb;
+            color: #1a202c;
+            border-radius: 6px;
+            padding: 4px 6px;
+            font-size: 12px;
+            height: 30px;
+            outline: none;
+            cursor: pointer;
+            -webkit-appearance: none;
+            appearance: none;
+            padding-right: 20px;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%239ca3af'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 6px center;
+        }
+        .ann-format-bar select:focus { border-color: #93c5fd; outline: none; }
+        .afb-font-select { width: 140px; }
+        .afb-size-group {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .afb-size-label {
+            font-size: 11px;
+            color: #6b7280;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            flex-shrink: 0;
+        }
+        .afb-size-slider {
+            width: 80px;
+            height: 20px;
+            padding: 0;
+            border: none;
+            background: transparent;
+            accent-color: #3b82f6;
+            cursor: ew-resize;
+        }
+        .afb-size-value {
+            min-width: 36px;
+            padding: 0 6px;
+            height: 30px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 6px;
+            background: #f3f4f6;
+            border: 1px solid #e5e7eb;
+            font-size: 12px;
+            font-variant-numeric: tabular-nums;
+            color: #1a202c;
+        }
+        .afb-color-wrap {
+            position: relative;
+            width: 30px;
+            height: 30px;
+            border-radius: 6px;
+            overflow: hidden;
+            border: 1px solid #e5e7eb;
+            flex-shrink: 0;
+            cursor: pointer;
+            background: #f3f4f6;
+        }
+        .afb-color-wrap input[type="color"] {
+            position: absolute;
+            width: 200%;
+            height: 200%;
+            top: -50%;
+            left: -50%;
+            border: none;
+            cursor: pointer;
+            padding: 0;
+        }
+        .afb-opacity-group {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .afb-btn {
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #f3f4f6;
+            border: 1px solid #e5e7eb;
+            color: #6b7280;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
+            flex-shrink: 0;
+        }
+        .afb-btn:hover { background: #e5e7eb; color: #111827; }
+        .afb-btn.is-active,
+        .afb-btn[aria-pressed="true"] {
+            background: linear-gradient(180deg, #dbeafe 0%, #bfdbfe 100%);
+            border-color: #3b82f6;
+            color: #1d4ed8;
+        }
+        .afb-btn.is-danger { color: #ef4444; }
+        .afb-btn.is-danger:hover { background: #fee2e2; border-color: #fca5a5; color: #dc2626; }
     </style>
 </head>
 <body>
@@ -595,6 +749,84 @@
     <button type="button" id="page-next" aria-label="Next page">›</button>
 </div>
 
+<!-- Text Format Bar — shown when an annotation is selected -->
+<div class="ann-format-bar" id="ann-format-bar">
+    <!-- Font Family -->
+    <select class="afb-font-select" id="afb-font" title="Font Family">
+        <option value="Helvetica">Helvetica</option>
+        <option value="Arial">Arial</option>
+        <option value="Georgia">Georgia</option>
+        <option value="TimesRoman">Times Roman</option>
+        <option value="Courier">Courier</option>
+        <option value="Verdana">Verdana</option>
+        <option value="Palatino">Palatino</option>
+        <option value="Garamond">Garamond</option>
+        <option value="TrebuchetMS">Trebuchet MS</option>
+    </select>
+    <div class="afb-divider"></div>
+    <!-- Font Size -->
+    <div class="afb-size-group" title="Font Size">
+        <span class="afb-size-label">Size</span>
+        <input type="range" class="afb-size-slider" id="afb-size" min="8" max="72" step="1" value="12" />
+        <span class="afb-size-value" id="afb-size-value">12pt</span>
+    </div>
+    <div class="afb-divider"></div>
+    <!-- Text Color -->
+    <div class="afb-color-wrap" title="Text Color">
+        <input type="color" id="afb-text-color" value="#000000" />
+    </div>
+    <!-- Background Color -->
+    <div class="afb-color-wrap" title="Background Color" style="margin-left:2px;">
+        <input type="color" id="afb-bg-color" value="#ffffff" />
+    </div>
+    <div class="afb-divider"></div>
+    <!-- Opacity -->
+    <div class="afb-opacity-group">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#9ca3af;flex-shrink:0;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        <select id="afb-opacity" title="Opacity" style="width:64px;">
+            <option value="1">100%</option>
+            <option value="0.9">90%</option>
+            <option value="0.8">80%</option>
+            <option value="0.7">70%</option>
+            <option value="0.6">60%</option>
+            <option value="0.5">50%</option>
+            <option value="0.4">40%</option>
+            <option value="0.3">30%</option>
+            <option value="0.2">20%</option>
+            <option value="0.1">10%</option>
+        </select>
+    </div>
+    <div class="afb-divider"></div>
+    <!-- Bold -->
+    <button type="button" class="afb-btn" id="afb-bold" title="Bold" aria-pressed="false"><strong>B</strong></button>
+    <!-- Italic -->
+    <button type="button" class="afb-btn" id="afb-italic" title="Italic" aria-pressed="false"><em>I</em></button>
+    <!-- Underline -->
+    <button type="button" class="afb-btn" id="afb-underline" title="Underline" aria-pressed="false" style="text-decoration:underline;">U</button>
+    <div class="afb-divider"></div>
+    <!-- Text Align -->
+    <select id="afb-align" title="Text Alignment" style="width:76px;">
+        <option value="left">Left</option>
+        <option value="center">Center</option>
+        <option value="right">Right</option>
+    </select>
+    <!-- Vertical Align -->
+    <select id="afb-valign" title="Vertical Alignment" style="width:76px;">
+        <option value="top">Top</option>
+        <option value="middle">Middle</option>
+        <option value="bottom">Bottom</option>
+    </select>
+    <div class="afb-divider"></div>
+    <!-- Duplicate -->
+    <button type="button" class="afb-btn" id="afb-copy" title="Duplicate annotation">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+    </button>
+    <!-- Delete -->
+    <button type="button" class="afb-btn is-danger" id="afb-delete" title="Delete annotation">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+    </button>
+</div>
+
 <script>
 (function () {
     const CSRF        = document.querySelector('meta[name="csrf-token"]')?.content || '';
@@ -617,6 +849,20 @@
     const ftbEditMode = document.getElementById('ftb-edit-mode');
     const ftbAddText  = document.getElementById('ftb-add-text');
     const zoomLabel   = document.getElementById('zoom-label');
+    const annFormatBar  = document.getElementById('ann-format-bar');
+    const afbFont       = document.getElementById('afb-font');
+    const afbSize       = document.getElementById('afb-size');
+    const afbSizeValue  = document.getElementById('afb-size-value');
+    const afbTextColor  = document.getElementById('afb-text-color');
+    const afbBgColor    = document.getElementById('afb-bg-color');
+    const afbOpacity    = document.getElementById('afb-opacity');
+    const afbBold       = document.getElementById('afb-bold');
+    const afbItalic     = document.getElementById('afb-italic');
+    const afbUnderline  = document.getElementById('afb-underline');
+    const afbAlign      = document.getElementById('afb-align');
+    const afbValign     = document.getElementById('afb-valign');
+    const afbCopy       = document.getElementById('afb-copy');
+    const afbDelete     = document.getElementById('afb-delete');
     const zoomOutBtn  = document.getElementById('zoom-out');
     const zoomInBtn   = document.getElementById('zoom-in');
     const pageJumpInput = document.getElementById('page-jump');
@@ -656,7 +902,7 @@
     let activeState = { pi: null, uid: null };
     let hoverState  = { pi: null, uid: null };
     let dragState   = { active: false, pi: null, uid: null, offsetXPts: 0, offsetYPts: 0 };
-    let resizeState = { active: false, pi: null, uid: null, handle: null, startPt: null, startBox: null };
+    let resizeState = { active: false, pi: null, uid: null, handle: null, startPt: null, startBox: null, startFontSize: null };
     let textCreationState = { active: false, pi: null, pointerId: null, startX: 0, startY: 0, rect: null, previewEl: null, moved: false };
     let isDirty     = false;
     let isSaving    = false;
@@ -666,6 +912,7 @@
     let currentZoomPercent = initialZoomPercent;
 
     let measureCanvas = null;
+    let overlayEmbeddedFonts = null;
     const pendingDeletedAnnotationIds = new Set();
     const pendingDeletedPromotedSourceKeys = new Set();
 
@@ -822,23 +1069,28 @@
     }
 
     // ── Font helpers ───────────────────────────────────────────────────────────
+    // NOTE: Use SINGLE quotes around multi-word family names. These values are interpolated
+    // into HTML `style="…"` attributes; embedding double quotes there truncates the attribute
+    // and causes the entire inline style (font-family, font-size, etc.) to be dropped, so the
+    // contenteditable falls back to body defaults — which breaks edit-mode parity with the
+    // canvas rendering and with the format-bar font-size slider.
     const FONT_MAP = {
         Arial:         'Arial, Helvetica, sans-serif',
         'Arial,Bold':  'Arial, Helvetica, sans-serif',
         ArialMT:       'Arial, Helvetica, sans-serif',
         'Arial-BoldMT':'Arial, Helvetica, sans-serif',
         Helvetica:     'Arial, Helvetica, sans-serif',
-        FreeSans:      '"Liberation Sans", Arial, Helvetica, sans-serif',
-        FreeSerif:     '"Liberation Serif", "Times New Roman", Times, serif',
-        FreeMono:      '"Liberation Mono", "Courier New", Courier, monospace',
-        Times:         '"Times New Roman", Times, serif',
-        TimesRoman:    '"Times New Roman", Times, serif',
-        'Times New Roman': '"Times New Roman", Times, serif',
+        FreeSans:      "'Liberation Sans', Arial, Helvetica, sans-serif",
+        FreeSerif:     "'Liberation Serif', 'Times New Roman', Times, serif",
+        FreeMono:      "'Liberation Mono', 'Courier New', Courier, monospace",
+        Times:         "'Times New Roman', Times, serif",
+        TimesRoman:    "'Times New Roman', Times, serif",
+        'Times New Roman': "'Times New Roman', Times, serif",
         Verdana:       'Verdana, Geneva, sans-serif',
         Tahoma:        'Tahoma, Geneva, sans-serif',
-        DejaVuSans:    '"DejaVu Sans", Arial, Helvetica, sans-serif',
-        DejaVuSerif:   '"DejaVu Serif", "Times New Roman", serif',
-        Courier:       '"Courier New", Courier, monospace',
+        DejaVuSans:    "'DejaVu Sans', Arial, Helvetica, sans-serif",
+        DejaVuSerif:   "'DejaVu Serif', 'Times New Roman', serif",
+        Courier:       "'Courier New', Courier, monospace",
     };
 
     const normalizeFontName = (name) => {
@@ -849,14 +1101,110 @@
         return s;
     };
 
-    const fallbackFontFamily = (name, family = '') => {
+    const fontFileFormat = (fileExt) => {
+        const ext = String(fileExt || 'ttf').toLowerCase();
+        if (ext === 'woff2') return 'woff2';
+        if (ext === 'woff') return 'woff';
+        return (ext === 'otf' || ext === 'cff') ? 'opentype' : 'truetype';
+    };
+
+    const shouldBypassEmbeddedFont = (name, family = '') => {
+        const rawName = normalizeFontName(name);
+        const rawFamily = normalizeFontName(family);
+        return /^Free(?:Sans|Serif|Mono)/i.test(rawName)
+            || /^Free(?:Sans|Serif|Mono)/i.test(rawFamily)
+            || /^ArialMT$/i.test(rawName);
+    };
+
+    const loadEmbeddedFontFaces = (embeddedFonts) => {
+        overlayEmbeddedFonts = embeddedFonts && typeof embeddedFonts === 'object' ? embeddedFonts : null;
+
+        const existing = document.getElementById('edit-new-embedded-fonts');
+        if (existing) existing.remove();
+        if (!overlayEmbeddedFonts) return;
+
+        let css = '';
+        for (const [fontKey, fontData] of Object.entries(overlayEmbeddedFonts)) {
+            const cleanName = String(fontData?.clean_name || fontKey || '').trim();
+            const family = String(fontData?.family || fontKey || '').trim();
+            if (!cleanName) continue;
+            if (shouldBypassEmbeddedFont(cleanName, family)) continue;
+
+            let filePath = String(fontData?.file_path || '').trim();
+            if (!filePath) continue;
+
+            let fileExt = String(fontData?.file_ext || 'ttf').toLowerCase();
+            if (fileExt === 'cff') {
+                filePath = filePath.replace(/\.cff$/i, '.otf');
+                fileExt = 'otf';
+            }
+            if (fileExt === 'cid') continue;
+
+            const format = fontFileFormat(fileExt);
+            const weight = String(fontData?.css_weight || '400');
+            const fontStyle = String(fontData?.css_style || 'normal');
+            const fontStretch = String(fontData?.css_stretch || 'normal');
+            const exactFamily = `PDF_${cleanName}`;
+            const familyAlias = family ? `PDF_${family}` : '';
+
+            css += `@font-face { font-family: '${exactFamily}'; src: url('${filePath}') format('${format}'); font-weight: ${weight}; font-style: ${fontStyle};${fontStretch !== 'normal' ? ` font-stretch: ${fontStretch};` : ''} font-display: block; }\n`;
+            if (familyAlias && familyAlias !== exactFamily) {
+                css += `@font-face { font-family: '${familyAlias}'; src: url('${filePath}') format('${format}'); font-weight: ${weight}; font-style: ${fontStyle};${fontStretch !== 'normal' ? ` font-stretch: ${fontStretch};` : ''} font-display: block; }\n`;
+            }
+        }
+
+        if (!css) return;
+
+        const style = document.createElement('style');
+        style.id = 'edit-new-embedded-fonts';
+        style.textContent = css;
+        document.head.appendChild(style);
+    };
+
+    const systemFallbackFontFamily = (name, family = '') => {
         const raw = normalizeFontName(name || family);
         if (!raw) return FONT_MAP['Helvetica'];
         const key = raw.replace(/['"]/g, '').trim();
         if (FONT_MAP[key]) return FONT_MAP[key];
         const simple = key.split(/[-_,]/)[0];
         if (FONT_MAP[simple]) return FONT_MAP[simple];
-        return FONT_MAP['Helvetica'];
+        // Use single-quotes so the value is safe to interpolate into style="…" HTML attributes
+        // without truncating the attribute at the first embedded double quote.
+        return `'${key}', ${FONT_MAP['Helvetica']}`;
+    };
+
+    const fallbackFontFamily = (name, family = '') => {
+        const rawExact = normalizeFontName(name);
+        const rawFamily = normalizeFontName(family);
+
+        if (overlayEmbeddedFonts) {
+            const entries = Object.entries(overlayEmbeddedFonts);
+            if (rawExact) {
+                for (const [fontKey, fontData] of entries) {
+                    const cleanName = String(fontData?.clean_name || fontKey || '').trim();
+                    const embeddedFamily = String(fontData?.family || fontKey || '').trim();
+                    if (!cleanName || shouldBypassEmbeddedFont(cleanName, embeddedFamily)) continue;
+                    if (normalizeFontName(cleanName).toLowerCase() === rawExact.toLowerCase()) {
+                        const fallback = systemFallbackFontFamily('', embeddedFamily || cleanName);
+                        return `'PDF_${cleanName}', ${fallback}`;
+                    }
+                }
+            }
+
+            if (rawFamily) {
+                for (const [fontKey, fontData] of entries) {
+                    const cleanName = String(fontData?.clean_name || fontKey || '').trim();
+                    const embeddedFamily = String(fontData?.family || fontKey || '').trim();
+                    if (!cleanName || !embeddedFamily || shouldBypassEmbeddedFont(cleanName, embeddedFamily)) continue;
+                    if (normalizeFontName(embeddedFamily).toLowerCase() === rawFamily.toLowerCase()) {
+                        const fallback = systemFallbackFontFamily('', embeddedFamily);
+                        return `'PDF_${cleanName}', ${fallback}`;
+                    }
+                }
+            }
+        }
+
+        return systemFallbackFontFamily(name, family);
     };
 
     const ensureMeasureCtx = () => {
@@ -1159,8 +1507,18 @@
     }
 
     function annotationDimensionsChanged(ann) {
-        const cur = resolveAnnBox(ann), orig = resolveOriginalAnnBox(ann);
-        if (!cur || !orig) return false;
+        const cur = resolveAnnBox(ann);
+        if (!cur) return false;
+        // Use _originalPdfBox (captured from the loaded pdfWidth/pdfHeight) when available,
+        // instead of _originalBox (which reflects the span-origin visual block and can be
+        // a few pts smaller/larger than the stored pdfW/H — that false-positive would force
+        // syncActiveEditor into the plain-text editor render, making selected/clicked mode
+        // look different from the unselected canvas render).
+        const origPdf = ann._originalPdfBox;
+        const orig = (origPdf && [origPdf.x, origPdf.y, origPdf.w, origPdf.h].every(Number.isFinite))
+            ? origPdf
+            : resolveOriginalAnnBox(ann);
+        if (!orig) return false;
         return Math.abs(cur.w - orig.w) > 0.25 || Math.abs(cur.h - orig.h) > 0.25;
     }
 
@@ -1350,6 +1708,69 @@
         return lines;
     }
 
+    function normalizeQuarterTurnDegrees(value) {
+        const raw = Number(value);
+        if (!Number.isFinite(raw)) return 0;
+        const normalized = ((((raw % 360) + 540) % 360) - 180);
+        if (Math.abs(normalized - 90) <= 12) return 90;
+        if (Math.abs(normalized + 90) <= 12) return -90;
+        return 0;
+    }
+
+    function sourceLineRotationDegrees(ann, lineIndex = 0) {
+        const line = renderableSourceLines(ann)[lineIndex];
+        const spans = Array.isArray(line?.spans) ? line.spans : [];
+        let positiveWeight = 0;
+        let negativeWeight = 0;
+
+        spans.forEach((span) => {
+            const rotation = normalizeQuarterTurnDegrees(span?.rotation);
+            if (!rotation) return;
+            const bbox = Array.isArray(span?.bbox) ? span.bbox : null;
+            const spanWidth = bbox ? Math.abs(Number(bbox[2]) - Number(bbox[0])) : 0;
+            const spanHeight = bbox ? Math.abs(Number(bbox[3]) - Number(bbox[1])) : 0;
+            const weight = Math.max(
+                1,
+                spanWidth,
+                spanHeight,
+                String(span?.render_text ?? span?.text ?? '').replace(/\s+/g, '').length
+            );
+            if (rotation > 0) positiveWeight += weight;
+            else negativeWeight += weight;
+        });
+
+        if (positiveWeight || negativeWeight) {
+            return positiveWeight >= negativeWeight ? 90 : -90;
+        }
+
+        const bbox = Array.isArray(line?.bbox) ? line.bbox : null;
+        if (bbox && bbox.length >= 4) {
+            const width = Math.abs(Number(bbox[2]) - Number(bbox[0]));
+            const height = Math.abs(Number(bbox[3]) - Number(bbox[1]));
+            if (height > width * 1.2) {
+                const direction = Array.isArray(spans[0]?.direction) ? spans[0].direction : null;
+                const dy = Number(direction?.[1]);
+                if (Number.isFinite(dy) && Math.abs(dy) > 0.75) {
+                    return dy < 0 ? -90 : 90;
+                }
+            }
+        }
+
+        return 0;
+    }
+
+    function annotationSourceRotationDegrees(ann) {
+        const rotations = renderableSourceLines(ann)
+            .map((_, index) => sourceLineRotationDegrees(ann, index))
+            .filter((value) => value !== 0);
+
+        if (!rotations.length) return 0;
+
+        const positiveCount = rotations.filter((value) => value > 0).length;
+        const negativeCount = rotations.length - positiveCount;
+        return positiveCount >= negativeCount ? 90 : -90;
+    }
+
     function lineSpans(ann, lineIndex) {
         return Array.isArray(renderableSourceLines(ann)[lineIndex]?.spans)
             ? renderableSourceLines(ann)[lineIndex].spans
@@ -1365,8 +1786,8 @@
             fontFamily: fallbackFontFamily(fontName, span?.embedded_font_family || ann?.fontFamily || ''),
             fontSizePt,
             fontWeight: String(span?.font_weight || span?.fontWeight || ann?.fontWeight || (span?.bold ? '700' : '400') || '400'),
-            fontStyle:  span?.fontStyle || (span?.italic || ann?.fontStyle === 'italic' ? 'italic' : 'normal'),
-            fillStyle:  String(span?.hex_color || ann?.textColor || '#000000'),
+            fontStyle:  span?.fontStyle || (span?.italic ? 'italic' : 'normal') || ann?.fontStyle || 'normal',
+            fillStyle:  String(ann?.textColor || span?.hex_color || '#000000'),
         };
     }
 
@@ -1381,8 +1802,8 @@
                 fontFamily: fallbackFontFamily(fontName, span?.embedded_font_family || ann?.fontFamily || ''),
                 fontSizePt: Number(span?.font_size ?? span?.fontSize ?? ann?.fontSize) || 12,
                 fontWeight: String(span?.font_weight || span?.fontWeight || ann?.fontWeight || (span?.bold ? '700' : '400') || '400'),
-                fontStyle: span?.fontStyle || (span?.italic || ann?.fontStyle === 'italic' ? 'italic' : 'normal'),
-                fillStyle: String(span?.hex_color || ann?.textColor || '#000000'),
+                fontStyle: span?.fontStyle || (span?.italic ? 'italic' : 'normal') || ann?.fontStyle || 'normal',
+                fillStyle: String(ann?.textColor || span?.hex_color || '#000000'),
             };
             const key = JSON.stringify(style);
             const spanText = String(span?.render_text ?? span?.text ?? '');
@@ -1396,26 +1817,64 @@
         return bestKey ? JSON.parse(bestKey) : sourceStyle(ann, lineIndex);
     }
 
-    function blockLineHeightPx(ann, lineIndex = 0, scale) {
+    function editableLineStyle(ann, lineIndex = 0) {
+        const baseStyle = compositeLineStyle(ann, lineIndex);
+        const annFontFamily = String(ann?.fontFamily || '').trim();
+        const annFontSize = Number(ann?.fontSize);
+        const annFontWeight = String(ann?.fontWeight || '').trim();
+        const annFontStyle = String(ann?.fontStyle || '').trim();
+        const annTextColor = String(ann?.textColor || '').trim();
+
+        return {
+            fontFamily: annFontFamily ? fallbackFontFamily(annFontFamily, annFontFamily) : baseStyle.fontFamily,
+            fontSizePt: annFontSize > 0 ? annFontSize : baseStyle.fontSizePt,
+            fontWeight: annFontWeight || baseStyle.fontWeight,
+            fontStyle: annFontStyle || baseStyle.fontStyle,
+            fillStyle: annTextColor || baseStyle.fillStyle,
+        };
+    }
+
+    function blockLineHeightPx(ann, lineIndex = 0, scale, styleOverride = null) {
         const lineBBox = Array.isArray(renderableSourceLines(ann)[lineIndex]?.bbox) ? renderableSourceLines(ann)[lineIndex].bbox : null;
-        const sourceH = lineBBox ? Math.max(0, Number(lineBBox[3]) - Number(lineBBox[1])) * scale : 0;
-        const fontH = sourceStyle(ann, lineIndex).fontSizePt * scale * 1.18;
+        const rotation = sourceLineRotationDegrees(ann, lineIndex);
+        const sourceH = lineBBox
+            ? Math.max(
+                0,
+                Math.abs(rotation) === 90
+                    ? (Number(lineBBox[2]) - Number(lineBBox[0]))
+                    : (Number(lineBBox[3]) - Number(lineBBox[1]))
+            ) * scale
+            : 0;
+        const resolvedStyle = styleOverride || sourceStyle(ann, lineIndex);
+        const fontH = resolvedStyle.fontSizePt * scale * 1.18;
         const minHeightPx = lineBBox ? 0 : 12;
         return Math.max(minHeightPx, sourceH || 0, fontH);
     }
 
-    function editorLineTopShiftPx(ann, lineIndex = 0, scale) {
-        const style = compositeLineStyle(ann, lineIndex);
-        const lineHeightPx = blockLineHeightPx(ann, lineIndex, scale);
+    function editorLineTopShiftPx(ann, lineIndex = 0, scale, styleOverride = null) {
+        const style = styleOverride || compositeLineStyle(ann, lineIndex);
+        const lineHeightPx = blockLineHeightPx(ann, lineIndex, scale, style);
         const fontSizePx = style.fontSizePt * scale;
         return Math.max(0, (lineHeightPx - fontSizePx) / 2);
     }
 
     function lineTargetWidthPx(ann, lineIndex, scale) {
         const rect = sourceLineRectWithinAnnotation(ann, lineIndex, scale);
-        if (rect && Number.isFinite(rect.width) && rect.width > 0) return rect.width;
+        if (rect) {
+            const rotation = sourceLineRotationDegrees(ann, lineIndex);
+            const targetExtent = Math.abs(rotation) === 90 ? rect.height : rect.width;
+            if (Number.isFinite(targetExtent) && targetExtent > 0) return targetExtent;
+        }
         const lineBBox = Array.isArray(ann?.sourceLineBBoxes?.[lineIndex]) ? ann.sourceLineBBoxes[lineIndex] : null;
-        if (lineBBox) return Math.max(2, (Number(lineBBox[2]) - Number(lineBBox[0])) * scale);
+        if (lineBBox) {
+            const rotation = sourceLineRotationDegrees(ann, lineIndex);
+            return Math.max(
+                2,
+                Math.abs(rotation) === 90
+                    ? Math.abs(Number(lineBBox[3]) - Number(lineBBox[1])) * scale
+                    : Math.abs(Number(lineBBox[2]) - Number(lineBBox[0])) * scale
+            );
+        }
         return Math.max(2, (resolveAnnBox(ann)?.w || 2) * scale);
     }
 
@@ -1474,7 +1933,7 @@
         }
         const rawRatio = targetWidthPx / measuredWidthPx;
         if (!Number.isFinite(rawRatio) || rawRatio <= 0) return 1;
-        const clampedRatio = Math.max(0.7, Math.min(1.3, rawRatio));
+        const clampedRatio = Math.max(0.5, Math.min(1.3, rawRatio));
         return Math.abs(clampedRatio - 1) <= 0.015 ? 1 : clampedRatio;
     }
 
@@ -1499,7 +1958,7 @@
             }
 
             const rawRatio = targetWidthPx / rawWidthPx;
-            const clampedRatio = Math.max(0.7, Math.min(1.3, rawRatio));
+            const clampedRatio = Math.max(0.5, Math.min(1.3, rawRatio));
             const scaleX = Math.abs(clampedRatio - 1) <= 0.015 ? 1 : clampedRatio;
             contentEl.style.transform = `scaleX(${scaleX.toFixed(4)})`;
         });
@@ -1515,12 +1974,19 @@
             if (!origin || origin.length < 2) return;
             const drawText = String(span?.render_text ?? span?.text ?? '');
             if (!drawText) return;
-            const fontFamily = fallbackFontFamily(span?.embedded_font_name || span?.font, span?.embedded_font_family || span?.fontFamily || '');
+            const annFontFamilyOverride = String(ann?.fontFamily || '').trim();
+            const fontFamily = annFontFamilyOverride
+                ? fallbackFontFamily(annFontFamilyOverride, annFontFamilyOverride)
+                : fallbackFontFamily(span?.embedded_font_name || span?.font, span?.embedded_font_family || span?.fontFamily || '');
             const fontSizePx = (Number(span?.font_size ?? span?.fontSize) || Number(ann?.fontSize) || 12) * scale;
-            const fontStyle  = span?.fontStyle || (span?.italic ? 'italic' : 'normal');
-            const fontWeight = String(span?.font_weight || span?.fontWeight || (span?.bold ? '700' : '400') || '400');
+            // Apply ann-level font overrides (from format bar) at render time;
+            // span-derived values are used for measurement/layout via compositeLineStyle.
+            const spanFontStyle  = span?.fontStyle || (span?.italic ? 'italic' : 'normal');
+            const spanFontWeight = String(span?.font_weight || span?.fontWeight || (span?.bold ? '700' : '400') || '400');
+            const fontStyle  = ann?.fontStyle  || spanFontStyle;
+            const fontWeight = ann?.fontWeight || spanFontWeight;
             ctx.font         = ctxFont({ fontFamily, fontSizePx, fontWeight, fontStyle });
-            ctx.fillStyle    = String(span?.hex_color || ann?.textColor || '#000000');
+            ctx.fillStyle    = String(ann?.textColor || span?.hex_color || '#000000');
             ctx.textBaseline = 'alphabetic';
             const drawX = (Number(origin[0]) + offset.dx) * scale;
             const drawY = (Number(origin[1]) + offset.dy) * scale;
@@ -1535,7 +2001,7 @@
             })();
             const measuredWidthPx = ctx.measureText(drawText).width || 0;
             const rawRatio = (targetWidthPx > 0 && measuredWidthPx > 0) ? (targetWidthPx / measuredWidthPx) : 1;
-            const scaleX = (!Number.isFinite(rawRatio) || rawRatio <= 0) ? 1 : Math.max(0.7, Math.min(1.3, rawRatio));
+            const scaleX = (!Number.isFinite(rawRatio) || rawRatio <= 0) ? 1 : Math.max(0.5, Math.min(1.3, rawRatio));
             if (isVertical) {
                 // spanRotation -90: direction [0,-1] (upward) → canvas rotate(-π/2) draws text upward
                 // spanRotation +90: direction [0,+1] (downward) → canvas rotate(+π/2) draws text downward
@@ -1588,7 +2054,13 @@
         const box = resolveAnnBox(ann);
         if (!box) return [];
         const offset = annotationSourceOffset(ann);
-        const paragraphs = String(text || '').split('\n');
+        // Mirror renderPlainEditorHTML: single \n are soft breaks (reflow), \n\n+ are hard.
+        const normalized = String(text ?? '')
+            .replace(/\r\n?/g, '\n')
+            .replace(/\n{2,}/g, '\x00')
+            .replace(/\n/g, ' ')
+            .replace(/\x00/g, '\n');
+        const paragraphs = normalized.split('\n');
         const lineBBoxes = renderableSourceLines(ann).map((line) => line.bbox).filter(Array.isArray);
         const lines = [];
         const maxWidthPx = Math.max(10, box.w * scale);
@@ -1597,13 +2069,15 @@
             : (pageHeightPts - box.y - box.h);
 
         paragraphs.forEach((para, pi) => {
-            const style = compositeLineStyle(ann, Math.min(pi, Math.max(0, lineBBoxes.length - 1)));
+            const style = editableLineStyle(ann, Math.min(pi, Math.max(0, lineBBoxes.length - 1)));
             const stylePx = { ...style, fontSizePx: style.fontSizePt * scale };
             const wrapped = wrapParagraph(para, maxWidthPx, stylePx);
             wrapped.forEach((lineText, wi) => {
                 const si = lines.length;
                 const sourceBBox = Array.isArray(lineBBoxes[si]) ? lineBBoxes[si] : null;
-                const lineHeightPx = blockLineHeightPx(ann, Math.min(si, Math.max(0, lineBBoxes.length - 1)), scale);
+                const lineStyle = editableLineStyle(ann, Math.min(si, Math.max(0, lineBBoxes.length - 1)));
+                const lineStylePx = { ...lineStyle, fontSizePx: lineStyle.fontSizePt * scale };
+                const lineHeightPx = blockLineHeightPx(ann, Math.min(si, Math.max(0, lineBBoxes.length - 1)), scale, lineStyle);
                 const topPts = sourceBBox
                     ? Number(sourceBBox[1]) + offset.dy
                     : (cursorTopPts + ((wi === 0 && pi === 0 && lines.length === 0) ? 0 : (lineHeightPx / scale)));
@@ -1612,7 +2086,7 @@
                     if (Array.isArray(sp?.origin) && sp.origin.length >= 2) return Number(sp.origin[1]) + offset.dy;
                     return topPts + (lineHeightPx / scale) * 0.82;
                 })();
-                lines.push({ text: lineText, xPts: box.x, topPts, baselinePts, lineHeightPx, style: stylePx });
+                lines.push({ text: lineText, xPts: box.x, topPts, baselinePts, lineHeightPx, style: lineStylePx });
                 cursorTopPts = topPts;
             });
         });
@@ -1644,9 +2118,24 @@
             && editedTexts[ann._uid] !== String(ann.text ?? '');
         const savedDiffersFromPdf = annTextIsEdited(ann);
         const dimensionsChanged = annotationDimensionsChanged(ann);
+        // styleChanged: user changed a visual property (color, background) via format bar.
+        // Forces the "edited" drawing path so the canvas reflects the new style even when
+        // the annotation text hasn't been changed.
+        const annBgColor = String(ann.backgroundColor || '').trim();
+        const annOpacity = Math.min(1, Math.max(0, parseFloat(ann.opacity ?? 1)));
+        // styleChanged: only force the "edited" redraw path for properties that
+        // drawOriginalSource cannot handle (bg color, sub-1 opacity, underline strokes).
+        // textColor is already applied inside drawOriginalSource, so it does NOT belong here.
+        const styleChanged = hasSourceContent && Boolean(
+            (annBgColor && annBgColor !== '#ffffff' && annBgColor !== 'transparent')
+            || annOpacity < 0.999
+            || ann.underline
+            || (String(ann.verticalAlign || 'top').toLowerCase() !== 'top')
+            || (String(ann.textAlign || 'left').toLowerCase() !== 'left')
+        );
         const { dx: posDx, dy: posDy } = annotationOffset(ann);
         const positionChanged = Math.abs(posDx) > 0.25 || Math.abs(posDy) > 0.25;
-        if (!editedInSession && !savedDiffersFromPdf && !dimensionsChanged) {
+        if (!editedInSession && !savedDiffersFromPdf && !dimensionsChanged && !styleChanged && !ann._richHtml) {
             // When only position changed, erase old source area before drawing at new position
             if (positionChanged) {
                 const sL = Number(ann.sourceBlockLeft), sT = Number(ann.sourceBlockTop);
@@ -1686,15 +2175,118 @@
             ctx.restore();
         }
         const lines = buildEditedLines(ann, currentText, scale, pageWidthPts, pageHeightPts);
+        const annTextAlign = ann.textAlign || 'left';
+        // Vertical alignment: offset all baselines by Δ so the block of text is aligned
+        // top / middle / bottom within the annotation box. Only applied when the lines
+        // don't already have anchored source bboxes (plain text edits); for the default
+        // 'top' case Δ is 0 so source-anchored positions are unchanged.
+        const vAlignRaw = String(ann.verticalAlign || 'top').toLowerCase();
+        const vAlignDyPx = (() => {
+            if (vAlignRaw === 'top' || !lines.length) return 0;
+            const blockHeightPx = lines.reduce((sum, l) => sum + (l.lineHeightPx || 0), 0);
+            const boxHeightPx = box.h * scale;
+            if (blockHeightPx >= boxHeightPx - 0.5) return 0;
+            const slackPx = boxHeightPx - blockHeightPx;
+            if (vAlignRaw === 'middle' || vAlignRaw === 'center') return slackPx / 2;
+            if (vAlignRaw === 'bottom') return slackPx;
+            return 0;
+        })();
+        ctx.save();
+        ctx.globalAlpha = annOpacity;
+        // Draw background color (if explicitly set and not white)
+        if (annBgColor && annBgColor !== '#ffffff' && annBgColor !== 'transparent') {
+            ctx.fillStyle = annBgColor;
+            ctx.fillRect(eraseLeft, eraseTop, eraseW, eraseH);
+        }
         lines.forEach((line) => {
-            ctx.font         = ctxFont(line.style);
+            // Apply ann-level font overrides on top of span-derived style (format-bar B/I)
+            const renderWeight = ann.fontWeight || line.style.fontWeight;
+            const renderFontStyle = ann.fontStyle || line.style.fontStyle;
+            ctx.font         = ctxFont({ ...line.style, fontWeight: renderWeight, fontStyle: renderFontStyle });
             ctx.fillStyle    = line.style.fillStyle;
             ctx.textBaseline = 'alphabetic';
-            ctx.fillText(line.text, line.xPts * scale, line.baselinePts * scale);
+            const lineWidthPx = line.text ? ctx.measureText(line.text).width : 0;
+            let drawX = line.xPts * scale;
+            if (annTextAlign !== 'left' && line.text) {
+                const boxWidthPx  = box.w * scale;
+                if (annTextAlign === 'center') {
+                    drawX = (box.x * scale) + (boxWidthPx - lineWidthPx) / 2;
+                } else if (annTextAlign === 'right') {
+                    drawX = (box.x * scale) + boxWidthPx - lineWidthPx;
+                }
+            }
+            const drawY = (line.baselinePts * scale) + vAlignDyPx;
+            // When per-selection formatting is present (ann._richHtml), the canvas only
+            // erases the background and paints the opaque bg color — the rich-html-layer
+            // DIV renders the styled text on top so the canvas and editor use the same
+            // DOM layout. Skip fillText here to avoid doubling up.
+            if (!ann._richHtml) {
+                ctx.fillText(line.text, drawX, drawY);
+                if (ann.underline && line.text) {
+                    const fontSize = line.style.fontSizePt * scale;
+                    ctx.strokeStyle = line.style.fillStyle;
+                    ctx.lineWidth = Math.max(0.5, fontSize * 0.07);
+                    ctx.beginPath();
+                    ctx.moveTo(drawX, drawY + Math.ceil(fontSize * 0.12));
+                    ctx.lineTo(drawX + lineWidthPx, drawY + Math.ceil(fontSize * 0.12));
+                    ctx.stroke();
+                }
+            }
         });
+        ctx.restore();
     }
 
-    // ── Overlay canvas redraw ─────────────────────────────────────────────────
+    // Builds the rich-html layer for a page: renders a positioned <div> mirroring the
+    // active-editor styling for every non-active annotation that has ann._richHtml set.
+    // Called at the end of redrawOverlay so the DOM layer stays in sync with the canvas.
+    function renderRichHtmlLayer(pi) {
+        const data = pageData[pi];
+        const layer = document.getElementById('rhl-' + (pi + 1));
+        if (!data || !layer) return;
+        const { scale, canvasHeight, annotations } = data;
+        layer.innerHTML = '';
+        annotations.forEach((ann) => {
+            if (!ann._richHtml) return;
+            if (ann._uid === activeState.uid) return; // shown via active editor
+            const box = resolveAnnBox(ann);
+            if (!box) return;
+            const rect = annRectPx(ann, scale, canvasHeight);
+            const left   = rect ? rect.left : (box.x * scale);
+            const top    = rect ? rect.top  : (canvasHeight - (box.y + box.h) * scale);
+            const width  = rect ? Math.max(2, rect.width)  : Math.max(2, box.w * scale);
+            const height = rect ? Math.max(2, rect.height) : Math.max(2, box.h * scale);
+            const style0 = editableLineStyle(ann, 0);
+            const lineHeightPx = blockLineHeightPx(ann, 0, scale, style0);
+            const bg = String(ann.backgroundColor || '').trim();
+            const bgCss = (bg && bg !== '#ffffff' && bg !== 'transparent') ? bg : 'transparent';
+            const vAlign = (() => {
+                const v = String(ann.verticalAlign || 'top').toLowerCase();
+                if (v === 'middle' || v === 'center') return 'center';
+                if (v === 'bottom') return 'flex-end';
+                return 'flex-start';
+            })();
+            const item = document.createElement('div');
+            item.className = 'rich-html-item';
+            item.style.cssText = [
+                'display:flex', 'flex-direction:column',
+                `justify-content:${vAlign}`,
+                `left:${left.toFixed(2)}px`, `top:${top.toFixed(2)}px`,
+                `width:${width.toFixed(2)}px`, `height:${height.toFixed(2)}px`,
+                `font-family:${style0.fontFamily}`,
+                `font-size:${(style0.fontSizePt * scale).toFixed(2)}px`,
+                `font-weight:${ann.fontWeight || style0.fontWeight || '400'}`,
+                `font-style:${ann.fontStyle || style0.fontStyle || 'normal'}`,
+                `text-decoration:${ann.underline ? 'underline' : 'none'}`,
+                `color:${style0.fillStyle}`,
+                `line-height:${lineHeightPx.toFixed(2)}px`,
+                `background:${bgCss}`,
+                `text-align:${ann.textAlign || 'left'}`,
+                `opacity:${parseFloat(ann.opacity ?? 1)}`,
+            ].join(';');
+            item.innerHTML = ann._richHtml;
+            layer.appendChild(item);
+        });
+    }
     function redrawOverlay(pi) {
         const data = pageData[pi];
         if (!data) return;
@@ -1724,10 +2316,25 @@
                 ctx.strokeRect(rect.left, rect.top, rect.width, rect.height);
                 ctx.restore();
             });
+        } else if (addTextMode) {
+            // In addTextMode, only show outlines for user-created annotations
+            // (not extracted ones) so existing PDF content looks untouched.
+            annotations.filter(a => a.userCreated && a._uid !== activeState.uid).forEach((ann) => {
+                const rect = annRectPx(ann, scale, canvasHeight);
+                if (!rect) return;
+                ctx.save();
+                ctx.strokeStyle = 'rgba(96, 165, 250, 0.95)';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([5, 4]);
+                ctx.fillStyle = 'rgba(147, 197, 253, 0.08)';
+                ctx.fillRect(rect.left, rect.top, rect.width, rect.height);
+                ctx.strokeRect(rect.left, rect.top, rect.width, rect.height);
+                ctx.restore();
+            });
         }
 
         // Hover highlight
-        if (editModeEnabled && hoverState.pi === pi && hoverState.uid && hoverState.uid !== activeState.uid) {
+        if ((editModeEnabled || addTextMode) && hoverState.pi === pi && hoverState.uid && hoverState.uid !== activeState.uid) {
             const hAnn = annotations.find(a => a._uid === hoverState.uid);
             const rect = hAnn ? annRectPx(hAnn, scale, canvasHeight) : null;
             if (rect) {
@@ -1743,7 +2350,7 @@
         }
 
         // Active annotation selection outline
-        if (editModeEnabled && activeState.pi === pi && activeState.uid) {
+        if ((editModeEnabled || addTextMode) && activeState.pi === pi && activeState.uid) {
             const aAnn = annotations.find(a => a._uid === activeState.uid);
             const rect = aAnn ? annRectPx(aAnn, scale, canvasHeight) : null;
             if (rect) {
@@ -1757,6 +2364,8 @@
                 ctx.restore();
             }
         }
+
+        renderRichHtmlLayer(pi);
     }
 
     // ── Hit testing ───────────────────────────────────────────────────────────
@@ -1803,12 +2412,19 @@
     }
 
     function editorSpanStyle(ann, span, scale) {
+        // Priority mirrors drawOriginalSource: ann-level format-bar overrides win over span defaults.
+        const spanFontWeight = String(span?.font_weight || span?.fontWeight || (span?.bold ? '700' : '400') || '400');
+        const spanFontStyle  = span?.fontStyle || (span?.italic ? 'italic' : 'normal');
+        const annFontFamilyOverride = String(ann?.fontFamily || '').trim();
+        const resolvedFontFamily = annFontFamilyOverride
+            ? fallbackFontFamily(annFontFamilyOverride, annFontFamilyOverride)
+            : fallbackFontFamily(span?.embedded_font_name || span?.font, span?.embedded_font_family || span?.fontFamily || '');
         return {
-            fontFamily: fallbackFontFamily(span?.embedded_font_name || span?.font, span?.embedded_font_family || span?.fontFamily || ''),
+            fontFamily: resolvedFontFamily,
             fontSizePx: (Number(span?.font_size ?? span?.fontSize) || Number(ann?.fontSize) || 12) * scale,
-            fontWeight: String(span?.font_weight || span?.fontWeight || (span?.bold ? '700' : '400') || '400'),
-            fontStyle: span?.fontStyle || (span?.italic ? 'italic' : 'normal'),
-            color: String(span?.hex_color || ann?.textColor || '#000000'),
+            fontWeight: String(ann?.fontWeight || spanFontWeight),
+            fontStyle:  ann?.fontStyle || spanFontStyle || 'normal',
+            color: String(ann?.textColor || span?.hex_color || '#000000'),
         };
     }
 
@@ -1830,7 +2446,10 @@
             const style = editorSpanStyle(ann, span, scale);
             const bbox = Array.isArray(span?.bbox) ? span.bbox : null;
             const origin = Array.isArray(span?.origin) ? span.origin : null;
-            const spanStartPts = bbox ? Number(bbox[0]) : (origin ? Number(origin[0]) : cursorPts);
+            // Mirror drawOriginalSource: use origin[0] as the span's x position when
+            // available, falling back to bbox[0] then cursorPts.
+            // This matches the canvas which draws at origin[0] coordinates.
+            const spanStartPts = origin ? Number(origin[0]) : (bbox ? Number(bbox[0]) : cursorPts);
 
             if (cursorPts !== null && Number.isFinite(spanStartPts)) {
                 const gapPts = spanStartPts - cursorPts;
@@ -1853,8 +2472,10 @@
 
             html += renderEditorSpanHtml(style, drawText);
 
-            if (bbox) {
-                cursorPts = Number(bbox[2]);
+            // Advance cursor from span's origin by the bbox width — mirrors how
+            // drawOriginalSource occupies space: drawn at origin[0], occupies bboxWidth pts.
+            if (Number.isFinite(spanStartPts) && bbox) {
+                cursorPts = spanStartPts + (Number(bbox[2]) - Number(bbox[0]));
             } else if (Number.isFinite(spanStartPts)) {
                 cursorPts = spanStartPts + (measureTextWidth(drawText, {
                     fontFamily: style.fontFamily,
@@ -1875,19 +2496,43 @@
         const topShiftPx = editorLineTopShiftPx(ann, lineIndex, scale);
         const rect = sourceLineRectWithinAnnotation(ann, lineIndex, scale);
         const scaleX = editorLineScaleX(ann, lineIndex, scale, spans);
+        const lineRotation = sourceLineRotationDegrees(ann, lineIndex);
+        const wrapperWidthPx = rect
+            ? (Math.abs(lineRotation) === 90 ? Math.max(2, rect.height) : Math.max(2, rect.width))
+            : null;
+        const wrapperHeightPx = rect
+            ? (Math.abs(lineRotation) === 90 ? Math.max(lineHeightPx, rect.width || 0) : Math.max(lineHeightPx, rect.height || 0))
+            : lineHeightPx;
+        const wrapperTransform = (() => {
+            const transforms = [];
+            if (Math.abs(lineRotation) === 90 && rect) {
+                if (lineRotation > 0) {
+                    transforms.push(`translateX(${Math.max(2, rect.width).toFixed(2)}px)`);
+                    transforms.push('rotate(90deg)');
+                } else {
+                    transforms.push(`translateY(${Math.max(2, rect.height).toFixed(2)}px)`);
+                    transforms.push('rotate(-90deg)');
+                }
+            }
+            if (topShiftPx > 0.01) {
+                transforms.push(`translateY(-${topShiftPx.toFixed(2)}px)`);
+            }
+            return transforms.length ? transforms.join(' ') : 'none';
+        })();
         const lineWrapperStyle = [
             'position:absolute',
             rect ? `left:${rect.left.toFixed(2)}px` : 'left:0',
             rect ? `top:${rect.top.toFixed(2)}px` : 'top:0',
-            rect ? `width:${rect.width.toFixed(2)}px` : 'width:100%',
-            `min-height:${Math.max(lineHeightPx, rect?.height || 0).toFixed(2)}px`,
+            wrapperWidthPx !== null ? `width:${wrapperWidthPx.toFixed(2)}px` : 'width:100%',
+            `height:${wrapperHeightPx.toFixed(2)}px`,
+            `min-height:${wrapperHeightPx.toFixed(2)}px`,
             `font-family:${style.fontFamily}`,
             `font-size:${(style.fontSizePt * scale).toFixed(2)}px`,
             `font-weight:${style.fontWeight}`,
             `font-style:${style.fontStyle}`,
             `line-height:${lineHeightPx.toFixed(2)}px`,
             `color:${style.fillStyle}`,
-            `transform:translateY(-${topShiftPx.toFixed(2)}px)`,
+            `transform:${wrapperTransform}`,
             'transform-origin:top left',
             'padding:0',
             'margin:0',
@@ -1956,32 +2601,92 @@
             const rect = sourceLineRectWithinAnnotation(ann, lineIndex, scale);
             const innerHtml = buildLineInnerHtml(ann, lineIndex, scale, lineSpansForHtml);
             const scaleX = editorLineScaleX(ann, lineIndex, scale, lineSpansForHtml);
-            return `<div data-line-index="${lineIndex}" style="position:absolute;left:${(rect?.left || 0).toFixed(2)}px;top:${(rect?.top || 0).toFixed(2)}px;${rect ? `width:${rect.width.toFixed(2)}px;` : 'width:100%;'}min-height:${Math.max(lineHeightPx, rect?.height || 0).toFixed(2)}px;font-family:${style.fontFamily};font-size:${(style.fontSizePt * scale).toFixed(2)}px;font-weight:${style.fontWeight};font-style:${style.fontStyle};line-height:${lineHeightPx.toFixed(2)}px;color:${style.fillStyle};transform:translateY(-${topShiftPx.toFixed(2)}px);transform-origin:top left;padding:0;margin:0;white-space:normal;overflow:visible;"><span data-line-content="1" style="display:inline-block;width:max-content;min-width:max-content;transform:scaleX(${scaleX.toFixed(4)});transform-origin:top left;white-space:pre;overflow-wrap:normal;word-break:normal;padding:0;margin:0;">${innerHtml || '<br>'}</span></div>`;
+            const lineRotation = sourceLineRotationDegrees(ann, lineIndex);
+            const wrapperWidthPx = rect
+                ? (Math.abs(lineRotation) === 90 ? Math.max(2, rect.height) : Math.max(2, rect.width))
+                : null;
+            const wrapperHeightPx = rect
+                ? (Math.abs(lineRotation) === 90 ? Math.max(lineHeightPx, rect.width || 0) : Math.max(lineHeightPx, rect.height || 0))
+                : lineHeightPx;
+            const wrapperTransform = (() => {
+                const transforms = [];
+                if (Math.abs(lineRotation) === 90 && rect) {
+                    if (lineRotation > 0) {
+                        transforms.push(`translateX(${Math.max(2, rect.width).toFixed(2)}px)`);
+                        transforms.push('rotate(90deg)');
+                    } else {
+                        transforms.push(`translateY(${Math.max(2, rect.height).toFixed(2)}px)`);
+                        transforms.push('rotate(-90deg)');
+                    }
+                }
+                if (topShiftPx > 0.01) {
+                    transforms.push(`translateY(-${topShiftPx.toFixed(2)}px)`);
+                }
+                return transforms.length ? transforms.join(' ') : 'none';
+            })();
+            return `<div data-line-index="${lineIndex}" style="position:absolute;left:${(rect?.left || 0).toFixed(2)}px;top:${(rect?.top || 0).toFixed(2)}px;${wrapperWidthPx !== null ? `width:${wrapperWidthPx.toFixed(2)}px;` : 'width:100%;'}height:${wrapperHeightPx.toFixed(2)}px;min-height:${wrapperHeightPx.toFixed(2)}px;font-family:${style.fontFamily};font-size:${(style.fontSizePt * scale).toFixed(2)}px;font-weight:${style.fontWeight};font-style:${style.fontStyle};text-decoration:${ann.underline ? 'underline' : 'none'};line-height:${lineHeightPx.toFixed(2)}px;color:${style.fillStyle};transform:${wrapperTransform};transform-origin:top left;padding:0;margin:0;white-space:normal;overflow:visible;"><span data-line-content="1" style="display:inline-block;width:max-content;min-width:max-content;transform:scaleX(${scaleX.toFixed(4)});transform-origin:top left;white-space:pre;overflow-wrap:normal;word-break:normal;padding:0;margin:0;">${innerHtml || '<br>'}</span></div>`;
         }).join('');
     }
 
     function renderPlainEditorHTML(ann, text, scale) {
-        const lines = String(text ?? '').split('\n');
         const maxSourceIndex = Math.max(0, renderableSourceLines(ann).length - 1);
-
-        return (lines.length ? lines : ['']).map((lineText, index) => {
-            const lineIndex = Math.min(index, maxSourceIndex);
-            const style = compositeLineStyle(ann, lineIndex);
-            const lineHeightPx = blockLineHeightPx(ann, lineIndex, scale);
-            const topShiftPx = editorLineTopShiftPx(ann, lineIndex, scale);
-            const escaped = escapeHtml(lineText);
-            return `<div data-line-index="${lineIndex}" style="font-family:${style.fontFamily};font-size:${(style.fontSizePt * scale).toFixed(2)}px;font-weight:${style.fontWeight};font-style:${style.fontStyle};line-height:${lineHeightPx.toFixed(2)}px;min-height:${lineHeightPx.toFixed(2)}px;color:${style.fillStyle};transform:translateY(-${topShiftPx.toFixed(2)}px);transform-origin:top left;padding:0;margin:0;white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word;">${escaped || '<br>'}</div>`;
-        }).join('');
+        const style = editableLineStyle(ann, 0);
+        const lineHeightPx = blockLineHeightPx(ann, 0, scale, style);
+        const topShiftPx = editorLineTopShiftPx(ann, 0, scale, style);
+        const renderWeight = ann.fontWeight || style.fontWeight;
+        const renderFontStyle = ann.fontStyle || style.fontStyle;
+        const lineAlign = ann.textAlign || 'left';
+        // Normalize extracted/user newlines so the box width drives wrap:
+        //   \n\n+ → hard paragraph break (visible <br>)
+        //   single \n → soft break (space) → reflows to bounding box width
+        // This ensures text re-flows when the annotation box is resized, while still
+        // letting the user make explicit paragraph breaks by pressing Enter twice.
+        const normalized = String(text ?? '')
+            .replace(/\r\n?/g, '\n')
+            .replace(/\n{2,}/g, '\x00')
+            .replace(/\n/g, ' ')
+            .replace(/\x00/g, '\n');
+        const paragraphs = normalized.split('\n');
+        const innerHtml = paragraphs
+            .map((p) => escapeHtml(p) || '<br>')
+            .join('<br><br>');
+        // Suppress maxSourceIndex lint noise — retained for future per-line overrides.
+        void maxSourceIndex;
+        return `<div data-line-index="0" style="font-family:${style.fontFamily};font-size:${(style.fontSizePt * scale).toFixed(2)}px;font-weight:${renderWeight};font-style:${renderFontStyle};text-decoration:${ann.underline ? 'underline' : 'none'};line-height:${lineHeightPx.toFixed(2)}px;min-height:${lineHeightPx.toFixed(2)}px;color:${style.fillStyle};text-align:${lineAlign};transform:translateY(-${topShiftPx.toFixed(2)}px);transform-origin:top left;padding:0;margin:0;white-space:normal;overflow-wrap:break-word;word-break:break-word;">${innerHtml}</div>`;
     }
 
     function measureEditedTextHeightPts(ann, text, scale) {
-        const lines = String(text ?? '').split('\n');
-        const effectiveLines = lines.length ? lines : [''];
+        // Mirror the wrap logic in buildEditedLines / renderPlainEditorHTML so the
+        // measured height reflects the actual number of rendered (wrapped) lines,
+        // not just the count of `\n`s in the source string. Otherwise a long
+        // single-line paragraph collapses the annotation box to one line-height
+        // when the user changes font size.
         const maxSourceIndex = Math.max(0, renderableSourceLines(ann).length - 1);
-        const totalHeightPx = effectiveLines.reduce((sum, _lineText, index) => {
-            const lineIndex = Math.min(index, maxSourceIndex);
-            return sum + blockLineHeightPx(ann, lineIndex, scale);
-        }, 0);
+        const box = resolveAnnBox(ann);
+        const normalized = String(text ?? '')
+            .replace(/\r\n?/g, '\n')
+            .replace(/\n{2,}/g, '\x00')
+            .replace(/\n/g, ' ')
+            .replace(/\x00/g, '\n');
+        const paragraphs = normalized.split('\n');
+        const maxWidthPx = Math.max(10, (box ? box.w : 0) * scale);
+        let totalLineCount = 0;
+        const perLineHeightPx = [];
+        paragraphs.forEach((para, pIdx) => {
+            const lineIndex = Math.min(pIdx, maxSourceIndex);
+            const style = editableLineStyle(ann, lineIndex);
+            const stylePx = { ...style, fontSizePx: style.fontSizePt * scale };
+            const wrapped = box ? wrapParagraph(para, maxWidthPx, stylePx) : [para];
+            wrapped.forEach(() => {
+                const si = Math.min(totalLineCount, maxSourceIndex);
+                perLineHeightPx.push(blockLineHeightPx(ann, si, scale, editableLineStyle(ann, si)));
+                totalLineCount++;
+            });
+        });
+        if (!perLineHeightPx.length) {
+            perLineHeightPx.push(blockLineHeightPx(ann, 0, scale, editableLineStyle(ann, 0)));
+        }
+        const totalHeightPx = perLineHeightPx.reduce((a, b) => a + b, 0);
         return Math.max(1, totalHeightPx / Math.max(scale, 0.0001));
     }
 
@@ -2002,13 +2707,13 @@
         });
     }
 
-    function syncActiveEditor() {
+    function syncActiveEditor(forceRebuild = false) {
         const { pi, uid } = activeState;
         const data = pi !== null ? pageData[pi] : null;
         const ann  = data ? data.annotations.find(a => a._uid === uid) : null;
 
-        // Hide editors/handles on all pages when edit mode is off.
-        if (!editModeEnabled) {
+        // Hide editors/handles on all pages when neither edit mode nor addText mode is active.
+        if (!editModeEnabled && !addTextMode) {
             Object.keys(pageData).forEach((pIdx) => {
                 const pn = Number(pIdx) + 1;
                 const ae = document.getElementById('ae-' + pn);
@@ -2055,17 +2760,43 @@
         const width  = displayRect ? Math.max(2, displayRect.width) : Math.max(2, box.w * scale);
         const height = displayRect ? Math.max(18, displayRect.height) : Math.max(18, box.h * scale);
 
-        const style0       = compositeLineStyle(ann, 0);
-        const lineHeightPx = blockLineHeightPx(ann, 0, scale);
+        // Use editableLineStyle so ann-level overrides (format-bar font size / family / color)
+        // drive the outer container, keeping the caret + any unwrapped text node in sync with
+        // the format bar as soon as a slider change fires — not only after blur/reopen.
+        const style0       = editableLineStyle(ann, 0);
+        const lineHeightPx = blockLineHeightPx(ann, 0, scale, style0);
+        const sourceRotation = annotationSourceRotationDegrees(ann);
 
+        const aeBgColor = (() => {
+            const bg = String(ann.backgroundColor || '').trim();
+            return (bg && bg !== '#ffffff' && bg !== 'transparent') ? bg : 'transparent';
+        })();
+        // Vertical alignment: use flex on the outer container so inner content is pushed
+        // to top / middle / bottom of the annotation box. The editor HTML remains a single
+        // block inside, so flex vertically positions the whole block without disrupting
+        // text wrap or caret behavior.
+        const vAlign = (() => {
+            const v = String(ann.verticalAlign || 'top').toLowerCase();
+            if (v === 'middle' || v === 'center') return 'center';
+            if (v === 'bottom') return 'flex-end';
+            return 'flex-start';
+        })();
         ae.style.cssText = [
-            'display:block', 'position:absolute',
+            'display:flex', 'flex-direction:column',
+            `justify-content:${vAlign}`,
+            'position:absolute',
             `left:${left.toFixed(2)}px`, `top:${top.toFixed(2)}px`,
             `width:${width.toFixed(2)}px`, `height:${height.toFixed(2)}px`,
+            `font-family:${style0.fontFamily}`,
             `font-size:${(style0.fontSizePt * scale).toFixed(2)}px`,
+            `font-weight:${ann.fontWeight || style0.fontWeight || '400'}`,
+            `font-style:${ann.fontStyle || style0.fontStyle || 'normal'}`,
+            `text-decoration:${ann.underline ? 'underline' : 'none'}`,
             `color:${style0.fillStyle}`,
             `line-height:${lineHeightPx.toFixed(2)}px`,
-            'padding:0', 'margin:0', 'background:transparent',
+            'padding:0', 'margin:0', `background:${aeBgColor}`,
+            `text-align:${ann.textAlign || 'left'}`,
+            `opacity:${parseFloat(ann.opacity ?? 1)}`,
             'border:none', 'outline:none', 'overflow:visible',
             'white-space:pre-wrap', 'word-break:break-word',
             'pointer-events:auto', 'user-select:text', 'cursor:text',
@@ -2082,28 +2813,50 @@
         } else {
             delete ae.dataset.creating;
         }
-        // Only reset content when not focused (avoids caret jump mid-edit)
-        if (document.activeElement !== ae) {
-            const editedText = editedTexts[ann._uid];
-            if (editedText !== undefined && (editedText !== String(ann.text ?? '') || annotationDimensionsChanged(ann))) {
+        // Only reset content when not focused (avoids caret jump mid-edit).
+        // forceRebuild=true is set by format-bar actions so changes are immediately visible.
+        if (document.activeElement !== ae || forceRebuild) {
+            // Per-selection formatting (via execCommand) is captured in ann._richHtml.
+            // Respect it so subsequent syncs don't flatten inline <span style="…"> back to
+            // the annotation-level uniform styling. A forceRebuild from annotation-level
+            // format changes (font family/size/etc.) still preserves the rich HTML since
+            // annotation-level styles apply to the editor container, not the inner spans.
+            if (ann._richHtml) {
                 ae.dataset.renderMode = 'plain';
-                ae.innerHTML = renderPlainEditorHTML(ann, editedText, scale);
+                if (ae.innerHTML !== ann._richHtml) ae.innerHTML = ann._richHtml;
             } else {
-                // Detect persisted edits (same logic as annTextIsEdited in canvas draw):
-                // compare ann.text against ann.originalText (the value at extraction).
-                const normWS = s => String(s).replace(/[\s\n]+/g, ' ').trim();
-                const savedText     = String(ann.text ?? '');
-                const originalText  = String(ann.originalText ?? '');
-                const textWasEdited = originalText !== '' && normWS(savedText) !== normWS(originalText);
-                if (textWasEdited) {
+                const editedText = editedTexts[ann._uid];
+                if (editedText !== undefined && (editedText !== String(ann.text ?? '') || annotationDimensionsChanged(ann))) {
                     ae.dataset.renderMode = 'plain';
-                    ae.innerHTML = renderPlainEditorHTML(ann, savedText, scale);
+                    ae.innerHTML = renderPlainEditorHTML(ann, editedText, scale);
                 } else {
-                    // Text matches the original extraction — render with per-span styles
-                    ae.dataset.renderMode = 'source';
-                    ae.innerHTML = buildEditorHTML(ann, scale);
+                    // Detect persisted edits (same logic as annTextIsEdited in canvas draw):
+                    // compare ann.text against ann.originalText (the value at extraction).
+                    const normWS = s => String(s).replace(/[\s\n]+/g, ' ').trim();
+                    const savedText     = String(ann.text ?? '');
+                    const originalText  = String(ann.originalText ?? '');
+                    const textWasEdited = originalText !== '' && normWS(savedText) !== normWS(originalText);
+                    if (textWasEdited) {
+                        ae.dataset.renderMode = 'plain';
+                        ae.innerHTML = renderPlainEditorHTML(ann, savedText, scale);
+                    } else {
+                        // Text matches the original extraction — render with per-span styles
+                        ae.dataset.renderMode = 'source';
+                        ae.innerHTML = buildEditorHTML(ann, scale);
+                    }
                 }
             }
+        }
+        if (ae.dataset.renderMode !== 'source' && Math.abs(sourceRotation) === 90 && height > 0 && width > 0) {
+            ae.style.width = `${height.toFixed(2)}px`;
+            ae.style.height = `${width.toFixed(2)}px`;
+            ae.style.transformOrigin = 'top left';
+            ae.style.transform = sourceRotation > 0
+                ? `translateX(${width.toFixed(2)}px) rotate(90deg)`
+                : `translateY(${height.toFixed(2)}px) rotate(-90deg)`;
+        } else {
+            ae.style.transformOrigin = 'top left';
+            ae.style.transform = 'none';
         }
         if (ae.dataset.renderMode === 'source') {
             fitActiveEditorSourceLines(ae, ann, scale);
@@ -2148,16 +2901,63 @@
         const prevPi = activeState.pi;
         activeState = { pi: null, uid: null };
         syncActiveEditor();
+        updateFormatBar();
         if (prevPi !== null) redrawOverlay(prevPi);
     }
 
     function selectAnnotation(ann, pi) {
-        if (!editModeEnabled || !ann) return;
+        if ((!editModeEnabled && !addTextMode) || !ann) return;
         const prevPi = activeState.pi;
         activeState = { pi, uid: ann._uid };
         syncActiveEditor();
+        updateFormatBar();
         if (prevPi !== null && prevPi !== pi) redrawOverlay(prevPi);
         redrawOverlay(pi);
+    }
+
+    function updateFormatBar() {
+        const { pi, uid } = activeState;
+        const data = pi !== null ? pageData[pi] : null;
+        const ann  = data ? data.annotations.find(a => a._uid === uid) : null;
+        if (!annFormatBar) return;
+        if (!ann) {
+            annFormatBar.classList.remove('is-visible');
+            return;
+        }
+        annFormatBar.classList.add('is-visible');
+        if (afbFont) {
+            const fv = ann.fontFamily || 'Helvetica';
+            afbFont.value = fv;
+            // If the font isn't in the list, fall back to Helvetica
+            if (!afbFont.value) afbFont.value = 'Helvetica';
+        }
+        const fontSize = Number(ann.fontSize) || 12;
+        if (afbSize)      afbSize.value = String(Math.round(Math.min(144, Math.max(6, fontSize))));
+        if (afbSizeValue) afbSizeValue.textContent = Math.round(fontSize) + 'pt';
+        if (afbTextColor) afbTextColor.value = ann.textColor || '#000000';
+        if (afbBgColor)   afbBgColor.value   = ann.backgroundColor || '#ffffff';
+        if (afbOpacity) {
+            const op = parseFloat(ann.opacity ?? 1);
+            const rounded = Math.round((isNaN(op) ? 1 : Math.min(1, Math.max(0.1, op))) * 10) / 10;
+            afbOpacity.value = String(rounded);
+        }
+        if (afbBold) {
+            const isBold = String(ann.fontWeight || '400') === '700';
+            afbBold.setAttribute('aria-pressed', String(isBold));
+            afbBold.classList.toggle('is-active', isBold);
+        }
+        if (afbItalic) {
+            const isItalic = (ann.fontStyle || 'normal') === 'italic';
+            afbItalic.setAttribute('aria-pressed', String(isItalic));
+            afbItalic.classList.toggle('is-active', isItalic);
+        }
+        if (afbUnderline) {
+            const isUnderline = Boolean(ann.underline);
+            afbUnderline.setAttribute('aria-pressed', String(isUnderline));
+            afbUnderline.classList.toggle('is-active', isUnderline);
+        }
+        if (afbAlign)  afbAlign.value  = ann.textAlign     || 'left';
+        if (afbValign) afbValign.value = ann.verticalAlign || 'top';
     }
 
     function updateSaveUi() {
@@ -2198,16 +2998,16 @@
             editModeToggleLabel.textContent = editModeEnabled ? 'Edit Mode ON' : 'Edit Mode OFF';
         }
         if (addTextBtn) {
-            addTextBtn.disabled = !editModeEnabled;
+            addTextBtn.disabled = editModeEnabled;
             addTextBtn.title = editModeEnabled
-                ? 'Add Text — click or drag on the page to place a new text block'
-                : 'Turn Edit Mode ON to add text';
+                ? 'Turn Edit Mode OFF to add text'
+                : 'Add Text — click or drag on the page to place a new text block';
         }
         if (ftbAddText) {
-            ftbAddText.classList.toggle('is-disabled', !editModeEnabled);
+            ftbAddText.classList.toggle('is-disabled', editModeEnabled);
             ftbAddText.title = editModeEnabled
-                ? 'Text — click on the page to place a new text block'
-                : 'Turn Edit Mode ON to add text';
+                ? 'Turn Edit Mode OFF to add text'
+                : 'Text — click on the page to place a new text block';
         }
     }
 
@@ -2215,9 +3015,9 @@
         const nextState = !!active;
         if (editModeEnabled === nextState) return;
         editModeEnabled = nextState;
+        setAddTextMode(false); // always exit addTextMode when edit mode changes
         if (!editModeEnabled) {
             hoverState = { pi: null, uid: null };
-            setAddTextMode(false);
             clearActiveAnnotation();
         }
         updateEditModeUi();
@@ -2345,7 +3145,7 @@
     }
 
     function beginDrag(e, pi) {
-        if (!editModeEnabled) return;
+        if (!editModeEnabled && !addTextMode) return;
         const data = pageData[pi];
         const ann  = data?.annotations.find(a => a._uid === activeState.uid);
         const box  = ann ? resolveAnnBox(ann) : null;
@@ -2356,13 +3156,14 @@
     }
 
     function beginResize(e, pi, handle) {
-        if (!editModeEnabled) return;
+        if (!editModeEnabled && !addTextMode) return;
         const data = pageData[pi];
         const ann = data?.annotations.find(a => a._uid === activeState.uid);
         const box = ann ? resolveAnnBox(ann) : null;
         const pt = ann ? pdfPtFromClient(e.clientX, e.clientY, pi) : null;
         if (!ann || !box || !pt) return;
         pushUndo();
+        const startStyle = editableLineStyle(ann, 0);
         resizeState = {
             active: true,
             pi,
@@ -2370,6 +3171,7 @@
             handle,
             startPt: pt,
             startBox: { ...box },
+            startFontSize: startStyle.fontSizePt,
         };
     }
 
@@ -2381,8 +3183,23 @@
 
     function endResize() {
         if (!resizeState.active) return;
-        resizeState = { active: false, pi: null, uid: null, handle: null, startPt: null, startBox: null };
+        resizeState = { active: false, pi: null, uid: null, handle: null, startPt: null, startBox: null, startFontSize: null };
         markDirty();
+    }
+
+    function shouldScaleFontOnResize(ann) {
+        return false;
+    }
+
+    function scaledResizeFontSize(startFontSize, startBox, nextWidth, nextHeight) {
+        const baselineFontSize = Math.max(1, Number(startFontSize) || 12);
+        const widthScale = (Number(startBox?.w) || 0) > 0 ? (nextWidth / startBox.w) : 1;
+        const heightScale = (Number(startBox?.h) || 0) > 0 ? (nextHeight / startBox.h) : 1;
+        const scaleFactor = Math.sqrt(
+            Math.max(0.01, Number.isFinite(widthScale) ? widthScale : 1)
+            * Math.max(0.01, Number.isFinite(heightScale) ? heightScale : 1)
+        );
+        return Math.max(6, Math.min(144, baselineFontSize * scaleFactor));
     }
 
     window.addEventListener('mousemove', (e) => {
@@ -2405,7 +3222,7 @@
         }
 
         if (!resizeState.active) return;
-        const { pi, uid, handle, startPt, startBox } = resizeState;
+        const { pi, uid, handle, startPt, startBox, startFontSize } = resizeState;
         const data = pageData[pi];
         const ann = data?.annotations.find(a => a._uid === uid);
         const pt = pdfPtFromClient(e.clientX, e.clientY, pi);
@@ -2413,7 +3230,6 @@
 
         const minWidthPts = 12;
         const currentText = editedTexts[ann._uid] ?? String(ann.text ?? '');
-        const minHeightPts = Math.max(8, measureEditedTextHeightPts(ann, currentText, data.scale));
         const right = startBox.x + startBox.w;
         const top = startBox.y + startBox.h;
 
@@ -2429,10 +3245,10 @@
             nextRight = Math.max(pt.x, startBox.x + minWidthPts);
         }
         if (handle.includes('s')) {
-            nextBottom = Math.min(pt.y, top - minHeightPts);
+            nextBottom = pt.y;
         }
         if (handle.includes('n')) {
-            nextTop = Math.max(pt.y, startBox.y + minHeightPts);
+            nextTop = pt.y;
         }
 
         nextLeft = Math.max(0, nextLeft);
@@ -2440,8 +3256,37 @@
         nextRight = Math.min(data.wPts, nextRight);
         nextTop = Math.min(data.hPts, nextTop);
 
-        const nextWidth = Math.max(minWidthPts, nextRight - nextLeft);
-        const nextHeight = Math.max(minHeightPts, nextTop - nextBottom);
+        let nextWidth = Math.max(minWidthPts, nextRight - nextLeft);
+        let nextHeight = Math.max(8, nextTop - nextBottom);
+
+        if (shouldScaleFontOnResize(ann) && startFontSize) {
+            const previousFontSize = ann.fontSize;
+            ann.fontSize = scaledResizeFontSize(startFontSize, startBox, nextWidth, nextHeight);
+            const scaledMinHeightPts = Math.max(8, measureEditedTextHeightPts(ann, currentText, data.scale));
+            ann.fontSize = previousFontSize;
+
+            if (handle.includes('s')) {
+                nextBottom = Math.min(nextBottom, nextTop - scaledMinHeightPts);
+            }
+            if (handle.includes('n')) {
+                nextTop = Math.max(nextTop, nextBottom + scaledMinHeightPts);
+            }
+            nextBottom = Math.max(0, nextBottom);
+            nextTop = Math.min(data.hPts, nextTop);
+            nextHeight = Math.max(scaledMinHeightPts, nextTop - nextBottom);
+        } else {
+            const minHeightPts = Math.max(8, measureEditedTextHeightPts(ann, currentText, data.scale));
+            if (handle.includes('s')) {
+                nextBottom = Math.min(nextBottom, nextTop - minHeightPts);
+            }
+            if (handle.includes('n')) {
+                nextTop = Math.max(nextTop, nextBottom + minHeightPts);
+            }
+            nextBottom = Math.max(0, nextBottom);
+            nextTop = Math.min(data.hPts, nextTop);
+            nextHeight = Math.max(minHeightPts, nextTop - nextBottom);
+        }
+        nextWidth = Math.max(minWidthPts, nextRight - nextLeft);
 
         setAnnotationBox(ann, {
             x: nextLeft,
@@ -2449,9 +3294,13 @@
             w: nextWidth,
             h: nextHeight,
         });
+        if (shouldScaleFontOnResize(ann) && startFontSize) {
+            ann.fontSize = scaledResizeFontSize(startFontSize, startBox, nextWidth, nextHeight);
+        }
 
         redrawOverlay(pi);
         syncActiveEditor();
+        updateFormatBar();
     });
 
     window.addEventListener('mouseup', () => {
@@ -2472,7 +3321,7 @@
             if (!inTextField) { e.preventDefault(); performRedo(); return; }
         }
 
-        if (!editModeEnabled) return;
+        if (!editModeEnabled && !addTextMode) return;
         if (e.key !== 'Delete' && e.key !== 'Backspace') return;
         if (dragState.active || resizeState.active) return;
         if (!activeState.uid || activeState.pi === null) return;
@@ -2514,6 +3363,9 @@
             }
         }
         delete payload._originalBox;
+        delete payload._originalPdfBox;
+        delete payload._styleDirty;
+        delete payload._richHtml;
         return payload;
     }
 
@@ -2534,6 +3386,7 @@
         if (nextText !== originalText) return true;
         if (annotationPositionChanged(ann)) return true;
         if (annotationDimensionsChanged(ann)) return true;
+        if (ann._styleDirty) return true;
         return false;
     }
 
@@ -2720,7 +3573,7 @@
 
     // ── Add Text mode ─────────────────────────────────────────────────────────
     function setAddTextMode(active) {
-        addTextMode = editModeEnabled && !!active;
+        addTextMode = !editModeEnabled && !!active;
         if (!addTextMode && textCreationState.active) cancelTextCreationPreview();
         if (addTextBtn) addTextBtn.classList.toggle('active', addTextMode);
         if (ftbAddText) ftbAddText.classList.toggle('is-active', addTextMode);
@@ -2743,7 +3596,7 @@
     }
 
     function createNewTextAnnotation(canvasX, canvasY, pi, canvasWidth = null, canvasHeight = null) {
-        if (!editModeEnabled) return;
+        if (!addTextMode) return;
         const data = pageData[pi];
         if (!data) return;
 
@@ -2779,11 +3632,20 @@
             fontSize:     defaultFontSize,
             fontFamily:   'Helvetica',
             textColor:    '#000000',
+            fontWeight:   '400',
+            fontStyle:    'normal',
+            underline:    false,
+            textAlign:    'left',
+            verticalAlign: 'top',
+            backgroundColor: '#ffffff',
+            opacity:      1,
+            userCreated:        true,
             sourceSpans:        [],
             sourceLineBBoxes:   [],
             sourceTextLines:    [],
         };
         ann._originalBox = { x, y, w: nextWidthPts, h: nextHeightPts };
+        ann._originalPdfBox = { x, y, w: nextWidthPts, h: nextHeightPts };
 
         pushUndo();
         editedTexts[uid] = '';
@@ -2835,6 +3697,7 @@
                 `<img id="en-img-${pg}" alt="Page ${pg}">` +
                 `<div id="ac-${pg}" class="acro-layer"></div>` +
                 `<canvas id="oc-${pg}" class="overlay-canvas"></canvas>` +
+                `<div id="rhl-${pg}" class="rich-html-layer"></div>` +
                 `<div id="ae-${pg}" class="active-editor" contenteditable="true" spellcheck="false"></div>` +
                 `<div id="tm-${pg}" class="annotation-tbc-menu">` +
                     `<button id="mh-${pg}" type="button" class="tbc-menu-btn" title="Move" aria-label="Move">` +
@@ -2899,7 +3762,7 @@
         ac.style.height = `${initH}px`;
 
         const applyEditorTextTransform = (transformer) => {
-            if (!editModeEnabled) return;
+            if (!editModeEnabled && !addTextMode) return;
             const ann = pageData[pi]?.annotations.find((item) => item._uid === activeState.uid);
             if (!ann || typeof transformer !== 'function') return;
             const currentText = editedTexts[ann._uid] ?? String(ann.text ?? '');
@@ -2917,6 +3780,24 @@
 
         const startTextCreation = (event) => {
             if (!addTextMode || dragState.active || resizeState.active) return;
+            // If the pointer lands on a user-created annotation, select it instead
+            // of starting a new text-creation drag.
+            const _rect = oc.getBoundingClientRect();
+            const _pt = {
+                x: (event.clientX - _rect.left) * (oc.width / Math.max(_rect.width, 1)),
+                y: (event.clientY - _rect.top)  * (oc.height / Math.max(_rect.height, 1)),
+            };
+            const _data = pageData[pi];
+            const _hit = _data ? findAnnotationAt(_pt.x, _pt.y, _data.annotations, _data.scale, _data.canvasHeight) : null;
+            if (_hit?.userCreated) {
+                event.preventDefault();
+                if (activeState.uid && activeState.uid !== _hit._uid) {
+                    const activeEditor = activeState.pi !== null ? document.getElementById('ae-' + (activeState.pi + 1)) : null;
+                    if (activeEditor && document.activeElement === activeEditor) activeEditor.blur();
+                }
+                selectAnnotation(_hit, pi);
+                return;
+            }
             event.preventDefault();
             if (activeState.uid) {
                 const activeEditor = activeState.pi !== null ? document.getElementById('ae-' + (activeState.pi + 1)) : null;
@@ -3017,7 +3898,7 @@
         oc.addEventListener('mousemove', (e) => {
             if (textCreationState.active) return;
             if (dragState.active || resizeState.active) return;
-            if (!editModeEnabled) {
+            if (!editModeEnabled && !addTextMode) {
                 if (hoverState.pi === pi) {
                     hoverState = { pi: null, uid: null };
                     redrawOverlay(pi);
@@ -3025,11 +3906,20 @@
                 oc.style.cursor = 'default';
                 return;
             }
-            if (addTextMode) { oc.style.cursor = 'crosshair'; return; }
             const data = pageData[pi];
             const pt   = canvasPointFromEvent(e, oc);
             if (!pt) return;
             const ann = findAnnotationAt(pt.x, pt.y, data.annotations, data.scale, data.canvasHeight);
+            if (addTextMode) {
+                // Show a text cursor over user-created annotations; crosshair everywhere else.
+                const nextUid = ann?.userCreated ? ann._uid : null;
+                if (nextUid !== hoverState.uid || pi !== hoverState.pi) {
+                    hoverState = { pi, uid: nextUid };
+                    redrawOverlay(pi);
+                }
+                oc.style.cursor = ann?.userCreated ? 'text' : 'crosshair';
+                return;
+            }
             const nextUid = ann?._uid || null;
             if (nextUid === hoverState.uid && pi === hoverState.pi) return;
             hoverState  = { pi, uid: nextUid };
@@ -3038,7 +3928,7 @@
         });
 
         oc.addEventListener('mouseleave', () => {
-            if (!editModeEnabled) {
+            if (!editModeEnabled && !addTextMode) {
                 oc.style.cursor = 'default';
                 return;
             }
@@ -3050,8 +3940,18 @@
 
         oc.addEventListener('click', (e) => {
             if (dragState.active || resizeState.active) return;
-            if (!editModeEnabled) return;
-            if (addTextMode) return;
+            if (!editModeEnabled && !addTextMode) return;
+            if (addTextMode) {
+                // Allow clicking a user-created annotation to select it.
+                // (Actual creation is driven by pointerdown/up; this handles
+                // the synthetic click that fires after a short tap.)
+                const data = pageData[pi];
+                const pt   = canvasPointFromEvent(e, oc);
+                if (!pt) return;
+                const ann = findAnnotationAt(pt.x, pt.y, data.annotations, data.scale, data.canvasHeight);
+                if (ann?.userCreated && activeState.uid !== ann._uid) selectAnnotation(ann, pi);
+                return;
+            }
             const data = pageData[pi];
             const pt   = canvasPointFromEvent(e, oc);
             if (!pt) return;
@@ -3069,24 +3969,30 @@
         // ── Editor events ──
         let _textUndoPending = false;
         ae.addEventListener('focus', () => {
-            if (!editModeEnabled) { ae.blur(); return; }
+            if (!editModeEnabled && !addTextMode) { ae.blur(); return; }
             _textUndoPending = true;
         });
 
         ae.addEventListener('input', (e) => {
-            if (!editModeEnabled) return;
+            if (!editModeEnabled && !addTextMode) return;
             // Push undo snapshot once — before the first character change in this focus session.
             if (_textUndoPending) { _textUndoPending = false; pushUndo(); }
             const data = pageData[pi];
             const ann  = data?.annotations.find(a => a._uid === activeState.uid);
             if (!ann) return;
-            const selection = getEditorSelectionOffsets(e.currentTarget);
             const nextText = getEditorPlainText(e.currentTarget);
             editedTexts[ann._uid] = nextText;
             resizeAnnotationForEditedText(ann, nextText, pi);
-            e.currentTarget.innerHTML = renderPlainEditorHTML(ann, nextText, data.scale);
-            if (selection) {
-                setEditorSelectionOffsets(e.currentTarget, selection.start, selection.end);
+            if (ann._richHtml) {
+                // Preserve per-selection formatting: don't flatten innerHTML on typing.
+                // Just capture the updated HTML and keep the caret where the browser left it.
+                ann._richHtml = e.currentTarget.innerHTML;
+            } else {
+                const selection = getEditorSelectionOffsets(e.currentTarget);
+                e.currentTarget.innerHTML = renderPlainEditorHTML(ann, nextText, data.scale);
+                if (selection) {
+                    setEditorSelectionOffsets(e.currentTarget, selection.start, selection.end);
+                }
             }
             markDirty();
             syncActiveEditor();
@@ -3094,7 +4000,7 @@
         });
 
         ae.addEventListener('blur', (e) => {
-            if (!editModeEnabled) return;
+            if (!editModeEnabled && !addTextMode) return;
             const data = pageData[pi];
             const ann  = data?.annotations.find(a => a._uid === activeState.uid);
             if (!ann) return;
@@ -3114,15 +4020,33 @@
                 redrawOverlay(pi);
                 return;
             }
-            // Clear active state so the canvas draws the annotation with the updated text.
-            const clearUid = ann._uid;
-            requestAnimationFrame(() => {
-                if (activeState.uid === clearUid) clearActiveAnnotation();
-            });
+            if (isNewAnn) {
+                // Stay in addTextMode with the new annotation remaining selected.
+                // Do NOT call setEditModeEnabled(true) — that would show all extracted
+                // fields as editable, which is not wanted here.
+                // activeState still points at this annotation; just redraw to show the
+                // selection outline.
+                redrawOverlay(pi);
+            } else {
+                // For existing annotations: clear active state so the canvas redraws with text.
+                // Exception: don't clear if focus moved into the format bar (e.g. color picker),
+                // otherwise the bar disappears before the property change can fire.
+                // Also check a recent mousedown timestamp on the bar, because a native color-picker
+                // dialog can steal document focus away from the input element itself.
+                const clearUid = ann._uid;
+                requestAnimationFrame(() => {
+                    if (activeState.uid === clearUid) {
+                        const focused = document.activeElement;
+                        const recentFormatBarClick = (Date.now() - _formatBarMousedownTs) < 600;
+                        if (recentFormatBarClick || (focused && annFormatBar && annFormatBar.contains(focused))) return;
+                        clearActiveAnnotation();
+                    }
+                });
+            }
         });
 
         ae.addEventListener('keydown', (e) => {
-            if (!editModeEnabled) return;
+            if (!editModeEnabled && !addTextMode) return;
             // Blur (don't clearActiveAnnotation directly) so the blur handler saves first
             if (e.key === 'Escape') { e.preventDefault(); ae.blur(); return; }
             // Let the global Ctrl+Z/Y handler take care of undo/redo instead of browser default.
@@ -3259,7 +4183,7 @@
     }
     if (ftbAddText) {
         ftbAddText.addEventListener('click', () => {
-            if (!editModeEnabled) return;
+            if (editModeEnabled) return;
             setAddTextMode(!addTextMode);
             if (addTextMode) clearActiveAnnotation();
         });
@@ -3304,6 +4228,285 @@
         syncCurrentPageFromScroll();
     });
 
+    // ── Text Format Bar event listeners ───────────────────────────────────────
+    // Track pointer-down on the format bar so the ae blur handler doesn't clear
+    // the active annotation when the user clicks a color picker or other control.
+    let _formatBarMousedownTs = 0;
+    if (annFormatBar) {
+        annFormatBar.addEventListener('mousedown', (e) => {
+            _formatBarMousedownTs = Date.now();
+            // Prevent the format-bar button/control from stealing focus away from
+            // the active editor. This preserves the user's selection so per-selection
+            // commands (bold/italic/underline/color on a highlighted word) can run
+            // via document.execCommand without collapsing the range. Inputs that need
+            // to receive focus (text colour picker, select dropdowns, the size slider)
+            // are excluded so they can still be interacted with.
+            const target = e.target;
+            if (!(target instanceof HTMLElement)) return;
+            const tag = target.tagName;
+            const isFocusableControl = tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA'
+                || target.isContentEditable
+                || (target.closest && target.closest('input, select, textarea, [contenteditable=""], [contenteditable="true"]'));
+            if (!isFocusableControl) e.preventDefault();
+        });
+    }
+
+    function getActiveAnnAndPage() {
+        const { pi, uid } = activeState;
+        const data = pi !== null ? pageData[pi] : null;
+        const ann  = data ? data.annotations.find(a => a._uid === uid) : null;
+        return ann ? { ann, pi, data } : null;
+    }
+
+    // Return the active editor element and the current selection range if
+    // (a) the selection lies fully inside the editor AND (b) the selection
+    // is not collapsed — i.e. the user actually has characters highlighted.
+    // Used to route format-bar actions to per-selection formatting via
+    // document.execCommand, instead of setting annotation-level properties.
+    function getActiveEditorSelection() {
+        const active = getActiveAnnAndPage();
+        if (!active) return null;
+        const ae = document.getElementById('ae-' + (active.pi + 1));
+        if (!(ae instanceof HTMLElement) || ae.style.display === 'none') return null;
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
+        const range = selection.getRangeAt(0);
+        if (!ae.contains(range.startContainer) || !ae.contains(range.endContainer)) return null;
+        return { ae, range, selection, active };
+    }
+
+    // Persist the editor's current innerHTML on the annotation so subsequent
+    // syncActiveEditor calls (triggered by redraw, resize etc.) don't flatten
+    // per-selection formatting back to annotation-level uniform styling.
+    function persistRichEditorHtml(active, ae) {
+        active.ann._richHtml = ae.innerHTML;
+        active.ann._styleDirty = true;
+        markDirty();
+    }
+
+    function applySelectionFormat(command, valueArg) {
+        const info = getActiveEditorSelection();
+        if (!info) return false;
+        // Ensure the editor has focus so execCommand targets our selection.
+        if (document.activeElement !== info.ae) {
+            info.ae.focus({ preventScroll: true });
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(info.range);
+        }
+        pushUndo();
+        const beforeHtml = info.ae.innerHTML;
+        document.execCommand('styleWithCSS', false, true);
+        document.execCommand(command, false, valueArg);
+        // Chromium silently no-ops execCommand('bold'/'italic'/'underline') when the
+        // contenteditable's ancestor has explicit inline font-weight / font-style /
+        // text-decoration (as our `<div data-line-index=0 style="font-weight:400;...">`
+        // wrapper does). Fall back to manual wrapping so the three toolbar commands
+        // always produce a CSS span around the selection.
+        if (info.ae.innerHTML === beforeHtml) {
+            manualWrapSelection(info.ae, info.range, command, valueArg);
+        }
+        persistRichEditorHtml(info.active, info.ae);
+        redrawOverlay(info.active.pi);
+        return true;
+    }
+
+    // Wraps the current selection with a <span> that applies the equivalent inline
+    // style for the given execCommand. Used as a fallback when Chromium refuses to
+    // modify the DOM (happens when the editor's wrapper has explicit font-weight
+    // etc. declarations).
+    function manualWrapSelection(ae, fallbackRange, command, valueArg) {
+        const sel = window.getSelection();
+        let range = null;
+        if (sel && sel.rangeCount > 0) range = sel.getRangeAt(0);
+        if (!range || range.collapsed) range = fallbackRange;
+        if (!range || range.collapsed) return;
+        if (!ae.contains(range.startContainer) || !ae.contains(range.endContainer)) return;
+
+        const cssDecl = (() => {
+            switch (command) {
+                case 'bold':      return 'font-weight: bold';
+                case 'italic':    return 'font-style: italic';
+                case 'underline': return 'text-decoration: underline';
+                case 'foreColor': return `color: ${valueArg || '#000000'}`;
+                default:          return null;
+            }
+        })();
+        if (!cssDecl) return;
+
+        try {
+            const contents = range.extractContents();
+            const span = document.createElement('span');
+            span.setAttribute('style', cssDecl);
+            span.appendChild(contents);
+            range.insertNode(span);
+            // Restore selection across the freshly-wrapped span.
+            const newRange = document.createRange();
+            newRange.selectNodeContents(span);
+            sel.removeAllRanges();
+            sel.addRange(newRange);
+        } catch (_error) {
+            // Selection spanned non-wrappable structure (eg. adjacent block boundaries).
+            // Give up silently — the undo snapshot will let the user retry.
+        }
+    }
+
+    function applyFormatProperty(update) {
+        const active = getActiveAnnAndPage();
+        if (!active) return;
+        const { ann, pi } = active;
+        pushUndo();
+        update(ann, pi);
+        ann._styleDirty = true;
+        redrawOverlay(pi);
+        syncActiveEditor(true);
+        markDirty();
+    }
+
+    if (afbFont) {
+        afbFont.addEventListener('change', () => {
+            applyFormatProperty(ann => { ann.fontFamily = afbFont.value; });
+        });
+    }
+    if (afbSize) {
+        // Live label update while dragging (no annotation write)
+        afbSize.addEventListener('input', () => {
+            const pt = Number(afbSize.value) || 12;
+            if (afbSizeValue) afbSizeValue.textContent = pt + 'pt';
+        });
+        // Commit when slider is released
+        afbSize.addEventListener('change', () => {
+            const pt = Number(afbSize.value) || 12;
+            if (afbSizeValue) afbSizeValue.textContent = pt + 'pt';
+            applyFormatProperty((ann, pi) => {
+                ann.fontSize = pt;
+                const currentText = String(editedTexts[ann._uid] ?? ann.text ?? '');
+                resizeAnnotationForEditedText(ann, currentText, pi);
+            });
+        });
+    }
+    if (afbTextColor) {
+        // 'input' fires live while dragging in picker; 'change' fires on close and pushes undo
+        afbTextColor.addEventListener('input', () => {
+            // If there is a highlighted selection, recolor just that selection live.
+            if (applySelectionFormat('foreColor', afbTextColor.value)) return;
+            const active = getActiveAnnAndPage();
+            if (!active) return;
+            active.ann.textColor = afbTextColor.value;
+            redrawOverlay(active.pi);
+            syncActiveEditor(true);
+        });
+        afbTextColor.addEventListener('change', () => {
+            if (applySelectionFormat('foreColor', afbTextColor.value)) return;
+            applyFormatProperty(ann => { ann.textColor = afbTextColor.value; });
+        });
+    }
+    if (afbBgColor) {
+        afbBgColor.addEventListener('input', () => {
+            const active = getActiveAnnAndPage();
+            if (!active) return;
+            active.ann.backgroundColor = afbBgColor.value;
+            redrawOverlay(active.pi);
+            syncActiveEditor(true);
+        });
+        afbBgColor.addEventListener('change', () => {
+            applyFormatProperty(ann => { ann.backgroundColor = afbBgColor.value; });
+        });
+    }
+    if (afbOpacity) {
+        afbOpacity.addEventListener('change', () => {
+            applyFormatProperty(ann => { ann.opacity = parseFloat(afbOpacity.value); });
+        });
+    }
+    if (afbBold) {
+        afbBold.addEventListener('click', () => {
+            if (applySelectionFormat('bold')) return;
+            const active = getActiveAnnAndPage();
+            if (!active) return;
+            const isBold = String(active.ann.fontWeight || '400') === '700';
+            pushUndo();
+            active.ann.fontWeight = isBold ? '400' : '700';
+            active.ann._styleDirty = true;
+            afbBold.setAttribute('aria-pressed', String(!isBold));
+            afbBold.classList.toggle('is-active', !isBold);
+            redrawOverlay(active.pi);
+            syncActiveEditor(true);
+            markDirty();
+        });
+    }
+    if (afbItalic) {
+        afbItalic.addEventListener('click', () => {
+            if (applySelectionFormat('italic')) return;
+            const active = getActiveAnnAndPage();
+            if (!active) return;
+            const isItalic = (active.ann.fontStyle || 'normal') === 'italic';
+            pushUndo();
+            active.ann.fontStyle = isItalic ? 'normal' : 'italic';
+            active.ann._styleDirty = true;
+            afbItalic.setAttribute('aria-pressed', String(!isItalic));
+            afbItalic.classList.toggle('is-active', !isItalic);
+            redrawOverlay(active.pi);
+            syncActiveEditor(true);
+            markDirty();
+        });
+    }
+    if (afbUnderline) {
+        afbUnderline.addEventListener('click', () => {
+            if (applySelectionFormat('underline')) return;
+            const active = getActiveAnnAndPage();
+            if (!active) return;
+            const isUnderline = Boolean(active.ann.underline);
+            pushUndo();
+            active.ann.underline = !isUnderline;
+            active.ann._styleDirty = true;
+            afbUnderline.setAttribute('aria-pressed', String(!isUnderline));
+            afbUnderline.classList.toggle('is-active', !isUnderline);
+            redrawOverlay(active.pi);
+            syncActiveEditor(true);
+            markDirty();
+        });
+    }
+    if (afbAlign) {
+        afbAlign.addEventListener('change', () => {
+            applyFormatProperty(ann => { ann.textAlign = afbAlign.value; });
+        });
+    }
+    if (afbValign) {
+        afbValign.addEventListener('change', () => {
+            applyFormatProperty(ann => { ann.verticalAlign = afbValign.value; });
+        });
+    }
+    if (afbCopy) {
+        afbCopy.addEventListener('click', () => {
+            const active = getActiveAnnAndPage();
+            if (!active) return;
+            const { ann, pi, data } = active;
+            pushUndo();
+            const OFFSET = 12; // pts
+            const newAnn = {
+                ...ann,
+                _uid: 'new_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+                id:   generateAnnotationId(),
+                pdfX: Math.min(ann.pdfX + OFFSET, Math.max(0, data.wPts - (ann.pdfWidth || 60))),
+                pdfY: Math.max(ann.pdfY - OFFSET, 0),
+                userCreated: true,
+            };
+            newAnn._originalBox = { x: newAnn.pdfX, y: newAnn.pdfY, w: newAnn.pdfWidth, h: newAnn.pdfHeight };
+            newAnn._originalPdfBox = { x: newAnn.pdfX, y: newAnn.pdfY, w: newAnn.pdfWidth, h: newAnn.pdfHeight };
+            editedTexts[newAnn._uid] = String(editedTexts[ann._uid] ?? ann.text ?? '');
+            data.annotations.push(newAnn);
+            selectAnnotation(newAnn, pi);
+            markDirty();
+        });
+    }
+    if (afbDelete) {
+        afbDelete.addEventListener('click', () => {
+            const active = getActiveAnnAndPage();
+            if (!active) return;
+            deleteAnnotation(active.ann, active.pi);
+        });
+    }
+
     // ── Main ──────────────────────────────────────────────────────────────────
     async function run() {
         let data;
@@ -3315,6 +4518,16 @@
             data = await resp.json();
             if (!data.success) throw new Error(data.message || 'Failed to load document info.');
         } catch (e) { showError(String(e)); return; }
+
+        const embeddedFontsBySource = data.embedded_fonts_by_source && typeof data.embedded_fonts_by_source === 'object'
+            ? data.embedded_fonts_by_source
+            : null;
+        const preferredEmbeddedFonts = (embeddedFontsBySource?.clean && typeof embeddedFontsBySource.clean === 'object')
+            ? embeddedFontsBySource.clean
+            : (embeddedFontsBySource?.file && typeof embeddedFontsBySource.file === 'object')
+                ? embeddedFontsBySource.file
+                : ((data.embedded_fonts && typeof data.embedded_fonts === 'object') ? data.embedded_fonts : null);
+        loadEmbeddedFontFaces(preferredEmbeddedFonts);
 
         acroFormEntries = Array.isArray(data.acro_form_entries) ? data.acro_form_entries : [];
         acroFieldLookup = buildAcroFieldLookup(acroFormEntries);
@@ -3336,6 +4549,23 @@
         const allAnnotations = rawAnns.map((ann, i) => {
             const hydrated = { ...ann, _uid: String(ann.id || ann.db_id || '') + '_' + i };
             hydrated._originalBox = resolveSourceBox(hydrated) || resolveAnnBox(hydrated) || null;
+            // Pick the "original" PDF box used by annotationDimensionsChanged:
+            //  - If the stored pdfW/H matches the sourceBlock dims within a few pts,
+            //    the annotation was never resized — use the stored box so
+            //    dimensionsChanged stays false (avoids false-positive forcing the
+            //    plain-text editor render for promoted annotations).
+            //  - Otherwise the user resized it in a prior session — use the sourceBlock
+            //    box so dimensionsChanged returns true and drawEditedAnnotation takes
+            //    the resized render path instead of falling back to drawOriginalSource
+            //    (which would ignore the saved pdfWidth/pdfHeight and re-render the
+            //    original wide PDF layout).
+            const storedBox = resolveAnnBox(hydrated);
+            const sourceBox = resolveSourceBox(hydrated);
+            const TOL = 2;
+            const roughlyEqual = storedBox && sourceBox
+                && Math.abs(storedBox.w - sourceBox.w) <= TOL
+                && Math.abs(storedBox.h - sourceBox.h) <= TOL;
+            hydrated._originalPdfBox = roughlyEqual ? storedBox : (sourceBox || storedBox || null);
             return hydrated;
         });
         allAnnotations.forEach(ann => { editedTexts[ann._uid] = String(ann.text || ''); });
@@ -3374,6 +4604,9 @@
             await pdfPage.render({
                 canvasContext: offscreen.getContext('2d'),
                 viewport: pdfPage.getViewport({ scale: renderScale }),
+                annotationMode: typeof pdfjsLib?.AnnotationMode?.DISABLE === 'number'
+                    ? pdfjsLib.AnnotationMode.DISABLE
+                    : 0,
             }).promise.catch(() => {});
             await new Promise(res => { img.onload = res; img.onerror = res; img.src = offscreen.toDataURL('image/png'); });
 
@@ -3381,6 +4614,26 @@
             setupPage(pg, wPts, hPts, byPage[pi] || [], acroWidgets);
             redrawOverlay(pi);
             drawAcroOverlay(pi);
+        }
+
+        // CSS @font-face fonts are lazy-loaded — only triggered when first used.
+        // Explicitly load each font face so canvas ctx.measureText() uses real metrics.
+        // Then redraw all overlays so span scaleX calculations are accurate.
+        if (preferredEmbeddedFonts && document.fonts?.load) {
+            const fontLoadPromises = [];
+            for (const [, fontData] of Object.entries(preferredEmbeddedFonts)) {
+                const cleanName = String(fontData?.clean_name || '').trim();
+                const family    = String(fontData?.family || '').trim();
+                const weight    = String(fontData?.css_weight || '400');
+                const style     = String(fontData?.css_style || 'normal');
+                const sizePx    = '16px'; // arbitrary size — triggers download
+                if (cleanName) fontLoadPromises.push(document.fonts.load(`${style} ${weight} ${sizePx} PDF_${cleanName}`).catch(() => {}));
+                if (family && family !== cleanName) fontLoadPromises.push(document.fonts.load(`${style} ${weight} ${sizePx} PDF_${family}`).catch(() => {}));
+            }
+            if (fontLoadPromises.length) {
+                try { await Promise.all(fontLoadPromises); } catch (_) {}
+            }
+            for (const pi of Object.keys(pageData)) redrawOverlay(Number(pi));
         }
 
         markClean();
