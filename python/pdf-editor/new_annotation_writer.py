@@ -672,7 +672,11 @@ def build_annotation_htmlbox_css(ann: Dict[str, Any], font_size: float, opacity:
         line_height_value = float(ann.get("lineHeight") or 0)
     except Exception:
         line_height_value = 0.0
-    line_height_css = f"{line_height_value}pt" if line_height_value > 0 else "normal"
+    # Match the browser's blockLineHeightPx formula (fontSize * 1.18) with a
+    # unitless value so rich-html spans with per-span font-sizes scale
+    # correctly. MuPDF's "normal" default produced tighter line spacing than
+    # the editor.
+    line_height_css = f"{line_height_value}pt" if line_height_value > 0 else "1.18"
     white_space = "pre" if preserve_extracted_lines else "pre-wrap"
     overflow_wrap = "normal" if preserve_extracted_lines else "break-word"
     word_break = "normal" if preserve_extracted_lines else "break-word"
@@ -1323,7 +1327,8 @@ def normalize_exact_source_line_layout(
         dominant_source_font_style = str(dominant_source_span.get("font_style") or "").strip() or None
         dominant_source_underline = bool(dominant_source_span.get("underline"))
 
-    force_annotation_font_family = (
+    style_dirty = bool(ann.get("styleDirty"))
+    force_annotation_font_family = style_dirty and (
         bool(raw_annotation_font_family or raw_annotation_font_source_name)
         and (
             not dominant_source_font_family
@@ -1336,12 +1341,12 @@ def normalize_exact_source_line_layout(
         and bool(dominant_source_color)
         and annotation_text_color.lower() != dominant_source_color.lower()
     )
-    force_annotation_font_weight = (
+    force_annotation_font_weight = style_dirty and (
         bool(annotation_font_weight)
         and bool(dominant_source_font_weight)
         and annotation_font_weight.lower() != dominant_source_font_weight.lower()
     )
-    force_annotation_font_style = (
+    force_annotation_font_style = style_dirty and (
         bool(annotation_font_style)
         and bool(dominant_source_font_style)
         and annotation_font_style.lower() != dominant_source_font_style.lower()
@@ -1353,7 +1358,7 @@ def normalize_exact_source_line_layout(
         except Exception:
             dominant_source_font_size = None
     font_size_tolerance = max(0.5, float(font_size or 0.0) * 0.02)
-    force_annotation_font_size = (
+    force_annotation_font_size = style_dirty and (
         float(font_size or 0.0) > 0
         and dominant_source_font_size is not None
         and abs(float(font_size) - float(dominant_source_font_size)) > font_size_tolerance
@@ -3456,8 +3461,10 @@ def draw_shape(page: fitz.Page, ann: Dict[str, Any]) -> None:
         draw_open_lines([(rp(line_start_x, line_start_y), rp(line_end_x, line_end_y))])
         return
 
-    # Default rectangle
-    points = [rp(0.05, 0.05), rp(0.95, 0.05), rp(0.95, 0.95), rp(0.05, 0.95), rp(0.05, 0.05)]
+    # Default rectangle: use the full annotation bounds. The editor stores the
+    # square/rectangle box as the intended final geometry; insetting by 5% on
+    # each side shrinks exported bars relative to the DOM preview.
+    points = [rp(0.0, 0.0), rp(1.0, 0.0), rp(1.0, 1.0), rp(0.0, 1.0), rp(0.0, 0.0)]
     draw_poly(points, close_path=True, line_join=1)
 
 

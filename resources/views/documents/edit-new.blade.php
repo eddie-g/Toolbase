@@ -14,6 +14,13 @@
                 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
         }
     </script>
+    <!-- Popular Google Fonts available in the /edit-new font picker. Loaded
+         once at page load so the canvas + contenteditable can render any of
+         them immediately when the user picks one in the format bar. The
+         server-side PDF export reads the same TTFs from python/pdf-editor/fonts. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:ital,wght@0,400;0,700;1,400;1,700&family=Bebas+Neue&family=Cabin:ital,wght@0,400;0,700;1,400;1,700&family=Crimson+Text:ital,wght@0,400;0,700;1,400;1,700&family=DM+Sans:ital,wght@0,400;0,700;1,400;1,700&family=Dosis:wght@400;700&family=Fira+Sans:ital,wght@0,400;0,700;1,400;1,700&family=Heebo:wght@400;700&family=Hind:wght@400;700&family=Inter:ital,wght@0,400;0,700;1,400;1,700&family=Josefin+Sans:ital,wght@0,400;0,700;1,400;1,700&family=Kanit:ital,wght@0,400;0,700;1,400;1,700&family=Karla:ital,wght@0,400;0,700;1,400;1,700&family=Lato:ital,wght@0,400;0,700;1,400;1,700&family=Lora:ital,wght@0,400;0,700;1,400;1,700&family=Manrope:wght@400;700&family=Merriweather:ital,wght@0,400;0,700;1,400;1,700&family=Montserrat:ital,wght@0,400;0,700;1,400;1,700&family=Mukta:wght@400;700&family=Mulish:ital,wght@0,400;0,700;1,400;1,700&family=Noto+Sans:ital,wght@0,400;0,700;1,400;1,700&family=Noto+Serif:ital,wght@0,400;0,700;1,400;1,700&family=Nunito:ital,wght@0,400;0,700;1,400;1,700&family=Open+Sans:ital,wght@0,400;0,700;1,400;1,700&family=Oswald:wght@400;700&family=PT+Sans:ital,wght@0,400;0,700;1,400;1,700&family=Playfair+Display:ital,wght@0,400;0,700;1,400;1,700&family=Poppins:ital,wght@0,400;0,700;1,400;1,700&family=Quicksand:wght@400;700&family=Raleway:ital,wght@0,400;0,700;1,400;1,700&family=Roboto+Condensed:ital,wght@0,400;0,700;1,400;1,700&family=Roboto+Mono:ital,wght@0,400;0,700;1,400;1,700&family=Roboto+Slab:wght@400;700&family=Roboto:ital,wght@0,400;0,700;1,400;1,700&family=Rubik:ital,wght@0,400;0,700;1,400;1,700&family=Source+Sans+3:ital,wght@0,400;0,700;1,400;1,700&family=Ubuntu:ital,wght@0,400;0,700;1,400;1,700&family=Work+Sans:ital,wght@0,400;0,700;1,400;1,700&display=swap">
     <style>
         *, *::before, *::after { box-sizing: border-box; }
         body { margin: 0; background: #f3f4f6; font-family: system-ui, sans-serif; }
@@ -24,20 +31,40 @@
             padding: 10px 20px; display: flex; align-items: center; gap: 12px;
         }
         .top-bar h1 { margin: 0; font-size: 15px; font-weight: 600; color: #111827; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        /* Rename UI: hover + active states for the document name. */
+        .top-bar .doc-name-wrap { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+        .top-bar .doc-name-display {
+            margin: 0; font-size: 15px; font-weight: 600; color: #111827;
+            min-width: 0; max-width: 100%;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            cursor: text; padding: 2px 6px; border-radius: 4px;
+            border: 1px solid transparent;
+        }
+        .top-bar .doc-name-display:hover { background: #f3f4f6; border-color: #e5e7eb; }
+        .top-bar .doc-name-display:focus-visible { outline: none; background: #fff; border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,0.15); }
+        .top-bar .doc-name-input {
+            margin: 0; font-size: 15px; font-weight: 600; color: #111827;
+            min-width: 0; flex: 1;
+            padding: 2px 6px; border-radius: 4px;
+            border: 1px solid #6366f1; background: #fff;
+            outline: none; box-shadow: 0 0 0 3px rgba(99,102,241,0.15);
+        }
+        .top-bar .doc-name-edit-btn {
+            background: none; border: none; padding: 2px; margin: 0;
+            color: #6b7280; cursor: pointer; border-radius: 4px;
+            display: inline-flex; align-items: center; justify-content: center;
+            line-height: 0;
+        }
+        .top-bar .doc-name-edit-btn:hover { background: #f3f4f6; color: #111827; }
+        .top-bar .doc-name-edit-btn:focus-visible { outline: none; background: #f3f4f6; box-shadow: 0 0 0 3px rgba(99,102,241,0.2); }
         .top-bar a  { font-size: 13px; color: #6b7280; text-decoration: none; white-space: nowrap; }
         .top-bar a:hover { color: #111827; }
         .top-bar .save-status { font-size: 12px; color: #6b7280; white-space: nowrap; }
         .top-bar .save-btn {
-            appearance: none;
-            border: none;
-            border-radius: 8px;
-            background: #111827;
-            color: #fff;
-            font-size: 13px;
-            font-weight: 600;
-            padding: 8px 14px;
-            cursor: pointer;
-            white-space: nowrap;
+            /* Auto-save is enabled: the manual Save button is hidden. Keep the
+               element in the DOM because existing JS (updateSaveUi, click
+               handler, etc.) still references it to reflect save state. */
+            display: none !important;
         }
         .top-bar .save-btn[disabled] {
             background: #9ca3af;
@@ -132,6 +159,17 @@
             line-height: 1.2;
         }
         .top-bar .add-text-btn.active { background: #dbeafe; color: #1d4ed8; border-color: #93c5fd; }
+        .top-bar .add-shape-btn {
+            padding: 8px 14px;
+            font-size: 13px;
+            font-weight: 500;
+            line-height: 1.2;
+        }
+        .top-bar .add-shape-btn.active {
+            background: linear-gradient(180deg, #dcfce7 0%, #bbf7d0 100%);
+            color: #166534;
+            border-color: #86efac;
+        }
 
         #pages-wrap { padding: 88px 20px 24px; max-width: 1100px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; align-items: center; }
 
@@ -298,6 +336,20 @@
             display: block;
             line-height: 1.4;
         }
+        /* When the canvas owns the painting (pristine extracted + actively
+         * editing), the editor still holds contenteditable text nodes for the
+         * caret + execCommand to work, but every visible glyph and inline
+         * background must be hidden so the canvas baseline shows through. The
+         * inner spans built by buildEditorHTML / buildSourceFlowEditorHTML set
+         * their own inline color, so we override descendants with !important.
+         */
+        .active-editor[data-canvas-owns="1"],
+        .active-editor[data-canvas-owns="1"] * {
+            color: transparent !important;
+            -webkit-text-fill-color: transparent !important;
+            background: transparent !important;
+            text-shadow: none !important;
+        }
 
         .annotation-tbc-menu {
             display: none;
@@ -346,11 +398,84 @@
             background: rgba(248, 113, 113, 0.15);
             border-color: rgba(248, 113, 113, 0.3);
         }
+        .annotation-tbc-menu .tbc-menu-btn.tbc-lock { color: #93c5fd; }
+        .annotation-tbc-menu .tbc-menu-btn.tbc-lock:hover {
+            background: rgba(147, 197, 253, 0.15);
+            border-color: rgba(147, 197, 253, 0.35);
+        }
+        .annotation-tbc-menu .tbc-menu-btn.tbc-lock.is-active {
+            background: rgba(59, 130, 246, 0.28);
+            border-color: rgba(147, 197, 253, 0.6);
+            color: #dbeafe;
+        }
         .annotation-tbc-menu .tbc-menu-divider {
             width: 1px;
             height: 20px;
             background: rgba(255,255,255,0.12);
             margin: 0 2px;
+        }
+        .shape-action-bar {
+            display: none;
+            position: absolute;
+            align-items: center;
+            gap: 4px;
+            background: rgba(11, 19, 32, 0.95);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 10px;
+            padding: 4px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.38);
+            z-index: 6;
+            transform: translateX(-50%);
+            white-space: nowrap;
+            backdrop-filter: blur(8px);
+        }
+        .shape-action-bar.is-below {
+            transform: translate(-50%, 8px);
+        }
+        .shape-action-bar__btn {
+            width: 30px;
+            height: 30px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 7px;
+            border: 1px solid rgba(77, 208, 168, 0.28);
+            background: rgba(77, 208, 168, 0.14);
+            color: #6ee7b7;
+            cursor: pointer;
+            transition: background 0.16s ease, transform 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+        }
+        .shape-action-bar__btn:hover {
+            background: rgba(77, 208, 168, 0.24);
+            border-color: rgba(77, 208, 168, 0.45);
+            transform: scale(1.05);
+        }
+        .shape-action-bar__btn.is-danger {
+            background: rgba(248, 113, 113, 0.14);
+            border-color: rgba(248, 113, 113, 0.26);
+            color: #fca5a5;
+        }
+        .shape-action-bar__btn.is-danger:hover {
+            background: rgba(248, 113, 113, 0.24);
+            border-color: rgba(248, 113, 113, 0.4);
+        }
+        .shape-action-bar__btn.is-active {
+            background: rgba(77, 208, 168, 0.42);
+            border-color: rgba(77, 208, 168, 0.7);
+            color: #ecfeff;
+        }
+        .shape-action-bar__tag {
+            display: none;
+            align-items: center;
+            height: 30px;
+            padding: 0 9px;
+            border-radius: 999px;
+            background: rgba(59, 130, 246, 0.18);
+            border: 1px solid rgba(96, 165, 250, 0.32);
+            color: #dbeafe;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.01em;
         }
 
         .text-drag-selection {
@@ -378,9 +503,44 @@
         .resize-handle[data-dir="sw"] { cursor: nesw-resize; }
         .resize-handle[data-dir="se"] { cursor: nwse-resize; }
 
+        .rotate-handle {
+            display: none;
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            margin: 0;
+            padding: 0;
+            background: rgba(59, 130, 246, 0.92);
+            border: 2px solid #0b1320;
+            border-radius: 9999px;
+            color: #fff;
+            cursor: grab;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            line-height: 1;
+            z-index: 7;
+            user-select: none;
+        }
+        .rotate-handle.is-active { cursor: grabbing; background: rgba(37, 99, 235, 1); }
+        .rotate-handle svg { display: block; pointer-events: none; }
+
+        .shape-selection-box {
+            display: none;
+            position: absolute;
+            border: 1px dashed #2563eb;
+            background: transparent;
+            pointer-events: none;
+            box-sizing: border-box;
+            z-index: 5;
+        }
+
         #error-banner { background: #fef2f2; border: 1px solid #fecaca; border-radius: 10px; padding: 12px 16px; font-size: 13px; color: #dc2626; display: none; }
         #save-toast { position: fixed; bottom: 20px; right: 20px; background: #1e293b; color: #fff; font-size: 13px; padding: 8px 16px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 100; }
         #save-toast.show { opacity: 1; }
+        #shape-constrain-tip { position: fixed; background: #1e293b; color: #fff; font-size: 12px; padding: 6px 10px; border-radius: 6px; opacity: 0; transition: opacity .15s; pointer-events: none; z-index: 120; white-space: nowrap; box-shadow: 0 2px 6px rgba(0,0,0,.25); }
+        #shape-constrain-tip.show { opacity: 1; }
+        #shape-constrain-tip kbd { background: #334155; color: #fff; padding: 1px 5px; border-radius: 3px; font-family: inherit; font-size: 11px; }
         /* ── Floating tool bar ─────────────────────────────────────────────── */
         .floating-tool-bar {
             position: fixed;
@@ -434,6 +594,8 @@
         }
         .ftb-btn svg { flex-shrink: 0; }
         .ftb-btn:hover { background: #f3f4f6; color: #111827; }
+        .ftb-btn[disabled] { opacity: 0.42; cursor: not-allowed; }
+        .ftb-btn[disabled]:hover { background: transparent; color: #4b5563; }
         .ftb-btn.is-active {
             background: #eff6ff;
             color: #1d4ed8;
@@ -442,6 +604,1467 @@
         .ftb-btn.is-active svg { stroke: #1d4ed8; }
         .ftb-btn.is-disabled { opacity: 0.42; cursor: default; }
         .ftb-btn.is-disabled:hover { background: transparent; color: #4b5563; }
+
+        /* ── Shape Format Bar (compact toolbar matching .ann-format-bar) ──── */
+        .shape-tool-panel {
+            position: fixed;
+            top: 134px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: none;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: nowrap;
+            padding: 6px 10px;
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.10), 0 1px 4px rgba(0,0,0,0.06);
+            z-index: 38;
+            white-space: nowrap;
+            font-size: 13px;
+            color: #1a202c;
+            overflow-x: auto;
+            max-width: calc(100vw - 32px);
+            font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+        }
+        .shape-tool-panel.is-visible { display: flex; }
+        .draw-tool-panel {
+            position: fixed;
+            top: 136px;
+            right: 22px;
+            display: none;
+            flex-direction: column;
+            gap: 14px;
+            width: 88px;
+            padding: 14px 12px;
+            border-radius: 22px;
+            border: 1px solid rgba(148, 163, 184, 0.28);
+            background:
+                radial-gradient(circle at top, rgba(191, 219, 254, 0.72), transparent 34%),
+                linear-gradient(180deg, rgba(255,255,255,0.97) 0%, rgba(248,250,252,0.98) 100%);
+            box-shadow:
+                0 24px 54px rgba(15, 23, 42, 0.16),
+                0 8px 20px rgba(15, 23, 42, 0.08);
+            z-index: 39;
+            align-items: center;
+            backdrop-filter: blur(14px);
+        }
+        .draw-tool-panel.is-visible { display: flex; }
+        .draw-tool-panel__head {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+        .draw-tool-panel__title {
+            margin: 0;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #0f172a;
+        }
+        .draw-tool-panel__close {
+            appearance: none;
+            width: 28px;
+            height: 28px;
+            border: 1px solid rgba(203, 213, 225, 0.9);
+            border-radius: 999px;
+            background: rgba(255,255,255,0.88);
+            color: #475569;
+            cursor: pointer;
+            font-size: 18px;
+            line-height: 1;
+            transition: background .14s ease, color .14s ease, transform .14s ease;
+        }
+        .draw-tool-panel__close:hover {
+            background: #ffffff;
+            color: #0f172a;
+            transform: scale(1.04);
+        }
+        .draw-tool-panel__stack {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            align-items: center;
+        }
+        .draw-tool-panel__tool-group {
+            width: 100%;
+            display: grid;
+            gap: 8px;
+        }
+        .draw-tool-btn {
+            appearance: none;
+            width: 100%;
+            height: 44px;
+            border: 1px solid rgba(203, 213, 225, 0.85);
+            border-radius: 16px;
+            background: rgba(255,255,255,0.9);
+            color: #475569;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: transform .14s ease, border-color .14s ease, color .14s ease, box-shadow .14s ease;
+        }
+        .draw-tool-btn:hover {
+            transform: translateY(-1px);
+            border-color: rgba(96, 165, 250, 0.9);
+            color: #0f172a;
+        }
+        .draw-tool-btn.is-active {
+            border-color: rgba(37, 99, 235, 0.4);
+            color: #1d4ed8;
+            box-shadow: inset 0 0 0 1px rgba(191, 219, 254, 0.9), 0 10px 20px rgba(37, 99, 235, 0.12);
+            background: linear-gradient(180deg, rgba(239, 246, 255, 0.98) 0%, rgba(219, 234, 254, 0.96) 100%);
+        }
+        .draw-tool-btn svg {
+            width: 20px;
+            height: 20px;
+            stroke: currentColor;
+            fill: none;
+            stroke-width: 1.9;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            pointer-events: none;
+        }
+        .draw-tool-panel__section-label {
+            width: 100%;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #64748b;
+            text-align: left;
+        }
+        .draw-tool-panel__slider-wrap {
+            width: 100%;
+            display: grid;
+            gap: 6px;
+            justify-items: center;
+        }
+        .draw-tool-panel__slider-wrap input[type="range"] {
+            writing-mode: vertical-lr;
+            direction: rtl;
+            width: 34px;
+            height: 116px;
+            margin: 0;
+            accent-color: #2563eb;
+        }
+        .draw-tool-panel__readout {
+            font-size: 11px;
+            font-weight: 700;
+            color: #334155;
+            font-variant-numeric: tabular-nums;
+        }
+        .draw-tool-panel__colors {
+            width: 100%;
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+        }
+        .draw-color-swatch {
+            appearance: none;
+            width: 28px;
+            height: 28px;
+            border-radius: 999px;
+            border: 2px solid rgba(255,255,255,0.92);
+            box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.42);
+            background: var(--swatch-color, #111827);
+            cursor: pointer;
+            transition: transform .14s ease, box-shadow .14s ease;
+            justify-self: center;
+        }
+        .draw-color-swatch:hover {
+            transform: scale(1.08);
+        }
+        .draw-color-swatch.is-active {
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.82), 0 0 0 5px rgba(191, 219, 254, 0.88);
+        }
+        .draw-tool-panel__custom-color {
+            width: 36px;
+            height: 36px;
+            padding: 0;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+        }
+        .draw-tool-panel__status {
+            width: 100%;
+            font-size: 11px;
+            line-height: 1.45;
+            color: #475569;
+            text-align: left;
+        }
+        .draw-preview-layer,
+        .draw-edit-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            z-index: 4;
+        }
+        .draw-edit-layer {
+            z-index: 5;
+        }
+        .sfb-shape-grid {
+            display: inline-flex;
+            gap: 2px;
+            background: #f3f4f6;
+            border-radius: 7px;
+            padding: 2px;
+            flex-shrink: 0;
+        }
+        .sfb-shape-btn {
+            width: 28px;
+            height: 28px;
+            border: 1px solid transparent;
+            background: transparent;
+            border-radius: 5px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: #6b7280;
+            padding: 0;
+            transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+        }
+        .sfb-shape-btn:hover { background: #ffffff; color: #111827; }
+        .sfb-shape-btn.is-active {
+            background: #ffffff;
+            border-color: #93c5fd;
+            color: #1d4ed8;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+        }
+        .sfb-shape-btn svg {
+            width: 16px;
+            height: 16px;
+            stroke: currentColor;
+            fill: none;
+            stroke-width: 1.8;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            pointer-events: none;
+        }
+        .sfb-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: #374151;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+            flex-shrink: 0;
+        }
+        .sfb-mini-label {
+            font-size: 10px;
+            font-weight: 600;
+            color: #9ca3af;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            flex-shrink: 0;
+        }
+        .sfb-color {
+            width: 26px;
+            height: 26px;
+            border-radius: 6px;
+            overflow: hidden;
+            border: 1px solid #e5e7eb;
+            cursor: pointer;
+            position: relative;
+            flex-shrink: 0;
+            background:
+                linear-gradient(45deg, #e5e7eb 25%, transparent 25%) 0 0 / 8px 8px,
+                linear-gradient(-45deg, #e5e7eb 25%, transparent 25%) 0 4px / 8px 8px,
+                linear-gradient(45deg, transparent 75%, #e5e7eb 75%) 4px -4px / 8px 8px,
+                linear-gradient(-45deg, transparent 75%, #e5e7eb 75%) -4px 0 / 8px 8px,
+                #ffffff;
+        }
+        .sfb-color input[type="color"] {
+            position: absolute;
+            inset: -50%;
+            width: 200%;
+            height: 200%;
+            border: none;
+            padding: 0;
+            background: transparent;
+            cursor: pointer;
+        }
+        .sfb-slider {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 90px;
+            height: 4px;
+            background: #e5e7eb;
+            border-radius: 999px;
+            cursor: pointer;
+            margin: 0;
+            flex-shrink: 0;
+        }
+        .sfb-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 999px;
+            background: #ffffff;
+            border: 2px solid #3b82f6;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.18);
+            cursor: pointer;
+        }
+        .sfb-slider::-moz-range-thumb {
+            width: 14px;
+            height: 14px;
+            border-radius: 999px;
+            background: #ffffff;
+            border: 2px solid #3b82f6;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.18);
+            cursor: pointer;
+        }
+        .sfb-slider:focus { outline: none; }
+        .sfb-readout {
+            font-size: 11px;
+            font-weight: 600;
+            color: #6b7280;
+            font-variant-numeric: tabular-nums;
+            min-width: 36px;
+            text-align: left;
+            flex-shrink: 0;
+        }
+
+        .markup-modal {
+            position: fixed;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            z-index: 59;
+        }
+        .markup-modal.is-open { display: flex; }
+        .markup-modal__scrim {
+            position: absolute;
+            inset: 0;
+            background:
+                radial-gradient(circle at top, rgba(20, 184, 166, 0.18), transparent 34%),
+                radial-gradient(circle at bottom right, rgba(245, 158, 11, 0.12), transparent 30%),
+                rgba(15, 23, 42, 0.56);
+            backdrop-filter: blur(10px);
+        }
+        .markup-modal__card {
+            position: relative;
+            width: min(920px, calc(100vw - 32px));
+            max-height: min(760px, calc(100vh - 32px));
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            overflow: hidden;
+            padding: 24px;
+            border-radius: 28px;
+            border: 1px solid rgba(148, 163, 184, 0.28);
+            background:
+                linear-gradient(180deg, rgba(255,255,255,0.96) 0%, rgba(247,250,252,0.98) 100%);
+            box-shadow:
+                0 34px 88px rgba(15, 23, 42, 0.28),
+                0 10px 24px rgba(15, 23, 42, 0.14);
+        }
+        .markup-modal__header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 18px;
+        }
+        .markup-modal__eyebrow {
+            margin: 0 0 6px;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #0f766e;
+        }
+        .markup-modal__title {
+            margin: 0;
+            font-size: 28px;
+            line-height: 1.05;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            color: #0f172a;
+        }
+        .markup-modal__subtitle {
+            margin: 8px 0 0;
+            max-width: 560px;
+            font-size: 14px;
+            line-height: 1.5;
+            color: #475569;
+        }
+        .markup-modal__close {
+            appearance: none;
+            width: 40px;
+            height: 40px;
+            border: 1px solid #dbe3ee;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.88);
+            color: #334155;
+            font-size: 24px;
+            line-height: 1;
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: transform .16s ease, background .16s ease, border-color .16s ease;
+        }
+        .markup-modal__close:hover {
+            transform: scale(1.04);
+            background: #ffffff;
+            border-color: #cbd5e1;
+        }
+        .markup-modal__tabs {
+            display: inline-flex;
+            align-self: flex-start;
+            gap: 6px;
+            padding: 5px;
+            border-radius: 999px;
+            background: #dbeafe;
+        }
+        .markup-modal__tab {
+            appearance: none;
+            border: none;
+            border-radius: 999px;
+            background: transparent;
+            color: #475569;
+            font-size: 13px;
+            font-weight: 700;
+            padding: 10px 16px;
+            cursor: pointer;
+            transition: background .16s ease, color .16s ease, box-shadow .16s ease;
+        }
+        .markup-modal__tab.is-active {
+            background: #ffffff;
+            color: #0f172a;
+            box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+        }
+        .markup-modal__body {
+            min-height: 0;
+            flex: 1;
+        }
+        .markup-modal__panel {
+            display: none;
+            min-height: 0;
+        }
+        .markup-modal__panel.is-active {
+            display: grid;
+            grid-template-columns: minmax(250px, 300px) minmax(0, 1fr);
+            gap: 18px;
+            height: 100%;
+        }
+        .markup-modal__controls,
+        .markup-modal__stage,
+        .markup-modal__erase {
+            min-height: 0;
+            border: 1px solid #dbe3ee;
+            border-radius: 24px;
+            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.75);
+        }
+        .markup-modal__controls {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            padding: 18px;
+            overflow-y: auto;
+        }
+        .markup-modal__stage {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            padding: 18px;
+            background:
+                radial-gradient(circle at top left, rgba(153, 246, 228, 0.44), transparent 36%),
+                linear-gradient(180deg, #ffffff 0%, #f0fdfa 100%);
+        }
+        .markup-modal__section-title {
+            margin: 0;
+            font-size: 15px;
+            font-weight: 700;
+            color: #0f172a;
+        }
+        .markup-modal__section-copy {
+            margin: 4px 0 0;
+            font-size: 13px;
+            line-height: 1.5;
+            color: #64748b;
+        }
+        .markup-modal__field {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .markup-modal__field-label {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #64748b;
+        }
+        .markup-modal__field-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .markup-modal__color-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            width: fit-content;
+            padding: 8px 12px;
+            border-radius: 999px;
+            border: 1px solid #dbe3ee;
+            background: #ffffff;
+        }
+        .markup-modal__color-chip input[type="color"] {
+            width: 28px;
+            height: 28px;
+            border: none;
+            padding: 0;
+            background: transparent;
+            cursor: pointer;
+        }
+        .markup-modal__color-value,
+        .markup-modal__slider-value {
+            font-size: 12px;
+            font-weight: 700;
+            color: #334155;
+        }
+        .markup-modal__canvas-shell {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 340px;
+            padding: 20px;
+            border-radius: 22px;
+            border: 1px solid rgba(148, 163, 184, 0.28);
+            background:
+                linear-gradient(45deg, rgba(226, 232, 240, 0.85) 25%, transparent 25%) 0 0 / 24px 24px,
+                linear-gradient(-45deg, rgba(226, 232, 240, 0.85) 25%, transparent 25%) 0 12px / 24px 24px,
+                linear-gradient(45deg, transparent 75%, rgba(226, 232, 240, 0.85) 75%) 12px -12px / 24px 24px,
+                linear-gradient(-45deg, transparent 75%, rgba(226, 232, 240, 0.85) 75%) -12px 0 / 24px 24px,
+                #ffffff;
+        }
+        .markup-modal__canvas {
+            width: 100%;
+            max-width: 100%;
+            height: auto;
+            display: block;
+            border-radius: 18px;
+            background: rgba(255,255,255,0.92);
+            box-shadow: 0 14px 30px rgba(15, 23, 42, 0.1);
+            touch-action: none;
+        }
+        .markup-modal__hint {
+            font-size: 12px;
+            font-weight: 600;
+            color: #475569;
+        }
+        .markup-modal__erase {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 14px;
+            padding: 18px;
+            background:
+                radial-gradient(circle at top right, rgba(254, 215, 170, 0.42), transparent 30%),
+                linear-gradient(180deg, #ffffff 0%, #fff7ed 100%);
+        }
+        .markup-modal__erase-card {
+            padding: 16px;
+            border-radius: 18px;
+            border: 1px solid rgba(251, 191, 36, 0.2);
+            background: rgba(255,255,255,0.88);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .markup-modal__erase-card strong {
+            font-size: 14px;
+            color: #0f172a;
+        }
+        .markup-modal__erase-card span {
+            font-size: 13px;
+            line-height: 1.5;
+            color: #64748b;
+        }
+        .markup-modal__footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+        }
+        .markup-modal__status {
+            min-height: 18px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #64748b;
+        }
+        .markup-modal__status.is-error { color: #dc2626; }
+        .markup-modal__status.is-ready { color: #166534; }
+        .markup-modal__actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .markup-btn {
+            appearance: none;
+            border: 1px solid #cbd5e1;
+            border-radius: 999px;
+            background: #ffffff;
+            color: #334155;
+            font-size: 13px;
+            font-weight: 700;
+            padding: 11px 18px;
+            cursor: pointer;
+            transition: transform .16s ease, box-shadow .16s ease, background .16s ease, border-color .16s ease;
+        }
+        .markup-btn:hover:not([disabled]) {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+        }
+        .markup-btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+        .markup-btn--primary {
+            border-color: #0f766e;
+            background: linear-gradient(180deg, #14b8a6 0%, #0f766e 100%);
+            color: #ffffff;
+            box-shadow: 0 14px 26px rgba(20, 184, 166, 0.24);
+        }
+        body.markup-tool-modal-open {
+            overflow: hidden;
+        }
+
+        .signature-modal {
+            position: fixed;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            z-index: 60;
+        }
+        .signature-modal.is-open { display: flex; }
+        .signature-modal__scrim {
+            position: absolute;
+            inset: 0;
+            background:
+                radial-gradient(circle at top, rgba(37, 99, 235, 0.18), transparent 38%),
+                rgba(15, 23, 42, 0.52);
+            backdrop-filter: blur(8px);
+        }
+        .signature-modal__card {
+            position: relative;
+            width: min(980px, calc(100vw - 32px));
+            max-height: min(760px, calc(100vh - 32px));
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            overflow: hidden;
+            padding: 24px;
+            border-radius: 28px;
+            border: 1px solid rgba(148, 163, 184, 0.32);
+            background:
+                linear-gradient(180deg, rgba(255,255,255,0.96) 0%, rgba(248,250,252,0.98) 100%);
+            box-shadow:
+                0 36px 90px rgba(15, 23, 42, 0.28),
+                0 10px 24px rgba(15, 23, 42, 0.14);
+        }
+        .signature-modal__header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 18px;
+        }
+        .signature-modal__eyebrow {
+            margin: 0 0 6px;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #2563eb;
+        }
+        .signature-modal__title {
+            margin: 0;
+            font-size: 28px;
+            line-height: 1.05;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            color: #0f172a;
+        }
+        .signature-modal__subtitle {
+            margin: 8px 0 0;
+            font-size: 14px;
+            line-height: 1.5;
+            color: #475569;
+            max-width: 540px;
+        }
+        .signature-modal__close {
+            appearance: none;
+            width: 40px;
+            height: 40px;
+            border: 1px solid #dbe3ee;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.85);
+            color: #334155;
+            font-size: 24px;
+            line-height: 1;
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: transform .16s ease, background .16s ease, border-color .16s ease;
+        }
+        .signature-modal__close:hover {
+            transform: scale(1.04);
+            background: #ffffff;
+            border-color: #cbd5e1;
+        }
+        .signature-modal__tabs {
+            display: inline-flex;
+            align-self: flex-start;
+            gap: 6px;
+            padding: 5px;
+            border-radius: 999px;
+            background: #e2e8f0;
+        }
+        .signature-modal__tab {
+            appearance: none;
+            border: none;
+            border-radius: 999px;
+            background: transparent;
+            color: #475569;
+            font-size: 13px;
+            font-weight: 600;
+            padding: 10px 16px;
+            cursor: pointer;
+            transition: background .16s ease, color .16s ease, box-shadow .16s ease;
+        }
+        .signature-modal__tab.is-active {
+            background: #ffffff;
+            color: #0f172a;
+            box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+        }
+        .signature-modal__body {
+            display: grid;
+            grid-template-columns: minmax(250px, 300px) minmax(0, 1fr);
+            gap: 18px;
+            min-height: 0;
+            flex: 1;
+        }
+        .signature-modal__sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            min-height: 0;
+            overflow-y: auto;
+            padding-right: 4px;
+        }
+        .signature-modal__panel {
+            display: none;
+            flex-direction: column;
+            gap: 14px;
+            padding: 18px;
+            border-radius: 20px;
+            border: 1px solid #dbe3ee;
+            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.75);
+        }
+        .signature-modal__panel.is-active { display: flex; }
+        .signature-modal__panel-title {
+            margin: 0;
+            font-size: 15px;
+            font-weight: 700;
+            color: #0f172a;
+        }
+        .signature-modal__panel-copy {
+            margin: 0;
+            font-size: 13px;
+            line-height: 1.5;
+            color: #64748b;
+        }
+        .signature-field {
+            display: flex;
+            flex-direction: column;
+            gap: 7px;
+        }
+        .signature-field__label {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #64748b;
+        }
+        .signature-field__row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .signature-field__row--stack {
+            align-items: flex-start;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .signature-field input[type="text"],
+        .signature-field select {
+            width: 100%;
+            appearance: none;
+            border: 1px solid #cbd5e1;
+            border-radius: 12px;
+            background: #ffffff;
+            color: #0f172a;
+            font-size: 14px;
+            padding: 12px 14px;
+            outline: none;
+            transition: border-color .16s ease, box-shadow .16s ease;
+        }
+        .signature-field input[type="text"]:focus,
+        .signature-field select:focus {
+            border-color: #60a5fa;
+            box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.18);
+        }
+        .signature-field input[type="range"] {
+            width: 100%;
+            margin: 0;
+        }
+        .signature-color-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            border-radius: 999px;
+            border: 1px solid #dbe3ee;
+            background: #ffffff;
+            width: fit-content;
+        }
+        .signature-color-chip input[type="color"] {
+            width: 28px;
+            height: 28px;
+            border: none;
+            padding: 0;
+            background: transparent;
+            cursor: pointer;
+        }
+        .signature-color-chip__value {
+            font-size: 12px;
+            font-weight: 700;
+            color: #334155;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+        .signature-slider-readout {
+            min-width: 34px;
+            font-size: 12px;
+            font-weight: 700;
+            color: #334155;
+            text-align: right;
+        }
+        .signature-slider-stack {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+        }
+        .signature-upload {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            min-height: 152px;
+            padding: 18px;
+            border: 1px dashed #93c5fd;
+            border-radius: 18px;
+            background:
+                radial-gradient(circle at top, rgba(191, 219, 254, 0.55), transparent 65%),
+                #eff6ff;
+            text-align: center;
+            cursor: pointer;
+            overflow: hidden;
+        }
+        .signature-upload input[type="file"] {
+            position: absolute;
+            inset: 0;
+            opacity: 0;
+            cursor: pointer;
+        }
+        .signature-upload__icon {
+            width: 46px;
+            height: 46px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 14px;
+            background: rgba(37, 99, 235, 0.12);
+            color: #2563eb;
+        }
+        .signature-upload__title {
+            font-size: 15px;
+            font-weight: 700;
+            color: #0f172a;
+        }
+        .signature-upload__copy {
+            font-size: 13px;
+            line-height: 1.5;
+            color: #64748b;
+            max-width: 220px;
+        }
+        .signature-upload__meta {
+            font-size: 12px;
+            font-weight: 600;
+            color: #1d4ed8;
+        }
+        .signature-library {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            min-height: 0;
+            padding: 16px;
+            border-radius: 20px;
+            border: 1px solid #dbe3ee;
+            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.75);
+        }
+        .signature-library__header {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .signature-library__title {
+            margin: 0;
+            font-size: 14px;
+            font-weight: 700;
+            color: #0f172a;
+        }
+        .signature-library__copy {
+            margin: 0;
+            font-size: 12px;
+            line-height: 1.5;
+            color: #64748b;
+        }
+        .signature-library__save-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 8px;
+        }
+        .signature-library__load-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 8px;
+        }
+        .signature-library__name {
+            flex: 1;
+            min-width: 0;
+            appearance: none;
+            border: 1px solid #cbd5e1;
+            border-radius: 12px;
+            background: #ffffff;
+            color: #0f172a;
+            font-size: 13px;
+            padding: 10px 12px;
+            outline: none;
+            transition: border-color .16s ease, box-shadow .16s ease;
+        }
+        .signature-library__name:focus {
+            border-color: #60a5fa;
+            box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.18);
+        }
+        .signature-library__select {
+            min-width: 0;
+            appearance: none;
+            border: 1px solid #cbd5e1;
+            border-radius: 12px;
+            background: #ffffff;
+            color: #0f172a;
+            font-size: 13px;
+            padding: 10px 12px;
+            outline: none;
+            transition: border-color .16s ease, box-shadow .16s ease;
+        }
+        .signature-library__select:focus {
+            border-color: #60a5fa;
+            box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.18);
+        }
+        .signature-library__save-btn {
+            min-width: 110px;
+        }
+        .signature-library__load-btn {
+            min-width: 82px;
+        }
+        .signature-library__cta {
+            appearance: none;
+            border: 1px solid #cbd5e1;
+            border-radius: 12px;
+            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            color: #334155;
+            font-size: 12px;
+            font-weight: 700;
+            line-height: 1.2;
+            padding: 10px 14px;
+            cursor: pointer;
+            transition: background .16s ease, border-color .16s ease, color .16s ease, box-shadow .16s ease;
+        }
+        .signature-library__cta:hover:not([disabled]) {
+            background: #eff6ff;
+            border-color: #93c5fd;
+            color: #1d4ed8;
+            box-shadow: 0 8px 18px rgba(37, 99, 235, 0.10);
+        }
+        .signature-library__cta:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+        .signature-library__list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            min-height: 0;
+            max-height: 220px;
+            overflow-y: auto;
+            padding-right: 2px;
+        }
+        .signature-library__empty {
+            padding: 14px 12px;
+            border: 1px dashed #cbd5e1;
+            border-radius: 14px;
+            background: rgba(241, 245, 249, 0.7);
+            font-size: 12px;
+            line-height: 1.5;
+            color: #64748b;
+            text-align: center;
+        }
+        .signature-library__item {
+            display: grid;
+            grid-template-columns: 74px minmax(0, 1fr);
+            gap: 10px;
+            align-items: center;
+            padding: 10px;
+            border: 1px solid #dbe3ee;
+            border-radius: 16px;
+            background: #ffffff;
+        }
+        .signature-library__thumb {
+            width: 74px;
+            height: 40px;
+            border-radius: 10px;
+            border: 1px solid rgba(148, 163, 184, 0.22);
+            background:
+                linear-gradient(45deg, rgba(226, 232, 240, 0.85) 25%, transparent 25%) 0 0 / 14px 14px,
+                linear-gradient(-45deg, rgba(226, 232, 240, 0.85) 25%, transparent 25%) 0 7px / 14px 14px,
+                linear-gradient(45deg, transparent 75%, rgba(226, 232, 240, 0.85) 75%) 7px -7px / 14px 14px,
+                linear-gradient(-45deg, transparent 75%, rgba(226, 232, 240, 0.85) 75%) -7px 0 / 14px 14px,
+                #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        .signature-library__thumb img {
+            max-width: 100%;
+            max-height: 100%;
+            display: block;
+        }
+        .signature-library__meta {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .signature-library__name-text {
+            font-size: 13px;
+            font-weight: 700;
+            color: #0f172a;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .signature-library__detail {
+            font-size: 11px;
+            color: #64748b;
+            text-transform: capitalize;
+        }
+        .signature-library__actions {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .signature-library__btn {
+            appearance: none;
+            border: 1px solid #cbd5e1;
+            border-radius: 999px;
+            background: #ffffff;
+            color: #334155;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 6px 10px;
+            cursor: pointer;
+            transition: background .16s ease, border-color .16s ease, color .16s ease;
+        }
+        .signature-library__btn:hover {
+            background: #eff6ff;
+            border-color: #93c5fd;
+            color: #1d4ed8;
+        }
+        .signature-library__btn.is-danger:hover {
+            background: #fef2f2;
+            border-color: #fecaca;
+            color: #dc2626;
+        }
+        .signature-stage {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            padding: 18px;
+            border-radius: 24px;
+            border: 1px solid #dbe3ee;
+            background:
+                radial-gradient(circle at top left, rgba(191, 219, 254, 0.48), transparent 34%),
+                linear-gradient(180deg, #ffffff 0%, #eff6ff 100%);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.76);
+        }
+        .signature-stage__header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .signature-stage__title {
+            margin: 0;
+            font-size: 15px;
+            font-weight: 700;
+            color: #0f172a;
+        }
+        .signature-stage__copy {
+            margin: 4px 0 0;
+            font-size: 13px;
+            color: #64748b;
+        }
+        .signature-clear-btn {
+            appearance: none;
+            border: 1px solid #cbd5e1;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.88);
+            color: #334155;
+            font-size: 12px;
+            font-weight: 700;
+            padding: 9px 14px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .signature-stage__canvas-shell {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 340px;
+            padding: 20px;
+            border-radius: 22px;
+            border: 1px solid rgba(148, 163, 184, 0.28);
+            background:
+                linear-gradient(45deg, rgba(226, 232, 240, 0.85) 25%, transparent 25%) 0 0 / 24px 24px,
+                linear-gradient(-45deg, rgba(226, 232, 240, 0.85) 25%, transparent 25%) 0 12px / 24px 24px,
+                linear-gradient(45deg, transparent 75%, rgba(226, 232, 240, 0.85) 75%) 12px -12px / 24px 24px,
+                linear-gradient(-45deg, transparent 75%, rgba(226, 232, 240, 0.85) 75%) -12px 0 / 24px 24px,
+                #ffffff;
+        }
+        .signature-canvas {
+            width: 100%;
+            max-width: 100%;
+            height: auto;
+            display: block;
+            border-radius: 18px;
+            background: rgba(255,255,255,0.86);
+            box-shadow: 0 14px 30px rgba(15, 23, 42, 0.1);
+            touch-action: none;
+        }
+        .signature-stage__hint {
+            font-size: 12px;
+            font-weight: 600;
+            color: #475569;
+        }
+        .signature-modal__footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+        }
+        .signature-modal__status {
+            min-height: 18px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #64748b;
+        }
+        .signature-modal__status.is-error { color: #dc2626; }
+        .signature-modal__status.is-ready { color: #166534; }
+        .signature-modal__actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .signature-btn {
+            appearance: none;
+            border: 1px solid #cbd5e1;
+            border-radius: 999px;
+            background: #ffffff;
+            color: #334155;
+            font-size: 13px;
+            font-weight: 700;
+            padding: 11px 18px;
+            cursor: pointer;
+            transition: transform .16s ease, box-shadow .16s ease, background .16s ease, border-color .16s ease;
+        }
+        .signature-btn:hover:not([disabled]) {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+        }
+        .signature-btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+        .signature-btn--primary {
+            border-color: #2563eb;
+            background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
+            color: #ffffff;
+            box-shadow: 0 14px 26px rgba(37, 99, 235, 0.28);
+        }
+        body.signature-modal-open {
+            overflow: hidden;
+        }
+
+        @media (max-width: 860px) {
+            .draw-tool-panel {
+                top: auto;
+                right: 12px;
+                left: 12px;
+                bottom: 12px;
+                width: auto;
+                flex-direction: row;
+                align-items: stretch;
+                justify-content: flex-start;
+                gap: 12px;
+                overflow-x: auto;
+                padding: 12px 14px;
+            }
+            .draw-tool-panel__head,
+            .draw-tool-panel__stack {
+                width: auto;
+                flex-shrink: 0;
+            }
+            .draw-tool-panel__stack {
+                flex-direction: row;
+                align-items: center;
+            }
+            .draw-tool-panel__tool-group {
+                width: auto;
+                grid-template-columns: repeat(2, 44px);
+            }
+            .draw-tool-panel__slider-wrap {
+                width: auto;
+            }
+            .draw-tool-panel__slider-wrap input[type="range"] {
+                writing-mode: initial;
+                direction: ltr;
+                width: 112px;
+                height: 32px;
+            }
+            .draw-tool-panel__colors {
+                width: auto;
+                grid-template-columns: repeat(4, 28px);
+            }
+            .markup-modal {
+                padding: 12px;
+            }
+            .markup-modal__card {
+                width: min(100%, 100vw - 24px);
+                max-height: calc(100vh - 24px);
+                padding: 18px;
+                border-radius: 22px;
+            }
+            .markup-modal__panel.is-active,
+            .markup-modal__erase {
+                grid-template-columns: 1fr;
+            }
+            .markup-modal__canvas-shell {
+                min-height: 240px;
+                padding: 14px;
+            }
+            .markup-modal__footer {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .markup-modal__actions {
+                justify-content: stretch;
+            }
+            .signature-modal {
+                padding: 12px;
+            }
+            .signature-modal__card {
+                width: min(100%, 100vw - 24px);
+                max-height: calc(100vh - 24px);
+                padding: 18px;
+                border-radius: 22px;
+            }
+            .signature-modal__body {
+                grid-template-columns: 1fr;
+            }
+            .signature-library__load-row,
+            .signature-library__save-row {
+                grid-template-columns: 1fr;
+            }
+            .signature-stage__canvas-shell {
+                min-height: 240px;
+                padding: 14px;
+            }
+            .signature-modal__footer {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .signature-modal__actions {
+                justify-content: stretch;
+            }
+            .signature-btn {
+                flex: 1;
+                justify-content: center;
+            }
+        }
+
+        /* Image import modal — modern, lightweight; reuses signature-btn for buttons. */
+        .image-import-modal {
+            position: fixed; inset: 0;
+            display: none;
+            align-items: center; justify-content: center;
+            padding: 24px;
+            z-index: 60;
+        }
+        .image-import-modal.is-open { display: flex; }
+        .image-import-modal__scrim {
+            position: absolute; inset: 0;
+            background:
+                radial-gradient(circle at top, rgba(37, 99, 235, 0.18), transparent 38%),
+                rgba(15, 23, 42, 0.52);
+            backdrop-filter: blur(8px);
+        }
+        .image-import-modal__card {
+            position: relative;
+            width: min(560px, calc(100vw - 32px));
+            max-height: min(680px, calc(100vh - 32px));
+            display: flex; flex-direction: column;
+            gap: 18px;
+            padding: 24px;
+            border-radius: 24px;
+            border: 1px solid rgba(148, 163, 184, 0.32);
+            background: linear-gradient(180deg, rgba(255,255,255,0.96) 0%, rgba(248,250,252,0.98) 100%);
+            box-shadow: 0 36px 90px rgba(15, 23, 42, 0.28), 0 10px 24px rgba(15, 23, 42, 0.14);
+        }
+        .image-import-modal__close {
+            position: absolute; top: 14px; right: 14px;
+            width: 32px; height: 32px;
+            border-radius: 10px;
+            border: 1px solid rgba(148,163,184,0.28);
+            background: rgba(255,255,255,0.7);
+            color: #475569;
+            font-size: 20px; line-height: 1;
+            cursor: pointer;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
+        }
+        .image-import-modal__close:hover { background: #f1f5f9; color: #0f172a; }
+        .image-import-modal__header { display: flex; flex-direction: column; gap: 4px; padding-right: 36px; }
+        .image-import-modal__eyebrow {
+            text-transform: uppercase; letter-spacing: 0.12em;
+            font-size: 11px; font-weight: 600;
+            color: #2563eb;
+        }
+        .image-import-modal__title {
+            font-size: 22px; font-weight: 700;
+            color: #0f172a; margin: 0;
+        }
+        .image-import-modal__subtitle {
+            font-size: 13px; color: #475569; margin: 0;
+        }
+        .image-import-modal__body { display: flex; flex: 1; min-height: 0; }
+        .image-import-dropzone {
+            position: relative;
+            flex: 1;
+            display: flex; align-items: center; justify-content: center;
+            min-height: 220px;
+            border: 2px dashed rgba(148, 163, 184, 0.55);
+            border-radius: 18px;
+            background: rgba(241, 245, 249, 0.55);
+            cursor: pointer;
+            transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+            outline: none;
+            padding: 16px;
+        }
+        .image-import-dropzone:hover,
+        .image-import-dropzone:focus-visible {
+            border-color: #2563eb;
+            background: rgba(219, 234, 254, 0.45);
+        }
+        .image-import-dropzone.is-drag {
+            border-color: #2563eb;
+            background: rgba(191, 219, 254, 0.55);
+            box-shadow: inset 0 0 0 4px rgba(37, 99, 235, 0.08);
+        }
+        .image-import-dropzone__inner {
+            display: flex; flex-direction: column; align-items: center; gap: 10px;
+            color: #475569; text-align: center;
+            pointer-events: none;
+        }
+        .image-import-dropzone__inner svg { color: #94a3b8; }
+        .image-import-dropzone__title { font-size: 15px; font-weight: 600; color: #0f172a; }
+        .image-import-dropzone__subtitle { font-size: 13px; color: #475569; }
+        .image-import-dropzone__link { color: #2563eb; font-weight: 600; text-decoration: underline; }
+        .image-import-dropzone__hint { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+        .image-import-preview {
+            position: relative;
+            display: flex; flex-direction: column; align-items: center; gap: 10px;
+            width: 100%; max-height: 100%;
+        }
+        .image-import-preview img {
+            max-width: 100%;
+            max-height: 280px;
+            border-radius: 12px;
+            border: 1px solid rgba(148,163,184,0.28);
+            background: #fff;
+            box-shadow: 0 8px 22px rgba(15,23,42,0.12);
+            object-fit: contain;
+        }
+        .image-import-preview__meta { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+        .image-import-preview__name { font-size: 13px; font-weight: 600; color: #0f172a; word-break: break-all; }
+        .image-import-preview__dims { font-size: 12px; color: #64748b; }
+        .image-import-preview__remove {
+            position: absolute; top: -6px; right: -6px;
+            width: 28px; height: 28px;
+            border-radius: 999px;
+            border: 1px solid rgba(148,163,184,0.4);
+            background: #fff;
+            color: #475569;
+            font-size: 18px; line-height: 1;
+            cursor: pointer;
+            display: inline-flex; align-items: center; justify-content: center;
+            box-shadow: 0 4px 10px rgba(15,23,42,0.12);
+            pointer-events: auto;
+        }
+        .image-import-preview__remove:hover { background: #fee2e2; color: #b91c1c; border-color: #fecaca; }
+        .image-import-modal__footer {
+            display: flex; align-items: center; justify-content: space-between; gap: 12px;
+            padding-top: 4px;
+            border-top: 1px solid rgba(148, 163, 184, 0.22);
+            padding-top: 14px;
+        }
+        .image-import-modal__status { font-size: 12px; color: #64748b; flex: 1; min-width: 0; }
+        .image-import-modal__actions { display: inline-flex; gap: 8px; }
+        @media (max-width: 600px) {
+            .image-import-modal__card { padding: 18px; gap: 14px; }
+            .image-import-modal__footer { flex-direction: column; align-items: stretch; }
+            .image-import-modal__actions { justify-content: stretch; }
+            .image-import-modal__actions .signature-btn { flex: 1; justify-content: center; }
+        }
 
         .floating-zoom-bar {
             position: fixed;
@@ -632,12 +2255,44 @@
         }
         .afb-btn.is-danger { color: #ef4444; }
         .afb-btn.is-danger:hover { background: #fee2e2; border-color: #fca5a5; color: #dc2626; }
+        /* Faux selection overlay shown while the native color picker has
+           focus (the contenteditable's real ::selection is hidden by the
+           browser when it loses focus, so we mirror the range rects). */
+        .afb-faux-selection {
+            position: fixed;
+            background: rgba(59, 130, 246, 0.45);
+            pointer-events: none;
+            z-index: 9999;
+            border-radius: 1px;
+            mix-blend-mode: multiply;
+        }
     </style>
 </head>
 <body>
 
 <div class="top-bar">
-    <h1>{{ $document->original_name }}</h1>
+    <div class="doc-name-wrap" id="doc-name-wrap"
+         data-rename-url="{{ route('documents.rename', $document) }}"
+         data-original-name="{{ $document->original_name }}">
+        <span id="doc-name-display"
+              class="doc-name-display"
+              role="button"
+              tabindex="0"
+              title="Click to rename document">{{ $document->original_name }}</span>
+        <input id="doc-name-input"
+               class="doc-name-input"
+               type="text"
+               maxlength="240"
+               style="display:none;"
+               aria-label="Document name"
+               value="{{ $document->original_name }}" />
+        <button id="doc-name-edit-btn" type="button" class="doc-name-edit-btn" title="Rename document" aria-label="Rename document">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 20h9"/>
+                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>
+            </svg>
+        </button>
+    </div>
     <span id="save-status" class="save-status">Saved</span>
     <button id="undo-btn" type="button" class="history-btn" title="Undo (Ctrl+Z)" disabled>&#8592;</button>
     <button id="redo-btn" type="button" class="history-btn" title="Redo (Ctrl+Y)" disabled>&#8594;</button>
@@ -648,9 +2303,10 @@
                 <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>
             </svg>
         </span>
-        <span id="edit-mode-toggle-label" class="edit-mode-toggle__label">Edit Mode OFF</span>
+            <span id="edit-mode-toggle-label" class="edit-mode-toggle__label">Edit Mode OFF</span>
     </button>
     <button id="add-text-btn" type="button" class="history-btn add-text-btn" title="Add Text — click or drag on the page to place a new text block">Add Text</button>
+    <button id="add-shape-btn" type="button" class="history-btn add-shape-btn" title="Shapes — choose a shape and drag on the page to draw it">Shapes</button>
     <button id="save-btn" type="button" class="save-btn">Save</button>
     <button id="download-pdf-btn" type="button" class="download-btn">Download PDF</button>
     <a href="{{ route('documents.edit', $document) }}">← Edit</a>
@@ -661,6 +2317,7 @@
     <div id="error-banner"></div>
 </div>
 <div id="save-toast">Saved</div>
+<div id="shape-constrain-tip">Hold <kbd>Shift</kbd> to constrain shape</div>
 
 <!-- Floating tool bar -->
 <div class="floating-tool-bar" id="floating-tool-bar">
@@ -672,55 +2329,50 @@
             </svg>
             <span>Edit PDF</span>
         </button>
-        <button type="button" class="ftb-btn is-disabled" title="Coming soon">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M15 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 3 14 8 20 8"/>
-            </svg>
-            <span>Fill &amp; Sign</span>
-        </button>
     </div>
     <div class="ftb-sep"></div>
     <!-- Group 2: Annotation tools -->
     <div class="ftb-group">
+        <button type="button" class="ftb-btn" id="ftb-sign" title="Sign — create a signature by drawing, typing, or uploading an image">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m3 21 3.75-.75L18.5 8.5a2.12 2.12 0 1 0-3-3L3.75 17.25z"></path>
+                <path d="m14.5 6.5 3 3"></path>
+                <path d="M2.5 21.5h6"></path>
+            </svg>
+            <span>Sign</span>
+        </button>
         <button type="button" class="ftb-btn ftb-add-text" id="ftb-add-text" title="Add Text — click on the page to place a new text block">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/>
             </svg>
             <span>Text</span>
         </button>
-        <button type="button" class="ftb-btn is-disabled" title="Coming soon">
+        <button type="button" class="ftb-btn" id="ftb-add-shape" title="Shapes — choose a shape, then drag on the page to draw">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M20 20H7L3 16V4a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v9"/><path d="m6.5 17.5 10-10m-7 10 10-10"/>
+                <circle cx="7" cy="8" r="3.5"></circle>
+                <path d="M14 5h6v6"></path>
+                <path d="M14 19h6"></path>
+                <path d="M4 19l6-8 6 8z"></path>
             </svg>
-            <span>Erase</span>
+            <span>Shapes</span>
         </button>
-        <button type="button" class="ftb-btn is-disabled" title="Coming soon">
+        <button type="button" class="ftb-btn" id="ftb-draw-erase" title="Draw &amp; Erase — sketch a freehand mark or remove annotations">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 20h9"/><path d="M3 12l9-9 4 4-9 9H3v-4z"/>
+                <path d="M4 20h8"></path>
+                <path d="M14.5 4.5a2.1 2.1 0 0 1 3 3L8 17l-4 1 1-4 9.5-9.5z"></path>
+                <path d="M13 6l5 5"></path>
             </svg>
-            <span>Highlight</span>
-        </button>
-        <button type="button" class="ftb-btn is-disabled" title="Coming soon">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/>
-            </svg>
-            <span>Redact</span>
+            <span>Draw / Erase</span>
         </button>
     </div>
     <div class="ftb-sep"></div>
     <!-- Group 3: Insert -->
     <div class="ftb-group">
-        <button type="button" class="ftb-btn is-disabled" title="Coming soon">
+        <button type="button" class="ftb-btn" id="ftb-add-image" title="Image — import an image and place it on the page">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
             </svg>
             <span>Image</span>
-        </button>
-        <button type="button" class="ftb-btn is-disabled" title="Coming soon">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>
-            </svg>
-            <span>Draw</span>
         </button>
         <button type="button" class="ftb-btn is-disabled" title="Coming soon">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -734,6 +2386,353 @@
             </svg>
             <span>Check</span>
         </button>
+    </div>
+</div>
+<div class="shape-tool-panel" id="shape-tool-panel">
+    <div class="sfb-shape-grid" id="shape-type-grid">
+        <button type="button" class="sfb-shape-btn is-active" data-shape-tool="circle" title="Circle" aria-label="Circle">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"></circle></svg>
+        </button>
+        <button type="button" class="sfb-shape-btn" data-shape-tool="triangle" title="Triangle" aria-label="Triangle">
+            <svg viewBox="0 0 24 24"><path d="M12 5 19 18H5z"></path></svg>
+        </button>
+        <button type="button" class="sfb-shape-btn" data-shape-tool="square" title="Square" aria-label="Square">
+            <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12"></rect></svg>
+        </button>
+        <button type="button" class="sfb-shape-btn" data-shape-tool="star" title="Star" aria-label="Star">
+            <svg viewBox="0 0 24 24"><path d="m12 4 2.35 4.76 5.25.76-3.8 3.7.9 5.23L12 16l-4.7 2.45.9-5.23-3.8-3.7 5.25-.76z"></path></svg>
+        </button>
+        <button type="button" class="sfb-shape-btn" data-shape-tool="line" title="Line" aria-label="Line">
+            <svg viewBox="0 0 24 24"><path d="M5 19 19 5"></path></svg>
+        </button>
+    </div>
+    <div class="afb-divider"></div>
+    <span class="sfb-label">Stroke</span>
+    <label class="sfb-color" title="Stroke color" aria-label="Stroke color">
+        <input type="color" id="shape-stroke-color" value="#0f172a">
+    </label>
+    <input type="hidden" id="shape-stroke-hex" value="#0f172a">
+    <input type="checkbox" id="shape-stroke-transparent" style="display:none;">
+    <span class="sfb-mini-label" title="Width">W</span>
+    <input type="range" class="sfb-slider" id="shape-stroke-width" min="1" max="24" step="1" value="3" title="Stroke width">
+    <span class="sfb-readout" id="shape-stroke-width-value">3px</span>
+    <span class="sfb-mini-label" title="Opacity">α</span>
+    <input type="range" class="sfb-slider" id="shape-stroke-opacity" min="0" max="100" step="1" value="100" title="Stroke opacity">
+    <span class="sfb-readout" id="shape-stroke-opacity-value">100%</span>
+    <div class="afb-divider"></div>
+    <span class="sfb-label">Fill</span>
+    <label class="sfb-color" title="Fill color" aria-label="Fill color">
+        <input type="color" id="shape-fill-color" value="#22c55e">
+    </label>
+    <input type="hidden" id="shape-fill-hex" value="#22c55e">
+    <input type="checkbox" id="shape-fill-transparent" style="display:none;">
+    <span class="sfb-mini-label" title="Opacity">α</span>
+    <input type="range" class="sfb-slider" id="shape-fill-opacity" min="0" max="100" step="1" value="22" title="Fill opacity">
+    <span class="sfb-readout" id="shape-fill-opacity-value">22%</span>
+</div>
+<div class="draw-tool-panel" id="draw-tool-panel" aria-hidden="true">
+    <div class="draw-tool-panel__head">
+        <p class="draw-tool-panel__title">Draw</p>
+        <button type="button" class="draw-tool-panel__close" id="draw-tool-close" aria-label="Close draw tool">×</button>
+    </div>
+    <div class="draw-tool-panel__stack">
+        <div class="draw-tool-panel__tool-group">
+            <button type="button" class="draw-tool-btn is-active" id="draw-tool-pen" data-draw-direct-tool="pen" title="Pen" aria-label="Pen">
+                <svg viewBox="0 0 24 24"><path d="M4 20h8"></path><path d="M14.5 4.5a2.1 2.1 0 0 1 3 3L8 17l-4 1 1-4 9.5-9.5z"></path><path d="M13 6l5 5"></path></svg>
+            </button>
+            <button type="button" class="draw-tool-btn" id="draw-tool-eraser" data-draw-direct-tool="eraser" title="Eraser" aria-label="Eraser">
+                <svg viewBox="0 0 24 24"><path d="m7 14 7.5-7.5a2.1 2.1 0 0 1 3 0l1 1a2.1 2.1 0 0 1 0 3L11 18H7z"></path><path d="M5 18h10"></path></svg>
+            </button>
+        </div>
+        <div class="draw-tool-panel__slider-wrap">
+            <span class="draw-tool-panel__section-label">Size</span>
+            <input type="range" id="draw-tool-size" min="2" max="36" step="1" value="10" aria-label="Draw brush size">
+            <span class="draw-tool-panel__readout" id="draw-tool-size-value">10px</span>
+        </div>
+        <div class="draw-tool-panel__slider-wrap">
+            <span class="draw-tool-panel__section-label">Alpha</span>
+            <input type="range" id="draw-tool-opacity" min="10" max="100" step="1" value="100" aria-label="Draw opacity">
+            <span class="draw-tool-panel__readout" id="draw-tool-opacity-value">100%</span>
+        </div>
+        <div class="draw-tool-panel__stack" style="gap: 8px; width: 100%;">
+            <span class="draw-tool-panel__section-label">Color</span>
+            <div class="draw-tool-panel__colors">
+                <button type="button" class="draw-color-swatch is-active" data-draw-color="#111827" style="--swatch-color:#111827" aria-label="Black ink"></button>
+                <button type="button" class="draw-color-swatch" data-draw-color="#dc2626" style="--swatch-color:#dc2626" aria-label="Red ink"></button>
+                <button type="button" class="draw-color-swatch" data-draw-color="#2563eb" style="--swatch-color:#2563eb" aria-label="Blue ink"></button>
+                <button type="button" class="draw-color-swatch" data-draw-color="#16a34a" style="--swatch-color:#16a34a" aria-label="Green ink"></button>
+                <button type="button" class="draw-color-swatch" data-draw-color="#ea580c" style="--swatch-color:#ea580c" aria-label="Orange ink"></button>
+                <button type="button" class="draw-color-swatch" data-draw-color="#7c3aed" style="--swatch-color:#7c3aed" aria-label="Violet ink"></button>
+            </div>
+            <input type="color" id="draw-tool-color" class="draw-tool-panel__custom-color" value="#111827" aria-label="Custom ink color">
+        </div>
+    </div>
+    <div class="draw-tool-panel__status" id="draw-tool-status">Pen mode is active. Drag directly on the page to draw.</div>
+</div>
+<div class="markup-modal" id="markup-tool-modal" aria-hidden="true">
+    <div class="markup-modal__scrim" id="markup-tool-modal-scrim"></div>
+    <div class="markup-modal__card" role="dialog" aria-modal="true" aria-labelledby="markup-tool-modal-title">
+        <div class="markup-modal__header">
+            <div>
+                <p class="markup-modal__eyebrow">Markup Tool</p>
+                <h2 class="markup-modal__title" id="markup-tool-modal-title">Draw or erase annotations</h2>
+                <p class="markup-modal__subtitle">Sketch a freehand mark and place it on the PDF, or switch to erase mode to remove any annotation directly from the page.</p>
+            </div>
+            <button type="button" class="markup-modal__close" id="markup-tool-modal-close" aria-label="Close draw and erase modal">×</button>
+        </div>
+        <div class="markup-modal__tabs">
+            <button type="button" class="markup-modal__tab is-active" data-markup-tool-mode="draw">Draw</button>
+            <button type="button" class="markup-modal__tab" data-markup-tool-mode="erase">Erase</button>
+        </div>
+        <div class="markup-modal__body">
+            <div class="markup-modal__panel is-active" data-markup-tool-panel="draw">
+                <div class="markup-modal__controls">
+                    <div>
+                        <h3 class="markup-modal__section-title">Freehand mark</h3>
+                        <p class="markup-modal__section-copy">Use your mouse, trackpad, or stylus to sketch a mark, underline, or handwritten note before placing it on the page.</p>
+                    </div>
+                    <div class="markup-modal__field">
+                        <span class="markup-modal__field-label">Ink color</span>
+                        <label class="markup-modal__color-chip">
+                            <input id="markup-tool-color" type="color" value="#0f172a" aria-label="Drawing ink color">
+                            <span class="markup-modal__color-value" id="markup-tool-color-value">#0F172A</span>
+                        </label>
+                    </div>
+                    <div class="markup-modal__field">
+                        <span class="markup-modal__field-label">Stroke width</span>
+                        <div class="markup-modal__field-row">
+                            <input id="markup-tool-width" type="range" min="1" max="10" step="1" value="4" aria-label="Drawing stroke width">
+                            <span class="markup-modal__slider-value" id="markup-tool-width-value">4px</span>
+                        </div>
+                    </div>
+                    <div class="markup-modal__field">
+                        <span class="markup-modal__field-label">Stroke smoothing</span>
+                        <div class="markup-modal__field-row">
+                            <input id="markup-tool-smoothing" type="range" min="0" max="100" step="1" value="58" aria-label="Drawing stroke smoothing">
+                            <span class="markup-modal__slider-value" id="markup-tool-smoothing-value">58%</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="markup-modal__stage">
+                    <div>
+                        <h3 class="markup-modal__section-title">Preview</h3>
+                        <p class="markup-modal__section-copy">Draw here, then place the finished mark anywhere on the current page.</p>
+                    </div>
+                    <div class="markup-modal__canvas-shell">
+                        <canvas id="markup-tool-canvas" class="markup-modal__canvas" width="880" height="360" aria-label="Freehand drawing canvas"></canvas>
+                    </div>
+                    <div class="markup-modal__hint" id="markup-tool-hint">Draw mode: click and drag to create a mark.</div>
+                </div>
+            </div>
+            <div class="markup-modal__panel" data-markup-tool-panel="erase">
+                <div class="markup-modal__erase">
+                    <div class="markup-modal__erase-card">
+                        <strong>Erase any annotation</strong>
+                        <span>After you start erase mode, click any text box, shape, signature, or image annotation on the page to remove it immediately.</span>
+                    </div>
+                    <div class="markup-modal__erase-card">
+                        <strong>Stay in control</strong>
+                        <span>Erase mode stays active until you press Escape or reopen this tool, so you can clean up multiple annotations in one pass.</span>
+                    </div>
+                    <div class="markup-modal__erase-card">
+                        <strong>Visual targeting</strong>
+                        <span>Hover over the page to preview which annotation will be deleted before you click.</span>
+                    </div>
+                    <div class="markup-modal__erase-card">
+                        <strong>Undo still works</strong>
+                        <span>Every removal uses the normal annotation delete pipeline, so undo and save behavior remain consistent.</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="markup-modal__footer">
+            <div class="markup-modal__status" id="markup-tool-status">Draw a mark, then place it on the page.</div>
+            <div class="markup-modal__actions">
+                <button type="button" class="markup-btn" id="markup-tool-clear">Clear</button>
+                <button type="button" class="markup-btn" id="markup-tool-cancel">Cancel</button>
+                <button type="button" class="markup-btn markup-btn--primary" id="markup-tool-apply" disabled>Place drawing</button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="signature-modal" id="signature-modal" aria-hidden="true">
+    <div class="signature-modal__scrim" id="signature-modal-scrim"></div>
+    <div class="signature-modal__card" role="dialog" aria-modal="true" aria-labelledby="signature-modal-title">
+        <div class="signature-modal__header">
+            <div>
+                <p class="signature-modal__eyebrow">Sign Document</p>
+                <h2 class="signature-modal__title" id="signature-modal-title">Add your signature</h2>
+                <p class="signature-modal__subtitle">Create a clean signature mark for this PDF. Draw it freehand, type it in a script style, or upload an existing signature image.</p>
+            </div>
+            <button type="button" class="signature-modal__close" id="signature-modal-close" aria-label="Close signature modal">×</button>
+        </div>
+        <div class="signature-modal__tabs">
+            <button type="button" class="signature-modal__tab is-active" data-signature-mode="draw">Draw</button>
+            <button type="button" class="signature-modal__tab" data-signature-mode="type">Type</button>
+            <button type="button" class="signature-modal__tab" data-signature-mode="upload">Upload</button>
+        </div>
+        <div class="signature-modal__body">
+            <div class="signature-modal__sidebar">
+                <div class="signature-modal__panel is-active" data-signature-panel="draw">
+                    <h3 class="signature-modal__panel-title">Draw naturally</h3>
+                    <p class="signature-modal__panel-copy">Use your mouse, trackpad, or stylus to sketch a handwritten signature.</p>
+                    <div class="signature-field">
+                        <span class="signature-field__label">Ink color</span>
+                        <label class="signature-color-chip">
+                            <input id="signature-color" type="color" value="#111827" aria-label="Signature ink color">
+                            <span class="signature-color-chip__value" id="signature-color-value">#111827</span>
+                        </label>
+                    </div>
+                    <div class="signature-field">
+                        <span class="signature-field__label">Stroke width</span>
+                        <div class="signature-field__row">
+                            <input id="signature-width" type="range" min="1" max="8" step="1" value="3" aria-label="Signature stroke width">
+                            <span class="signature-slider-readout" id="signature-width-value">3px</span>
+                        </div>
+                    </div>
+                    <div class="signature-field">
+                        <span class="signature-field__label">Stroke smoothing</span>
+                        <div class="signature-field__row signature-field__row--stack">
+                            <div class="signature-slider-stack">
+                                <input id="signature-smoothing" type="range" min="0" max="100" step="1" value="58" aria-label="Signature stroke smoothing">
+                                <span class="signature-slider-readout" id="signature-smoothing-value">58%</span>
+                            </div>
+                            <span class="signature-stage__hint">Lower keeps the raw stroke. Higher softens corners.</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="signature-modal__panel" data-signature-panel="type">
+                    <h3 class="signature-modal__panel-title">Type a signature</h3>
+                    <p class="signature-modal__panel-copy">Enter your name and preview it as a signature mark before placing it on the page.</p>
+                    <label class="signature-field">
+                        <span class="signature-field__label">Signature text</span>
+                        <input id="signature-text" type="text" placeholder="Type your full name">
+                    </label>
+                    <label class="signature-field">
+                        <span class="signature-field__label">Style</span>
+                        <select id="signature-font">
+                            <option value="Great Vibes" selected>Great Vibes</option>
+                            <option value="Dancing Script">Dancing Script</option>
+                            <option value="Allura">Allura</option>
+                            <option value="Pacifico">Pacifico</option>
+                            <option value="Alex Brush">Alex Brush</option>
+                            <option value="Sacramento">Sacramento</option>
+                            <option value="Parisienne">Parisienne</option>
+                            <option value="Marck Script">Marck Script</option>
+                            <option value="Satisfy">Satisfy</option>
+                            <option value="Caveat">Caveat</option>
+                            <option value="Kaushan Script">Kaushan Script</option>
+                            <option value="Tangerine">Tangerine</option>
+                        </select>
+                    </label>
+                    <div class="signature-field">
+                        <span class="signature-field__label">Ink color</span>
+                        <label class="signature-color-chip">
+                            <input id="signature-type-color" type="color" value="#111827" aria-label="Typed signature color">
+                            <span class="signature-color-chip__value" id="signature-type-color-value">#111827</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="signature-modal__panel" data-signature-panel="upload">
+                    <h3 class="signature-modal__panel-title">Use an image</h3>
+                    <p class="signature-modal__panel-copy">Import a scanned signature, transparent PNG, or any image file and stamp it into the PDF as an annotation.</p>
+                    <label class="signature-upload">
+                        <input id="signature-image-input" type="file" accept="image/*">
+                        <span class="signature-upload__icon" aria-hidden="true">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="17 8 12 3 7 8"></polyline>
+                                <line x1="12" y1="3" x2="12" y2="15"></line>
+                            </svg>
+                        </span>
+                        <span class="signature-upload__title">Choose an image</span>
+                        <span class="signature-upload__copy">PNG, JPG, WebP, GIF, and SVG are normalized to a stamped PNG asset for export.</span>
+                        <span class="signature-upload__meta" id="signature-image-name">No file selected</span>
+                    </label>
+                </div>
+                <div class="signature-library">
+                    <div class="signature-library__header">
+                        <h3 class="signature-library__title">Saved signatures</h3>
+                        <p class="signature-library__copy">Save the current preview and reload it later in this browser.</p>
+                    </div>
+                    <div class="signature-library__load-row">
+                        <select id="signature-library-select" class="signature-library__select" aria-label="Saved signatures">
+                            <option value="">Load a saved signature</option>
+                        </select>
+                        <button type="button" class="signature-library__cta signature-library__load-btn" id="signature-library-load-btn" disabled>Load</button>
+                    </div>
+                    <div class="signature-library__save-row">
+                        <input id="signature-save-name" class="signature-library__name" type="text" placeholder="Signature name">
+                        <button type="button" class="signature-library__cta signature-library__save-btn" id="signature-save-btn" disabled>Save current</button>
+                    </div>
+                    <div class="signature-library__list" id="signature-library-list">
+                        <div class="signature-library__empty">No saved signatures yet.</div>
+                    </div>
+                </div>
+            </div>
+            <div class="signature-stage">
+                <div class="signature-stage__header">
+                    <div>
+                        <h3 class="signature-stage__title">Live preview</h3>
+                        <p class="signature-stage__copy">This preview becomes the annotation that gets placed into the document.</p>
+                    </div>
+                    <button type="button" class="signature-clear-btn" id="signature-clear">Clear</button>
+                </div>
+                <div class="signature-stage__canvas-shell">
+                    <canvas id="signature-canvas" class="signature-canvas" width="900" height="300"></canvas>
+                </div>
+                <div class="signature-stage__hint" id="signature-hint">Draw mode: click and drag to sign.</div>
+            </div>
+        </div>
+        <div class="signature-modal__footer">
+            <div class="signature-modal__status" id="signature-status">Create a signature, then place it on the current page.</div>
+            <div class="signature-modal__actions">
+                <button type="button" class="signature-btn" id="signature-cancel">Cancel</button>
+                <button type="button" class="signature-btn signature-btn--primary" id="signature-apply" disabled>Use signature</button>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- Image Import Modal -->
+<div class="image-import-modal" id="image-import-modal" aria-hidden="true" role="dialog" aria-labelledby="image-import-title">
+    <div class="image-import-modal__scrim" id="image-import-scrim"></div>
+    <div class="image-import-modal__card">
+        <button type="button" class="image-import-modal__close" id="image-import-close" aria-label="Close image modal">×</button>
+        <div class="image-import-modal__header">
+            <span class="image-import-modal__eyebrow">Insert</span>
+            <h2 class="image-import-modal__title" id="image-import-title">Import an image</h2>
+            <p class="image-import-modal__subtitle">Drop an image, paste from clipboard, or pick a file. JPG, PNG, GIF, WebP, or SVG.</p>
+        </div>
+        <div class="image-import-modal__body">
+            <label class="image-import-dropzone" id="image-import-dropzone" tabindex="0">
+                <input type="file" id="image-import-file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" hidden>
+                <div class="image-import-dropzone__inner" id="image-import-dropzone-inner">
+                    <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="3"/>
+                        <circle cx="8.5" cy="9" r="1.6"/>
+                        <path d="m21 16-5-5-9 9"/>
+                    </svg>
+                    <div class="image-import-dropzone__title">Drop your image here</div>
+                    <div class="image-import-dropzone__subtitle">or <span class="image-import-dropzone__link">browse to upload</span></div>
+                    <div class="image-import-dropzone__hint">You can also paste an image (Ctrl/⌘ + V)</div>
+                </div>
+                <div class="image-import-preview" id="image-import-preview" hidden>
+                    <img id="image-import-preview-img" alt="Selected image preview">
+                    <div class="image-import-preview__meta">
+                        <div class="image-import-preview__name" id="image-import-preview-name"></div>
+                        <div class="image-import-preview__dims" id="image-import-preview-dims"></div>
+                    </div>
+                    <button type="button" class="image-import-preview__remove" id="image-import-clear" aria-label="Remove selected image">×</button>
+                </div>
+            </label>
+        </div>
+        <div class="image-import-modal__footer">
+            <div class="image-import-modal__status" id="image-import-status">Drop or choose an image to insert.</div>
+            <div class="image-import-modal__actions">
+                <button type="button" class="signature-btn" id="image-import-cancel">Cancel</button>
+                <button type="button" class="signature-btn signature-btn--primary" id="image-import-apply" disabled>Insert image</button>
+            </div>
+        </div>
     </div>
 </div>
 <div class="floating-zoom-bar" id="floating-zoom-bar">
@@ -762,12 +2761,51 @@
         <option value="Palatino">Palatino</option>
         <option value="Garamond">Garamond</option>
         <option value="TrebuchetMS">Trebuchet MS</option>
+        <option disabled>───── Google Fonts ─────</option>
+        <option value="Roboto" style="font-family: 'Roboto', sans-serif;">Roboto</option>
+        <option value="OpenSans" style="font-family: 'Open Sans', sans-serif;">Open Sans</option>
+        <option value="Lato" style="font-family: 'Lato', sans-serif;">Lato</option>
+        <option value="Montserrat" style="font-family: 'Montserrat', sans-serif;">Montserrat</option>
+        <option value="Poppins" style="font-family: 'Poppins', sans-serif;">Poppins</option>
+        <option value="SourceSansPro" style="font-family: 'Source Sans 3', sans-serif;">Source Sans 3</option>
+        <option value="Inter" style="font-family: 'Inter', sans-serif;">Inter</option>
+        <option value="Nunito" style="font-family: 'Nunito', sans-serif;">Nunito</option>
+        <option value="Raleway" style="font-family: 'Raleway', sans-serif;">Raleway</option>
+        <option value="WorkSans" style="font-family: 'Work Sans', sans-serif;">Work Sans</option>
+        <option value="NotoSans" style="font-family: 'Noto Sans', sans-serif;">Noto Sans</option>
+        <option value="NotoSerif" style="font-family: 'Noto Serif', serif;">Noto Serif</option>
+        <option value="Merriweather" style="font-family: 'Merriweather', serif;">Merriweather</option>
+        <option value="PlayfairDisplay" style="font-family: 'Playfair Display', serif;">Playfair Display</option>
+        <option value="Oswald" style="font-family: 'Oswald', sans-serif;">Oswald</option>
+        <option value="RobotoSlab" style="font-family: 'Roboto Slab', serif;">Roboto Slab</option>
+        <option value="RobotoMono" style="font-family: 'Roboto Mono', monospace;">Roboto Mono</option>
+        <option value="RobotoCondensed" style="font-family: 'Roboto Condensed', sans-serif;">Roboto Condensed</option>
+        <option value="Ubuntu" style="font-family: 'Ubuntu', sans-serif;">Ubuntu</option>
+        <option value="Rubik" style="font-family: 'Rubik', sans-serif;">Rubik</option>
+        <option value="DMSans" style="font-family: 'DM Sans', sans-serif;">DM Sans</option>
+        <option value="Mulish" style="font-family: 'Mulish', sans-serif;">Mulish</option>
+        <option value="Quicksand" style="font-family: 'Quicksand', sans-serif;">Quicksand</option>
+        <option value="Kanit" style="font-family: 'Kanit', sans-serif;">Kanit</option>
+        <option value="FiraSans" style="font-family: 'Fira Sans', sans-serif;">Fira Sans</option>
+        <option value="Lora" style="font-family: 'Lora', serif;">Lora</option>
+        <option value="Cabin" style="font-family: 'Cabin', sans-serif;">Cabin</option>
+        <option value="Heebo" style="font-family: 'Heebo', sans-serif;">Heebo</option>
+        <option value="Karla" style="font-family: 'Karla', sans-serif;">Karla</option>
+        <option value="Manrope" style="font-family: 'Manrope', sans-serif;">Manrope</option>
+        <option value="JosefinSans" style="font-family: 'Josefin Sans', sans-serif;">Josefin Sans</option>
+        <option value="Dosis" style="font-family: 'Dosis', sans-serif;">Dosis</option>
+        <option value="Barlow" style="font-family: 'Barlow', sans-serif;">Barlow</option>
+        <option value="BebasNeue" style="font-family: 'Bebas Neue', sans-serif;">Bebas Neue</option>
+        <option value="PTSans" style="font-family: 'PT Sans', sans-serif;">PT Sans</option>
+        <option value="CrimsonText" style="font-family: 'Crimson Text', serif;">Crimson Text</option>
+        <option value="Hind" style="font-family: 'Hind', sans-serif;">Hind</option>
+        <option value="Mukta" style="font-family: 'Mukta', sans-serif;">Mukta</option>
     </select>
     <div class="afb-divider"></div>
     <!-- Font Size -->
     <div class="afb-size-group" title="Font Size">
         <span class="afb-size-label">Size</span>
-        <input type="range" class="afb-size-slider" id="afb-size" min="8" max="72" step="1" value="12" />
+        <input type="range" class="afb-size-slider" id="afb-size" min="0" max="100" step="1" value="50" />
         <span class="afb-size-value" id="afb-size-value">12pt</span>
     </div>
     <div class="afb-divider"></div>
@@ -832,9 +2870,116 @@
     const CSRF        = document.querySelector('meta[name="csrf-token"]')?.content || '';
     const INFO_URL    = '{{ route('pdfTests.documentInfo', $document) }}';
     const SAVE_URL    = '{{ route('documents.saveAnnotationState', $document) }}';
-    const DELETE_URL  = '{{ route('documents.deleteAnnotations', $document) }}';
     const DOWNLOAD_URL = '{{ route('documents.downloadAnnotatedPdf', $document) }}';
     const DOC_ID      = '{{ $document->id }}';
+
+    /* ──────────────────────────────────────────────────────────────────────
+       Document rename: click the title (or the pencil button) to enter
+       inline-edit mode. Enter / blur saves; Escape cancels. The backend
+       (DocumentController@rename) normalizes punctuation and preserves the
+       original extension, so we trust whatever it returns and reflect it
+       back in the title bar + browser tab title.
+    ────────────────────────────────────────────────────────────────────── */
+    (function setupRename() {
+        const wrap = document.getElementById('doc-name-wrap');
+        const display = document.getElementById('doc-name-display');
+        const input = document.getElementById('doc-name-input');
+        const editBtn = document.getElementById('doc-name-edit-btn');
+        if (!wrap || !display || !input || !editBtn) return;
+
+        const renameUrl = wrap.getAttribute('data-rename-url') || '';
+        let currentName = wrap.getAttribute('data-original-name') || display.textContent || '';
+        let saving = false;
+
+        function enterEdit() {
+            if (saving) return;
+            input.value = currentName;
+            display.style.display = 'none';
+            editBtn.style.display = 'none';
+            input.style.display = '';
+            input.focus();
+            input.select();
+        }
+
+        function exitEdit() {
+            input.style.display = 'none';
+            display.style.display = '';
+            editBtn.style.display = '';
+        }
+
+        function setName(newName) {
+            currentName = newName;
+            display.textContent = newName;
+            input.value = newName;
+            wrap.setAttribute('data-original-name', newName);
+            display.title = 'Click to rename document';
+            try { document.title = newName + ' — Edit New'; } catch (_e) {}
+        }
+
+        async function saveName() {
+            const proposed = (input.value || '').trim();
+            if (!proposed || proposed === currentName) {
+                exitEdit();
+                return;
+            }
+            if (!renameUrl) { exitEdit(); return; }
+
+            saving = true;
+            try {
+                const resp = await fetch(renameUrl, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Accept: 'application/json',
+                        'X-CSRF-TOKEN': CSRF,
+                    },
+                    body: JSON.stringify({ name: proposed }),
+                });
+                const data = await resp.json().catch(() => ({}));
+                if (!resp.ok || !data || data.success === false) {
+                    const msg = (data && data.message) ? data.message : ('Rename failed (HTTP ' + resp.status + ')');
+                    alert(msg);
+                    exitEdit();
+                    return;
+                }
+                setName(String(data.original_name || proposed));
+                exitEdit();
+            } catch (err) {
+                alert('Rename failed: ' + (err && err.message ? err.message : String(err)));
+                exitEdit();
+            } finally {
+                saving = false;
+            }
+        }
+
+        display.addEventListener('click', enterEdit);
+        display.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Enter' || ev.key === ' ') {
+                ev.preventDefault();
+                enterEdit();
+            }
+        });
+        editBtn.addEventListener('click', enterEdit);
+
+        input.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Enter') {
+                ev.preventDefault();
+                saveName();
+            } else if (ev.key === 'Escape') {
+                ev.preventDefault();
+                input.value = currentName;
+                exitEdit();
+            }
+        });
+        input.addEventListener('blur', () => {
+            // Defer to allow Escape keydown handler to clear the value first.
+            setTimeout(() => {
+                if (input.style.display !== 'none') saveName();
+            }, 0);
+        });
+    })();
+
     const wrap        = document.getElementById('pages-wrap');
     const errorBanner = document.getElementById('error-banner');
     const saveToast   = document.getElementById('save-toast');
@@ -846,8 +2991,105 @@
     const editModeToggle = document.getElementById('edit-mode-toggle');
     const editModeToggleLabel = document.getElementById('edit-mode-toggle-label');
     const addTextBtn  = document.getElementById('add-text-btn');
+    const addShapeBtn = document.getElementById('add-shape-btn');
     const ftbEditMode = document.getElementById('ftb-edit-mode');
+    const ftbSign     = document.getElementById('ftb-sign');
     const ftbAddText  = document.getElementById('ftb-add-text');
+    const ftbAddShape = document.getElementById('ftb-add-shape');
+    const ftbDrawErase = document.getElementById('ftb-draw-erase');
+    const ftbAddImage = document.getElementById('ftb-add-image');
+    const imageImportModal = document.getElementById('image-import-modal');
+    const imageImportScrim = document.getElementById('image-import-scrim');
+    const imageImportClose = document.getElementById('image-import-close');
+    const imageImportCancel = document.getElementById('image-import-cancel');
+    const imageImportApply = document.getElementById('image-import-apply');
+    const imageImportFileInput = document.getElementById('image-import-file');
+    const imageImportDropzone = document.getElementById('image-import-dropzone');
+    const imageImportDropzoneInner = document.getElementById('image-import-dropzone-inner');
+    const imageImportPreview = document.getElementById('image-import-preview');
+    const imageImportPreviewImg = document.getElementById('image-import-preview-img');
+    const imageImportPreviewName = document.getElementById('image-import-preview-name');
+    const imageImportPreviewDims = document.getElementById('image-import-preview-dims');
+    const imageImportClear = document.getElementById('image-import-clear');
+    const imageImportStatus = document.getElementById('image-import-status');
+    const signatureModal = document.getElementById('signature-modal');
+    const markupToolModal = document.getElementById('markup-tool-modal');
+    const markupToolModalScrim = document.getElementById('markup-tool-modal-scrim');
+    const markupToolModalClose = document.getElementById('markup-tool-modal-close');
+    const markupToolTabs = Array.from(document.querySelectorAll('[data-markup-tool-mode]'));
+    const markupToolPanels = Array.from(document.querySelectorAll('[data-markup-tool-panel]'));
+    const markupToolCanvas = document.getElementById('markup-tool-canvas');
+    const markupToolColorInput = document.getElementById('markup-tool-color');
+    const markupToolColorValue = document.getElementById('markup-tool-color-value');
+    const markupToolWidthInput = document.getElementById('markup-tool-width');
+    const markupToolWidthValue = document.getElementById('markup-tool-width-value');
+    const markupToolSmoothingInput = document.getElementById('markup-tool-smoothing');
+    const markupToolSmoothingValue = document.getElementById('markup-tool-smoothing-value');
+    const markupToolHint = document.getElementById('markup-tool-hint');
+    const markupToolClearBtn = document.getElementById('markup-tool-clear');
+    const markupToolCancelBtn = document.getElementById('markup-tool-cancel');
+    const markupToolApplyBtn = document.getElementById('markup-tool-apply');
+    const markupToolStatus = document.getElementById('markup-tool-status');
+    const signatureModalScrim = document.getElementById('signature-modal-scrim');
+    const signatureModalClose = document.getElementById('signature-modal-close');
+    const signatureModalTitle = document.getElementById('signature-modal-title');
+    const signatureModalSubtitle = signatureModal?.querySelector('.signature-modal__subtitle') || null;
+    const signatureTabs = Array.from(document.querySelectorAll('[data-signature-mode]'));
+    const signaturePanels = Array.from(document.querySelectorAll('[data-signature-panel]'));
+    const signatureCanvas = document.getElementById('signature-canvas');
+    const signatureClearBtn = document.getElementById('signature-clear');
+    const signatureCancelBtn = document.getElementById('signature-cancel');
+    const signatureApplyBtn = document.getElementById('signature-apply');
+    const signatureStatus = document.getElementById('signature-status');
+    const signatureHint = document.getElementById('signature-hint');
+    const signatureColorInput = document.getElementById('signature-color');
+    const signatureColorValue = document.getElementById('signature-color-value');
+    const signatureWidthInput = document.getElementById('signature-width');
+    const signatureWidthValue = document.getElementById('signature-width-value');
+    const signatureSmoothingInput = document.getElementById('signature-smoothing');
+    const signatureSmoothingValue = document.getElementById('signature-smoothing-value');
+    const signatureTextInput = document.getElementById('signature-text');
+    const signatureFontInput = document.getElementById('signature-font');
+    const signatureTypeColorInput = document.getElementById('signature-type-color');
+    const signatureTypeColorValue = document.getElementById('signature-type-color-value');
+    const signatureImageInput = document.getElementById('signature-image-input');
+    const signatureImageName = document.getElementById('signature-image-name');
+    const signatureLibrarySelect = document.getElementById('signature-library-select');
+    const signatureLibraryLoadBtn = document.getElementById('signature-library-load-btn');
+    const signatureSaveNameInput = document.getElementById('signature-save-name');
+    const signatureSaveBtn = document.getElementById('signature-save-btn');
+    const signatureLibraryList = document.getElementById('signature-library-list');
+    const shapeToolPanel = document.getElementById('shape-tool-panel');
+    const shapeDrawToggle = document.getElementById('shape-draw-toggle');
+    const shapeCopyBtn = document.getElementById('shape-copy-btn');
+    const shapeDeleteBtn = document.getElementById('shape-delete-btn');
+    const shapeModeIndicator = document.getElementById('shape-mode-indicator');
+    const shapeToolStatus = document.getElementById('shape-tool-status');
+    const shapeTypeButtons = Array.from(document.querySelectorAll('[data-shape-tool]'));
+    const drawToolPanel = document.getElementById('draw-tool-panel');
+    const drawToolClose = document.getElementById('draw-tool-close');
+    const drawToolPenBtn = document.getElementById('draw-tool-pen');
+    const drawToolEraserBtn = document.getElementById('draw-tool-eraser');
+    const drawToolButtons = Array.from(document.querySelectorAll('[data-draw-direct-tool]'));
+    const drawToolSizeInput = document.getElementById('draw-tool-size');
+    const drawToolSizeValue = document.getElementById('draw-tool-size-value');
+    const drawToolOpacityInput = document.getElementById('draw-tool-opacity');
+    const drawToolOpacityValue = document.getElementById('draw-tool-opacity-value');
+    const drawToolColorInput = document.getElementById('draw-tool-color');
+    const drawColorSwatches = Array.from(document.querySelectorAll('[data-draw-color]'));
+    const drawToolStatus = document.getElementById('draw-tool-status');
+    const shapeStrokeColorInput = document.getElementById('shape-stroke-color');
+    const shapeStrokeHexInput = document.getElementById('shape-stroke-hex');
+    const shapeStrokeTransparentInput = document.getElementById('shape-stroke-transparent');
+    const shapeStrokeWidthInput = document.getElementById('shape-stroke-width');
+    const shapeStrokeWidthValue = document.getElementById('shape-stroke-width-value');
+    const shapeStrokeOpacityInput = document.getElementById('shape-stroke-opacity');
+    const shapeStrokeOpacityValue = document.getElementById('shape-stroke-opacity-value');
+    const shapeFillColorInput = document.getElementById('shape-fill-color');
+    const shapeFillHexInput = document.getElementById('shape-fill-hex');
+    const shapeFillTransparentInput = document.getElementById('shape-fill-transparent');
+    const shapeFillOpacityInput = document.getElementById('shape-fill-opacity');
+    const shapeFillOpacityValue = document.getElementById('shape-fill-opacity-value');
     const zoomLabel   = document.getElementById('zoom-label');
     const annFormatBar  = document.getElementById('ann-format-bar');
     const afbFont       = document.getElementById('afb-font');
@@ -873,6 +3115,8 @@
 
     // ── Session ID (persisted per-document so saves survive reload) ───────────
     const SESSION_KEY = `edit_new_session_${DOC_ID}`;
+    const SIGNATURE_LIBRARY_KEY = 'edit_new_signature_library_v1';
+    const SIGNATURE_LIBRARY_LIMIT = 8;
     const ZOOM_MIN_PERCENT = 50;
     const ZOOM_MAX_PERCENT = 400;
     const ZOOM_STEP_PERCENT = 30;
@@ -901,20 +3145,652 @@
 
     let activeState = { pi: null, uid: null };
     let hoverState  = { pi: null, uid: null };
-    let dragState   = { active: false, pi: null, uid: null, offsetXPts: 0, offsetYPts: 0 };
-    let resizeState = { active: false, pi: null, uid: null, handle: null, startPt: null, startBox: null, startFontSize: null };
+    let dragState   = { active: false, pi: null, uid: null, offsetXPts: 0, offsetYPts: 0, startPt: null, startBox: null };
+    let resizeState = { active: false, pi: null, uid: null, handle: null, startPt: null, startBox: null, startFontSize: null, startLineGeometry: null };
+    let rotateState = { active: false, pi: null, uid: null, pointerId: null, grabAngleOffset: 0 };
     let textCreationState = { active: false, pi: null, pointerId: null, startX: 0, startY: 0, rect: null, previewEl: null, moved: false };
+    let shapeCreationState = { active: false, pi: null, pointerId: null, startPt: null, currentPt: null, previewAnn: null, constrain: false };
+    let shapeCutState = { armed: false, pi: null, uid: null, pointerId: null, startPt: null, currentPt: null };
     let isDirty     = false;
     let isSaving    = false;
     let isDownloadingPdf = false;
     let editModeEnabled = false;
     let addTextMode = false;
+    let shapeMode = false;
+    let signatureMode = 'draw';
+    let signatureDirty = false;
+    let signatureDrawing = false;
+    let signatureStrokes = [];
+    let signatureActiveStroke = null;
+    let signatureImageAsset = null;
+    let signatureEditTarget = null;
+    let savedSignatureLibrary = [];
+    let signaturePlacementState = { active: false, asset: null, type: 'signature', toolSource: null };
+    let drawModeActive = false;
+    let drawToolType = 'pen';
+    let drawStrokeColor = '#111827';
+    let drawOpacity = 1;
+    let drawBrushSize = 10;
+    let activeDrawSession = null;
+    let imageBackgroundRemovalState = { active: false, uid: null };
+    let markupToolMode = 'draw';
+    let markupToolDirty = false;
+    let markupToolDrawing = false;
+    let markupToolStrokes = [];
+    let markupToolActiveStroke = null;
+    let eraseMode = false;
     let currentZoomPercent = initialZoomPercent;
+    let suppressEditorAutofit = false;
+    let suppressEditorAutofitResetToken = 0;
+    let currentShapeType = 'circle';
+    let currentShapeStrokeColor = '#0f172a';
+    let currentShapeStrokeOpacity = 1;
+    let currentShapeStrokeWidth = 3;
+    let currentShapeStrokeTransparent = false;
+    let currentShapeFillColor = '#22c55e';
+    let currentShapeFillOpacity = 0.22;
+    let currentShapeFillTransparent = false;
 
     let measureCanvas = null;
     let overlayEmbeddedFonts = null;
+    let markupToolCtx = null;
+    let signatureCtx = null;
+    let signatureTypedRenderToken = 0;
     const pendingDeletedAnnotationIds = new Set();
     const pendingDeletedPromotedSourceKeys = new Set();
+    const annotationImageCache = new Map();
+    const shapeHitTestCanvas = document.createElement('canvas');
+    const shapeHitTestCtx = shapeHitTestCanvas.getContext('2d');
+    const signatureFontLoadPromises = new Map();
+
+    function clamp01(value, fallback = 0) {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return fallback;
+        return Math.max(0, Math.min(1, numeric));
+    }
+
+    function isShapeAnnotation(ann) {
+        return String(ann?.type || '') === 'shape';
+    }
+
+    function isImageBackedAnnotation(ann) {
+        const type = String(ann?.type || '').toLowerCase();
+        return type === 'signature' || type === 'image';
+    }
+
+    function isDirectDrawAnnotation(ann) {
+        return isImageBackedAnnotation(ann) && String(ann?.imageToolSource || '') === 'direct-draw';
+    }
+
+    function canRemoveBackgroundFromImageAnnotation(ann) {
+        return String(ann?.type || '').toLowerCase() === 'image' && !isDirectDrawAnnotation(ann);
+    }
+
+    function normalizeSignatureSourceMode(value) {
+        const raw = String(value || '').toLowerCase();
+        return ['draw', 'type', 'upload'].includes(raw) ? raw : 'draw';
+    }
+
+    function getSignatureAnnotationLabel(mode) {
+        const normalized = normalizeSignatureSourceMode(mode);
+        if (normalized === 'type') return 'Typed signature';
+        if (normalized === 'upload') return 'Uploaded signature';
+        return 'Drawn signature';
+    }
+
+    function getAnnotationDisplayLabel(ann) {
+        const type = String(ann?.type || '').toLowerCase();
+        if (type === 'signature') return getSignatureAnnotationLabel(ann?.signatureSourceMode);
+        if (type === 'image') return 'Image';
+        return '';
+    }
+
+    function isBoxAnnotation(ann) {
+        return isShapeAnnotation(ann) || isImageBackedAnnotation(ann);
+    }
+
+    function isTextAnnotation(ann) {
+        return !isBoxAnnotation(ann);
+    }
+
+    function isAnnotationLocked(ann) {
+        return Boolean(ann?.locked);
+    }
+
+    function isLineShape(annOrType) {
+        const shapeType = typeof annOrType === 'string' ? annOrType : annOrType?.shapeType;
+        return String(shapeType || '') === 'line';
+    }
+
+    function normalizeHexColor(value, fallback) {
+        const raw = String(value || '').trim();
+        if (/^#[0-9a-f]{6}$/i.test(raw)) return raw.toLowerCase();
+        if (/^#[0-9a-f]{3}$/i.test(raw)) {
+            const [, r, g, b] = raw;
+            return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
+        }
+        return fallback;
+    }
+
+    function hexToRgbaString(hex, opacity) {
+        const normalized = normalizeHexColor(hex, '#000000');
+        const safeOpacity = clamp01(opacity, 1);
+        const intValue = parseInt(normalized.slice(1), 16);
+        const r = (intValue >> 16) & 255;
+        const g = (intValue >> 8) & 255;
+        const b = intValue & 255;
+        return `rgba(${r}, ${g}, ${b}, ${safeOpacity})`;
+    }
+
+    function normalizeShapeType(shapeType) {
+        const raw = String(shapeType || '').toLowerCase();
+        if (raw === 'rect') return 'square';
+        return raw || 'circle';
+    }
+
+    function defaultPolygonUnitPoints() {
+        return [
+            { x: 0.50, y: 0.05 },
+            { x: 0.90, y: 0.27 },
+            { x: 0.90, y: 0.73 },
+            { x: 0.50, y: 0.95 },
+            { x: 0.10, y: 0.73 },
+            { x: 0.10, y: 0.27 },
+        ];
+    }
+
+    function normalizePolygonPointList(points, fallback = null) {
+        if (!Array.isArray(points)) return fallback;
+        const normalized = points
+            .map((point) => ({
+                x: clamp01(point?.x, NaN),
+                y: clamp01(point?.y, NaN),
+            }))
+            .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+        return normalized.length >= 3 ? normalized : fallback;
+    }
+
+    function normalizeShapeAnnotation(ann) {
+        if (!isShapeAnnotation(ann)) return ann;
+        ann.shapeType = normalizeShapeType(ann.shapeType);
+        ann.strokeColor = normalizeHexColor(ann.strokeColor, '#0f172a');
+        ann.fillColor = normalizeHexColor(ann.fillColor, '#22c55e');
+        ann.strokeOpacity = clamp01(ann.strokeOpacity ?? ann.opacity ?? 1, 1);
+        ann.fillOpacity = clamp01(ann.fillOpacity ?? (ann.fillTransparent ? 0 : 0.22), ann.fillTransparent ? 0 : 0.22);
+        ann.strokeWidth = Math.max(1, Number(ann.strokeWidth) || 3);
+        ann.strokeTransparent = Boolean(ann.strokeTransparent);
+        ann.fillTransparent = Boolean(ann.fillTransparent);
+        if (ann.shapeType === 'polygon') {
+            ann.polygonPoints = normalizePolygonPointList(ann.polygonPoints, defaultPolygonUnitPoints());
+        }
+        if (isLineShape(ann)) {
+            // Line endpoint convention: Y is image-y-down (0 = visual top of
+            // bounding box, 1 = visual bottom). This matches /edit and the
+            // Python PDF exporter (apply_annotations_direct*.py) which both
+            // interpret lineStartY/lineEndY the same way. The default for a
+            // freshly-defaulted line is top-left → bottom-right (↘).
+            ann.lineStartX = clamp01(ann.lineStartX, 0);
+            ann.lineStartY = clamp01(ann.lineStartY, 0);
+            ann.lineEndX = clamp01(ann.lineEndX, 1);
+            ann.lineEndY = clamp01(ann.lineEndY, 1);
+            const cap = String(ann.lineCap || 'round').toLowerCase();
+            ann.lineCap = (cap === 'butt' || cap === 'square') ? cap : 'round';
+        }
+        return ann;
+    }
+
+    function normalizeImageAnnotation(ann) {
+        if (!isImageBackedAnnotation(ann)) return ann;
+        if (String(ann.type || '').toLowerCase() === 'signature') {
+            ann.signatureSourceMode = normalizeSignatureSourceMode(ann.signatureSourceMode);
+        } else {
+            delete ann.signatureSourceMode;
+        }
+        ann.opacity = clamp01(ann.opacity ?? 1, 1);
+        ann.rotation = Number(ann.rotation) || 0;
+        ann.fileName = String(ann.fileName || (String(ann.type || '').toLowerCase() === 'signature' ? 'signature.png' : 'image.png'));
+        ann.mimeType = String(ann.mimeType || 'image/png');
+        ann.intrinsicWidth = Math.max(1, Number(ann.intrinsicWidth || ann.width || ann.imageWidth) || 1);
+        ann.intrinsicHeight = Math.max(1, Number(ann.intrinsicHeight || ann.height || ann.imageHeight) || 1);
+        if (isDirectDrawAnnotation(ann) && ann.drawStrokeColor) {
+            ann.drawStrokeColor = normalizeHexColor(ann.drawStrokeColor, '#111827');
+        } else {
+            delete ann.drawStrokeColor;
+        }
+        return ann;
+    }
+
+    function normalizeTextBackgroundColorValue(value, explicit = false) {
+        const raw = String(value ?? '').trim();
+        if (!raw) return 'transparent';
+        const lower = raw.toLowerCase();
+        if (lower === 'transparent') return 'transparent';
+        if (!explicit && (lower === '#fff' || lower === '#ffffff' || lower === 'white')) {
+            return 'transparent';
+        }
+        return raw;
+    }
+
+    function sourceAverageLineHeightPts(ann) {
+        const lines = renderableSourceLines(ann);
+        if (!Array.isArray(lines) || !lines.length) return 0;
+        const heights = lines.map((line, index) => {
+            const bbox = Array.isArray(line?.bbox) ? line.bbox : null;
+            if (!bbox || bbox.length < 4) return 0;
+            const rotation = sourceLineRotationDegrees(ann, index);
+            const extent = Math.abs(rotation) === 90
+                ? (Number(bbox[2]) - Number(bbox[0]))
+                : (Number(bbox[3]) - Number(bbox[1]));
+            return Number.isFinite(extent) && extent > 0 ? extent : 0;
+        }).filter((height) => Number.isFinite(height) && height > 0);
+        if (!heights.length) return 0;
+        return heights.reduce((sum, height) => sum + height, 0) / heights.length;
+    }
+
+    function resolveReflowedTextLineHeightPts(ann) {
+        const fontSizePt = Math.max(0, Number(ann?.fontSize) || 0);
+        const fontDrivenHeightPts = fontSizePt > 0 ? (fontSizePt * 1.18) : 0;
+        const sourceDrivenHeightPts = sourceAverageLineHeightPts(ann);
+        const savedLineHeightPts = Math.max(0, Number(ann?.lineHeight) || 0);
+        return Math.max(fontDrivenHeightPts, sourceDrivenHeightPts, savedLineHeightPts);
+    }
+
+    function normalizeTextAnnotation(ann) {
+        if (!ann || String(ann.type || '').toLowerCase() !== 'text') return ann;
+        ann.backgroundColorExplicit = Boolean(ann.backgroundColorExplicit);
+        ann.backgroundColor = normalizeTextBackgroundColorValue(
+            ann.backgroundColor,
+            ann.backgroundColorExplicit
+        );
+        const usesReflowedLayout = Boolean(
+            ann.userCreated
+            || ann.userAuthored
+            || ann._userAuthored
+            || ann.promotedDirty
+            || ann._styleDirty
+            || (typeof ann.richTextHtml === 'string' && ann.richTextHtml.trim())
+            || (typeof ann._richHtml === 'string' && ann._richHtml.trim())
+        );
+        if (usesReflowedLayout) {
+            const normalizedLineHeight = resolveReflowedTextLineHeightPts(ann);
+            if (normalizedLineHeight > 0) {
+                ann.lineHeight = normalizedLineHeight;
+            }
+        }
+        return ann;
+    }
+
+    function getImageAnnotationSource(ann) {
+        return String(ann?.dataUrl || ann?.src || '').trim();
+    }
+
+    function cloneSerializableValue(value, fallback) {
+        try {
+            return JSON.parse(JSON.stringify(value));
+        } catch (_error) {
+            return fallback;
+        }
+    }
+
+    function getCachedAnnotationImage(ann) {
+        if (!isImageBackedAnnotation(ann)) return null;
+        const src = getImageAnnotationSource(ann);
+        if (!src) return null;
+        let cached = annotationImageCache.get(src);
+        if (!cached) {
+            const img = new Image();
+            cached = { img, loaded: false, failed: false };
+            img.onload = () => {
+                cached.loaded = true;
+                redrawAllOverlays();
+                if (activeState.uid === ann?._uid) syncActiveEditor(true);
+            };
+            img.onerror = () => {
+                cached.failed = true;
+            };
+            img.src = src;
+            annotationImageCache.set(src, cached);
+        }
+        if (cached.failed || !cached.loaded) return null;
+        return cached.img;
+    }
+
+    function loadImageSource(src) {
+        return new Promise((resolve, reject) => {
+            if (!src) {
+                reject(new Error('Missing image source.'));
+                return;
+            }
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = () => reject(new Error('Failed to load drawing image.'));
+            img.src = src;
+        });
+    }
+
+    function toTransparentPngFileName(fileName, fallback = 'image.png') {
+        const raw = String(fileName || '').trim() || fallback;
+        const clean = raw.split(/[?#]/)[0] || fallback;
+        if (!/\.[^./\\]+$/.test(clean)) return `${clean}.png`;
+        return clean.replace(/\.[^./\\]+$/, '.png');
+    }
+
+    function buildWhiteMatteCandidateMask(imageData) {
+        const { data, width, height } = imageData || {};
+        const pixelCount = Math.max(0, (Number(width) || 0) * (Number(height) || 0));
+        const mask = new Uint8Array(pixelCount);
+        for (let idx = 0; idx < pixelCount; idx += 1) {
+            const offset = idx * 4;
+            const alpha = Number(data[offset + 3]) || 0;
+            if (alpha < 8) continue;
+            const r = Number(data[offset]) || 0;
+            const g = Number(data[offset + 1]) || 0;
+            const b = Number(data[offset + 2]) || 0;
+            const min = Math.min(r, g, b);
+            const max = Math.max(r, g, b);
+            const avg = (r + g + b) / 3;
+            if (min >= 232 && avg >= 238 && (max - min) <= 26) {
+                mask[idx] = 1;
+            }
+        }
+        return mask;
+    }
+
+    function removeWhiteMatteFromImageData(imageData) {
+        const width = Number(imageData?.width) || 0;
+        const height = Number(imageData?.height) || 0;
+        if (!width || !height) return { changed: false, affectedPixels: 0 };
+
+        const { data } = imageData;
+        const candidateMask = buildWhiteMatteCandidateMask(imageData);
+        const pixelCount = width * height;
+        const visited = new Uint8Array(pixelCount);
+        const queue = new Uint32Array(pixelCount);
+        let head = 0;
+        let tail = 0;
+
+        const enqueue = (index) => {
+            if (index < 0 || index >= pixelCount) return;
+            if (!candidateMask[index] || visited[index]) return;
+            visited[index] = 1;
+            queue[tail] = index;
+            tail += 1;
+        };
+
+        for (let x = 0; x < width; x += 1) {
+            enqueue(x);
+            enqueue(((height - 1) * width) + x);
+        }
+        for (let y = 1; y < height - 1; y += 1) {
+            enqueue(y * width);
+            enqueue((y * width) + (width - 1));
+        }
+
+        while (head < tail) {
+            const index = queue[head];
+            head += 1;
+            const x = index % width;
+            const y = Math.floor(index / width);
+            if (x > 0) enqueue(index - 1);
+            if (x + 1 < width) enqueue(index + 1);
+            if (y > 0) enqueue(index - width);
+            if (y + 1 < height) enqueue(index + width);
+        }
+
+        let changed = false;
+        let affectedPixels = 0;
+        for (let index = 0; index < pixelCount; index += 1) {
+            if (!visited[index]) continue;
+            const x = index % width;
+            const y = Math.floor(index / width);
+            const offset = index * 4;
+            const currentAlpha = Number(data[offset + 3]) || 0;
+            if (!currentAlpha) continue;
+
+            const isBorderPixel = x === 0 || y === 0 || x === (width - 1) || y === (height - 1);
+            let visitedNeighbors = 0;
+            for (let ny = Math.max(0, y - 1); ny <= Math.min(height - 1, y + 1); ny += 1) {
+                for (let nx = Math.max(0, x - 1); nx <= Math.min(width - 1, x + 1); nx += 1) {
+                    if (nx === x && ny === y) continue;
+                    if (visited[(ny * width) + nx]) visitedNeighbors += 1;
+                }
+            }
+
+            let nextAlpha = currentAlpha;
+            if (isBorderPixel || visitedNeighbors >= 5) {
+                nextAlpha = 0;
+            } else if (visitedNeighbors >= 3) {
+                nextAlpha = Math.min(currentAlpha, 48);
+            }
+            if (nextAlpha === currentAlpha) continue;
+
+            if (nextAlpha > 0) {
+                const alphaRatio = nextAlpha / 255;
+                for (let channel = 0; channel < 3; channel += 1) {
+                    const composited = (Number(data[offset + channel]) || 0) / 255;
+                    const unblended = (composited - (1 - alphaRatio)) / Math.max(alphaRatio, 0.001);
+                    data[offset + channel] = Math.max(0, Math.min(255, Math.round(unblended * 255)));
+                }
+            } else {
+                data[offset] = 0;
+                data[offset + 1] = 0;
+                data[offset + 2] = 0;
+            }
+            data[offset + 3] = nextAlpha;
+            changed = true;
+            affectedPixels += 1;
+        }
+
+        return { changed, affectedPixels };
+    }
+
+    async function buildBackgroundRemovedImageAsset(ann) {
+        const src = getImageAnnotationSource(ann);
+        if (!src) throw new Error('Missing image source.');
+        const img = getCachedAnnotationImage(ann) || await loadImageSource(src);
+        const width = Math.max(1, Number(ann?.intrinsicWidth) || img.naturalWidth || img.width || 1);
+        const height = Math.max(1, Number(ann?.intrinsicHeight) || img.naturalHeight || img.height || 1);
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) throw new Error('Could not prepare the image for editing.');
+        ctx.clearRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+        const imageData = ctx.getImageData(0, 0, width, height);
+        const result = removeWhiteMatteFromImageData(imageData);
+        if (!result.changed) {
+            throw new Error('No removable white background was detected.');
+        }
+        ctx.putImageData(imageData, 0, 0);
+        return {
+            dataUrl: canvas.toDataURL('image/png'),
+            width,
+            height,
+            fileName: toTransparentPngFileName(ann?.fileName || 'image.png'),
+            mimeType: 'image/png',
+        };
+    }
+
+    async function removeBackgroundFromImageAnnotation(ann, pi) {
+        if (!canRemoveBackgroundFromImageAnnotation(ann)) return false;
+        if (isAnnotationLocked(ann)) return false;
+        if (imageBackgroundRemovalState.active) return false;
+        imageBackgroundRemovalState = { active: true, uid: ann._uid };
+        syncActiveEditor(true);
+        try {
+            const asset = await buildBackgroundRemovedImageAsset(ann);
+            replaceImageBackedAnnotation(ann, pi, asset);
+            showToast('Background removed');
+            return true;
+        } finally {
+            imageBackgroundRemovalState = { active: false, uid: null };
+            syncActiveEditor(true);
+        }
+    }
+
+    function safeLocalStorageGet(key) {
+        try {
+            return localStorage.getItem(key);
+        } catch (_error) {
+            return null;
+        }
+    }
+
+    function safeLocalStorageSet(key, value) {
+        try {
+            localStorage.setItem(key, value);
+            return true;
+        } catch (_error) {
+            return false;
+        }
+    }
+
+    function computeLineBoxGeometry(startX, startY, endX, endY) {
+        const safeStartX = Number(startX) || 0;
+        const safeStartY = Number(startY) || 0;
+        const safeEndX = Number(endX) || 0;
+        const safeEndY = Number(endY) || 0;
+        const left = Math.min(safeStartX, safeEndX);
+        const bottom = Math.min(safeStartY, safeEndY);
+        const top = Math.max(safeStartY, safeEndY);
+        const width = Math.max(1, Math.abs(safeEndX - safeStartX));
+        const height = Math.max(1, Math.abs(safeEndY - safeStartY));
+        // Inputs (startX/Y, endX/Y) are PDF-y-up coordinates from
+        // pdfPtFromClient (larger Y = visual top). Storage convention is
+        // image-y-down (0 = visual top of bounding box, 1 = visual bottom)
+        // to match /edit and the Python PDF exporter. Flip Y here so the
+        // editor preview, the saved JSON, and the downloaded PDF all agree.
+        return {
+            left,
+            bottom,
+            width,
+            height,
+            lineStartX: clamp01((safeStartX - left) / width, 0),
+            lineStartY: clamp01((top - safeStartY) / height, 0),
+            lineEndX: clamp01((safeEndX - left) / width, 1),
+            lineEndY: clamp01((top - safeEndY) / height, 1),
+        };
+    }
+
+    // Mirrors /edit's snapLineEndpoint: when the drag angle is within ~8° of
+    // any 45° step (0°/45°/90°/...), snap the end point onto that ray so
+    // straight horizontal / vertical / diagonal lines are easy to draw.
+    function snapLineEndpoint(startX, startY, endX, endY) {
+        const sx = Number(startX) || 0;
+        const sy = Number(startY) || 0;
+        const ex = Number(endX) || 0;
+        const ey = Number(endY) || 0;
+        const dx = ex - sx;
+        const dy = ey - sy;
+        const distance = Math.hypot(dx, dy);
+        if (distance < 1) return { x: ex, y: ey };
+
+        const angle = Math.atan2(dy, dx);
+        const snapStep = Math.PI / 4;
+        const snapThreshold = (8 * Math.PI) / 180;
+        const snappedAngle = Math.round(angle / snapStep) * snapStep;
+        let angleDelta = angle - snappedAngle;
+        while (angleDelta > Math.PI) angleDelta -= Math.PI * 2;
+        while (angleDelta < -Math.PI) angleDelta += Math.PI * 2;
+        if (Math.abs(angleDelta) > snapThreshold) return { x: ex, y: ey };
+
+        return {
+            x: sx + Math.cos(snappedAngle) * distance,
+            y: sy + Math.sin(snappedAngle) * distance,
+        };
+    }
+
+    function currentShapeDefaults() {
+        return {
+            shapeType: currentShapeType,
+            strokeColor: currentShapeStrokeColor,
+            strokeOpacity: clamp01(currentShapeStrokeOpacity, 1),
+            strokeWidth: Math.max(1, Number(currentShapeStrokeWidth) || 3),
+            strokeTransparent: Boolean(currentShapeStrokeTransparent),
+            fillColor: currentShapeFillColor,
+            fillOpacity: clamp01(currentShapeFillOpacity, 0.22),
+            fillTransparent: Boolean(currentShapeFillTransparent),
+        };
+    }
+
+    function hasActiveBoxSelection() {
+        const data = activeState.pi !== null ? pageData[activeState.pi] : null;
+        const ann = data ? data.annotations.find((item) => item._uid === activeState.uid) : null;
+        return Boolean(ann && isBoxAnnotation(ann));
+    }
+
+    function hasActiveShapeSelection() {
+        const data = activeState.pi !== null ? pageData[activeState.pi] : null;
+        const ann = data ? data.annotations.find((item) => item._uid === activeState.uid) : null;
+        return Boolean(ann && isShapeAnnotation(ann));
+    }
+
+    function setAnnotationLocked(ann, pi, locked) {
+        if (!ann) return;
+        const nextLocked = Boolean(locked);
+        if (isAnnotationLocked(ann) === nextLocked) return;
+        pushUndo();
+        ann.locked = nextLocked;
+        // Note: do NOT call markUserAuthored() here. Locking must only prevent
+        // move/resize/edit; it must not promote an extracted annotation into
+        // "user-authored" mode, because that flips text rendering from the
+        // canvas/PDF-backed path to the rich-html DOM layer (via
+        // shouldRenderTextInRichHtmlLayer), which causes extracted text to
+        // disappear from the page when locked. The locked flag is persisted
+        // independently in buildPersistedAnnotationPayload (payload.locked).
+        if (ann.annotation_data && typeof ann.annotation_data === 'object') {
+            ann.annotation_data.locked = nextLocked;
+        }
+        redrawOverlay(pi);
+        syncActiveEditor(true);
+        markDirty();
+    }
+
+    function moveAnnotationLayer(ann, pi, direction) {
+        const data = pageData[pi];
+        if (!data || !ann || !isBoxAnnotation(ann)) return false;
+        if (isAnnotationLocked(ann)) return false;
+        const idx = data.annotations.indexOf(ann);
+        if (idx < 0) return false;
+
+        if (direction === 'front') {
+            if (idx === data.annotations.length - 1) return false;
+            pushUndo();
+            data.annotations.splice(idx, 1);
+            data.annotations.push(ann);
+        } else if (direction === 'back') {
+            if (idx === 0) return false;
+            pushUndo();
+            data.annotations.splice(idx, 1);
+            data.annotations.unshift(ann);
+        } else {
+            return false;
+        }
+
+        redrawOverlay(pi);
+        syncActiveEditor(true);
+        markDirty();
+        return true;
+    }
+
+    function getStickyUiBottomEdge() {
+        let safeTop = 0;
+        [
+            document.querySelector('.top-bar'),
+            document.getElementById('floating-tool-bar'),
+            document.getElementById('ann-format-bar'),
+            document.getElementById('shape-tool-panel'),
+        ].forEach((element) => {
+            if (!(element instanceof HTMLElement)) return;
+            const isHidden = window.getComputedStyle(element).display === 'none';
+            if (isHidden) return;
+            const rect = element.getBoundingClientRect();
+            if (rect.height <= 0 || rect.bottom <= 0) return;
+            safeTop = Math.max(safeTop, rect.bottom);
+        });
+        return Math.max(0, safeTop);
+    }
 
     // ── Undo / Redo history ────────────────────────────────────────────────────
     const HISTORY_LIMIT = 100;
@@ -925,7 +3801,7 @@
     function captureSnapshot() {
         const annsByPage = {};
         for (const [pi, data] of Object.entries(pageData)) {
-            annsByPage[pi] = data.annotations.map(ann => ({ ...ann }));
+            annsByPage[pi] = data.annotations.map((ann) => cloneSerializableValue(ann, { ...ann }));
         }
         return {
             annsByPage,
@@ -940,7 +3816,7 @@
         // Restore annotations
         for (const [pi, anns] of Object.entries(snap.annsByPage)) {
             const data = pageData[pi];
-            if (data) data.annotations = anns.map(ann => ({ ...ann }));
+            if (data) data.annotations = anns.map((ann) => cloneSerializableValue(ann, { ...ann }));
         }
         // Restore edited texts
         for (const key of Object.keys(editedTexts)) delete editedTexts[key];
@@ -978,10 +3854,74 @@
         return (data.fitScale || 1) * (currentZoomPercent / 100);
     }
 
+    // Annotation TEXT scales with the page during zoom (uniform zoom: page +
+    // text shrink/grow together). Helper kept as identity so all call sites
+    // continue to compile; a previous experiment returned fit-scale here to
+    // keep glyphs constant pixel-size, but uniform scaling is the desired UX.
+    function fontDisplayScale(scale) {
+        return Number(scale) || 0;
+    }
+
     function updatePageCardWidth(pi, canvasWidth) {
         const card = document.getElementById(`card-${pi + 1}`);
         if (!card) return;
         card.style.width = `${Math.ceil(Math.max(0, canvasWidth) + 32)}px`;
+    }
+
+    // ── HiDPI overlay support ────────────────────────────────────────────────
+    // The overlay canvas renders vector shapes (ellipses, strokes, polygons).
+    // Two factors stretch its visible size beyond its backing store unless
+    // accounted for here:
+    //   1. devicePixelRatio (HiDPI / retina) — physical pixel density.
+    //   2. currentZoomPercent — applied as pure-CSS upscale on the parent
+    //      page card (`--scale` var). Without compensating, zoom > 100 turns
+    //      every drawn pixel into 2× / 3× browser-bilinear-upscaled pixels =
+    //      visible blur on curves and strokes.
+    // We keep `data.scale` and the rest of the drawing/hit-testing math in
+    // FIT-scale CSS-pixel space (so every existing call site is unchanged),
+    // and absorb both factors into the canvas backing store + the
+    // `setTransform` we apply at the start of `redrawOverlay`.
+    function overlayDevicePixelRatio() {
+        const raw = Number(window.devicePixelRatio) || 1;
+        // Clamp: < 1 is meaningless for sharpening; > 3 wastes memory without
+        // visible benefit (a 2000×2600-pixel page at dpr=4 is 80 MP).
+        if (!Number.isFinite(raw) || raw < 1) return 1;
+        return Math.min(3, raw);
+    }
+
+    function overlayZoomMultiplier() {
+        const z = Number(currentZoomPercent);
+        if (!Number.isFinite(z) || z <= 0) return 1;
+        return z / 100;
+    }
+
+    function overlayBackingScale() {
+        return overlayDevicePixelRatio() * overlayZoomMultiplier();
+    }
+
+    function sizeOverlayCanvas(canvas, cssW, cssH) {
+        if (!canvas) return;
+        const backing = overlayBackingScale();
+        const w = Math.max(1, Math.round(cssW));
+        const h = Math.max(1, Math.round(cssH));
+        canvas.width = Math.max(1, Math.round(w * backing));
+        canvas.height = Math.max(1, Math.round(h * backing));
+        // Stash the FIT-scale logical (CSS) dimensions so drawing/hit-testing
+        // code can keep working in fit-scale CSS pixel coords regardless of
+        // the backing-store DPR or zoom.
+        canvas.__cssWidth = w;
+        canvas.__cssHeight = h;
+        canvas.__backingScale = backing;
+    }
+
+    function canvasLogicalWidth(canvas) {
+        if (!canvas) return 0;
+        return canvas.__cssWidth ?? canvas.width;
+    }
+
+    function canvasLogicalHeight(canvas) {
+        if (!canvas) return 0;
+        return canvas.__cssHeight ?? canvas.height;
     }
 
     function applyPageScale(pi) {
@@ -989,17 +3929,72 @@
         const pageEl = document.getElementById('pc-' + (pi + 1));
         if (!data || !pageEl) return;
         data.fitScale = getFitScaleForWidth(data.wPts);
-        pageEl.style.setProperty('--scale', getAppliedScale(data));
+        const fitScale = data.fitScale || 1;
+        const zoomMult = (Number(currentZoomPercent) || 100) / 100;
+
+        // Pure CSS zoom: the canvas/page is rasterized once at fitScale, and
+        // the user's zoom level is applied as a CSS transform on top. This
+        // grows/shrinks the entire page (background + annotations + text) in
+        // lockstep, exactly like browser zoom — no re-rasterization, no
+        // re-laying-out of annotations on zoom changes.
+        pageEl.style.setProperty('--scale', fitScale);
+        pageEl.style.transformOrigin = 'top left';
+        pageEl.style.transform = zoomMult === 1 ? '' : `scale(${zoomMult})`;
+        // Reserve layout space for the scaled element so siblings/scroll work.
+        const baseW = data.wPts * fitScale;
+        const baseH = data.hPts * fitScale;
+        pageEl.style.marginRight = `${baseW * (zoomMult - 1)}px`;
+        pageEl.style.marginBottom = `${baseH * (zoomMult - 1)}px`;
+
+        // Sync the canvas bitmap to fitScale (only re-rasterize when fitScale
+        // itself changed, e.g. window resize). Zoom changes are pure CSS,
+        // BUT the backing-store scale (dpr × zoom) does still need updating
+        // on zoom so curves don't blur — see sizeOverlayCanvas /
+        // overlayBackingScale.
+        const newW = Math.round(data.wPts * fitScale);
+        const newH = Math.round(data.hPts * fitScale);
+        const fitDimsChanged = (data.canvasWidth !== newW || data.canvasHeight !== newH);
+        const oc = document.getElementById('oc-' + (pi + 1));
+        const desiredBacking = overlayBackingScale();
+        const backingChanged = oc && (oc.__backingScale ?? null) !== desiredBacking;
+        if (newW > 0 && newH > 0 && (fitDimsChanged || backingChanged)) {
+            data.scale = fitScale;
+            data.canvasWidth = newW;
+            data.canvasHeight = newH;
+            updatePageCardWidth(pi, newW);
+            const ac = document.getElementById('ac-' + (pi + 1));
+            if (oc) sizeOverlayCanvas(oc, newW, newH);
+            if (ac) {
+                ac.style.width = `${newW}px`;
+                ac.style.height = `${newH}px`;
+            }
+            redrawOverlay(pi);
+            drawAcroOverlay(pi);
+            if (activeState.pi === pi) syncActiveEditor();
+        }
     }
 
     function applyAllPageScales() {
         Object.keys(pageData).forEach((key) => applyPageScale(Number(key)));
     }
 
+    function beginViewportScaleUpdate() {
+        suppressEditorAutofit = true;
+        const token = ++suppressEditorAutofitResetToken;
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                if (suppressEditorAutofitResetToken === token) {
+                    suppressEditorAutofit = false;
+                }
+            });
+        });
+    }
+
     function updateZoom(value) {
         const zoomValue = Math.max(ZOOM_MIN_PERCENT, Math.min(ZOOM_MAX_PERCENT, parseInt(value, 10)));
         currentZoomPercent = zoomValue;
         if (zoomLabel) zoomLabel.textContent = `${zoomValue}%`;
+        beginViewportScaleUpdate();
         applyAllPageScales();
     }
 
@@ -1091,6 +4086,45 @@
         DejaVuSans:    "'DejaVu Sans', Arial, Helvetica, sans-serif",
         DejaVuSerif:   "'DejaVu Serif', 'Times New Roman', serif",
         Courier:       "'Courier New', Courier, monospace",
+        // ── Popular Google Fonts (loaded via the @import in <head>) ────────
+        Roboto:           "'Roboto', Arial, Helvetica, sans-serif",
+        OpenSans:         "'Open Sans', Arial, Helvetica, sans-serif",
+        Lato:             "'Lato', Arial, Helvetica, sans-serif",
+        Montserrat:       "'Montserrat', Arial, Helvetica, sans-serif",
+        Poppins:          "'Poppins', Arial, Helvetica, sans-serif",
+        SourceSansPro:    "'Source Sans 3', 'Source Sans Pro', Arial, Helvetica, sans-serif",
+        Inter:            "'Inter', Arial, Helvetica, sans-serif",
+        Nunito:           "'Nunito', Arial, Helvetica, sans-serif",
+        Raleway:          "'Raleway', Arial, Helvetica, sans-serif",
+        WorkSans:         "'Work Sans', Arial, Helvetica, sans-serif",
+        NotoSans:         "'Noto Sans', Arial, Helvetica, sans-serif",
+        NotoSerif:        "'Noto Serif', Georgia, 'Times New Roman', serif",
+        Merriweather:     "'Merriweather', Georgia, 'Times New Roman', serif",
+        PlayfairDisplay:  "'Playfair Display', Georgia, 'Times New Roman', serif",
+        Oswald:           "'Oswald', Impact, Arial, sans-serif",
+        RobotoSlab:       "'Roboto Slab', Georgia, 'Times New Roman', serif",
+        RobotoMono:       "'Roboto Mono', Consolas, 'Courier New', monospace",
+        RobotoCondensed:  "'Roboto Condensed', Arial, Helvetica, sans-serif",
+        Ubuntu:           "'Ubuntu', Arial, Helvetica, sans-serif",
+        Rubik:            "'Rubik', Arial, Helvetica, sans-serif",
+        DMSans:           "'DM Sans', Arial, Helvetica, sans-serif",
+        Mulish:           "'Mulish', Arial, Helvetica, sans-serif",
+        Quicksand:        "'Quicksand', Arial, Helvetica, sans-serif",
+        Kanit:            "'Kanit', Arial, Helvetica, sans-serif",
+        FiraSans:         "'Fira Sans', Arial, Helvetica, sans-serif",
+        Lora:             "'Lora', Georgia, 'Times New Roman', serif",
+        Cabin:            "'Cabin', Arial, Helvetica, sans-serif",
+        Heebo:            "'Heebo', Arial, Helvetica, sans-serif",
+        Karla:            "'Karla', Arial, Helvetica, sans-serif",
+        Manrope:          "'Manrope', Arial, Helvetica, sans-serif",
+        JosefinSans:      "'Josefin Sans', Arial, Helvetica, sans-serif",
+        Dosis:            "'Dosis', Arial, Helvetica, sans-serif",
+        Barlow:           "'Barlow', Arial, Helvetica, sans-serif",
+        BebasNeue:        "'Bebas Neue', Impact, Arial, sans-serif",
+        PTSans:           "'PT Sans', Arial, Helvetica, sans-serif",
+        CrimsonText:      "'Crimson Text', Georgia, 'Times New Roman', serif",
+        Hind:             "'Hind', Arial, Helvetica, sans-serif",
+        Mukta:            "'Mukta', Arial, Helvetica, sans-serif",
     };
 
     const normalizeFontName = (name) => {
@@ -1568,6 +4602,10 @@
         const px = Number(ann.pdfX), py = Number(ann.pdfY);
         const pw = Number(ann.pdfWidth), ph = Number(ann.pdfHeight);
         if ([px, py, pw, ph].every(Number.isFinite) && pw > 0 && ph > 0) return { x: px, y: py, w: pw, h: ph };
+        return resolveSourceAnnBox(ann);
+    }
+
+    function resolveSourceAnnBox(ann) {
         const sL = Number(ann.sourceBlockLeft), sT = Number(ann.sourceBlockTop);
         const sW = Number(ann.sourceBlockWidth), sH = Number(ann.sourceBlockHeight);
         const pageH = Number(ann.sourcePageHeight);
@@ -1629,6 +4667,48 @@
             && (Math.abs(oldW - b.w) > 0.25 || Math.abs(oldH - b.h) > 0.25)) {
             markUserAuthored(ann);
         }
+    }
+
+    function boxesRoughlyEqual(a, b, epsilon = 0.05) {
+        if (!a || !b) return false;
+        return ['x', 'y', 'w', 'h'].every((key) => Math.abs((Number(a[key]) || 0) - (Number(b[key]) || 0)) <= epsilon);
+    }
+
+    function constrainAnnotationBoxToPage(pi, box) {
+        const data = pageData[pi];
+        const rawX = Number(box?.x);
+        const rawY = Number(box?.y);
+        const rawW = Number(box?.w);
+        const rawH = Number(box?.h);
+        const pageW = Number(data?.wPts);
+        const pageH = Number(data?.hPts);
+        if (![rawX, rawY, rawW, rawH, pageW, pageH].every(Number.isFinite) || pageW <= 0 || pageH <= 0) {
+            return null;
+        }
+
+        const w = Math.max(1, Math.min(pageW, rawW));
+        const h = Math.max(1, Math.min(pageH, rawH));
+        const x = Math.min(Math.max(0, rawX), Math.max(0, pageW - w));
+        const y = Math.min(Math.max(0, rawY), Math.max(0, pageH - h));
+
+        return { x, y, w, h };
+    }
+
+    function setAnnotationBoxWithinPage(ann, pi, box) {
+        const constrained = constrainAnnotationBoxToPage(pi, box);
+        if (!constrained) return false;
+
+        const wasConstrained = Boolean(ann._pageBoundsConstrained);
+        ann._pageBoundsConstrained = !boxesRoughlyEqual(constrained, box);
+        const constraintChanged = wasConstrained !== ann._pageBoundsConstrained;
+
+        const current = resolveAnnBox(ann);
+        if (current && boxesRoughlyEqual(current, constrained)) {
+            return constraintChanged;
+        }
+
+        setAnnotationBox(ann, constrained);
+        return true;
     }
 
     // ── User-authored annotation flag ──────────────────────────────────────────
@@ -1733,11 +4813,61 @@
     function annotationUsesStoredBoxForDisplay(ann) {
         const currentText = editedTexts[ann?._uid];
         const editedInSession = currentText !== undefined && currentText !== String(ann?.text ?? '');
-        return editedInSession || annTextIsEdited(ann) || annotationDimensionsChanged(ann);
+        const annBgColor = resolveDisplayBgColor(ann);
+        const annOpacity = Math.min(1, Math.max(0, parseFloat(ann?.opacity ?? 1)));
+        const styleChanged = Boolean(
+            (annBgColor && annBgColor !== '#ffffff' && annBgColor !== 'transparent')
+            || annOpacity < 0.999
+            || ann?.underline
+            || (String(ann?.verticalAlign || 'top').toLowerCase() !== 'top')
+            || (String(ann?.textAlign || 'left').toLowerCase() !== 'left')
+        );
+        // Keep the DOM/editor geometry aligned with the export/canvas paths.
+        // Once a promoted annotation becomes user-authored (style change, text
+        // edit, resize, rich formatting), it must render from its stored box
+        // instead of the original source block geometry.
+        return editedInSession
+            || annTextIsEdited(ann)
+            || annotationDimensionsChanged(ann)
+            || styleChanged
+            || isUserAuthoredAnnotation(ann)
+            || Boolean(ann?._richHtml);
     }
 
     // Convert PDF-space box to canvas-pixel rect { left, top, width, height }
-    function annRectPx(ann, scale, canvasHeight) {
+    function lineSelectionRectPx(ann, scale, canvasHeight, extraPaddingPx = 14) {
+        if (!isShapeAnnotation(ann) || !isLineShape(ann)) return null;
+        const box = resolveAnnBox(ann);
+        if (!box) return null;
+        const left = box.x * scale;
+        const top = canvasHeight - (box.y + box.h) * scale;
+        const width = Math.max(1, box.w * scale);
+        const height = Math.max(1, box.h * scale);
+        const lineGeometry = {
+            lineStartX: clamp01(ann.lineStartX, 0),
+            lineStartY: clamp01(ann.lineStartY, 0),
+            lineEndX: clamp01(ann.lineEndX, 1),
+            lineEndY: clamp01(ann.lineEndY, 1),
+        };
+        const x1 = left + (width * lineGeometry.lineStartX);
+        const y1 = top + (height * lineGeometry.lineStartY);
+        const x2 = left + (width * lineGeometry.lineEndX);
+        const y2 = top + (height * lineGeometry.lineEndY);
+        const strokePx = Math.max(0, (Number(ann.strokeWidth) || 0) * scale);
+        const clearance = (strokePx / 2) + Math.max(0, Number(extraPaddingPx) || 0);
+        return {
+            left: Math.min(x1, x2) - clearance,
+            top: Math.min(y1, y2) - clearance,
+            width: Math.abs(x2 - x1) + (clearance * 2),
+            height: Math.abs(y2 - y1) + (clearance * 2),
+        };
+    }
+
+    function annRectPx(ann, scale, canvasHeight, opts = {}) {
+        if (opts.expandLine !== false) {
+            const lineRect = lineSelectionRectPx(ann, scale, canvasHeight);
+            if (lineRect) return lineRect;
+        }
         if (!annotationUsesStoredBoxForDisplay(ann)) {
             const sourceRect = sourceVisualRectPx(ann, scale);
             if (sourceRect) return sourceRect;
@@ -1750,6 +4880,350 @@
             width:  box.w * scale,
             height: box.h * scale,
         };
+    }
+
+    function drawShapePath(ctx, shapeType, rect, lineGeometry = null) {
+        const left = Number(rect?.left) || 0;
+        const top = Number(rect?.top) || 0;
+        const width = Math.max(1, Number(rect?.width) || 1);
+        const height = Math.max(1, Number(rect?.height) || 1);
+        const right = left + width;
+        const bottom = top + height;
+        const centerX = left + (width / 2);
+        const centerY = top + (height / 2);
+        const type = normalizeShapeType(shapeType);
+
+        ctx.beginPath();
+
+        if (type === 'circle') {
+            ctx.ellipse(centerX, centerY, width / 2, height / 2, 0, 0, Math.PI * 2);
+            return;
+        }
+
+        if (type === 'triangle') {
+            ctx.moveTo(centerX, top);
+            ctx.lineTo(right, bottom);
+            ctx.lineTo(left, bottom);
+            ctx.closePath();
+            return;
+        }
+
+        if (type === 'star') {
+            const outerRadius = Math.min(width, height) / 2;
+            const innerRadius = outerRadius * 0.45;
+            for (let i = 0; i < 10; i += 1) {
+                const radius = i % 2 === 0 ? outerRadius : innerRadius;
+                const angle = (-Math.PI / 2) + (i * Math.PI / 5);
+                const x = centerX + (Math.cos(angle) * radius);
+                const y = centerY + (Math.sin(angle) * radius);
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.closePath();
+            return;
+        }
+
+        if (type === 'polygon') {
+            const points = normalizePolygonPointList(lineGeometry?.polygonPoints, defaultPolygonUnitPoints());
+            points.forEach((point, index) => {
+                const x = left + (point.x * width);
+                const y = top + (point.y * height);
+                if (index === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            });
+            ctx.closePath();
+            return;
+        }
+
+        if (type === 'line') {
+            const geometry = lineGeometry || {
+                lineStartX: 0,
+                lineStartY: 0,
+                lineEndX: 1,
+                lineEndY: 1,
+            };
+            ctx.moveTo(left + (geometry.lineStartX * width), top + (geometry.lineStartY * height));
+            ctx.lineTo(left + (geometry.lineEndX * width), top + (geometry.lineEndY * height));
+            return;
+        }
+
+        ctx.rect(left, top, width, height);
+    }
+
+    function drawShapeAnnotation(ann, ctx, scale, canvasHeight) {
+        const box = resolveAnnBox(ann);
+        if (!box) return;
+
+        const rect = {
+            left: box.x * scale,
+            top: canvasHeight - (box.y + box.h) * scale,
+            width: Math.max(1, box.w * scale),
+            height: Math.max(1, box.h * scale),
+        };
+        const strokeWidth = Math.max(1, Number(ann.strokeWidth) || 3);
+        const hasStroke = !ann.strokeTransparent && clamp01(ann.strokeOpacity ?? 1, 1) > 0;
+        const hasFill = !ann.fillTransparent && !isLineShape(ann) && clamp01(ann.fillOpacity ?? 0.22, 0.22) > 0;
+        const lineGeometry = isLineShape(ann)
+            ? {
+                lineStartX: clamp01(ann.lineStartX, 0),
+                lineStartY: clamp01(ann.lineStartY, 0),
+                lineEndX: clamp01(ann.lineEndX, 1),
+                lineEndY: clamp01(ann.lineEndY, 1),
+            }
+            : (normalizeShapeType(ann.shapeType) === 'polygon'
+                ? { polygonPoints: normalizePolygonPointList(ann.polygonPoints, defaultPolygonUnitPoints()) }
+                : null);
+
+        ctx.save();
+        // strokeWidth is stored in PDF points (the export pipeline writes it as
+        // PyMuPDF `width=...`, which is in points). The canvas is sized at
+        // `wPts * scale` pixels, so 1 PDF point == `scale` canvas pixels.
+        // Multiply here so the editor preview matches the downloaded PDF.
+        ctx.lineWidth = Math.max(1, strokeWidth * scale);
+        const annLineCap = (ann.lineCap === 'butt' || ann.lineCap === 'square') ? ann.lineCap : 'round';
+        ctx.lineCap = annLineCap;
+        ctx.lineJoin = 'round';
+        const userRot = Number(ann.rotation) || 0;
+        if (userRot && !isLineShape(ann)) {
+            const rcx = rect.left + rect.width / 2;
+            const rcy = rect.top + rect.height / 2;
+            ctx.translate(rcx, rcy);
+            ctx.rotate(userRot * Math.PI / 180);
+            ctx.translate(-rcx, -rcy);
+        }
+        if (hasFill) {
+            drawShapePath(ctx, ann.shapeType, rect, lineGeometry);
+            ctx.fillStyle = hexToRgbaString(ann.fillColor, ann.fillOpacity);
+            ctx.fill();
+        }
+        if (hasStroke) {
+            // Clear the fill band underneath where the stroke will be painted so the
+            // stroke's inner-edge anti-aliasing doesn't blend into the partially
+            // transparent fill (which produces a visible "lighter ring" between the
+            // fill and the solid stroke).
+            if (hasFill) {
+                ctx.save();
+                ctx.globalCompositeOperation = 'destination-out';
+                drawShapePath(ctx, ann.shapeType, rect, lineGeometry);
+                ctx.strokeStyle = '#000';
+                ctx.stroke();
+                ctx.restore();
+            }
+            drawShapePath(ctx, ann.shapeType, rect, lineGeometry);
+            ctx.strokeStyle = hexToRgbaString(ann.strokeColor, ann.strokeOpacity);
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
+
+    function getShapeUnitVertices(ann) {
+        const type = normalizeShapeType(ann?.shapeType);
+        if (type === 'circle') {
+            // High step count so that derived polygons (e.g. after a cut) still
+            // look smooth — a polygon-shape draws as straight ctx.lineTo segments
+            // between vertices, so visible faceting depends on this density.
+            const steps = 192;
+            const points = [];
+            for (let index = 0; index < steps; index += 1) {
+                const angle = (Math.PI * 2 * index) / steps;
+                points.push({
+                    x: 0.5 + (Math.cos(angle) * 0.5),
+                    y: 0.5 + (Math.sin(angle) * 0.5),
+                });
+            }
+            return points;
+        }
+        if (type === 'triangle') {
+            return [
+                { x: 0.5, y: 0.0 },
+                { x: 1.0, y: 1.0 },
+                { x: 0.0, y: 1.0 },
+            ];
+        }
+        if (type === 'star') {
+            const outerRadius = 0.5;
+            const innerRadius = outerRadius * 0.45;
+            const points = [];
+            for (let index = 0; index < 10; index += 1) {
+                const radius = index % 2 === 0 ? outerRadius : innerRadius;
+                const angle = (-Math.PI / 2) + (index * Math.PI / 5);
+                points.push({
+                    x: 0.5 + (Math.cos(angle) * radius),
+                    y: 0.5 + (Math.sin(angle) * radius),
+                });
+            }
+            return points;
+        }
+        if (type === 'polygon') {
+            return normalizePolygonPointList(ann?.polygonPoints, defaultPolygonUnitPoints());
+        }
+        if (type === 'line') return [];
+        return [
+            { x: 0.0, y: 0.0 },
+            { x: 1.0, y: 0.0 },
+            { x: 1.0, y: 1.0 },
+            { x: 0.0, y: 1.0 },
+        ];
+    }
+
+    function getShapePolygonPointsPdf(ann) {
+        if (!isShapeAnnotation(ann) || isLineShape(ann)) return [];
+        const box = resolveAnnBox(ann);
+        if (!box) return [];
+        const vertices = getShapeUnitVertices(ann);
+        if (!vertices.length) return [];
+        const width = Math.max(1, Number(box.w) || 1);
+        const height = Math.max(1, Number(box.h) || 1);
+        const cx = box.x + (width / 2);
+        const cy = box.y + (height / 2);
+        const rotation = (Number(ann.rotation) || 0) * (Math.PI / 180);
+        const cosRotation = Math.cos(rotation);
+        const sinRotation = Math.sin(rotation);
+        return vertices.map((point) => {
+            const dx = (point.x - 0.5) * width;
+            const dyDown = (point.y - 0.5) * height;
+            const rotatedX = (dx * cosRotation) - (dyDown * sinRotation);
+            const rotatedYDown = (dx * sinRotation) + (dyDown * cosRotation);
+            return {
+                x: cx + rotatedX,
+                y: cy - rotatedYDown,
+            };
+        });
+    }
+
+    function getShapePolygonPointsCanvas(ann, scale, canvasHeight) {
+        return getShapePolygonPointsPdf(ann).map((point) => ({
+            x: point.x * scale,
+            y: canvasHeight - (point.y * scale),
+        }));
+    }
+
+    function pointInPolygon(point, polygon) {
+        if (!point || !Array.isArray(polygon) || polygon.length < 3) return false;
+        let inside = false;
+        for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+            const xi = Number(polygon[i]?.x) || 0;
+            const yi = Number(polygon[i]?.y) || 0;
+            const xj = Number(polygon[j]?.x) || 0;
+            const yj = Number(polygon[j]?.y) || 0;
+            const intersects = ((yi > point.y) !== (yj > point.y))
+                && (point.x < (((xj - xi) * (point.y - yi)) / Math.max(1e-9, (yj - yi))) + xi);
+            if (intersects) inside = !inside;
+        }
+        return inside;
+    }
+
+    function distanceToSegment(point, start, end) {
+        const dx = (Number(end?.x) || 0) - (Number(start?.x) || 0);
+        const dy = (Number(end?.y) || 0) - (Number(start?.y) || 0);
+        if (Math.abs(dx) < 1e-6 && Math.abs(dy) < 1e-6) {
+            return Math.hypot((Number(point?.x) || 0) - (Number(start?.x) || 0), (Number(point?.y) || 0) - (Number(start?.y) || 0));
+        }
+        const t = Math.max(0, Math.min(1, (
+            (((Number(point?.x) || 0) - (Number(start?.x) || 0)) * dx)
+            + (((Number(point?.y) || 0) - (Number(start?.y) || 0)) * dy)
+        ) / ((dx * dx) + (dy * dy))));
+        const projX = (Number(start?.x) || 0) + (t * dx);
+        const projY = (Number(start?.y) || 0) + (t * dy);
+        return Math.hypot((Number(point?.x) || 0) - projX, (Number(point?.y) || 0) - projY);
+    }
+
+    function shapeContainsCanvasPoint(ann, x, y, scale, canvasHeight) {
+        if (!isShapeAnnotation(ann)) return false;
+        if (isLineShape(ann)) {
+            const box = resolveAnnBox(ann);
+            if (!box) return false;
+            const width = Math.max(1, box.w * scale);
+            const height = Math.max(1, box.h * scale);
+            const left = box.x * scale;
+            const top = canvasHeight - (box.y + box.h) * scale;
+            const start = {
+                x: left + (width * clamp01(ann.lineStartX, 0)),
+                y: top + (height * clamp01(ann.lineStartY, 0)),
+            };
+            const end = {
+                x: left + (width * clamp01(ann.lineEndX, 1)),
+                y: top + (height * clamp01(ann.lineEndY, 1)),
+            };
+            const strokeAllowance = Math.max(6, ((Number(ann.strokeWidth) || 3) * scale / 2) + 4);
+            return distanceToSegment({ x, y }, start, end) <= strokeAllowance;
+        }
+        const box = resolveAnnBox(ann);
+        if (!box) return false;
+        const rect = {
+            left: box.x * scale,
+            top: canvasHeight - (box.y + box.h) * scale,
+            width: Math.max(1, box.w * scale),
+            height: Math.max(1, box.h * scale),
+        };
+        // Allow selecting the shape by clicking anywhere inside its bounding box,
+        // not just on the stroke outline. Account for user rotation by transforming
+        // the click point into the shape's local (unrotated) space.
+        const userRot = Number(ann.rotation) || 0;
+        const rcx = rect.left + rect.width / 2;
+        const rcy = rect.top + rect.height / 2;
+        let lx = x;
+        let ly = y;
+        if (userRot) {
+            const a = -userRot * Math.PI / 180;
+            const cos = Math.cos(a);
+            const sin = Math.sin(a);
+            const dx = x - rcx;
+            const dy = y - rcy;
+            lx = rcx + dx * cos - dy * sin;
+            ly = rcy + dx * sin + dy * cos;
+        }
+        const bboxSlop = 2;
+        if (
+            lx >= rect.left - bboxSlop &&
+            lx <= rect.left + rect.width + bboxSlop &&
+            ly >= rect.top - bboxSlop &&
+            ly <= rect.top + rect.height + bboxSlop
+        ) {
+            return true;
+        }
+        const hitCtx = shapeHitTestCtx;
+        if (!hitCtx) return false;
+        const hitPadding = Math.max(rect.width, rect.height) + 8;
+        shapeHitTestCanvas.width = Math.max(1, Math.ceil(rect.left + rect.width + hitPadding));
+        shapeHitTestCanvas.height = Math.max(1, Math.ceil(rect.top + rect.height + hitPadding));
+        hitCtx.lineWidth = Math.max(1, (Number(ann.strokeWidth) || 3) * scale);
+        hitCtx.lineJoin = 'round';
+        hitCtx.lineCap = (ann.lineCap === 'butt' || ann.lineCap === 'square') ? ann.lineCap : 'round';
+        if (userRot) {
+            hitCtx.translate(rcx, rcy);
+            hitCtx.rotate(userRot * Math.PI / 180);
+            hitCtx.translate(-rcx, -rcy);
+        }
+        drawShapePath(hitCtx, ann.shapeType, rect, normalizeShapeType(ann.shapeType) === 'polygon'
+            ? { polygonPoints: normalizePolygonPointList(ann.polygonPoints, defaultPolygonUnitPoints()) }
+            : null);
+        const fillHit = !ann.fillTransparent && clamp01(ann.fillOpacity ?? 0.22, 0.22) > 0 && hitCtx.isPointInPath(x, y);
+        const strokeHit = !ann.strokeTransparent && clamp01(ann.strokeOpacity ?? 1, 1) > 0 && hitCtx.isPointInStroke(x, y);
+        return fillHit || strokeHit;
+    }
+
+    function drawImageBackedAnnotation(ann, ctx, scale, canvasHeight) {
+        const box = resolveAnnBox(ann);
+        if (!box) return;
+        const img = getCachedAnnotationImage(ann);
+        if (!img) return;
+        const left = box.x * scale;
+        const top = canvasHeight - (box.y + box.h) * scale;
+        const width = Math.max(1, box.w * scale);
+        const height = Math.max(1, box.h * scale);
+        ctx.save();
+        ctx.globalAlpha = clamp01(ann.opacity ?? 1, 1);
+        const userRot = Number(ann.rotation) || 0;
+        if (userRot) {
+            const cx = left + width / 2;
+            const cy = top + height / 2;
+            ctx.translate(cx, cy);
+            ctx.rotate(userRot * Math.PI / 180);
+            ctx.translate(-cx, -cy);
+        }
+        ctx.drawImage(img, left, top, width, height);
+        ctx.restore();
     }
 
     // ── Style helpers (ported from pdfRecon2) ─────────────────────────────────
@@ -1788,6 +5262,102 @@
         return overlapRatio >= 0.5;
     }
 
+    function buildRenderableLinesFromSpans(spans) {
+        const normalizedSpans = Array.isArray(spans)
+            ? spans.map((span, index) => {
+                const bbox = Array.isArray(span?.bbox) ? span.bbox : null;
+                const origin = Array.isArray(span?.origin) ? span.origin : null;
+                const left = bbox ? Number(bbox[0]) : Number(origin?.[0]);
+                const top = bbox ? Number(bbox[1]) : Number(origin?.[1]);
+                const right = bbox ? Number(bbox[2]) : left;
+                const bottom = bbox ? Number(bbox[3]) : top;
+                const height = Number.isFinite(bottom) && Number.isFinite(top)
+                    ? Math.max(0.001, Math.abs(bottom - top))
+                    : 0.001;
+                const centerY = Number.isFinite(top) && Number.isFinite(bottom)
+                    ? ((top + bottom) / 2)
+                    : Number(origin?.[1]);
+                const startX = Number.isFinite(left)
+                    ? left
+                    : Number(origin?.[0]);
+                return {
+                    span,
+                    index,
+                    bbox,
+                    origin,
+                    left,
+                    top,
+                    right,
+                    bottom,
+                    height,
+                    centerY,
+                    startX,
+                };
+            }).filter((entry) => Number.isFinite(entry.centerY) && Number.isFinite(entry.startX))
+            : [];
+
+        if (!normalizedSpans.length) return [];
+
+        normalizedSpans.sort((a, b) => {
+            if (Math.abs(a.centerY - b.centerY) > 0.25) return a.centerY - b.centerY;
+            if (Math.abs(a.startX - b.startX) > 0.25) return a.startX - b.startX;
+            return a.index - b.index;
+        });
+
+        const groups = [];
+        normalizedSpans.forEach((entry) => {
+            const lastGroup = groups[groups.length - 1] || null;
+            const tolerance = Math.max(
+                1.5,
+                Math.min(
+                    (lastGroup?.avgHeight || entry.height),
+                    entry.height
+                ) * 0.65
+            );
+
+            if (!lastGroup || Math.abs(entry.centerY - lastGroup.centerY) > tolerance) {
+                groups.push({
+                    centerY: entry.centerY,
+                    avgHeight: entry.height,
+                    entries: [entry],
+                });
+                return;
+            }
+
+            lastGroup.entries.push(entry);
+            lastGroup.centerY = (
+                (lastGroup.centerY * (lastGroup.entries.length - 1))
+                + entry.centerY
+            ) / lastGroup.entries.length;
+            lastGroup.avgHeight = (
+                (lastGroup.avgHeight * (lastGroup.entries.length - 1))
+                + entry.height
+            ) / lastGroup.entries.length;
+        });
+
+        return groups.map((group, rawIndex) => {
+            const entries = group.entries.slice().sort((a, b) => {
+                if (Math.abs(a.startX - b.startX) > 0.25) return a.startX - b.startX;
+                return a.index - b.index;
+            });
+            const lefts = entries.map((entry) => entry.left).filter(Number.isFinite);
+            const tops = entries.map((entry) => entry.top).filter(Number.isFinite);
+            const rights = entries.map((entry) => entry.right).filter(Number.isFinite);
+            const bottoms = entries.map((entry) => entry.bottom).filter(Number.isFinite);
+            const bbox = (lefts.length && tops.length && rights.length && bottoms.length)
+                ? [Math.min(...lefts), Math.min(...tops), Math.max(...rights), Math.max(...bottoms)]
+                : null;
+            return {
+                rawIndex,
+                bbox,
+                spans: entries.map((entry) => entry.span),
+                width: bbox ? Math.max(0, Number(bbox[2]) - Number(bbox[0])) : 0,
+                height: bbox ? Math.max(0, Number(bbox[3]) - Number(bbox[1])) : 0,
+                text: entries.map((entry) => String(entry.span?.render_text ?? entry.span?.text ?? '')).join(''),
+            };
+        }).filter((line) => Array.isArray(line.bbox) && line.width > 0 && line.height > 0);
+    }
+
     function renderableSourceLines(ann) {
         if (Array.isArray(ann?._renderableSourceLines)) return ann._renderableSourceLines;
 
@@ -1809,15 +5379,13 @@
             };
         });
 
-        if (!lines.length && spans.length) {
-            lines = spans.map((span, rawIndex) => ({
-                rawIndex,
-                bbox: Array.isArray(span?.bbox) ? span.bbox : null,
-                spans: [span],
-                width: Math.max(0, Number(span?.bbox?.[2]) - Number(span?.bbox?.[0])),
-                height: Math.max(0, Number(span?.bbox?.[3]) - Number(span?.bbox?.[1])),
-                text: String(span?.render_text ?? span?.text ?? ''),
-            })).filter((line) => Array.isArray(line.bbox));
+        const matchedSpanCount = lines.reduce((count, line) => count + (Array.isArray(line.spans) ? line.spans.length : 0), 0);
+
+        if (spans.length && (!lines.length || matchedSpanCount < spans.length)) {
+            const spanDerivedLines = buildRenderableLinesFromSpans(spans);
+            if (spanDerivedLines.length) {
+                lines = spanDerivedLines;
+            }
         }
 
         lines = lines.filter((line) => {
@@ -1842,6 +5410,68 @@
 
         ann._renderableSourceLines = lines;
         return lines;
+    }
+
+    function sourceTextFallbackFromAnnotation(ann) {
+        const lines = renderableSourceLines(ann);
+        if (lines.length) {
+            const text = lines
+                .map((line) => String(line?.text ?? '').replace(/\s+$/g, ''))
+                .filter((lineText) => lineText.length > 0)
+                .join('\n')
+                .replace(/[ \t]{2,}/g, ' ')
+                .replace(/\s+([,.;!?])/g, '$1')
+                .trim();
+            if (text) return text;
+        }
+
+        const spans = Array.isArray(ann?.sourceSpans) ? ann.sourceSpans : [];
+        if (!spans.length) return '';
+        return spans
+            .slice()
+            .sort((a, b) => {
+                const ay = Number(Array.isArray(a?.bbox) ? a.bbox[1] : 0);
+                const by = Number(Array.isArray(b?.bbox) ? b.bbox[1] : 0);
+                if (Math.abs(ay - by) > 1.5) return ay - by;
+                return Number(Array.isArray(a?.bbox) ? a.bbox[0] : 0)
+                    - Number(Array.isArray(b?.bbox) ? b.bbox[0] : 0);
+            })
+            .map((span) => String(span?.render_text ?? span?.text ?? ''))
+            .join('')
+            .replace(/[ \t]{2,}/g, ' ')
+            .replace(/\s+([,.;!?])/g, '$1')
+            .trim();
+    }
+
+    function normalizeTextForSourceComparison(value) {
+        return String(value ?? '')
+            .replace(/\r\n?/g, '\n')
+            .replace(/\u00a0/g, ' ')
+            .replace(/\s+/g, ' ')
+            // Mirror sourceTextFallbackFromAnnotation, which strips whitespace
+            // before punctuation. Without this, leader-dot rows (". . . . . .")
+            // normalize differently on the two sides of the comparison —
+            // editedText keeps the spaces, source text collapses them — and
+            // pristine extracted multi-line annotations are misclassified as
+            // "edited", forcing the active editor onto the renderPlainEditorHTML
+            // reflow path that visibly collapses leader-dot spacing.
+            .replace(/\s+([,.;!?])/g, '$1')
+            .trim();
+    }
+
+    function annotationTextMatchesSource(ann, text = null) {
+        const hasSourceContent = (Array.isArray(ann?.sourceSpans) && ann.sourceSpans.length > 0)
+            || (Array.isArray(ann?.sourceLineBBoxes) && ann.sourceLineBBoxes.length > 0)
+            || (Array.isArray(ann?.sourceTextLines) && ann.sourceTextLines.length > 0);
+        if (!hasSourceContent) return true;
+
+        const sourceText = sourceTextFallbackFromAnnotation(ann);
+        if (!sourceText) return true;
+
+        const currentText = text === null || text === undefined
+            ? String(ann?.text ?? '')
+            : String(text);
+        return normalizeTextForSourceComparison(currentText) === normalizeTextForSourceComparison(sourceText);
     }
 
     function normalizeQuarterTurnDegrees(value) {
@@ -1913,6 +5543,29 @@
             : [];
     }
 
+    // Resolve the fill colour to use when painting one extracted span.
+    //
+    // Per-span `hex_color` from the extractor is authoritative for an
+    // unmodified promoted annotation: the block-level dominant colour
+    // (persisted into ann.textColor at materialisation) reflects the
+    // *majority* span colour, so using it for every span overpaints
+    // minority-colour glyphs (e.g. the white "Part I" badge on the dark
+    // Schedule 3 header band — block dominant is black, so the span gets
+    // hidden behind the dark raster background).
+    //
+    // ann.textColor only wins once the user has explicitly recoloured the
+    // annotation via the format bar (_styleDirty), mirroring the same gate
+    // we apply to font family / weight / style overrides.
+    function resolveSpanFillStyle(ann, span) {
+        const styleOverride = Boolean(ann?._styleDirty);
+        const annTextColor = String(ann?.textColor || '').trim();
+        const spanHex = String(span?.hex_color || '').trim();
+        if (styleOverride && annTextColor) return annTextColor;
+        if (spanHex) return spanHex;
+        if (annTextColor) return annTextColor;
+        return '#000000';
+    }
+
     function sourceStyle(ann, lineIndex = 0) {
         const spans = lineSpans(ann, lineIndex);
         const span = spans[0] || (Array.isArray(ann?.sourceSpans) ? ann.sourceSpans[0] : null) || null;
@@ -1923,7 +5576,7 @@
             fontSizePt,
             fontWeight: String(span?.font_weight || span?.fontWeight || ann?.fontWeight || (span?.bold ? '700' : '400') || '400'),
             fontStyle:  span?.fontStyle || (span?.italic ? 'italic' : 'normal') || ann?.fontStyle || 'normal',
-            fillStyle:  String(ann?.textColor || span?.hex_color || '#000000'),
+            fillStyle:  resolveSpanFillStyle(ann, span),
         };
     }
 
@@ -1939,7 +5592,7 @@
                 fontSizePt: Number(span?.font_size ?? span?.fontSize ?? ann?.fontSize) || 12,
                 fontWeight: String(span?.font_weight || span?.fontWeight || ann?.fontWeight || (span?.bold ? '700' : '400') || '400'),
                 fontStyle: span?.fontStyle || (span?.italic ? 'italic' : 'normal') || ann?.fontStyle || 'normal',
-                fillStyle: String(ann?.textColor || span?.hex_color || '#000000'),
+                fillStyle: resolveSpanFillStyle(ann, span),
             };
             const key = JSON.stringify(style);
             const spanText = String(span?.render_text ?? span?.text ?? '');
@@ -1955,10 +5608,22 @@
 
     function editableLineStyle(ann, lineIndex = 0) {
         const baseStyle = compositeLineStyle(ann, lineIndex);
-        const annFontFamily = String(ann?.fontFamily || '').trim();
-        const annFontSize = Number(ann?.fontSize);
-        const annFontWeight = String(ann?.fontWeight || '').trim();
-        const annFontStyle = String(ann?.fontStyle || '').trim();
+        // Only honor ann-level font overrides (family/weight/style) when the user
+        // explicitly changed them via the format bar (_styleDirty). Otherwise the
+        // dominant-block-style values persisted at extraction time would override
+        // the per-span truth (e.g. force bold-italic sans on a block whose
+        // spans are regular-italic Times), diverging editor and exported PDF.
+        const styleOverride = Boolean(ann?._styleDirty);
+        const annFontFamily = styleOverride ? String(ann?.fontFamily || '').trim() : '';
+        // fontSize must gate on _styleDirty too: extraction can persist an ann.fontSize
+        // (e.g. 17.94pt) that doesn't match the per-span/composite size (e.g. 21.53pt),
+        // which would make the active-editor outer container's font-size & line-height
+        // disagree with the inner per-line wrappers + spans (which use composite/span
+        // sizes), producing a visibly mis-sized "selected" render vs. the loaded canvas.
+        const annFontSizeRaw = Number(ann?.fontSize);
+        const annFontSize = (styleOverride && annFontSizeRaw > 0) ? annFontSizeRaw : 0;
+        const annFontWeight = styleOverride ? String(ann?.fontWeight || '').trim() : '';
+        const annFontStyle = styleOverride ? String(ann?.fontStyle || '').trim() : '';
         const annTextColor = String(ann?.textColor || '').trim();
 
         return {
@@ -1973,7 +5638,7 @@
     function blockLineHeightPx(ann, lineIndex = 0, scale, styleOverride = null) {
         const lineBBox = Array.isArray(renderableSourceLines(ann)[lineIndex]?.bbox) ? renderableSourceLines(ann)[lineIndex].bbox : null;
         const rotation = sourceLineRotationDegrees(ann, lineIndex);
-        const sourceH = lineBBox
+        const sourceH = (!isUserAuthoredAnnotation(ann) && lineBBox)
             ? Math.max(
                 0,
                 Math.abs(rotation) === 90
@@ -1982,15 +5647,19 @@
             ) * scale
             : 0;
         const resolvedStyle = styleOverride || sourceStyle(ann, lineIndex);
-        const fontH = resolvedStyle.fontSizePt * scale * 1.18;
+        // Font glyphs are drawn at fit-scale (zoom-invariant) so the line
+        // height computed from the font also stays at fit-scale. Otherwise
+        // line spacing would grow with user zoom while the actual text didn't.
+        const fontH = resolvedStyle.fontSizePt * fontDisplayScale(scale) * 1.18;
         const minHeightPx = lineBBox ? 0 : 12;
         return Math.max(minHeightPx, sourceH || 0, fontH);
     }
 
     function editorLineTopShiftPx(ann, lineIndex = 0, scale, styleOverride = null) {
+        if (isUserAuthoredAnnotation(ann)) return 0;
         const style = styleOverride || compositeLineStyle(ann, lineIndex);
         const lineHeightPx = blockLineHeightPx(ann, lineIndex, scale, style);
-        const fontSizePx = style.fontSizePt * scale;
+        const fontSizePx = style.fontSizePt * fontDisplayScale(scale);
         return Math.max(0, (lineHeightPx - fontSizePx) / 2);
     }
 
@@ -2055,7 +5724,7 @@
         const style = compositeLineStyle(ann, lineIndex);
         return measureTextWidth(text, {
             fontFamily: style.fontFamily,
-            fontSizePx: style.fontSizePt * scale,
+            fontSizePx: style.fontSizePt * fontDisplayScale(scale),
             fontWeight: style.fontWeight,
             fontStyle: style.fontStyle,
         });
@@ -2110,19 +5779,25 @@
             if (!origin || origin.length < 2) return;
             const drawText = String(span?.render_text ?? span?.text ?? '');
             if (!drawText) return;
-            const annFontFamilyOverride = String(ann?.fontFamily || '').trim();
+            // Only honor ann-level font overrides (fontFamily/Weight/Style) when the
+            // user explicitly changed them via the format bar (_styleDirty). Otherwise
+            // the per-span extraction data is authoritative — this is the same data
+            // the PDF exporter uses, so editor and downloaded PDF stay in lockstep.
+            // Blocks whose dominant font was bold/italic would otherwise force every
+            // span to that style even when individual spans are regular-italic Times,
+            // producing a bold-italic sans-serif editor preview for a serif italic PDF.
+            const styleOverride = Boolean(ann?._styleDirty);
+            const annFontFamilyOverride = styleOverride ? String(ann?.fontFamily || '').trim() : '';
             const fontFamily = annFontFamilyOverride
                 ? fallbackFontFamily(annFontFamilyOverride, annFontFamilyOverride)
                 : fallbackFontFamily(span?.embedded_font_name || span?.font, span?.embedded_font_family || span?.fontFamily || '');
-            const fontSizePx = (Number(span?.font_size ?? span?.fontSize) || Number(ann?.fontSize) || 12) * scale;
-            // Apply ann-level font overrides (from format bar) at render time;
-            // span-derived values are used for measurement/layout via compositeLineStyle.
+            const fontSizePx = (Number(span?.font_size ?? span?.fontSize) || Number(ann?.fontSize) || 12) * fontDisplayScale(scale);
             const spanFontStyle  = span?.fontStyle || (span?.italic ? 'italic' : 'normal');
             const spanFontWeight = String(span?.font_weight || span?.fontWeight || (span?.bold ? '700' : '400') || '400');
-            const fontStyle  = ann?.fontStyle  || spanFontStyle;
-            const fontWeight = ann?.fontWeight || spanFontWeight;
+            const fontStyle  = styleOverride ? (ann?.fontStyle  || spanFontStyle)  : spanFontStyle;
+            const fontWeight = styleOverride ? (ann?.fontWeight || spanFontWeight) : spanFontWeight;
             ctx.font         = ctxFont({ fontFamily, fontSizePx, fontWeight, fontStyle });
-            ctx.fillStyle    = String(ann?.textColor || span?.hex_color || '#000000');
+            ctx.fillStyle    = resolveSpanFillStyle(ann, span);
             ctx.textBaseline = 'alphabetic';
             const drawX = (Number(origin[0]) + offset.dx) * scale;
             const drawY = (Number(origin[1]) + offset.dy) * scale;
@@ -2190,12 +5865,11 @@
         const box = resolveAnnBox(ann);
         if (!box) return [];
         const offset = annotationSourceOffset(ann);
-        // Mirror renderPlainEditorHTML: single \n are soft breaks (reflow), \n\n+ are hard.
+        // Mirror renderPlainEditorHTML: preserve explicit blank lines created by
+        // Enter at an existing line boundary. Collapsing \n\n back to \n makes
+        // Enter appear to do nothing in paragraph edit mode.
         const normalized = String(text ?? '')
-            .replace(/\r\n?/g, '\n')
-            .replace(/\n{2,}/g, '\x00')
-            .replace(/\n/g, ' ')
-            .replace(/\x00/g, '\n');
+            .replace(/\r\n?/g, '\n');
         const paragraphs = normalized.split('\n');
         // For user-authored (edited/resized) annotations, ignore the original per-line
         // source bboxes: they were captured from the *wide* pre-resize layout with tight
@@ -2214,13 +5888,13 @@
 
         paragraphs.forEach((para, pi) => {
             const style = editableLineStyle(ann, Math.min(pi, Math.max(0, lineBBoxes.length - 1)));
-            const stylePx = { ...style, fontSizePx: style.fontSizePt * scale };
+            const stylePx = { ...style, fontSizePx: style.fontSizePt * fontDisplayScale(scale) };
             const wrapped = wrapParagraph(para, maxWidthPx, stylePx);
             wrapped.forEach((lineText, wi) => {
                 const si = lines.length;
                 const sourceBBox = Array.isArray(lineBBoxes[si]) ? lineBBoxes[si] : null;
                 const lineStyle = editableLineStyle(ann, Math.min(si, Math.max(0, lineBBoxes.length - 1)));
-                const lineStylePx = { ...lineStyle, fontSizePx: lineStyle.fontSizePt * scale };
+                const lineStylePx = { ...lineStyle, fontSizePx: lineStyle.fontSizePt * fontDisplayScale(scale) };
                 const lineHeightPx = blockLineHeightPx(ann, Math.min(si, Math.max(0, lineBBoxes.length - 1)), scale, lineStyle);
                 const topPts = sourceBBox
                     ? Number(sourceBBox[1]) + offset.dy
@@ -2249,6 +5923,14 @@
 
     function drawEditedAnnotation(ann, ctx, scale, pageWidthPts, pageHeightPts) {
         if (!resolveAnnBox(ann)) return;
+        if (isShapeAnnotation(ann)) {
+            drawShapeAnnotation(ann, ctx, scale, canvasLogicalHeight(ctx.canvas));
+            return;
+        }
+        if (isImageBackedAnnotation(ann)) {
+            drawImageBackedAnnotation(ann, ctx, scale, canvasLogicalHeight(ctx.canvas));
+            return;
+        }
         // currentText: what is being typed right now, or the saved value
         const currentText = String(editedTexts[ann._uid] ?? ann.text ?? '');
         const hasSourceContent = (Array.isArray(ann?.sourceSpans) && ann.sourceSpans.length > 0)
@@ -2283,15 +5965,20 @@
         );
         const { dx: posDx, dy: posDy } = annotationOffset(ann);
         const positionChanged = Math.abs(posDx) > 0.25 || Math.abs(posDy) > 0.25;
-        // Exact-preserve path: use drawOriginalSource ONLY when the annotation is a
-        // pristine promoted-from-extraction annotation with no user modifications.
-        // Once an annotation has been flipped to user-authored (via markUserAuthored,
-        // see setAnnotationBox / ae.input / applyFormatProperty / applySelectionFormat),
-        // it always reflows to box bounds using annotation-level styling. This is the
-        // one-way "approach 1" conversion \u2014 collapses the preserve-vs-reflow fork to
-        // a single check per annotation.
+        // Exact-preserve path: use drawOriginalSource when the annotation's text,
+        // dimensions, and style are unchanged from extraction. The user-authored
+        // flag does NOT by itself block the preserve path — flipping that flag
+        // (via setAnnotationBox grow, format-bar style edits, etc.) must not
+        // collapse leader-dot spacing or per-span fonts on annotations whose
+        // visible content still matches the PDF source. Reflow only kicks in
+        // when the text or geometry actually diverges from the extraction.
         const userAuthored = isUserAuthoredAnnotation(ann);
-        if (!userAuthored && !editedInSession && !savedDiffersFromPdf && !dimensionsChanged && !styleChanged && !ann._richHtml) {
+        if (!editedInSession && !savedDiffersFromPdf && !dimensionsChanged && !styleChanged && !ann._richHtml) {
+            // Skip preserve path when user has applied a free rotation — the rotation
+            // must be applied around the box center via canvas transform below.
+            if (Number(ann.rotation) || 0) {
+                // fall through to edited path
+            } else {
             // When only position changed, erase old source area before drawing at new position
             if (positionChanged) {
                 const sL = Number(ann.sourceBlockLeft), sT = Number(ann.sourceBlockTop);
@@ -2304,11 +5991,12 @@
                 }
             }
             if (drawOriginalSource(ann, ctx, scale)) return;
+            }
         }
         // Erase the original PDF background text by filling a white rect over the annotation area
         // (covers both original source area and current/moved position)
         const box = resolveAnnBox(ann);
-        const canvasHeight = ctx.canvas.height;
+        const canvasHeight = canvasLogicalHeight(ctx.canvas);
         // Erase original source area (in case the annotation was also moved)
         if (hasSourceContent && positionChanged) {
             const sL = Number(ann.sourceBlockLeft), sT = Number(ann.sourceBlockTop);
@@ -2349,6 +6037,14 @@
         })();
         ctx.save();
         ctx.globalAlpha = annOpacity;
+        const userRotText = Number(ann.rotation) || 0;
+        if (userRotText) {
+            const rcx = eraseLeft + eraseW / 2;
+            const rcy = eraseTop + eraseH / 2;
+            ctx.translate(rcx, rcy);
+            ctx.rotate(userRotText * Math.PI / 180);
+            ctx.translate(-rcx, -rcy);
+        }
         // Draw background color (if explicitly set and not white)
         if (annBgColor && annBgColor !== '#ffffff' && annBgColor !== 'transparent') {
             ctx.fillStyle = annBgColor;
@@ -2383,7 +6079,7 @@
             if (!renderedByDom) {
                 ctx.fillText(line.text, drawX, drawY);
                 if (ann.underline && line.text) {
-                    const fontSize = line.style.fontSizePt * scale;
+                    const fontSize = line.style.fontSizePt * fontDisplayScale(scale);
                     ctx.strokeStyle = line.style.fillStyle;
                     ctx.lineWidth = Math.max(0.5, fontSize * 0.07);
                     ctx.beginPath();
@@ -2396,8 +6092,47 @@
         ctx.restore();
     }
 
+    function shouldRenderTextInRichHtmlLayer(ann) {
+        const hasRichHtml = !!ann?._richHtml;
+        const userAuthoredText = (ann?.type || 'text') === 'text'
+            && (ann?.userCreated || isUserAuthoredAnnotation(ann));
+        if (hasRichHtml) return true;
+        if (!userAuthoredText) return false;
+        // Pristine extracted text whose visible content still matches the PDF
+        // source must keep canvas drawOriginalSource (per-span exact positions),
+        // even if the user-authored flag was flipped by a non-text edit
+        // (geometry grow, color/bg change, etc.). The DOM layer renders text
+        // via CSS measureText spacing, which collapses tab-leader dots and
+        // joins styled runs — visibly different from the canvas baseline.
+        const hasSourceContent = (Array.isArray(ann?.sourceSpans) && ann.sourceSpans.length > 0)
+            || (Array.isArray(ann?.sourceLineBBoxes) && ann.sourceLineBBoxes.length > 0)
+            || ann?.promotedFromExtraction === true;
+        if (!hasSourceContent) return true;
+        const editedInSession = typeof editedTexts !== 'undefined'
+            && editedTexts[ann?._uid] !== undefined
+            && editedTexts[ann?._uid] !== String(ann?.text ?? '');
+        if (editedInSession) return true;
+        if (typeof annTextIsEdited === 'function' && annTextIsEdited(ann)) return true;
+        if (typeof annotationDimensionsChanged === 'function' && annotationDimensionsChanged(ann)) return true;
+        return false;
+    }
+
+    function activeEditorCanvasOwnsPaint(ann, aeEl) {
+        if (!(aeEl instanceof HTMLElement) || !ann) return false;
+        const mode = aeEl.dataset ? aeEl.dataset.renderMode : '';
+        if (mode === 'canvas') return true;
+        const editingSourceMode = editorIsEditingAnnotation(aeEl, ann)
+            && (mode === 'source' || mode === 'source-flow');
+        if (!editingSourceMode) return false;
+        // Source/source-flow editing is allowed to hide the contenteditable's
+        // glyphs only while the canvas still paints the annotation text. Once
+        // the annotation is resized, styled, rich-html-backed, or otherwise
+        // DOM-owned, hiding the editor would leave no visible text.
+        return !shouldRenderTextInRichHtmlLayer(ann);
+    }
+
     // Builds the rich-html layer for a page: renders a positioned <div> mirroring the
-    // active-editor styling for every non-active annotation that has ann._richHtml set.
+    // active-editor styling for every annotation that should use DOM layout.
     // Called at the end of redrawOverlay so the DOM layer stays in sync with the canvas.
     function renderRichHtmlLayer(pi) {
         const data = pageData[pi];
@@ -2407,14 +6142,16 @@
         layer.innerHTML = '';
         annotations.forEach((ann) => {
             const hasRichHtml = !!ann._richHtml;
-            // Also render user-authored text annotations even without _richHtml.
-            // The rich-html-layer is the source of truth for wrapping — canvas
-            // measureText and CSS text layout wrap at different boundaries, so
-            // mirroring the editor DOM here keeps view and edit mode identical.
-            const userAuthoredText = (ann.type || 'text') === 'text'
-                && (ann.userCreated || isUserAuthoredAnnotation(ann));
-            if (!hasRichHtml && !userAuthoredText) return;
-            if (ann._uid === activeState.uid) return; // shown via active editor
+            if (!shouldRenderTextInRichHtmlLayer(ann)) return;
+            // Selected text must never disappear. User-authored / rich text is
+            // normally owned by this DOM layer; keep rendering it while merely
+            // selected because the active editor may be intentionally empty in
+            // drag/resize mode. Only hide it while the contenteditable is
+            // actively editing the same annotation, where ae owns caret + text.
+            if (ann._uid === activeState.uid) {
+                const aeEl = document.getElementById('ae-' + (pi + 1));
+                if (editorIsEditingAnnotation(aeEl, ann)) return;
+            }
             const box = resolveAnnBox(ann);
             if (!box) return;
             const rect = annRectPx(ann, scale, canvasHeight);
@@ -2431,15 +6168,16 @@
                 if (v === 'bottom') return 'flex-end';
                 return 'flex-start';
             })();
+            const useFlexLayout = vAlign !== 'flex-start';
             const item = document.createElement('div');
             item.className = 'rich-html-item';
             item.style.cssText = [
-                'display:flex', 'flex-direction:column',
-                `justify-content:${vAlign}`,
+                `display:${useFlexLayout ? 'flex' : 'block'}`,
+                ...(useFlexLayout ? ['flex-direction:column', `justify-content:${vAlign}`] : []),
                 `left:${left.toFixed(2)}px`, `top:${top.toFixed(2)}px`,
                 `width:${width.toFixed(2)}px`, `height:${height.toFixed(2)}px`,
                 `font-family:${style0.fontFamily}`,
-                `font-size:${(style0.fontSizePt * scale).toFixed(2)}px`,
+                `font-size:${(style0.fontSizePt * fontDisplayScale(scale)).toFixed(2)}px`,
                 `font-weight:${ann.fontWeight || style0.fontWeight || '400'}`,
                 `font-style:${ann.fontStyle || style0.fontStyle || 'normal'}`,
                 `text-decoration:${ann.underline ? 'underline' : 'none'}`,
@@ -2448,16 +6186,86 @@
                 `background:${bgCss}`,
                 `text-align:${ann.textAlign || 'left'}`,
                 `opacity:${parseFloat(ann.opacity ?? 1)}`,
+                ...(ann._pageBoundsConstrained ? ['overflow:hidden'] : []),
             ].join(';');
+            const userRotItem = Number(ann.rotation) || 0;
+            if (userRotItem) {
+                item.style.transformOrigin = 'center center';
+                item.style.transform = `rotate(${userRotItem}deg)`;
+            }
             if (hasRichHtml) {
-                item.innerHTML = ann._richHtml;
+                item.innerHTML = normalizeRichHtmlForDisplay(ann._richHtml, ann);
             } else {
                 const currentText = String(editedTexts[ann._uid] ?? ann.text ?? '');
                 item.innerHTML = renderPlainEditorHTML(ann, currentText, scale);
             }
             layer.appendChild(item);
+
+            // Grow the annotation box to envelop the actually-rendered DOM
+            // height. measureEditedTextHeightPts only knows about the first-line
+            // style and the plain-text wrap, so rich-html with per-span font
+            // sizes / explicit <br>s / mixed line-heights can render taller than
+            // the stored box. Without this, text spills below the dashed
+            // bounding outline (most visible after zoom / window-resize because
+            // browser line-height rounding diverges from the synthetic measure).
+            const renderedPx = item.scrollHeight;
+            if (renderedPx > height + 1) {
+                const boxChanged = growAnnotationBoxToRenderedHeight(ann, item, pi);
+                const grownBox = resolveAnnBox(ann);
+                if (grownBox) {
+                    const newTopPx = canvasHeight - (grownBox.y + grownBox.h) * scale;
+                    item.style.top = `${newTopPx.toFixed(2)}px`;
+                    item.style.height = `${(grownBox.h * scale).toFixed(2)}px`;
+                }
+                if (boxChanged && !data._richBoxFitScheduled) {
+                    data._richBoxFitScheduled = true;
+                    requestAnimationFrame(() => {
+                        data._richBoxFitScheduled = false;
+                        redrawOverlay(pi);
+                    });
+                }
+            }
         });
     }
+
+    function traceRoundedRectPath(ctx, x, y, width, height, radius) {
+        const safeRadius = Math.max(0, Math.min(Number(radius) || 0, width / 2, height / 2));
+        ctx.beginPath();
+        ctx.moveTo(x + safeRadius, y);
+        ctx.lineTo(x + width - safeRadius, y);
+        ctx.quadraticCurveTo(x + width, y, x + width, y + safeRadius);
+        ctx.lineTo(x + width, y + height - safeRadius);
+        ctx.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height);
+        ctx.lineTo(x + safeRadius, y + height);
+        ctx.quadraticCurveTo(x, y + height, x, y + height - safeRadius);
+        ctx.lineTo(x, y + safeRadius);
+        ctx.quadraticCurveTo(x, y, x + safeRadius, y);
+        ctx.closePath();
+    }
+
+    function drawAnnotationTypeBadge(ctx, rect, label) {
+        const text = String(label || '').trim();
+        if (!text || !rect) return;
+        ctx.save();
+        ctx.font = '700 11px system-ui, sans-serif';
+        ctx.textBaseline = 'middle';
+        const paddingX = 8;
+        const badgeHeight = 22;
+        const badgeWidth = Math.ceil(ctx.measureText(text).width) + (paddingX * 2);
+        const badgeX = Math.max(4, Math.min(rect.left + 4, canvasLogicalWidth(ctx.canvas) - badgeWidth - 4));
+        const canPlaceAbove = rect.top >= (badgeHeight + 10);
+        const badgeY = canPlaceAbove ? (rect.top - badgeHeight - 4) : Math.max(4, rect.top + 4);
+        traceRoundedRectPath(ctx, badgeX, badgeY, badgeWidth, badgeHeight, 11);
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(96, 165, 250, 0.5)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillText(text, badgeX + paddingX, badgeY + (badgeHeight / 2));
+        ctx.restore();
+    }
+
     function redrawOverlay(pi) {
         const data = pageData[pi];
         if (!data) return;
@@ -2466,15 +6274,62 @@
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
 
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        // Normalise the transform so the rest of this function (and
+        // everything it calls) can keep working in FIT-scale CSS pixel
+        // coordinates. The backing store is `cssW × cssH × (dpr × zoom)`;
+        // applying that combined scale here means draw operations issued at
+        // logical px get rasterised at full physical resolution, regardless
+        // of HiDPI density or the user's zoom level. Without this, curves
+        // and strokes blur whenever zoom > 100% because the bitmap is
+        // smaller than the displayed canvas and the browser bilinear-
+        // upsamples it.
+        const backing = canvas.__backingScale || overlayBackingScale();
+        ctx.setTransform(backing, 0, 0, backing, 0, 0);
+        ctx.clearRect(0, 0, canvasLogicalWidth(canvas), canvasLogicalHeight(canvas));
         const { scale, canvasHeight, annotations, wPts, hPts } = data;
 
         annotations.forEach((ann) => {
-            if (ann._uid === activeState.uid) return; // active annotation shown in editor div
+            if (ann._uid === activeState.uid && isTextAnnotation(ann)) {
+                // Suppress canvas drawing only when the active editor element
+                // owns the painting outright. When syncActiveEditor decided
+                // renderMode='canvas' (just selected for drag/resize), or
+                // 'source'/'source-flow' (actively editing pristine extracted
+                // text — ae text is rendered transparent so canvas paints the
+                // visible glyphs), keep canvas drawing so per-span layout
+                // stays pixel-identical to the deselected baseline.
+                const aeEl = document.getElementById('ae-' + (pi + 1));
+                const editing = editorIsEditingAnnotation(aeEl, ann);
+                const canvasOwns = activeEditorCanvasOwnsPaint(ann, aeEl);
+                if (editing && !canvasOwns) {
+                    return;
+                }
+            }
+            if (isTextAnnotation(ann) && shouldRenderTextInRichHtmlLayer(ann)) return; // non-active DOM-rendered text
             drawEditedAnnotation(ann, ctx, scale, wPts, hPts);
         });
 
-        if (editModeEnabled) {
+        if (shapeCreationState.active && shapeCreationState.pi === pi && shapeCreationState.previewAnn) {
+            drawShapeAnnotation(shapeCreationState.previewAnn, ctx, scale, canvasHeight);
+        }
+
+        if (
+            shapeCutState.armed
+            && shapeCutState.pi === pi
+            && shapeCutState.startPt
+            && shapeCutState.currentPt
+        ) {
+            ctx.save();
+            ctx.strokeStyle = 'rgba(220, 38, 38, 0.95)';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([9, 6]);
+            ctx.beginPath();
+            ctx.moveTo(shapeCutState.startPt.x * scale, canvasHeight - (shapeCutState.startPt.y * scale));
+            ctx.lineTo(shapeCutState.currentPt.x * scale, canvasHeight - (shapeCutState.currentPt.y * scale));
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        if (editModeEnabled && !window.__pdfTestSuppressSelectionChrome) {
             annotations.forEach((ann) => {
                 const rect = annRectPx(ann, scale, canvasHeight);
                 if (!rect) return;
@@ -2487,7 +6342,7 @@
                 ctx.strokeRect(rect.left, rect.top, rect.width, rect.height);
                 ctx.restore();
             });
-        } else if (addTextMode) {
+        } else if (addTextMode && !window.__pdfTestSuppressSelectionChrome) {
             // In addTextMode, only show outlines for user-created annotations
             // (not extracted ones) so existing PDF content looks untouched.
             annotations.filter(a => a.userCreated && a._uid !== activeState.uid).forEach((ann) => {
@@ -2505,7 +6360,7 @@
         }
 
         // Hover highlight
-        if ((editModeEnabled || addTextMode) && hoverState.pi === pi && hoverState.uid && hoverState.uid !== activeState.uid) {
+        if ((editModeEnabled || addTextMode) && hoverState.pi === pi && hoverState.uid && hoverState.uid !== activeState.uid && !window.__pdfTestSuppressSelectionChrome) {
             const hAnn = annotations.find(a => a._uid === hoverState.uid);
             const rect = hAnn ? annRectPx(hAnn, scale, canvasHeight) : null;
             if (rect) {
@@ -2521,7 +6376,7 @@
         }
 
         // Active annotation selection outline
-        if ((editModeEnabled || addTextMode) && activeState.pi === pi && activeState.uid) {
+        if ((editModeEnabled || addTextMode) && activeState.pi === pi && activeState.uid && !window.__pdfTestSuppressSelectionChrome) {
             const aAnn = annotations.find(a => a._uid === activeState.uid);
             const rect = aAnn ? annRectPx(aAnn, scale, canvasHeight) : null;
             if (rect) {
@@ -2544,7 +6399,13 @@
         const hits = annotations
             .map(ann => ({ ann, rect: annRectPx(ann, scale, canvasHeight) }))
             .filter(({ rect }) => rect && rect.width > 0 && rect.height > 0)
-            .filter(({ rect }) => x >= rect.left && x <= rect.left + rect.width && y >= rect.top && y <= rect.top + rect.height)
+            .filter(({ ann, rect }) => {
+                const withinBounds = x >= rect.left && x <= rect.left + rect.width && y >= rect.top && y <= rect.top + rect.height;
+                if (!withinBounds) return false;
+                return isShapeAnnotation(ann)
+                    ? shapeContainsCanvasPoint(ann, x, y, scale, canvasHeight)
+                    : true;
+            })
             .sort((a, b) => (a.rect.width * a.rect.height) - (b.rect.width * b.rect.height));
         return hits.length ? hits[0].ann : null;
     }
@@ -2552,9 +6413,17 @@
     function canvasPointFromEvent(e, canvas) {
         const r = canvas.getBoundingClientRect();
         if (!r.width || !r.height) return null;
+        // Return coordinates in the canvas's LOGICAL (CSS-pixel) space, not
+        // its backing-store space. The ratio used to be `canvas.width /
+        // r.width`, which happened to equal 1 when the canvas was sized 1:1.
+        // After the HiDPI overlay change, `canvas.width` is `cssW * dpr`, so
+        // we must read the logical width to keep downstream hit-testing code
+        // (pdfPtFromClient, shape hit tests, …) unchanged.
+        const logicalW = canvasLogicalWidth(canvas);
+        const logicalH = canvasLogicalHeight(canvas);
         return {
-            x: (e.clientX - r.left) * (canvas.width / r.width),
-            y: (e.clientY - r.top)  * (canvas.height / r.height),
+            x: (e.clientX - r.left) * (logicalW / r.width),
+            y: (e.clientY - r.top)  * (logicalH / r.height),
         };
     }
 
@@ -2583,24 +6452,45 @@
     }
 
     function editorSpanStyle(ann, span, scale) {
-        // Priority mirrors drawOriginalSource: ann-level format-bar overrides win over span defaults.
+        // Priority mirrors drawOriginalSource: per-span extraction data is authoritative
+        // for an unmodified promoted annotation; ann-level format-bar overrides
+        // (fontFamily/Weight/Style) only win once the user has explicitly changed them
+        // (_styleDirty). Otherwise the dominant block-style values persisted at extraction
+        // would override per-span truth here while drawOriginalSource still uses span data,
+        // producing different glyph widths in the active editor vs. the loaded canvas
+        // render — which makes the source-line scaleX fit reflow the text on click.
         const spanFontWeight = String(span?.font_weight || span?.fontWeight || (span?.bold ? '700' : '400') || '400');
         const spanFontStyle  = span?.fontStyle || (span?.italic ? 'italic' : 'normal');
-        const annFontFamilyOverride = String(ann?.fontFamily || '').trim();
+        const styleOverride = Boolean(ann?._styleDirty);
+        const annFontFamilyOverride = styleOverride ? String(ann?.fontFamily || '').trim() : '';
+        const annFontWeightOverride = styleOverride ? String(ann?.fontWeight || '').trim() : '';
+        const annFontStyleOverride  = styleOverride ? String(ann?.fontStyle  || '').trim() : '';
         const resolvedFontFamily = annFontFamilyOverride
             ? fallbackFontFamily(annFontFamilyOverride, annFontFamilyOverride)
             : fallbackFontFamily(span?.embedded_font_name || span?.font, span?.embedded_font_family || span?.fontFamily || '');
         return {
             fontFamily: resolvedFontFamily,
-            fontSizePx: (Number(span?.font_size ?? span?.fontSize) || Number(ann?.fontSize) || 12) * scale,
-            fontWeight: String(ann?.fontWeight || spanFontWeight),
-            fontStyle:  ann?.fontStyle || spanFontStyle || 'normal',
-            color: String(ann?.textColor || span?.hex_color || '#000000'),
+            fontSizePx: (Number(span?.font_size ?? span?.fontSize) || Number(ann?.fontSize) || 12) * fontDisplayScale(scale),
+            fontWeight: annFontWeightOverride || spanFontWeight,
+            fontStyle:  annFontStyleOverride  || spanFontStyle || 'normal',
+            color: resolveSpanFillStyle(ann, span),
         };
     }
 
     function renderEditorSpanHtml(style, text) {
         return `<span style="font-family:${style.fontFamily};font-size:${style.fontSizePx.toFixed(2)}px;font-weight:${style.fontWeight};font-style:${style.fontStyle};color:${style.color};white-space:pre;">${escapeHtml(text)}</span>`;
+    }
+
+    // Render an inter-span gap as a fixed-pixel-width inline-block so the visual
+    // gap matches the canvas exactly. We still emit literal space characters
+    // inside (preserving getEditorPlainText() == ann.text parity) but the
+    // wrapper's explicit width pins the visual gap to gapPx regardless of the
+    // rendered font's space-glyph width — which is what was causing the
+    // "spacing collapses on Edit text" regression on bold-led leader lines.
+    function renderEditorGapHtml(style, gapPx, spaceCount) {
+        const safeGap = Math.max(0, Number(gapPx) || 0);
+        const safeCount = Math.max(1, Number(spaceCount) || 1);
+        return `<span data-source-gap="1" style="display:inline-block;width:${safeGap.toFixed(2)}px;min-width:${safeGap.toFixed(2)}px;font-family:${style.fontFamily};font-size:${style.fontSizePx.toFixed(2)}px;font-weight:${style.fontWeight};font-style:${style.fontStyle};color:${style.color};white-space:pre;overflow:hidden;vertical-align:baseline;">${' '.repeat(safeCount)}</span>`;
     }
 
     function buildLineInnerHtml(ann, lineIndex, scale, spans) {
@@ -2637,7 +6527,7 @@
                     );
                     const gapPx = gapPts * scale;
                     const spaceCount = Math.max(1, Math.round(gapPx / measuredSpacePx));
-                    html += renderEditorSpanHtml(style, ' '.repeat(spaceCount));
+                    html += renderEditorGapHtml(style, gapPx, spaceCount);
                 }
             }
 
@@ -2698,7 +6588,7 @@
             `height:${wrapperHeightPx.toFixed(2)}px`,
             `min-height:${wrapperHeightPx.toFixed(2)}px`,
             `font-family:${style.fontFamily}`,
-            `font-size:${(style.fontSizePt * scale).toFixed(2)}px`,
+            `font-size:${(style.fontSizePt * fontDisplayScale(scale)).toFixed(2)}px`,
             `font-weight:${style.fontWeight}`,
             `font-style:${style.fontStyle}`,
             `line-height:${lineHeightPx.toFixed(2)}px`,
@@ -2731,6 +6621,87 @@
         const innerHtml = buildLineInnerHtml(ann, lineIndex, scale, spans);
 
         return `<div data-line-index="${lineIndex}" style="${lineWrapperStyle}"><span data-line-content="1" style="${contentStyle}">${innerHtml || '<br>'}</span></div>`;
+    }
+
+    function buildSourceFlowLineEditorHTML(ann, lineIndex, scale) {
+        const spans = lineSpans(ann, lineIndex);
+        const style = compositeLineStyle(ann, lineIndex);
+        const lineHeightPx = blockLineHeightPx(ann, lineIndex, scale);
+        const lineStyle = [
+            'display:block',
+            // Keep the source line on a single visual line — the canvas render
+            // never wraps these promoted lines, and using width:100% with
+            // pre-wrap caused inline-block gap spans (and long leader-dot
+            // tails) to break onto a second line on entering edit mode.
+            'width:max-content',
+            'min-width:100%',
+            'box-sizing:border-box',
+            `font-family:${style.fontFamily}`,
+            `font-size:${(style.fontSizePt * fontDisplayScale(scale)).toFixed(2)}px`,
+            `font-weight:${style.fontWeight}`,
+            `font-style:${style.fontStyle}`,
+            `line-height:${lineHeightPx.toFixed(2)}px`,
+            `min-height:${lineHeightPx.toFixed(2)}px`,
+            `color:${style.fillStyle}`,
+            `text-decoration:${ann.underline ? 'underline' : 'none'}`,
+            'padding:0',
+            'margin:0',
+            'white-space:pre',
+            'overflow-wrap:normal',
+            'word-break:normal',
+        ].join(';');
+
+        const fallbackLine = String(renderableSourceLines(ann)[lineIndex]?.text ?? '');
+        const innerHtml = spans.length
+            ? buildLineInnerHtml(ann, lineIndex, scale, spans)
+            : escapeHtml(fallbackLine);
+
+        return `<div data-line-index="${lineIndex}" style="${lineStyle}">${innerHtml || '<br>'}</div>`;
+    }
+
+    function buildSourceFlowEditorHTML(ann, scale) {
+        const lines = renderableSourceLines(ann);
+        if (lines.length) {
+            return lines.map((_, lineIndex) => buildSourceFlowLineEditorHTML(ann, lineIndex, scale)).join('');
+        }
+
+        const spans = Array.isArray(ann?.sourceSpans) ? ann.sourceSpans : [];
+        if (spans.length) {
+            const style = compositeLineStyle(ann, 0);
+            const lineHeightPx = blockLineHeightPx(ann, 0, scale, style);
+            return `<div data-line-index="0" style="display:block;width:max-content;min-width:100%;box-sizing:border-box;font-family:${style.fontFamily};font-size:${(style.fontSizePt * fontDisplayScale(scale)).toFixed(2)}px;font-weight:${style.fontWeight};font-style:${style.fontStyle};line-height:${lineHeightPx.toFixed(2)}px;min-height:${lineHeightPx.toFixed(2)}px;color:${style.fillStyle};text-decoration:${ann.underline ? 'underline' : 'none'};padding:0;margin:0;white-space:pre;overflow-wrap:normal;word-break:normal;">${buildLineInnerHtml(ann, 0, scale, spans) || '<br>'}</div>`;
+        }
+
+        return renderPlainEditorHTML(ann, String(ann.text ?? ''), scale);
+    }
+
+    function shouldUseSourceFlowEditorHTML(ann, editedText, options = {}) {
+        if (!ann || ann._richHtml) return false;
+        const allowCurrentBoxSourceFlow = Boolean(options.allowCurrentBoxSourceFlow);
+        const hasSourceContent = (Array.isArray(ann.sourceSpans) && ann.sourceSpans.length > 0)
+            || (Array.isArray(ann.sourceLineBBoxes) && ann.sourceLineBBoxes.length > 0);
+        if (!hasSourceContent) return false;
+        if (!annotationTextMatchesSource(ann, editedText !== undefined ? editedText : ann.text)) return false;
+        // Single extracted PDF rows match the canvas best when edited through
+        // the absolute source layout. The flow layout re-baselines the same
+        // glyphs as ordinary HTML and can introduce a small visible jump for
+        // pristine canvas-owned text. Resized / DOM-owned text cannot use the
+        // absolute source layout because native selection would be offset from
+        // the current annotation box, so source-flow is allowed there even for
+        // one-line leader-dot rows.
+        if (!allowCurrentBoxSourceFlow && renderableSourceLines(ann).length <= 1) return false;
+        if (editedText !== undefined && editedText !== String(ann.text ?? '')) return false;
+        if (annTextIsEdited(ann)) return false;
+        // Note: `promotedDirty` is intentionally NOT a disqualifier. It can
+        // remain set after a prior resize/move while the underlying text and
+        // per-span source data are still 100% accurate. The canvas renderer
+        // uses the same source spans regardless of promotedDirty, so the
+        // source-flow editor must too — otherwise selecting/editing a
+        // promoted block visibly collapses leader-dot gaps and drops bold
+        // styling that the canvas was painting just fine.
+        if (ann.userCreated || ann._styleDirty) return false;
+        if (!allowCurrentBoxSourceFlow && ann.userAuthored) return false;
+        return true;
     }
 
     // Build innerHTML that mirrors the extracted source lines as closely as possible:
@@ -2795,7 +6766,7 @@
                 }
                 return transforms.length ? transforms.join(' ') : 'none';
             })();
-            return `<div data-line-index="${lineIndex}" style="position:absolute;left:${(rect?.left || 0).toFixed(2)}px;top:${(rect?.top || 0).toFixed(2)}px;${wrapperWidthPx !== null ? `width:${wrapperWidthPx.toFixed(2)}px;` : 'width:100%;'}height:${wrapperHeightPx.toFixed(2)}px;min-height:${wrapperHeightPx.toFixed(2)}px;font-family:${style.fontFamily};font-size:${(style.fontSizePt * scale).toFixed(2)}px;font-weight:${style.fontWeight};font-style:${style.fontStyle};text-decoration:${ann.underline ? 'underline' : 'none'};line-height:${lineHeightPx.toFixed(2)}px;color:${style.fillStyle};transform:${wrapperTransform};transform-origin:top left;padding:0;margin:0;white-space:normal;overflow:visible;"><span data-line-content="1" style="display:inline-block;width:max-content;min-width:max-content;transform:scaleX(${scaleX.toFixed(4)});transform-origin:top left;white-space:pre;overflow-wrap:normal;word-break:normal;padding:0;margin:0;">${innerHtml || '<br>'}</span></div>`;
+            return `<div data-line-index="${lineIndex}" style="position:absolute;left:${(rect?.left || 0).toFixed(2)}px;top:${(rect?.top || 0).toFixed(2)}px;${wrapperWidthPx !== null ? `width:${wrapperWidthPx.toFixed(2)}px;` : 'width:100%;'}height:${wrapperHeightPx.toFixed(2)}px;min-height:${wrapperHeightPx.toFixed(2)}px;font-family:${style.fontFamily};font-size:${(style.fontSizePt * fontDisplayScale(scale)).toFixed(2)}px;font-weight:${style.fontWeight};font-style:${style.fontStyle};text-decoration:${ann.underline ? 'underline' : 'none'};line-height:${lineHeightPx.toFixed(2)}px;color:${style.fillStyle};transform:${wrapperTransform};transform-origin:top left;padding:0;margin:0;white-space:normal;overflow:visible;"><span data-line-content="1" style="display:inline-block;width:max-content;min-width:max-content;transform:scaleX(${scaleX.toFixed(4)});transform-origin:top left;white-space:pre;overflow-wrap:normal;word-break:normal;padding:0;margin:0;">${innerHtml || '<br>'}</span></div>`;
         }).join('');
     }
 
@@ -2805,20 +6776,15 @@
         const lineHeightPx = blockLineHeightPx(ann, 0, scale, style);
         const topShiftPx = editorLineTopShiftPx(ann, 0, scale, style);
         const lineAlign = ann.textAlign || 'left';
-        // Normalize extracted/user newlines so the box width drives wrap:
-        //   \n\n+ → hard paragraph break (visible <br>)
-        //   single \n → soft break (space) → reflows to bounding box width
-        // This ensures text re-flows when the annotation box is resized, while still
-        // letting the user make explicit paragraph breaks by pressing Enter twice.
+        // Preserve explicit blank lines. Enter at an existing source line break
+        // intentionally creates \n\n, and collapsing that run makes the key look
+        // like a no-op.
         const normalized = String(text ?? '')
-            .replace(/\r\n?/g, '\n')
-            .replace(/\n{2,}/g, '\x00')
-            .replace(/\n/g, ' ')
-            .replace(/\x00/g, '\n');
+            .replace(/\r\n?/g, '\n');
         const paragraphs = normalized.split('\n');
         const innerHtml = paragraphs
-            .map((p) => escapeHtml(p) || '<br>')
-            .join('<br><br>');
+            .map((p) => escapeHtml(p))
+            .join('<br>') || '<br>';
         // Suppress maxSourceIndex lint noise — retained for future per-line overrides.
         void maxSourceIndex;
         // Critical: do NOT hardcode font-family, font-size, color, font-weight, or
@@ -2828,10 +6794,10 @@
         // properties in here they'd override the outer container and format-bar
         // changes (font family / size / color) wouldn't take effect once this
         // HTML has been persisted into ann._richHtml.
-        return `<div data-line-index="0" style="text-decoration:${ann.underline ? 'underline' : 'none'};line-height:${lineHeightPx.toFixed(2)}px;min-height:${lineHeightPx.toFixed(2)}px;text-align:${lineAlign};transform:translateY(-${topShiftPx.toFixed(2)}px);transform-origin:top left;padding:0;margin:0;white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word;">${innerHtml}</div>`;
+        return `<div data-line-index="0" style="display:block;width:100%;box-sizing:border-box;font-family:inherit;font-size:inherit;font-weight:inherit;font-style:inherit;letter-spacing:inherit;color:inherit;text-decoration:${ann.underline ? 'underline' : 'none'};line-height:${lineHeightPx.toFixed(2)}px;min-height:${lineHeightPx.toFixed(2)}px;text-align:${lineAlign};transform:translateY(-${topShiftPx.toFixed(2)}px);transform-origin:top left;padding:0;margin:0;white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word;">${innerHtml}</div>`;
     }
 
-    function measureEditedTextHeightPts(ann, text, scale) {
+    function measureEditedTextHeightPts(ann, text, scale, overrideWidthPts = null) {
         // Mirror the wrap logic in buildEditedLines / renderPlainEditorHTML so the
         // measured height reflects the actual number of rendered (wrapped) lines,
         // not just the count of `\n`s in the source string. Otherwise a long
@@ -2840,18 +6806,18 @@
         const maxSourceIndex = Math.max(0, renderableSourceLines(ann).length - 1);
         const box = resolveAnnBox(ann);
         const normalized = String(text ?? '')
-            .replace(/\r\n?/g, '\n')
-            .replace(/\n{2,}/g, '\x00')
-            .replace(/\n/g, ' ')
-            .replace(/\x00/g, '\n');
+            .replace(/\r\n?/g, '\n');
         const paragraphs = normalized.split('\n');
-        const maxWidthPx = Math.max(10, (box ? box.w : 0) * scale);
+        const widthPts = Number.isFinite(Number(overrideWidthPts)) && Number(overrideWidthPts) > 0
+            ? Number(overrideWidthPts)
+            : (box ? box.w : 0);
+        const maxWidthPx = Math.max(10, widthPts * scale);
         let totalLineCount = 0;
         const perLineHeightPx = [];
         paragraphs.forEach((para, pIdx) => {
             const lineIndex = Math.min(pIdx, maxSourceIndex);
             const style = editableLineStyle(ann, lineIndex);
-            const stylePx = { ...style, fontSizePx: style.fontSizePt * scale };
+            const stylePx = { ...style, fontSizePx: style.fontSizePt * fontDisplayScale(scale) };
             const wrapped = box ? wrapParagraph(para, maxWidthPx, stylePx) : [para];
             wrapped.forEach(() => {
                 const si = Math.min(totalLineCount, maxSourceIndex);
@@ -2866,6 +6832,29 @@
         return Math.max(1, totalHeightPx / Math.max(scale, 0.0001));
     }
 
+    const autoWidthMeasureCanvas = document.createElement('canvas');
+    const autoWidthMeasureCtx = autoWidthMeasureCanvas.getContext('2d');
+    function measureEditedTextAutoWidthPts(ann, text, scale, maxWidthPts) {
+        if (!autoWidthMeasureCtx) {
+            return Math.max(60, Math.min(Number(maxWidthPts) || 60, 60));
+        }
+        const normalized = String(text ?? '').replace(/\r\n?/g, '\n');
+        const lines = normalized.length ? normalized.split('\n') : [''];
+        const maxSourceIndex = Math.max(0, renderableSourceLines(ann).length - 1);
+        let widestLinePx = 0;
+
+        lines.forEach((line, index) => {
+            const style = editableLineStyle(ann, Math.min(index, maxSourceIndex));
+            const fontSizePx = style.fontSizePt * fontDisplayScale(scale);
+            autoWidthMeasureCtx.font = `${style.fontStyle || 'normal'} ${style.fontWeight || '400'} ${fontSizePx}px ${style.fontFamily || 'Arial, Helvetica, sans-serif'}`;
+            widestLinePx = Math.max(widestLinePx, autoWidthMeasureCtx.measureText(line || ' ').width);
+        });
+
+        const paddedPts = (widestLinePx + 12) / Math.max(scale, 0.0001);
+        const capPts = Math.max(60, Number(maxWidthPts) || 60);
+        return Math.max(60, Math.min(capPts, paddedPts));
+    }
+
     function resizeAnnotationForEditedText(ann, text, pi) {
         const data = pageData[pi];
         const box = data ? resolveAnnBox(ann) : null;
@@ -2873,31 +6862,89 @@
 
         const topFromPagePts = data.hPts - (box.y + box.h);
         const nextHeightPts = measureEditedTextHeightPts(ann, text, data.scale);
+        const nextWidthPts = ann?._autoWidth
+            ? measureEditedTextAutoWidthPts(ann, text, data.scale, ann._autoWidthMaxWidthPts || box.w)
+            : box.w;
         const nextY = Math.max(0, data.hPts - topFromPagePts - nextHeightPts);
 
-        setAnnotationBox(ann, {
+        setAnnotationBoxWithinPage(ann, pi, {
             x: box.x,
             y: nextY,
-            w: box.w,
+            w: nextWidthPts,
             h: nextHeightPts,
         });
     }
+
+    // For rich-html annotations, the synthetic plain-text measurement in
+    // measureEditedTextHeightPts can underestimate the actual rendered height
+    // (per-span font sizes, explicit <br>s, browser line-height rounding at
+    // different fitScales). Grow ann.pdfHeight to envelop the live DOM height
+    // measured from the contenteditable / rich-html-item container so the
+    // bounding box always wraps the visible text.
+    function growAnnotationBoxToRenderedHeight(ann, el, pi) {
+        const data = pageData[pi];
+        const box = data ? resolveAnnBox(ann) : null;
+        if (!data || !box || !el) return false;
+        const renderedPx = el.scrollHeight;
+        if (!Number.isFinite(renderedPx) || renderedPx <= 0) return false;
+        const currentPx = box.h * data.scale;
+        if (renderedPx <= currentPx + 1) return false;
+        const grownHeightPts = renderedPx / Math.max(data.scale, 0.0001);
+        const topFromPagePts = data.hPts - (box.y + box.h);
+        const newY = Math.max(0, data.hPts - topFromPagePts - grownHeightPts);
+        return setAnnotationBoxWithinPage(ann, pi, { x: box.x, y: newY, w: box.w, h: grownHeightPts });
+    }
+
+    // Font-size slider mapping. The UI slider is 0–100 with the midpoint mapped
+    // to 12pt via an exponential curve between 2pt (slider=0) and 72pt (slider=100):
+    //   pt = 2 * (72/2)^(slider/100)  →  slider=50 → pt = sqrt(2*72) = 12.
+    const FONT_SLIDER_MIN_PT = 2;
+    const FONT_SLIDER_MAX_PT = 72;
+    function sliderValueToFontPt(value) {
+        const t = Math.min(1, Math.max(0, Number(value) / 100));
+        const ratio = FONT_SLIDER_MAX_PT / FONT_SLIDER_MIN_PT;
+        const pt = FONT_SLIDER_MIN_PT * Math.pow(ratio, t);
+        return Math.max(FONT_SLIDER_MIN_PT, Math.min(FONT_SLIDER_MAX_PT, Math.round(pt)));
+    }
+    function fontPtToSliderValue(pt) {
+        const clamped = Math.max(FONT_SLIDER_MIN_PT, Math.min(FONT_SLIDER_MAX_PT, Number(pt) || 12));
+        const ratio = FONT_SLIDER_MAX_PT / FONT_SLIDER_MIN_PT;
+        const t = Math.log(clamped / FONT_SLIDER_MIN_PT) / Math.log(ratio);
+        return Math.round(Math.min(100, Math.max(0, t * 100)));
+    }
+
+    // Module-scoped clipboard for Ctrl+C / Ctrl+V annotation copy/paste.
+    let _annClipboard = null;
 
     function syncActiveEditor(forceRebuild = false) {
         const { pi, uid } = activeState;
         const data = pi !== null ? pageData[pi] : null;
         const ann  = data ? data.annotations.find(a => a._uid === uid) : null;
 
-        // Hide editors/handles on all pages when neither edit mode nor addText mode is active.
-        if (!editModeEnabled && !addTextMode) {
+        // Hide editors/handles on all pages when no editable text mode is active
+        // and there isn't an annotation actively selected. We used to gate this
+        // on hasActiveBoxSelection() (shapes/images only), which made the resize
+        // handles vanish whenever a text annotation was selected outside of
+        // edit-mode / add-text mode (e.g. after toggling the shape/line tool on
+        // and back off). Falling back to "any active selection" keeps the
+        // handles around for text annotations too.
+        if (!editModeEnabled && !addTextMode && !ann) {
             Object.keys(pageData).forEach((pIdx) => {
                 const pn = Number(pIdx) + 1;
                 const ae = document.getElementById('ae-' + pn);
                 const tm = document.getElementById('tm-' + pn);
+                const sh = document.getElementById('sh-' + pn);
+                const shTag = document.getElementById('sh-' + pn + '-tag');
                 const rhs = ['nw', 'ne', 'sw', 'se'].map((dir) => document.getElementById(`rh-${pn}-${dir}`));
+                const rhRot = document.getElementById('rh-' + pn + '-rot');
+                const sb = document.getElementById('sb-' + pn);
                 if (ae) ae.style.display = 'none';
                 if (tm) tm.style.display = 'none';
+                if (sh) sh.style.display = 'none';
+                if (shTag) shTag.style.display = 'none';
                 rhs.forEach((handle) => { if (handle) handle.style.display = 'none'; });
+                if (rhRot) rhRot.style.display = 'none';
+                if (sb) sb.style.display = 'none';
             });
             return;
         }
@@ -2908,33 +6955,359 @@
             const pn = Number(pIdx) + 1;
             const ae = document.getElementById('ae-' + pn);
             const tm = document.getElementById('tm-' + pn);
+            const sh = document.getElementById('sh-' + pn);
+            const shTag = document.getElementById('sh-' + pn + '-tag');
             const rhs = ['nw', 'ne', 'sw', 'se'].map((dir) => document.getElementById(`rh-${pn}-${dir}`));
+            const rhRot = document.getElementById('rh-' + pn + '-rot');
             if (ae) ae.style.display = 'none';
             if (tm) tm.style.display = 'none';
+            if (sh) sh.style.display = 'none';
+            if (shTag) shTag.style.display = 'none';
             rhs.forEach((handle) => { if (handle) handle.style.display = 'none'; });
+            if (rhRot) rhRot.style.display = 'none';
+            const sb = document.getElementById('sb-' + pn);
+            if (sb) sb.style.display = 'none';
         });
 
         const ae = pi !== null ? document.getElementById('ae-' + (pi + 1)) : null;
         const tm = pi !== null ? document.getElementById('tm-' + (pi + 1)) : null;
+        const sh = pi !== null ? document.getElementById('sh-' + (pi + 1)) : null;
         const rhs = pi !== null
             ? ['nw', 'ne', 'sw', 'se'].map((dir) => document.getElementById(`rh-${pi + 1}-${dir}`))
             : [];
-        if (!ann || !ae || !tm || rhs.some((handle) => !handle)) return;
+        const rhRot = pi !== null ? document.getElementById('rh-' + (pi + 1) + '-rot') : null;
+        if (!ann || !ae || !tm || !sh || rhs.some((handle) => !handle) || !rhRot) return;
+        const sb = document.getElementById('sb-' + (pi + 1));
+        const lkhEl = document.getElementById('lkh-' + (pi + 1));
+        const ehEl = document.getElementById('eh-' + (pi + 1));
+        const uhEl = document.getElementById('uh-' + (pi + 1));
+        const lhEl = document.getElementById('lh-' + (pi + 1));
+        const dhEl = document.getElementById('dh-' + (pi + 1));
+        const shLockEl = document.getElementById('sh-' + (pi + 1) + '-lock');
+        const shFrontEl = document.getElementById('sh-' + (pi + 1) + '-front');
+        const shBackEl = document.getElementById('sh-' + (pi + 1) + '-back');
+        const tmFrontEl = document.getElementById('tm-' + (pi + 1) + '-front');
+        const tmBackEl = document.getElementById('tm-' + (pi + 1) + '-back');
+        const shEditEl = document.getElementById('sh-' + (pi + 1) + '-edit');
+        const shBgEl = document.getElementById('sh-' + (pi + 1) + '-bg');
+        const shCutEl = document.getElementById('sh-' + (pi + 1) + '-cut');
+        const shCapEl = document.getElementById('sh-' + (pi + 1) + '-cap');
+        const shTagEl = document.getElementById('sh-' + (pi + 1) + '-tag');
+        const shDeleteEl = document.getElementById('sh-' + (pi + 1) + '-delete');
+
+        const locked = isAnnotationLocked(ann);
+        if (lkhEl) {
+            lkhEl.classList.toggle('is-active', locked);
+            lkhEl.title = locked ? 'Unlock annotation' : 'Lock annotation';
+            lkhEl.setAttribute('aria-label', locked ? 'Unlock annotation' : 'Lock annotation');
+        }
+        if (shLockEl) {
+            shLockEl.classList.toggle('is-active', locked);
+            shLockEl.title = locked ? 'Unlock annotation' : 'Lock annotation';
+            shLockEl.setAttribute('aria-label', locked ? 'Unlock annotation' : 'Lock annotation');
+        }
+        [ehEl, uhEl, lhEl, dhEl].forEach((button) => {
+            if (button) button.disabled = locked;
+        });
+        [tmFrontEl, tmBackEl].forEach((button) => {
+            if (button) button.disabled = locked;
+        });
+        [shFrontEl, shBackEl, shEditEl, shCutEl, shCapEl, shDeleteEl].forEach((button) => {
+            if (button) button.disabled = locked;
+        });
+        if (shBgEl) {
+            shBgEl.disabled = locked
+                || !canRemoveBackgroundFromImageAnnotation(ann)
+                || imageBackgroundRemovalState.active;
+        }
 
         const { scale, canvasHeight } = data;
         const box = resolveAnnBox(ann);
         if (!box) {
             ae.style.display = 'none';
             tm.style.display = 'none';
+            sh.style.display = 'none';
+            if (shTagEl) shTagEl.style.display = 'none';
             rhs.forEach((handle) => { handle.style.display = 'none'; });
+            rhRot.style.display = 'none';
+            if (sb) sb.style.display = 'none';
             return;
         }
 
-        const displayRect = annRectPx(ann, scale, canvasHeight);
+        const displayRect = annRectPx(ann, scale, canvasHeight, {
+            expandLine: !(isShapeAnnotation(ann) && isLineShape(ann)),
+        });
         const left   = displayRect ? displayRect.left : (box.x * scale);
         const top    = displayRect ? displayRect.top : (canvasHeight - (box.y + box.h) * scale);
         const width  = displayRect ? Math.max(2, displayRect.width) : Math.max(2, box.w * scale);
-        const height = displayRect ? Math.max(18, displayRect.height) : Math.max(18, box.h * scale);
+        const height = displayRect ? Math.max(2, displayRect.height) : Math.max(2, box.h * scale);
+
+        const positionRotateHandle = (showHandle) => {
+            if (!showHandle) { rhRot.style.display = 'none'; return; }
+            // 15% of selection height beyond the bottom edge → orbit radius from center.
+            const orbitRadius = (height / 2) + (height * 0.15);
+            const handleAngleDeg = normalizeRotationDegrees((ann.rotation || 0) + 90); // 90 = bottom by default
+            const rad = handleAngleDeg * (Math.PI / 180);
+            const cx = left + width / 2;
+            const cy = top + height / 2;
+            const hx = cx + Math.cos(rad) * orbitRadius;
+            const hy = cy + Math.sin(rad) * orbitRadius;
+            const half = 10; // half of 20px
+            const hidden = (dragState.active && dragState.uid === ann._uid)
+                || (resizeState.active && resizeState.uid === ann._uid);
+            rhRot.style.cssText = [
+                hidden ? 'display:none' : 'display:flex',
+                'position:absolute',
+                `left:${(hx - half).toFixed(2)}px`,
+                `top:${(hy - half).toFixed(2)}px`,
+                'width:20px',
+                'height:20px',
+                'z-index:7',
+            ].join(';');
+        };
+        const applySelectionBox = ({
+            left: boxLeft,
+            top: boxTop,
+            width: boxWidth,
+            height: boxHeight,
+            rotation = 0,
+            padX = 0,
+            padY = 0,
+            minWidth = 0,
+            minHeight = 0,
+            borderRadius = 6,
+        } = {}) => {
+            if (!sb) return;
+            let nextLeft = Number(boxLeft) - Number(padX || 0);
+            let nextTop = Number(boxTop) - Number(padY || 0);
+            let nextWidth = Math.max(0, Number(boxWidth) + (Number(padX || 0) * 2));
+            let nextHeight = Math.max(0, Number(boxHeight) + (Number(padY || 0) * 2));
+            if (nextWidth < minWidth) {
+                nextLeft -= (minWidth - nextWidth) / 2;
+                nextWidth = minWidth;
+            }
+            if (nextHeight < minHeight) {
+                nextTop -= (minHeight - nextHeight) / 2;
+                nextHeight = minHeight;
+            }
+            sb.style.cssText = [
+                'display:block',
+                'position:absolute',
+                `left:${nextLeft.toFixed(2)}px`,
+                `top:${nextTop.toFixed(2)}px`,
+                `width:${nextWidth.toFixed(2)}px`,
+                `height:${nextHeight.toFixed(2)}px`,
+                'border:1px dashed #2563eb',
+                `border-radius:${borderRadius}px`,
+                'pointer-events:none',
+                'box-sizing:border-box',
+                `transform:${rotation ? `rotate(${Number(rotation).toFixed(3)}deg)` : 'none'}`,
+                'transform-origin:center center',
+                'z-index:5',
+            ].join(';');
+        };
+
+        if (isShapeAnnotation(ann)) {
+            const cutArmed = isShapeCutModeArmedFor(ann, pi);
+            ae.style.display = 'none';
+            tm.style.display = 'none';
+            if (shTagEl) shTagEl.style.display = 'none';
+            if (shFrontEl) shFrontEl.style.display = '';
+            if (shBackEl) shBackEl.style.display = '';
+            if (shEditEl) shEditEl.style.display = 'none';
+            if (shBgEl) shBgEl.style.display = 'none';
+            if (shCutEl) {
+                shCutEl.style.display = isLineShape(ann) ? 'none' : '';
+                shCutEl.classList.toggle('is-active', cutArmed);
+                shCutEl.title = cutArmed ? 'Cancel cut mode' : 'Cut shape';
+                shCutEl.setAttribute('aria-label', cutArmed ? 'Cancel cut mode' : 'Cut shape');
+            }
+            const isActiveLineShape = isLineShape(ann);
+            const lineGeometry = isActiveLineShape ? {
+                lineStartX: clamp01(ann.lineStartX, 0),
+                lineStartY: clamp01(ann.lineStartY, 0),
+                lineEndX: clamp01(ann.lineEndX, 1),
+                lineEndY: clamp01(ann.lineEndY, 1),
+            } : null;
+            const handleConfigs = isActiveLineShape ? {
+                nw: {
+                    visible: !locked,
+                    dir: 'line-start',
+                    cursor: 'move',
+                    aria: 'Move line start',
+                    left: left + (width * lineGeometry.lineStartX) - 6,
+                    top: top + (height * lineGeometry.lineStartY) - 6,
+                },
+                ne: { visible: false, dir: 'ne', cursor: 'ne-resize', aria: 'Resize northeast' },
+                sw: { visible: false, dir: 'sw', cursor: 'sw-resize', aria: 'Resize southwest' },
+                se: {
+                    visible: !locked,
+                    dir: 'line-end',
+                    cursor: 'move',
+                    aria: 'Move line end',
+                    left: left + (width * lineGeometry.lineEndX) - 6,
+                    top: top + (height * lineGeometry.lineEndY) - 6,
+                },
+            } : {
+                nw: { visible: !locked, dir: 'nw', cursor: 'nw-resize', aria: 'Resize northwest', left: left - 6, top: top - 6 },
+                ne: { visible: !locked, dir: 'ne', cursor: 'ne-resize', aria: 'Resize northeast', left: left + width - 6, top: top - 6 },
+                sw: { visible: !locked, dir: 'sw', cursor: 'sw-resize', aria: 'Resize southwest', left: left - 6, top: top + height - 6 },
+                se: { visible: !locked, dir: 'se', cursor: 'se-resize', aria: 'Resize southeast', left: left + width - 6, top: top + height - 6 },
+            };
+            ['nw', 'ne', 'sw', 'se'].forEach((key, index) => {
+                const handle = rhs[index];
+                const config = handleConfigs[key];
+                handle.dataset.dir = config.dir;
+                handle.setAttribute('aria-label', config.aria);
+                if (!config.visible || cutArmed) {
+                    handle.style.display = 'none';
+                    return;
+                }
+                handle.style.cssText = [
+                    'display:block',
+                    'position:absolute',
+                    `left:${config.left.toFixed(2)}px`,
+                    `top:${config.top.toFixed(2)}px`,
+                    'width:12px',
+                    'height:12px',
+                    `cursor:${config.cursor}`,
+                    'z-index:6',
+                ].join(';');
+            });
+            const helperTop = top - 46;
+            const helperBelow = helperTop < (getStickyUiBottomEdge() + 8);
+            sh.classList.toggle('is-below', helperBelow);
+            sh.style.cssText = [
+                // Keep the action bar hidden while a shape drag is in progress
+                // so it doesn't follow the cursor and re-trigger hover transitions
+                // on every mousemove tick.
+                (dragState.active && dragState.uid === ann._uid) ? 'display:none' : 'display:flex',
+                'position:absolute',
+                `left:${(left + (width / 2)).toFixed(2)}px`,
+                `top:${(helperBelow ? (top + height) : helperTop).toFixed(2)}px`,
+                'z-index:6',
+            ].join(';');
+            syncShapePanelUi();
+            positionRotateHandle(!isActiveLineShape && !locked && !cutArmed);
+            // Toggle the line-cap button only for line shapes; reflect its
+            // current state visually (active = round, default).
+            if (shCapEl) {
+                if (isActiveLineShape) {
+                    const isRound = (ann.lineCap || 'round') === 'round';
+                    shCapEl.style.display = '';
+                    shCapEl.classList.toggle('is-active', isRound);
+                    shCapEl.title = isRound ? 'Disable rounded line caps' : 'Enable rounded line caps';
+                } else {
+                    shCapEl.style.display = 'none';
+                }
+            }
+            // Lines are stroked outward from the bbox center by strokeWidth/2
+            // perpendicular to the line, AND round caps extend strokeWidth/2
+            // beyond each endpoint. Pad by the FULL stroke width on each side
+            // so the dashed selection box always sits clearly outside the
+            // visible stroke regardless of cap setting or AA.
+            if (isActiveLineShape) {
+                const selectionRect = lineSelectionRectPx(ann, scale, canvasHeight, 14);
+                applySelectionBox({
+                    left: selectionRect?.left ?? left,
+                    top: selectionRect?.top ?? top,
+                    width: selectionRect?.width ?? width,
+                    height: selectionRect?.height ?? height,
+                    rotation: 0,
+                    padX: 0,
+                    padY: 0,
+                    minWidth: 0,
+                    minHeight: 0,
+                    borderRadius: 6,
+                });
+            } else {
+                applySelectionBox({
+                    left,
+                    top,
+                    width,
+                    height,
+                    rotation: ann.rotation || 0,
+                    padX: 4,
+                    padY: 4,
+                    minWidth: 0,
+                    minHeight: 0,
+                    borderRadius: 6,
+                });
+            }
+            return;
+        }
+        if (isImageBackedAnnotation(ann)) {
+            ae.style.display = 'none';
+            tm.style.display = 'none';
+            if (shTagEl) {
+                const tagText = getAnnotationDisplayLabel(ann);
+                shTagEl.textContent = tagText;
+                shTagEl.style.display = tagText ? 'inline-flex' : 'none';
+            }
+            if (shFrontEl) shFrontEl.style.display = '';
+            if (shBackEl) shBackEl.style.display = '';
+            if (shEditEl) shEditEl.style.display = String(ann.type || '').toLowerCase() === 'signature' ? '' : 'none';
+            if (shBgEl) {
+                shBgEl.style.display = canRemoveBackgroundFromImageAnnotation(ann) ? '' : 'none';
+                shBgEl.textContent = imageBackgroundRemovalState.active && imageBackgroundRemovalState.uid === ann._uid
+                    ? '...'
+                    : 'BG';
+            }
+            if (shCutEl) shCutEl.style.display = 'none';
+            if (shCapEl) shCapEl.style.display = 'none';
+            ['nw', 'ne', 'sw', 'se'].forEach((key, index) => {
+                const handle = rhs[index];
+                const positions = {
+                    nw: { left: left - 6, top: top - 6 },
+                    ne: { left: left + width - 6, top: top - 6 },
+                    sw: { left: left - 6, top: top + height - 6 },
+                    se: { left: left + width - 6, top: top + height - 6 },
+                };
+                handle.dataset.dir = key;
+                handle.setAttribute('aria-label', `Resize ${key.toUpperCase()}`);
+                if (locked) {
+                    handle.style.display = 'none';
+                    return;
+                }
+                handle.style.cssText = [
+                    'display:block',
+                    'position:absolute',
+                    `left:${positions[key].left.toFixed(2)}px`,
+                    `top:${positions[key].top.toFixed(2)}px`,
+                    'width:12px',
+                    'height:12px',
+                    'z-index:6',
+                ].join(';');
+            });
+            const helperTop = top - 46;
+            const helperBelow = helperTop < (getStickyUiBottomEdge() + 8);
+            sh.classList.toggle('is-below', helperBelow);
+            sh.style.cssText = [
+                (dragState.active && dragState.uid === ann._uid) ? 'display:none' : 'display:flex',
+                'position:absolute',
+                `left:${(left + (width / 2)).toFixed(2)}px`,
+                `top:${(helperBelow ? (top + height) : helperTop).toFixed(2)}px`,
+                'z-index:6',
+            ].join(';');
+            positionRotateHandle(!locked);
+            applySelectionBox({
+                left,
+                top,
+                width,
+                height,
+                rotation: ann.rotation || 0,
+                padX: 4,
+                padY: 4,
+                minWidth: 0,
+                minHeight: 0,
+                borderRadius: 12,
+            });
+            return;
+        }
+        sh.style.display = 'none';
+        if (shTagEl) shTagEl.style.display = 'none';
+        if (shCapEl) shCapEl.style.display = 'none';
+        if (shCutEl) shCutEl.style.display = 'none';
 
         // Use editableLineStyle so ann-level overrides (format-bar font size / family / color)
         // drive the outer container, keeping the caret + any unwrapped text node in sync with
@@ -2942,8 +7315,10 @@
         const style0       = editableLineStyle(ann, 0);
         const lineHeightPx = blockLineHeightPx(ann, 0, scale, style0);
         const sourceRotation = annotationSourceRotationDegrees(ann);
-
-        const aeBgColor = resolveDisplayBgColor(ann);
+        const _inEditing = editorIsEditingAnnotation(ae, ann);
+        const selectedTextUsesDomLayer = !_inEditing && shouldRenderTextInRichHtmlLayer(ann);
+        const aeBgColor = selectedTextUsesDomLayer ? 'transparent' : resolveDisplayBgColor(ann);
+        const aeTextColor = style0.fillStyle;
         // Vertical alignment: use flex on the outer container so inner content is pushed
         // to top / middle / bottom of the annotation box. The editor HTML remains a single
         // block inside, so flex vertically positions the whole block without disrupting
@@ -2954,27 +7329,36 @@
             if (v === 'bottom') return 'flex-end';
             return 'flex-start';
         })();
+        const useFlexEditorLayout = vAlign !== 'flex-start';
         ae.style.cssText = [
-            'display:flex', 'flex-direction:column',
-            `justify-content:${vAlign}`,
+            `display:${useFlexEditorLayout ? 'flex' : 'block'}`,
+            ...(useFlexEditorLayout ? ['flex-direction:column', `justify-content:${vAlign}`] : []),
             'position:absolute',
             `left:${left.toFixed(2)}px`, `top:${top.toFixed(2)}px`,
-            `width:${width.toFixed(2)}px`, `height:${height.toFixed(2)}px`,
+            `width:${width.toFixed(2)}px`, `height:${Math.max(18, height).toFixed(2)}px`,
             `font-family:${style0.fontFamily}`,
-            `font-size:${(style0.fontSizePt * scale).toFixed(2)}px`,
+            `font-size:${(style0.fontSizePt * fontDisplayScale(scale)).toFixed(2)}px`,
             `font-weight:${ann.fontWeight || style0.fontWeight || '400'}`,
             `font-style:${ann.fontStyle || style0.fontStyle || 'normal'}`,
             `text-decoration:${ann.underline ? 'underline' : 'none'}`,
-            `color:${style0.fillStyle}`,
+            `color:${aeTextColor}`,
             `line-height:${lineHeightPx.toFixed(2)}px`,
             'padding:0', 'margin:0', `background:${aeBgColor}`,
             `text-align:${ann.textAlign || 'left'}`,
             `opacity:${parseFloat(ann.opacity ?? 1)}`,
-            'border:none', 'outline:none', 'overflow:visible',
+            'border:none', 'outline:none',
+            ...(ann._pageBoundsConstrained ? ['overflow-x:hidden', 'overflow-y:auto'] : ['overflow:visible']),
             'white-space:pre-wrap', 'word-break:break-word',
-            'pointer-events:auto', 'user-select:text', 'cursor:text',
-            'caret-color:#2563eb', 'z-index:5',
+            'pointer-events:auto',
+            'box-sizing:border-box',
+            'z-index:5',
         ].join(';');
+        // Cursor + selection vary based on whether the user is actively typing
+        // (data-editing) vs. just having the annotation selected (cursor:move,
+        // body click → drag). Set after cssText so they aren't overridden.
+        ae.style.cursor = _inEditing ? 'text' : 'move';
+        ae.style.userSelect = _inEditing ? 'text' : 'none';
+        ae.style.caretColor = _inEditing ? '#2563eb' : 'transparent';
         // Mark new-annotation creation state so CSS can show a visible input box + placeholder.
         // A new annotation has no source content and empty text; the green dashed border
         // (via [data-creating]) matches the .text-box-creator style from the edit view.
@@ -2994,12 +7378,33 @@
             // the annotation-level uniform styling. A forceRebuild from annotation-level
             // format changes (font family/size/etc.) still preserves the rich HTML since
             // annotation-level styles apply to the editor container, not the inner spans.
-            if (ann._richHtml) {
+            const _isEditing = editorIsEditingAnnotation(ae, ann);
+            const _canUseSourceEditorLayout = _isEditing && !shouldRenderTextInRichHtmlLayer(ann);
+            const _canUseCurrentBoxSourceFlow = _isEditing && !_canUseSourceEditorLayout;
+            if (!_isEditing && shouldRenderTextInRichHtmlLayer(ann)) {
+                ae.dataset.renderMode = 'dom-layer';
+                if (ae.innerHTML !== '') ae.innerHTML = '';
+            } else if (ann._richHtml) {
                 ae.dataset.renderMode = 'plain';
                 if (ae.innerHTML !== ann._richHtml) ae.innerHTML = ann._richHtml;
             } else {
                 const editedText = editedTexts[ann._uid];
-                if (editedText !== undefined && (editedText !== String(ann.text ?? '') || annotationDimensionsChanged(ann))) {
+                if (_isEditing && shouldUseSourceFlowEditorHTML(ann, editedText, {
+                    allowCurrentBoxSourceFlow: _canUseCurrentBoxSourceFlow,
+                })) {
+                    ae.dataset.renderMode = 'source-flow';
+                    ae.innerHTML = buildSourceFlowEditorHTML(ann, scale);
+                } else if (editedText !== undefined
+                    && (annotationDimensionsChanged(ann)
+                        || (editedText !== String(ann.text ?? '')
+                            && !annotationTextMatchesSource(ann, editedText)))) {
+                    // Real divergence from the extraction (user typed, or
+                    // dimensions grew). Use the plain reflow path. If the
+                    // editedText still whitespace-normalizes to the original
+                    // PDF source content (e.g. seeded from ann.text on load
+                    // with no user edit), fall through to the source-render
+                    // path so leader-dot spacing and per-span layout remain
+                    // pixel-identical to the deselected canvas baseline.
                     ae.dataset.renderMode = 'plain';
                     ae.innerHTML = renderPlainEditorHTML(ann, editedText, scale);
                 } else {
@@ -3012,13 +7417,53 @@
                     if (textWasEdited) {
                         ae.dataset.renderMode = 'plain';
                         ae.innerHTML = renderPlainEditorHTML(ann, savedText, scale);
+                    } else if (_isEditing) {
+                        if (_canUseSourceEditorLayout && annotationTextMatchesSource(ann, savedText)) {
+                            // Actively editing an unmodified promoted block — render the
+                            // per-span source DOM so the user can place a caret between
+                            // styled runs. Resized/DOM-owned annotations must not use
+                            // this source-positioned HTML because its native selection
+                            // highlight is offset from the current annotation box.
+                            ae.dataset.renderMode = 'source';
+                            ae.innerHTML = buildEditorHTML(ann, scale);
+                        } else {
+                            // The saved text has diverged from the old extraction
+                            // source lines. Rendering source DOM here shows stale
+                            // text, then the next keystroke snaps back to saved
+                            // text. Use the canonical annotation text instead.
+                            ae.dataset.renderMode = 'plain';
+                            ae.innerHTML = renderPlainEditorHTML(ann, savedText, scale);
+                        }
                     } else {
-                        // Text matches the original extraction — render with per-span styles
-                        ae.dataset.renderMode = 'source';
-                        ae.innerHTML = buildEditorHTML(ann, scale);
+                        // Just selected (drag/resize), not editing: leave the editor
+                        // empty so the canvas underneath renders with PDF-accurate
+                        // per-span positioning. Otherwise buildEditorHTML's
+                        // approximated inter-span gaps + scaleX fit can collapse a
+                        // space between styled runs (e.g. bold "Program
+                        // Administrator" joining "Steadily" with no space) and
+                        // shift glyph metrics — visibly changing spacing/font on
+                        // selection vs the unselected canvas render.
+                        ae.dataset.renderMode = 'canvas';
+                        if (ae.innerHTML !== '') ae.innerHTML = '';
                     }
                 }
             }
+        }
+        // For renderModes where canvas drawOriginalSource owns the visible
+        // painting (canvas-only fallback, or source/source-flow while actively
+        // editing pristine extracted text), hide ae's background + text color
+        // so the canvas baseline shows through unobstructed. ae still holds
+        // the contenteditable text nodes so the caret + execCommand keep
+        // working; only the visible glyphs come from canvas. The moment
+        // editedText diverges from ann.text, the cascade above switches to
+        // 'plain' renderMode and ae becomes opaque again.
+        const _canvasOwnsPaint = activeEditorCanvasOwnsPaint(ann, ae);
+        if (_canvasOwnsPaint) {
+            ae.style.background = 'transparent';
+            ae.style.color = 'transparent';
+            ae.dataset.canvasOwns = '1';
+        } else {
+            delete ae.dataset.canvasOwns;
         }
         if (ae.dataset.renderMode !== 'source' && Math.abs(sourceRotation) === 90 && height > 0 && width > 0) {
             ae.style.width = `${height.toFixed(2)}px`;
@@ -3031,15 +7476,36 @@
             ae.style.transformOrigin = 'top left';
             ae.style.transform = 'none';
         }
+        const userRotAe = Number(ann.rotation) || 0;
+        if (userRotAe) {
+            ae.style.transformOrigin = 'center center';
+            ae.style.transform = `rotate(${userRotAe}deg)`;
+        }
+        applySelectionBox({
+            left,
+            top,
+            width,
+            height: Math.max(18, height),
+            rotation: userRotAe,
+            padX: 0,
+            padY: 0,
+            minWidth: 0,
+            minHeight: 0,
+            borderRadius: 4,
+        });
         if (ae.dataset.renderMode === 'source') {
             fitActiveEditorSourceLines(ae, ann, scale);
         }
+
+        ae.setAttribute('contenteditable', locked ? 'false' : 'true');
 
         const menuTop = top - 42;
         const menuBelow = menuTop < 4;
         tm.classList.toggle('is-below', menuBelow);
         tm.style.cssText = [
-            'display:flex',
+            // Hide the text hover menu while dragging so it doesn't follow the
+            // cursor and re-trigger hover transitions on every mousemove tick.
+            (dragState.active && dragState.uid === ann._uid) ? 'display:none' : 'display:flex',
             'position:absolute',
             `left:${(left + (width / 2)).toFixed(2)}px`,
             `top:${(menuBelow ? (top + height) : menuTop).toFixed(2)}px`,
@@ -3052,9 +7518,15 @@
             sw: { left: left - 6, top: top + height - 6 },
             se: { left: left + width - 6, top: top + height - 6 },
         };
-        rhs.forEach((handle) => {
-            const dir = handle.dataset.dir;
+        ['nw', 'ne', 'sw', 'se'].forEach((dir, index) => {
+            const handle = rhs[index];
             const pos = handlePositions[dir];
+            handle.dataset.dir = dir;
+            handle.setAttribute('aria-label', `Resize ${dir.toUpperCase()}`);
+            if (locked) {
+                handle.style.display = 'none';
+                return;
+            }
             handle.style.cssText = [
                 'display:block',
                 'position:absolute',
@@ -3065,13 +7537,61 @@
                 'z-index:6',
             ].join(';');
         });
+
+        positionRotateHandle(!locked);
+
+        // Autofit: the canvas-based measureEditedTextHeightPts can under-estimate the
+        // rendered height (different metrics from CSS layout). After the editor DOM is
+        // populated, compare its scrollHeight against the assigned client height and
+        // grow the annotation box if the text overflows. Single re-sync only — guard
+        // prevents recursion.
+        // Skip autofit for pristine extracted annotations the user hasn't touched:
+        // CSS line-height rounding for promoted text routinely reports ~1–2px of
+        // spurious overflow vs the extraction-derived box, and growing the box on
+        // mere selection/focus mutates loaded geometry (and via setAnnotationBox →
+        // markUserAuthored permanently dirties the annotation), causing visible drift
+        // on no-op enter+blur cycles.
+        const _autofitEditedText = editedTexts[ann._uid];
+        const _autofitTextChanged = _autofitEditedText !== undefined
+            && _autofitEditedText !== String(ann.text ?? '');
+        const _autofitPristine = !ann.userCreated
+            && !isUserAuthoredAnnotation(ann)
+            && !_autofitTextChanged
+            && (
+                (Array.isArray(ann.sourceSpans) && ann.sourceSpans.length > 0)
+                || (Array.isArray(ann.sourceLineBBoxes) && ann.sourceLineBBoxes.length > 0)
+                || ann.promotedFromExtraction === true
+            );
+        if (!_autofitPristine && !suppressEditorAutofit && !syncActiveEditor._autofitGuard) {
+            const contentH = ae.scrollHeight;
+            const clientH = ae.clientHeight;
+            if (contentH > clientH + 0.5) {
+                const extraPts = (contentH - clientH) / Math.max(scale, 0.0001);
+                const curBox = resolveAnnBox(ann);
+                if (curBox) {
+                    const topFromPagePts = data.hPts - (curBox.y + curBox.h);
+                    const newH = curBox.h + extraPts;
+                    const newY = Math.max(0, data.hPts - topFromPagePts - newH);
+                    const boxChanged = setAnnotationBoxWithinPage(ann, activeState.pi, { x: curBox.x, y: newY, w: curBox.w, h: newH });
+                    if (boxChanged) {
+                        redrawOverlay(activeState.pi);
+                        syncActiveEditor._autofitGuard = true;
+                        try { syncActiveEditor(forceRebuild); }
+                        finally { syncActiveEditor._autofitGuard = false; }
+                    }
+                }
+            }
+        }
     }
 
     function clearActiveAnnotation() {
         if (dragState.active) endDrag();
         if (resizeState.active) endResize();
         if (textCreationState.active) cancelTextCreationPreview();
+        if (shapeCreationState.active) cancelShapeCreationPreview();
+        if (shapeCutState.armed) cancelShapeCutMode({ redraw: false });
         const prevPi = activeState.pi;
+        clearEditorEditingState(activeEditorForPage(prevPi));
         activeState = { pi: null, uid: null };
         syncActiveEditor();
         updateFormatBar();
@@ -3079,10 +7599,18 @@
     }
 
     function selectAnnotation(ann, pi) {
-        if ((!editModeEnabled && !addTextMode) || !ann) return;
+        if ((!editModeEnabled && !addTextMode && !shapeMode && !isBoxAnnotation(ann)) || !ann) return;
+        if (shapeCutState.armed && (shapeCutState.pi !== pi || shapeCutState.uid !== ann._uid)) {
+            cancelShapeCutMode({ redraw: false });
+        }
         const prevPi = activeState.pi;
+        const prevUid = activeState.uid;
+        const selectionChanged = prevPi !== pi || prevUid !== ann._uid;
+        if (prevUid && selectionChanged) {
+            clearEditorEditingState(activeEditorForPage(prevPi));
+        }
         activeState = { pi, uid: ann._uid };
-        syncActiveEditor();
+        syncActiveEditor(selectionChanged);
         updateFormatBar();
         if (prevPi !== null && prevPi !== pi) redrawOverlay(prevPi);
         redrawOverlay(pi);
@@ -3093,10 +7621,17 @@
         const data = pi !== null ? pageData[pi] : null;
         const ann  = data ? data.annotations.find(a => a._uid === uid) : null;
         if (!annFormatBar) return;
-        if (!ann) {
+        if (ann && !isTextAnnotation(ann)) {
             annFormatBar.classList.remove('is-visible');
+            syncShapePanelUi();
             return;
         }
+        if (!ann) {
+            annFormatBar.classList.remove('is-visible');
+            syncShapePanelUi();
+            return;
+        }
+        const locked = isAnnotationLocked(ann);
         annFormatBar.classList.add('is-visible');
         if (afbFont) {
             const fv = ann.fontFamily || 'Helvetica';
@@ -3105,7 +7640,7 @@
             if (!afbFont.value) afbFont.value = 'Helvetica';
         }
         const fontSize = Number(ann.fontSize) || 12;
-        if (afbSize)      afbSize.value = String(Math.round(Math.min(144, Math.max(6, fontSize))));
+        if (afbSize)      afbSize.value = String(fontPtToSliderValue(fontSize));
         if (afbSizeValue) afbSizeValue.textContent = Math.round(fontSize) + 'pt';
         if (afbTextColor) afbTextColor.value = ann.textColor || '#000000';
         if (afbBgColor)   afbBgColor.value   = ann.backgroundColor || '#ffffff';
@@ -3131,6 +7666,10 @@
         }
         if (afbAlign)  afbAlign.value  = ann.textAlign     || 'left';
         if (afbValign) afbValign.value = ann.verticalAlign || 'top';
+        [afbFont, afbSize, afbTextColor, afbBgColor, afbOpacity, afbBold, afbItalic, afbUnderline, afbAlign, afbValign].forEach((control) => {
+            if (control) control.disabled = locked;
+        });
+        syncShapePanelUi();
     }
 
     function updateSaveUi() {
@@ -3151,6 +7690,127 @@
 
     function redrawAllOverlays() {
         Object.keys(pageData).forEach((pi) => redrawOverlay(Number(pi)));
+    }
+
+    function reflectShapeStateToInputs(shapeState) {
+        if (!shapeState) return;
+        currentShapeType = normalizeShapeType(shapeState.shapeType);
+        currentShapeStrokeColor = normalizeHexColor(shapeState.strokeColor, currentShapeStrokeColor);
+        currentShapeStrokeOpacity = clamp01(shapeState.strokeOpacity, currentShapeStrokeOpacity);
+        currentShapeStrokeWidth = Math.max(1, Number(shapeState.strokeWidth) || currentShapeStrokeWidth);
+        currentShapeStrokeTransparent = Boolean(shapeState.strokeTransparent);
+        currentShapeFillColor = normalizeHexColor(shapeState.fillColor, currentShapeFillColor);
+        currentShapeFillOpacity = clamp01(shapeState.fillOpacity, currentShapeFillOpacity);
+        currentShapeFillTransparent = Boolean(shapeState.fillTransparent);
+
+        if (shapeStrokeColorInput) shapeStrokeColorInput.value = currentShapeStrokeColor;
+        if (shapeStrokeHexInput) shapeStrokeHexInput.value = currentShapeStrokeColor;
+        if (shapeStrokeTransparentInput) shapeStrokeTransparentInput.checked = currentShapeStrokeTransparent;
+        if (shapeStrokeWidthInput) shapeStrokeWidthInput.value = String(currentShapeStrokeWidth);
+        if (shapeStrokeWidthValue) shapeStrokeWidthValue.textContent = `${Math.round(currentShapeStrokeWidth)} px`;
+        if (shapeStrokeOpacityInput) shapeStrokeOpacityInput.value = String(Math.round(currentShapeStrokeOpacity * 100));
+        if (shapeStrokeOpacityValue) shapeStrokeOpacityValue.textContent = `${Math.round(currentShapeStrokeOpacity * 100)}%`;
+        if (shapeFillColorInput) shapeFillColorInput.value = currentShapeFillColor;
+        if (shapeFillHexInput) shapeFillHexInput.value = currentShapeFillColor;
+        if (shapeFillTransparentInput) shapeFillTransparentInput.checked = currentShapeFillTransparent;
+        if (shapeFillOpacityInput) shapeFillOpacityInput.value = String(Math.round(currentShapeFillOpacity * 100));
+        if (shapeFillOpacityValue) shapeFillOpacityValue.textContent = `${Math.round(currentShapeFillOpacity * 100)}%`;
+        shapeTypeButtons.forEach((button) => {
+            button.classList.toggle('is-active', button.dataset.shapeTool === currentShapeType);
+        });
+    }
+
+    function syncShapePanelUi() {
+        const active = getActiveAnnAndPage();
+        const activeShape = active && isShapeAnnotation(active.ann) ? active.ann : null;
+        const activeShapeLocked = isAnnotationLocked(activeShape);
+        const cutArmed = activeShape ? isShapeCutModeArmedFor(activeShape, active.pi) : false;
+        if (activeShape) normalizeShapeAnnotation(activeShape);
+        reflectShapeStateToInputs(activeShape || currentShapeDefaults());
+
+        const showPanel = !!activeShape || (!editModeEnabled && shapeMode);
+        if (shapeToolPanel) shapeToolPanel.classList.toggle('is-visible', showPanel);
+        if (shapeDrawToggle) {
+            shapeDrawToggle.textContent = shapeMode ? 'Drawing Active' : 'Draw Shape';
+            shapeDrawToggle.classList.toggle('is-primary', !shapeMode);
+            shapeDrawToggle.setAttribute('aria-pressed', shapeMode ? 'true' : 'false');
+        }
+        if (shapeModeIndicator) {
+            shapeModeIndicator.textContent = shapeMode ? 'Draw Mode' : (activeShape ? 'Shape Selected' : 'Idle');
+        }
+        if (shapeToolStatus) {
+            if (activeShape) {
+                const shapeLabel = normalizeShapeType(activeShape.shapeType);
+                if (cutArmed) {
+                    shapeToolStatus.innerHTML = `<strong>Cut mode:</strong> drag a line through the selected ${shapeLabel} shape.`;
+                } else {
+                    shapeToolStatus.innerHTML = `<strong>Selected:</strong> ${shapeLabel.charAt(0).toUpperCase() + shapeLabel.slice(1)} shape ready for styling, resize, move, or cut.`;
+                }
+            } else if (shapeMode) {
+                shapeToolStatus.innerHTML = '<strong>Drawing:</strong> drag on the canvas to place the next shape.';
+            } else {
+                shapeToolStatus.innerHTML = '<strong>Ready:</strong> pick a shape and click <span style="font-weight:700;">Draw Shape</span>.';
+            }
+        }
+        if (shapeCopyBtn) shapeCopyBtn.disabled = !activeShape || activeShapeLocked;
+        if (shapeDeleteBtn) shapeDeleteBtn.disabled = !activeShape || activeShapeLocked;
+    }
+
+    function setDrawToolStatus(message) {
+        if (drawToolStatus) drawToolStatus.textContent = String(message || '');
+    }
+
+    function clearActiveDrawSession() {
+        if (activeDrawSession?.layer?.parentNode) {
+            activeDrawSession.layer.parentNode.removeChild(activeDrawSession.layer);
+        }
+        activeDrawSession = null;
+    }
+
+    function syncDrawToolPanelUi() {
+        if (drawToolPanel) {
+            drawToolPanel.classList.toggle('is-visible', !editModeEnabled && drawModeActive);
+            drawToolPanel.setAttribute('aria-hidden', !editModeEnabled && drawModeActive ? 'false' : 'true');
+        }
+        drawToolButtons.forEach((button) => {
+            button.classList.toggle('is-active', button.dataset.drawDirectTool === drawToolType);
+        });
+        drawColorSwatches.forEach((button) => {
+            button.classList.toggle('is-active', normalizeHexColor(button.dataset.drawColor, '') === normalizeHexColor(drawStrokeColor, '#111827'));
+        });
+        if (drawToolColorInput) drawToolColorInput.value = normalizeHexColor(drawStrokeColor, '#111827');
+        if (drawToolSizeInput) drawToolSizeInput.value = String(drawBrushSize);
+        if (drawToolSizeValue) drawToolSizeValue.textContent = `${Math.round(drawBrushSize)}px`;
+        if (drawToolOpacityInput) drawToolOpacityInput.value = String(Math.round(drawOpacity * 100));
+        if (drawToolOpacityValue) drawToolOpacityValue.textContent = `${Math.round(drawOpacity * 100)}%`;
+        if (drawToolOpacityInput) drawToolOpacityInput.disabled = drawToolType === 'eraser';
+        setDrawToolStatus(
+            drawToolType === 'eraser'
+                ? 'Eraser is active. Drag over a drawing to remove parts of it.'
+                : 'Pen mode is active. Drag directly on the page to draw.'
+        );
+    }
+
+    function setDrawMode(active, nextTool = drawToolType) {
+        const nextState = !editModeEnabled && !!active;
+        if (nextState) {
+            cancelSignaturePlacement();
+            cancelEraseMode();
+            closeMarkupToolModal();
+            setAddTextMode(false);
+            setShapeMode(false);
+            cancelShapeCutMode({ redraw: false });
+            clearActiveAnnotation();
+            drawToolType = String(nextTool || '') === 'eraser' ? 'eraser' : 'pen';
+        } else {
+            clearActiveDrawSession();
+        }
+        drawModeActive = nextState;
+        hoverState = { pi: null, uid: null };
+        syncCanvasCursors();
+        syncDrawToolPanelUi();
+        updateEditModeUi();
+        redrawAllOverlays();
     }
 
     function updateEditModeUi() {
@@ -3176,19 +7836,77 @@
                 ? 'Turn Edit Mode OFF to add text'
                 : 'Add Text — click or drag on the page to place a new text block';
         }
+        if (addShapeBtn) {
+            addShapeBtn.disabled = editModeEnabled;
+            addShapeBtn.title = editModeEnabled
+                ? 'Turn Edit Mode OFF to draw shapes'
+                : 'Shapes — choose a shape and drag on the page to draw it';
+            addShapeBtn.classList.toggle('active', shapeMode);
+        }
         if (ftbAddText) {
             ftbAddText.classList.toggle('is-disabled', editModeEnabled);
             ftbAddText.title = editModeEnabled
                 ? 'Turn Edit Mode OFF to add text'
                 : 'Text — click on the page to place a new text block';
         }
+        if (ftbAddShape) {
+            ftbAddShape.classList.toggle('is-disabled', editModeEnabled);
+            ftbAddShape.classList.toggle('is-active', shapeMode);
+            ftbAddShape.title = editModeEnabled
+                ? 'Turn Edit Mode OFF to draw shapes'
+                : 'Shapes — choose a shape, then drag on the page to draw';
+        }
+        if (ftbSign) {
+            ftbSign.disabled = editModeEnabled;
+            ftbSign.classList.toggle('is-disabled', editModeEnabled);
+            ftbSign.classList.toggle(
+                'is-active',
+                !editModeEnabled && (
+                    signatureModal?.classList.contains('is-open')
+                    || (signaturePlacementState.active && signaturePlacementState.toolSource !== 'draw-erase')
+                )
+            );
+            ftbSign.title = editModeEnabled
+                ? 'Turn Edit Mode OFF to place signatures'
+                : 'Sign — create a signature by drawing, typing, or uploading an image';
+        }
+        if (ftbDrawErase) {
+            ftbDrawErase.disabled = editModeEnabled;
+            ftbDrawErase.classList.toggle('is-disabled', editModeEnabled);
+            ftbDrawErase.classList.toggle('is-active', !editModeEnabled && drawModeActive);
+            ftbDrawErase.title = editModeEnabled
+                ? 'Turn Edit Mode OFF to draw or erase annotations'
+                : (drawModeActive
+                    ? (drawToolType === 'eraser'
+                        ? 'Eraser active — drag over a drawing to remove parts of it'
+                        : 'Pen active — drag directly on the page to draw')
+                    : 'Draw & Erase — draw directly on the page or erase parts of an existing drawing');
+        }
+        if (ftbAddImage) {
+            ftbAddImage.disabled = editModeEnabled;
+            ftbAddImage.classList.toggle('is-disabled', editModeEnabled);
+            ftbAddImage.title = editModeEnabled
+                ? 'Turn Edit Mode OFF to insert an image'
+                : 'Image — import an image and place it on the page';
+        }
+        syncShapePanelUi();
+        syncDrawToolPanelUi();
     }
 
     function setEditModeEnabled(active) {
         const nextState = !!active;
         if (editModeEnabled === nextState) return;
+        cancelSignaturePlacement();
+        cancelEraseMode();
+        cancelShapeCutMode({ redraw: false });
+        if (nextState) {
+            closeSignatureModal();
+            closeMarkupToolModal();
+            setDrawMode(false);
+        }
         editModeEnabled = nextState;
         setAddTextMode(false); // always exit addTextMode when edit mode changes
+        setShapeMode(false);
         if (!editModeEnabled) {
             hoverState = { pi: null, uid: null };
             clearActiveAnnotation();
@@ -3200,11 +7918,1570 @@
         }
     }
 
+    function setSignatureStatus(message, tone = 'default') {
+        if (!signatureStatus) return;
+        signatureStatus.textContent = String(message || '');
+        signatureStatus.classList.toggle('is-error', tone === 'error');
+        signatureStatus.classList.toggle('is-ready', tone === 'ready');
+    }
+
+    function setSignatureDirtyState(dirty) {
+        signatureDirty = !!dirty;
+        if (signatureApplyBtn) signatureApplyBtn.disabled = !signatureDirty;
+        updateSignatureLibrarySaveUi();
+    }
+
+    function setMarkupToolStatus(message, tone = 'default') {
+        if (!markupToolStatus) return;
+        markupToolStatus.textContent = String(message || '');
+        markupToolStatus.classList.toggle('is-error', tone === 'error');
+        markupToolStatus.classList.toggle('is-ready', tone === 'ready');
+    }
+
+    function setMarkupToolDirtyState(dirty) {
+        markupToolDirty = !!dirty;
+        if (markupToolApplyBtn) {
+            markupToolApplyBtn.disabled = markupToolMode === 'draw' ? !markupToolDirty : false;
+        }
+    }
+
+    function clearMarkupToolCanvas() {
+        if (!markupToolCtx || !markupToolCanvas) return;
+        markupToolCtx.clearRect(0, 0, markupToolCanvas.width, markupToolCanvas.height);
+        markupToolCtx.lineCap = 'round';
+        markupToolCtx.lineJoin = 'round';
+    }
+
+    function clearMarkupToolDrawingState() {
+        markupToolDrawing = false;
+        markupToolStrokes = [];
+        markupToolActiveStroke = null;
+        clearMarkupToolCanvas();
+    }
+
+    function getMarkupToolSmoothingAmount() {
+        return clamp01((Number(markupToolSmoothingInput?.value) || 0) / 100, 0.58);
+    }
+
+    function hasMarkupToolDrawContent() {
+        return markupToolStrokes.some((stroke) => Array.isArray(stroke?.points) && stroke.points.length > 0)
+            || (Array.isArray(markupToolActiveStroke?.points) && markupToolActiveStroke.points.length > 0);
+    }
+
+    function paintMarkupToolStroke(stroke) {
+        const points = Array.isArray(stroke?.points) ? stroke.points : [];
+        if (!markupToolCtx || !points.length) return;
+
+        const smooth = getMarkupToolSmoothingAmount();
+        const color = stroke?.color || '#0f172a';
+        const width = Math.max(1, Number(stroke?.width) || 4);
+
+        markupToolCtx.save();
+        markupToolCtx.lineCap = 'round';
+        markupToolCtx.lineJoin = 'round';
+        markupToolCtx.strokeStyle = color;
+        markupToolCtx.fillStyle = color;
+        markupToolCtx.lineWidth = width;
+
+        if (points.length === 1) {
+            markupToolCtx.beginPath();
+            markupToolCtx.arc(points[0].x, points[0].y, Math.max(1, width / 2), 0, Math.PI * 2);
+            markupToolCtx.fill();
+            markupToolCtx.restore();
+            return;
+        }
+
+        markupToolCtx.beginPath();
+        markupToolCtx.moveTo(points[0].x, points[0].y);
+        if (smooth <= 0.01 || points.length === 2) {
+            for (let index = 1; index < points.length; index += 1) {
+                markupToolCtx.lineTo(points[index].x, points[index].y);
+            }
+        } else {
+            for (let index = 1; index < points.length - 1; index += 1) {
+                const current = points[index];
+                const next = points[index + 1];
+                const midX = (current.x + next.x) / 2;
+                const midY = (current.y + next.y) / 2;
+                const endX = current.x + ((midX - current.x) * smooth);
+                const endY = current.y + ((midY - current.y) * smooth);
+                markupToolCtx.quadraticCurveTo(current.x, current.y, endX, endY);
+            }
+            const last = points[points.length - 1];
+            markupToolCtx.lineTo(last.x, last.y);
+        }
+        markupToolCtx.stroke();
+        markupToolCtx.restore();
+    }
+
+    function renderMarkupToolDrawPreview() {
+        if (!markupToolCanvas || !markupToolCtx) return;
+        clearMarkupToolCanvas();
+        markupToolStrokes.forEach((stroke) => paintMarkupToolStroke(stroke));
+        if (markupToolActiveStroke) paintMarkupToolStroke(markupToolActiveStroke);
+    }
+
+    function syncMarkupToolLabels() {
+        if (markupToolColorValue && markupToolColorInput) markupToolColorValue.textContent = markupToolColorInput.value.toUpperCase();
+        if (markupToolWidthValue && markupToolWidthInput) markupToolWidthValue.textContent = `${markupToolWidthInput.value}px`;
+        if (markupToolSmoothingValue && markupToolSmoothingInput) markupToolSmoothingValue.textContent = `${markupToolSmoothingInput.value}%`;
+    }
+
+    function updateMarkupToolUi() {
+        markupToolTabs.forEach((tab) => {
+            tab.classList.toggle('is-active', tab.dataset.markupToolMode === markupToolMode);
+        });
+        markupToolPanels.forEach((panel) => {
+            panel.classList.toggle('is-active', panel.dataset.markupToolPanel === markupToolMode);
+        });
+        if (markupToolHint) {
+            markupToolHint.textContent = markupToolMode === 'draw'
+                ? 'Draw mode: click and drag to create a mark.'
+                : 'Erase mode: close the modal, then click any annotation to remove it.';
+        }
+        if (markupToolClearBtn) {
+            markupToolClearBtn.disabled = markupToolMode !== 'draw' || !hasMarkupToolDrawContent();
+            markupToolClearBtn.hidden = markupToolMode !== 'draw';
+        }
+        if (markupToolApplyBtn) {
+            markupToolApplyBtn.textContent = markupToolMode === 'draw' ? 'Place drawing' : 'Start erasing';
+        }
+        if (markupToolCanvas) markupToolCanvas.style.cursor = markupToolMode === 'draw' ? 'crosshair' : 'default';
+
+        if (markupToolMode === 'draw') {
+            renderMarkupToolDrawPreview();
+            const hasContent = hasMarkupToolDrawContent();
+            setMarkupToolDirtyState(hasContent);
+            setMarkupToolStatus(
+                hasContent ? 'Drawing ready to place.' : 'Draw a mark, then place it on the page.',
+                hasContent ? 'ready' : 'default'
+            );
+            return;
+        }
+
+        setMarkupToolDirtyState(true);
+        setMarkupToolStatus('Erase mode is ready. Close this modal and click annotations on the page to remove them.', 'ready');
+    }
+
+    function setMarkupToolMode(nextMode) {
+        markupToolMode = String(nextMode || '') === 'erase' ? 'erase' : 'draw';
+        updateMarkupToolUi();
+    }
+
+    function resetMarkupToolComposer() {
+        markupToolMode = 'draw';
+        if (markupToolColorInput) markupToolColorInput.value = '#0f172a';
+        if (markupToolWidthInput) markupToolWidthInput.value = '4';
+        if (markupToolSmoothingInput) markupToolSmoothingInput.value = '58';
+        syncMarkupToolLabels();
+        clearMarkupToolDrawingState();
+        setMarkupToolDirtyState(false);
+        setMarkupToolStatus('Draw a mark, then place it on the page.');
+    }
+
+    function buildCurrentMarkupAsset() {
+        if (!markupToolDirty || !markupToolCanvas) return null;
+        return {
+            dataUrl: markupToolCanvas.toDataURL('image/png'),
+            width: markupToolCanvas.width,
+            height: markupToolCanvas.height,
+            fileName: 'drawing.png',
+            mimeType: 'image/png',
+            toolSource: 'draw-erase',
+        };
+    }
+
+    function getMarkupToolCanvasPoint(event) {
+        if (!markupToolCanvas) return null;
+        const rect = markupToolCanvas.getBoundingClientRect();
+        if (!rect.width || !rect.height) return null;
+        return {
+            x: (event.clientX - rect.left) * (markupToolCanvas.width / rect.width),
+            y: (event.clientY - rect.top) * (markupToolCanvas.height / rect.height),
+        };
+    }
+
+    function beginMarkupToolStroke(event) {
+        if (markupToolMode !== 'draw' || !markupToolCtx) return;
+        const point = getMarkupToolCanvasPoint(event);
+        if (!point) return;
+        event.preventDefault();
+        markupToolDrawing = true;
+        markupToolActiveStroke = {
+            color: markupToolColorInput?.value || '#0f172a',
+            width: Math.max(1, Number(markupToolWidthInput?.value) || 4),
+            points: [point],
+        };
+        markupToolCanvas?.setPointerCapture?.(event.pointerId);
+        renderMarkupToolDrawPreview();
+    }
+
+    function drawMarkupToolStroke(event) {
+        if (!markupToolDrawing || markupToolMode !== 'draw' || !markupToolActiveStroke) return;
+        const point = getMarkupToolCanvasPoint(event);
+        if (!point) return;
+        markupToolActiveStroke.points.push(point);
+        renderMarkupToolDrawPreview();
+    }
+
+    function endMarkupToolStroke(event) {
+        if (!markupToolDrawing || markupToolMode !== 'draw') return;
+        markupToolDrawing = false;
+        markupToolCanvas?.releasePointerCapture?.(event?.pointerId);
+        if (markupToolActiveStroke?.points?.length) markupToolStrokes.push(markupToolActiveStroke);
+        markupToolActiveStroke = null;
+        renderMarkupToolDrawPreview();
+        const hasContent = hasMarkupToolDrawContent();
+        setMarkupToolDirtyState(hasContent);
+        setMarkupToolStatus(
+            hasContent ? 'Drawing ready to place.' : 'Draw a mark, then place it on the page.',
+            hasContent ? 'ready' : 'default'
+        );
+    }
+
+    function createDrawLayer(pi, className, width, height, left = 0, top = 0, cssWidth = width, cssHeight = height) {
+        const pageContent = document.getElementById('pc-' + (pi + 1));
+        if (!pageContent) return null;
+        const layer = document.createElement('canvas');
+        layer.className = className;
+        layer.width = Math.max(1, Math.round(width));
+        layer.height = Math.max(1, Math.round(height));
+        layer.style.left = `${left}px`;
+        layer.style.top = `${top}px`;
+        layer.style.width = `${Math.max(1, cssWidth)}px`;
+        layer.style.height = `${Math.max(1, cssHeight)}px`;
+        pageContent.appendChild(layer);
+        return layer;
+    }
+
+    function paintDrawDot(ctx, x, y, width, color, composite = 'source-over') {
+        ctx.save();
+        ctx.globalCompositeOperation = composite;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(x, y, Math.max(1, width / 2), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+
+    function paintDrawSegment(ctx, fromMid, controlPoint, toPoint, width, color, composite = 'source-over') {
+        ctx.save();
+        ctx.globalCompositeOperation = composite;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = color;
+        ctx.lineWidth = width;
+        ctx.beginPath();
+        ctx.moveTo(fromMid.x, fromMid.y);
+        ctx.quadraticCurveTo(controlPoint.x, controlPoint.y, toPoint.x, toPoint.y);
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    function localPointFromDrawSession(session, canvasPoint) {
+        const relX = (canvasPoint.x - session.left) / Math.max(1, session.displayWidth);
+        const relY = (canvasPoint.y - session.top) / Math.max(1, session.displayHeight);
+        return {
+            x: Math.max(0, Math.min(session.layer.width, relX * session.layer.width)),
+            y: Math.max(0, Math.min(session.layer.height, relY * session.layer.height)),
+        };
+    }
+
+    function beginDirectPenStroke(event, oc, pi) {
+        const point = canvasPointFromEvent(event, oc);
+        if (!point) return false;
+        const layer = createDrawLayer(pi, 'draw-preview-layer', oc.clientWidth, oc.clientHeight, 0, 0, oc.clientWidth, oc.clientHeight);
+        const ctx = layer?.getContext('2d');
+        if (!layer || !ctx) return false;
+        clearActiveDrawSession();
+        event.preventDefault();
+        oc.setPointerCapture?.(event.pointerId);
+        layer.style.opacity = String(drawOpacity);
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.imageSmoothingEnabled = true;
+        paintDrawDot(ctx, point.x, point.y, drawBrushSize, drawStrokeColor);
+        activeDrawSession = {
+            kind: 'pen',
+            pi,
+            overlay: oc,
+            pointerId: event.pointerId,
+            layer,
+            ctx,
+            color: drawStrokeColor,
+            width: drawBrushSize,
+            opacity: drawOpacity,
+            points: [point],
+            lastMidPoint: { x: point.x, y: point.y },
+            minX: point.x - (drawBrushSize / 2),
+            minY: point.y - (drawBrushSize / 2),
+            maxX: point.x + (drawBrushSize / 2),
+            maxY: point.y + (drawBrushSize / 2),
+        };
+        return true;
+    }
+
+    function moveDirectPenStroke(event, oc) {
+        if (!activeDrawSession || activeDrawSession.kind !== 'pen' || activeDrawSession.overlay !== oc) return false;
+        if (event.pointerId !== activeDrawSession.pointerId) return false;
+        const point = canvasPointFromEvent(event, oc);
+        if (!point) return true;
+        const lastPoint = activeDrawSession.points[activeDrawSession.points.length - 1];
+        const dx = point.x - lastPoint.x;
+        const dy = point.y - lastPoint.y;
+        if ((dx * dx) + (dy * dy) < 0.5) return true;
+        activeDrawSession.points.push(point);
+        activeDrawSession.minX = Math.min(activeDrawSession.minX, point.x - (activeDrawSession.width / 2));
+        activeDrawSession.minY = Math.min(activeDrawSession.minY, point.y - (activeDrawSession.width / 2));
+        activeDrawSession.maxX = Math.max(activeDrawSession.maxX, point.x + (activeDrawSession.width / 2));
+        activeDrawSession.maxY = Math.max(activeDrawSession.maxY, point.y + (activeDrawSession.width / 2));
+        const midPoint = { x: (lastPoint.x + point.x) / 2, y: (lastPoint.y + point.y) / 2 };
+        paintDrawSegment(activeDrawSession.ctx, activeDrawSession.lastMidPoint, lastPoint, midPoint, activeDrawSession.width, activeDrawSession.color);
+        activeDrawSession.lastMidPoint = midPoint;
+        return true;
+    }
+
+    function finishDirectPenStroke(event, oc) {
+        if (!activeDrawSession || activeDrawSession.kind !== 'pen' || activeDrawSession.overlay !== oc) return false;
+        if (event.pointerId !== activeDrawSession.pointerId) return false;
+        const session = activeDrawSession;
+        oc.releasePointerCapture?.(event.pointerId);
+        if (session.points.length > 1) {
+            const lastPoint = session.points[session.points.length - 1];
+            paintDrawSegment(session.ctx, session.lastMidPoint, lastPoint, lastPoint, session.width, session.color);
+        }
+        const padding = Math.max(session.width, 8);
+        const cropLeft = Math.max(0, Math.floor(session.minX - padding));
+        const cropTop = Math.max(0, Math.floor(session.minY - padding));
+        const cropRight = Math.min(session.layer.width, Math.ceil(session.maxX + padding));
+        const cropBottom = Math.min(session.layer.height, Math.ceil(session.maxY + padding));
+        const pageInfo = pageData[session.pi];
+        const pageScale = Math.max(0.0001, Number(pageInfo?.scale || 1));
+
+        // ── Auto-grouping ────────────────────────────────────────────────────
+        // If the user just drew another stroke on the same page within a short
+        // time window AND the new stroke's bbox is close to the previous
+        // direct-draw bbox, merge them into a single image annotation. This
+        // gives the natural "scribble several quick marks → one selection"
+        // behaviour while still keeping spatially-distant marks separate.
+        const MERGE_TIME_MS = 1500;
+        const MERGE_GAP_PT = 50;
+        const mergeGapPx = Math.max(MERGE_GAP_PT * pageScale, session.width * 2);
+        const now = Date.now();
+        let mergeCandidate = null;
+        if (pageInfo && Array.isArray(pageInfo.annotations)) {
+            for (let i = pageInfo.annotations.length - 1; i >= 0; i -= 1) {
+                const a = pageInfo.annotations[i];
+                if (!a) continue;
+                if (String(a.imageToolSource || '') !== 'direct-draw') continue;
+                if (typeof a._drawCreatedAt !== 'number') continue;
+                if (now - a._drawCreatedAt > MERGE_TIME_MS) continue;
+                if (Math.abs(Number(a.rotation) || 0) > 0.01) continue; // rotated → unsafe to composite
+                const aLeft = (Number(a.pdfX) || 0) * pageScale;
+                const aBottom = oc.clientHeight - (Number(a.pdfY) || 0) * pageScale;
+                const aRight = aLeft + (Number(a.pdfWidth) || 0) * pageScale;
+                const aTop = aBottom - (Number(a.pdfHeight) || 0) * pageScale;
+                const gapX = Math.max(0, Math.max(cropLeft, aLeft) - Math.min(cropRight, aRight));
+                const gapY = Math.max(0, Math.max(cropTop, aTop) - Math.min(cropBottom, aBottom));
+                const gap = Math.hypot(gapX, gapY);
+                if (gap > mergeGapPx) continue;
+                const cachedImg = getCachedAnnotationImage(a);
+                if (!cachedImg) continue; // can't composite without the bitmap
+                mergeCandidate = { ann: a, left: aLeft, top: aTop, right: aRight, bottom: aBottom, image: cachedImg };
+                break;
+            }
+        }
+
+        const uLeft = mergeCandidate ? Math.min(cropLeft, mergeCandidate.left) : cropLeft;
+        const uTop = mergeCandidate ? Math.min(cropTop, mergeCandidate.top) : cropTop;
+        const uRight = mergeCandidate ? Math.max(cropRight, mergeCandidate.right) : cropRight;
+        const uBottom = mergeCandidate ? Math.max(cropBottom, mergeCandidate.bottom) : cropBottom;
+        const cropWidth = Math.max(1, uRight - uLeft);
+        const cropHeight = Math.max(1, uBottom - uTop);
+        const outputCanvas = document.createElement('canvas');
+        const outputScale = 2;
+        outputCanvas.width = Math.max(1, Math.ceil(cropWidth * outputScale));
+        outputCanvas.height = Math.max(1, Math.ceil(cropHeight * outputScale));
+        const outputCtx = outputCanvas.getContext('2d');
+        outputCtx.imageSmoothingEnabled = true;
+        outputCtx.scale(outputScale, outputScale);
+        if (mergeCandidate) {
+            // Draw the prior drawing first (its image already has stroke opacity
+            // baked in from its own export pass), then the new stroke on top.
+            outputCtx.globalAlpha = 1;
+            outputCtx.drawImage(
+                mergeCandidate.image,
+                mergeCandidate.left - uLeft,
+                mergeCandidate.top - uTop,
+                mergeCandidate.right - mergeCandidate.left,
+                mergeCandidate.bottom - mergeCandidate.top
+            );
+        }
+        outputCtx.globalAlpha = session.opacity;
+        outputCtx.drawImage(session.layer, -uLeft, -uTop);
+        const pdfWidth = cropWidth / pageScale;
+        const pdfHeight = cropHeight / pageScale;
+        const pdfX = uLeft / pageScale;
+        const pdfY = (oc.clientHeight - uTop) / pageScale - pdfHeight;
+        clearActiveDrawSession();
+
+        if (mergeCandidate && pageInfo) {
+            // Replace the prior annotation in-place with the merged one. Single
+            // pushUndo() captures the pre-merge state so undo restores BOTH the
+            // prior annotation AND removes the merged result.
+            const mergedAnn = createImageAnnotationAtPageBox({
+                type: 'image',
+                dataUrl: outputCanvas.toDataURL('image/png'),
+                width: outputCanvas.width,
+                height: outputCanvas.height,
+                fileName: 'drawing.png',
+                mimeType: 'image/png',
+                intrinsicWidth: outputCanvas.width,
+                intrinsicHeight: outputCanvas.height,
+                imageToolSource: 'direct-draw',
+                drawStrokeColor: session.color,
+                pdfX,
+                pdfY,
+                pdfWidth,
+                pdfHeight,
+            }, session.pi);
+            if (mergedAnn) {
+                pushUndo();
+                const priorIdx = pageInfo.annotations.indexOf(mergeCandidate.ann);
+                if (priorIdx >= 0) pageInfo.annotations.splice(priorIdx, 1);
+                const priorId = String(mergeCandidate.ann.id || '').trim();
+                if (priorId) pendingDeletedAnnotationIds.add(priorId);
+                const firstTextIdx = pageInfo.annotations.findIndex((existing) => isTextAnnotation(existing));
+                if (firstTextIdx < 0) {
+                    pageInfo.annotations.push(mergedAnn);
+                } else {
+                    pageInfo.annotations.splice(firstTextIdx, 0, mergedAnn);
+                }
+                mergedAnn._drawCreatedAt = now;
+                redrawOverlay(session.pi);
+                clearActiveAnnotation();
+                markDirty();
+                setDrawToolStatus('Drawing added. Keep drawing or switch to the eraser.');
+                return true;
+            }
+        }
+
+        const created = placeImageBackedAnnotationAtPageBox(session.pi, {
+            dataUrl: outputCanvas.toDataURL('image/png'),
+            width: outputCanvas.width,
+            height: outputCanvas.height,
+            fileName: 'drawing.png',
+            mimeType: 'image/png',
+            imageToolSource: 'direct-draw',
+            drawStrokeColor: session.color,
+        }, {
+            pdfX,
+            pdfY,
+            pdfWidth,
+            pdfHeight,
+        }, 'image');
+        if (created) {
+            created._drawCreatedAt = now;
+            clearActiveAnnotation();
+            setDrawToolStatus('Drawing added. Keep drawing or switch to the eraser.');
+        }
+        return true;
+    }
+
+    async function beginDirectEraserStroke(event, oc, pi) {
+        const data = pageData[pi];
+        const point = canvasPointFromEvent(event, oc);
+        if (!data || !point) return false;
+        const ann = findAnnotationAt(point.x, point.y, data.annotations, data.scale, data.canvasHeight);
+        if (!ann) return false;
+        if (isAnnotationLocked(ann)) {
+            setDrawToolStatus('This annotation is locked. Unlock it before erasing.');
+            return true;
+        }
+
+        // For non-direct-draw annotations (shapes, text, etc.), delete them on click
+        if (!isDirectDrawAnnotation(ann)) {
+            deleteAnnotation(ann, pi);
+            setDrawToolStatus('Annotation deleted.');
+            return true;
+        }
+
+        // For direct-draw annotations, do partial erasing by painting over them
+        if (Math.abs(Number(ann.rotation) || 0) > 0.01) {
+            setDrawToolStatus('Rotate the drawing back to 0° before erasing it.');
+            return true;
+        }
+        const box = resolveAnnBox(ann);
+        if (!box) return true;
+        const left = box.x * data.scale;
+        const top = data.canvasHeight - (box.y + box.h) * data.scale;
+        const displayWidth = Math.max(1, box.w * data.scale);
+        const displayHeight = Math.max(1, box.h * data.scale);
+        const layer = createDrawLayer(
+            pi,
+            'draw-edit-layer',
+            Math.max(1, Number(ann.intrinsicWidth) || 1),
+            Math.max(1, Number(ann.intrinsicHeight) || 1),
+            left,
+            top,
+            displayWidth,
+            displayHeight
+        );
+        const ctx = layer?.getContext('2d');
+        if (!layer || !ctx) return true;
+        clearActiveDrawSession();
+        const src = getImageAnnotationSource(ann);
+        try {
+            const img = getCachedAnnotationImage(ann) || await loadImageSource(src);
+            ctx.drawImage(img, 0, 0, layer.width, layer.height);
+        } catch (_error) {
+            if (layer.parentNode) layer.parentNode.removeChild(layer);
+            setDrawToolStatus('Failed to load the drawing for erasing.');
+            return true;
+        }
+        event.preventDefault();
+        oc.setPointerCapture?.(event.pointerId);
+        const localPoint = localPointFromDrawSession({ layer, left, top, displayWidth, displayHeight }, point);
+        paintDrawDot(ctx, localPoint.x, localPoint.y, drawBrushSize, '#000000', 'destination-out');
+        activeDrawSession = {
+            kind: 'eraser',
+            pi,
+            overlay: oc,
+            pointerId: event.pointerId,
+            ann,
+            layer,
+            ctx,
+            left,
+            top,
+            displayWidth,
+            displayHeight,
+            width: drawBrushSize,
+            lastPoint: localPoint,
+            lastMidPoint: { x: localPoint.x, y: localPoint.y },
+            dirty: true,
+        };
+        setDrawToolStatus('Erasing the selected drawing. Release to save the change.');
+        return true;
+    }
+
+    function moveDirectEraserStroke(event, oc) {
+        if (!activeDrawSession || activeDrawSession.kind !== 'eraser' || activeDrawSession.overlay !== oc) return false;
+        if (event.pointerId !== activeDrawSession.pointerId) return false;
+        const point = canvasPointFromEvent(event, oc);
+        if (!point) return true;
+        const localPoint = localPointFromDrawSession(activeDrawSession, point);
+        const lastPoint = activeDrawSession.lastPoint;
+        const dx = localPoint.x - lastPoint.x;
+        const dy = localPoint.y - lastPoint.y;
+        if ((dx * dx) + (dy * dy) < 0.5) return true;
+        const midPoint = { x: (lastPoint.x + localPoint.x) / 2, y: (lastPoint.y + localPoint.y) / 2 };
+        paintDrawSegment(activeDrawSession.ctx, activeDrawSession.lastMidPoint, lastPoint, midPoint, activeDrawSession.width, '#000000', 'destination-out');
+        activeDrawSession.lastPoint = localPoint;
+        activeDrawSession.lastMidPoint = midPoint;
+        activeDrawSession.dirty = true;
+        return true;
+    }
+
+    function finishDirectEraserStroke(event, oc) {
+        if (!activeDrawSession || activeDrawSession.kind !== 'eraser' || activeDrawSession.overlay !== oc) return false;
+        if (event.pointerId !== activeDrawSession.pointerId) return false;
+        const session = activeDrawSession;
+        oc.releasePointerCapture?.(event.pointerId);
+        paintDrawSegment(session.ctx, session.lastMidPoint, session.lastPoint, session.lastPoint, session.width, '#000000', 'destination-out');
+        const dataUrl = session.layer.toDataURL('image/png');
+        clearActiveDrawSession();
+        replaceImageBackedAnnotation(session.ann, session.pi, {
+            dataUrl,
+            width: session.ann.intrinsicWidth,
+            height: session.ann.intrinsicHeight,
+            fileName: session.ann.fileName || 'drawing.png',
+            mimeType: session.ann.mimeType || 'image/png',
+            imageToolSource: 'direct-draw',
+            drawStrokeColor: session.ann.drawStrokeColor || null,
+        });
+        clearActiveAnnotation();
+        setDrawToolStatus('Drawing updated. Continue erasing or switch back to the pen.');
+        return true;
+    }
+
+    function cancelDirectDrawPointer(oc, pointerId = null) {
+        if (!activeDrawSession) return;
+        if (activeDrawSession.overlay !== oc) return;
+        if (pointerId !== null && activeDrawSession.pointerId !== pointerId) return;
+        oc.releasePointerCapture?.(activeDrawSession.pointerId);
+        clearActiveDrawSession();
+    }
+
+    function currentCanvasCursor() {
+        if (signaturePlacementState.active) return 'copy';
+        if (drawModeActive || eraseMode) return 'crosshair';
+        if (shapeCutState.armed) return 'crosshair';
+        if (addTextMode || shapeMode) return 'crosshair';
+        return 'default';
+    }
+
+    function syncCanvasCursors() {
+        Object.keys(pageData).forEach((piStr) => {
+            const oc = document.getElementById('oc-' + (Number(piStr) + 1));
+            if (oc) oc.style.cursor = currentCanvasCursor();
+        });
+    }
+
+    function openMarkupToolModal(initialMode = 'draw') {
+        if (!markupToolModal || editModeEnabled) return;
+        cancelSignaturePlacement();
+        cancelEraseMode();
+        cancelShapeCutMode({ redraw: false });
+        setAddTextMode(false);
+        setShapeMode(false);
+        resetMarkupToolComposer();
+        markupToolModal.classList.add('is-open');
+        markupToolModal.setAttribute('aria-hidden', 'false');
+        document.body.classList.add('markup-tool-modal-open');
+        setMarkupToolMode(initialMode);
+        updateEditModeUi();
+    }
+
+    function closeMarkupToolModal() {
+        if (!markupToolModal) return;
+        markupToolModal.classList.remove('is-open');
+        markupToolModal.setAttribute('aria-hidden', 'true');
+        document.body.classList.remove('markup-tool-modal-open');
+        markupToolDrawing = false;
+        markupToolActiveStroke = null;
+        updateEditModeUi();
+    }
+
+    function cancelEraseMode() {
+        if (!eraseMode) return;
+        eraseMode = false;
+        hoverState = { pi: null, uid: null };
+        syncCanvasCursors();
+        updateEditModeUi();
+        redrawAllOverlays();
+    }
+
+    function setEraseMode(active) {
+        const nextState = !editModeEnabled && !!active;
+        if (eraseMode === nextState) {
+            updateEditModeUi();
+            return;
+        }
+        if (nextState) {
+            cancelSignaturePlacement();
+            setAddTextMode(false);
+            setShapeMode(false);
+            cancelShapeCutMode({ redraw: false });
+            clearActiveAnnotation();
+        }
+        eraseMode = nextState;
+        hoverState = { pi: null, uid: null };
+        syncCanvasCursors();
+        updateEditModeUi();
+        redrawAllOverlays();
+    }
+
+    function clearSignatureCanvas() {
+        if (!signatureCtx || !signatureCanvas) return;
+        signatureCtx.clearRect(0, 0, signatureCanvas.width, signatureCanvas.height);
+        signatureCtx.lineCap = 'round';
+        signatureCtx.lineJoin = 'round';
+    }
+
+    function clearSignatureDrawingState() {
+        signatureDrawing = false;
+        signatureStrokes = [];
+        signatureActiveStroke = null;
+        clearSignatureCanvas();
+    }
+
+    function getSignatureSmoothingAmount() {
+        return clamp01((Number(signatureSmoothingInput?.value) || 0) / 100, 0.58);
+    }
+
+    function hasSignatureDrawContent() {
+        return signatureStrokes.some((stroke) => Array.isArray(stroke?.points) && stroke.points.length > 0)
+            || (Array.isArray(signatureActiveStroke?.points) && signatureActiveStroke.points.length > 0);
+    }
+
+    function paintSignatureStroke(stroke) {
+        const points = Array.isArray(stroke?.points) ? stroke.points : [];
+        if (!signatureCtx || !points.length) return;
+        const smooth = getSignatureSmoothingAmount();
+        const color = stroke?.color || '#111827';
+        const width = Math.max(1, Number(stroke?.width) || 3);
+
+        signatureCtx.save();
+        signatureCtx.lineCap = 'round';
+        signatureCtx.lineJoin = 'round';
+        signatureCtx.strokeStyle = color;
+        signatureCtx.fillStyle = color;
+        signatureCtx.lineWidth = width;
+
+        if (points.length === 1) {
+            signatureCtx.beginPath();
+            signatureCtx.arc(points[0].x, points[0].y, Math.max(1, width / 2), 0, Math.PI * 2);
+            signatureCtx.fill();
+            signatureCtx.restore();
+            return;
+        }
+
+        signatureCtx.beginPath();
+        signatureCtx.moveTo(points[0].x, points[0].y);
+        if (smooth <= 0.01 || points.length === 2) {
+            for (let index = 1; index < points.length; index += 1) {
+                signatureCtx.lineTo(points[index].x, points[index].y);
+            }
+        } else {
+            for (let index = 1; index < points.length - 1; index += 1) {
+                const current = points[index];
+                const next = points[index + 1];
+                const midX = (current.x + next.x) / 2;
+                const midY = (current.y + next.y) / 2;
+                const endX = current.x + ((midX - current.x) * smooth);
+                const endY = current.y + ((midY - current.y) * smooth);
+                signatureCtx.quadraticCurveTo(current.x, current.y, endX, endY);
+            }
+            const last = points[points.length - 1];
+            signatureCtx.lineTo(last.x, last.y);
+        }
+        signatureCtx.stroke();
+        signatureCtx.restore();
+    }
+
+    function renderDrawSignaturePreview() {
+        if (!signatureCanvas || !signatureCtx) return;
+        clearSignatureCanvas();
+        signatureStrokes.forEach((stroke) => paintSignatureStroke(stroke));
+        if (signatureActiveStroke) paintSignatureStroke(signatureActiveStroke);
+    }
+
+    function syncSignatureColorLabels() {
+        if (signatureColorValue && signatureColorInput) signatureColorValue.textContent = signatureColorInput.value.toUpperCase();
+        if (signatureTypeColorValue && signatureTypeColorInput) signatureTypeColorValue.textContent = signatureTypeColorInput.value.toUpperCase();
+        if (signatureWidthValue && signatureWidthInput) signatureWidthValue.textContent = `${signatureWidthInput.value}px`;
+        if (signatureSmoothingValue && signatureSmoothingInput) signatureSmoothingValue.textContent = `${signatureSmoothingInput.value}%`;
+    }
+
+    function updateSignatureModalCopy() {
+        const isEditingSignature = Boolean(signatureEditTarget);
+        if (signatureModalTitle) {
+            signatureModalTitle.textContent = isEditingSignature ? 'Edit your signature' : 'Add your signature';
+        }
+        if (signatureModalSubtitle) {
+            signatureModalSubtitle.textContent = isEditingSignature
+                ? 'Adjust the selected signature or replace it with a new one, then save it back into the document.'
+                : 'Create a clean signature mark for this PDF. Draw it freehand, type it in a script style, or upload an existing signature image.';
+        }
+    }
+
+    function signatureModeLabel(mode) {
+        const normalized = normalizeSignatureSourceMode(mode);
+        if (normalized === 'type') return 'typed';
+        if (normalized === 'upload') return 'uploaded';
+        return 'drawn';
+    }
+
+    function updateSignatureLibrarySaveUi() {
+        if (signatureSaveBtn) signatureSaveBtn.disabled = !signatureDirty;
+    }
+
+    function updateSignatureLibraryLoadUi() {
+        if (!signatureLibrarySelect) return;
+        const hasEntries = savedSignatureLibrary.length > 0;
+        const currentValue = String(signatureLibrarySelect.value || '');
+        signatureLibrarySelect.innerHTML = '<option value="">Load a saved signature</option>';
+        savedSignatureLibrary.forEach((entry) => {
+            const option = document.createElement('option');
+            option.value = String(entry.id || '');
+            option.textContent = String(entry.name || 'Saved signature');
+            signatureLibrarySelect.appendChild(option);
+        });
+        if (hasEntries && currentValue && savedSignatureLibrary.some((entry) => String(entry.id || '') === currentValue)) {
+            signatureLibrarySelect.value = currentValue;
+        } else {
+            signatureLibrarySelect.value = '';
+        }
+        signatureLibrarySelect.disabled = !hasEntries;
+        if (signatureLibraryLoadBtn) {
+            signatureLibraryLoadBtn.disabled = !signatureLibrarySelect.value;
+        }
+    }
+
+    function persistSavedSignatureLibrary() {
+        return safeLocalStorageSet(SIGNATURE_LIBRARY_KEY, JSON.stringify(savedSignatureLibrary));
+    }
+
+    function renderSavedSignatureLibrary() {
+        if (!signatureLibraryList) return;
+        updateSignatureLibraryLoadUi();
+        if (!savedSignatureLibrary.length) {
+            signatureLibraryList.innerHTML = '<div class="signature-library__empty">No saved signatures yet.</div>';
+            return;
+        }
+
+        signatureLibraryList.innerHTML = savedSignatureLibrary.map((entry) => {
+            const entryId = String(entry.id || '');
+            const label = String(entry.name || 'Saved signature');
+            const modeLabel = signatureModeLabel(entry.asset?.signatureSourceMode || entry.asset?.signatureComposer?.mode || 'draw');
+            const previewSrc = String(entry.previewDataUrl || entry.asset?.dataUrl || '').trim();
+            const updatedAt = entry.updatedAt ? new Date(entry.updatedAt) : null;
+            const updatedLabel = updatedAt && !Number.isNaN(updatedAt.getTime())
+                ? updatedAt.toLocaleDateString()
+                : 'Saved';
+            return (
+                `<div class="signature-library__item" data-signature-library-id="${entryId}">` +
+                    `<div class="signature-library__thumb">` +
+                        (previewSrc ? `<img src="${previewSrc}" alt="${escapeHtml(label)}">` : '') +
+                    `</div>` +
+                    `<div class="signature-library__meta">` +
+                        `<div class="signature-library__name-text" title="${escapeHtml(label)}">${escapeHtml(label)}</div>` +
+                        `<div class="signature-library__detail">${modeLabel} signature • ${escapeHtml(updatedLabel)}</div>` +
+                        `<div class="signature-library__actions">` +
+                            `<button type="button" class="signature-library__btn" data-signature-library-action="load">Load</button>` +
+                            `<button type="button" class="signature-library__btn is-danger" data-signature-library-action="delete">Delete</button>` +
+                        `</div>` +
+                    `</div>` +
+                `</div>`
+            );
+        }).join('');
+    }
+
+    function loadSavedSignatureLibrary() {
+        const raw = safeLocalStorageGet(SIGNATURE_LIBRARY_KEY);
+        if (!raw) {
+            savedSignatureLibrary = [];
+            renderSavedSignatureLibrary();
+            return;
+        }
+        try {
+            const parsed = JSON.parse(raw);
+            savedSignatureLibrary = Array.isArray(parsed)
+                ? parsed.filter((entry) => entry && typeof entry === 'object' && entry.asset && typeof entry.asset === 'object')
+                : [];
+        } catch (_error) {
+            savedSignatureLibrary = [];
+        }
+        renderSavedSignatureLibrary();
+    }
+
+    function makeSavedSignatureName() {
+        const explicitName = String(signatureSaveNameInput?.value || '').trim();
+        if (explicitName) return explicitName;
+        return `Signature ${savedSignatureLibrary.length + 1}`;
+    }
+
+    function buildSignatureLibraryEntry() {
+        const currentAsset = buildCurrentSignatureAsset();
+        if (!currentAsset) return null;
+
+        const snapshotDataUrl = signatureCanvas?.toDataURL('image/png') || currentAsset.dataUrl || '';
+        const nextAsset = cloneSerializableValue(currentAsset, null);
+        if (!nextAsset || !snapshotDataUrl) return null;
+
+        nextAsset.dataUrl = snapshotDataUrl;
+        nextAsset.src = '';
+        if (nextAsset.signatureSourceMode === 'upload') {
+            if (nextAsset.signatureComposer?.imageAsset && typeof nextAsset.signatureComposer.imageAsset === 'object') {
+                nextAsset.signatureComposer.imageAsset.dataUrl = nextAsset.signatureComposer.imageAsset.dataUrl || snapshotDataUrl;
+                nextAsset.signatureComposer.imageAsset.src = '';
+                delete nextAsset.signatureComposer.imageAsset.assetPath;
+            }
+            delete nextAsset.assetPath;
+            delete nextAsset.imagePath;
+        }
+
+        return {
+            id: `saved-signature-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+            name: makeSavedSignatureName(),
+            previewDataUrl: snapshotDataUrl,
+            asset: nextAsset,
+            updatedAt: new Date().toISOString(),
+        };
+    }
+
+    function saveCurrentSignatureToLibrary() {
+        const entry = buildSignatureLibraryEntry();
+        if (!entry) {
+            setSignatureStatus('Create a signature before saving it.', 'error');
+            return;
+        }
+        const previousLibrary = savedSignatureLibrary.slice();
+        savedSignatureLibrary = [entry, ...savedSignatureLibrary].slice(0, SIGNATURE_LIBRARY_LIMIT);
+        if (!persistSavedSignatureLibrary()) {
+            savedSignatureLibrary = previousLibrary;
+            setSignatureStatus('Unable to save signature in this browser.', 'error');
+            return;
+        }
+        renderSavedSignatureLibrary();
+        if (signatureSaveNameInput) signatureSaveNameInput.value = '';
+        setSignatureStatus(`Saved "${entry.name}" to your signature library.`, 'ready');
+    }
+
+    async function loadSavedSignatureFromLibrary(entryId) {
+        const entry = savedSignatureLibrary.find((item) => String(item.id || '') === String(entryId || ''));
+        if (!entry?.asset) return;
+
+        resetSignatureComposer();
+        signatureEditTarget = null;
+        updateSignatureModalCopy();
+        updateSignatureModeUi();
+
+        try {
+            await loadSignatureComposerFromAnnotation({
+                type: 'signature',
+                signatureSourceMode: entry.asset.signatureSourceMode || entry.asset.signatureComposer?.mode || 'draw',
+                signatureComposer: cloneSerializableValue(entry.asset.signatureComposer || null, null),
+                dataUrl: entry.asset.dataUrl || '',
+                src: entry.asset.src || '',
+                fileName: entry.asset.fileName || 'signature.png',
+                mimeType: entry.asset.mimeType || 'image/png',
+                intrinsicWidth: entry.asset.width || entry.asset.intrinsicWidth || signatureCanvas?.width || 1,
+                intrinsicHeight: entry.asset.height || entry.asset.intrinsicHeight || signatureCanvas?.height || 1,
+                assetPath: entry.asset.assetPath || null,
+            });
+            setSignatureStatus(`Loaded "${entry.name}".`, 'ready');
+        } catch (error) {
+            setSignatureStatus(error?.message || 'Failed to load saved signature.', 'error');
+            setSignatureDirtyState(false);
+        }
+    }
+
+    function deleteSavedSignatureFromLibrary(entryId) {
+        const nextLibrary = savedSignatureLibrary.filter((item) => String(item.id || '') !== String(entryId || ''));
+        if (nextLibrary.length === savedSignatureLibrary.length) return;
+        const previousLibrary = savedSignatureLibrary.slice();
+        savedSignatureLibrary = nextLibrary;
+        if (!persistSavedSignatureLibrary()) {
+            savedSignatureLibrary = previousLibrary;
+            setSignatureStatus('Unable to update saved signatures in this browser.', 'error');
+            return;
+        }
+        renderSavedSignatureLibrary();
+        setSignatureStatus('Saved signature removed from your library.');
+    }
+
+    function resetSignatureComposer() {
+        signatureMode = 'draw';
+        signatureImageAsset = null;
+        signatureEditTarget = null;
+        signatureTypedRenderToken += 1;
+        if (signatureSaveNameInput) signatureSaveNameInput.value = '';
+        if (signatureTextInput) signatureTextInput.value = '';
+        if (signatureImageInput) signatureImageInput.value = '';
+        if (signatureImageName) signatureImageName.textContent = 'No file selected';
+        if (signatureColorInput) signatureColorInput.value = '#111827';
+        if (signatureTypeColorInput) signatureTypeColorInput.value = '#111827';
+        if (signatureWidthInput) signatureWidthInput.value = '3';
+        if (signatureSmoothingInput) signatureSmoothingInput.value = '58';
+        if (signatureFontInput) signatureFontInput.value = 'Great Vibes';
+        syncSignatureColorLabels();
+        clearSignatureDrawingState();
+        setSignatureDirtyState(false);
+        setSignatureStatus('Create a signature, then place it on the current page.');
+        updateSignatureModalCopy();
+        updateSignatureLibrarySaveUi();
+        void ensureSignatureFontLoaded(signatureFontInput?.value || 'Great Vibes');
+    }
+
+    const readFileAsDataUrl = (file) => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(new Error('Failed to read image file.'));
+        reader.readAsDataURL(file);
+    });
+
+    const loadImageElement = (src) => new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('Failed to load image.'));
+        img.src = src;
+    });
+
+    async function normalizeImportedImageAsset(file) {
+        if (!file || !String(file.type || '').startsWith('image/')) {
+            throw new Error('Choose an image file to import.');
+        }
+        const sourceDataUrl = await readFileAsDataUrl(file);
+        const img = await loadImageElement(sourceDataUrl);
+        const naturalWidth = Math.max(1, img.naturalWidth || img.width || 1);
+        const naturalHeight = Math.max(1, img.naturalHeight || img.height || 1);
+        const maxDimension = 2048;
+        const scale = Math.min(1, maxDimension / Math.max(naturalWidth, naturalHeight));
+        const targetWidth = Math.max(1, Math.round(naturalWidth * scale));
+        const targetHeight = Math.max(1, Math.round(naturalHeight * scale));
+        const normalizeCanvas = document.createElement('canvas');
+        normalizeCanvas.width = targetWidth;
+        normalizeCanvas.height = targetHeight;
+        const normalizeCtx = normalizeCanvas.getContext('2d');
+        normalizeCtx.clearRect(0, 0, targetWidth, targetHeight);
+        normalizeCtx.drawImage(img, 0, 0, targetWidth, targetHeight);
+        return {
+            dataUrl: normalizeCanvas.toDataURL('image/png'),
+            width: targetWidth,
+            height: targetHeight,
+            fileName: file.name || 'signature.png',
+            mimeType: 'image/png',
+        };
+    }
+
+    function ensureSignatureFontLoaded(fontName) {
+        const normalizedFontName = String(fontName || '').trim();
+        if (!normalizedFontName) return Promise.resolve();
+        if (signatureFontLoadPromises.has(normalizedFontName)) {
+            return signatureFontLoadPromises.get(normalizedFontName);
+        }
+        const id = `signature-font-${normalizedFontName.replace(/\s+/g, '-')}`;
+        const fontPromise = new Promise((resolve) => {
+            let settled = false;
+            const finish = () => {
+                if (settled) return;
+                settled = true;
+                if (!document.fonts?.load) {
+                    resolve();
+                    return;
+                }
+                Promise.allSettled([
+                    document.fonts.load(`400 96px "${normalizedFontName}"`),
+                    document.fonts.load(`700 96px "${normalizedFontName}"`),
+                ]).finally(resolve);
+            };
+
+            let link = document.getElementById(id);
+            if (!(link instanceof HTMLLinkElement)) {
+                link = document.createElement('link');
+                link.id = id;
+                link.rel = 'stylesheet';
+                link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(normalizedFontName)}:wght@400;700&display=swap`;
+                document.head.appendChild(link);
+            }
+
+            if (link.dataset.loaded === '1') {
+                finish();
+                return;
+            }
+
+            const markLoaded = () => {
+                link.dataset.loaded = '1';
+                finish();
+            };
+
+            link.addEventListener('load', markLoaded, { once: true });
+            link.addEventListener('error', markLoaded, { once: true });
+            window.setTimeout(markLoaded, 1800);
+        });
+
+        signatureFontLoadPromises.set(normalizedFontName, fontPromise);
+        return fontPromise;
+    }
+
+    async function renderTypedSignaturePreview() {
+        const renderToken = ++signatureTypedRenderToken;
+        if (signatureMode !== 'type' || !signatureCanvas || !signatureCtx) return;
+        const text = String(signatureTextInput?.value || '').trim();
+        clearSignatureCanvas();
+        if (!text) {
+            setSignatureDirtyState(false);
+            return;
+        }
+        const fontName = signatureFontInput?.value || 'Great Vibes';
+        await ensureSignatureFontLoaded(fontName);
+        if (
+            renderToken !== signatureTypedRenderToken
+            || signatureMode !== 'type'
+            || !signatureCanvas
+            || !signatureCtx
+        ) {
+            return;
+        }
+        clearSignatureCanvas();
+        const inkColor = signatureTypeColorInput?.value || '#111827';
+        const maxWidth = signatureCanvas.width * 0.82;
+        let fontSize = 136;
+        signatureCtx.textAlign = 'center';
+        signatureCtx.textBaseline = 'middle';
+        signatureCtx.fillStyle = inkColor;
+        while (fontSize > 24) {
+            signatureCtx.font = `${fontSize}px "${fontName}", cursive`;
+            if (signatureCtx.measureText(text).width <= maxWidth) break;
+            fontSize -= 4;
+        }
+        signatureCtx.fillText(text, signatureCanvas.width / 2, signatureCanvas.height / 2);
+        setSignatureDirtyState(true);
+        setSignatureStatus('Typed signature ready to place.', 'ready');
+    }
+
+    async function renderSignatureImagePreview() {
+        if (signatureMode !== 'upload' || !signatureCanvas || !signatureCtx) return;
+        clearSignatureCanvas();
+        const previewSrc = String(signatureImageAsset?.dataUrl || signatureImageAsset?.src || '').trim();
+        if (!previewSrc) {
+            setSignatureDirtyState(false);
+            return;
+        }
+        const img = await loadImageElement(previewSrc);
+        const padding = 24;
+        const availableWidth = Math.max(1, signatureCanvas.width - (padding * 2));
+        const availableHeight = Math.max(1, signatureCanvas.height - (padding * 2));
+        const drawScale = Math.min(availableWidth / img.naturalWidth, availableHeight / img.naturalHeight, 1);
+        const drawWidth = Math.max(1, img.naturalWidth * drawScale);
+        const drawHeight = Math.max(1, img.naturalHeight * drawScale);
+        const drawX = (signatureCanvas.width - drawWidth) / 2;
+        const drawY = (signatureCanvas.height - drawHeight) / 2;
+        signatureCtx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
+        setSignatureDirtyState(true);
+        setSignatureStatus('Uploaded signature ready to place.', 'ready');
+    }
+
+    function updateSignatureModeUi() {
+        signatureTabs.forEach((tab) => {
+            tab.classList.toggle('is-active', tab.dataset.signatureMode === signatureMode);
+        });
+        signaturePanels.forEach((panel) => {
+            panel.classList.toggle('is-active', panel.dataset.signaturePanel === signatureMode);
+        });
+        if (signatureHint) {
+            signatureHint.textContent = signatureMode === 'draw'
+                ? 'Draw mode: click and drag to sign.'
+                : (signatureMode === 'type'
+                    ? 'Type mode: edit your name and preview it live.'
+                    : 'Upload mode: choose an image and preview the stamp.');
+        }
+        if (signatureApplyBtn) {
+            const actionVerb = signatureEditTarget ? 'Update' : 'Use';
+            signatureApplyBtn.textContent = signatureMode === 'upload'
+                ? `${actionVerb} uploaded signature`
+                : (signatureMode === 'type' ? `${actionVerb} typed signature` : `${actionVerb} signature`);
+        }
+        if (signatureCanvas) signatureCanvas.style.cursor = signatureMode === 'draw' ? 'crosshair' : 'default';
+        if (signatureMode === 'draw') {
+            renderDrawSignaturePreview();
+            setSignatureDirtyState(hasSignatureDrawContent());
+            setSignatureStatus(
+                hasSignatureDrawContent()
+                    ? 'Signature ready to place.'
+                    : 'Draw a signature, then place it on the page.',
+                hasSignatureDrawContent() ? 'ready' : 'default'
+            );
+        } else if (signatureMode === 'type') {
+            renderTypedSignaturePreview();
+        } else if (signatureMode === 'upload') {
+            renderSignatureImagePreview().catch((error) => {
+                setSignatureStatus(error?.message || 'Failed to preview image.', 'error');
+                setSignatureDirtyState(false);
+            });
+        }
+    }
+
+    function setSignatureMode(nextMode) {
+        signatureMode = ['draw', 'type', 'upload'].includes(String(nextMode)) ? String(nextMode) : 'draw';
+        updateSignatureModeUi();
+    }
+
+    function buildCurrentSignatureAsset() {
+        if (!signatureDirty || !signatureCanvas) return null;
+
+        if (signatureMode === 'upload') {
+            const uploadAsset = signatureImageAsset || {};
+            const previewSrc = String(uploadAsset.dataUrl || uploadAsset.src || '').trim();
+            if (!previewSrc) return null;
+            return {
+                ...uploadAsset,
+                dataUrl: uploadAsset.dataUrl || '',
+                src: uploadAsset.src || '',
+                width: uploadAsset.width || uploadAsset.intrinsicWidth || 1,
+                height: uploadAsset.height || uploadAsset.intrinsicHeight || 1,
+                fileName: uploadAsset.fileName || 'signature.png',
+                mimeType: uploadAsset.mimeType || 'image/png',
+                assetPath: uploadAsset.assetPath || uploadAsset.imagePath || null,
+                signatureSourceMode: 'upload',
+                signatureComposer: {
+                    mode: 'upload',
+                    imageAsset: {
+                        dataUrl: uploadAsset.dataUrl || '',
+                        src: uploadAsset.src || '',
+                        width: uploadAsset.width || uploadAsset.intrinsicWidth || 1,
+                        height: uploadAsset.height || uploadAsset.intrinsicHeight || 1,
+                        fileName: uploadAsset.fileName || 'signature.png',
+                        mimeType: uploadAsset.mimeType || 'image/png',
+                        assetPath: uploadAsset.assetPath || uploadAsset.imagePath || null,
+                    },
+                },
+            };
+        }
+
+        const canvasAsset = {
+            dataUrl: signatureCanvas.toDataURL('image/png'),
+            width: signatureCanvas.width,
+            height: signatureCanvas.height,
+            fileName: 'signature.png',
+            mimeType: 'image/png',
+            signatureSourceMode: signatureMode,
+        };
+
+        if (signatureMode === 'type') {
+            canvasAsset.signatureComposer = {
+                mode: 'type',
+                text: String(signatureTextInput?.value || '').trim(),
+                fontFamily: String(signatureFontInput?.value || 'Great Vibes').trim(),
+                inkColor: normalizeHexColor(signatureTypeColorInput?.value, '#111827'),
+            };
+            return canvasAsset;
+        }
+
+        canvasAsset.signatureComposer = {
+            mode: 'draw',
+            strokes: cloneSerializableValue(signatureStrokes, []),
+            inkColor: normalizeHexColor(signatureColorInput?.value, '#111827'),
+            strokeWidth: Math.max(1, Number(signatureWidthInput?.value) || 3),
+            smoothing: Math.max(0, Math.min(100, Number(signatureSmoothingInput?.value) || 58)),
+        };
+        return canvasAsset;
+    }
+
+    async function loadSignatureComposerFromAnnotation(ann) {
+        if (!ann || String(ann.type || '').toLowerCase() !== 'signature') return;
+
+        const composer = ann.signatureComposer && typeof ann.signatureComposer === 'object'
+            ? ann.signatureComposer
+            : null;
+        const preferredMode = normalizeSignatureSourceMode(composer?.mode || ann.signatureSourceMode);
+
+        if (preferredMode === 'type' && composer) {
+            if (signatureTextInput) signatureTextInput.value = String(composer.text || '');
+            if (signatureFontInput) signatureFontInput.value = String(composer.fontFamily || 'Great Vibes');
+            if (signatureTypeColorInput) {
+                signatureTypeColorInput.value = normalizeHexColor(composer.inkColor, '#111827');
+            }
+            syncSignatureColorLabels();
+            setSignatureMode('type');
+            await renderTypedSignaturePreview();
+            setSignatureStatus('Typed signature loaded. Update it and save it back to the page.', signatureDirty ? 'ready' : 'default');
+            return;
+        }
+
+        if (preferredMode === 'draw' && Array.isArray(composer?.strokes) && composer.strokes.length > 0) {
+            if (signatureColorInput) signatureColorInput.value = normalizeHexColor(composer.inkColor, '#111827');
+            if (signatureWidthInput) signatureWidthInput.value = String(Math.max(1, Number(composer.strokeWidth) || 3));
+            if (signatureSmoothingInput) signatureSmoothingInput.value = String(Math.max(0, Math.min(100, Number(composer.smoothing) || 58)));
+            syncSignatureColorLabels();
+            signatureStrokes = cloneSerializableValue(composer.strokes, []);
+            signatureActiveStroke = null;
+            setSignatureMode('draw');
+            renderDrawSignaturePreview();
+            setSignatureDirtyState(hasSignatureDrawContent());
+            setSignatureStatus('Drawn signature loaded. Keep drawing or save it back to the page.', signatureDirty ? 'ready' : 'default');
+            return;
+        }
+
+        const imageSource = getImageAnnotationSource(ann);
+        signatureImageAsset = {
+            dataUrl: String(composer?.imageAsset?.dataUrl || '').trim(),
+            src: String(composer?.imageAsset?.src || imageSource || '').trim(),
+            width: Math.max(1, Number(composer?.imageAsset?.width || ann.intrinsicWidth || ann.pdfWidth || 1) || 1),
+            height: Math.max(1, Number(composer?.imageAsset?.height || ann.intrinsicHeight || ann.pdfHeight || 1) || 1),
+            fileName: String(composer?.imageAsset?.fileName || ann.fileName || 'signature.png'),
+            mimeType: String(composer?.imageAsset?.mimeType || ann.mimeType || 'image/png'),
+            assetPath: String(composer?.imageAsset?.assetPath || ann.assetPath || ann.imagePath || ''),
+        };
+        if (signatureImageName) {
+            signatureImageName.textContent = `${signatureImageAsset.fileName} • ${signatureImageAsset.width}×${signatureImageAsset.height}`;
+        }
+        setSignatureMode('upload');
+        await renderSignatureImagePreview();
+        setSignatureStatus('Signature loaded. Replace it or save it back to the page.', signatureDirty ? 'ready' : 'default');
+    }
+
+    function openSignatureModal(initialMode = 'draw') {
+        if (!signatureModal || editModeEnabled) return;
+        closeMarkupToolModal();
+        cancelEraseMode();
+        cancelShapeCutMode({ redraw: false });
+        setDrawMode(false);
+        setAddTextMode(false);
+        setShapeMode(false);
+        resetSignatureComposer();
+        signatureModal.classList.add('is-open');
+        signatureModal.setAttribute('aria-hidden', 'false');
+        document.body.classList.add('signature-modal-open');
+        setSignatureMode(initialMode);
+        updateEditModeUi();
+    }
+
+    async function openSignatureEditModal(ann, pi) {
+        if (!signatureModal || editModeEnabled) return;
+        if (!ann || String(ann.type || '').toLowerCase() !== 'signature') return;
+        closeMarkupToolModal();
+        cancelEraseMode();
+        cancelShapeCutMode({ redraw: false });
+        setDrawMode(false);
+        setAddTextMode(false);
+        setShapeMode(false);
+        cancelSignaturePlacement();
+        resetSignatureComposer();
+        signatureEditTarget = { pi, uid: ann._uid };
+        updateSignatureModalCopy();
+        updateSignatureModeUi();
+        signatureModal.classList.add('is-open');
+        signatureModal.setAttribute('aria-hidden', 'false');
+        document.body.classList.add('signature-modal-open');
+        setSignatureStatus('Loading selected signature…');
+        try {
+            await loadSignatureComposerFromAnnotation(ann);
+        } catch (error) {
+            setSignatureStatus(error?.message || 'Failed to load signature.', 'error');
+            setSignatureDirtyState(false);
+        }
+        updateEditModeUi();
+    }
+
+    function closeSignatureModal() {
+        if (!signatureModal) return;
+        signatureModal.classList.remove('is-open');
+        signatureModal.setAttribute('aria-hidden', 'true');
+        document.body.classList.remove('signature-modal-open');
+        signatureDrawing = false;
+        signatureActiveStroke = null;
+        signatureEditTarget = null;
+        updateSignatureModalCopy();
+        updateEditModeUi();
+    }
+
+    function cancelSignaturePlacement() {
+        if (!signaturePlacementState.active) return;
+        signaturePlacementState = { active: false, asset: null, type: 'signature', toolSource: null };
+        syncCanvasCursors();
+        updateEditModeUi();
+    }
+
+    function beginSignaturePlacement(asset, type = 'signature') {
+        if (!asset?.dataUrl && !asset?.src) return;
+        signaturePlacementState = {
+            active: true,
+            asset: {
+                dataUrl: asset.dataUrl || '',
+                src: asset.src || '',
+                width: asset.width || asset.intrinsicWidth || 1,
+                height: asset.height || asset.intrinsicHeight || 1,
+                fileName: asset.fileName || null,
+                mimeType: asset.mimeType || 'image/png',
+                assetPath: asset.assetPath || asset.imagePath || null,
+                signatureSourceMode: normalizeSignatureSourceMode(asset.signatureSourceMode),
+                signatureComposer: cloneSerializableValue(asset.signatureComposer || null, null),
+            },
+            type: String(type || 'signature').toLowerCase() === 'image' ? 'image' : 'signature',
+            toolSource: asset.toolSource || null,
+        };
+        syncCanvasCursors();
+        clearActiveAnnotation();
+        updateEditModeUi();
+    }
+
+    function getSignatureCanvasPoint(event) {
+        if (!signatureCanvas) return null;
+        const rect = signatureCanvas.getBoundingClientRect();
+        if (!rect.width || !rect.height) return null;
+        return {
+            x: (event.clientX - rect.left) * (signatureCanvas.width / rect.width),
+            y: (event.clientY - rect.top) * (signatureCanvas.height / rect.height),
+        };
+    }
+
+    function beginSignatureStroke(event) {
+        if (signatureMode !== 'draw' || !signatureCtx) return;
+        const point = getSignatureCanvasPoint(event);
+        if (!point) return;
+        event.preventDefault();
+        signatureDrawing = true;
+        signatureActiveStroke = {
+            color: signatureColorInput?.value || '#111827',
+            width: Math.max(1, Number(signatureWidthInput?.value) || 3),
+            points: [point],
+        };
+        renderDrawSignaturePreview();
+        setSignatureDirtyState(true);
+        setSignatureStatus('Signature ready to place.', 'ready');
+    }
+
+    function drawSignatureStroke(event) {
+        if (!signatureDrawing || signatureMode !== 'draw' || !signatureCtx) return;
+        const point = getSignatureCanvasPoint(event);
+        if (!point) return;
+        signatureActiveStroke?.points?.push(point);
+        renderDrawSignaturePreview();
+    }
+
+    function endSignatureStroke() {
+        if (!signatureDrawing) return;
+        signatureDrawing = false;
+        if (signatureActiveStroke?.points?.length) {
+            signatureStrokes.push(signatureActiveStroke);
+        }
+        signatureActiveStroke = null;
+        renderDrawSignaturePreview();
+        setSignatureDirtyState(hasSignatureDrawContent());
+    }
+
     function getEditorPlainText(editor) {
-        return String(editor?.innerText ?? '')
+        if (!editor) return '';
+        // Walk the DOM rather than using innerText. The source-flow editor
+        // emits `[data-source-gap]` spans containing literal multi-space runs
+        // sized to pixel width (see renderEditorGapHtml) — innerText would
+        // capture those and inflate canonical text by 4-8x per gap on every
+        // edit-text round trip, which then gets persisted back into ann.text
+        // by saveAllChanges, ballooning whitespace each session.
+        // Treat each gap as a single space, mirroring the canonical token
+        // separator in extracted text. BR -> '\n', block-level elements get
+        // a trailing newline to preserve line structure.
+        let out = '';
+        const isBlockTag = (tag) => tag === 'DIV' || tag === 'P' || tag === 'LI' || tag === 'TR';
+        const walk = (node) => {
+            if (node.nodeType === Node.TEXT_NODE) { out += node.nodeValue; return; }
+            if (node.nodeType !== Node.ELEMENT_NODE) return;
+            if (node.dataset && node.dataset.sourceGap === '1') { out += ' '; return; }
+            const tag = node.nodeName;
+            if (tag === 'BR') { out += '\n'; return; }
+            const before = out.length;
+            for (const child of node.childNodes) walk(child);
+            if (isBlockTag(tag) && out.length > before && !out.endsWith('\n')) out += '\n';
+        };
+        for (const child of editor.childNodes) walk(child);
+        return out
             .replace(/\r/g, '')
             .replace(/\u00a0/g, ' ')
+            .replace(/\u200b/g, '')
             .replace(/\n$/, '');
+    }
+
+    function stripEditorSentinels(value) {
+        return String(value ?? '').replace(/\u200b/g, '');
+    }
+
+    function richHtmlHasInlineSelectionFormatting(html) {
+        const raw = String(html ?? '');
+        if (!raw.trim()) return false;
+        const tmp = document.createElement('div');
+        tmp.innerHTML = raw;
+        return Boolean(tmp.querySelector('span[style], font, b, strong, i, em, u'));
+    }
+
+    function normalizeRichHtmlForDisplay(html, ann = null) {
+        const raw = stripEditorSentinels(html);
+        if (!raw.trim()) return '';
+        const tmp = document.createElement('div');
+        tmp.innerHTML = raw;
+        const align = ann ? (ann.textAlign || 'left') : null;
+        const decoration = ann ? (ann.underline ? 'underline' : 'none') : null;
+        tmp.querySelectorAll('[data-line-index]').forEach((el) => {
+            el.style.lineHeight = 'inherit';
+            el.style.minHeight = '0';
+            el.style.height = 'auto';
+            el.style.transform = 'none';
+            el.style.removeProperty('transform-origin');
+            el.style.display = 'block';
+            el.style.width = '100%';
+            el.style.boxSizing = 'border-box';
+            el.style.whiteSpace = 'pre-wrap';
+            el.style.overflowWrap = 'break-word';
+            el.style.wordBreak = 'break-word';
+            if (align) el.style.textAlign = align;
+            if (decoration) el.style.textDecoration = decoration;
+        });
+        return tmp.innerHTML;
+    }
+
+    function canonicalTextLength(value) {
+        return String(value ?? '')
+            .replace(/\r/g, '')
+            .replace(/\u200b/g, '')
+            .length;
+    }
+
+    function domTextOffsetForCanonicalOffset(value, canonicalOffset) {
+        const text = String(value ?? '');
+        let seen = 0;
+        const target = Math.max(0, Number(canonicalOffset) || 0);
+        for (let i = 0; i < text.length; i++) {
+            if (text[i] === '\r' || text[i] === '\u200b') continue;
+            if (seen >= target) return i;
+            seen++;
+            if (seen >= target) return i + 1;
+        }
+        return text.length;
+    }
+
+    function childIndex(node) {
+        if (!node || !node.parentNode) return 0;
+        return Array.prototype.indexOf.call(node.parentNode.childNodes, node);
+    }
+
+    function editorDomPositionToTextOffset(editor, targetNode, targetOffset) {
+        if (!editor || !targetNode) return null;
+        const isBlockTag = (tag) => tag === 'DIV' || tag === 'P' || tag === 'LI' || tag === 'TR';
+        let offset = 0;
+        let lastChar = '';
+        let found = false;
+
+        const appendText = (value) => {
+            const text = String(value ?? '').replace(/\r/g, '').replace(/\u00a0/g, ' ');
+            for (const ch of text) {
+                if (ch === '\u200b') continue;
+                offset += 1;
+                lastChar = ch;
+            }
+        };
+        const appendNewline = () => {
+            offset += 1;
+            lastChar = '\n';
+        };
+
+        const walk = (node) => {
+            if (found || !node) return;
+
+            if (node === targetNode) {
+                if (node.nodeType === Node.TEXT_NODE) {
+                    appendText(String(node.nodeValue ?? '').slice(0, Math.max(0, targetOffset)));
+                } else if (node.nodeType === Node.ELEMENT_NODE || node === editor) {
+                    const children = Array.from(node.childNodes || []);
+                    const limit = Math.max(0, Math.min(Number(targetOffset) || 0, children.length));
+                    for (let i = 0; i < limit; i++) walk(children[i]);
+                }
+                found = true;
+                return;
+            }
+
+            if (node.nodeType === Node.TEXT_NODE) {
+                appendText(node.nodeValue);
+                return;
+            }
+            if (node.nodeType !== Node.ELEMENT_NODE) return;
+            if (node.dataset && node.dataset.sourceGap === '1' && !node.contains(targetNode)) {
+                appendText(' ');
+                return;
+            }
+            if (node.nodeName === 'BR') {
+                appendNewline();
+                return;
+            }
+
+            const before = offset;
+            for (const child of Array.from(node.childNodes)) {
+                walk(child);
+                if (found) return;
+            }
+            if (isBlockTag(node.nodeName) && offset > before && lastChar !== '\n') appendNewline();
+        };
+
+        if (targetNode === editor) {
+            walk(editor);
+        } else {
+            for (const child of Array.from(editor.childNodes)) {
+                walk(child);
+                if (found) break;
+            }
+        }
+
+        return found ? offset : null;
     }
 
     function getEditorSelectionOffsets(editor) {
@@ -3213,76 +9490,94 @@
         const range = selection.getRangeAt(0);
         if (!editor.contains(range.startContainer) || !editor.contains(range.endContainer)) return null;
 
-        const startRange = document.createRange();
-        startRange.selectNodeContents(editor);
-        startRange.setEnd(range.startContainer, range.startOffset);
+        const start = editorDomPositionToTextOffset(editor, range.startContainer, range.startOffset);
+        const end = editorDomPositionToTextOffset(editor, range.endContainer, range.endOffset);
+        if (start === null || end === null) return null;
 
-        const endRange = document.createRange();
-        endRange.selectNodeContents(editor);
-        endRange.setEnd(range.endContainer, range.endOffset);
-
-        return {
-            start: startRange.toString().length,
-            end: endRange.toString().length,
-        };
+        return { start, end };
     }
 
-    function findLineTextPosition(lineEl, charOffset) {
-        const walker = document.createTreeWalker(lineEl, NodeFilter.SHOW_TEXT);
-        let remaining = Math.max(0, charOffset);
-        let lastTextNode = null;
+    function findEditorTextPosition(editor, targetOffset) {
+        const isBlockTag = (tag) => tag === 'DIV' || tag === 'P' || tag === 'LI' || tag === 'TR';
+        let remaining = Math.max(0, Number(targetOffset) || 0);
+        let lastPos = { node: editor, offset: 0 };
+        let lastChar = '';
 
-        while (walker.nextNode()) {
-            const textNode = walker.currentNode;
-            const textLength = textNode.textContent.length;
-            lastTextNode = textNode;
-            if (remaining <= textLength) {
-                return { node: textNode, offset: remaining };
+        const walk = (node) => {
+            if (!node) return null;
+
+            if (node.nodeType === Node.TEXT_NODE) {
+                const len = canonicalTextLength(node.nodeValue);
+                if (remaining <= len) {
+                    return {
+                        node,
+                        offset: domTextOffsetForCanonicalOffset(node.nodeValue, remaining),
+                    };
+                }
+                remaining -= len;
+                lastPos = { node, offset: String(node.nodeValue ?? '').length };
+                const visible = String(node.nodeValue ?? '').replace(/\r/g, '').replace(/\u200b/g, '');
+                if (visible) lastChar = visible[visible.length - 1];
+                return null;
             }
-            remaining -= textLength;
+
+            if (node.nodeType !== Node.ELEMENT_NODE) return null;
+            const tag = node.nodeName;
+
+            if (node.dataset && node.dataset.sourceGap === '1') {
+                const idx = childIndex(node);
+                if (remaining <= 0) return { node: node.parentNode, offset: idx };
+                if (remaining <= 1) return { node: node.parentNode, offset: idx + 1 };
+                remaining -= 1;
+                lastPos = { node: node.parentNode, offset: idx + 1 };
+                lastChar = ' ';
+                return null;
+            }
+
+            if (tag === 'BR') {
+                const idx = childIndex(node);
+                if (remaining <= 0) return { node: node.parentNode, offset: idx };
+                if (remaining <= 1) return { node: node.parentNode, offset: idx + 1 };
+                remaining -= 1;
+                lastPos = { node: node.parentNode, offset: idx + 1 };
+                lastChar = '\n';
+                return null;
+            }
+
+            const before = remaining;
+            const children = Array.from(node.childNodes);
+            for (const child of children) {
+                const found = walk(child);
+                if (found) return found;
+            }
+
+            if (isBlockTag(tag) && remaining < before && lastChar !== '\n') {
+                const idx = childIndex(node);
+                if (remaining <= 0) return { node, offset: node.childNodes.length };
+                if (remaining <= 1 && node.parentNode) return { node: node.parentNode, offset: idx + 1 };
+                remaining -= 1;
+                lastPos = node.parentNode
+                    ? { node: node.parentNode, offset: idx + 1 }
+                    : { node, offset: node.childNodes.length };
+                lastChar = '\n';
+            }
+
+            return null;
+        };
+
+        for (const child of Array.from(editor.childNodes)) {
+            const found = walk(child);
+            if (found) return found;
         }
 
-        if (lastTextNode) {
-            return { node: lastTextNode, offset: lastTextNode.textContent.length };
-        }
-
-        return { node: lineEl, offset: lineEl.childNodes.length };
+        return lastPos;
     }
 
     function setEditorSelectionOffsets(editor, start, end = start) {
         if (!editor) return;
-        const lines = Array.from(editor.children);
-        if (!lines.length) {
-            editor.focus({ preventScroll: true });
-            return;
-        }
 
-        const locate = (targetOffset) => {
-            let remaining = Math.max(0, targetOffset);
-
-            for (let i = 0; i < lines.length; i++) {
-                const lineEl = lines[i];
-                const lineText = String(lineEl.innerText ?? '').replace(/\r/g, '').replace(/\n$/, '');
-                const lineLength = lineText.length;
-                if (remaining <= lineLength) {
-                    return findLineTextPosition(lineEl, remaining);
-                }
-                remaining -= lineLength;
-                if (i < lines.length - 1) {
-                    if (remaining === 0) {
-                        return findLineTextPosition(lineEl, lineLength);
-                    }
-                    remaining -= 1;
-                }
-            }
-
-            const lastLine = lines[lines.length - 1];
-            const lastLineText = String(lastLine.innerText ?? '').replace(/\r/g, '').replace(/\n$/, '');
-            return findLineTextPosition(lastLine, lastLineText.length);
-        };
-
-        const startPos = locate(start);
-        const endPos = locate(end);
+        const startPos = findEditorTextPosition(editor, start);
+        const endPos = findEditorTextPosition(editor, end);
         const selection = window.getSelection();
         if (!selection || !startPos || !endPos) return;
 
@@ -3297,12 +9592,67 @@
     function markDirty() {
         isDirty = true;
         updateSaveUi();
+        scheduleAutoSave();
     }
 
     function markClean() {
         isDirty = false;
         updateSaveUi();
     }
+
+    // Auto-save: debounce for 800ms of idle time after the last edit. If a save
+    // is already in flight, chain another one once it completes so edits that
+    // land mid-save are not lost.
+    let autoSaveTimer = null;
+    const AUTO_SAVE_DEBOUNCE_MS = 800;
+    function scheduleAutoSave() {
+        if (autoSaveTimer) clearTimeout(autoSaveTimer);
+        autoSaveTimer = setTimeout(() => {
+            autoSaveTimer = null;
+            triggerAutoSave();
+        }, AUTO_SAVE_DEBOUNCE_MS);
+    }
+    function triggerAutoSave() {
+        if (!isDirty && pendingDeletedAnnotationIds.size === 0 && pendingDeletedPromotedSourceKeys.size === 0) {
+            return;
+        }
+        if (isSaving) {
+            // A save is currently running — reschedule once it finishes so we
+            // don't drop edits made during the save.
+            scheduleAutoSave();
+            return;
+        }
+        // saveAllChanges is a no-op when nothing is dirty and handles its own
+        // error reporting via showToast.
+        saveAllChanges({ silent: true }).catch(() => { /* handled inside saveAllChanges */ });
+    }
+
+    // Flush any pending auto-save immediately when the user navigates away or
+    // hides the tab. Without this, a debounce interval straddling the unload
+    // would drop the most recent edit.
+    function flushAutoSaveIfPending() {
+        if (autoSaveTimer) {
+            clearTimeout(autoSaveTimer);
+            autoSaveTimer = null;
+            triggerAutoSave();
+        }
+    }
+
+    // Test-only: force a save POST to /save-annotation-state regardless of the
+    // current dirty/timer state. Used by automated tests that need to observe
+    // the network round-trip after the auto-save debounce may have already
+    // fired and reset isDirty.
+    async function forceSaveForTests() {
+        if (autoSaveTimer) { clearTimeout(autoSaveTimer); autoSaveTimer = null; }
+        const wasDirty = isDirty;
+        isDirty = true;
+        try { await saveAllChanges({ silent: true }); }
+        finally { if (!wasDirty && isDirty) markClean(); }
+    }
+    window.addEventListener('beforeunload', flushAutoSaveIfPending);
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') flushAutoSaveIfPending();
+    });
 
     // ── Drag-to-reposition ────────────────────────────────────────────────────
     function pdfPtFromClient(clientX, clientY, pi) {
@@ -3312,29 +9662,57 @@
         if (!canvas) return null;
         const r = canvas.getBoundingClientRect();
         if (!r.width || !r.height) return null;
-        const cx = (clientX - r.left) * (canvas.width / r.width);
-        const cy = (clientY - r.top)  * (canvas.height / r.height);
+        // Use the canvas's LOGICAL (CSS-pixel) size — `canvas.width` is now
+        // the DPR-scaled backing-store size after the HiDPI overlay change.
+        const logicalW = canvasLogicalWidth(canvas);
+        const logicalH = canvasLogicalHeight(canvas);
+        const cx = (clientX - r.left) * (logicalW / r.width);
+        const cy = (clientY - r.top)  * (logicalH / r.height);
         return { x: cx / data.scale, y: (data.canvasHeight - cy) / data.scale };
     }
 
     function beginDrag(e, pi) {
-        if (!editModeEnabled && !addTextMode) return;
+        if (!editModeEnabled && !addTextMode && !shapeMode && !hasActiveBoxSelection()) return;
         const data = pageData[pi];
         const ann  = data?.annotations.find(a => a._uid === activeState.uid);
         const box  = ann ? resolveAnnBox(ann) : null;
         const pt   = ann ? pdfPtFromClient(e.clientX, e.clientY, pi) : null;
         if (!ann || !box || !pt) return;
+        if (isAnnotationLocked(ann)) return;
         pushUndo();
-        dragState = { active: true, pi, uid: ann._uid, offsetXPts: pt.x - box.x, offsetYPts: pt.y - box.y };
+        dragState = {
+            active: true,
+            pi,
+            uid: ann._uid,
+            offsetXPts: pt.x - box.x,
+            offsetYPts: pt.y - box.y,
+            startPt: { ...pt },
+            startBox: { ...box },
+        };
+        // Hide the shape action bar / text hover menu while dragging so they don't
+        // follow the cursor and re-trigger hover/scale transitions on every mousemove.
+        if (isBoxAnnotation(ann)) {
+            const sh = document.getElementById('sh-' + (pi + 1));
+            if (sh) sh.style.display = 'none';
+            document.body.style.cursor = 'grabbing';
+        } else {
+            const tm = document.getElementById('tm-' + (pi + 1));
+            if (tm) tm.style.display = 'none';
+            document.body.style.cursor = 'grabbing';
+        }
     }
 
     function beginResize(e, pi, handle) {
-        if (!editModeEnabled && !addTextMode) return;
+        if (!editModeEnabled && !addTextMode && !shapeMode && !hasActiveBoxSelection()) return;
         const data = pageData[pi];
         const ann = data?.annotations.find(a => a._uid === activeState.uid);
         const box = ann ? resolveAnnBox(ann) : null;
         const pt = ann ? pdfPtFromClient(e.clientX, e.clientY, pi) : null;
         if (!ann || !box || !pt) return;
+        if (isAnnotationLocked(ann)) return;
+        if (isTextAnnotation(ann)) {
+            ann._autoWidth = false;
+        }
         pushUndo();
         const startStyle = editableLineStyle(ann, 0);
         resizeState = {
@@ -3345,18 +9723,95 @@
             startPt: pt,
             startBox: { ...box },
             startFontSize: startStyle.fontSizePt,
+            startLineGeometry: (isShapeAnnotation(ann) && isLineShape(ann))
+                ? {
+                    lineStartX: clamp01(ann.lineStartX, 0),
+                    lineStartY: clamp01(ann.lineStartY, 0),
+                    lineEndX: clamp01(ann.lineEndX, 1),
+                    lineEndY: clamp01(ann.lineEndY, 1),
+                }
+                : null,
         };
     }
 
     function endDrag() {
         if (!dragState.active) return;
-        dragState = { active: false, pi: null, uid: null, offsetXPts: 0, offsetYPts: 0 };
+        const pi = dragState.pi;
+        dragState = { active: false, pi: null, uid: null, offsetXPts: 0, offsetYPts: 0, startPt: null, startBox: null };
+        document.body.style.cursor = '';
+        // Restore the shape action bar (hidden during drag).
+        if (pi !== null) syncActiveEditor(true);
         markDirty();
     }
 
     function endResize() {
         if (!resizeState.active) return;
-        resizeState = { active: false, pi: null, uid: null, handle: null, startPt: null, startBox: null, startFontSize: null };
+        resizeState = { active: false, pi: null, uid: null, handle: null, startPt: null, startBox: null, startFontSize: null, startLineGeometry: null };
+        markDirty();
+    }
+
+    // ── Rotation helpers ──────────────────────────────────────────────────
+    function normalizeRotationDegrees(angle) {
+        const a = Number(angle);
+        if (!Number.isFinite(a)) return 0;
+        let n = a % 360;
+        if (n < 0) n += 360;
+        return n;
+    }
+    function getRotationCenterClient(pi, ann) {
+        const data = pageData[pi];
+        if (!data) return null;
+        const oc = document.getElementById('oc-' + (pi + 1));
+        const box = ann ? resolveAnnBox(ann) : null;
+        if (!oc || !box) return null;
+        const rect = oc.getBoundingClientRect();
+        const left = box.x * data.scale;
+        const top  = data.canvasHeight - (box.y + box.h) * data.scale;
+        const w    = Math.max(1, box.w * data.scale);
+        const h    = Math.max(1, box.h * data.scale);
+        return {
+            cx: rect.left + left + w / 2,
+            cy: rect.top + top + h / 2,
+        };
+    }
+    function pointerAngleDeg(clientX, clientY, center) {
+        return Math.atan2(clientY - center.cy, clientX - center.cx) * (180 / Math.PI);
+    }
+    function beginRotate(e, pi) {
+        if (!editModeEnabled && !addTextMode && !shapeMode && !hasActiveBoxSelection()) return;
+        const data = pageData[pi];
+        const ann = data?.annotations.find(a => a._uid === activeState.uid);
+        if (!ann) return;
+        if (isAnnotationLocked(ann)) return;
+        if (isShapeAnnotation(ann) && isLineShape(ann)) return; // lines rotate via endpoints
+        const center = getRotationCenterClient(pi, ann);
+        if (!center) return;
+        pushUndo();
+        const currentRot = normalizeRotationDegrees(ann.rotation || 0);
+        const handleAngle = normalizeRotationDegrees(currentRot + 90); // base = bottom
+        const pAngle = pointerAngleDeg(e.clientX, e.clientY, center);
+        let offset = pAngle - handleAngle;
+        // normalize signed
+        offset = ((offset + 540) % 360) - 180;
+        rotateState = {
+            active: true,
+            pi,
+            uid: ann._uid,
+            pointerId: e.pointerId,
+            grabAngleOffset: offset,
+        };
+        if (e.target && typeof e.target.setPointerCapture === 'function') {
+            try { e.target.setPointerCapture(e.pointerId); } catch (_) {}
+            e.target.classList.add('is-active');
+        }
+        if (!ann.rotation) ann.rotation = 0;
+        markUserAuthored(ann);
+    }
+    function endRotate() {
+        if (!rotateState.active) return;
+        const rot = document.getElementById('rh-' + (rotateState.pi + 1) + '-rot');
+        if (rot) rot.classList.remove('is-active');
+        rotateState = { active: false, pi: null, uid: null, pointerId: null, grabAngleOffset: 0 };
         markDirty();
     }
 
@@ -3377,17 +9832,24 @@
 
     window.addEventListener('mousemove', (e) => {
         if (dragState.active) {
-            const { pi, uid, offsetXPts, offsetYPts } = dragState;
+            const { pi, uid, startPt, startBox, offsetXPts, offsetYPts } = dragState;
             const data = pageData[pi];
             const ann  = data?.annotations.find(a => a._uid === uid);
-            if (!ann) return;
-            const box = resolveAnnBox(ann);
+            if (!ann || !startPt || !startBox) return;
             const pt  = pdfPtFromClient(e.clientX, e.clientY, pi);
-            if (!box || !pt) return;
+            if (!pt) return;
+            const fallbackX = pt.x - offsetXPts;
+            const fallbackY = pt.y - offsetYPts;
+            const nextX = Number.isFinite(startPt.x)
+                ? startBox.x + (pt.x - startPt.x)
+                : fallbackX;
+            const nextY = Number.isFinite(startPt.y)
+                ? startBox.y + (pt.y - startPt.y)
+                : fallbackY;
             setAnnotationBox(ann, {
-                x: Math.min(Math.max(0, pt.x - offsetXPts), Math.max(0, data.wPts - box.w)),
-                y: Math.min(Math.max(0, pt.y - offsetYPts), Math.max(0, data.hPts - box.h)),
-                w: box.w, h: box.h,
+                x: Math.min(Math.max(0, nextX), Math.max(0, data.wPts - startBox.w)),
+                y: Math.min(Math.max(0, nextY), Math.max(0, data.hPts - startBox.h)),
+                w: startBox.w, h: startBox.h,
             });
             redrawOverlay(pi);
             syncActiveEditor();
@@ -3395,13 +9857,64 @@
         }
 
         if (!resizeState.active) return;
-        const { pi, uid, handle, startPt, startBox, startFontSize } = resizeState;
+        const { pi, uid, handle, startPt, startBox, startFontSize, startLineGeometry } = resizeState;
         const data = pageData[pi];
         const ann = data?.annotations.find(a => a._uid === uid);
         const pt = pdfPtFromClient(e.clientX, e.clientY, pi);
         if (!ann || !pt || !startPt || !startBox) return;
 
-        const minWidthPts = 12;
+        if (isShapeAnnotation(ann) && isLineShape(ann) && (handle === 'line-start' || handle === 'line-end')) {
+            const geometry = startLineGeometry || {
+                lineStartX: 0,
+                lineStartY: 0,
+                lineEndX: 1,
+                lineEndY: 1,
+            };
+            // geometry.line*Y is image-y-down (0 = visual top of box,
+            // 1 = visual bottom). startBox.y is the PDF-y of the bottom
+            // edge (PDF-y-up), so the visual top of the box is
+            // startBox.y + startBox.h. Flip to PDF-y-up before passing
+            // back into computeLineBoxGeometry, which expects PDF-up.
+            const startPoint = {
+                x: startBox.x + (startBox.w * geometry.lineStartX),
+                y: startBox.y + (startBox.h * (1 - geometry.lineStartY)),
+            };
+            const endPoint = {
+                x: startBox.x + (startBox.w * geometry.lineEndX),
+                y: startBox.y + (startBox.h * (1 - geometry.lineEndY)),
+            };
+            const draggedPoint = {
+                x: Math.max(0, Math.min(data.wPts, pt.x)),
+                y: Math.max(0, Math.min(data.hPts, pt.y)),
+            };
+            const nextGeometry = handle === 'line-start'
+                ? (() => {
+                    const snappedStart = snapLineEndpoint(endPoint.x, endPoint.y, draggedPoint.x, draggedPoint.y);
+                    return computeLineBoxGeometry(snappedStart.x, snappedStart.y, endPoint.x, endPoint.y);
+                })()
+                : (() => {
+                    const snappedEnd = snapLineEndpoint(startPoint.x, startPoint.y, draggedPoint.x, draggedPoint.y);
+                    return computeLineBoxGeometry(startPoint.x, startPoint.y, snappedEnd.x, snappedEnd.y);
+                })();
+
+            setAnnotationBox(ann, {
+                x: nextGeometry.left,
+                y: nextGeometry.bottom,
+                w: nextGeometry.width,
+                h: nextGeometry.height,
+            });
+            ann.lineStartX = nextGeometry.lineStartX;
+            ann.lineStartY = nextGeometry.lineStartY;
+            ann.lineEndX = nextGeometry.lineEndX;
+            ann.lineEndY = nextGeometry.lineEndY;
+
+            redrawOverlay(pi);
+            syncActiveEditor();
+            updateFormatBar();
+            return;
+        }
+
+        const minWidthPts = isShapeAnnotation(ann) ? (isLineShape(ann) ? 4 : 8) : 12;
         const currentText = editedTexts[ann._uid] ?? String(ann.text ?? '');
         const right = startBox.x + startBox.w;
         const top = startBox.y + startBox.h;
@@ -3430,12 +9943,17 @@
         nextTop = Math.min(data.hPts, nextTop);
 
         let nextWidth = Math.max(minWidthPts, nextRight - nextLeft);
-        let nextHeight = Math.max(8, nextTop - nextBottom);
+        let nextHeight = Math.max(isShapeAnnotation(ann) ? (isLineShape(ann) ? 4 : 8) : 8, nextTop - nextBottom);
 
-        if (shouldScaleFontOnResize(ann) && startFontSize) {
+        if (isShapeAnnotation(ann)) {
+            nextBottom = Math.max(0, nextBottom);
+            nextTop = Math.min(data.hPts, nextTop);
+            nextWidth = Math.max(minWidthPts, nextRight - nextLeft);
+            nextHeight = Math.max(isLineShape(ann) ? 4 : 8, nextTop - nextBottom);
+        } else if (shouldScaleFontOnResize(ann) && startFontSize) {
             const previousFontSize = ann.fontSize;
             ann.fontSize = scaledResizeFontSize(startFontSize, startBox, nextWidth, nextHeight);
-            const scaledMinHeightPts = Math.max(8, measureEditedTextHeightPts(ann, currentText, data.scale));
+            const scaledMinHeightPts = Math.max(8, measureEditedTextHeightPts(ann, currentText, data.scale, nextWidth));
             ann.fontSize = previousFontSize;
 
             if (handle.includes('s')) {
@@ -3448,7 +9966,7 @@
             nextTop = Math.min(data.hPts, nextTop);
             nextHeight = Math.max(scaledMinHeightPts, nextTop - nextBottom);
         } else {
-            const minHeightPts = Math.max(8, measureEditedTextHeightPts(ann, currentText, data.scale));
+            const minHeightPts = Math.max(8, measureEditedTextHeightPts(ann, currentText, data.scale, nextWidth));
             if (handle.includes('s')) {
                 nextBottom = Math.min(nextBottom, nextTop - minHeightPts);
             }
@@ -3461,6 +9979,9 @@
         }
         nextWidth = Math.max(minWidthPts, nextRight - nextLeft);
 
+        if (isTextAnnotation(ann)) {
+            ann._pageBoundsConstrained = false;
+        }
         setAnnotationBox(ann, {
             x: nextLeft,
             y: nextBottom,
@@ -3480,7 +10001,63 @@
         if (dragState.active) endDrag();
         if (resizeState.active) endResize();
     });
+
+    window.addEventListener('pointermove', (e) => {
+        if (!rotateState.active) return;
+        if (rotateState.pointerId !== null && e.pointerId !== rotateState.pointerId) return;
+        const { pi, uid, grabAngleOffset } = rotateState;
+        const data = pageData[pi];
+        const ann = data?.annotations.find(a => a._uid === uid);
+        if (!ann) return;
+        const center = getRotationCenterClient(pi, ann);
+        if (!center) return;
+        const pAngle = pointerAngleDeg(e.clientX, e.clientY, center);
+        const handleAngle = normalizeRotationDegrees(pAngle - grabAngleOffset);
+        ann.rotation = normalizeRotationDegrees(handleAngle - 90);
+        redrawOverlay(pi);
+        syncActiveEditor(true);
+    });
+    window.addEventListener('pointerup', (e) => {
+        if (!rotateState.active) return;
+        if (rotateState.pointerId !== null && e.pointerId !== rotateState.pointerId) return;
+        endRotate();
+    });
+    window.addEventListener('pointercancel', (e) => {
+        if (!rotateState.active) return;
+        if (rotateState.pointerId !== null && e.pointerId !== rotateState.pointerId) return;
+        endRotate();
+    });
     window.addEventListener('keydown', (e) => {
+        if (markupToolModal?.classList.contains('is-open') && e.key === 'Escape') {
+            e.preventDefault();
+            closeMarkupToolModal();
+            return;
+        }
+        if (signatureModal?.classList.contains('is-open') && e.key === 'Escape') {
+            e.preventDefault();
+            closeSignatureModal();
+            return;
+        }
+        if (eraseMode && e.key === 'Escape') {
+            e.preventDefault();
+            cancelEraseMode();
+            return;
+        }
+        if (drawModeActive && e.key === 'Escape') {
+            e.preventDefault();
+            setDrawMode(false);
+            return;
+        }
+        if (shapeCutState.armed && e.key === 'Escape') {
+            e.preventDefault();
+            cancelShapeCutMode();
+            return;
+        }
+        if (signaturePlacementState.active && e.key === 'Escape') {
+            e.preventDefault();
+            cancelSignaturePlacement();
+            return;
+        }
         // Undo / Redo — never intercept when focus is inside a text field.
         const inTextField = document.activeElement && (
             document.activeElement.tagName === 'INPUT' ||
@@ -3494,7 +10071,58 @@
             if (!inTextField) { e.preventDefault(); performRedo(); return; }
         }
 
-        if (!editModeEnabled && !addTextMode) return;
+        // Ctrl/Cmd+C — copy the active annotation into an in-memory clipboard
+        // (only when the user isn't editing text and has nothing selected).
+        if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'c' || e.key === 'C')) {
+            if (inTextField) return; // editing text → native copy
+            const sel = window.getSelection?.();
+            if (sel && !sel.isCollapsed && String(sel.toString() || '').length > 0) return;
+            if (!activeState.uid || activeState.pi === null) return;
+            const active = getActiveAnnAndPage();
+            if (!active) return;
+            e.preventDefault();
+            const { ann } = active;
+            // Snapshot a deep-ish copy so future mutations to the source don't
+            // leak into the clipboard.
+            _annClipboard = {
+                ann: JSON.parse(JSON.stringify(ann)),
+                text: String(editedTexts[ann._uid] ?? ann.text ?? ''),
+            };
+            return;
+        }
+
+        // Ctrl/Cmd+V — paste the most recently copied annotation onto the page
+        // currently containing the active annotation (or page 0 if nothing
+        // active). Always offset slightly so it's visible.
+        if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'v' || e.key === 'V')) {
+            if (inTextField) return; // editing text → native paste
+            if (!_annClipboard) return;
+            e.preventDefault();
+            const targetPi = activeState.pi !== null ? activeState.pi : 0;
+            const data = pageData[targetPi];
+            if (!data) return;
+            pushUndo();
+            const OFFSET = 12;
+            const src = _annClipboard.ann;
+            const newAnn = {
+                ...JSON.parse(JSON.stringify(src)),
+                _uid: 'new_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+                id:   generateAnnotationId(),
+                pageIndex: targetPi,
+                pdfX: Math.min((Number(src.pdfX) || 0) + OFFSET, Math.max(0, data.wPts - (Number(src.pdfWidth) || 60))),
+                pdfY: Math.max((Number(src.pdfY) || 0) - OFFSET, 0),
+                userCreated: true,
+            };
+            newAnn._originalBox = { x: newAnn.pdfX, y: newAnn.pdfY, w: newAnn.pdfWidth, h: newAnn.pdfHeight };
+            newAnn._originalPdfBox = { x: newAnn.pdfX, y: newAnn.pdfY, w: newAnn.pdfWidth, h: newAnn.pdfHeight };
+            editedTexts[newAnn._uid] = String(_annClipboard.text ?? '');
+            data.annotations.push(newAnn);
+            selectAnnotation(newAnn, targetPi);
+            markDirty();
+            return;
+        }
+
+        if (!editModeEnabled && !addTextMode && !eraseMode) return;
         if (e.key !== 'Delete' && e.key !== 'Backspace') return;
         if (dragState.active || resizeState.active) return;
         if (!activeState.uid || activeState.pi === null) return;
@@ -3503,6 +10131,7 @@
         e.preventDefault();
         const ann = pageData[activeState.pi]?.annotations.find(a => a._uid === activeState.uid);
         if (!ann) return;
+        if (isAnnotationLocked(ann)) return;
         deleteAnnotation(ann, activeState.pi);
     });
 
@@ -3517,14 +10146,63 @@
 
     function buildPersistedAnnotationPayload(ann) {
         const currentText = editedTexts[ann._uid] ?? String(ann.text ?? '');
-        const payload = Object.assign({}, ann, {
+        const payload = normalizeTextAnnotation(Object.assign({}, ann, {
             text: currentText,
-        });
+        }));
+        // Promote the editor's display-only dark-bg fallback (resolveDisplayBgColor)
+        // into a real persisted backgroundColor when the annotation has white text
+        // but no explicit bg. Without this the editor shows white text on a dark
+        // slate placeholder, but the saved/downloaded PDF would render white-on-
+        // transparent (invisible on a white page) — i.e. the user sees text in
+        // the editor and gets a blank PDF on download.
+        if (String(payload.type || '').toLowerCase() === 'text'
+            && !payload.backgroundColorExplicit
+            && (!payload.backgroundColor || String(payload.backgroundColor).toLowerCase() === 'transparent')
+            && payload.textColor
+            && _WHITE_TEXT_RE.test(String(payload.textColor).replace(/\s/g, ''))
+            && String(currentText || '').length > 0) {
+            payload.backgroundColor = '#2c3e50';
+            payload.backgroundColorExplicit = true;
+        }
+        const persistedSourceBox = shouldPersistPromotedSourceBoxForBackground(ann, currentText)
+            ? resolveSourceAnnBox(ann)
+            : null;
+        if (persistedSourceBox) {
+            payload.pdfX = persistedSourceBox.x;
+            payload.pdfY = persistedSourceBox.y;
+            payload.pdfWidth = persistedSourceBox.w;
+            payload.pdfHeight = persistedSourceBox.h;
+        }
         if (ann.promotedFromExtraction) {
             payload.promotedDirty = shouldPersistPromotedDirty(ann, currentText);
         }
         const userAuthoredFlag = !!(ann._userAuthored || ann.userAuthored || payload.promotedDirty);
         payload.userAuthored = userAuthoredFlag;
+        payload.locked = isAnnotationLocked(ann);
+        if (ann._styleDirty) {
+            payload.styleDirty = true;
+        }
+        // Persist per-selection rich HTML (bold/italic/font/colour spans baked
+        // into the contenteditable by execCommand or manualWrapSelection) so it
+        // survives a page reload. We standardise on the top-level
+        // `richTextHtml` key — the Python exporter
+        // (apply_annotations_direct{,_new}.py) reads that field, and the
+        // hydration path below restores `_richHtml` from it on reload. Older
+        // payloads that wrote `richHtml` (top-level or under annotation_data)
+        // are still read on hydration for backwards compatibility.
+        const richHtml = (
+            typeof ann._richHtml === 'string'
+            && ann._richHtml.length > 0
+            && richHtmlHasInlineSelectionFormatting(ann._richHtml)
+        )
+            ? stripEditorSentinels(ann._richHtml)
+            : null;
+        if (richHtml) {
+            payload.richTextHtml = richHtml;
+        } else {
+            delete payload.richTextHtml;
+            delete payload.richHtml;
+        }
         if (payload.annotation_data && typeof payload.annotation_data === 'object') {
             payload.annotation_data = Object.assign({}, payload.annotation_data, {
                 text: currentText,
@@ -3532,10 +10210,17 @@
                 pdfY: payload.pdfY,
                 pdfWidth: payload.pdfWidth,
                 pdfHeight: payload.pdfHeight,
+                lineHeight: payload.lineHeight,
                 userAuthored: userAuthoredFlag,
+                locked: payload.locked,
+                styleDirty: !!ann._styleDirty,
             });
             if (ann.promotedFromExtraction) {
                 payload.annotation_data.promotedDirty = payload.promotedDirty;
+            }
+            if (!richHtml) {
+                delete payload.annotation_data.richTextHtml;
+                delete payload.annotation_data.richHtml;
             }
         }
         delete payload._originalBox;
@@ -3544,6 +10229,32 @@
         delete payload._richHtml;
         delete payload._userAuthored;
         return payload;
+    }
+
+    function shouldPersistPromotedSourceBoxForBackground(ann, currentText) {
+        if (String(ann?.type || '').toLowerCase() !== 'text') return false;
+        if (!ann?.promotedFromExtraction) return false;
+
+        const background = String(ann?.backgroundColor || '').trim().toLowerCase();
+        if (!background || background === 'transparent') return false;
+        if (typeof ann?._richHtml === 'string' && ann._richHtml.trim()) return false;
+
+        const currentBox = resolveAnnBox(ann);
+        const sourceBox = resolveSourceAnnBox(ann);
+        if (!currentBox || !sourceBox) return false;
+
+        const currentNormalized = normalizeAnnotationTextForDirtyComparison(currentText);
+        const originalNormalized = normalizeAnnotationTextForDirtyComparison(ann.originalText ?? ann.text ?? '');
+        if (currentNormalized !== originalNormalized) return false;
+
+        const geometryTolerance = 0.75;
+        const topLeftMatchesSource = Math.abs(currentBox.x - sourceBox.x) <= geometryTolerance
+            && Math.abs(currentBox.y - sourceBox.y) <= geometryTolerance;
+        if (!topLeftMatchesSource) return false;
+
+        if (Math.abs(currentBox.h - sourceBox.h) > 2.0) return false;
+
+        return (sourceBox.w - currentBox.w) > 2.0;
     }
 
     function normalizeAnnotationTextForDirtyComparison(value) {
@@ -3573,6 +10284,16 @@
         if (!(ae instanceof HTMLElement) || ae.style.display === 'none') return;
         const ann = pageData[activeState.pi]?.annotations.find(a => a._uid === activeState.uid);
         if (!ann) return;
+        // Only flush when the contenteditable is actually the source of truth.
+        // After a format-bar change (color / align / font / etc.) on a
+        // user-authored annotation, syncActiveEditor switches the render mode
+        // to 'dom-layer' and empties `ae` — the canonical text now lives in
+        // editedTexts[uid] and is rendered via rich-html-layer. Reading
+        // getEditorPlainText(ae) in that state returns "" and would delete
+        // editedTexts[uid] (since "" === ann.text === ""), causing the save
+        // payload to ship text:"" and persistently wipe the user's typed text
+        // on reload — the "text vanishes after changing color/alignment" bug.
+        if (!editorIsEditingAnnotation(ae, ann)) return;
         const nextText = getEditorPlainText(ae);
         const savedText = String(ann.text ?? '');
         if (nextText === savedText) {
@@ -3601,6 +10322,34 @@
             get: () => (typeof acroFormEntries !== 'undefined' ? acroFormEntries : []),
             configurable: true,
         });
+        // Bridge for the pdf-new test harness (run_pdf_tests.cjs). All editor
+        // state is IIFE-scoped, so the harness needs an explicit hook to read /
+        // mutate annotations programmatically.
+        window.__editorTestState = {
+            get pageData()    { return pageData; },
+            get editedTexts() { return editedTexts; },
+            get activeState() { return activeState; },
+            get addTextMode() { return addTextMode; },
+            get isDirty()     { return isDirty; },
+            get isSaving()    { return isSaving; },
+            getSessionId,
+            setAddTextMode,
+            createNewTextAnnotation,
+            redrawOverlay,
+            markDirty,
+            scheduleAutoSave,
+            triggerAutoSave,
+            flushAutoSaveIfPending,
+            forceSaveForTests,
+            saveAllChanges,
+            generateAnnotationId,
+            selectAnnotation,
+            clearActiveAnnotation,
+            setEditModeEnabled,
+            updateFormatBar,
+            normalizeShapeAnnotation,
+            createShapeAnnotationFromPoints,
+        };
     } catch (_e) {}
 
     async function downloadReadyPdf() {
@@ -3611,6 +10360,17 @@
         if (popup) {
             popup.document.write('<!DOCTYPE html><title>Preparing PDF</title><body style="font-family:system-ui,sans-serif;padding:24px;color:#111827;">Preparing PDF...</body>');
             popup.document.close();
+        }
+
+        // Persist any pending edits BEFORE generating the PDF so the user
+        // never has to click Save manually. Flush a debounced auto-save if one
+        // is queued, then await it (saveAllChanges is a no-op when nothing is
+        // dirty). This also ensures the saved DB state matches the downloaded
+        // PDF for the same click.
+        if (autoSaveTimer) { clearTimeout(autoSaveTimer); autoSaveTimer = null; }
+        if (isDirty || pendingDeletedAnnotationIds.size > 0 || pendingDeletedPromotedSourceKeys.size > 0) {
+            try { await saveAllChanges({ silent: true }); }
+            catch (_error) { /* saveAllChanges surfaces its own toast */ }
         }
 
         isDownloadingPdf = true;
@@ -3674,11 +10434,12 @@
         }
     }
 
-    async function saveAllChanges() {
+    async function saveAllChanges(options = {}) {
         if (isSaving) return;
+        const silent = Boolean(options.silent);
         flushActiveEditorState();
         if (!isDirty && pendingDeletedAnnotationIds.size === 0 && pendingDeletedPromotedSourceKeys.size === 0) {
-            showToast('No changes to save');
+            if (!silent) showToast('No changes to save');
             return;
         }
 
@@ -3690,23 +10451,6 @@
         const deletedPromotedSourceKeys = Array.from(pendingDeletedPromotedSourceKeys);
 
         try {
-            if (deletedAnnotationIds.length || deletedPromotedSourceKeys.length) {
-                const deleteResponse = await fetch(DELETE_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': CSRF },
-                    credentials: 'same-origin',
-                    body: JSON.stringify({
-                        session_id: getSessionId(),
-                        annotation_ids: deletedAnnotationIds,
-                        deleted_promoted_source_keys: deletedPromotedSourceKeys,
-                    }),
-                });
-                const deleteResult = await deleteResponse.json().catch(() => ({}));
-                if (!deleteResponse.ok || !deleteResult.success) {
-                    throw new Error(deleteResult.message || 'Delete failed');
-                }
-            }
-
             const response = await fetch(SAVE_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': CSRF },
@@ -3715,6 +10459,7 @@
                     annotations: sessionAnnotations,
                     session_annotations: sessionAnnotations,
                     acro_form_entries: acroFormEntries,
+                    deleted_annotation_ids: deletedAnnotationIds,
                     deleted_promoted_source_keys: deletedPromotedSourceKeys,
                     session_id: getSessionId(),
                 }),
@@ -3732,8 +10477,10 @@
             pendingDeletedAnnotationIds.clear();
             pendingDeletedPromotedSourceKeys.clear();
             markClean();
-            showToast('Saved');
+            if (!silent) showToast('Saved');
         } catch (error) {
+            // Always surface save failures — even in auto-save mode — so the
+            // user is aware that edits did not persist.
             showToast(error?.message || 'Save failed');
         } finally {
             isSaving = false;
@@ -3760,17 +10507,260 @@
         markDirty();
     }
 
+    function replaceImageBackedAnnotation(ann, pi, asset) {
+        if (!ann || !asset) return;
+        pushUndo();
+        ann.dataUrl = asset.dataUrl || '';
+        ann.src = asset.src || '';
+        ann.fileName = asset.fileName || ann.fileName || 'signature.png';
+        ann.mimeType = asset.mimeType || ann.mimeType || 'image/png';
+        ann.intrinsicWidth = Math.max(1, Number(asset.width || asset.intrinsicWidth || ann.intrinsicWidth || 1) || 1);
+        ann.intrinsicHeight = Math.max(1, Number(asset.height || asset.intrinsicHeight || ann.intrinsicHeight || 1) || 1);
+        ann.signatureSourceMode = normalizeSignatureSourceMode(asset.signatureSourceMode || ann.signatureSourceMode);
+        ann.signatureComposer = cloneSerializableValue(asset.signatureComposer || null, null);
+        if (asset.imageToolSource) {
+            ann.imageToolSource = asset.imageToolSource;
+        }
+        if (asset.drawStrokeColor) {
+            ann.drawStrokeColor = normalizeHexColor(asset.drawStrokeColor, '#111827');
+        } else if (asset.imageToolSource !== 'direct-draw') {
+            delete ann.drawStrokeColor;
+        }
+        if (asset.assetPath || asset.imagePath) {
+            ann.assetPath = asset.assetPath || asset.imagePath || ann.assetPath || null;
+        } else if (asset.dataUrl) {
+            delete ann.assetPath;
+            delete ann.imagePath;
+        }
+        normalizeImageAnnotation(ann);
+        markUserAuthored(ann);
+        redrawOverlay(pi);
+        selectAnnotation(ann, pi);
+        markDirty();
+    }
+
+    function canCutShapeAnnotation(ann) {
+        if (!ann || !isShapeAnnotation(ann)) return false;
+        if (isAnnotationLocked(ann) || isLineShape(ann)) return false;
+        const type = normalizeShapeType(ann.shapeType);
+        return ['square', 'circle', 'triangle', 'star', 'polygon'].includes(type);
+    }
+
+    function isShapeCutModeArmedFor(ann, pi) {
+        return Boolean(
+            shapeCutState.armed
+            && shapeCutState.pi === pi
+            && shapeCutState.uid
+            && ann
+            && shapeCutState.uid === ann._uid
+        );
+    }
+
+    function resetShapeCutState() {
+        shapeCutState = { armed: false, pi: null, uid: null, pointerId: null, startPt: null, currentPt: null };
+    }
+
+    function cancelShapeCutMode({ redraw = true } = {}) {
+        const prevPi = shapeCutState.pi;
+        resetShapeCutState();
+        if (redraw && prevPi !== null) redrawOverlay(prevPi);
+        syncCanvasCursors();
+        syncShapePanelUi();
+    }
+
+    function armShapeCutMode(ann, pi) {
+        if (!canCutShapeAnnotation(ann)) return;
+        shapeCutState = {
+            armed: true,
+            pi,
+            uid: ann._uid,
+            pointerId: null,
+            startPt: null,
+            currentPt: null,
+        };
+        syncCanvasCursors();
+        syncShapePanelUi();
+        redrawOverlay(pi);
+    }
+
+    function toggleShapeCutMode(ann, pi) {
+        if (isShapeCutModeArmedFor(ann, pi)) {
+            cancelShapeCutMode();
+            return;
+        }
+        armShapeCutMode(ann, pi);
+    }
+
+    function crossProduct2d(ax, ay, bx, by) {
+        return (ax * by) - (ay * bx);
+    }
+
+    function dedupePolygonVertices(points, epsilon = 0.01) {
+        if (!Array.isArray(points)) return [];
+        const deduped = [];
+        points.forEach((point) => {
+            const x = Number(point?.x);
+            const y = Number(point?.y);
+            if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+            const previous = deduped[deduped.length - 1];
+            if (previous && Math.hypot(previous.x - x, previous.y - y) <= epsilon) return;
+            deduped.push({ x, y });
+        });
+        if (deduped.length > 1) {
+            const first = deduped[0];
+            const last = deduped[deduped.length - 1];
+            if (Math.hypot(first.x - last.x, first.y - last.y) <= epsilon) {
+                deduped.pop();
+            }
+        }
+        return deduped;
+    }
+
+    function computePolygonArea(points) {
+        if (!Array.isArray(points) || points.length < 3) return 0;
+        let area = 0;
+        for (let index = 0; index < points.length; index += 1) {
+            const current = points[index];
+            const next = points[(index + 1) % points.length];
+            area += ((Number(current?.x) || 0) * (Number(next?.y) || 0)) - ((Number(next?.x) || 0) * (Number(current?.y) || 0));
+        }
+        return area / 2;
+    }
+
+    function clipPolygonAgainstInfiniteLine(points, lineStart, lineEnd, keepPositive) {
+        const cleaned = dedupePolygonVertices(points);
+        if (cleaned.length < 3) return [];
+        const dirX = (Number(lineEnd?.x) || 0) - (Number(lineStart?.x) || 0);
+        const dirY = (Number(lineEnd?.y) || 0) - (Number(lineStart?.y) || 0);
+        const epsilon = 1e-6;
+        const isInside = (point) => {
+            const side = crossProduct2d(dirX, dirY, (Number(point?.x) || 0) - (Number(lineStart?.x) || 0), (Number(point?.y) || 0) - (Number(lineStart?.y) || 0));
+            return keepPositive ? side >= -epsilon : side <= epsilon;
+        };
+        const intersectionPoint = (from, to) => {
+            const edgeX = (Number(to?.x) || 0) - (Number(from?.x) || 0);
+            const edgeY = (Number(to?.y) || 0) - (Number(from?.y) || 0);
+            const denom = crossProduct2d(dirX, dirY, edgeX, edgeY);
+            if (Math.abs(denom) < epsilon) return null;
+            const startOffsetX = (Number(lineStart?.x) || 0) - (Number(from?.x) || 0);
+            const startOffsetY = (Number(lineStart?.y) || 0) - (Number(from?.y) || 0);
+            const t = crossProduct2d(dirX, dirY, startOffsetX, startOffsetY) / denom;
+            return {
+                x: (Number(from?.x) || 0) + (edgeX * t),
+                y: (Number(from?.y) || 0) + (edgeY * t),
+            };
+        };
+
+        const output = [];
+        let previous = cleaned[cleaned.length - 1];
+        let previousInside = isInside(previous);
+        cleaned.forEach((current) => {
+            const currentInside = isInside(current);
+            if (currentInside !== previousInside) {
+                const intersection = intersectionPoint(previous, current);
+                if (intersection) output.push(intersection);
+            }
+            if (currentInside) output.push({ x: Number(current.x), y: Number(current.y) });
+            previous = current;
+            previousInside = currentInside;
+        });
+        return dedupePolygonVertices(output);
+    }
+
+    function createPolygonAnnotationFromPdfPoints(templateAnn, pi, points) {
+        const cleaned = dedupePolygonVertices(points);
+        if (cleaned.length < 3 || Math.abs(computePolygonArea(cleaned)) < 1) return null;
+        const xs = cleaned.map((point) => point.x);
+        const ys = cleaned.map((point) => point.y);
+        const left = Math.min(...xs);
+        const right = Math.max(...xs);
+        const bottom = Math.min(...ys);
+        const top = Math.max(...ys);
+        const width = Math.max(1, right - left);
+        const height = Math.max(1, top - bottom);
+        const polygonPoints = cleaned.map((point) => ({
+            x: clamp01((point.x - left) / width, 0.5),
+            y: clamp01((top - point.y) / height, 0.5),
+        }));
+        const ann = normalizeShapeAnnotation({
+            _uid: 'new_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+            id: generateAnnotationId(),
+            pageIndex: pi,
+            type: 'shape',
+            shapeType: 'polygon',
+            pdfX: left,
+            pdfY: bottom,
+            pdfWidth: width,
+            pdfHeight: height,
+            rotation: 0,
+            userCreated: true,
+            strokeColor: templateAnn.strokeColor,
+            strokeOpacity: templateAnn.strokeOpacity,
+            strokeWidth: templateAnn.strokeWidth,
+            strokeTransparent: templateAnn.strokeTransparent,
+            fillColor: templateAnn.fillColor,
+            fillOpacity: templateAnn.fillOpacity,
+            fillTransparent: templateAnn.fillTransparent,
+            polygonPoints,
+            text: '',
+        });
+        ann._originalBox = { x: ann.pdfX, y: ann.pdfY, w: ann.pdfWidth, h: ann.pdfHeight };
+        ann._originalPdfBox = { x: ann.pdfX, y: ann.pdfY, w: ann.pdfWidth, h: ann.pdfHeight };
+        return ann;
+    }
+
+    function cutShapeAnnotation(ann, pi, startPt, endPt) {
+        if (!canCutShapeAnnotation(ann)) return { ok: false, message: 'This shape cannot be cut.' };
+        const polygon = getShapePolygonPointsPdf(ann);
+        if (polygon.length < 3) return { ok: false, message: 'Shape outline is unavailable.' };
+        const lineDx = (Number(endPt?.x) || 0) - (Number(startPt?.x) || 0);
+        const lineDy = (Number(endPt?.y) || 0) - (Number(startPt?.y) || 0);
+        if (Math.hypot(lineDx, lineDy) < 4) {
+            return { ok: false, message: 'Drag a longer cut line through the shape.' };
+        }
+
+        const firstHalf = clipPolygonAgainstInfiniteLine(polygon, startPt, endPt, true);
+        const secondHalf = clipPolygonAgainstInfiniteLine(polygon, startPt, endPt, false);
+        const cutA = createPolygonAnnotationFromPdfPoints(ann, pi, firstHalf);
+        const cutB = createPolygonAnnotationFromPdfPoints(ann, pi, secondHalf);
+        if (!cutA || !cutB) {
+            return { ok: false, message: 'The cut line must pass through the shape.' };
+        }
+
+        const data = pageData[pi];
+        if (!data) return { ok: false, message: 'Page state is unavailable.' };
+        const index = data.annotations.findIndex((item) => item._uid === ann._uid);
+        if (index < 0) return { ok: false, message: 'Selected shape no longer exists.' };
+
+        const annotationId = String(ann.id || '').trim();
+        const promotedSourceKey = ann.promotedFromExtraction ? String(ann.promotedSourceKey || '').trim() : '';
+        pushUndo();
+        if (annotationId) pendingDeletedAnnotationIds.add(annotationId);
+        if (promotedSourceKey) pendingDeletedPromotedSourceKeys.add(promotedSourceKey);
+        delete editedTexts[ann._uid];
+        data.annotations.splice(index, 1, cutA, cutB);
+        if (hoverState.uid === ann._uid) hoverState = { pi: null, uid: null };
+        resetShapeCutState();
+        selectAnnotation(cutA, pi);
+        redrawOverlay(pi);
+        markDirty();
+        return { ok: true, annotations: [cutA, cutB] };
+    }
+
     // ── Add Text mode ─────────────────────────────────────────────────────────
     function setAddTextMode(active) {
-        addTextMode = !editModeEnabled && !!active;
+        if (active) {
+            cancelSignaturePlacement();
+            cancelEraseMode();
+            setDrawMode(false);
+            cancelShapeCutMode({ redraw: false });
+        }
+        addTextMode = !editModeEnabled && !shapeMode && !!active;
         if (!addTextMode && textCreationState.active) cancelTextCreationPreview();
         if (addTextBtn) addTextBtn.classList.toggle('active', addTextMode);
         if (ftbAddText) ftbAddText.classList.toggle('is-active', addTextMode);
-        // Update pointer cursor on every page canvas
-        Object.keys(pageData).forEach((piStr) => {
-            const oc = document.getElementById('oc-' + (Number(piStr) + 1));
-            if (oc) oc.style.cursor = addTextMode ? 'crosshair' : 'default';
-        });
+        syncCanvasCursors();
+        syncShapePanelUi();
     }
 
     function cancelTextCreationPreview() {
@@ -3778,6 +10768,108 @@
             textCreationState.previewEl.remove();
         }
         textCreationState = { active: false, pi: null, pointerId: null, startX: 0, startY: 0, rect: null, previewEl: null, moved: false };
+    }
+
+    function cancelShapeCreationPreview() {
+        shapeCreationState = { active: false, pi: null, pointerId: null, startPt: null, currentPt: null, previewAnn: null, constrain: false };
+        detachShapeConstrainShiftListener();
+        hideShapeConstrainTip();
+        redrawAllOverlays();
+        syncShapePanelUi();
+    }
+
+    // ── Shift-to-constrain shape drawing ──────────────────────────────────────
+    // Mirrors Photoshop's behaviour: while the user is actively drawing a new
+    // shape (rectangle/ellipse/polygon/line), holding Shift locks the preview
+    // to a 1:1 aspect ratio (perfect square / circle) or — for lines —
+    // snaps the endpoint to the nearest 45° step. A floating hint near the
+    // pointer tells the user about the modifier, and disappears once Shift
+    // is actually pressed (so it doesn't keep interrupting experienced users).
+    const shapeConstrainTipEl = document.getElementById('shape-constrain-tip');
+    let shapeConstrainShiftAttached = false;
+    let shapeConstrainUserDismissedTip = false;
+
+    function handleShapeConstrainShiftEvent(event) {
+        if (event.key !== 'Shift') return;
+        const wantConstrain = event.type === 'keydown';
+        if (shapeCreationState.constrain === wantConstrain) return;
+        shapeCreationState.constrain = wantConstrain;
+        if (wantConstrain) {
+            shapeConstrainUserDismissedTip = true;
+            hideShapeConstrainTip();
+        }
+        if (!shapeCreationState.active || shapeCreationState.pi === null) return;
+        if (!shapeCreationState.startPt || !shapeCreationState.currentPt) return;
+        shapeCreationState.previewAnn = createShapeAnnotationFromPoints(
+            shapeCreationState.startPt,
+            shapeCreationState.currentPt,
+            shapeCreationState.pi,
+            { constrain: wantConstrain }
+        );
+        redrawOverlay(shapeCreationState.pi);
+    }
+
+    function attachShapeConstrainShiftListener() {
+        if (shapeConstrainShiftAttached) return;
+        shapeConstrainShiftAttached = true;
+        window.addEventListener('keydown', handleShapeConstrainShiftEvent, true);
+        window.addEventListener('keyup', handleShapeConstrainShiftEvent, true);
+    }
+
+    function detachShapeConstrainShiftListener() {
+        if (!shapeConstrainShiftAttached) return;
+        shapeConstrainShiftAttached = false;
+        window.removeEventListener('keydown', handleShapeConstrainShiftEvent, true);
+        window.removeEventListener('keyup', handleShapeConstrainShiftEvent, true);
+    }
+
+    function positionShapeConstrainTip(clientX, clientY) {
+        if (!shapeConstrainTipEl) return;
+        const margin = 14;
+        const tipW = shapeConstrainTipEl.offsetWidth || 0;
+        const tipH = shapeConstrainTipEl.offsetHeight || 0;
+        const viewportW = window.innerWidth || document.documentElement.clientWidth || 1024;
+        const viewportH = window.innerHeight || document.documentElement.clientHeight || 768;
+        let left = clientX + margin;
+        let top = clientY + margin;
+        if (left + tipW + 4 > viewportW) left = Math.max(4, clientX - tipW - margin);
+        if (top + tipH + 4 > viewportH) top = Math.max(4, clientY - tipH - margin);
+        shapeConstrainTipEl.style.left = `${Math.max(4, left)}px`;
+        shapeConstrainTipEl.style.top = `${Math.max(4, top)}px`;
+    }
+
+    function showShapeConstrainTip(clientX, clientY) {
+        if (!shapeConstrainTipEl || shapeConstrainUserDismissedTip) return;
+        positionShapeConstrainTip(clientX, clientY);
+        shapeConstrainTipEl.classList.add('show');
+    }
+
+    function hideShapeConstrainTip() {
+        if (!shapeConstrainTipEl) return;
+        shapeConstrainTipEl.classList.remove('show');
+    }
+
+    function setShapeMode(active) {
+        if (active) {
+            cancelSignaturePlacement();
+            cancelEraseMode();
+            setDrawMode(false);
+            cancelShapeCutMode({ redraw: false });
+        }
+        const nextState = !editModeEnabled && !!active;
+        if (shapeMode === nextState) {
+            syncShapePanelUi();
+            return;
+        }
+        shapeMode = nextState;
+        if (shapeMode) {
+            setAddTextMode(false);
+        } else if (shapeCreationState.active) {
+            cancelShapeCreationPreview();
+        }
+        syncCanvasCursors();
+        syncShapePanelUi();
+        redrawAllOverlays();
     }
 
     function generateAnnotationId() {
@@ -3826,12 +10918,15 @@
             underline:    false,
             textAlign:    'left',
             verticalAlign: 'top',
-            backgroundColor: '#ffffff',
+            backgroundColor: 'transparent',
+            backgroundColorExplicit: false,
             opacity:      1,
             userCreated:        true,
             sourceSpans:        [],
             sourceLineBBoxes:   [],
             sourceTextLines:    [],
+            _autoWidth:         !hasDraggedSize,
+            _autoWidthMaxWidthPts: hasDraggedSize ? null : nextWidthPts,
         };
         ann._originalBox = { x, y, w: nextWidthPts, h: nextHeightPts };
         ann._originalPdfBox = { x, y, w: nextWidthPts, h: nextHeightPts };
@@ -3844,8 +10939,367 @@
 
         // Focus editor immediately so the user can start typing
         const ae = document.getElementById('ae-' + (pi + 1));
-        if (ae) requestAnimationFrame(() => ae.focus({ preventScroll: true }));
+        if (ae) {
+            setEditorEditingAnnotation(ae, ann);
+            requestAnimationFrame(() => ae.focus({ preventScroll: true }));
+        }
 
+        markDirty();
+    }
+
+    function createShapeAnnotationFromPoints(startPt, endPt, pi, options = {}) {
+        const data = pageData[pi];
+        if (!data || !startPt || !endPt) return null;
+
+        const constrain = Boolean(options && options.constrain);
+        const defaults = currentShapeDefaults();
+        if (isLineShape(defaults.shapeType)) {
+            // When Shift is held, force-snap the line to the nearest 45°
+            // step regardless of the normal angular threshold, matching
+            // Photoshop's constrain-to-axis behaviour. Without Shift we
+            // fall back to the gentle auto-snap inside snapLineEndpoint.
+            let snapped;
+            if (constrain) {
+                const dx = endPt.x - startPt.x;
+                const dy = endPt.y - startPt.y;
+                const dist = Math.hypot(dx, dy);
+                if (dist < 1) {
+                    snapped = { x: endPt.x, y: endPt.y };
+                } else {
+                    const snapStep = Math.PI / 4;
+                    const snappedAngle = Math.round(Math.atan2(dy, dx) / snapStep) * snapStep;
+                    snapped = {
+                        x: startPt.x + Math.cos(snappedAngle) * dist,
+                        y: startPt.y + Math.sin(snappedAngle) * dist,
+                    };
+                }
+            } else {
+                snapped = snapLineEndpoint(startPt.x, startPt.y, endPt.x, endPt.y);
+            }
+            const lineBox = computeLineBoxGeometry(startPt.x, startPt.y, snapped.x, snapped.y);
+            const ann = normalizeShapeAnnotation({
+                _uid: 'new_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+                id: generateAnnotationId(),
+                pageIndex: pi,
+                type: 'shape',
+                pdfX: lineBox.left,
+                pdfY: lineBox.bottom,
+                pdfWidth: lineBox.width,
+                pdfHeight: lineBox.height,
+                userCreated: true,
+                ...defaults,
+                lineStartX: lineBox.lineStartX,
+                lineStartY: lineBox.lineStartY,
+                lineEndX: lineBox.lineEndX,
+                lineEndY: lineBox.lineEndY,
+                text: '',
+            });
+            ann._originalBox = { x: ann.pdfX, y: ann.pdfY, w: ann.pdfWidth, h: ann.pdfHeight };
+            ann._originalPdfBox = { x: ann.pdfX, y: ann.pdfY, w: ann.pdfWidth, h: ann.pdfHeight };
+            return ann;
+        }
+
+        // When Shift is held on a non-line shape, lock the bounding box to
+        // a 1:1 aspect ratio so rectangles become perfect squares and
+        // ellipses become perfect circles. The side is driven by the
+        // longer of the two drag deltas so the preview always reaches
+        // under the cursor; we flip around startPt to preserve the drag
+        // direction (drag up-left still grows up-left).
+        let dx = endPt.x - startPt.x;
+        let dy = endPt.y - startPt.y;
+        if (constrain) {
+            const side = Math.max(Math.abs(dx), Math.abs(dy));
+            dx = (dx < 0 ? -1 : 1) * side;
+            dy = (dy < 0 ? -1 : 1) * side;
+        }
+        const left = Math.min(startPt.x, startPt.x + dx);
+        const bottom = Math.min(startPt.y, startPt.y + dy);
+        const width = Math.max(1, Math.abs(dx));
+        const height = Math.max(1, Math.abs(dy));
+        const ann = normalizeShapeAnnotation({
+            _uid: 'new_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+            id: generateAnnotationId(),
+            pageIndex: pi,
+            type: 'shape',
+            pdfX: left,
+            pdfY: bottom,
+            pdfWidth: width,
+            pdfHeight: height,
+            userCreated: true,
+            ...defaults,
+            text: '',
+        });
+        ann._originalBox = { x: ann.pdfX, y: ann.pdfY, w: ann.pdfWidth, h: ann.pdfHeight };
+        ann._originalPdfBox = { x: ann.pdfX, y: ann.pdfY, w: ann.pdfWidth, h: ann.pdfHeight };
+        return ann;
+    }
+
+    function getCurrentVisiblePageIndex() {
+        const fromActive = Number(activeState.pi);
+        if (Number.isInteger(fromActive) && fromActive >= 0 && pageData[fromActive]) return fromActive;
+        const fromJump = Math.max(0, (Number(pageJumpInput?.value) || 1) - 1);
+        if (pageData[fromJump]) return fromJump;
+        const firstKey = Object.keys(pageData)[0];
+        return Number.isFinite(Number(firstKey)) ? Number(firstKey) : 0;
+    }
+
+    function createImageAnnotation({
+        type = 'image',
+        dataUrl = '',
+        src = '',
+        fileName = null,
+        mimeType = 'image/png',
+        assetPath = null,
+        intrinsicWidth = 1,
+        intrinsicHeight = 1,
+        signatureSourceMode = 'draw',
+        signatureComposer = null,
+        centerXPts = null,
+        centerYPts = null,
+        imageToolSource = null,
+        drawStrokeColor = null,
+    } = {}, pi) {
+        const data = pageData[pi];
+        if (!data) return null;
+        const safeIntrinsicWidth = Math.max(1, Number(intrinsicWidth) || 1);
+        const safeIntrinsicHeight = Math.max(1, Number(intrinsicHeight) || 1);
+        const aspectRatio = safeIntrinsicWidth / safeIntrinsicHeight;
+        const preferredWidthPts = String(type).toLowerCase() === 'signature' ? 180 : 220;
+        const maxWidthPts = data.wPts * (String(type).toLowerCase() === 'signature' ? 0.34 : 0.4);
+        const maxHeightPts = data.hPts * (String(type).toLowerCase() === 'signature' ? 0.18 : 0.28);
+        let pdfWidth = Math.max(72, Math.min(preferredWidthPts, maxWidthPts));
+        let pdfHeight = pdfWidth / Math.max(0.01, aspectRatio);
+        if (pdfHeight > maxHeightPts) {
+            pdfHeight = maxHeightPts;
+            pdfWidth = pdfHeight * Math.max(0.01, aspectRatio);
+        }
+        pdfWidth = Math.max(48, Math.min(pdfWidth, data.wPts - 24));
+        pdfHeight = Math.max(24, Math.min(pdfHeight, data.hPts - 24));
+        const centeredPdfX = Math.max(12, (data.wPts - pdfWidth) / 2);
+        const centeredPdfY = Math.max(12, (data.hPts - pdfHeight) / 2);
+        const pdfX = Number.isFinite(Number(centerXPts))
+            ? Math.max(12, Math.min(data.wPts - pdfWidth - 12, Number(centerXPts) - (pdfWidth / 2)))
+            : centeredPdfX;
+        const pdfY = Number.isFinite(Number(centerYPts))
+            ? Math.max(12, Math.min(data.hPts - pdfHeight - 12, Number(centerYPts) - (pdfHeight / 2)))
+            : centeredPdfY;
+        const ann = normalizeImageAnnotation({
+            _uid: 'new_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+            id: generateAnnotationId(),
+            pageIndex: pi,
+            type: String(type).toLowerCase() === 'signature' ? 'signature' : 'image',
+            pdfX,
+            pdfY,
+            pdfWidth,
+            pdfHeight,
+            rotation: 0,
+            opacity: 1,
+            userCreated: true,
+            dataUrl: dataUrl || '',
+            src: src || '',
+            fileName: fileName || undefined,
+            mimeType: mimeType || 'image/png',
+            assetPath: assetPath || undefined,
+            intrinsicWidth: safeIntrinsicWidth,
+            intrinsicHeight: safeIntrinsicHeight,
+            signatureSourceMode: String(type).toLowerCase() === 'signature'
+                ? normalizeSignatureSourceMode(signatureSourceMode)
+                : undefined,
+            signatureComposer: String(type).toLowerCase() === 'signature'
+                ? cloneSerializableValue(signatureComposer, null)
+                : undefined,
+            imageToolSource: imageToolSource || undefined,
+            drawStrokeColor: imageToolSource === 'direct-draw' && drawStrokeColor
+                ? normalizeHexColor(drawStrokeColor, '#111827')
+                : undefined,
+            text: '',
+        });
+        ann._originalBox = { x: ann.pdfX, y: ann.pdfY, w: ann.pdfWidth, h: ann.pdfHeight };
+        ann._originalPdfBox = { x: ann.pdfX, y: ann.pdfY, w: ann.pdfWidth, h: ann.pdfHeight };
+        return ann;
+    }
+
+    function createImageAnnotationAtPageBox({
+        type = 'image',
+        dataUrl = '',
+        src = '',
+        fileName = null,
+        mimeType = 'image/png',
+        assetPath = null,
+        intrinsicWidth = 1,
+        intrinsicHeight = 1,
+        pdfX = 0,
+        pdfY = 0,
+        pdfWidth = 1,
+        pdfHeight = 1,
+        signatureSourceMode = 'draw',
+        signatureComposer = null,
+        imageToolSource = null,
+        drawStrokeColor = null,
+    } = {}, pi) {
+        const ann = normalizeImageAnnotation({
+            _uid: 'new_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+            id: generateAnnotationId(),
+            pageIndex: pi,
+            type: String(type).toLowerCase() === 'signature' ? 'signature' : 'image',
+            pdfX: Math.max(0, Number(pdfX) || 0),
+            pdfY: Math.max(0, Number(pdfY) || 0),
+            pdfWidth: Math.max(1, Number(pdfWidth) || 1),
+            pdfHeight: Math.max(1, Number(pdfHeight) || 1),
+            rotation: 0,
+            opacity: 1,
+            userCreated: true,
+            dataUrl: dataUrl || '',
+            src: src || '',
+            fileName: fileName || undefined,
+            mimeType: mimeType || 'image/png',
+            assetPath: assetPath || undefined,
+            intrinsicWidth: Math.max(1, Number(intrinsicWidth) || 1),
+            intrinsicHeight: Math.max(1, Number(intrinsicHeight) || 1),
+            signatureSourceMode: String(type).toLowerCase() === 'signature'
+                ? normalizeSignatureSourceMode(signatureSourceMode)
+                : undefined,
+            signatureComposer: String(type).toLowerCase() === 'signature'
+                ? cloneSerializableValue(signatureComposer, null)
+                : undefined,
+            imageToolSource: imageToolSource || undefined,
+            drawStrokeColor: imageToolSource === 'direct-draw' && drawStrokeColor
+                ? normalizeHexColor(drawStrokeColor, '#111827')
+                : undefined,
+            text: '',
+        });
+        ann._originalBox = { x: ann.pdfX, y: ann.pdfY, w: ann.pdfWidth, h: ann.pdfHeight };
+        ann._originalPdfBox = { x: ann.pdfX, y: ann.pdfY, w: ann.pdfWidth, h: ann.pdfHeight };
+        return ann;
+    }
+
+    function placeImageBackedAnnotationAtPageBox(pi, asset, box, type = 'image') {
+        const data = pageData[pi];
+        if (!data || (!asset?.dataUrl && !asset?.src) || !box) return null;
+        const ann = createImageAnnotationAtPageBox({
+            type,
+            dataUrl: asset.dataUrl || '',
+            src: asset.src || '',
+            fileName: asset.fileName || null,
+            mimeType: asset.mimeType || 'image/png',
+            assetPath: asset.assetPath || asset.imagePath || null,
+            intrinsicWidth: asset.width || asset.intrinsicWidth || 1,
+            intrinsicHeight: asset.height || asset.intrinsicHeight || 1,
+            signatureSourceMode: asset.signatureSourceMode || 'draw',
+            signatureComposer: asset.signatureComposer || null,
+            imageToolSource: asset.imageToolSource || null,
+            drawStrokeColor: asset.drawStrokeColor || null,
+            pdfX: box.pdfX,
+            pdfY: box.pdfY,
+            pdfWidth: box.pdfWidth,
+            pdfHeight: box.pdfHeight,
+        }, pi);
+        if (!ann) return null;
+        pushUndo();
+        // Direct-draw strokes (marker/pen tool) sit between shapes and text:
+        //   shape annotations  →  direct-draw  →  text annotations  →  signatures/images
+        // The editor renders text via a DOM rich-html-layer (z-index 4) that
+        // sits above the overlay canvas, so direct-draw is visually under text
+        // in the editor regardless of array position. Mirroring that order in
+        // the PDF export keeps the download identical to what the editor shows.
+        if (String(asset.imageToolSource || '') === 'direct-draw') {
+            const firstTextIdx = data.annotations.findIndex((existing) => isTextAnnotation(existing));
+            if (firstTextIdx < 0) {
+                data.annotations.push(ann);
+            } else {
+                data.annotations.splice(firstTextIdx, 0, ann);
+            }
+        } else {
+            data.annotations.push(ann);
+        }
+        redrawOverlay(pi);
+        selectAnnotation(ann, pi);
+        markDirty();
+        return ann;
+    }
+
+    function placeImageBackedAnnotationOnPage(pi, asset, type = 'signature', centerPt = null) {
+        if (!asset?.dataUrl && !asset?.src) return;
+        const data = pageData[pi];
+        if (!data) return;
+        const ann = createImageAnnotation({
+            type,
+            dataUrl: asset.dataUrl || '',
+            src: asset.src || '',
+            fileName: asset.fileName || null,
+            mimeType: asset.mimeType || 'image/png',
+            assetPath: asset.assetPath || asset.imagePath || null,
+            intrinsicWidth: asset.width || asset.intrinsicWidth || 1,
+            intrinsicHeight: asset.height || asset.intrinsicHeight || 1,
+            signatureSourceMode: asset.signatureSourceMode || 'draw',
+            signatureComposer: asset.signatureComposer || null,
+            centerXPts: centerPt?.x ?? null,
+            centerYPts: centerPt?.y ?? null,
+            imageToolSource: asset.imageToolSource || null,
+            drawStrokeColor: asset.drawStrokeColor || null,
+        }, pi);
+        if (!ann) return;
+        pushUndo();
+        data.annotations.push(ann);
+        redrawOverlay(pi);
+        selectAnnotation(ann, pi);
+        markDirty();
+    }
+
+    function placeImageBackedAnnotationOnCurrentPage(asset, type = 'signature') {
+        const pi = getCurrentVisiblePageIndex();
+        placeImageBackedAnnotationOnPage(pi, asset, type, null);
+    }
+
+    function applyShapeStateToAnnotation(ann, shapeState) {
+        if (!ann || !isShapeAnnotation(ann)) return;
+        const normalized = normalizeShapeAnnotation({ ...ann, ...shapeState });
+        ann.shapeType = normalized.shapeType;
+        ann.strokeColor = normalized.strokeColor;
+        ann.strokeOpacity = normalized.strokeOpacity;
+        ann.strokeWidth = normalized.strokeWidth;
+        ann.strokeTransparent = normalized.strokeTransparent;
+        ann.fillColor = normalized.fillColor;
+        ann.fillOpacity = normalized.fillOpacity;
+        ann.fillTransparent = normalized.fillTransparent;
+        if (isLineShape(normalized)) {
+            ann.lineStartX = normalized.lineStartX;
+            ann.lineStartY = normalized.lineStartY;
+            ann.lineEndX = normalized.lineEndX;
+            ann.lineEndY = normalized.lineEndY;
+        }
+    }
+
+    function readShapeInspectorState() {
+        const state = {
+            shapeType: currentShapeType,
+            strokeColor: normalizeHexColor(shapeStrokeColorInput?.value || shapeStrokeHexInput?.value, currentShapeStrokeColor),
+            strokeOpacity: clamp01((Number(shapeStrokeOpacityInput?.value) || 0) / 100, currentShapeStrokeOpacity),
+            strokeWidth: Math.max(1, Number(shapeStrokeWidthInput?.value) || currentShapeStrokeWidth),
+            strokeTransparent: Boolean(shapeStrokeTransparentInput?.checked),
+            fillColor: normalizeHexColor(shapeFillColorInput?.value || shapeFillHexInput?.value, currentShapeFillColor),
+            fillOpacity: clamp01((Number(shapeFillOpacityInput?.value) || 0) / 100, currentShapeFillOpacity),
+            fillTransparent: Boolean(shapeFillTransparentInput?.checked),
+        };
+        reflectShapeStateToInputs(state);
+        return currentShapeDefaults();
+    }
+
+    function commitShapeInspectorToActive({ pushHistory = false } = {}) {
+        const state = readShapeInspectorState();
+        const active = getActiveAnnAndPage();
+        if (!active || !isShapeAnnotation(active.ann)) {
+            // No active shape — defaults are now updated; skip syncShapePanelUi
+            // because reflecting the (stale) active shape state would revert the
+            // inputs the user is currently dragging.
+            return;
+        }
+        if (isAnnotationLocked(active.ann)) return;
+        if (pushHistory) pushUndo();
+        applyShapeStateToAnnotation(active.ann, state);
+        redrawOverlay(active.pi);
+        syncActiveEditor(true);
+        syncShapePanelUi();
         markDirty();
     }
 
@@ -3864,7 +11318,7 @@
             updatePageCardWidth(pi, newW);
             const oc = document.getElementById('oc-' + (pi + 1));
             const ac = document.getElementById('ac-' + (pi + 1));
-            if (oc) { oc.width = newW; oc.height = newH; }
+            if (oc) sizeOverlayCanvas(oc, newW, newH);
             if (ac) {
                 ac.style.width = `${newW}px`;
                 ac.style.height = `${newH}px`;
@@ -3889,9 +11343,12 @@
                 `<div id="rhl-${pg}" class="rich-html-layer"></div>` +
                 `<div id="ae-${pg}" class="active-editor" contenteditable="true" spellcheck="false"></div>` +
                 `<div id="tm-${pg}" class="annotation-tbc-menu">` +
-                    `<button id="mh-${pg}" type="button" class="tbc-menu-btn" title="Move" aria-label="Move">` +
-                        `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 9l-3 3 3 3"/><path d="M9 5l3-3 3 3"/><path d="M15 19l-3 3-3-3"/><path d="M19 9l3 3-3 3"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/></svg>` +
+                    `<button id="lkh-${pg}" type="button" class="tbc-menu-btn tbc-lock" title="Lock annotation" aria-label="Lock annotation">` +
+                        `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="9" rx="2"></rect><path d="M8 11V8a4 4 0 1 1 8 0v3"></path></svg>` +
                     `</button>` +
+                    `<button id="tm-${pg}-front" type="button" class="tbc-menu-btn" title="Bring to front" aria-label="Bring to front">⬆</button>` +
+                    `<button id="tm-${pg}-back" type="button" class="tbc-menu-btn" title="Send to back" aria-label="Send to back">⬇</button>` +
+                    `<div class="tbc-menu-divider"></div>` +
                     `<button id="eh-${pg}" type="button" class="tbc-menu-btn tbc-ok" title="Edit text" aria-label="Edit text">` +
                         `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>` +
                     `</button>` +
@@ -3906,10 +11363,33 @@
                         `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>` +
                     `</button>` +
                 `</div>` +
+                `<div id="sh-${pg}" class="shape-action-bar">` +
+                    `<span id="sh-${pg}-tag" class="shape-action-bar__tag"></span>` +
+                    `<button id="sh-${pg}-edit" type="button" class="shape-action-bar__btn" title="Edit signature" aria-label="Edit signature" style="display:none;">` +
+                        `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"></path></svg>` +
+                    `</button>` +
+                    `<button id="sh-${pg}-bg" type="button" class="shape-action-bar__btn" title="Remove white background" aria-label="Remove white background" style="display:none;">BG</button>` +
+                    `<button id="sh-${pg}-lock" type="button" class="shape-action-bar__btn" title="Lock annotation" aria-label="Lock annotation">` +
+                        `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="9" rx="2"></rect><path d="M8 11V8a4 4 0 1 1 8 0v3"></path></svg>` +
+                    `</button>` +
+                    `<button id="sh-${pg}-front" type="button" class="shape-action-bar__btn" title="Bring to front" aria-label="Bring to front">⬆</button>` +
+                    `<button id="sh-${pg}-back" type="button" class="shape-action-bar__btn" title="Send to back" aria-label="Send to back">⬇</button>` +
+                    `<button id="sh-${pg}-cut" type="button" class="shape-action-bar__btn" title="Cut shape" aria-label="Cut shape">Cut</button>` +
+                    `<button id="sh-${pg}-cap" type="button" class="shape-action-bar__btn" title="Toggle rounded line caps" aria-label="Toggle rounded line caps" style="display:none;">` +
+                        `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/></svg>` +
+                    `</button>` +
+                    `<button id="sh-${pg}-delete" type="button" class="shape-action-bar__btn is-danger" title="Delete" aria-label="Delete">` +
+                        `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>` +
+                    `</button>` +
+                `</div>` +
                 `<button id="rh-${pg}-nw" type="button" class="resize-handle" data-dir="nw" aria-label="Resize northwest"></button>` +
                 `<button id="rh-${pg}-ne" type="button" class="resize-handle" data-dir="ne" aria-label="Resize northeast"></button>` +
                 `<button id="rh-${pg}-sw" type="button" class="resize-handle" data-dir="sw" aria-label="Resize southwest"></button>` +
                 `<button id="rh-${pg}-se" type="button" class="resize-handle" data-dir="se" aria-label="Resize southeast"></button>` +
+                `<div id="sb-${pg}" class="shape-selection-box" aria-hidden="true"></div>` +
+                `<button id="rh-${pg}-rot" type="button" class="rotate-handle" aria-label="Rotate">` +
+                    `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3.5-7.1"></path><polyline points="21 4 21 10 15 10"></polyline></svg>` +
+                `</button>` +
             `</div></div>`;
         wrap.appendChild(card);
         return card;
@@ -3922,17 +11402,38 @@
         const ac     = document.getElementById('ac-' + pg);
         const ae     = document.getElementById('ae-' + pg);
         const tm     = document.getElementById('tm-' + pg);
-        const mh     = document.getElementById('mh-' + pg);
         const eh     = document.getElementById('eh-' + pg);
+        const lkh    = document.getElementById('lkh-' + pg);
         const uh     = document.getElementById('uh-' + pg);
         const lh     = document.getElementById('lh-' + pg);
         const ch     = document.getElementById('ch-' + pg);
         const dh     = document.getElementById('dh-' + pg);
+        const tmFront = document.getElementById('tm-' + pg + '-front');
+        const tmBack = document.getElementById('tm-' + pg + '-back');
+        const sh     = document.getElementById('sh-' + pg);
+        const shLock = document.getElementById('sh-' + pg + '-lock');
+        const shFront = document.getElementById('sh-' + pg + '-front');
+        const shBack = document.getElementById('sh-' + pg + '-back');
+        const shEdit = document.getElementById('sh-' + pg + '-edit');
+        const shBg = document.getElementById('sh-' + pg + '-bg');
+        const shCut = document.getElementById('sh-' + pg + '-cut');
+        const shCap = document.getElementById('sh-' + pg + '-cap');
+        const shDelete = document.getElementById('sh-' + pg + '-delete');
         const rhs    = ['nw', 'ne', 'sw', 'se'].map((dir) => document.getElementById(`rh-${pg}-${dir}`));
-        if (!pageEl || !oc || !ac || !ae || !tm || !mh || !eh || !uh || !lh || !ch || !dh || rhs.some((handle) => !handle)) return;
+        const rhRot  = document.getElementById('rh-' + pg + '-rot');
+        if (!pageEl || !oc || !ac || !ae || !tm || !eh || !lkh || !uh || !lh || !ch || !dh || !tmFront || !tmBack || !sh || !shLock || !shFront || !shBack || !shEdit || !shBg || !shCut || !shCap || !shDelete || rhs.some((handle) => !handle) || !rhRot) return;
 
         const fitScale  = getFitScaleForWidth(wPts);
-        const initScale = fitScale * (currentZoomPercent / 100);
+        // Pure CSS zoom model: the canvas/page is always rasterized at
+        // fitScale; the user's zoom (currentZoomPercent) is applied as a CSS
+        // transform on the page card by applyPageScale(). Sizing the initial
+        // canvas at fitScale*zoom (the previous behaviour) made the very
+        // first zoom action invalidate canvasWidth and force an editor
+        // rebuild — which dropped active source-flow editors back to plain
+        // mode and produced visibly mis-scaled text. Keep `data.scale`
+        // synonymous with `fitScale` here so subsequent applyPageScale calls
+        // are no-ops on canvas dimensions and only update the CSS transform.
+        const initScale = fitScale;
         const initW     = Math.round(wPts * initScale);
         const initH     = Math.round(hPts * initScale);
 
@@ -3945,22 +11446,44 @@
         updatePageCardWidth(pi, initW);
         scaleObs.observe(pageEl);
 
-        oc.width  = initW;
-        oc.height = initH;
+        sizeOverlayCanvas(oc, initW, initH);
         ac.style.width = `${initW}px`;
         ac.style.height = `${initH}px`;
+
+        // Apply the initial CSS zoom transform now that the page card exists.
+        // applyPageScale is otherwise only triggered by the zoom controls.
+        applyPageScale(pi);
 
         const applyEditorTextTransform = (transformer) => {
             if (!editModeEnabled && !addTextMode) return;
             const ann = pageData[pi]?.annotations.find((item) => item._uid === activeState.uid);
             if (!ann || typeof transformer !== 'function') return;
+            if (isAnnotationLocked(ann)) return;
             const currentText = editedTexts[ann._uid] ?? String(ann.text ?? '');
             const nextText = transformer(currentText);
             if (nextText === currentText) return;
             pushUndo();
+            // Mirror the input-handler's behaviour so the case change is treated
+            // as a real user edit (otherwise dirty/save tracking and the
+            // user-authored render path can disagree).
+            if (nextText !== String(ann.text ?? '')) markUserAuthored(ann);
             editedTexts[ann._uid] = nextText;
             resizeAnnotationForEditedText(ann, nextText, pi);
             ae.innerHTML = renderPlainEditorHTML(ann, nextText, pageData[pi].scale);
+            // CRITICAL: update ann._richHtml to the freshly-rendered editor HTML.
+            // The rich-html DOM layer (renderRichHtmlLayer) and syncActiveEditor
+            // both read from ann._richHtml. If we leave it stale, then:
+            //   (a) clicking off the annotation makes the page revert to the
+            //       pre-transform case (rich-html-layer renders old _richHtml),
+            //   (b) re-selecting the annotation rebuilds ae.innerHTML from the
+            //       stale _richHtml, while editedTexts[_uid] already holds the
+            //       transformed text — so the next case-button click hits the
+            //       `nextText === currentText` early-return and appears to do
+            //       nothing until the user types something to refresh _richHtml.
+            // Note: this collapses any per-selection rich formatting (bold spans,
+            // mid-text colour, etc.) to the annotation-level uniform style. That
+            // matches the intent of "make all UPPERCASE / lowercase".
+            ann._richHtml = ae.innerHTML;
             syncActiveEditor();
             requestAnimationFrame(() => ae.focus({ preventScroll: true }));
             markDirty();
@@ -3969,30 +11492,15 @@
 
         const startTextCreation = (event) => {
             if (!addTextMode || dragState.active || resizeState.active) return;
-            // If the pointer lands on a user-created annotation, select it instead
-            // of starting a new text-creation drag.
             const _rect = oc.getBoundingClientRect();
-            const _pt = {
-                x: (event.clientX - _rect.left) * (oc.width / Math.max(_rect.width, 1)),
-                y: (event.clientY - _rect.top)  * (oc.height / Math.max(_rect.height, 1)),
-            };
-            const _data = pageData[pi];
-            const _hit = _data ? findAnnotationAt(_pt.x, _pt.y, _data.annotations, _data.scale, _data.canvasHeight) : null;
-            if (_hit?.userCreated) {
-                event.preventDefault();
-                if (activeState.uid && activeState.uid !== _hit._uid) {
-                    const activeEditor = activeState.pi !== null ? document.getElementById('ae-' + (activeState.pi + 1)) : null;
-                    if (activeEditor && document.activeElement === activeEditor) activeEditor.blur();
-                }
-                selectAnnotation(_hit, pi);
-                return;
-            }
+            const _pt = canvasPointFromEvent(event, oc);
             event.preventDefault();
             if (activeState.uid) {
                 const activeEditor = activeState.pi !== null ? document.getElementById('ae-' + (activeState.pi + 1)) : null;
                 if (activeEditor && document.activeElement === activeEditor) activeEditor.blur();
                 clearActiveAnnotation();
             }
+            if (!_pt || !_rect.width || !_rect.height) return;
             const rect = oc.getBoundingClientRect();
             const startX = event.clientX - rect.left;
             const startY = event.clientY - rect.top;
@@ -4009,7 +11517,11 @@
                 pointerId: event.pointerId,
                 startX,
                 startY,
+                startCanvasX: _pt.x,
+                startCanvasY: _pt.y,
                 rect,
+                logicalWidth: canvasLogicalWidth(oc),
+                logicalHeight: canvasLogicalHeight(oc),
                 previewEl,
                 moved: false,
             };
@@ -4046,12 +11558,12 @@
             const top = Math.min(state.startY, currentY);
             const width = Math.abs(currentX - state.startX);
             const height = Math.abs(currentY - state.startY);
-            const scaleX = oc.width / Math.max(state.rect.width, 1);
-            const scaleY = oc.height / Math.max(state.rect.height, 1);
+            const scaleX = state.logicalWidth / Math.max(state.rect.width, 1);
+            const scaleY = state.logicalHeight / Math.max(state.rect.height, 1);
             const useDraggedBox = state.moved && width > 20 && height > 10;
             createNewTextAnnotation(
-                left * scaleX,
-                top * scaleY,
+                useDraggedBox ? (left * scaleX) : state.startCanvasX,
+                useDraggedBox ? (top * scaleY) : state.startCanvasY,
                 pi,
                 useDraggedBox ? (width * scaleX) : null,
                 useDraggedBox ? (height * scaleY) : null
@@ -4059,35 +11571,326 @@
             return true;
         };
 
+        const startShapeCreation = (event) => {
+            if (!shapeMode || dragState.active || resizeState.active) return false;
+            const rect = oc.getBoundingClientRect();
+            const canvasX = (event.clientX - rect.left) * (oc.width / Math.max(rect.width, 1));
+            const canvasY = (event.clientY - rect.top) * (oc.height / Math.max(rect.height, 1));
+            const data = pageData[pi];
+            const hit = data ? findAnnotationAt(canvasX, canvasY, data.annotations, data.scale, data.canvasHeight) : null;
+            // Hitting any existing annotation while shape/line tool is active
+            // selects it (and starts a drag) instead of starting a new shape.
+            // Previously this only matched shape annotations, so clicking on a
+            // text/image annotation would clear the selection and start a tiny
+            // shape-creation preview — which made the resize handles vanish.
+            if (hit) {
+                event.preventDefault();
+                if (activeState.uid !== hit._uid) selectAnnotation(hit, pi);
+                if (isAnnotationLocked(hit)) return true;
+                beginDrag(event, pi);
+                return true;
+            }
+
+            const startPt = pdfPtFromClient(event.clientX, event.clientY, pi);
+            if (!startPt) return false;
+            event.preventDefault();
+            if (activeState.uid) clearActiveAnnotation();
+            const initialConstrain = Boolean(event.shiftKey);
+            shapeCreationState = {
+                active: true,
+                pi,
+                pointerId: event.pointerId,
+                startPt,
+                currentPt: startPt,
+                previewAnn: createShapeAnnotationFromPoints(startPt, startPt, pi, { constrain: initialConstrain }),
+                constrain: initialConstrain,
+            };
+            attachShapeConstrainShiftListener();
+            if (initialConstrain) {
+                shapeConstrainUserDismissedTip = true;
+            } else {
+                showShapeConstrainTip(event.clientX, event.clientY);
+            }
+            if (typeof oc.setPointerCapture === 'function') {
+                oc.setPointerCapture(event.pointerId);
+            }
+            redrawOverlay(pi);
+            syncShapePanelUi();
+            return true;
+        };
+
+        const updateShapeCreation = (event) => {
+            if (!shapeCreationState.active || shapeCreationState.pi !== pi || shapeCreationState.pointerId !== event.pointerId) return false;
+            const currentPt = pdfPtFromClient(event.clientX, event.clientY, pi);
+            if (!currentPt) return false;
+            shapeCreationState.currentPt = currentPt;
+            // Sync constrain flag with the live event — covers the case
+            // where Shift is pressed while the pointer is over the canvas
+            // (keydown handler still fires, but reading shiftKey keeps us
+            // correct if the event was dispatched without focus).
+            shapeCreationState.constrain = Boolean(event.shiftKey);
+            if (shapeCreationState.constrain) {
+                shapeConstrainUserDismissedTip = true;
+                hideShapeConstrainTip();
+            } else if (!shapeConstrainUserDismissedTip) {
+                showShapeConstrainTip(event.clientX, event.clientY);
+            }
+            shapeCreationState.previewAnn = createShapeAnnotationFromPoints(
+                shapeCreationState.startPt,
+                currentPt,
+                pi,
+                { constrain: shapeCreationState.constrain }
+            );
+            redrawOverlay(pi);
+            return true;
+        };
+
+        const finishShapeCreation = (event) => {
+            if (!shapeCreationState.active || shapeCreationState.pi !== pi || shapeCreationState.pointerId !== event.pointerId) return false;
+            const state = { ...shapeCreationState };
+            if (typeof oc.releasePointerCapture === 'function' && oc.hasPointerCapture?.(event.pointerId)) {
+                oc.releasePointerCapture(event.pointerId);
+            }
+            const ann = state.previewAnn ? normalizeShapeAnnotation(state.previewAnn) : null;
+            shapeCreationState = { active: false, pi: null, pointerId: null, startPt: null, currentPt: null, previewAnn: null, constrain: false };
+            detachShapeConstrainShiftListener();
+            hideShapeConstrainTip();
+            redrawOverlay(pi);
+            if (!ann) return false;
+            const minDimension = isLineShape(ann) ? 6 : 8;
+            const longEnough = Math.max(Number(ann.pdfWidth) || 0, Number(ann.pdfHeight) || 0) >= minDimension;
+            if (!longEnough) {
+                syncShapePanelUi();
+                return true;
+            }
+            pushUndo();
+            pageData[pi].annotations.push(ann);
+            selectAnnotation(ann, pi);
+            markDirty();
+            syncShapePanelUi();
+            redrawOverlay(pi);
+            return true;
+        };
+
+        const beginShapeCutDrag = (event) => {
+            if (!shapeCutState.armed || shapeCutState.pi !== pi || shapeCutState.pointerId !== null) return false;
+            const startPt = pdfPtFromClient(event.clientX, event.clientY, pi);
+            if (!startPt) return false;
+            const ann = pageData[pi]?.annotations.find((item) => item._uid === shapeCutState.uid);
+            if (!canCutShapeAnnotation(ann)) {
+                cancelShapeCutMode();
+                return false;
+            }
+            event.preventDefault();
+            shapeCutState = {
+                ...shapeCutState,
+                pointerId: event.pointerId,
+                startPt,
+                currentPt: startPt,
+            };
+            oc.setPointerCapture?.(event.pointerId);
+            redrawOverlay(pi);
+            return true;
+        };
+
+        const updateShapeCutDrag = (event) => {
+            if (!shapeCutState.armed || shapeCutState.pi !== pi || shapeCutState.pointerId !== event.pointerId) return false;
+            const currentPt = pdfPtFromClient(event.clientX, event.clientY, pi);
+            if (!currentPt) return false;
+            shapeCutState = {
+                ...shapeCutState,
+                currentPt,
+            };
+            redrawOverlay(pi);
+            return true;
+        };
+
+        const finishShapeCutDrag = (event) => {
+            if (!shapeCutState.armed || shapeCutState.pi !== pi || shapeCutState.pointerId !== event.pointerId) return false;
+            if (typeof oc.releasePointerCapture === 'function' && oc.hasPointerCapture?.(event.pointerId)) {
+                oc.releasePointerCapture(event.pointerId);
+            }
+            const ann = pageData[pi]?.annotations.find((item) => item._uid === shapeCutState.uid);
+            const startPt = shapeCutState.startPt;
+            const endPt = pdfPtFromClient(event.clientX, event.clientY, pi) || shapeCutState.currentPt;
+            if (!ann || !startPt || !endPt) {
+                cancelShapeCutMode();
+                return true;
+            }
+            const result = cutShapeAnnotation(ann, pi, startPt, endPt);
+            if (!result.ok) {
+                shapeCutState = {
+                    ...shapeCutState,
+                    pointerId: null,
+                    startPt: null,
+                    currentPt: null,
+                };
+                redrawOverlay(pi);
+                showToast(result.message || 'Unable to cut shape.');
+                syncCanvasCursors();
+                syncShapePanelUi();
+                return true;
+            }
+            showToast('Shape cut into 2 pieces.');
+            return true;
+        };
+
         // ── Canvas events ──
         oc.addEventListener('pointerdown', (e) => {
+            if (signaturePlacementState.active) {
+                const pt = pdfPtFromClient(e.clientX, e.clientY, pi);
+                if (!pt || !signaturePlacementState.asset) return;
+                e.preventDefault();
+                placeImageBackedAnnotationOnPage(pi, signaturePlacementState.asset, signaturePlacementState.type, pt);
+                cancelSignaturePlacement();
+                return;
+            }
+            if (drawModeActive) {
+                if (drawToolType === 'eraser') {
+                    void beginDirectEraserStroke(e, oc, pi);
+                } else {
+                    beginDirectPenStroke(e, oc, pi);
+                }
+                return;
+            }
+            if (shapeCutState.armed && shapeCutState.pi === pi) {
+                if (beginShapeCutDrag(e)) return;
+            }
+            if (eraseMode) return;
+            if (!addTextMode && !shapeMode) {
+                const data = pageData[pi];
+                const pt = canvasPointFromEvent(e, oc);
+                if (data && pt) {
+                    const ann = findAnnotationAt(pt.x, pt.y, data.annotations, data.scale, data.canvasHeight);
+                    if (ann && isBoxAnnotation(ann) && !isAnnotationLocked(ann)) {
+                        if (activeState.uid !== ann._uid) selectAnnotation(ann, pi);
+                        beginDrag(e, pi);
+                        return;
+                    }
+                }
+            }
             if (addTextMode) {
                 startTextCreation(e);
+                return;
+            }
+            if (shapeMode) {
+                startShapeCreation(e);
             }
         });
 
         oc.addEventListener('pointermove', (e) => {
+            if (drawModeActive && activeDrawSession) {
+                if (activeDrawSession.kind === 'eraser') {
+                    moveDirectEraserStroke(e, oc);
+                } else {
+                    moveDirectPenStroke(e, oc);
+                }
+                return;
+            }
             if (textCreationState.active) {
                 updateTextCreation(e);
+                return;
+            }
+            if (shapeCutState.armed && shapeCutState.pi === pi && shapeCutState.pointerId !== null) {
+                updateShapeCutDrag(e);
+                return;
+            }
+            if (shapeCreationState.active) {
+                updateShapeCreation(e);
             }
         });
 
         oc.addEventListener('pointerup', (e) => {
+            if (drawModeActive && activeDrawSession) {
+                if (activeDrawSession.kind === 'eraser') {
+                    finishDirectEraserStroke(e, oc);
+                } else {
+                    finishDirectPenStroke(e, oc);
+                }
+                e.preventDefault();
+                return;
+            }
+            if (shapeCutState.armed && shapeCutState.pi === pi && shapeCutState.pointerId !== null) {
+                if (finishShapeCutDrag(e)) {
+                    e.preventDefault();
+                    return;
+                }
+            }
             if (finishTextCreation(e)) {
+                e.preventDefault();
+                return;
+            }
+            if (finishShapeCreation(e)) {
                 e.preventDefault();
             }
         });
 
         oc.addEventListener('pointercancel', (e) => {
+            if (drawModeActive && activeDrawSession) {
+                cancelDirectDrawPointer(oc, e.pointerId);
+                return;
+            }
             if (textCreationState.active && textCreationState.pi === pi && textCreationState.pointerId === e.pointerId) {
                 cancelTextCreationPreview();
+            }
+            if (shapeCreationState.active && shapeCreationState.pi === pi && shapeCreationState.pointerId === e.pointerId) {
+                cancelShapeCreationPreview();
+            }
+            if (shapeCutState.armed && shapeCutState.pi === pi && shapeCutState.pointerId === e.pointerId) {
+                shapeCutState = {
+                    ...shapeCutState,
+                    pointerId: null,
+                    startPt: null,
+                    currentPt: null,
+                };
+                redrawOverlay(pi);
             }
         });
 
         oc.addEventListener('mousemove', (e) => {
-            if (textCreationState.active) return;
+            if (textCreationState.active || shapeCreationState.active) return;
             if (dragState.active || resizeState.active) return;
-            if (!editModeEnabled && !addTextMode) {
+            if (signaturePlacementState.active) {
+                oc.style.cursor = 'copy';
+                return;
+            }
+            if (drawModeActive) {
+                const data = pageData[pi];
+                const pt = canvasPointFromEvent(e, oc);
+                const ann = (drawToolType === 'eraser' && data && pt)
+                    ? findAnnotationAt(pt.x, pt.y, data.annotations, data.scale, data.canvasHeight)
+                    : null;
+                const canErase = isDirectDrawAnnotation(ann) && !isAnnotationLocked(ann);
+                const nextUid = canErase ? ann._uid : null;
+                if (nextUid !== hoverState.uid || pi !== hoverState.pi) {
+                    hoverState = { pi, uid: nextUid };
+                    redrawOverlay(pi);
+                }
+                oc.style.cursor = ann && !canErase ? 'not-allowed' : 'crosshair';
+                return;
+            }
+            if (eraseMode) {
+                const data = pageData[pi];
+                const pt = canvasPointFromEvent(e, oc);
+                if (!pt || !data) return;
+                const ann = findAnnotationAt(pt.x, pt.y, data.annotations, data.scale, data.canvasHeight);
+                const nextUid = ann?._uid || null;
+                if (nextUid !== hoverState.uid || pi !== hoverState.pi) {
+                    hoverState = { pi, uid: nextUid };
+                    redrawOverlay(pi);
+                }
+                oc.style.cursor = nextUid ? 'not-allowed' : 'crosshair';
+                return;
+            }
+            if (shapeCutState.armed && shapeCutState.pi === pi) {
+                if (hoverState.pi === pi) {
+                    hoverState = { pi: null, uid: null };
+                    redrawOverlay(pi);
+                }
+                oc.style.cursor = 'crosshair';
+                return;
+            }
+            if (!editModeEnabled && !addTextMode && !shapeMode && !hasActiveBoxSelection()) {
                 if (hoverState.pi === pi) {
                     hoverState = { pi: null, uid: null };
                     redrawOverlay(pi);
@@ -4100,45 +11903,114 @@
             if (!pt) return;
             const ann = findAnnotationAt(pt.x, pt.y, data.annotations, data.scale, data.canvasHeight);
             if (addTextMode) {
-                // Show a text cursor over user-created annotations; crosshair everywhere else.
-                const nextUid = ann?.userCreated ? ann._uid : null;
+                if (hoverState.pi === pi) {
+                    hoverState = { pi: null, uid: null };
+                    redrawOverlay(pi);
+                }
+                oc.style.cursor = 'crosshair';
+                return;
+            }
+            if (!editModeEnabled && !shapeMode && hasActiveBoxSelection()) {
+                const nextUid = ann && isBoxAnnotation(ann) ? ann._uid : null;
                 if (nextUid !== hoverState.uid || pi !== hoverState.pi) {
                     hoverState = { pi, uid: nextUid };
                     redrawOverlay(pi);
                 }
-                oc.style.cursor = ann?.userCreated ? 'text' : 'crosshair';
+                oc.style.cursor = nextUid
+                    ? (isAnnotationLocked(ann) ? 'not-allowed' : 'move')
+                    : 'default';
+                return;
+            }
+            if (shapeMode) {
+                const data = pageData[pi];
+                const pt = canvasPointFromEvent(e, oc);
+                if (!pt) return;
+                const ann = findAnnotationAt(pt.x, pt.y, data.annotations, data.scale, data.canvasHeight);
+                const nextUid = ann && isShapeAnnotation(ann) ? ann._uid : null;
+                if (nextUid !== hoverState.uid || pi !== hoverState.pi) {
+                    hoverState = { pi, uid: nextUid };
+                    redrawOverlay(pi);
+                }
+                oc.style.cursor = nextUid
+                    ? (isAnnotationLocked(ann) ? 'not-allowed' : 'move')
+                    : 'crosshair';
                 return;
             }
             const nextUid = ann?._uid || null;
             if (nextUid === hoverState.uid && pi === hoverState.pi) return;
             hoverState  = { pi, uid: nextUid };
-            oc.style.cursor = nextUid ? 'text' : 'default';
+            oc.style.cursor = nextUid
+                ? (isAnnotationLocked(ann) ? 'not-allowed' : (isTextAnnotation(ann) ? 'text' : 'move'))
+                : 'default';
             redrawOverlay(pi);
         });
 
         oc.addEventListener('mouseleave', () => {
-            if (!editModeEnabled && !addTextMode) {
-                oc.style.cursor = 'default';
+            if (signaturePlacementState.active) {
+                oc.style.cursor = 'copy';
+                return;
+            }
+            if (drawModeActive) {
+                if (hoverState.pi === pi) {
+                    hoverState = { pi: null, uid: null };
+                    redrawOverlay(pi);
+                }
+                oc.style.cursor = currentCanvasCursor();
+                return;
+            }
+            if (!editModeEnabled && !addTextMode && !shapeMode && !eraseMode && !hasActiveBoxSelection()) {
+                oc.style.cursor = currentCanvasCursor();
                 return;
             }
             if (hoverState.pi !== pi) return;
             hoverState  = { pi: null, uid: null };
-            oc.style.cursor = addTextMode ? 'crosshair' : 'default';
+            oc.style.cursor = currentCanvasCursor();
             redrawOverlay(pi);
         });
 
         oc.addEventListener('click', (e) => {
             if (dragState.active || resizeState.active) return;
-            if (!editModeEnabled && !addTextMode) return;
-            if (addTextMode) {
-                // Allow clicking a user-created annotation to select it.
-                // (Actual creation is driven by pointerdown/up; this handles
-                // the synthetic click that fires after a short tap.)
+            if (drawModeActive) return;
+            if (!editModeEnabled && !addTextMode && !shapeMode && !eraseMode && !hasActiveBoxSelection()) return;
+            if (shapeCutState.armed && shapeCutState.pi === pi) return;
+            if (eraseMode) {
                 const data = pageData[pi];
-                const pt   = canvasPointFromEvent(e, oc);
+                const pt = canvasPointFromEvent(e, oc);
+                if (!pt || !data) return;
+                const ann = findAnnotationAt(pt.x, pt.y, data.annotations, data.scale, data.canvasHeight);
+                if (!ann) return;
+                if (isAnnotationLocked(ann)) return;
+                deleteAnnotation(ann, pi);
+                return;
+            }
+            if (addTextMode) {
+                return;
+            }
+            if (shapeMode) {
+                const data = pageData[pi];
+                const pt = canvasPointFromEvent(e, oc);
                 if (!pt) return;
                 const ann = findAnnotationAt(pt.x, pt.y, data.annotations, data.scale, data.canvasHeight);
-                if (ann?.userCreated && activeState.uid !== ann._uid) selectAnnotation(ann, pi);
+                // Allow selecting any annotation (text included) while the
+                // shape/line tool is active so the resize handles aren't
+                // wiped out by a stray click on a text annotation.
+                if (!ann) {
+                    clearActiveAnnotation();
+                    return;
+                }
+                if (activeState.uid !== ann._uid) selectAnnotation(ann, pi);
+                return;
+            }
+            if (!editModeEnabled && hasActiveBoxSelection()) {
+                const data = pageData[pi];
+                const pt = canvasPointFromEvent(e, oc);
+                if (!pt) return;
+                const ann = findAnnotationAt(pt.x, pt.y, data.annotations, data.scale, data.canvasHeight);
+                if (!ann || !isBoxAnnotation(ann)) {
+                    clearActiveAnnotation();
+                    return;
+                }
+                if (activeState.uid !== ann._uid) selectAnnotation(ann, pi);
                 return;
             }
             const data = pageData[pi];
@@ -4159,7 +12031,68 @@
         let _textUndoPending = false;
         ae.addEventListener('focus', () => {
             if (!editModeEnabled && !addTextMode) { ae.blur(); return; }
+            const ann = pageData[pi]?.annotations.find((item) => item._uid === activeState.uid);
+            if (!ann) { clearEditorEditingState(ae); return; }
+            if (isAnnotationLocked(ann)) { ae.blur(); return; }
             _textUndoPending = true;
+            // Entering text-editing mode: switch cursor + enable selection.
+            setEditorEditingAnnotation(ae, ann);
+            ae.style.cursor = 'text';
+            ae.style.userSelect = 'text';
+            ae.style.caretColor = '#2563eb';
+            // Populate the editor DOM (selected-but-not-editing leaves it empty
+            // so canvas renders the text) and refresh the canvas which now
+            // suppresses drawing the active annotation.
+            try { syncActiveEditor(true); } catch (_e) {}
+            try { redrawOverlay(pi); } catch (_e) {}
+            // Stepping in to edit text — make sure the format bar is shown
+            // for the active annotation. Some entry paths (eh hover-menu
+            // button click, tab focus, programmatic focus) bypass
+            // selectAnnotation, leaving the bar hidden if it was previously
+            // closed by a stale blur.
+            updateFormatBar();
+        });
+
+        // Drag the annotation by clicking anywhere on its body when not in
+        // text-editing mode (replaces the dedicated move handle).
+        ae.addEventListener('mousedown', (e) => {
+            const ann = pageData[pi]?.annotations.find((item) => item._uid === activeState.uid);
+            if (editorIsEditingAnnotation(ae, ann)) return; // editing → place caret normally
+            if (e.button !== 0) return;
+            if (isAnnotationLocked(ann)) return;
+            e.preventDefault();
+            e.stopPropagation();
+            beginDrag(e, pi);
+        });
+
+        // Double-click on the annotation body → enter text-editing mode.
+        ae.addEventListener('dblclick', (e) => {
+            const ann = pageData[pi]?.annotations.find((item) => item._uid === activeState.uid);
+            if (editorIsEditingAnnotation(ae, ann)) return;
+            if (isAnnotationLocked(ann)) return;
+            e.preventDefault();
+            e.stopPropagation();
+            setEditorEditingAnnotation(ae, ann);
+            ae.style.cursor = 'text';
+            ae.style.userSelect = 'text';
+            ae.style.caretColor = '#2563eb';
+            // Populate the editor DOM now that we're entering edit mode (the
+            // selected-but-not-editing branch left it empty so the canvas
+            // showed the PDF-accurate render underneath).
+            try { syncActiveEditor(true); } catch (_e) {}
+            try { redrawOverlay(pi); } catch (_e) {}
+            requestAnimationFrame(() => ae.focus({ preventScroll: true }));
+        });
+
+        // Plain-text paste: strip styles so pasted content adopts the
+        // annotation's own font / color / size instead of the source's.
+        ae.addEventListener('paste', (e) => {
+            e.preventDefault();
+            const cd = e.clipboardData || window.clipboardData;
+            const text = cd ? cd.getData('text/plain') : '';
+            if (!text) return;
+            try { document.execCommand('insertText', false, text); }
+            catch (_err) { /* fallback: ignore */ }
         });
 
         ae.addEventListener('input', (e) => {
@@ -4167,27 +12100,35 @@
             // Push undo snapshot once — before the first character change in this focus session.
             if (_textUndoPending) { _textUndoPending = false; pushUndo(); }
             const data = pageData[pi];
-            const ann  = data?.annotations.find(a => a._uid === activeState.uid);
+            const editingUid = e.currentTarget.dataset.editingUid || activeState.uid;
+            const ann  = data?.annotations.find(a => a._uid === editingUid);
             if (!ann) return;
+            if (isAnnotationLocked(ann)) return;
             const nextText = getEditorPlainText(e.currentTarget);
             if (nextText !== String(ann.text ?? '')) markUserAuthored(ann);
             editedTexts[ann._uid] = nextText;
             resizeAnnotationForEditedText(ann, nextText, pi);
-            if (ann._richHtml) {
+            const hasFormattedRichHtml = richHtmlHasInlineSelectionFormatting(ann._richHtml);
+            if (e.currentTarget.dataset.renderMode === 'source-flow' || hasFormattedRichHtml) {
                 // Preserve per-selection formatting: don't flatten innerHTML on typing.
                 // Just capture the updated HTML and keep the caret where the browser left it.
                 ann._richHtml = e.currentTarget.innerHTML;
+                // Grow the box to the actual rendered editor height — the
+                // synthetic plain-text measure above doesn't account for
+                // per-span font sizes / explicit <br>s in rich html.
+                growAnnotationBoxToRenderedHeight(ann, e.currentTarget, pi);
             } else {
                 const selection = getEditorSelectionOffsets(e.currentTarget);
                 e.currentTarget.innerHTML = renderPlainEditorHTML(ann, nextText, data.scale);
                 if (selection) {
                     setEditorSelectionOffsets(e.currentTarget, selection.start, selection.end);
                 }
-                // Persist the rendered HTML so the rich-html-layer uses the exact same
-                // DOM for non-edit view as the active editor does — canvas measureText
-                // and browser CSS layout wrap at slightly different boundaries, which
-                // previously produced a different line break in view vs. edit mode.
-                ann._richHtml = e.currentTarget.innerHTML;
+                // Plain edited text should be rendered from current geometry each time.
+                // Persisting generated wrapper HTML stores pixel line-height and
+                // translateY values from the old box, which makes later resize/edit
+                // sessions keep stale padding. Only formatted-rich content keeps
+                // `_richHtml` because it carries actual inline style spans.
+                delete ann._richHtml;
             }
             markDirty();
             syncActiveEditor();
@@ -4195,9 +12136,18 @@
         });
 
         ae.addEventListener('blur', (e) => {
+            const blurredEditingUid = ae.dataset.editingUid || activeState.uid;
+            // Always clear editing mode on blur so the next selection starts in
+            // "select / drag" mode (cursor: move) rather than "text input" mode.
+            clearEditorEditingState(ae);
+            // After leaving edit mode, re-sync (editor empties itself for the
+            // selected-but-not-editing branch) and re-draw the canvas so the
+            // active annotation is rendered there again instead of in the DOM.
+            try { syncActiveEditor(true); } catch (_e) {}
+            try { redrawOverlay(pi); } catch (_e) {}
             if (!editModeEnabled && !addTextMode) return;
             const data = pageData[pi];
-            const ann  = data?.annotations.find(a => a._uid === activeState.uid);
+            const ann  = data?.annotations.find(a => a._uid === blurredEditingUid);
             if (!ann) return;
             // Auto-remove new annotations that are still empty — matches edit view behaviour
             // where clicking off a blank text-box-creator discards it.
@@ -4252,26 +12202,87 @@
                 e.preventDefault();
                 if (_textUndoPending) { _textUndoPending = false; pushUndo(); }
                 const data = pageData[pi];
-                const ann = data?.annotations.find(a => a._uid === activeState.uid);
+                // Resolve the annotation by ae.dataset.editingUid first (set when
+                // editing was entered) and fall back to activeState.uid. The two
+                // can diverge after focus moves through the format bar / outside
+                // controls; using only activeState.uid would silently drop Enter.
+                const editingUid = ae.dataset.editingUid || activeState.uid;
+                const ann = data?.annotations.find(a => a._uid === editingUid);
                 if (!ann) return;
+                if (isAnnotationLocked(ann)) return;
+                // Rich-formatted path: insert a <br> in place so per-selection
+                // bold/italic/color spans around the caret survive the new line.
+                // Rebuilding via renderPlainEditorHTML (the plain-text branch
+                // below) would flatten the styled spans and re-render the whole
+                // annotation in the annotation-level style.
+                const hasFormattedRichHtml = richHtmlHasInlineSelectionFormatting(ann._richHtml);
+                if (ae.dataset.renderMode === 'source-flow' || hasFormattedRichHtml) {
+                    // Insert a real <br> at the caret. execCommand('insertLineBreak')
+                    // is unreliable across browsers (sometimes inserts a \n text
+                    // node that doesn't render as a visible break); doing the DOM
+                    // mutation by hand keeps surrounding bold/italic/color spans
+                    // intact and produces a visible newline in every browser.
+                    const sel = window.getSelection();
+                    if (sel && sel.rangeCount > 0) {
+                        const range = sel.getRangeAt(0);
+                        if (!ae.contains(range.startContainer) || !ae.contains(range.endContainer)) return;
+                        if (!range.collapsed) range.deleteContents();
+                        const br = document.createElement('br');
+                        range.insertNode(br);
+                        // If the <br> ends up being the very last node in its parent,
+                        // append a trailing zero-width text node so the caret can
+                        // sit AFTER the break (browsers refuse to place a caret
+                        // after a trailing <br> otherwise).
+                        const trailing = document.createTextNode('\u200b');
+                        if (br.parentNode) br.parentNode.insertBefore(trailing, br.nextSibling);
+                        const after = document.createRange();
+                        after.setStart(trailing, 1);
+                        after.collapse(true);
+                        sel.removeAllRanges();
+                        sel.addRange(after);
+                    }
+                    ann._richHtml = ae.innerHTML;
+                    const nextText = getEditorPlainText(ae);
+                    if (nextText !== String(ann.text ?? '')) markUserAuthored(ann);
+                    editedTexts[ann._uid] = nextText;
+                    resizeAnnotationForEditedText(ann, nextText, pi);
+                    syncActiveEditor();
+                    markDirty();
+                    redrawOverlay(pi);
+                    return;
+                }
                 const selection = getEditorSelectionOffsets(ae);
                 if (!selection) return;
                 const currentText = editedTexts[ann._uid] ?? String(ann.text ?? '');
-                const nextText = currentText.slice(0, selection.start) + '\n' + currentText.slice(selection.end);
+                const beforeText = currentText.slice(0, selection.start);
+                const afterText = currentText.slice(selection.end);
+                const nextText = beforeText + '\n' + afterText;
+                const nextCaret = beforeText.length + 1;
                 editedTexts[ann._uid] = nextText;
                 resizeAnnotationForEditedText(ann, nextText, pi);
                 ae.innerHTML = renderPlainEditorHTML(ann, nextText, data.scale);
                 syncActiveEditor();
-                setEditorSelectionOffsets(ae, selection.start + 1, selection.start + 1);
+                setEditorSelectionOffsets(ae, nextCaret, nextCaret);
                 markDirty();
                 redrawOverlay(pi);
             }
             if (e.key === 'Backspace' || e.key === 'Delete') {
-                e.preventDefault();
-                if (_textUndoPending) { _textUndoPending = false; pushUndo(); }
                 const data = pageData[pi];
                 const ann = data?.annotations.find(a => a._uid === activeState.uid);
                 if (!ann) return;
+                if (isAnnotationLocked(ann)) return;
+                // Rich-formatted path: let the browser perform the deletion
+                // natively so per-selection bold/italic/color spans around the
+                // caret survive. The 'input' listener above will then capture
+                // the updated innerHTML into ann._richHtml. Calling
+                // renderPlainEditorHTML here would flatten all styled spans.
+                const hasFormattedRichHtml = richHtmlHasInlineSelectionFormatting(ann._richHtml);
+                if (ae.dataset.renderMode === 'source-flow' || hasFormattedRichHtml) {
+                    if (_textUndoPending) { _textUndoPending = false; pushUndo(); }
+                    return;
+                }
+                e.preventDefault();
+                if (_textUndoPending) { _textUndoPending = false; pushUndo(); }
                 const selection = getEditorSelectionOffsets(ae);
                 if (!selection) return;
                 const currentText = editedTexts[ann._uid] ?? String(ann.text ?? '');
@@ -4299,11 +12310,21 @@
             }
         });
 
-        // Stop overlay canvas from receiving events that land on the editor
-        ae.addEventListener('pointerdown', (e) => e.stopPropagation());
+        // In Add Text mode, clicking the currently active editor should start a
+        // fresh text box at that point, not trap the click inside the old box.
+        // Outside Add Text mode we still block the canvas beneath the editor.
+        ae.addEventListener('pointerdown', (e) => {
+            if (addTextMode) {
+                e.preventDefault();
+                e.stopPropagation();
+                startTextCreation(e);
+                return;
+            }
+            e.stopPropagation();
+        });
         ae.addEventListener('click',       (e) => e.stopPropagation());
 
-        [tm, eh, uh, lh, ch, dh].forEach((element) => {
+        [tm, eh, lkh, uh, lh, ch, dh, sh, shLock, shFront, shBack, shEdit, shBg, shCut, shCap, shDelete].forEach((element) => {
             element.addEventListener('mousedown', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -4312,12 +12333,13 @@
         });
 
         // ── Floating menu ──
-        mh.addEventListener('mousedown', (e) => {
-            e.preventDefault(); e.stopPropagation();
-            beginDrag(e, pi);
-        });
-
         eh.addEventListener('click', () => {
+            const ann = pageData[pi]?.annotations.find((item) => item._uid === activeState.uid);
+            if (isAnnotationLocked(ann)) return;
+            setEditorEditingAnnotation(ae, ann);
+            ae.style.cursor = 'text';
+            ae.style.userSelect = 'text';
+            ae.style.caretColor = '#2563eb';
             requestAnimationFrame(() => ae.focus({ preventScroll: true }));
         });
 
@@ -4337,6 +12359,14 @@
             navigator.clipboard.writeText(currentText).catch(() => {});
         });
 
+        lkh.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const ann = pageData[pi]?.annotations.find((item) => item._uid === activeState.uid);
+            if (!ann) return;
+            setAnnotationLocked(ann, pi, !isAnnotationLocked(ann));
+        });
+
         rhs.forEach((handle) => {
             handle.addEventListener('mousedown', (e) => {
                 e.preventDefault();
@@ -4345,10 +12375,112 @@
             });
         });
 
+        rhRot.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            beginRotate(e, pi);
+        });
+
         dh.addEventListener('click', (e) => {
             e.preventDefault(); e.stopPropagation();
             const ann = pageData[pi]?.annotations.find(a => a._uid === activeState.uid);
             if (!ann) return;
+            if (isAnnotationLocked(ann)) return;
+            deleteAnnotation(ann, pi);
+        });
+
+        tmFront.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const ann = pageData[pi]?.annotations.find((item) => item._uid === activeState.uid);
+            if (!ann || !isTextAnnotation(ann)) return;
+            moveAnnotationLayer(ann, pi, 'front');
+        });
+
+        tmBack.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const ann = pageData[pi]?.annotations.find((item) => item._uid === activeState.uid);
+            if (!ann || !isTextAnnotation(ann)) return;
+            moveAnnotationLayer(ann, pi, 'back');
+        });
+
+        shLock.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const ann = pageData[pi]?.annotations.find((item) => item._uid === activeState.uid);
+            if (!ann || !isBoxAnnotation(ann)) return;
+            setAnnotationLocked(ann, pi, !isAnnotationLocked(ann));
+        });
+
+        shFront.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const ann = pageData[pi]?.annotations.find(a => a._uid === activeState.uid);
+            if (!ann || !isBoxAnnotation(ann)) return;
+            moveAnnotationLayer(ann, pi, 'front');
+        });
+
+        shBack.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const ann = pageData[pi]?.annotations.find(a => a._uid === activeState.uid);
+            if (!ann || !isBoxAnnotation(ann)) return;
+            moveAnnotationLayer(ann, pi, 'back');
+        });
+
+        shEdit.addEventListener('click', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const ann = pageData[pi]?.annotations.find(a => a._uid === activeState.uid);
+            if (!ann || String(ann.type || '').toLowerCase() !== 'signature') return;
+            if (isAnnotationLocked(ann)) return;
+            await openSignatureEditModal(ann, pi);
+        });
+
+        shBg.addEventListener('click', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const ann = pageData[pi]?.annotations.find(a => a._uid === activeState.uid);
+            if (!canRemoveBackgroundFromImageAnnotation(ann)) return;
+            if (isAnnotationLocked(ann)) return;
+            try {
+                await removeBackgroundFromImageAnnotation(ann, pi);
+            } catch (error) {
+                showToast(error?.message || 'Could not remove that background.');
+            }
+        });
+
+        shCut.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const ann = pageData[pi]?.annotations.find(a => a._uid === activeState.uid);
+            if (!canCutShapeAnnotation(ann)) return;
+            toggleShapeCutMode(ann, pi);
+        });
+
+        shCap.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const ann = pageData[pi]?.annotations.find(a => a._uid === activeState.uid);
+            if (!ann || !isShapeAnnotation(ann) || !isLineShape(ann)) return;
+            if (isAnnotationLocked(ann)) return;
+            pushUndo();
+            const current = (ann.lineCap || 'round').toLowerCase();
+            ann.lineCap = current === 'round' ? 'butt' : 'round';
+            shCap.classList.toggle('is-active', ann.lineCap === 'round');
+            shCap.title = ann.lineCap === 'round' ? 'Disable rounded line caps' : 'Enable rounded line caps';
+            markDirty();
+            redrawOverlay(pi);
+            syncActiveEditor(true);
+        });
+
+        shDelete.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const ann = pageData[pi]?.annotations.find(a => a._uid === activeState.uid);
+            if (!ann || !isBoxAnnotation(ann)) return;
+            if (isAnnotationLocked(ann)) return;
             deleteAnnotation(ann, pi);
         });
     }
@@ -4370,10 +12502,497 @@
             setEditModeEnabled(!editModeEnabled);
         });
     }
+    if (markupToolCanvas) {
+        markupToolCtx = markupToolCanvas.getContext('2d');
+        clearMarkupToolCanvas();
+        syncMarkupToolLabels();
+    }
+    if (signatureCanvas) {
+        signatureCtx = signatureCanvas.getContext('2d');
+        clearSignatureCanvas();
+        syncSignatureColorLabels();
+    }
+    syncDrawToolPanelUi();
+    if (ftbDrawErase) {
+        ftbDrawErase.addEventListener('click', () => {
+            if (editModeEnabled) return;
+            setDrawMode(!drawModeActive, drawToolType);
+        });
+    }
+    if (drawToolClose) {
+        drawToolClose.addEventListener('click', () => setDrawMode(false));
+    }
+    drawToolButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+            drawToolType = button.dataset.drawDirectTool === 'eraser' ? 'eraser' : 'pen';
+            if (!drawModeActive) {
+                setDrawMode(true, drawToolType);
+                return;
+            }
+            syncDrawToolPanelUi();
+            updateEditModeUi();
+        });
+    });
+    drawColorSwatches.forEach((button) => {
+        button.addEventListener('click', () => {
+            drawStrokeColor = normalizeHexColor(button.dataset.drawColor, drawStrokeColor);
+            syncDrawToolPanelUi();
+        });
+    });
+    if (drawToolColorInput) {
+        drawToolColorInput.addEventListener('input', () => {
+            drawStrokeColor = normalizeHexColor(drawToolColorInput.value, drawStrokeColor);
+            syncDrawToolPanelUi();
+        });
+    }
+    if (drawToolSizeInput) {
+        drawToolSizeInput.addEventListener('input', () => {
+            drawBrushSize = Math.max(2, Number(drawToolSizeInput.value) || 10);
+            syncDrawToolPanelUi();
+        });
+    }
+    if (drawToolOpacityInput) {
+        drawToolOpacityInput.addEventListener('input', () => {
+            drawOpacity = clamp01((Number(drawToolOpacityInput.value) || 100) / 100, 1);
+            syncDrawToolPanelUi();
+        });
+    }
+    markupToolTabs.forEach((tab) => {
+        tab.addEventListener('click', () => {
+            setMarkupToolMode(tab.dataset.markupToolMode || 'draw');
+        });
+    });
+    if (markupToolModalScrim) {
+        markupToolModalScrim.addEventListener('click', () => closeMarkupToolModal());
+    }
+    if (markupToolModalClose) {
+        markupToolModalClose.addEventListener('click', () => closeMarkupToolModal());
+    }
+    if (markupToolCancelBtn) {
+        markupToolCancelBtn.addEventListener('click', () => closeMarkupToolModal());
+    }
+    if (markupToolClearBtn) {
+        markupToolClearBtn.addEventListener('click', () => {
+            clearMarkupToolDrawingState();
+            setMarkupToolDirtyState(false);
+            setMarkupToolStatus('Drawing cleared. Start a new mark.');
+            updateMarkupToolUi();
+        });
+    }
+    if (markupToolColorInput) markupToolColorInput.addEventListener('input', syncMarkupToolLabels);
+    if (markupToolWidthInput) markupToolWidthInput.addEventListener('input', syncMarkupToolLabels);
+    if (markupToolSmoothingInput) {
+        markupToolSmoothingInput.addEventListener('input', () => {
+            syncMarkupToolLabels();
+            if (markupToolMode === 'draw') renderMarkupToolDrawPreview();
+        });
+    }
+    if (markupToolCanvas) {
+        markupToolCanvas.addEventListener('pointerdown', beginMarkupToolStroke);
+        markupToolCanvas.addEventListener('pointermove', drawMarkupToolStroke);
+        markupToolCanvas.addEventListener('pointerup', endMarkupToolStroke);
+        markupToolCanvas.addEventListener('pointerleave', endMarkupToolStroke);
+        markupToolCanvas.addEventListener('pointercancel', endMarkupToolStroke);
+    }
+    if (markupToolApplyBtn) {
+        markupToolApplyBtn.addEventListener('click', () => {
+            if (markupToolMode === 'erase') {
+                closeMarkupToolModal();
+                setEraseMode(true);
+                return;
+            }
+            const asset = buildCurrentMarkupAsset();
+            if (!asset?.dataUrl) {
+                setMarkupToolStatus('Draw something before placing it on the page.', 'error');
+                return;
+            }
+            closeMarkupToolModal();
+            beginSignaturePlacement(asset, 'image');
+        });
+    }
+    if (ftbSign) {
+        ftbSign.addEventListener('click', () => {
+            if (editModeEnabled) return;
+            cancelSignaturePlacement();
+            openSignatureModal('draw');
+        });
+    }
+
+    // ---- Image import modal ---------------------------------------------
+    // Lightweight standalone modal: pick / drop / paste an image, preview it,
+    // then place it as an annotation on the current visible page using the
+    // same plumbing signatures use (placeImageBackedAnnotationOnCurrentPage).
+    const IMAGE_IMPORT_ACCEPTED_TYPES = new Set([
+        'image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp', 'image/svg+xml',
+    ]);
+    const IMAGE_IMPORT_MAX_BYTES = 25 * 1024 * 1024; // 25 MB
+    let imageImportPendingAsset = null;
+
+    function setImageImportStatus(text, isError = false) {
+        if (!imageImportStatus) return;
+        imageImportStatus.textContent = text || '';
+        imageImportStatus.style.color = isError ? '#b91c1c' : '';
+    }
+    function clearImageImportSelection() {
+        imageImportPendingAsset = null;
+        if (imageImportFileInput) imageImportFileInput.value = '';
+        if (imageImportPreview) imageImportPreview.hidden = true;
+        if (imageImportPreviewImg) imageImportPreviewImg.removeAttribute('src');
+        if (imageImportPreviewName) imageImportPreviewName.textContent = '';
+        if (imageImportPreviewDims) imageImportPreviewDims.textContent = '';
+        if (imageImportDropzoneInner) imageImportDropzoneInner.style.display = '';
+        if (imageImportApply) imageImportApply.disabled = true;
+        setImageImportStatus('Drop or choose an image to insert.');
+    }
+    function openImageImportModal() {
+        if (!imageImportModal || editModeEnabled) return;
+        clearImageImportSelection();
+        imageImportModal.classList.add('is-open');
+        imageImportModal.setAttribute('aria-hidden', 'false');
+    }
+    function closeImageImportModal() {
+        if (!imageImportModal) return;
+        imageImportModal.classList.remove('is-open');
+        imageImportModal.setAttribute('aria-hidden', 'true');
+        clearImageImportSelection();
+    }
+    function imageImportLoadFile(file) {
+        if (!file) return;
+        const mime = String(file.type || '').toLowerCase();
+        if (!IMAGE_IMPORT_ACCEPTED_TYPES.has(mime)) {
+            setImageImportStatus('Unsupported file type. Use PNG, JPG, GIF, WebP, or SVG.', true);
+            return;
+        }
+        if (file.size > IMAGE_IMPORT_MAX_BYTES) {
+            setImageImportStatus('File is too large (max 25 MB).', true);
+            return;
+        }
+        const reader = new FileReader();
+        reader.onerror = () => setImageImportStatus('Could not read that file.', true);
+        reader.onload = (ev) => {
+            const dataUrl = String(ev.target?.result || '');
+            if (!dataUrl) {
+                setImageImportStatus('Could not read that file.', true);
+                return;
+            }
+            const probe = new Image();
+            probe.onerror = () => setImageImportStatus('That image could not be decoded.', true);
+            probe.onload = () => {
+                const w = probe.naturalWidth || probe.width || 1;
+                const h = probe.naturalHeight || probe.height || 1;
+                imageImportPendingAsset = {
+                    dataUrl,
+                    fileName: file.name || 'image',
+                    mimeType: mime,
+                    width: w,
+                    height: h,
+                };
+                if (imageImportPreviewImg) imageImportPreviewImg.src = dataUrl;
+                if (imageImportPreviewName) imageImportPreviewName.textContent = file.name || 'image';
+                if (imageImportPreviewDims) imageImportPreviewDims.textContent = `${w} × ${h} px`;
+                if (imageImportPreview) imageImportPreview.hidden = false;
+                if (imageImportDropzoneInner) imageImportDropzoneInner.style.display = 'none';
+                if (imageImportApply) imageImportApply.disabled = false;
+                setImageImportStatus('Ready to insert on the current page.');
+            };
+            probe.src = dataUrl;
+        };
+        reader.readAsDataURL(file);
+    }
+    if (ftbAddImage) {
+        ftbAddImage.addEventListener('click', () => {
+            if (editModeEnabled) return;
+            openImageImportModal();
+        });
+    }
+    if (imageImportScrim) imageImportScrim.addEventListener('click', () => closeImageImportModal());
+    if (imageImportClose) imageImportClose.addEventListener('click', () => closeImageImportModal());
+    if (imageImportCancel) imageImportCancel.addEventListener('click', () => closeImageImportModal());
+    if (imageImportClear) {
+        imageImportClear.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            clearImageImportSelection();
+        });
+    }
+    if (imageImportFileInput) {
+        imageImportFileInput.addEventListener('change', (e) => {
+            const file = e.target?.files?.[0];
+            if (file) imageImportLoadFile(file);
+        });
+    }
+    if (imageImportDropzone) {
+        imageImportDropzone.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                imageImportFileInput?.click();
+            }
+        });
+        ['dragenter', 'dragover'].forEach((ev) => {
+            imageImportDropzone.addEventListener(ev, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                imageImportDropzone.classList.add('is-drag');
+            });
+        });
+        ['dragleave', 'dragend', 'drop'].forEach((ev) => {
+            imageImportDropzone.addEventListener(ev, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                imageImportDropzone.classList.remove('is-drag');
+            });
+        });
+        imageImportDropzone.addEventListener('drop', (e) => {
+            const file = e.dataTransfer?.files?.[0];
+            if (file) imageImportLoadFile(file);
+        });
+    }
+    // Paste-from-clipboard: only while modal is open.
+    document.addEventListener('paste', (e) => {
+        if (!imageImportModal?.classList.contains('is-open')) return;
+        const items = e.clipboardData?.items || [];
+        for (const it of items) {
+            if (it.kind === 'file' && String(it.type || '').startsWith('image/')) {
+                const file = it.getAsFile();
+                if (file) {
+                    e.preventDefault();
+                    imageImportLoadFile(file);
+                    break;
+                }
+            }
+        }
+    });
+    if (imageImportApply) {
+        imageImportApply.addEventListener('click', () => {
+            if (!imageImportPendingAsset) return;
+            try {
+                // Pick the page that occupies the largest portion of the
+                // current viewport and place the image at the viewport's
+                // visible center on that page (converted to PDF bottom-origin
+                // coords). Falls back to page center when geometry isn't
+                // available. This avoids the "weird place" caused by relying
+                // on the stale page-jump input or last-active annotation page.
+                const target = pickViewportTargetPage();
+                if (target && Number.isInteger(target.pi) && pageData[target.pi]) {
+                    placeImageBackedAnnotationOnPage(target.pi, imageImportPendingAsset, 'image', target.centerPt);
+                } else {
+                    placeImageBackedAnnotationOnCurrentPage(imageImportPendingAsset, 'image');
+                }
+            } catch (err) {
+                console.error('Image insert failed', err);
+                setImageImportStatus('Could not insert that image.', true);
+                return;
+            }
+            closeImageImportModal();
+        });
+    }
+    // pickViewportTargetPage: returns { pi, centerPt: {x, y} (pdf bottom-origin
+    // points) } for the page card most visible in the viewport, with the
+    // center point computed from the viewport center clamped to the page.
+    function pickViewportTargetPage() {
+        const cards = Array.from(document.querySelectorAll('.page-card[data-page-number]'));
+        if (!cards.length) return null;
+        const viewportH = window.innerHeight || document.documentElement.clientHeight || 0;
+        const viewportW = window.innerWidth || document.documentElement.clientWidth || 0;
+        const viewportCenterY = viewportH / 2;
+        const viewportCenterX = viewportW / 2;
+        let best = null;
+        let bestOverlap = -Infinity;
+        cards.forEach((card) => {
+            const rect = card.getBoundingClientRect();
+            const overlap = Math.max(0, Math.min(rect.bottom, viewportH) - Math.max(rect.top, 0));
+            if (overlap > bestOverlap) {
+                bestOverlap = overlap;
+                best = { card, rect };
+            }
+        });
+        if (!best) return null;
+        const pageNum = parseInt(best.card.dataset.pageNumber || '1', 10);
+        const pi = Number.isFinite(pageNum) ? pageNum - 1 : 0;
+        const data = pageData[pi];
+        if (!data || !data.wPts || !data.hPts) return { pi, centerPt: null };
+        const rect = best.rect;
+        const pageW = rect.width || 1;
+        const pageH = rect.height || 1;
+        // Local coords inside the page card (clamped to its bounds).
+        const localX = Math.max(0, Math.min(pageW, viewportCenterX - rect.left));
+        const localY = Math.max(0, Math.min(pageH, viewportCenterY - rect.top));
+        const pdfXPts = (localX / pageW) * data.wPts;
+        // pdfY is bottom-origin (see drawImageBackedAnnotation), so flip Y.
+        const pdfYPts = data.hPts - (localY / pageH) * data.hPts;
+        return { pi, centerPt: { x: pdfXPts, y: pdfYPts } };
+    }
+    // Close on Escape (only when this modal is the topmost open one).
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && imageImportModal?.classList.contains('is-open')) {
+            closeImageImportModal();
+        }
+    });
+
+    signatureTabs.forEach((tab) => {
+        tab.addEventListener('click', () => {
+            setSignatureMode(tab.dataset.signatureMode || 'draw');
+        });
+    });
+    if (signatureModalScrim) {
+        signatureModalScrim.addEventListener('click', () => closeSignatureModal());
+    }
+    if (signatureModalClose) {
+        signatureModalClose.addEventListener('click', () => closeSignatureModal());
+    }
+    if (signatureCancelBtn) {
+        signatureCancelBtn.addEventListener('click', () => closeSignatureModal());
+    }
+    if (signatureClearBtn) {
+        signatureClearBtn.addEventListener('click', () => {
+            clearSignatureDrawingState();
+            signatureImageAsset = null;
+            if (signatureTextInput) signatureTextInput.value = '';
+            if (signatureImageInput) signatureImageInput.value = '';
+            if (signatureImageName) signatureImageName.textContent = 'No file selected';
+            setSignatureDirtyState(false);
+            setSignatureStatus('Preview cleared.');
+        });
+    }
+    if (signatureSaveBtn) {
+        signatureSaveBtn.addEventListener('click', () => {
+            saveCurrentSignatureToLibrary();
+        });
+    }
+    if (signatureLibrarySelect) {
+        signatureLibrarySelect.addEventListener('change', () => {
+            if (signatureLibraryLoadBtn) signatureLibraryLoadBtn.disabled = !signatureLibrarySelect.value;
+        });
+    }
+    if (signatureLibraryLoadBtn) {
+        signatureLibraryLoadBtn.addEventListener('click', async () => {
+            const entryId = String(signatureLibrarySelect?.value || '');
+            if (!entryId) return;
+            await loadSavedSignatureFromLibrary(entryId);
+        });
+    }
+    if (signatureSaveNameInput) {
+        signatureSaveNameInput.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            if (!signatureDirty) return;
+            saveCurrentSignatureToLibrary();
+        });
+    }
+    if (signatureLibraryList) {
+        signatureLibraryList.addEventListener('click', async (event) => {
+            const button = event.target instanceof HTMLElement
+                ? event.target.closest('[data-signature-library-action]')
+                : null;
+            if (!(button instanceof HTMLElement)) return;
+            const action = String(button.dataset.signatureLibraryAction || '');
+            const row = button.closest('[data-signature-library-id]');
+            const entryId = String(row?.getAttribute('data-signature-library-id') || '');
+            if (!entryId) return;
+            if (action === 'load') {
+                await loadSavedSignatureFromLibrary(entryId);
+                return;
+            }
+            if (action === 'delete') {
+                deleteSavedSignatureFromLibrary(entryId);
+            }
+        });
+    }
+    if (signatureColorInput) {
+        signatureColorInput.addEventListener('input', () => {
+            syncSignatureColorLabels();
+            if (signatureMode === 'draw' && signatureActiveStroke) {
+                signatureActiveStroke.color = signatureColorInput.value || '#111827';
+                renderDrawSignaturePreview();
+            }
+        });
+    }
+    if (signatureWidthInput) {
+        signatureWidthInput.addEventListener('input', () => {
+            syncSignatureColorLabels();
+            if (signatureMode === 'draw' && signatureActiveStroke) {
+                signatureActiveStroke.width = Math.max(1, Number(signatureWidthInput.value) || 3);
+                renderDrawSignaturePreview();
+            }
+        });
+    }
+    if (signatureSmoothingInput) {
+        signatureSmoothingInput.addEventListener('input', () => {
+            syncSignatureColorLabels();
+            if (signatureMode === 'draw') renderDrawSignaturePreview();
+        });
+    }
+    if (signatureTypeColorInput) {
+        signatureTypeColorInput.addEventListener('input', () => {
+            syncSignatureColorLabels();
+            if (signatureMode === 'type') renderTypedSignaturePreview();
+        });
+    }
+    if (signatureTextInput) {
+        signatureTextInput.addEventListener('input', () => {
+            renderTypedSignaturePreview();
+        });
+    }
+    if (signatureFontInput) {
+        signatureFontInput.addEventListener('change', () => {
+            renderTypedSignaturePreview();
+        });
+    }
+    if (signatureImageInput) {
+        signatureImageInput.addEventListener('change', async () => {
+            const file = signatureImageInput.files?.[0];
+            if (!file) return;
+            try {
+                signatureImageAsset = await normalizeImportedImageAsset(file);
+                if (signatureImageName) {
+                    signatureImageName.textContent = `${signatureImageAsset.fileName} • ${signatureImageAsset.width}×${signatureImageAsset.height}`;
+                }
+                setSignatureMode('upload');
+                await renderSignatureImagePreview();
+                setSignatureStatus('Image imported and ready to place.', 'ready');
+            } catch (error) {
+                signatureImageAsset = null;
+                if (signatureImageName) signatureImageName.textContent = 'No file selected';
+                setSignatureStatus(error?.message || 'Failed to import image.', 'error');
+                setSignatureDirtyState(false);
+            }
+        });
+    }
+    if (signatureCanvas) {
+        signatureCanvas.addEventListener('pointerdown', beginSignatureStroke);
+        signatureCanvas.addEventListener('pointermove', drawSignatureStroke);
+        signatureCanvas.addEventListener('pointerup', endSignatureStroke);
+        signatureCanvas.addEventListener('pointerleave', endSignatureStroke);
+        signatureCanvas.addEventListener('pointercancel', endSignatureStroke);
+    }
+    if (signatureApplyBtn) {
+        signatureApplyBtn.addEventListener('click', () => {
+            if (!signatureDirty || !signatureCanvas) return;
+            const asset = buildCurrentSignatureAsset();
+            if (!asset?.dataUrl && !asset?.src) return;
+            const editTarget = signatureEditTarget ? { ...signatureEditTarget } : null;
+            closeSignatureModal();
+            if (editTarget) {
+                const targetAnn = pageData[editTarget.pi]?.annotations.find((item) => item._uid === editTarget.uid);
+                if (targetAnn) {
+                    replaceImageBackedAnnotation(targetAnn, editTarget.pi, asset);
+                    return;
+                }
+            }
+            beginSignaturePlacement(asset, 'signature');
+        });
+    }
     if (addTextBtn) {
         addTextBtn.addEventListener('click', () => {
             setAddTextMode(!addTextMode);
             if (addTextMode) clearActiveAnnotation();
+        });
+    }
+    if (addShapeBtn) {
+        addShapeBtn.addEventListener('click', () => {
+            if (editModeEnabled) return;
+            setShapeMode(!shapeMode);
+            if (shapeMode) clearActiveAnnotation();
         });
     }
     if (ftbAddText) {
@@ -4381,6 +13000,51 @@
             if (editModeEnabled) return;
             setAddTextMode(!addTextMode);
             if (addTextMode) clearActiveAnnotation();
+        });
+    }
+    if (ftbAddShape) {
+        ftbAddShape.addEventListener('click', () => {
+            if (editModeEnabled) return;
+            setShapeMode(!shapeMode);
+            if (shapeMode) clearActiveAnnotation();
+        });
+    }
+    if (shapeDrawToggle) {
+        shapeDrawToggle.addEventListener('click', () => {
+            if (editModeEnabled) return;
+            setShapeMode(!shapeMode);
+            if (shapeMode) clearActiveAnnotation();
+        });
+    }
+    if (shapeCopyBtn) {
+        shapeCopyBtn.addEventListener('click', () => {
+            const active = getActiveAnnAndPage();
+            if (!active || !isShapeAnnotation(active.ann)) return;
+            if (isAnnotationLocked(active.ann)) return;
+            const { ann, pi, data } = active;
+            pushUndo();
+            const OFFSET = 12;
+            const newAnn = JSON.parse(JSON.stringify(ann));
+            newAnn._uid = 'new_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+            newAnn.id = generateAnnotationId();
+            newAnn.pageIndex = pi;
+            newAnn.pdfX = Math.min((Number(ann.pdfX) || 0) + OFFSET, Math.max(0, data.wPts - (Number(ann.pdfWidth) || 60)));
+            newAnn.pdfY = Math.max((Number(ann.pdfY) || 0) - OFFSET, 0);
+            newAnn.userCreated = true;
+            normalizeShapeAnnotation(newAnn);
+            newAnn._originalBox = { x: newAnn.pdfX, y: newAnn.pdfY, w: newAnn.pdfWidth, h: newAnn.pdfHeight };
+            newAnn._originalPdfBox = { x: newAnn.pdfX, y: newAnn.pdfY, w: newAnn.pdfWidth, h: newAnn.pdfHeight };
+            data.annotations.push(newAnn);
+            selectAnnotation(newAnn, pi);
+            markDirty();
+        });
+    }
+    if (shapeDeleteBtn) {
+        shapeDeleteBtn.addEventListener('click', () => {
+            const active = getActiveAnnAndPage();
+            if (!active || !isShapeAnnotation(active.ann)) return;
+            if (isAnnotationLocked(active.ann)) return;
+            deleteAnnotation(active.ann, active.pi);
         });
     }
     if (downloadPdfButton) {
@@ -4417,11 +13081,93 @@
             scrollToPage(current + 1);
         });
     }
-    window.addEventListener('scroll', syncCurrentPageFromScroll, { passive: true });
+    window.addEventListener('scroll', () => {
+        syncCurrentPageFromScroll();
+        if (activeState.pi !== null) syncActiveEditor();
+    }, { passive: true });
     window.addEventListener('resize', () => {
+        beginViewportScaleUpdate();
         applyAllPageScales();
         syncCurrentPageFromScroll();
+        if (activeState.pi !== null) syncActiveEditor();
     });
+
+    shapeTypeButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+            const nextType = normalizeShapeType(button.dataset.shapeTool);
+            reflectShapeStateToInputs({ ...currentShapeDefaults(), shapeType: nextType });
+            const active = getActiveAnnAndPage();
+            if (active && isShapeAnnotation(active.ann)) {
+                commitShapeInspectorToActive({ pushHistory: true });
+            } else {
+                syncShapePanelUi();
+            }
+        });
+    });
+
+    if (shapeStrokeColorInput) {
+        shapeStrokeColorInput.addEventListener('input', () => {
+            if (shapeStrokeHexInput) shapeStrokeHexInput.value = shapeStrokeColorInput.value;
+            commitShapeInspectorToActive({ pushHistory: false });
+        });
+        shapeStrokeColorInput.addEventListener('change', () => commitShapeInspectorToActive({ pushHistory: true }));
+    }
+    if (shapeStrokeHexInput) {
+        shapeStrokeHexInput.addEventListener('input', () => {
+            const normalized = normalizeHexColor(shapeStrokeHexInput.value, currentShapeStrokeColor);
+            if (shapeStrokeColorInput) shapeStrokeColorInput.value = normalized;
+            commitShapeInspectorToActive({ pushHistory: false });
+        });
+        shapeStrokeHexInput.addEventListener('change', () => commitShapeInspectorToActive({ pushHistory: true }));
+    }
+    if (shapeStrokeTransparentInput) {
+        shapeStrokeTransparentInput.addEventListener('change', () => {
+            readShapeInspectorState();
+            commitShapeInspectorToActive({ pushHistory: true });
+        });
+    }
+    if (shapeStrokeWidthInput) {
+        shapeStrokeWidthInput.addEventListener('input', () => {
+            if (shapeStrokeWidthValue) shapeStrokeWidthValue.textContent = `${shapeStrokeWidthInput.value} px`;
+            commitShapeInspectorToActive({ pushHistory: false });
+        });
+        shapeStrokeWidthInput.addEventListener('change', () => commitShapeInspectorToActive({ pushHistory: true }));
+    }
+    if (shapeStrokeOpacityInput) {
+        shapeStrokeOpacityInput.addEventListener('input', () => {
+            if (shapeStrokeOpacityValue) shapeStrokeOpacityValue.textContent = `${shapeStrokeOpacityInput.value}%`;
+            commitShapeInspectorToActive({ pushHistory: false });
+        });
+        shapeStrokeOpacityInput.addEventListener('change', () => commitShapeInspectorToActive({ pushHistory: true }));
+    }
+    if (shapeFillColorInput) {
+        shapeFillColorInput.addEventListener('input', () => {
+            if (shapeFillHexInput) shapeFillHexInput.value = shapeFillColorInput.value;
+            commitShapeInspectorToActive({ pushHistory: false });
+        });
+        shapeFillColorInput.addEventListener('change', () => commitShapeInspectorToActive({ pushHistory: true }));
+    }
+    if (shapeFillHexInput) {
+        shapeFillHexInput.addEventListener('input', () => {
+            const normalized = normalizeHexColor(shapeFillHexInput.value, currentShapeFillColor);
+            if (shapeFillColorInput) shapeFillColorInput.value = normalized;
+            commitShapeInspectorToActive({ pushHistory: false });
+        });
+        shapeFillHexInput.addEventListener('change', () => commitShapeInspectorToActive({ pushHistory: true }));
+    }
+    if (shapeFillTransparentInput) {
+        shapeFillTransparentInput.addEventListener('change', () => {
+            readShapeInspectorState();
+            commitShapeInspectorToActive({ pushHistory: true });
+        });
+    }
+    if (shapeFillOpacityInput) {
+        shapeFillOpacityInput.addEventListener('input', () => {
+            if (shapeFillOpacityValue) shapeFillOpacityValue.textContent = `${shapeFillOpacityInput.value}%`;
+            commitShapeInspectorToActive({ pushHistory: false });
+        });
+        shapeFillOpacityInput.addEventListener('change', () => commitShapeInspectorToActive({ pushHistory: true }));
+    }
 
     // ── Text Format Bar event listeners ───────────────────────────────────────
     // Track pointer-down on the format bar so the ae blur handler doesn't clear
@@ -4451,6 +13197,30 @@
         const data = pi !== null ? pageData[pi] : null;
         const ann  = data ? data.annotations.find(a => a._uid === uid) : null;
         return ann ? { ann, pi, data } : null;
+    }
+
+    function activeEditorForPage(pi) {
+        if (pi === null || pi === undefined) return null;
+        return document.getElementById('ae-' + (Number(pi) + 1));
+    }
+
+    function setEditorEditingAnnotation(ae, ann) {
+        if (!(ae instanceof HTMLElement) || !ann) return;
+        ae.dataset.editing = '1';
+        ae.dataset.editingUid = String(ann._uid || '');
+    }
+
+    function clearEditorEditingState(ae) {
+        if (!(ae instanceof HTMLElement)) return;
+        delete ae.dataset.editing;
+        delete ae.dataset.editingUid;
+    }
+
+    function editorIsEditingAnnotation(ae, ann) {
+        return ae instanceof HTMLElement
+            && ann
+            && ae.dataset.editing === '1'
+            && ae.dataset.editingUid === String(ann._uid || '');
     }
 
     // Return the active editor element and the current selection range if
@@ -4483,6 +13253,7 @@
     function applySelectionFormat(command, valueArg) {
         const info = getActiveEditorSelection();
         if (!info) return false;
+        if (isAnnotationLocked(info.active?.ann)) return false;
         // Ensure the editor has focus so execCommand targets our selection.
         if (document.activeElement !== info.ae) {
             info.ae.focus({ preventScroll: true });
@@ -4492,6 +13263,15 @@
         }
         pushUndo();
         if (info.active?.ann) markUserAuthored(info.active.ann);
+        // Pre-seed `_richHtml` from the current editor markup BEFORE invoking
+        // execCommand. The editor's `input` listener wipes any per-selection
+        // formatting by re-rendering plain HTML when `_richHtml` is empty —
+        // that branch destroys the bold/italic span execCommand just produced.
+        // Setting _richHtml here puts the input handler on the preservation
+        // branch so the freshly-styled span survives the first click.
+        if (info.active?.ann && !info.active.ann._richHtml) {
+            info.active.ann._richHtml = info.ae.innerHTML;
+        }
         const beforeHtml = info.ae.innerHTML;
         document.execCommand('styleWithCSS', false, true);
         document.execCommand(command, false, valueArg);
@@ -4526,6 +13306,8 @@
                 case 'italic':    return 'font-style: italic';
                 case 'underline': return 'text-decoration: underline';
                 case 'foreColor': return `color: ${valueArg || '#000000'}`;
+                case 'fontName':  return `font-family: ${valueArg || 'Helvetica'}`;
+                case 'fontSize':  return `font-size: ${valueArg || '12pt'}`;
                 default:          return null;
             }
         })();
@@ -4548,14 +13330,69 @@
         }
     }
 
-    function applyFormatProperty(update) {
+    function applyFormatProperty(update, opts) {
         const active = getActiveAnnAndPage();
         if (!active) return;
         const { ann, pi } = active;
+        if (isAnnotationLocked(ann)) return;
         pushUndo();
-        update(ann, pi);
+        // Mark the style as dirty BEFORE running update(): editableLineStyle (and
+        // editorSpanStyle) gate ann-level font overrides on _styleDirty, and the
+        // font-size update callback calls resizeAnnotationForEditedText, which
+        // measures the wrapped height via editableLineStyle. If _styleDirty is
+        // still false at measurement time, the resize uses the OLD composite
+        // size — height stays unchanged, annotationDimensionsChanged returns
+        // false, and syncActiveEditor falls into the source-render path that
+        // shows the OLD per-span sizes instead of the new ann.fontSize.
         ann._styleDirty = true;
+        update(ann, pi);
         markUserAuthored(ann);
+        // Block-level styles (text-align, underline) are baked into the inner
+        // <div data-line-index="…"> wrappers produced by renderPlainEditorHTML.
+        // Once the user has typed, _richHtml caches that DOM and is replayed by
+        // syncActiveEditor, so the outer ae's text-align is overridden by the
+        // inner div's stale value. Re-sync those wrappers to ann.textAlign /
+        // ann.underline so format-bar changes take effect immediately.
+        if (typeof ann._richHtml === 'string' && ann._richHtml.length > 0) {
+            try {
+                const tmp = document.createElement('div');
+                tmp.innerHTML = ann._richHtml;
+                const wrappers = tmp.querySelectorAll('[data-line-index]');
+                if (wrappers.length) {
+                    const align = ann.textAlign || 'left';
+                    const decoration = ann.underline ? 'underline' : 'none';
+                    wrappers.forEach((el) => {
+                        el.style.textAlign = align;
+                        el.style.textDecoration = decoration;
+                    });
+                }
+                ann._richHtml = normalizeRichHtmlForDisplay(tmp.innerHTML, ann);
+                tmp.innerHTML = ann._richHtml;
+                // Strip the named inline style props from every descendant so
+                // an annotation-level override (font color, font family, size,
+                // weight, style) actually wins over previously-applied inline
+                // selection styles cached inside _richHtml.
+                const stripProps = Array.isArray(opts && opts.stripInlineProps) ? opts.stripInlineProps : null;
+                if (stripProps && stripProps.length) {
+                    tmp.querySelectorAll('[style]').forEach((el) => {
+                        stripProps.forEach((prop) => { el.style.removeProperty(prop); });
+                        if (!el.getAttribute('style')) el.removeAttribute('style');
+                    });
+                    // <font face="…"> tags from execCommand('fontName') aren't
+                    // covered by the [style] sweep above — unwrap them when we
+                    // strip font-family.
+                    if (stripProps.includes('font-family')) {
+                        tmp.querySelectorAll('font[face]').forEach((el) => {
+                            const parent = el.parentNode;
+                            if (!parent) return;
+                            while (el.firstChild) parent.insertBefore(el.firstChild, el);
+                            parent.removeChild(el);
+                        });
+                    }
+                }
+                ann._richHtml = normalizeRichHtmlForDisplay(tmp.innerHTML, ann);
+            } catch (_err) { /* best-effort sync */ }
+        }
         redrawOverlay(pi);
         syncActiveEditor(true);
         markDirty();
@@ -4563,24 +13400,36 @@
 
     if (afbFont) {
         afbFont.addEventListener('change', () => {
-            applyFormatProperty(ann => { ann.fontFamily = afbFont.value; });
+            // Per-selection: if the user has highlighted characters, change only
+            // those. Otherwise apply to the whole annotation and strip any
+            // previously-applied inline font-family overrides so the new value wins.
+            if (applySelectionFormat('fontName', afbFont.value)) return;
+            applyFormatProperty(
+                (ann) => { ann.fontFamily = afbFont.value; },
+                { stripInlineProps: ['font-family'] }
+            );
         });
     }
     if (afbSize) {
         // Live label update while dragging (no annotation write)
         afbSize.addEventListener('input', () => {
-            const pt = Number(afbSize.value) || 12;
+            const pt = sliderValueToFontPt(afbSize.value);
             if (afbSizeValue) afbSizeValue.textContent = pt + 'pt';
         });
         // Commit when slider is released
         afbSize.addEventListener('change', () => {
-            const pt = Number(afbSize.value) || 12;
+            const pt = sliderValueToFontPt(afbSize.value);
             if (afbSizeValue) afbSizeValue.textContent = pt + 'pt';
-            applyFormatProperty((ann, pi) => {
-                ann.fontSize = pt;
-                const currentText = String(editedTexts[ann._uid] ?? ann.text ?? '');
-                resizeAnnotationForEditedText(ann, currentText, pi);
-            });
+            // Per-selection size if a range is highlighted; otherwise whole annotation.
+            if (applySelectionFormat('fontSize', `${pt}pt`)) return;
+            applyFormatProperty(
+                (ann, pi) => {
+                    ann.fontSize = pt;
+                    const currentText = String(editedTexts[ann._uid] ?? ann.text ?? '');
+                    resizeAnnotationForEditedText(ann, currentText, pi);
+                },
+                { stripInlineProps: ['font-size'] }
+            );
         });
     }
     // Color pickers (`<input type="color">`) fire 'input' during drag for live
@@ -4599,7 +13448,110 @@
     //     'input' burst (dismissed), the preview is cleared on blur.
     function setupColorPicker(input, property, { applySelectionMode } = {}) {
         if (!input) return;
-        const state = { active: false, originalValue: null };
+        const state = {
+            active: false,
+            originalValue: null,
+            // Per-selection drag state: when the user opens the picker with a
+            // text selection in the active editor, we snapshot that range and
+            // re-apply it on every 'input' tick so the color is restricted to
+            // the selection for the entire drag (browser focus shifting into
+            // the native picker would otherwise collapse the range and cause
+            // each subsequent tick to recolor the whole paragraph).
+            selectionRange: null,
+            selectionAe: null,
+            selectionAnn: null,
+            undoPushed: false,
+            // True once any per-selection drag tick has been applied during
+            // this picker interaction. Used to suppress the fall-through path
+            // in `change`/`blur` that would otherwise call applyFormatProperty
+            // with stripInlineProps and recolor the entire paragraph (browsers
+            // may fire blur before change when the native picker dialog
+            // closes, clearing selectionRange just in time for change to take
+            // the wrong branch — the classic "inverse text changed color"
+            // bug).
+            perSelectionApplied: false,
+            fauxNodes: [],
+        };
+
+        const clearFauxSelection = () => {
+            if (!state.fauxNodes.length) return;
+            for (const node of state.fauxNodes) {
+                if (node && node.parentNode) node.parentNode.removeChild(node);
+            }
+            state.fauxNodes = [];
+        };
+
+        const renderFauxSelection = () => {
+            clearFauxSelection();
+            if (!state.selectionRange) return;
+            let rects;
+            try { rects = state.selectionRange.getClientRects(); }
+            catch (_e) { return; }
+            if (!rects || rects.length === 0) return;
+            for (const r of rects) {
+                if (r.width <= 0 || r.height <= 0) continue;
+                const el = document.createElement('div');
+                el.className = 'afb-faux-selection';
+                el.style.left   = r.left   + 'px';
+                el.style.top    = r.top    + 'px';
+                el.style.width  = r.width  + 'px';
+                el.style.height = r.height + 'px';
+                document.body.appendChild(el);
+                state.fauxNodes.push(el);
+            }
+        };
+
+        const captureSelectionForDrag = () => {
+            if (!applySelectionMode) return false;
+            const info = getActiveEditorSelection();
+            if (!info) return false;
+            state.selectionAe = info.ae;
+            state.selectionAnn = info.active.ann;
+            state.selectionRange = info.range.cloneRange();
+            renderFauxSelection();
+            return true;
+        };
+
+        const restoreSelectionForDrag = () => {
+            if (!state.selectionRange || !state.selectionAe) return false;
+            if (!state.selectionAe.isConnected) return false;
+            if (document.activeElement !== state.selectionAe) {
+                state.selectionAe.focus({ preventScroll: true });
+            }
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(state.selectionRange);
+            return true;
+        };
+
+        const applyDragColor = (value) => {
+            if (!restoreSelectionForDrag()) return false;
+            if (!state.undoPushed) {
+                pushUndo();
+                state.undoPushed = true;
+            }
+            if (state.selectionAnn) markUserAuthored(state.selectionAnn);
+            if (state.selectionAnn && !state.selectionAnn._richHtml) {
+                state.selectionAnn._richHtml = state.selectionAe.innerHTML;
+            }
+            try {
+                document.execCommand('styleWithCSS', false, true);
+                document.execCommand('foreColor', false, value);
+            } catch (_err) { return false; }
+            // Re-snapshot the (now-collapsed-into-new-span) selection so the
+            // next tick's restore targets the newly-wrapped span instead of
+            // a stale range pointing at the now-removed text node.
+            const sel = window.getSelection();
+            if (sel && sel.rangeCount > 0) {
+                state.selectionRange = sel.getRangeAt(0).cloneRange();
+            }
+            if (state.selectionAnn) {
+                state.selectionAnn._richHtml = state.selectionAe.innerHTML;
+                state.selectionAnn._styleDirty = true;
+            }
+            renderFauxSelection();
+            return true;
+        };
 
         const beginPreviewIfNeeded = () => {
             if (state.active) return;
@@ -4612,54 +13564,93 @@
         const clearPreview = () => {
             state.active = false;
             state.originalValue = null;
+            state.selectionRange = null;
+            state.selectionAe = null;
+            state.selectionAnn = null;
+            state.undoPushed = false;
+            state.perSelectionApplied = false;
+            clearFauxSelection();
         };
 
+        // Snapshot the selection BEFORE the native picker takes focus (the
+        // pointerdown / mousedown on the input fires before the picker dialog
+        // opens). This guarantees the selection is captured even though the
+        // first 'input' event runs after focus has moved.
+        const onPickerOpen = () => {
+            if (!applySelectionMode) return;
+            captureSelectionForDrag();
+        };
+        input.addEventListener('pointerdown', onPickerOpen);
+        input.addEventListener('mousedown', onPickerOpen);
+
         input.addEventListener('input', () => {
-            if (applySelectionMode && applySelectionFormat('foreColor', input.value)) {
-                // A text selection was restyled directly — no ann-level preview
-                // state needed.
-                return;
+            if (applyDragColor && applySelectionMode && state.selectionRange) {
+                if (applyDragColor(input.value)) {
+                    state.perSelectionApplied = true;
+                    redrawOverlay(getActiveAnnAndPage()?.pi ?? 0);
+                    markDirty();
+                    return;
+                }
             }
             beginPreviewIfNeeded();
             const active = getActiveAnnAndPage();
             if (!active) return;
-            // Apply a transient preview to the active editor element only.
             const ae = document.getElementById('ae-' + (active.pi + 1));
             if (ae) {
-                if (property === 'backgroundColor') {
-                    ae.style.background = input.value;
-                } else if (property === 'textColor') {
-                    ae.style.color = input.value;
-                }
+                if (property === 'backgroundColor') ae.style.background = input.value;
+                else if (property === 'textColor')  ae.style.color = input.value;
             }
         });
 
         input.addEventListener('change', () => {
-            if (applySelectionMode && applySelectionFormat('foreColor', input.value)) {
+            if (applySelectionMode && state.selectionRange) {
+                applyDragColor(input.value);
+                state.perSelectionApplied = true;
+                const pi = getActiveAnnAndPage()?.pi ?? 0;
+                redrawOverlay(pi);
+                syncActiveEditor(true);
+                markDirty();
                 clearPreview();
                 return;
             }
-            // Commit via the normal formatting path (undo + markUserAuthored + markDirty).
-            applyFormatProperty(ann => { ann[property] = input.value; });
+            // If a per-selection drag already applied colors during this
+            // picker interaction (and the range was cleared by an earlier
+            // blur), skip the strip-and-recolor fallback so we don't wipe
+            // the spans we just painted onto the selection.
+            if (state.perSelectionApplied) {
+                clearPreview();
+                return;
+            }
+            const opts = (property === 'textColor') ? { stripInlineProps: ['color'] }
+                       : (property === 'backgroundColor') ? { stripInlineProps: ['background-color', 'background'] }
+                       : undefined;
+            applyFormatProperty((ann) => {
+                if (property === 'backgroundColor') {
+                    ann.backgroundColorExplicit = true;
+                    ann.backgroundColor = normalizeTextBackgroundColorValue(input.value, true);
+                    return;
+                }
+                ann[property] = input.value;
+            }, opts);
             clearPreview();
         });
 
         input.addEventListener('blur', () => {
-            if (!state.active) return;
-            // If we still have live preview state here, the user dismissed the
-            // picker without committing via 'change'. Restore the previous
-            // value on the editor so no visual drift is left behind, and
-            // re-sync so the preview clears.
+            if (!state.active && !state.selectionRange && !state.perSelectionApplied) return;
+            // Per-selection drags: don't clear selectionRange yet — `change`
+            // may still fire after blur in some browsers and needs the range
+            // to stay on the per-selection branch. Only clear the transient
+            // ann-level CSS preview.
             const active = getActiveAnnAndPage();
             if (active) {
                 const ae = document.getElementById('ae-' + (active.pi + 1));
-                if (ae) {
+                if (ae && !state.perSelectionApplied) {
                     if (property === 'backgroundColor') ae.style.background = '';
                     else if (property === 'textColor') ae.style.color = '';
+                    syncActiveEditor(true);
                 }
-                syncActiveEditor(true);
             }
-            clearPreview();
+            if (!state.perSelectionApplied) clearPreview();
         });
     }
 
@@ -4679,6 +13670,10 @@
             pushUndo();
             active.ann.fontWeight = isBold ? '400' : '700';
             active.ann._styleDirty = true;
+            // Mark as user-authored so the style change survives reload: the
+            // persisted userAuthored/promotedDirty flag switches rendering to
+            // the edited-reflow path, which honors ann-level font weight/style.
+            markUserAuthored(active.ann);
             afbBold.setAttribute('aria-pressed', String(!isBold));
             afbBold.classList.toggle('is-active', !isBold);
             redrawOverlay(active.pi);
@@ -4695,6 +13690,7 @@
             pushUndo();
             active.ann.fontStyle = isItalic ? 'normal' : 'italic';
             active.ann._styleDirty = true;
+            markUserAuthored(active.ann);
             afbItalic.setAttribute('aria-pressed', String(!isItalic));
             afbItalic.classList.toggle('is-active', !isItalic);
             redrawOverlay(active.pi);
@@ -4711,6 +13707,7 @@
             pushUndo();
             active.ann.underline = !isUnderline;
             active.ann._styleDirty = true;
+            markUserAuthored(active.ann);
             afbUnderline.setAttribute('aria-pressed', String(!isUnderline));
             afbUnderline.classList.toggle('is-active', !isUnderline);
             redrawOverlay(active.pi);
@@ -4763,6 +13760,7 @@
     async function run() {
         let data;
         updateEditModeUi();
+        loadSavedSignatureLibrary();
         updateZoom(currentZoomPercent);
         try {
             const resp = await fetch(INFO_URL_OBJ.toString(), { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
@@ -4801,6 +13799,32 @@
         const rawAnns = (data.annotations || []).filter(a => a && a.db_state !== 'deleted');
         const allAnnotations = rawAnns.map((ann, i) => {
             const hydrated = { ...ann, _uid: String(ann.id || ann.db_id || '') + '_' + i };
+            hydrated.locked = Boolean(
+                hydrated.locked
+                || (hydrated.annotation_data && hydrated.annotation_data.locked)
+            );
+            if (isShapeAnnotation(hydrated)) normalizeShapeAnnotation(hydrated);
+            if (isImageBackedAnnotation(hydrated)) normalizeImageAnnotation(hydrated);
+            if (String(hydrated.type || '').toLowerCase() === 'text') normalizeTextAnnotation(hydrated);
+            if (
+                String(hydrated.type || 'text').toLowerCase() === 'text'
+                && String(hydrated.text ?? '').trim() === ''
+                && (
+                    (Array.isArray(hydrated.sourceSpans) && hydrated.sourceSpans.length > 0)
+                    || (Array.isArray(hydrated.sourceLineBBoxes) && hydrated.sourceLineBBoxes.length > 0)
+                )
+            ) {
+                const sourceTextFallback = sourceTextFallbackFromAnnotation(hydrated);
+                if (sourceTextFallback) {
+                    hydrated.text = sourceTextFallback;
+                    if (String(hydrated.originalText ?? '').trim() === '') {
+                        hydrated.originalText = sourceTextFallback;
+                    }
+                    if (hydrated.annotation_data && typeof hydrated.annotation_data === 'object') {
+                        hydrated.annotation_data.text = sourceTextFallback;
+                    }
+                }
+            }
             hydrated._originalBox = resolveSourceBox(hydrated) || resolveAnnBox(hydrated) || null;
             // Pick the "original" PDF box used by annotationDimensionsChanged:
             //  - If the stored pdfW/H matches the sourceBlock dims within a few pts,
@@ -4824,6 +13848,27 @@
             // annotation is rendered via the reflow path instead of drawOriginalSource.
             const adUserAuthored = !!(hydrated.annotation_data && hydrated.annotation_data.userAuthored);
             hydrated._userAuthored = !!(hydrated.userAuthored || adUserAuthored || hydrated.promotedDirty || !roughlyEqual);
+            hydrated._styleDirty = !!(
+                hydrated.styleDirty
+                || (hydrated.annotation_data && hydrated.annotation_data.styleDirty)
+            );
+            // Restore per-selection rich HTML so bold/italic/font spans survive
+            // a reload and the rich-html-layer / active editor render them.
+            // Modern saves emit `richTextHtml` at the top level; older payloads
+            // wrote `richHtml` (top-level or under annotation_data) — we still
+            // read those for backwards compatibility.
+            const savedRichHtml = (typeof hydrated.richTextHtml === 'string' && hydrated.richTextHtml.length > 0)
+                ? hydrated.richTextHtml
+                : (typeof hydrated.richHtml === 'string' && hydrated.richHtml.length > 0
+                    ? hydrated.richHtml
+                    : (hydrated.annotation_data && typeof hydrated.annotation_data.richTextHtml === 'string'
+                        && hydrated.annotation_data.richTextHtml.length > 0
+                        ? hydrated.annotation_data.richTextHtml
+                        : (hydrated.annotation_data && typeof hydrated.annotation_data.richHtml === 'string'
+                            && hydrated.annotation_data.richHtml.length > 0
+                            ? hydrated.annotation_data.richHtml
+                            : null)));
+            if (savedRichHtml && richHtmlHasInlineSelectionFormatting(savedRichHtml)) hydrated._richHtml = savedRichHtml;
             return hydrated;
         });
         allAnnotations.forEach(ann => { editedTexts[ann._uid] = String(ann.text || ''); });
@@ -4832,12 +13877,54 @@
         allAnnotations.forEach(ann => {
             const pi = Number(ann.pageIndex) || 0;
             if (!byPage[pi]) byPage[pi] = [];
-            if ((ann.type || 'text') === 'text') byPage[pi].push(ann);
+            byPage[pi].push(ann);
+        });
+
+        // Re-sort each page so the editor canvas draw order matches the PDF
+        // export's draw order (annotation_layer_order in
+        // apply_annotations_direct_new.py). Layers (low → high):
+        //   0 shapes / tables / erasers
+        //   1 direct-draw (marker / pen)
+        //   2 text annotations
+        //   3 signatures and regular images
+        // Stable sort preserves intra-layer order so the user's manual
+        // "Bring to front" / "Send to back" within a layer is respected.
+        // This also fixes annotations that were saved with an older ordering
+        // rule (e.g. an early version that unshifted direct-draw to position
+        // 0, putting marker strokes underneath user-drawn shapes).
+        const annotationLayerKey = (ann) => {
+            if (isShapeAnnotation(ann)) return 0;
+            if (isImageBackedAnnotation(ann)) {
+                return String(ann?.imageToolSource || '') === 'direct-draw' ? 1 : 3;
+            }
+            return 2; // text
+        };
+        Object.keys(byPage).forEach((pi) => {
+            const arr = byPage[pi];
+            const decorated = arr.map((ann, idx) => ({ ann, idx, key: annotationLayerKey(ann) }));
+            decorated.sort((a, b) => (a.key - b.key) || (a.idx - b.idx));
+            byPage[pi] = decorated.map((entry) => entry.ann);
         });
 
         try {
             if (typeof pdfjsLib === 'undefined') throw new Error('PDF.js not loaded.');
-            _pdfDoc = await pdfjsLib.getDocument(data.document.clean_url).promise;
+            // Prefer the clean (extracted-text-removed) PDF, but fall back to
+            // the original file when the clean variant doesn't exist yet
+            // (e.g. blank documents created via /pdf-tests/create-blank).
+            const candidateUrls = [data.document.clean_url, data.document.file_url, data.document.original_url]
+                .filter((u) => typeof u === 'string' && u.length > 0);
+            let lastErr = null;
+            for (const url of candidateUrls) {
+                try {
+                    _pdfDoc = await pdfjsLib.getDocument(url).promise;
+                    lastErr = null;
+                    break;
+                } catch (err) {
+                    lastErr = err;
+                    _pdfDoc = null;
+                }
+            }
+            if (!_pdfDoc) throw lastErr || new Error('No PDF source URL succeeded.');
         } catch (e) { showError(String(e)); return; }
 
         const pageCount = _pdfDoc.numPages;

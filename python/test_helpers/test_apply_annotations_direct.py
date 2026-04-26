@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 
 import importlib.util
+import io
 import pathlib
 import sys
 import unittest
 
 import fitz
+from PIL import Image
 
 
 MODULE_PATH = pathlib.Path(__file__).resolve().parents[1] / "pdf-editor" / "apply_annotations_direct_new.py"
@@ -230,6 +232,70 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         self.assertEqual(len(page.insert_text_calls), 1)
         insert_point, _, _ = page.insert_text_calls[0]
         self.assertAlmostEqual(insert_point.x, annotation["pdfX"] + 6.0, places=3)
+
+    def test_normalize_direct_draw_white_image_bytes_forces_visible_pixels_to_white(self):
+        image = Image.new("RGBA", (3, 1))
+        image.putdata([
+            (64, 64, 64, 48),
+            (255, 255, 255, 255),
+            (10, 10, 10, 0),
+        ])
+        encoded = io.BytesIO()
+        image.save(encoded, format="PNG")
+
+        normalized = self.module.normalize_direct_draw_white_image_bytes(
+            {
+                "type": "image",
+                "imageToolSource": "direct-draw",
+                "drawStrokeColor": "#ffffff",
+            },
+            encoded.getvalue(),
+        )
+
+        with Image.open(io.BytesIO(normalized)) as result:
+            rgba = result.convert("RGBA")
+            pixel_access = rgba.load()
+            pixels = [pixel_access[x, 0] for x in range(rgba.width)]
+
+        self.assertEqual(pixels[0], (255, 255, 255, 48))
+        self.assertEqual(pixels[1], (255, 255, 255, 255))
+        self.assertEqual(pixels[2][3], 0)
+
+    def test_normalize_direct_draw_white_image_bytes_infers_legacy_white_stroke_without_color_metadata(self):
+        image = Image.new("RGBA", (5, 1))
+        image.putdata([
+            (210, 210, 210, 72),
+            (238, 238, 238, 160),
+            (255, 255, 255, 255),
+            (236, 236, 236, 160),
+            (208, 208, 208, 72),
+        ])
+        encoded = io.BytesIO()
+        image.save(encoded, format="PNG")
+
+        normalized = self.module.normalize_direct_draw_white_image_bytes(
+            {
+                "type": "image",
+                "imageToolSource": "direct-draw",
+            },
+            encoded.getvalue(),
+        )
+
+        with Image.open(io.BytesIO(normalized)) as result:
+            rgba = result.convert("RGBA")
+            pixel_access = rgba.load()
+            pixels = [pixel_access[x, 0] for x in range(rgba.width)]
+
+        self.assertEqual(
+            pixels,
+            [
+                (255, 255, 255, 72),
+                (255, 255, 255, 160),
+                (255, 255, 255, 255),
+                (255, 255, 255, 160),
+                (255, 255, 255, 72),
+            ],
+        )
 
     def test_draw_text_with_manual_heading_break_still_wraps_following_paragraph_to_bounds(self):
         annotation = {
@@ -632,6 +698,38 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         self.assertAlmostEqual(end.y, rect.y0 + (rect.height * 0.8), places=3)
         self.assertLess(start.x, end.x)
         self.assertLess(start.y, end.y)
+
+    def test_draw_shape_square_uses_full_annotation_bounds(self):
+        annotation = {
+            "type": "shape",
+            "shapeType": "square",
+            "pdfX": 32.040514534589285,
+            "pdfY": 352.6765862474232,
+            "pdfWidth": 544.38569836929,
+            "pdfHeight": 48.949172958379506,
+            "fillColor": "#935b1b",
+            "fillOpacity": 1,
+            "strokeColor": "#0f172a",
+            "strokeWidth": 1,
+            "strokeOpacity": 0,
+        }
+
+        page = self.FakePage()
+
+        self.module.draw_shape(page, annotation)
+
+        self.assertEqual(len(page.shape_draw_polyline_calls), 1)
+        points = page.shape_draw_polyline_calls[0]
+        rect = self.module.to_rect(page, annotation)
+
+        self.assertAlmostEqual(points[0].x, rect.x0, places=3)
+        self.assertAlmostEqual(points[0].y, rect.y0, places=3)
+        self.assertAlmostEqual(points[1].x, rect.x1, places=3)
+        self.assertAlmostEqual(points[1].y, rect.y0, places=3)
+        self.assertAlmostEqual(points[2].x, rect.x1, places=3)
+        self.assertAlmostEqual(points[2].y, rect.y1, places=3)
+        self.assertAlmostEqual(points[3].x, rect.x0, places=3)
+        self.assertAlmostEqual(points[3].y, rect.y1, places=3)
 
     def test_should_preserve_promoted_source_lines_respects_reflow_flag(self):
         annotation = {

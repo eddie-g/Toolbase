@@ -11,6 +11,7 @@ use App\Models\PdfExtractionPage;
 use App\Models\PdfExtractionSpan;
 use App\Models\PdfGroup;
 use App\Models\PdfState;
+use App\Services\PdfAnnotationAssetService;
 use App\Support\PdfAnnotationSuppression;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -305,8 +306,14 @@ class PdfTestController extends Controller
         $nodeScript = base_path('tests/OverlayEditor/Pdf/run_pdf_tests.cjs');
         $baseUrl = $this->resolveScriptBaseUrl($request);
 
+        // Suite runs (eg. text_layout_test_suite_1, paragraph_suite) chain
+        // many sub-tests sequentially and can easily exceed PHP's default
+        // 30-second max_execution_time, so allow up to the node `timeout`
+        // budget (1800s) for the HTTP request to complete.
+        @set_time_limit(1900);
+
         $command = sprintf(
-            'BASE_URL=%s timeout 240 node %s --single-test %s 2>&1',
+            'BASE_URL=%s timeout 1800 node %s --single-test %s 2>&1',
             escapeshellarg($baseUrl),
             escapeshellarg($nodeScript),
             escapeshellarg($testKey)
@@ -1377,6 +1384,475 @@ PYTHON;
         return $annotation;
     }
 
+    private function promotedAnnotationSourceRect(array $annotation): ?array
+    {
+        $lineBBoxes = $this->sanitizeSourceLineBBoxes($annotation['sourceLineBBoxes'] ?? []);
+        if (!empty($lineBBoxes)) {
+            return [
+                min(array_map(static fn (array $bbox): float => (float) $bbox[0], $lineBBoxes)),
+                min(array_map(static fn (array $bbox): float => (float) $bbox[1], $lineBBoxes)),
+                max(array_map(static fn (array $bbox): float => (float) $bbox[2], $lineBBoxes)),
+                max(array_map(static fn (array $bbox): float => (float) $bbox[3], $lineBBoxes)),
+            ];
+        }
+
+        if (
+            isset($annotation['sourceBlockLeft'], $annotation['sourceBlockTop'], $annotation['sourceBlockWidth'], $annotation['sourceBlockHeight'])
+            && is_numeric($annotation['sourceBlockLeft'])
+            && is_numeric($annotation['sourceBlockTop'])
+            && is_numeric($annotation['sourceBlockWidth'])
+            && is_numeric($annotation['sourceBlockHeight'])
+        ) {
+            $left = (float) $annotation['sourceBlockLeft'];
+            $top = (float) $annotation['sourceBlockTop'];
+            $width = max(0.0, (float) $annotation['sourceBlockWidth']);
+            $height = max(0.0, (float) $annotation['sourceBlockHeight']);
+            if ($width > 0.0 && $height > 0.0) {
+                return [$left, $top, $left + $width, $top + $height];
+            }
+        }
+
+        return null;
+    }
+
+    private function promotedAnnotationRectContains(array $outerRect, array $innerRect, float $padding = 0.0): bool
+    {
+        return ($innerRect[0] + $padding) >= ($outerRect[0] - $padding)
+            && ($innerRect[1] + $padding) >= ($outerRect[1] - $padding)
+            && ($innerRect[2] - $padding) <= ($outerRect[2] + $padding)
+            && ($innerRect[3] - $padding) <= ($outerRect[3] + $padding);
+    }
+
+    private function promotedAnnotationLineBoxesOverlap(array $leftRect, array $rightRect, float $threshold = 0.45): bool
+    {
+        $xi = max((float) $leftRect[0], (float) $rightRect[0]);
+        $yi = max((float) $leftRect[1], (float) $rightRect[1]);
+        $xa = min((float) $leftRect[2], (float) $rightRect[2]);
+        $ya = min((float) $leftRect[3], (float) $rightRect[3]);
+        $width = max(0.0, $xa - $xi);
+        $height = max(0.0, $ya - $yi);
+        if ($width <= 0.0 || $height <= 0.0) {
+            return false;
+        }
+
+        $leftArea = max(1.0, ((float) $leftRect[2] - (float) $leftRect[0]) * ((float) $leftRect[3] - (float) $leftRect[1]));
+        $rightArea = max(1.0, ((float) $rightRect[2] - (float) $rightRect[0]) * ((float) $rightRect[3] - (float) $rightRect[1]));
+        $overlapArea = $width * $height;
+
+        return ($overlapArea / min($leftArea, $rightArea)) >= $threshold;
+    }
+
+    private function promotedAnnotationsShareCompatibleTypography(array $parent, array $child): bool
+    {
+        $normalizeValue = static fn ($value): string => trim(Str::lower((string) $value));
+
+        $pairs = [
+            [$parent['fontSourceName'] ?? $parent['fontFamily'] ?? '', $child['fontSourceName'] ?? $child['fontFamily'] ?? ''],
+            [$parent['fontWeight'] ?? '', $child['fontWeight'] ?? ''],
+            [$parent['fontStyle'] ?? '', $child['fontStyle'] ?? ''],
+            [$parent['textColor'] ?? '', $child['textColor'] ?? ''],
+        ];
+
+        foreach ($pairs as [$left, $right]) {
+            $normalizedLeft = $normalizeValue($left);
+            $normalizedRight = $normalizeValue($right);
+            if ($normalizedLeft !== '' && $normalizedRight !== '' && $normalizedLeft !== $normalizedRight) {
+                return false;
+            }
+        }
+
+        $parentFontSize = isset($parent['fontSize']) && is_numeric($parent['fontSize']) ? (float) $parent['fontSize'] : null;
+        $childFontSize = isset($child['fontSize']) && is_numeric($child['fontSize']) ? (float) $child['fontSize'] : null;
+
+        return $parentFontSize === null
+            || $childFontSize === null
+            || abs($parentFontSize - $childFontSize) <= 0.5;
+    }
+
+    private function promotedAnnotationHasUnsafeMergeEdits(array $annotation): bool
+    {
+        if (empty($annotation['promotedFromExtraction'])) {
+            return true;
+        }
+
+        return !empty($annotation['promotedDirty'])
+            || !empty($annotation['promotedReflowEnabled'])
+            || $this->promotedAnnotationHasMaterialGeometryEdits($annotation);
+    }
+
+    private function promotedAnnotationHorizontalOverlapRatio(array $leftRect, array $rightRect): float
+    {
+        $leftWidth = max(1.0, (float) $leftRect[2] - (float) $leftRect[0]);
+        $rightWidth = max(1.0, (float) $rightRect[2] - (float) $rightRect[0]);
+        $overlapWidth = max(0.0, min((float) $leftRect[2], (float) $rightRect[2]) - max((float) $leftRect[0], (float) $rightRect[0]));
+
+        return $overlapWidth / min($leftWidth, $rightWidth);
+    }
+
+    private function promotedAnnotationGapFitScore(array $parentBoxes, array $childBoxes): ?float
+    {
+        if (empty($parentBoxes) || empty($childBoxes) || count($parentBoxes) < 2) {
+            return null;
+        }
+
+        $lineEntries = [];
+        foreach ($parentBoxes as $bbox) {
+            $lineEntries[] = [
+                'bbox' => $bbox,
+                'child' => false,
+            ];
+        }
+        foreach ($childBoxes as $bbox) {
+            $lineEntries[] = [
+                'bbox' => $bbox,
+                'child' => true,
+            ];
+        }
+
+        usort($lineEntries, static function (array $leftEntry, array $rightEntry): int {
+            $leftBox = $leftEntry['bbox'];
+            $rightBox = $rightEntry['bbox'];
+            $topDelta = (float) $leftBox[1] - (float) $rightBox[1];
+            if (abs($topDelta) > 0.25) {
+                return $topDelta < 0 ? -1 : 1;
+            }
+
+            return ((float) $leftBox[0]) <=> ((float) $rightBox[0]);
+        });
+
+        $childPositions = [];
+        foreach ($lineEntries as $index => $entry) {
+            if ($entry['child']) {
+                $childPositions[] = $index;
+            }
+        }
+        if (empty($childPositions)) {
+            return null;
+        }
+
+        $maxOverlapRatio = 0.0;
+        foreach ($childBoxes as $childBox) {
+            foreach ($parentBoxes as $parentBox) {
+                $xi = max((float) $childBox[0], (float) $parentBox[0]);
+                $yi = max((float) $childBox[1], (float) $parentBox[1]);
+                $xa = min((float) $childBox[2], (float) $parentBox[2]);
+                $ya = min((float) $childBox[3], (float) $parentBox[3]);
+                $width = max(0.0, $xa - $xi);
+                $height = max(0.0, $ya - $yi);
+                if ($width <= 0.0 || $height <= 0.0) {
+                    continue;
+                }
+
+                $childArea = max(1.0, ((float) $childBox[2] - (float) $childBox[0]) * ((float) $childBox[3] - (float) $childBox[1]));
+                $parentArea = max(1.0, ((float) $parentBox[2] - (float) $parentBox[0]) * ((float) $parentBox[3] - (float) $parentBox[1]));
+                $maxOverlapRatio = max($maxOverlapRatio, ($width * $height) / min($childArea, $parentArea));
+            }
+        }
+        if ($maxOverlapRatio > 0.12) {
+            return null;
+        }
+
+        $gapPenalty = 0.0;
+        foreach ($childPositions as $position) {
+            $parentBefore = null;
+            for ($index = $position - 1; $index >= 0; $index--) {
+                if (!$lineEntries[$index]['child']) {
+                    $parentBefore = $lineEntries[$index]['bbox'];
+                    break;
+                }
+            }
+
+            $parentAfter = null;
+            for ($index = $position + 1, $count = count($lineEntries); $index < $count; $index++) {
+                if (!$lineEntries[$index]['child']) {
+                    $parentAfter = $lineEntries[$index]['bbox'];
+                    break;
+                }
+            }
+
+            if ($parentBefore === null || $parentAfter === null) {
+                return null;
+            }
+
+            $childBox = $lineEntries[$position]['bbox'];
+            $gapAbove = max(0.0, (float) $childBox[1] - (float) $parentBefore[3]);
+            $gapBelow = max(0.0, (float) $parentAfter[1] - (float) $childBox[3]);
+            $gapPenalty += $gapAbove + $gapBelow;
+        }
+
+        return $gapPenalty;
+    }
+
+    private function promotedAnnotationTextContainsLines(array $annotation, array $lines): bool
+    {
+        $haystack = $this->normalizePromotedComparableText($annotation['text'] ?? '');
+        if ($haystack === '') {
+            return false;
+        }
+
+        foreach ($lines as $line) {
+            $needle = $this->normalizePromotedComparableText($line);
+            if ($needle === '') {
+                continue;
+            }
+
+            if (!str_contains($haystack, $needle)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function suppressContainedPromotedChildrenAlreadyInParentText(array $annotations): array
+    {
+        if (count($annotations) < 2) {
+            return [];
+        }
+
+        $suppressed = [];
+        foreach ($annotations as $childIndex => $childAnnotation) {
+            if (empty($childAnnotation['promotedFromExtraction']) || $this->promotedAnnotationHasUnsafeMergeEdits($childAnnotation)) {
+                continue;
+            }
+
+            $childLines = $this->sanitizeSourceTextLines($childAnnotation['sourceTextLines'] ?? []);
+            $childBoxes = $this->sanitizeSourceLineBBoxes($childAnnotation['sourceLineBBoxes'] ?? []);
+            if (empty($childLines) || count($childLines) !== count($childBoxes)) {
+                continue;
+            }
+
+            $childRect = $this->promotedAnnotationSourceRect($childAnnotation);
+            if (!$childRect) {
+                continue;
+            }
+
+            foreach ($annotations as $parentIndex => $parentAnnotation) {
+                if ($parentIndex === $childIndex || isset($suppressed[$parentIndex]) || empty($parentAnnotation['promotedFromExtraction'])) {
+                    continue;
+                }
+
+                if ((int) ($parentAnnotation['pageIndex'] ?? -1) !== (int) ($childAnnotation['pageIndex'] ?? -2)) {
+                    continue;
+                }
+
+                if (!$this->promotedAnnotationsShareCompatibleTypography($parentAnnotation, $childAnnotation)) {
+                    continue;
+                }
+
+                if (!$this->promotedAnnotationTextContainsLines($parentAnnotation, $childLines)) {
+                    continue;
+                }
+
+                $parentRect = $this->promotedAnnotationSourceRect($parentAnnotation);
+                if (!$parentRect) {
+                    continue;
+                }
+
+                $parentBoxes = $this->sanitizeSourceLineBBoxes($parentAnnotation['sourceLineBBoxes'] ?? []);
+                if (count($parentBoxes) < 2) {
+                    continue;
+                }
+
+                $hOverlapRatio = $this->promotedAnnotationHorizontalOverlapRatio($parentRect, $childRect);
+                if ($hOverlapRatio < 0.55) {
+                    continue;
+                }
+
+                $verticalWithinBand = (float) $childRect[1] >= ((float) $parentRect[1] - 2.0)
+                    && (float) $childRect[3] <= ((float) $parentRect[3] + 2.0);
+                if (!$verticalWithinBand && !$this->promotedAnnotationRectContains($parentRect, $childRect, 0.5)) {
+                    continue;
+                }
+
+                if ($this->promotedAnnotationGapFitScore($parentBoxes, $childBoxes) === null) {
+                    continue;
+                }
+
+                $suppressed[$childIndex] = true;
+                break;
+            }
+        }
+
+        return $suppressed;
+    }
+
+    private function mergeContainedPromotedAnnotationsForEditor(array $annotations): array
+    {
+        if (count($annotations) < 2) {
+            return $annotations;
+        }
+
+        $mergedAnnotations = array_values($annotations);
+        $removedIndices = $this->suppressContainedPromotedChildrenAlreadyInParentText($mergedAnnotations);
+
+        foreach ($mergedAnnotations as $childIndex => $childAnnotation) {
+            if (isset($removedIndices[$childIndex]) || empty($childAnnotation['promotedFromExtraction'])) {
+                continue;
+            }
+            if ($this->promotedAnnotationHasUnsafeMergeEdits($childAnnotation)) {
+                continue;
+            }
+
+            $childLines = $this->sanitizeSourceTextLines($childAnnotation['sourceTextLines'] ?? []);
+            $childBoxes = $this->sanitizeSourceLineBBoxes($childAnnotation['sourceLineBBoxes'] ?? []);
+            if (empty($childLines) || count($childLines) !== count($childBoxes)) {
+                continue;
+            }
+
+            $childRect = $this->promotedAnnotationSourceRect($childAnnotation);
+            if (!$childRect) {
+                continue;
+            }
+
+            $bestParentIndex = null;
+            $bestParentArea = null;
+            $bestGapFitScore = null;
+            foreach ($mergedAnnotations as $parentIndex => $parentAnnotation) {
+                if (
+                    $parentIndex === $childIndex
+                    || isset($removedIndices[$parentIndex])
+                    || empty($parentAnnotation['promotedFromExtraction'])
+                    || $this->promotedAnnotationHasUnsafeMergeEdits($parentAnnotation)
+                ) {
+                    continue;
+                }
+
+                if ((int) ($parentAnnotation['pageIndex'] ?? -1) !== (int) ($childAnnotation['pageIndex'] ?? -2)) {
+                    continue;
+                }
+
+                if (!$this->promotedAnnotationsShareCompatibleTypography($parentAnnotation, $childAnnotation)) {
+                    continue;
+                }
+
+                $parentRect = $this->promotedAnnotationSourceRect($parentAnnotation);
+                if (!$parentRect) {
+                    continue;
+                }
+
+                $parentLines = $this->sanitizeSourceTextLines($parentAnnotation['sourceTextLines'] ?? []);
+                $parentBoxes = $this->sanitizeSourceLineBBoxes($parentAnnotation['sourceLineBBoxes'] ?? []);
+                if (empty($parentLines) || count($parentLines) !== count($parentBoxes) || count($parentLines) < 2) {
+                    continue;
+                }
+
+                $hOverlapRatio = $this->promotedAnnotationHorizontalOverlapRatio($parentRect, $childRect);
+                if ($hOverlapRatio < 0.55) {
+                    continue;
+                }
+
+                $verticalWithinBand = (float) $childRect[1] >= ((float) $parentRect[1] - 2.0)
+                    && (float) $childRect[3] <= ((float) $parentRect[3] + 2.0);
+                if (!$verticalWithinBand && !$this->promotedAnnotationRectContains($parentRect, $childRect, 0.5)) {
+                    continue;
+                }
+
+                $gapFitScore = $this->promotedAnnotationGapFitScore($parentBoxes, $childBoxes);
+                if ($gapFitScore === null) {
+                    continue;
+                }
+
+                $parentArea = max(1.0, ($parentRect[2] - $parentRect[0]) * ($parentRect[3] - $parentRect[1]));
+                if (
+                    $bestParentArea === null
+                    || $parentArea < $bestParentArea
+                    || ($parentArea === $bestParentArea && ($bestGapFitScore === null || $gapFitScore < $bestGapFitScore))
+                ) {
+                    $bestParentIndex = $parentIndex;
+                    $bestParentArea = $parentArea;
+                    $bestGapFitScore = $gapFitScore;
+                }
+            }
+
+            if ($bestParentIndex === null) {
+                continue;
+            }
+
+            $parentAnnotation = $mergedAnnotations[$bestParentIndex];
+            $parentLines = $this->sanitizeSourceTextLines($parentAnnotation['sourceTextLines'] ?? []);
+            $parentBoxes = $this->sanitizeSourceLineBBoxes($parentAnnotation['sourceLineBBoxes'] ?? []);
+            $lineEntries = [];
+            foreach ($parentLines as $lineIndex => $lineText) {
+                $lineEntries[] = [
+                    'text' => $lineText,
+                    'bbox' => $parentBoxes[$lineIndex],
+                    'child' => false,
+                ];
+            }
+            foreach ($childLines as $lineIndex => $lineText) {
+                $lineEntries[] = [
+                    'text' => $lineText,
+                    'bbox' => $childBoxes[$lineIndex],
+                    'child' => true,
+                ];
+            }
+
+            usort($lineEntries, static function (array $leftEntry, array $rightEntry): int {
+                $leftBox = $leftEntry['bbox'];
+                $rightBox = $rightEntry['bbox'];
+                $topDelta = (float) $leftBox[1] - (float) $rightBox[1];
+                if (abs($topDelta) > 0.25) {
+                    return $topDelta < 0 ? -1 : 1;
+                }
+
+                $leftX = (float) $leftBox[0];
+                $rightX = (float) $rightBox[0];
+                if (abs($leftX - $rightX) > 0.25) {
+                    return $leftX <=> $rightX;
+                }
+
+                return ($leftEntry['child'] ? 1 : 0) <=> ($rightEntry['child'] ? 1 : 0);
+            });
+
+            $parentAnnotation['sourceTextLines'] = array_values(array_map(
+                static fn (array $entry): string => (string) $entry['text'],
+                $lineEntries
+            ));
+            $parentAnnotation['sourceLineBBoxes'] = array_values(array_map(
+                static fn (array $entry): array => $entry['bbox'],
+                $lineEntries
+            ));
+
+            $mergedSpans = array_merge(
+                array_values(array_filter(
+                    is_array($parentAnnotation['sourceSpans'] ?? null) ? $parentAnnotation['sourceSpans'] : [],
+                    static fn ($span): bool => is_array($span)
+                )),
+                array_values(array_filter(
+                    is_array($childAnnotation['sourceSpans'] ?? null) ? $childAnnotation['sourceSpans'] : [],
+                    static fn ($span): bool => is_array($span)
+                ))
+            );
+            usort($mergedSpans, static function (array $leftSpan, array $rightSpan): int {
+                $leftBox = is_array($leftSpan['bbox'] ?? null) ? array_slice($leftSpan['bbox'], 0, 4) : [0, 0, 0, 0];
+                $rightBox = is_array($rightSpan['bbox'] ?? null) ? array_slice($rightSpan['bbox'], 0, 4) : [0, 0, 0, 0];
+                $topDelta = (float) ($leftBox[1] ?? 0.0) - (float) ($rightBox[1] ?? 0.0);
+                if (abs($topDelta) > 0.25) {
+                    return $topDelta < 0 ? -1 : 1;
+                }
+
+                return ((float) ($leftBox[0] ?? 0.0)) <=> ((float) ($rightBox[0] ?? 0.0));
+            });
+            if (!empty($mergedSpans)) {
+                $parentAnnotation['sourceSpans'] = $mergedSpans;
+            }
+
+            $parentAnnotation['text'] = implode("\n", $parentAnnotation['sourceTextLines']);
+            $mergedAnnotations[$bestParentIndex] = $this->syncAnnotationGeometryFromSourceLineBBoxes($parentAnnotation);
+            $removedIndices[$childIndex] = true;
+        }
+
+        $result = [];
+        foreach ($mergedAnnotations as $index => $annotation) {
+            if (!isset($removedIndices[$index])) {
+                $result[] = $annotation;
+            }
+        }
+
+        return array_values($result);
+    }
+
     private function isPromotedSuppressionAnnotation(array $annotation): bool
     {
         if (empty($annotation['promotedFromExtraction'])) {
@@ -1674,13 +2150,24 @@ PYTHON;
             $sessionId = $request->session()->getId();
         }
 
-        $statesQuery = PdfState::where('document_id', $document->id);
-        $this->applyOwnershipScope(
-            $statesQuery,
-            $ownership['user_id'] ?? null,
-            $ownership['admin_id'] ?? null,
-            $sessionId
-        );
+        // Build the scope query: rows owned by the current viewer (by user/admin/session)
+        // OR rows materialized from the canonical extraction (which carry the
+        // synthetic `document_<id>_extracted` session id and may be unowned when the
+        // upload happened anonymously). This ensures the editor can render the
+        // auto-extracted annotations on first open even when the viewer's
+        // localStorage session id doesn't match the extraction's session id.
+        $extractedSessionId = 'document_' . $document->id . '_extracted';
+        $statesQuery = PdfState::where('document_id', $document->id)
+            ->where(function ($outer) use ($ownership, $sessionId, $extractedSessionId) {
+                $outer->where(function ($inner) use ($ownership, $sessionId) {
+                    $this->applyOwnershipScope(
+                        $inner,
+                        $ownership['user_id'] ?? null,
+                        $ownership['admin_id'] ?? null,
+                        $sessionId
+                    );
+                })->orWhere('session_id', $extractedSessionId);
+            });
         $states = $statesQuery->orderBy('id')->get();
         $deletedPromotedSourceKeys = [];
         foreach ($states as $state) {
@@ -1702,12 +2189,21 @@ PYTHON;
             ->value('id');
 
         // Deduplicate by annotation `id` field, keeping the highest db_id (most recent save)
+        $annotationAssets = app(PdfAnnotationAssetService::class);
         $seen = [];
-        $annotations = $states->map(function (PdfState $state) use (&$seen, $fallbackFitzId) {
+        $annotations = $states->map(function (PdfState $state) use (&$seen, $fallbackFitzId, $annotationAssets) {
             $data = is_array($state->annotation_data) ? $state->annotation_data : [];
             $fitzId = $state->pdf_extraction_fitz_id ?: $fallbackFitzId;
             if (!empty($data) && $fitzId) {
                 $data = $this->enrichAnnotationFromDb($data, $fitzId);
+            }
+            // Resolve persisted image assets (signatures, uploaded images, and
+            // direct-draw marker/pen strokes) back into a loadable `src` URL so
+            // the editor can render them after a reload. The PdfState row only
+            // stores `assetPath`; without this the overlay shows an empty
+            // image-tagged placeholder where the drawing used to be.
+            if (!empty($data)) {
+                $data = $annotationAssets->enrichForClient($data);
             }
             if (!empty($data) && $this->shouldDiscardLegacySyntheticMergedPromotedAnnotation($data)) {
                 return null;
@@ -1765,6 +2261,10 @@ PYTHON;
                 $annotations = $annotations->merge(array_values($newSymbol))->values();
             }
         }
+
+        $annotations = collect($this->mergeContainedPromotedAnnotationsForEditor(
+            $annotations->values()->all()
+        ))->values();
 
         // Load embedded font metadata per source. Reconstruction can render either the
         // current file PDF or the clean/original-backed PDF, and each source may carry

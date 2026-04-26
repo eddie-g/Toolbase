@@ -38,17 +38,43 @@
             <template x-if="globalRunning || (globalFinished && allRunResults.length > 0)">
                 <div class="space-y-2">
                     <div class="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-                        <span x-text="globalRunning ? 'Running ' + allRunResults.length + ' of ' + files.length + ' tests…' : 'Run complete'"></span>
+                        <span x-text="globalRunning ? 'Running ' + allRunResults.length + ' of ' + visibleFiles.length + ' tests…' : 'Run complete'"></span>
                         <span x-text="allRunPassedCount + ' passed · ' + allRunFailedCount + ' failed · ' + allRunErrorCount + ' errors'"></span>
                     </div>
                     <div class="relative w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
                         <div class="h-full rounded-full transition-all duration-500 ease-out"
                              x-bind:class="globalRunning ? 'bg-danger-500' : (allRunFailedCount === 0 && allRunErrorCount === 0 ? 'bg-success-500' : 'bg-warning-500')"
-                             x-bind:style="'width: ' + (files.length ? Math.round((allRunResults.length / files.length) * 100) : 0) + '%'">
+                             x-bind:style="'width: ' + (visibleFiles.length ? Math.round((allRunResults.length / visibleFiles.length) * 100) : 0) + '%'">
                         </div>
                     </div>
                 </div>
             </template>
+
+            {{-- Editor tabs (split tests by which editor URL they exercise) --}}
+            <div x-show="!loading" class="border-b border-gray-200 dark:border-gray-700">
+                <nav class="-mb-px flex gap-6" aria-label="Editor tabs">
+                    <button type="button"
+                            x-on:click="setActiveTab('edit-new')"
+                            x-bind:class="activeTab === 'edit-new'
+                                ? 'border-danger-500 text-danger-600 dark:text-danger-400'
+                                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-200'"
+                            class="whitespace-nowrap py-3 px-1 border-b-2 text-sm font-medium transition-colors">
+                        New editor <span class="text-xs text-gray-400">/edit-new</span>
+                        <span class="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300"
+                              x-text="editorCount('edit-new')"></span>
+                    </button>
+                    <button type="button"
+                            x-on:click="setActiveTab('edit')"
+                            x-bind:class="activeTab === 'edit'
+                                ? 'border-danger-500 text-danger-600 dark:text-danger-400'
+                                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-200'"
+                            class="whitespace-nowrap py-3 px-1 border-b-2 text-sm font-medium transition-colors">
+                        Old editor <span class="text-xs text-gray-400">/edit</span>
+                        <span class="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300"
+                              x-text="editorCount('edit')"></span>
+                    </button>
+                </nav>
+            </div>
 
             {{-- Loading state --}}
             <template x-if="loading">
@@ -62,8 +88,8 @@
             </template>
 
             {{-- Test cards grid --}}
-            <div x-show="!loading && files.length > 0" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <template x-for="file in files" :key="file.path">
+            <div x-show="!loading && visibleFiles.length > 0" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <template x-for="file in visibleFiles" :key="file.path">
                     <div class="group relative bg-white dark:bg-gray-800 rounded-2xl ring-1 ring-gray-950/5 dark:ring-white/10 overflow-hidden flex flex-col cursor-pointer transition-shadow hover:shadow-md"
                          x-on:click="openTest(file)">
 
@@ -80,7 +106,7 @@
                                 <div class="min-w-0 flex-1">
                                     <div class="flex items-center gap-2 flex-wrap">
                                         <span class="text-xs font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500"
-                                              x-text="'Test ' + (files.indexOf(file) + 1)"></span>
+                                              x-text="'Test ' + (visibleFiles.indexOf(file) + 1)"></span>
                                         <template x-if="latestResultFor(file.path)">
                                             <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold uppercase"
                                                   x-bind:class="latestResultFor(file.path).status === 'pass'
@@ -145,6 +171,11 @@
                     </div>
                 </template>
             </div>
+
+            {{-- Empty state when the active editor tab has no tests --}}
+            <div x-show="!loading && visibleFiles.length === 0" class="text-center py-12 text-sm text-gray-500 dark:text-gray-400">
+                No tests registered for this editor yet.
+            </div>
         </div>
 
         {{-- ═══════════════════════════════════════════════════════════
@@ -167,7 +198,7 @@
                 <div class="h-4 w-px bg-gray-200 dark:bg-gray-700"></div>
                 <div class="flex items-center gap-2 min-w-0">
                     <span class="text-xs font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500 shrink-0"
-                          x-text="activeFile ? 'Test ' + (files.indexOf(activeFile) + 1) : ''"></span>
+                          x-text="activeFile ? 'Test ' + (visibleFiles.indexOf(activeFile) + 1) : ''"></span>
                     <span class="font-semibold text-gray-900 dark:text-white truncate"
                           x-text="activeFile ? (activeFile.section_name || activeFile.filename) : ''"></span>
                 </div>
@@ -193,17 +224,19 @@
                     <template x-if="!detailRunning && detailResult">
                         <button type="button"
                                 x-on:click="runDetailTest()"
-                                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-danger-50 text-danger-700 hover:bg-danger-100 dark:bg-danger-950/40 dark:text-danger-400 dark:hover:bg-danger-950/60 transition-colors">
+                                x-bind:disabled="memberRunningKey !== null"
+                                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-danger-50 text-danger-700 hover:bg-danger-100 dark:bg-danger-950/40 dark:text-danger-400 dark:hover:bg-danger-950/60 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                             <svg class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-                            Re-run
+                            <span x-text="isSuite ? 'Re-run All' : 'Re-run'"></span>
                         </button>
                     </template>
                     <template x-if="!detailRunning && !detailResult">
                         <button type="button"
                                 x-on:click="runDetailTest()"
-                                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-danger-600 text-white hover:bg-danger-700 transition-colors">
+                                x-bind:disabled="memberRunningKey !== null"
+                                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-danger-600 text-white hover:bg-danger-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                             <svg class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-                            Run Test
+                            <span x-text="isSuite ? 'Run All in Suite' : 'Run Test'"></span>
                         </button>
                     </template>
                 </div>
@@ -212,6 +245,52 @@
             {{-- Description --}}
             <template x-if="activeFile">
                 <p class="text-sm text-gray-500 dark:text-gray-400" x-text="activeFile.description || ''"></p>
+            </template>
+
+            {{-- Suite member tests: per-test Run buttons (only for suite entries) --}}
+            <template x-if="isSuite">
+                <div class="bg-white dark:bg-gray-800 rounded-2xl ring-1 ring-gray-950/5 dark:ring-white/10 overflow-hidden">
+                    <div class="px-5 py-4 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between gap-3">
+                        <div>
+                            <div class="font-semibold text-gray-900 dark:text-white text-sm">Suite Tests</div>
+                            <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                                <span x-text="activeFile.member_tests.length"></span> tests · run individually or use “Run All in Suite” above
+                            </div>
+                        </div>
+                    </div>
+                    <ul class="divide-y divide-gray-100 dark:divide-gray-700/50">
+                        <template x-for="(member, mi) in activeFile.member_tests" :key="'member-' + member.path">
+                            <li class="px-5 py-3 flex items-start gap-3">
+                                <div class="mt-1 text-xs font-semibold text-gray-400 dark:text-gray-500 w-6 text-right shrink-0"
+                                     x-text="(mi + 1) + '.'"></div>
+                                <div class="min-w-0 flex-1">
+                                    <div class="text-sm font-medium text-gray-900 dark:text-white" x-text="member.section_name || member.path"></div>
+                                    <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5" x-text="member.description || ''"></div>
+                                </div>
+                                <div class="shrink-0 flex items-center gap-2">
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide"
+                                          x-bind:class="memberStatusClass(member)"
+                                          x-text="memberStatusLabel(member)"></span>
+                                    <template x-if="memberRunningKey === member.path">
+                                        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-danger-50 text-danger-700 dark:bg-danger-950/40 dark:text-danger-400">
+                                            <svg class="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                                            Running…
+                                        </span>
+                                    </template>
+                                    <template x-if="memberRunningKey !== member.path">
+                                        <button type="button"
+                                                x-on:click="runMemberTest(member)"
+                                                x-bind:disabled="memberRunningKey !== null || detailRunning"
+                                                class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-danger-600 text-white hover:bg-danger-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                                            <svg class="h-3 w-3" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                                            <span x-text="memberStatus(member) ? 'Re-run' : 'Run'"></span>
+                                        </button>
+                                    </template>
+                                </div>
+                            </li>
+                        </template>
+                    </ul>
+                </div>
             </template>
 
             {{-- Two-column layout: checklist + artifacts --}}
@@ -459,6 +538,22 @@
                 files: [],
                 latestRunCreatedAt: null,
                 activeArtifact: null,
+                activeTab: 'edit-new',
+                get visibleFiles() {
+                    return (this.files || []).filter((f) => (f.editor || 'edit-new') === this.activeTab);
+                },
+                editorCount(tab) {
+                    return (this.files || []).filter((f) => (f.editor || 'edit-new') === tab).length;
+                },
+                setActiveTab(tab) {
+                    if (this.globalRunning) return;
+                    this.activeTab = tab;
+                    try {
+                        const url = new URL(window.location.href);
+                        url.searchParams.set('editor', tab);
+                        history.replaceState(history.state || {}, '', url.toString());
+                    } catch (_e) { /* ignore */ }
+                },
 
                 /* ── list screen ── */
                 screen: 'list',
@@ -477,6 +572,13 @@
                 fakeProgressTimer: null,
                 revealIndex: 0,
                 revealTimer: null,
+
+                /* ── per-member-test runs (shown when activeFile is a suite) ── */
+                memberRunningKey: null,   // path of the currently-running member test, or null
+                memberResults: {},        // map: member.path → normalized result
+                get isSuite() {
+                    return !!(this.activeFile && Array.isArray(this.activeFile.member_tests) && this.activeFile.member_tests.length);
+                },
 
                 async init() {
                     this.loading = true;
@@ -501,10 +603,19 @@
 
                     // Check if URL has a test param — open that test's detail screen
                     const params = new URLSearchParams(window.location.search);
+                    const editorParam = params.get('editor');
+                    if (editorParam === 'edit' || editorParam === 'edit-new') {
+                        this.activeTab = editorParam;
+                    }
                     const testParam = params.get('test');
                     if (testParam && this.files.length) {
                         const match = this.files.find((f) => f.path === testParam);
-                        if (match) this.openTest(match);
+                        if (match) {
+                            // Make sure the test's editor tab is active so the
+                            // user sees the right list when they close detail.
+                            if (match.editor) this.activeTab = match.editor;
+                            this.openTest(match);
+                        }
                     }
 
                     // Handle browser back/forward
@@ -526,6 +637,9 @@
                     this.detailResult = this.latestResultFor(file.path) || null;
                     this.revealIndex = this.detailResult ? (this.detailResult.checks || []).length : 0;
                     this.fakeProgressIndex = 0;
+                    // Reset per-member state when opening a new (potentially suite) test.
+                    this.memberRunningKey = null;
+                    this.memberResults = {};
                     this.screen = 'detail';
                     const url = new URL(window.location.href);
                     url.searchParams.set('test', file.path);
@@ -551,13 +665,13 @@
 
                 /* ── run all ── */
                 async startAllTests() {
-                    if (this.globalRunning || !this.files.length) return;
+                    if (this.globalRunning || !this.visibleFiles.length) return;
                     this.globalRunning = true;
                     this.globalFinished = false;
                     this.allRunResults = [];
                     const runId = this.nextRunId();
 
-                    for (const file of this.files) {
+                    for (const file of this.visibleFiles) {
                         const result = await this.runTestRequest(file, runId);
                         this.allRunResults = [...this.allRunResults, result];
                     }
@@ -589,6 +703,35 @@
 
                     this.detailRunning = false;
                     this.startReveal(result.checks || []);
+                },
+
+                /* ── run a single member test inside an open suite ── */
+                async runMemberTest(member) {
+                    if (!member || !this.isSuite) return;
+                    if (this.memberRunningKey || this.detailRunning) return;
+                    this.memberRunningKey = member.path;
+                    const result = await this.runTestRequest(member, this.nextRunId());
+                    this.memberResults = { ...this.memberResults, [member.path]: result };
+                    this.memberRunningKey = null;
+                },
+
+                memberStatus(member) {
+                    if (!member) return null;
+                    return this.memberResults[member.path] || null;
+                },
+                memberStatusLabel(member) {
+                    const r = this.memberStatus(member);
+                    if (!r) return '—';
+                    if (r.status === 'pass') return 'PASS';
+                    if (r.status === 'fail') return `FAIL (${r.checks_passed}/${r.checks_total})`;
+                    return (r.status || 'error').toUpperCase();
+                },
+                memberStatusClass(member) {
+                    const r = this.memberStatus(member);
+                    if (!r) return 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400';
+                    if (r.status === 'pass') return 'bg-success-100 text-success-700 dark:bg-success-900/30 dark:text-success-400';
+                    if (r.status === 'fail') return 'bg-danger-100 text-danger-700 dark:bg-danger-900/30 dark:text-danger-400';
+                    return 'bg-warning-100 text-warning-700 dark:bg-warning-900/30 dark:text-warning-400';
                 },
 
                 /* ── fake progress animation ── */

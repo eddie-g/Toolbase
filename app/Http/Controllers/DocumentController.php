@@ -754,11 +754,39 @@ class DocumentController extends Controller
     {
         $annotationAssets = $this->annotationAssets();
 
-        return array_map(static function ($annotation) use ($annotationAssets, $document) {
-            return is_array($annotation)
-                ? $annotationAssets->normalizeForPersistence($document, $annotation)
-                : $annotation;
+        return array_map(function ($annotation) use ($annotationAssets, $document) {
+            if (!is_array($annotation)) {
+                return $annotation;
+            }
+
+            return $this->normalizeTextAnnotationBackgroundForExport(
+                $annotationAssets->normalizeForPersistence($document, $annotation)
+            );
         }, $annotations);
+    }
+
+    private function normalizeTextAnnotationBackgroundForExport(array $annotation): array
+    {
+        if (strtolower(trim((string) ($annotation['type'] ?? ''))) !== 'text') {
+            return $annotation;
+        }
+
+        $background = strtolower(trim((string) ($annotation['backgroundColor'] ?? '')));
+        $backgroundExplicit = filter_var(
+            $annotation['backgroundColorExplicit'] ?? false,
+            FILTER_VALIDATE_BOOL
+        );
+
+        if ($background === '' || $background === 'transparent') {
+            $annotation['backgroundColor'] = 'transparent';
+            return $annotation;
+        }
+
+        if (!$backgroundExplicit && in_array($background, ['#fff', '#ffffff', 'white'], true)) {
+            $annotation['backgroundColor'] = 'transparent';
+        }
+
+        return $annotation;
     }
 
     private function isDurablePromotedAnnotation(array $annotation): bool
@@ -1181,12 +1209,14 @@ class DocumentController extends Controller
     {
         $annotationAssets = $this->annotationAssets();
 
-        $prepared = array_values(array_filter(array_map(static function ($annotation) use ($annotationAssets) {
+        $prepared = array_values(array_filter(array_map(function ($annotation) use ($annotationAssets) {
             if (!is_array($annotation)) {
                 return null;
             }
 
-            $enriched = $annotationAssets->enrichForPython($annotation);
+            $enriched = $this->normalizeTextAnnotationBackgroundForExport(
+                $annotationAssets->enrichForPython($annotation)
+            );
             $annotationType = strtolower((string) ($enriched['type'] ?? ''));
 
             // Interactive PDF form fields are exported client-side with pdf-lib.
@@ -1801,6 +1831,10 @@ class DocumentController extends Controller
             return [];
         }
 
+        if (!config('pdf_editor.line_grouping_editor_mode', false)) {
+            return [$baseAnnotation];
+        }
+
         if (count($textLines) < 2 || count($sourceLineBBoxes) < 2 || count($textLines) !== count($sourceLineBBoxes)) {
             return [$baseAnnotation];
         }
@@ -1847,7 +1881,9 @@ class DocumentController extends Controller
                 continue;
             }
 
-            $blocks = is_array($pageData['blocks'] ?? null) ? $pageData['blocks'] : [];
+            $blocks = $this->mergeContainedStandaloneAnnotationBaseBlocks(
+                is_array($pageData['blocks'] ?? null) ? $pageData['blocks'] : []
+            );
             foreach ($blocks as $block) {
                 if (!is_array($block)) {
                     continue;
@@ -2020,6 +2056,142 @@ class DocumentController extends Controller
         unset($group);
 
         return array_values($groups);
+    }
+
+    private function mergeContainedStandaloneAnnotationBaseBlocks(array $blocks): array
+    {
+        if (count($blocks) < 2) {
+            return $blocks;
+        }
+
+        $mergedBlocks = array_values($blocks);
+        $removedIndices = [];
+
+        foreach ($mergedBlocks as $childIndex => $childBlock) {
+            if (isset($removedIndices[$childIndex])) {
+                continue;
+            }
+
+            $childLineBBoxes = array_values(array_filter(
+                is_array($childBlock['line_bboxes'] ?? null) ? $childBlock['line_bboxes'] : [],
+                static fn ($bbox) => is_array($bbox) && count($bbox) >= 4
+            ));
+            $childTextLines = is_array($childBlock['text_lines'] ?? null) ? array_values($childBlock['text_lines']) : [];
+            $childText = trim((string) ($childTextLines[0] ?? $childBlock['text'] ?? ''));
+            $childBBox = $this->normalizeAnnotationBaseBlockBBox($childBlock);
+
+            if (count($childLineBBoxes) !== 1 || $childText === '' || !$childBBox) {
+                continue;
+            }
+
+            $bestParentIndex = null;
+            $bestBlankLineIndex = null;
+            $bestParentArea = null;
+
+            foreach ($mergedBlocks as $parentIndex => $parentBlock) {
+                if ($parentIndex === $childIndex || isset($removedIndices[$parentIndex])) {
+                    continue;
+                }
+
+                $parentBBox = $this->normalizeAnnotationBaseBlockBBox($parentBlock);
+                if (
+                    !$parentBBox
+                    || !$this->annotationBaseRectContains($parentBBox, $childBBox, 0.5)
+                    || !$this->annotationBaseBlocksAreMergeCompatible($parentBlock, $childBlock)
+                ) {
+                    continue;
+                }
+
+                $parentLineBBoxes = array_values(array_filter(
+                    is_array($parentBlock['line_bboxes'] ?? null) ? $parentBlock['line_bboxes'] : [],
+                    static fn ($bbox) => is_array($bbox) && count($bbox) >= 4
+                ));
+                $parentTextLines = is_array($parentBlock['text_lines'] ?? null) ? array_values($parentBlock['text_lines']) : [];
+                if (count($parentLineBBoxes) < 2 || count($parentTextLines) !== count($parentLineBBoxes)) {
+                    continue;
+                }
+
+                foreach ($parentLineBBoxes as $lineIndex => $lineBBox) {
+                    if (
+                        trim((string) ($parentTextLines[$lineIndex] ?? '')) !== ''
+                        || !$this->annotationBaseNestedBlockFitsBlankLineSlot(
+                            array_map('floatval', array_slice($lineBBox, 0, 4)),
+                            array_map('floatval', array_slice($childLineBBoxes[0], 0, 4))
+                        )
+                    ) {
+                        continue;
+                    }
+
+                    $parentArea = max(1.0, ($parentBBox[2] - $parentBBox[0]) * ($parentBBox[3] - $parentBBox[1]));
+                    if ($bestParentArea === null || $parentArea < $bestParentArea) {
+                        $bestParentIndex = $parentIndex;
+                        $bestBlankLineIndex = $lineIndex;
+                        $bestParentArea = $parentArea;
+                    }
+                }
+            }
+
+            if ($bestParentIndex === null || $bestBlankLineIndex === null) {
+                continue;
+            }
+
+            $parentBlock = $mergedBlocks[$bestParentIndex];
+            $parentTextLines = array_values($parentBlock['text_lines'] ?? []);
+            $parentLineBBoxes = array_values($parentBlock['line_bboxes'] ?? []);
+            $parentTextLines[$bestBlankLineIndex] = $childText;
+            $parentLineBBoxes[$bestBlankLineIndex] = array_map('floatval', array_slice($childLineBBoxes[0], 0, 4));
+
+            $allLineBBoxes = array_values(array_filter(
+                $parentLineBBoxes,
+                static fn ($bbox) => is_array($bbox) && count($bbox) >= 4
+            ));
+            if (empty($allLineBBoxes)) {
+                continue;
+            }
+
+            $left = min(array_map(static fn (array $bbox): float => (float) $bbox[0], $allLineBBoxes));
+            $top = min(array_map(static fn (array $bbox): float => (float) $bbox[1], $allLineBBoxes));
+            $right = max(array_map(static fn (array $bbox): float => (float) $bbox[2], $allLineBBoxes));
+            $bottom = max(array_map(static fn (array $bbox): float => (float) $bbox[3], $allLineBBoxes));
+
+            $mergedSpans = array_merge(
+                is_array($parentBlock['spans'] ?? null) ? array_values($parentBlock['spans']) : [],
+                is_array($childBlock['spans'] ?? null) ? array_values($childBlock['spans']) : []
+            );
+            usort($mergedSpans, static function (array $leftSpan, array $rightSpan): int {
+                $leftBBox = is_array($leftSpan['bbox'] ?? null) ? array_slice($leftSpan['bbox'], 0, 4) : [0, 0, 0, 0];
+                $rightBBox = is_array($rightSpan['bbox'] ?? null) ? array_slice($rightSpan['bbox'], 0, 4) : [0, 0, 0, 0];
+                $leftTop = (float) ($leftBBox[1] ?? 0);
+                $rightTop = (float) ($rightBBox[1] ?? 0);
+                if (abs($leftTop - $rightTop) > 0.25) {
+                    return $leftTop <=> $rightTop;
+                }
+
+                return ((float) ($leftBBox[0] ?? 0)) <=> ((float) ($rightBBox[0] ?? 0));
+            });
+
+            $parentBlock['text_lines'] = $parentTextLines;
+            $parentBlock['text'] = implode("\n", $parentTextLines);
+            $parentBlock['line_bboxes'] = $parentLineBBoxes;
+            $parentBlock['left'] = $left;
+            $parentBlock['top'] = $top;
+            $parentBlock['width'] = max(0.0, $right - $left);
+            $parentBlock['height'] = max(0.0, $bottom - $top);
+            $parentBlock['bbox'] = [$left, $top, $right, $bottom];
+            $parentBlock['line_count'] = count($parentTextLines);
+            $parentBlock['spans'] = $mergedSpans;
+            $mergedBlocks[$bestParentIndex] = $parentBlock;
+            $removedIndices[$childIndex] = true;
+        }
+
+        $result = [];
+        foreach ($mergedBlocks as $index => $block) {
+            if (!isset($removedIndices[$index])) {
+                $result[] = $block;
+            }
+        }
+
+        return $result;
     }
 
     private function syncMaterializedPdfGroups(
@@ -2436,6 +2608,9 @@ class DocumentController extends Controller
 
         ksort($pages);
         foreach ($pages as &$page) {
+            $page['blocks'] = $this->mergeContainedStandaloneAnnotationBaseBlocks(
+                is_array($page['blocks'] ?? null) ? $page['blocks'] : []
+            );
             $page['blocks'] = $this->splitNestedAnnotationBaseBlocks(
                 is_array($page['blocks'] ?? null) ? $page['blocks'] : []
             );
@@ -2502,6 +2677,73 @@ class DocumentController extends Controller
             || ($rectA[3] + $padding) <= ($rectB[1] - $padding)
             || ($rectB[3] + $padding) <= ($rectA[1] - $padding)
         );
+    }
+
+    private function annotationBaseRectContains(array $outerRect, array $innerRect, float $padding = 0.0): bool
+    {
+        return ($innerRect[0] + $padding) >= ($outerRect[0] - $padding)
+            && ($innerRect[1] + $padding) >= ($outerRect[1] - $padding)
+            && ($innerRect[2] - $padding) <= ($outerRect[2] + $padding)
+            && ($innerRect[3] - $padding) <= ($outerRect[3] + $padding);
+    }
+
+    private function annotationBaseBlocksAreMergeCompatible(array $parentBlock, array $childBlock): bool
+    {
+        $normalizeValue = static fn ($value): string => trim(strtolower((string) $value));
+
+        $parentFont = $normalizeValue($parentBlock['font'] ?? $parentBlock['fontSourceName'] ?? '');
+        $childFont = $normalizeValue($childBlock['font'] ?? $childBlock['fontSourceName'] ?? '');
+        if ($parentFont !== '' && $childFont !== '' && $parentFont !== $childFont) {
+            return false;
+        }
+
+        $parentWeight = $normalizeValue($parentBlock['font_weight'] ?? $parentBlock['fontWeight'] ?? '');
+        $childWeight = $normalizeValue($childBlock['font_weight'] ?? $childBlock['fontWeight'] ?? '');
+        if ($parentWeight !== '' && $childWeight !== '' && $parentWeight !== $childWeight) {
+            return false;
+        }
+
+        $parentItalic = (bool) ($parentBlock['italic'] ?? false)
+            || $normalizeValue($parentBlock['fontStyle'] ?? '') === 'italic';
+        $childItalic = (bool) ($childBlock['italic'] ?? false)
+            || $normalizeValue($childBlock['fontStyle'] ?? '') === 'italic';
+        if ($parentItalic !== $childItalic) {
+            return false;
+        }
+
+        $parentColor = $normalizeValue($parentBlock['hex_color'] ?? $parentBlock['textColor'] ?? '');
+        $childColor = $normalizeValue($childBlock['hex_color'] ?? $childBlock['textColor'] ?? '');
+        if ($parentColor !== '' && $childColor !== '' && $parentColor !== $childColor) {
+            return false;
+        }
+
+        $parentFontSize = isset($parentBlock['font_size']) && is_numeric($parentBlock['font_size'])
+            ? (float) $parentBlock['font_size']
+            : (isset($parentBlock['fontSize']) && is_numeric($parentBlock['fontSize']) ? (float) $parentBlock['fontSize'] : null);
+        $childFontSize = isset($childBlock['font_size']) && is_numeric($childBlock['font_size'])
+            ? (float) $childBlock['font_size']
+            : (isset($childBlock['fontSize']) && is_numeric($childBlock['fontSize']) ? (float) $childBlock['fontSize'] : null);
+
+        return $parentFontSize === null
+            || $childFontSize === null
+            || abs($parentFontSize - $childFontSize) <= 0.5;
+    }
+
+    private function annotationBaseNestedBlockFitsBlankLineSlot(array $blankLineBBox, array $childLineBBox): bool
+    {
+        $blankWidth = max(0.0, (float) ($blankLineBBox[2] ?? 0) - (float) ($blankLineBBox[0] ?? 0));
+        if ($blankWidth > 2.0 && !$this->annotationBaseRectsIntersect($blankLineBBox, $childLineBBox, 0.5)) {
+            return false;
+        }
+
+        $blankTop = (float) ($blankLineBBox[1] ?? 0);
+        $blankBottom = (float) ($blankLineBBox[3] ?? $blankTop);
+        $childTop = (float) ($childLineBBox[1] ?? 0);
+        $childBottom = (float) ($childLineBBox[3] ?? $childTop);
+        $childCenter = ($childTop + $childBottom) / 2;
+
+        return $childCenter >= ($blankTop - 2.0)
+            && $childCenter <= ($blankBottom + 2.0);
     }
 
     private function splitNestedAnnotationBaseBlocks(array $blocks): array
@@ -8668,20 +8910,64 @@ class DocumentController extends Controller
         ]);
 
         $sessionId = trim((string) $validated['session_id']);
-        $ownership = $this->resolvePdfStateOwnership($document);
-        $annotationIds = array_values(array_filter(array_map(
-            static fn ($v) => is_string($v) ? trim($v) : '',
-            $validated['annotation_ids']
-        )));
-        $deletedPromotedSourceKeys = array_values(array_filter(array_map(
-            static fn ($v) => is_string($v) ? trim($v) : '',
-            is_array($validated['deleted_promoted_source_keys'] ?? null)
-                ? $validated['deleted_promoted_source_keys']
-                : []
-        )));
-        $deletedPromotedSourceKeyLookup = array_fill_keys($deletedPromotedSourceKeys, true);
+        $annotationIds = is_array($validated['annotation_ids']) ? $validated['annotation_ids'] : [];
+        $explicitKeys = is_array($validated['deleted_promoted_source_keys'] ?? null)
+            ? $validated['deleted_promoted_source_keys']
+            : [];
 
-        foreach ($annotationIds as $annotationId) {
+        $deletedPromotedSourceKeys = $this->applyAnnotationDeletions(
+            $document,
+            $sessionId,
+            $annotationIds,
+            $explicitKeys
+        );
+
+        foreach ($deletedPromotedSourceKeys as $sourceKey) {
+            $this->ensurePromotedSuppressionRecordForSession($document, $sessionId, $sourceKey);
+        }
+
+        return response()->json([
+            'success' => true,
+            'deleted' => count(array_filter($annotationIds, 'is_string')),
+            'deleted_promoted_source_keys' => $deletedPromotedSourceKeys,
+        ]);
+    }
+
+    /**
+     * Mark PdfState rows as deleted for the given annotation ids, plus bulk-mark
+     * any rows whose promotedSourceKey matches the explicit list (or is auto-
+     * discovered from a deleted promotedFromExtraction annotation). Returns the
+     * sorted, unique list of promoted source keys that were affected.
+     *
+     * Suppression-record bookkeeping is the caller's responsibility (either via
+     * ensurePromotedSuppressionRecordForSession or the
+     * syncDeletedPromotedSourceKeysForSession path used by saveAnnotationState).
+     */
+    private function applyAnnotationDeletions(
+        Document $document,
+        string $sessionId,
+        array $annotationIds,
+        array $explicitDeletedPromotedSourceKeys
+    ): array {
+        $ownership = $this->resolvePdfStateOwnership($document);
+
+        $normalizedAnnotationIds = array_values(array_filter(array_map(
+            static fn ($v) => is_string($v) ? trim($v) : '',
+            $annotationIds
+        )));
+
+        $deletedPromotedSourceKeyLookup = [];
+        foreach ($explicitDeletedPromotedSourceKeys as $key) {
+            if (!is_string($key)) {
+                continue;
+            }
+            $normalized = trim($key);
+            if ($normalized !== '') {
+                $deletedPromotedSourceKeyLookup[$normalized] = true;
+            }
+        }
+
+        foreach ($normalizedAnnotationIds as $annotationId) {
             $recordQuery = PdfState::where('document_id', $document->id)
                 ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.id')) = ?", [$annotationId])
                 ->where('state', '!=', 'extracted');
@@ -8716,15 +9002,9 @@ class DocumentController extends Controller
                 ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.promotedSourceKey')) = ?", [$sourceKey]);
             $this->applyPdfStateOwnershipScope($promotedDeleteQuery, $ownership['user_id'], $ownership['admin_id'], $sessionId);
             $promotedDeleteQuery->update(['state' => 'deleted']);
-
-            $this->ensurePromotedSuppressionRecordForSession($document, $sessionId, $sourceKey);
         }
 
-        return response()->json([
-            'success' => true,
-            'deleted' => count($annotationIds),
-            'deleted_promoted_source_keys' => $deletedPromotedSourceKeys,
-        ]);
+        return $deletedPromotedSourceKeys;
     }
 
     /**
@@ -8741,6 +9021,8 @@ class DocumentController extends Controller
             'session_annotations.*.type' => 'required_with:session_annotations|string',
             'session_annotations.*.pageIndex' => 'required_with:session_annotations',
             'acro_form_entries' => 'nullable|array',
+            'deleted_annotation_ids' => 'nullable|array',
+            'deleted_annotation_ids.*' => 'string',
             'deleted_promoted_source_keys' => 'nullable|array',
             'deleted_promoted_source_keys.*' => 'string',
             'session_id' => 'nullable|string',
@@ -8768,12 +9050,32 @@ class DocumentController extends Controller
         $sessionId = is_string($validated['session_id'] ?? null)
             ? trim((string) $validated['session_id'])
             : '';
+
+        // Apply pending deletions (annotation ids + promoted source keys) inline
+        // so the frontend only needs a single round-trip to persist a save that
+        // also removed annotations. The helper performs the same PdfState marking
+        // that the dedicated deleteAnnotations endpoint does; suppression-record
+        // bookkeeping is handled below by syncDeletedPromotedSourceKeysForSession.
+        $explicitDeletedKeys = is_array($validated['deleted_promoted_source_keys'] ?? null)
+            ? array_values(array_filter($validated['deleted_promoted_source_keys'], 'is_string'))
+            : [];
+        $deletedAnnotationIds = is_array($validated['deleted_annotation_ids'] ?? null)
+            ? $validated['deleted_annotation_ids']
+            : [];
+        $combinedDeletedKeys = $explicitDeletedKeys;
+        if (!empty($deletedAnnotationIds) || !empty($explicitDeletedKeys)) {
+            $combinedDeletedKeys = $this->applyAnnotationDeletions(
+                $document,
+                $sessionId,
+                $deletedAnnotationIds,
+                $explicitDeletedKeys
+            );
+        }
+
         $deletedPromotedSourceKeys = $this->mergeDeletedPromotedSourceKeys(
             $document,
             $sessionId,
-            is_array($validated['deleted_promoted_source_keys'] ?? null)
-                ? array_values(array_filter($validated['deleted_promoted_source_keys'], 'is_string'))
-                : [],
+            $combinedDeletedKeys,
             $sessionAnnotationsPayload
         );
 
@@ -8971,6 +9273,19 @@ class DocumentController extends Controller
         $annotationsFile = $tempDir . '/download_ann_' . $document->id . '_' . uniqid('', true) . '.json';
         $pythonAnnotationsPayload = $useExactCleanRebuild ? $sessionAnnotationsPayload : $annotationsPayload;
         $preparedAnnotationsForPython = $this->prepareAnnotationsForPython($pythonAnnotationsPayload);
+        // Stamp __documentId on every annotation so apply_annotations_direct_new.py
+        // can load this document's embedded-font metadata (temp/embedded_fonts_{id}.json)
+        // and resolve `ann.fontFamily` like "DejaVuSans" to the actual embedded TTF.
+        // Without this, resolve_embedded_font_entry() returns None and the export
+        // falls back to FONT_FILE_VARIANTS["Helvetica"] (Arimo), so the saved PDF
+        // does not match the editor display which loads PDF_<cleanName> via @font-face.
+        $preparedAnnotationsForPython = array_map(static function ($annotation) use ($document) {
+            if (!is_array($annotation)) {
+                return $annotation;
+            }
+            $annotation['__documentId'] = $document->id;
+            return $annotation;
+        }, $preparedAnnotationsForPython);
         if ($useExactCleanRebuild) {
             $preparedAnnotationsForPython = array_map(static function ($annotation) use ($preservePdfPath) {
                 if (!is_array($annotation)) {

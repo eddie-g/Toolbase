@@ -638,4 +638,597 @@ class PdfTestDocumentInfoEnrichmentTest extends TestCase
             $annotation['sourceTextLines'][2]
         );
     }
+
+    public function test_document_info_merges_contained_single_line_promoted_annotation_into_parent(): void
+    {
+        $user = User::factory()->create([
+            'email' => 'doc2995-owner@example.com',
+        ]);
+
+        $document = Document::query()->create([
+            'user_id' => $user->id,
+            'original_name' => 'doc2995.pdf',
+            'path' => 'documents/doc2995.pdf',
+            'mime_type' => 'application/pdf',
+            'size_bytes' => 100,
+        ]);
+
+        $fitz = PdfExtractionFitz::query()->create([
+            'document_id' => $document->id,
+            'session_id' => 'fitz-session',
+            'pdf_filename' => 'doc2995.pdf',
+            'total_pages' => 1,
+            'total_words' => 20,
+            'full_text' => 'sample',
+            'extraction_data' => [],
+        ]);
+
+        $page = PdfExtractionPage::query()->create([
+            'pdf_extraction_fitz_id' => $fitz->id,
+            'document_id' => $document->id,
+            'page_number' => 1,
+            'width' => 612,
+            'height' => 792,
+            'word_count' => 20,
+            'text' => 'sample',
+            'drawn_box_rects' => [],
+            'widget_rects' => [],
+        ]);
+
+        PdfExtractionBlock::query()->create([
+            'page_id' => $page->id,
+            'pdf_extraction_fitz_id' => $fitz->id,
+            'document_id' => $document->id,
+            'page_number' => 1,
+            'block_num' => 4,
+            'source_key' => 'block-1-4',
+            'root_source_key' => 'block-1-4',
+            'text' => "Use Form 1040-ES to figure and pay your estimated tax\nfor 2026.\nthat isn’t subject to withholding",
+            'text_single_line' => 'Use Form 1040-ES to figure and pay your estimated tax for 2026. that isn’t subject to withholding',
+            'text_lines' => [
+                'Use Form 1040-ES to figure and pay your estimated tax ',
+                'for 2026.',
+                'that isn’t subject to withholding',
+            ],
+            'line_bboxes' => [
+                [42.002, 132.542, 286.953, 142.542],
+                [42.002, 143.742, 80.880, 153.742],
+                [42.002, 172.142, 278.743, 182.142],
+            ],
+            'left' => 42.002,
+            'top' => 132.542,
+            'width' => 254.301,
+            'height' => 49.600,
+            'line_count' => 3,
+            'font' => 'HelveticaWorld-Regular',
+            'font_size' => 10,
+            'font_weight' => '400',
+            'italic' => false,
+            'underline' => false,
+            'hex_color' => '#231F20',
+            'line_height' => 10,
+            'avg_line_height' => 10,
+            'has_mixed_styles' => false,
+            'block_data' => [],
+        ]);
+
+        PdfExtractionBlock::query()->create([
+            'page_id' => $page->id,
+            'pdf_extraction_fitz_id' => $fitz->id,
+            'document_id' => $document->id,
+            'page_number' => 1,
+            'block_num' => 19,
+            'source_key' => 'block-1-19',
+            'root_source_key' => 'block-1-19',
+            'text' => 'Estimated tax is the method used to pay tax on income',
+            'text_single_line' => 'Estimated tax is the method used to pay tax on income',
+            'text_lines' => [
+                'Estimated tax is the method used to pay tax on income',
+            ],
+            'line_bboxes' => [
+                [54.002, 160.942, 295.413, 170.942],
+            ],
+            'left' => 54.002,
+            'top' => 160.942,
+            'width' => 241.411,
+            'height' => 10,
+            'line_count' => 1,
+            'font' => 'HelveticaWorld-Regular',
+            'font_size' => 10,
+            'font_weight' => '400',
+            'italic' => false,
+            'underline' => false,
+            'hex_color' => '#231F20',
+            'line_height' => 10,
+            'avg_line_height' => 10,
+            'has_mixed_styles' => false,
+            'block_data' => [],
+        ]);
+
+        PdfState::query()->create([
+            'document_id' => $document->id,
+            'pdf_extraction_fitz_id' => null,
+            'user_id' => $user->id,
+            'session_id' => 'state-session',
+            'page_number' => 0,
+            'state' => 'not_saved',
+            'annotation_data' => [
+                'id' => 'promoted_1_4',
+                'type' => 'text',
+                'text' => "Use Form 1040-ES to figure and pay your estimated tax\nfor 2026.\nthat isn’t subject to withholding",
+                'pageIndex' => 0,
+                'pdfX' => 42.002,
+                'pdfY' => 609.858,
+                'pdfWidth' => 254.301,
+                'pdfHeight' => 49.600,
+                'fontSize' => 10,
+                'fontFamily' => 'HelveticaWorld',
+                'fontSourceName' => 'HelveticaWorld-Regular',
+                'fontWeight' => '400',
+                'fontStyle' => 'normal',
+                'textColor' => '#231F20',
+                'lineHeight' => 10,
+                'promotedFromExtraction' => true,
+                'promotedDirty' => false,
+                'promotedSourceKey' => 'block-1-4',
+                'promotedSourceBlockNum' => 4,
+                'sourceBlockLeft' => 42.002,
+                'sourceBlockTop' => 132.542,
+                'sourceBlockWidth' => 254.301,
+                'sourceBlockHeight' => 49.600,
+                'sourcePageHeight' => 792,
+                'sourceTextLines' => [
+                    'Use Form 1040-ES to figure and pay your estimated tax ',
+                    'for 2026.',
+                    'that isn’t subject to withholding',
+                ],
+                'sourceLineBBoxes' => [
+                    [42.002, 132.542, 286.953, 142.542],
+                    [42.002, 143.742, 80.880, 153.742],
+                    [42.002, 172.142, 278.743, 182.142],
+                ],
+                'sourceSpans' => [
+                    [
+                        'text' => 'Use Form 1040-ES to figure and pay your estimated tax ',
+                        'render_text' => 'Use Form 1040-ES to figure and pay your estimated tax ',
+                        'origin' => [42.002, 140.736],
+                        'bbox' => [42.002, 132.542, 286.953, 142.542],
+                    ],
+                    [
+                        'text' => 'for 2026.',
+                        'render_text' => 'for 2026.',
+                        'origin' => [42.002, 151.936],
+                        'bbox' => [42.002, 143.742, 80.880, 153.742],
+                    ],
+                    [
+                        'text' => 'that isn’t subject to withholding',
+                        'render_text' => 'that isn’t subject to withholding',
+                        'origin' => [42.002, 180.336],
+                        'bbox' => [42.002, 172.142, 278.743, 182.142],
+                    ],
+                ],
+            ],
+        ]);
+
+        PdfState::query()->create([
+            'document_id' => $document->id,
+            'pdf_extraction_fitz_id' => null,
+            'user_id' => $user->id,
+            'session_id' => 'state-session',
+            'page_number' => 0,
+            'state' => 'not_saved',
+            'annotation_data' => [
+                'id' => 'promoted_1_19',
+                'type' => 'text',
+                'text' => 'Estimated tax is the method used to pay tax on income',
+                'pageIndex' => 0,
+                'pdfX' => 54.002,
+                'pdfY' => 621.058,
+                'pdfWidth' => 241.411,
+                'pdfHeight' => 10,
+                'fontSize' => 10,
+                'fontFamily' => 'HelveticaWorld',
+                'fontSourceName' => 'HelveticaWorld-Regular',
+                'fontWeight' => '400',
+                'fontStyle' => 'normal',
+                'textColor' => '#231F20',
+                'lineHeight' => 10,
+                'promotedFromExtraction' => true,
+                'promotedDirty' => false,
+                'promotedSourceKey' => 'block-1-19',
+                'promotedSourceBlockNum' => 19,
+                'sourceBlockLeft' => 54.002,
+                'sourceBlockTop' => 160.942,
+                'sourceBlockWidth' => 241.411,
+                'sourceBlockHeight' => 10,
+                'sourcePageHeight' => 792,
+                'sourceTextLines' => [
+                    'Estimated tax is the method used to pay tax on income',
+                ],
+                'sourceLineBBoxes' => [
+                    [54.002, 160.942, 295.413, 170.942],
+                ],
+                'sourceSpans' => [
+                    [
+                        'text' => 'Estimated tax is the method used to pay tax on income',
+                        'render_text' => 'Estimated tax is the method used to pay tax on income',
+                        'origin' => [54.002, 169.136],
+                        'bbox' => [54.002, 160.942, 295.413, 170.942],
+                    ],
+                ],
+            ],
+        ]);
+
+        $response = $this->actingAs($user)->getJson(route('pdfTests.documentInfo', $document, [
+            'session_id' => 'state-session',
+        ]));
+        $response->assertOk()->assertJson(['success' => true]);
+
+        $annotations = collect($response->json('annotations'));
+        $this->assertNull($annotations->firstWhere('id', 'promoted_1_19'));
+
+        $annotation = $annotations->firstWhere('id', 'promoted_1_4');
+        $this->assertNotNull($annotation);
+        $this->assertSame([
+            'Use Form 1040-ES to figure and pay your estimated tax ',
+            'for 2026.',
+            'Estimated tax is the method used to pay tax on income',
+            'that isn’t subject to withholding',
+        ], $annotation['sourceTextLines']);
+        $this->assertCount(4, $annotation['sourceLineBBoxes']);
+        $this->assertSame([54.002, 160.942, 295.413, 170.942], array_map(
+            static fn ($value) => round((float) $value, 3),
+            $annotation['sourceLineBBoxes'][2]
+        ));
+    }
+
+    public function test_document_info_merges_gap_fit_promoted_annotation_even_when_child_is_wider_than_parent_bbox(): void
+    {
+        $user = User::factory()->create([
+            'email' => 'doc2995-gap-owner@example.com',
+        ]);
+
+        $document = Document::query()->create([
+            'user_id' => $user->id,
+            'original_name' => 'doc2995-gap.pdf',
+            'path' => 'documents/doc2995-gap.pdf',
+            'mime_type' => 'application/pdf',
+            'size_bytes' => 100,
+        ]);
+
+        $fitz = PdfExtractionFitz::query()->create([
+            'document_id' => $document->id,
+            'session_id' => 'fitz-session',
+            'pdf_filename' => 'doc2995-gap.pdf',
+            'total_pages' => 1,
+            'total_words' => 12,
+            'full_text' => 'sample',
+            'extraction_data' => [],
+        ]);
+
+        $page = PdfExtractionPage::query()->create([
+            'pdf_extraction_fitz_id' => $fitz->id,
+            'document_id' => $document->id,
+            'page_number' => 1,
+            'width' => 612,
+            'height' => 792,
+            'word_count' => 12,
+            'text' => 'sample',
+            'drawn_box_rects' => [],
+            'widget_rects' => [],
+        ]);
+
+        PdfExtractionBlock::query()->create([
+            'page_id' => $page->id,
+            'pdf_extraction_fitz_id' => $fitz->id,
+            'document_id' => $document->id,
+            'page_number' => 1,
+            'block_num' => 14,
+            'source_key' => 'block-1-14',
+            'root_source_key' => 'block-1-14',
+            'text' => "or\n2025 tax return must cover all 12 months.",
+            'text_single_line' => 'or 2025 tax return must cover all 12 months.',
+            'text_lines' => [
+                'or',
+                '2025 tax return must cover all 12 months.',
+            ],
+            'line_bboxes' => [
+                [42.000, 637.742, 50.842, 647.742],
+                [42.000, 663.142, 222.303, 673.142],
+            ],
+            'left' => 42.000,
+            'top' => 637.742,
+            'width' => 180.303,
+            'height' => 35.400,
+            'line_count' => 2,
+            'font' => 'HelveticaWorld-Regular',
+            'font_size' => 10,
+            'font_weight' => '400',
+            'italic' => false,
+            'underline' => false,
+            'hex_color' => '#231F20',
+            'line_height' => 10,
+            'avg_line_height' => 10,
+            'has_mixed_styles' => false,
+            'block_data' => [],
+        ]);
+
+        PdfExtractionBlock::query()->create([
+            'page_id' => $page->id,
+            'pdf_extraction_fitz_id' => $fitz->id,
+            'document_id' => $document->id,
+            'page_number' => 1,
+            'block_num' => 23,
+            'source_key' => 'block-1-23',
+            'root_source_key' => 'block-1-23',
+            'text' => 'b. 100% of the tax shown on your 2025 tax return. Your',
+            'text_single_line' => 'b. 100% of the tax shown on your 2025 tax return. Your',
+            'text_lines' => [
+                'b. 100% of the tax shown on your 2025 tax return. Your',
+            ],
+            'line_bboxes' => [
+                [54.000, 652.856, 299.315, 662.275],
+            ],
+            'left' => 54.000,
+            'top' => 652.856,
+            'width' => 245.315,
+            'height' => 9.419,
+            'line_count' => 1,
+            'font' => 'HelveticaWorld-Regular',
+            'font_size' => 10,
+            'font_weight' => '400',
+            'italic' => false,
+            'underline' => false,
+            'hex_color' => '#231F20',
+            'line_height' => 10,
+            'avg_line_height' => 10,
+            'has_mixed_styles' => false,
+            'block_data' => [],
+        ]);
+
+        PdfState::query()->create([
+            'document_id' => $document->id,
+            'pdf_extraction_fitz_id' => null,
+            'user_id' => $user->id,
+            'session_id' => 'state-session',
+            'page_number' => 0,
+            'state' => 'not_saved',
+            'annotation_data' => [
+                'id' => 'promoted_1_14',
+                'type' => 'text',
+                'text' => "or\n2025 tax return must cover all 12 months.",
+                'pageIndex' => 0,
+                'pdfX' => 42.000,
+                'pdfY' => 118.858,
+                'pdfWidth' => 180.303,
+                'pdfHeight' => 35.400,
+                'fontSize' => 10,
+                'fontFamily' => 'HelveticaWorld',
+                'fontSourceName' => 'HelveticaWorld-Regular',
+                'fontWeight' => '400',
+                'fontStyle' => 'normal',
+                'textColor' => '#231F20',
+                'lineHeight' => 10,
+                'promotedFromExtraction' => true,
+                'promotedDirty' => false,
+                'promotedSourceKey' => 'block-1-14',
+                'promotedSourceBlockNum' => 14,
+                'sourceBlockLeft' => 42.000,
+                'sourceBlockTop' => 637.742,
+                'sourceBlockWidth' => 180.303,
+                'sourceBlockHeight' => 35.400,
+                'sourcePageHeight' => 792,
+                'sourceTextLines' => [
+                    'or',
+                    '2025 tax return must cover all 12 months.',
+                ],
+                'sourceLineBBoxes' => [
+                    [42.000, 637.742, 50.842, 647.742],
+                    [42.000, 663.142, 222.303, 673.142],
+                ],
+                'sourceSpans' => [
+                    [
+                        'text' => 'or',
+                        'render_text' => 'or',
+                        'origin' => [42.000, 645.100],
+                        'bbox' => [42.000, 637.742, 50.842, 647.742],
+                    ],
+                    [
+                        'text' => '2025 tax return must cover all 12 months.',
+                        'render_text' => '2025 tax return must cover all 12 months.',
+                        'origin' => [42.000, 670.500],
+                        'bbox' => [42.000, 663.142, 222.303, 673.142],
+                    ],
+                ],
+            ],
+        ]);
+
+        PdfState::query()->create([
+            'document_id' => $document->id,
+            'pdf_extraction_fitz_id' => null,
+            'user_id' => $user->id,
+            'session_id' => 'state-session',
+            'page_number' => 0,
+            'state' => 'not_saved',
+            'annotation_data' => [
+                'id' => 'promoted_1_23',
+                'type' => 'text',
+                'text' => 'b. 100% of the tax shown on your 2025 tax return. Your',
+                'pageIndex' => 0,
+                'pdfX' => 54.000,
+                'pdfY' => 129.725,
+                'pdfWidth' => 245.315,
+                'pdfHeight' => 9.419,
+                'fontSize' => 10,
+                'fontFamily' => 'HelveticaWorld',
+                'fontSourceName' => 'HelveticaWorld-Regular',
+                'fontWeight' => '400',
+                'fontStyle' => 'normal',
+                'textColor' => '#231F20',
+                'lineHeight' => 10,
+                'promotedFromExtraction' => true,
+                'promotedDirty' => false,
+                'promotedSourceKey' => 'block-1-23',
+                'promotedSourceBlockNum' => 23,
+                'sourceBlockLeft' => 54.000,
+                'sourceBlockTop' => 652.856,
+                'sourceBlockWidth' => 245.315,
+                'sourceBlockHeight' => 9.419,
+                'sourcePageHeight' => 792,
+                'sourceTextLines' => [
+                    'b. 100% of the tax shown on your 2025 tax return. Your',
+                ],
+                'sourceLineBBoxes' => [
+                    [54.000, 652.856, 299.315, 662.275],
+                ],
+                'sourceSpans' => [
+                    [
+                        'text' => 'b. 100% of the tax shown on your 2025 tax return. Your',
+                        'render_text' => 'b. 100% of the tax shown on your 2025 tax return. Your',
+                        'origin' => [54.000, 660.000],
+                        'bbox' => [54.000, 652.856, 299.315, 662.275],
+                    ],
+                ],
+            ],
+        ]);
+
+        $response = $this->actingAs($user)->getJson(route('pdfTests.documentInfo', $document, [
+            'session_id' => 'state-session',
+        ]));
+        $response->assertOk()->assertJson(['success' => true]);
+
+        $annotations = collect($response->json('annotations'));
+        $this->assertNull($annotations->firstWhere('id', 'promoted_1_23'));
+
+        $annotation = $annotations->firstWhere('id', 'promoted_1_14');
+        $this->assertNotNull($annotation);
+        $this->assertSame([
+            'or',
+            'b. 100% of the tax shown on your 2025 tax return. Your',
+            '2025 tax return must cover all 12 months.',
+        ], $annotation['sourceTextLines']);
+    }
+
+    public function test_document_info_suppresses_child_when_saved_parent_text_already_contains_it(): void
+    {
+        $user = User::factory()->create([
+            'email' => 'doc3018-owner@example.com',
+        ]);
+
+        $document = Document::query()->create([
+            'user_id' => $user->id,
+            'original_name' => 'doc3018.pdf',
+            'path' => 'documents/doc3018.pdf',
+            'mime_type' => 'application/pdf',
+            'size_bytes' => 100,
+        ]);
+
+        PdfExtractionFitz::query()->create([
+            'document_id' => $document->id,
+            'session_id' => 'fitz-session',
+            'pdf_filename' => 'doc3018.pdf',
+            'total_pages' => 1,
+            'total_words' => 12,
+            'full_text' => 'sample',
+            'extraction_data' => [],
+        ]);
+
+        PdfState::query()->create([
+            'document_id' => $document->id,
+            'pdf_extraction_fitz_id' => null,
+            'user_id' => $user->id,
+            'session_id' => 'state-session',
+            'page_number' => 0,
+            'state' => 'saved',
+            'annotation_data' => [
+                'id' => 'promoted_1_15',
+                'type' => 'text',
+                'text' => "or\nb. 100% of the tax shown on your 2025 tax return. Your\n2025 tax return must cover all 12 months.",
+                'originalText' => "or\n2025 tax return must cover all 12 months.",
+                'pageIndex' => 0,
+                'pdfX' => 42.000,
+                'pdfY' => 95.175,
+                'pdfWidth' => 180.303,
+                'pdfHeight' => 59.084,
+                'fontSize' => 10,
+                'fontFamily' => 'HelveticaWorld',
+                'fontSourceName' => 'HelveticaWorld-Regular',
+                'fontWeight' => '400',
+                'fontStyle' => 'normal',
+                'textColor' => '#231F20',
+                'lineHeight' => 10,
+                'promotedFromExtraction' => true,
+                'promotedDirty' => false,
+                'promotedSourceKey' => 'block-1-15',
+                'promotedSourceBlockNum' => 15,
+                'sourceBlockLeft' => 42.000,
+                'sourceBlockTop' => 637.742,
+                'sourceBlockWidth' => 180.303,
+                'sourceBlockHeight' => 35.400,
+                'sourcePageHeight' => 792,
+                'sourceTextLines' => [
+                    'or',
+                    '2025 tax return must cover all 12 months.',
+                ],
+                'sourceLineBBoxes' => [
+                    [42.000, 637.742, 50.842, 647.742],
+                    [42.000, 663.142, 222.303, 673.142],
+                ],
+            ],
+        ]);
+
+        PdfState::query()->create([
+            'document_id' => $document->id,
+            'pdf_extraction_fitz_id' => null,
+            'user_id' => $user->id,
+            'session_id' => 'state-session',
+            'page_number' => 0,
+            'state' => 'saved',
+            'annotation_data' => [
+                'id' => 'promoted_1_22',
+                'type' => 'text',
+                'text' => 'b. 100% of the tax shown on your 2025 tax return. Your',
+                'originalText' => 'b. 100% of the tax shown on your 2025 tax return. Your',
+                'pageIndex' => 0,
+                'pdfX' => 54.000,
+                'pdfY' => 129.725,
+                'pdfWidth' => 245.315,
+                'pdfHeight' => 9.419,
+                'fontSize' => 10,
+                'fontFamily' => 'HelveticaWorld',
+                'fontSourceName' => 'HelveticaWorld-Regular',
+                'fontWeight' => '400',
+                'fontStyle' => 'normal',
+                'textColor' => '#231F20',
+                'lineHeight' => 10,
+                'promotedFromExtraction' => true,
+                'promotedDirty' => false,
+                'promotedSourceKey' => 'block-1-22',
+                'promotedSourceBlockNum' => 22,
+                'sourceBlockLeft' => 54.000,
+                'sourceBlockTop' => 652.856,
+                'sourceBlockWidth' => 245.315,
+                'sourceBlockHeight' => 9.419,
+                'sourcePageHeight' => 792,
+                'sourceTextLines' => [
+                    'b. 100% of the tax shown on your 2025 tax return. Your',
+                ],
+                'sourceLineBBoxes' => [
+                    [54.000, 652.856, 299.315, 662.275],
+                ],
+            ],
+        ]);
+
+        $response = $this->actingAs($user)->getJson(route('pdfTests.documentInfo', $document, [
+            'session_id' => 'state-session',
+        ]));
+        $response->assertOk()->assertJson(['success' => true]);
+
+        $annotations = collect($response->json('annotations'));
+        $this->assertNull($annotations->firstWhere('id', 'promoted_1_22'));
+        $this->assertSame(
+            "or\nb. 100% of the tax shown on your 2025 tax return. Your\n2025 tax return must cover all 12 months.",
+            $annotations->firstWhere('id', 'promoted_1_15')['text'] ?? null
+        );
+    }
 }

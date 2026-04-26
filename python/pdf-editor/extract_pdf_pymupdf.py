@@ -1663,6 +1663,111 @@ def _collect_symbol_char_spans(page):
     return result
 
 
+def _collect_filled_text_background_rects(page):
+    """Collect opaque filled rectangles large enough to serve as a *background
+    region* behind one or more lines of text (e.g. colored section-header bars,
+    note callouts, table-row shading).
+
+    Returned tuples are ``(x0, y0, x1, y1, fill_color_int)`` where
+    ``fill_color_int`` is a 24-bit sRGB integer. Used by
+    :func:`_split_group_by_filled_background` to treat lines sitting on a
+    distinctly-colored background as a separate paragraph, matching how
+    Acrobat's reflow engine segments colored callouts.
+    """
+    rects = []
+    try:
+        drawings = page.get_drawings() or []
+    except Exception:
+        return rects
+
+    page_rect = getattr(page, 'rect', None)
+    try:
+        page_area = float(page_rect.width) * float(page_rect.height) if page_rect else 0.0
+    except Exception:
+        page_area = 0.0
+
+    for drawing in drawings:
+        rect = drawing.get('rect')
+        fill = drawing.get('fill')
+        fill_opacity = drawing.get('fill_opacity')
+        if rect is None or fill is None:
+            continue
+        try:
+            if float(fill_opacity if fill_opacity is not None else 1.0) < 0.9:
+                continue
+        except Exception:
+            continue
+        try:
+            x0 = float(rect.x0)
+            y0 = float(rect.y0)
+            x1 = float(rect.x1)
+            y1 = float(rect.y1)
+        except Exception:
+            continue
+        width = abs(x1 - x0)
+        height = abs(y1 - y0)
+        # Skip tiny shapes (checkbox outlines, dots) and whole-page bleeds
+        # (watermarks / full-page backgrounds that would swallow every line).
+        if width < 20.0 or height < 6.0:
+            continue
+        area = width * height
+        if page_area > 0 and area >= 0.85 * page_area:
+            continue
+
+        if isinstance(fill, (tuple, list)) and len(fill) >= 3:
+            try:
+                r = max(0, min(255, int(round(float(fill[0]) * 255))))
+                g = max(0, min(255, int(round(float(fill[1]) * 255))))
+                b = max(0, min(255, int(round(float(fill[2]) * 255))))
+            except (TypeError, ValueError):
+                continue
+            fill_int = (r << 16) | (g << 8) | b
+        else:
+            try:
+                fill_int = int(fill) & 0xFFFFFF
+            except (TypeError, ValueError):
+                continue
+
+        rects.append((
+            min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1), fill_int
+        ))
+
+    return rects
+
+
+def _line_bbox_on_filled_background(line_bbox, filled_rects):
+    """Return the fill-color integer of the first background rect that mostly
+    contains ``line_bbox`` (≥ 70% of the line's width and vertical midline
+    falls inside the rect). ``None`` if no background rect applies.
+    """
+    if not filled_rects or not line_bbox or len(line_bbox) < 4:
+        return None
+    try:
+        lx0, ly0, lx1, ly1 = (float(v) for v in line_bbox[:4])
+    except (TypeError, ValueError):
+        return None
+    line_width = max(0.0, lx1 - lx0)
+    if line_width <= 0:
+        return None
+    mid_y = (ly0 + ly1) / 2.0
+    best = None
+    best_area = 0.0
+    for rect in filled_rects:
+        if len(rect) < 5:
+            continue
+        rx0, ry0, rx1, ry1, fill_int = rect[0], rect[1], rect[2], rect[3], rect[4]
+        if mid_y < ry0 or mid_y > ry1:
+            continue
+        overlap = max(0.0, min(lx1, rx1) - max(lx0, rx0))
+        if overlap < 0.7 * line_width:
+            continue
+        area = (rx1 - rx0) * (ry1 - ry0)
+        if area > best_area:
+            best = fill_int
+            best_area = area
+    return best
+
+
 def _collect_drawn_box_rects(page):
     """Collect small drawn rectangle outlines such as checkbox boxes."""
     rects = []
@@ -2959,6 +3064,25 @@ def _merge_same_row_lines(line_items, vertical_lines=None, widget_rects=None, dr
             elif _rects_have_drawn_box_barrier(row_bbox, item_bbox, drawn_box_rects or []):
                 should_merge = False
 
+        # Don't merge items with significantly different dominant text colors.
+        # Form "section-label on a colored chip" (e.g. white "Part I" on a black
+        # bar) sits on the same visual row as the adjacent body text but must
+        # stay a separate annotation so it keeps its own color and its own tight
+        # bbox (which the filled-background-rect splitter relies on).
+        if should_merge:
+            row_color = None
+            for existing_item in row:
+                row_color = _line_item_dominant_color(existing_item)
+                if row_color is not None:
+                    break
+            item_color = _line_item_dominant_color(item)
+            if (
+                row_color is not None
+                and item_color is not None
+                and _colors_differ_significantly(row_color, item_color)
+            ):
+                should_merge = False
+
         # Don't merge items with a significant horizontal overlap (z-ordered text).
         # Normal text flows left-to-right with positive gaps.
         # Minimal negative gap (kerning) is okay, but large overlap means
@@ -3018,8 +3142,18 @@ def _merge_same_row_lines(line_items, vertical_lines=None, widget_rects=None, dr
                     )
                     if detached_row_label_pair:
                         should_merge = False
-                x_gap_threshold = max(avg_size * 2, 15)
-                if dist > x_gap_threshold:
+                # Multi-column form pages (Form 1040-ES etc.) have a vertical
+                # gutter ≈ 1.5–2× font height between left and right columns.
+                # If we let the threshold reach 2× font size, the gutter exactly
+                # matches it and lines from opposite columns at similar y-values
+                # get merged into a fake cross-column "row", which then poisons
+                # downstream block grouping (one synthetic block ends up
+                # containing every line on the page).  Use a tighter threshold
+                # and a non-strict comparison so equal-to-threshold gaps still
+                # split.  Genuine inline merges (italic span breaks, kerning)
+                # have gaps well under 1.5× font size.
+                x_gap_threshold = max(avg_size * 1.5, 15)
+                if dist >= x_gap_threshold:
                     should_merge = False
             else:
                 # Negative gap (overlap)
@@ -3281,30 +3415,109 @@ def _line_item_dominant_color(line_item):
     return max(color_char_counts.items(), key=lambda kv: kv[1])[0]
 
 
-def _colors_differ_significantly(a, b):
-    """True iff two 24-bit sRGB colors differ by more than a small tolerance.
+def _srgb_luminance(color_int):
+    """Rec. 601 perceptual luminance of a 24-bit sRGB color (0..255 scale)."""
+    r = (color_int >> 16) & 0xFF
+    g = (color_int >> 8) & 0xFF
+    b = color_int & 0xFF
+    return 0.299 * r + 0.587 * g + 0.114 * b
 
-    Uses max-channel distance so pure-white vs. very-dark-grey (e.g. #231F20)
-    is clearly separated from anti-alias jitter between near-black variants.
+
+def _colors_differ_significantly(a, b):
+    """True iff two 24-bit sRGB colors are perceptually distinct paragraph
+    colors (not just anti-alias / rendering jitter between near-black shades).
+
+    Uses Rec. 601 luminance delta (≥ 40) OR a large max-channel delta (≥ 120)
+    so saturated same-brightness hues (e.g. red vs green legend labels) still
+    count as distinct while near-black variants like #000000 vs #231F20 do not.
     """
     if a is None or b is None:
         return False
     if a == b:
         return False
+    if abs(_srgb_luminance(a) - _srgb_luminance(b)) >= 40.0:
+        return True
     ar, ag, ab = (a >> 16) & 0xFF, (a >> 8) & 0xFF, a & 0xFF
     br, bg, bb = (b >> 16) & 0xFF, (b >> 8) & 0xFF, b & 0xFF
-    return max(abs(ar - br), abs(ag - bg), abs(ab - bb)) >= 64
+    return max(abs(ar - br), abs(ag - bg), abs(ab - bb)) >= 120
+
+
+_SUBSET_FONT_PREFIX_RE = re.compile(r'^[A-Z]{6}\+')
+
+
+def _normalize_font_name(name):
+    """Strip PDF subset prefix (e.g. ``AAAAAA+Helvetica`` → ``Helvetica``)."""
+    if not name:
+        return ''
+    normalized = str(name).strip()
+    return _SUBSET_FONT_PREFIX_RE.sub('', normalized)
+
+
+def _line_item_font_key_counts(line_item):
+    """Return a ``{(normalized_font_name, is_bold, is_italic): char_count}``
+    mapping for every styled span on the line.
+    """
+    line = line_item.get('line') or {}
+    font_char_counts = {}
+    for span in line.get('spans', []) or []:
+        text = str(span.get('text') or '')
+        stripped = text.strip()
+        if not stripped:
+            continue
+        font_name = _normalize_font_name(span.get('font'))
+        if not font_name:
+            continue
+        try:
+            flags = int(span.get('flags') or 0)
+        except (TypeError, ValueError):
+            flags = 0
+        is_bold = bool(flags & 16) or 'bold' in font_name.lower() or 'black' in font_name.lower()
+        is_italic = bool(flags & 2) or 'italic' in font_name.lower() or 'oblique' in font_name.lower()
+        key = (font_name.lower(), is_bold, is_italic)
+        font_char_counts[key] = font_char_counts.get(key, 0) + len(stripped)
+    return font_char_counts
+
+
+def _line_item_dominant_font_key(line_item):
+    """Return a ``(normalized_font_name, is_bold, is_italic)`` tuple describing
+    the font style that covers the most characters on the line. Used to detect
+    paragraph breaks where a heading font transitions into body text (or vice
+    versa) without any color change.
+    """
+    counts = _line_item_font_key_counts(line_item)
+    if not counts:
+        return None
+    return max(counts.items(), key=lambda kv: kv[1])[0]
+
+
+def _font_keys_differ_significantly(a, b):
+    """True iff two ``_line_item_dominant_font_key`` tuples represent a real
+    paragraph-level style change (family change OR weight/italic toggle).
+    A same-family regular → regular with only a minor variant suffix is not
+    considered significant.
+    """
+    if not a or not b:
+        return False
+    if a == b:
+        return False
+    family_a = (a[0] or '').split('-')[0].split(',')[0]
+    family_b = (b[0] or '').split('-')[0].split(',')[0]
+    if family_a != family_b:
+        return True
+    # Same family: only flag when bold or italic toggles.
+    return (a[1] != b[1]) or (a[2] != b[2])
 
 
 def _split_group_by_color_change(group_items):
     """Split a group of line_items whenever two adjacent lines use distinctly
-    different text colors.
+    different text *styles* — either a significant color change OR a font
+    family / weight toggle that signals a paragraph boundary.
 
-    PyMuPDF's get_text("dict") sometimes emits multiple conceptually-distinct
-    paragraphs inside a single block when they happen to be near each other
-    vertically — even if the colors differ (e.g. dark-grey body text stacked
-    against a white-on-colored-bar note). Those should be separate annotations
-    so the editor can assign each the correct color and the right bounding box.
+    PyMuPDF's ``get_text("dict")`` sometimes emits multiple conceptually-
+    distinct paragraphs inside a single block when they happen to be near each
+    other vertically. Commercial PDF reflow engines (Acrobat, PDF.net) split
+    those on any perceptible style transition so each paragraph gets its own
+    annotation with the correct color, weight, and bounding box.
     """
     if len(group_items) <= 1:
         return [group_items]
@@ -3312,16 +3525,112 @@ def _split_group_by_color_change(group_items):
     ordered = sorted(group_items, key=lambda it: (it['bbox'][1], it['bbox'][0]))
     split_groups = [[ordered[0]]]
     prev_color = _line_item_dominant_color(ordered[0])
+    prev_font = _line_item_dominant_font_key(ordered[0])
+    prev_font_keys = set(_line_item_font_key_counts(ordered[0]).keys())
     for item in ordered[1:]:
         item_color = _line_item_dominant_color(item)
-        if prev_color is not None and item_color is not None and _colors_differ_significantly(prev_color, item_color):
+        item_font = _line_item_dominant_font_key(item)
+        item_font_keys = set(_line_item_font_key_counts(item).keys())
+        color_break = (
+            prev_color is not None
+            and item_color is not None
+            and _colors_differ_significantly(prev_color, item_color)
+        )
+        font_break = (
+            prev_font is not None
+            and item_font is not None
+            and _font_keys_differ_significantly(prev_font, item_font)
+        )
+        # A bold/italic lead-in span at the start of a paragraph (e.g.
+        # "Higher income taxpayers." followed by regular continuation text)
+        # makes the dominant font of that line bold while the rest of the
+        # paragraph continues in regular weight. Treat the lines as a single
+        # paragraph when the bold/italic line's mixed style set still includes
+        # the next line's dominant body font (or vice versa) — this means the
+        # paragraph just has a styled prefix, not a real heading→body break.
+        if font_break and prev_font_keys and item_font_keys:
+            shared_keys = prev_font_keys & item_font_keys
+            if shared_keys:
+                font_break = False
+        if color_break or font_break:
             split_groups.append([item])
         else:
             split_groups[-1].append(item)
-        # Track the dominant color of the most-recent line in the current group
-        # so a run of same-colored lines continues to anchor to that color.
+        if item_font_keys:
+            prev_font_keys = item_font_keys
+        # Track the most-recent line's style so a run of same-styled lines
+        # continues to anchor to that style.
         if item_color is not None:
             prev_color = item_color
+        if item_font is not None:
+            prev_font = item_font
+
+    return split_groups
+
+
+def _split_group_by_filled_background(group_items, filled_bg_rects):
+    """Split a group of line_items based on which opaque filled background
+    rectangle (if any) each line sits on.
+
+    Lines that share the same background fill stay together; a transition from
+    one fill to another (including ``no-fill`` ↔ ``fill``) creates a split.
+    This is how Acrobat segments colored callout bars, section-header bands,
+    and shaded table rows: the *design element* — not the text metrics — is
+    the paragraph boundary signal.
+    """
+    if len(group_items) <= 1 or not filled_bg_rects:
+        return [group_items]
+
+    ordered = sorted(group_items, key=lambda it: (it['bbox'][1], it['bbox'][0]))
+    split_groups = [[ordered[0]]]
+    prev_bg = _line_bbox_on_filled_background(ordered[0].get('bbox'), filled_bg_rects)
+    for item in ordered[1:]:
+        item_bg = _line_bbox_on_filled_background(item.get('bbox'), filled_bg_rects)
+        if item_bg != prev_bg:
+            split_groups.append([item])
+        else:
+            split_groups[-1].append(item)
+        prev_bg = item_bg
+
+    return split_groups
+
+
+def _split_group_by_line_width_jump(group_items):
+    """Split a group when adjacent lines have dramatically different widths
+    (narrow column labels adjacent to wide descriptor lines).
+
+    Conservative trigger — requires ALL of:
+      * narrow line width ≤ 80pt
+      * wide   line width ≥ 200pt
+      * width ratio ≥ 3×
+
+    These thresholds target the realtor-form pattern "left-column labels stacked
+    on top of full-width section descriptors" (and similar layouts) without
+    false-triggering on justified body text whose last line is short.
+    """
+    if len(group_items) <= 1:
+        return [group_items]
+
+    ordered = sorted(group_items, key=lambda it: (it['bbox'][1], it['bbox'][0]))
+
+    def _line_width(item):
+        bbox = item.get('bbox') or (0, 0, 0, 0)
+        try:
+            return max(0.0, float(bbox[2]) - float(bbox[0]))
+        except (TypeError, ValueError, IndexError):
+            return 0.0
+
+    split_groups = [[ordered[0]]]
+    prev_width = _line_width(ordered[0])
+    for item in ordered[1:]:
+        item_width = _line_width(item)
+        narrow = min(prev_width, item_width)
+        wide = max(prev_width, item_width)
+        if narrow <= 80.0 and wide >= 200.0 and wide >= 3.0 * max(narrow, 1.0):
+            split_groups.append([item])
+        else:
+            split_groups[-1].append(item)
+        prev_width = item_width
 
     return split_groups
 
@@ -4104,6 +4413,74 @@ def _merge_adjacent_page_blocks(page_blocks, page_width, page_words, page_lines,
     return page_blocks
 
 
+def _block_starts_with_bold_paragraph_lead_in(block):
+    """Return True when the block opens with a bold span that looks like a
+    paragraph heading lead-in (e.g. "Farming and fishing.") followed by a
+    period and space. Used to keep distinct paragraphs from being merged
+    together when they share body style.
+    """
+    if not isinstance(block, dict):
+        return False
+    spans = block.get('spans') or []
+    if not spans:
+        return False
+
+    def _span_is_bold(span):
+        if not isinstance(span, dict):
+            return False
+        if bool(span.get('bold')):
+            return True
+        font_name = str(span.get('font') or '').lower()
+        return 'bold' in font_name or 'black' in font_name or 'heavy' in font_name
+
+    if not _span_is_bold(spans[0]):
+        return False
+
+    # Concatenate consecutive bold spans at the start so that a heading split
+    # across spans (e.g. hyphenated end-of-line "ex-" / "panded.") is treated
+    # as one lead-in string.
+    bold_parts = []
+    for span in spans:
+        if not _span_is_bold(span):
+            break
+        bold_parts.append(str(span.get('text') or ''))
+    text = ''.join(bold_parts).strip()
+    # Repair end-of-line hyphenation across span boundaries: "ex- panded".
+    text = re.sub(r'-\s+', '', text)
+    if not text or len(text) > 70:
+        return False
+    # Heading-like: Title-Case or Sentence-case phrase ending with `.`,
+    # or with `-` when the heading is split across spans by end-of-line
+    # hyphenation (e.g. "Casualty loss deduction made permanent and ex-")
+    # whose continuation lives in the next block.
+    if not re.match(r"^[A-Z][A-Za-z0-9&'’/().,\- ]{2,68}[\.\-]\s*$", text):
+        return False
+    return True
+
+
+def _block_has_regular_continuation_after_bold(block):
+    """Return True when the block opens with a bold lead-in and continues
+    with regular body text in the same line (e.g. the `Higher income
+    taxpayers. If your adjusted gross` first line)."""
+    if not isinstance(block, dict):
+        return False
+    spans = block.get('spans') or []
+    if len(spans) < 2:
+        return False
+    first_span = spans[0]
+    if not isinstance(first_span, dict) or not bool(first_span.get('bold')):
+        return False
+    for span in spans[1:]:
+        if not isinstance(span, dict):
+            continue
+        if span.get('bold'):
+            continue
+        text = str(span.get('text') or '').strip()
+        if text:
+            return True
+    return False
+
+
 def _merge_stacked_paragraph_blocks(page_blocks, page_words, page_lines):
     """
     Merge vertically stacked synthetic paragraph fragments back into a single block.
@@ -4126,13 +4503,26 @@ def _merge_stacked_paragraph_blocks(page_blocks, page_words, page_lines):
             str(block.get('hex_color', '')),
         )
 
+    def _style_key_relaxed(block):
+        # Drop bold flag — used when allowing a bold-lead-in single line to
+        # merge with its regular-bodied continuation paragraph.
+        return (
+            round(float(block.get('font_size', 0) or 0), 1),
+            bool(block.get('italic')),
+            str(block.get('hex_color', '')),
+        )
+
     while changed:
         changed = False
         new_blocks = []
         used = set()
 
         sorted_pairs = sorted(enumerate(page_blocks), key=lambda pair: (
-            round(float(pair[1].get('left', 0) or 0), 1),
+            # Quantize column-left to ~16pt buckets so bulleted children whose
+            # left edge is offset by a glyph-width still group with the parent
+            # paragraph for merge consideration. Sub-pixel jitter (315.0 vs
+            # 314.999) must not split a bucket; floor by integer division.
+            int(float(pair[1].get('left', 0) or 0)) // 16,
             round(float(pair[1].get('top', 0) or 0), 1),
         ))
 
@@ -4152,7 +4542,7 @@ def _merge_stacked_paragraph_blocks(page_blocks, page_words, page_lines):
 
             merge_target_index = None
 
-            if a_source_ops or block_a.get('_from_xgap_split'):
+            if a_source_ops:
                 new_blocks.append(block_a)
                 used.add(original_index)
                 continue
@@ -4170,11 +4560,34 @@ def _merge_stacked_paragraph_blocks(page_blocks, page_words, page_lines):
                 b_line_height = float(block_b.get('avg_line_height') or block_b.get('line_height') or 0) or max(1.0, b_height)
                 b_source_ops = block_b.get('source_content_ops') or []
 
-                if b_source_ops or block_b.get('_from_xgap_split'):
+                if b_source_ops:
                     continue
 
-                if _style_key(block_a) != _style_key(block_b):
+                # Don't merge across a bold paragraph lead-in like
+                # "Farming and fishing." — that's the start of a new paragraph
+                # and anything after it belongs to that new paragraph, not to
+                # block_a. Stop scanning further candidates entirely.
+                if _block_starts_with_bold_paragraph_lead_in(block_b):
+                    same_column = abs(a_left - float(block_b.get('left', 0) or 0)) <= 12
+                    if same_column:
+                        break
                     continue
+
+                style_match = _style_key(block_a) == _style_key(block_b)
+                if not style_match:
+                    # Allow merging when block_a opens with a bold lead-in
+                    # ("Higher income taxpayers. If your adjusted gross") and
+                    # block_b is the regular-body continuation. The block-level
+                    # style may carry the bold flag forward through earlier
+                    # merges, but they're the same paragraph.
+                    a_is_bold_lead_in = (
+                        _block_has_regular_continuation_after_bold(block_a)
+                        and not bool(block_b.get('bold'))
+                    )
+                    if not a_is_bold_lead_in:
+                        continue
+                    if _style_key_relaxed(block_a) != _style_key_relaxed(block_b):
+                        continue
 
                 if abs(a_left - b_left) > 3:
                     continue
@@ -4536,6 +4949,7 @@ def extract_text_with_pymupdf(pdf_path):
             horizontal_lines = _collect_horizontal_lines(page)
             vertical_lines = _collect_vertical_lines(page)
             drawn_box_rects = _collect_drawn_box_rects(page)
+            filled_bg_rects = _collect_filled_text_background_rects(page)
             symbol_char_spans = _collect_symbol_char_spans(page)
             page_link_regions = _collect_page_link_regions(page)
             used_link_region_ids = set()
@@ -4696,7 +5110,8 @@ def extract_text_with_pymupdf(pdf_path):
                     # paragraphs of very different colors (e.g. dark-grey body
                     # text stacked against a white-on-colored-bar note). Separate
                     # those so each annotation carries the correct color and its
-                    # own tight bounding box.
+                    # own tight bounding box. Also splits on font family / weight
+                    # transitions (heading vs body) even without a color change.
                     color_split_groups = []
                     for group_items in groups:
                         split = _split_group_by_color_change(group_items)
@@ -4708,6 +5123,43 @@ def extract_text_with_pymupdf(pdf_path):
                         else:
                             color_split_groups.append(group_items)
                     groups = color_split_groups if color_split_groups else groups
+
+                    # Filled-background split: lines sitting on a distinct
+                    # opaque filled rectangle (colored section-header bar,
+                    # shaded note, table-row band) are separated from lines
+                    # outside that rectangle. This is how Acrobat's reflow
+                    # engine segments colored callouts — the design element,
+                    # not the text metrics, is the paragraph-boundary signal.
+                    if filled_bg_rects:
+                        bg_split_groups = []
+                        for group_items in groups:
+                            split = _split_group_by_filled_background(group_items, filled_bg_rects)
+                            if len(split) > 1:
+                                for sub in split:
+                                    for it in sub:
+                                        it['_from_xgap_split'] = True
+                                bg_split_groups.extend(split)
+                            else:
+                                bg_split_groups.append(group_items)
+                        groups = bg_split_groups if bg_split_groups else groups
+
+                    # Width-jump split: narrow column-label lines directly
+                    # adjacent to wide descriptor lines (e.g. realtor-form
+                    # "Bedroom/Breakfast/Kitchen" labels stacked on top of
+                    # "Bathroom Desc: ..." full-width rows) should not share a
+                    # block. Thresholds are intentionally strict to avoid
+                    # triggering on justified body text whose last line is short.
+                    width_split_groups = []
+                    for group_items in groups:
+                        split = _split_group_by_line_width_jump(group_items)
+                        if len(split) > 1:
+                            for sub in split:
+                                for it in sub:
+                                    it['_from_xgap_split'] = True
+                            width_split_groups.extend(split)
+                        else:
+                            width_split_groups.append(group_items)
+                    groups = width_split_groups if width_split_groups else groups
 
                     groups = sorted(groups, key=lambda items: min(item['y0'] for item in items) if items else 0)
 

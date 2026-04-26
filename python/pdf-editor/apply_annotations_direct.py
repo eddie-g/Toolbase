@@ -18,6 +18,10 @@ from typing import Any, Dict, Optional, Tuple
 from urllib.parse import urlparse
 
 import fitz
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover - optional runtime dependency
+    Image = None
 
 from pdf_annotation_contract import (
     normalize_annotations_for_pdf_export,
@@ -626,7 +630,11 @@ def build_annotation_htmlbox_css(ann: Dict[str, Any], font_size: float, opacity:
         line_height_value = float(ann.get("lineHeight") or 0)
     except Exception:
         line_height_value = 0.0
-    line_height_css = f"{line_height_value}pt" if line_height_value > 0 else "normal"
+    # Match the browser's blockLineHeightPx formula (fontSize * 1.18) with a
+    # unitless value so rich-html spans with per-span font-sizes scale
+    # correctly. MuPDF's "normal" default produced tighter line spacing than
+    # the editor.
+    line_height_css = f"{line_height_value}pt" if line_height_value > 0 else "1.18"
     white_space = "pre" if preserve_extracted_lines else "pre-wrap"
     overflow_wrap = "normal" if preserve_extracted_lines else "break-word"
     word_break = "normal" if preserve_extracted_lines else "break-word"
@@ -669,18 +677,23 @@ def _strip_px_font_sizes_from_html(html_str: str) -> str:
     """
     import re as _re
 
+    _PX_PROP_RE = _re.compile(
+        r"\b(?:font-size|line-height|min-height)\s*:\s*[\d.]+px\s*;?",
+        flags=_re.IGNORECASE,
+    )
+
     def _clean_style(m: "re.Match[str]") -> str:
         style = m.group(1)
-        cleaned = _re.sub(r"\bfont-size\s*:\s*[\d.]+px\s*;?", "", style, flags=_re.IGNORECASE)
+        cleaned = _PX_PROP_RE.sub("", style)
         # Collapse any double-semicolons left behind
         cleaned = _re.sub(r";\s*;+", ";", cleaned).strip("; ")
         if cleaned.strip():
             return f'style="{cleaned}"'
         return ""  # Drop the attribute entirely when nothing remains
 
-    # Only touch style="..." attributes that actually contain a px font-size
+    # Only touch style="..." attributes that actually contain a px size/spacing
     return _re.sub(
-        r'\bstyle="([^"]*\bfont-size\s*:\s*[\d.]+px[^"]*)"',
+        r'\bstyle="([^"]*\b(?:font-size|line-height|min-height)\s*:\s*[\d.]+px[^"]*)"',
         _clean_style,
         html_str,
         flags=_re.IGNORECASE,
@@ -794,6 +807,17 @@ def is_italic_style(value: Any) -> bool:
 
 
 def resolve_embedded_font_entry(ann: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if (
+        bool(ann.get("promotedFromExtraction"))
+        and (
+            bool(ann.get("promotedDirty"))
+            or bool(ann.get("userAuthored"))
+            or bool(ann.get("styleDirty"))
+            or bool(str(ann.get("richTextHtml") or "").strip())
+        )
+    ):
+        return None
+
     document_id = ann.get("__documentId") or ann.get("documentId")
     metadata = load_embedded_font_metadata(document_id)
     if not metadata:
@@ -1170,7 +1194,11 @@ def normalize_exact_source_line_layout(
                 "font_size": float(span.get("fontSize") or span.get("font_size") or font_size or 0),
                 "font_weight": str(span.get("fontWeight") or span.get("font_weight") or ann.get("fontWeight") or "400"),
                 "font_style": str(span.get("fontStyle") or span.get("font_style") or ann.get("fontStyle") or "normal"),
-                "color": str(span.get("color") or ann.get("textColor") or "#000000"),
+                "color": str(
+                    (span.get("hex_color") if span.get("hex_color") is not None else span.get("color"))
+                    or ann.get("textColor")
+                    or "#000000"
+                ),
                 "underline": bool(span.get("underline")),
                 "rotation": span.get("rotation"),
                 "direction": span.get("direction"),
@@ -1253,7 +1281,8 @@ def normalize_exact_source_line_layout(
             or normalize_exact_font_family(annotation_font_source_name) != normalize_exact_font_family(dominant_source_font_family)
         )
     )
-    force_annotation_text_color = (
+    style_dirty = bool(ann.get("styleDirty"))
+    force_annotation_text_color = style_dirty and (
         bool(annotation_text_color)
         and bool(dominant_source_color)
         and annotation_text_color.lower() != dominant_source_color.lower()
@@ -1863,7 +1892,7 @@ def wrap_text_to_width(font: fitz.Font, text: str, font_size: float, max_width: 
             current_line = ""
             for word in words:
                 candidate = f"{current_line} {word}".strip() if current_line else word
-                if not current_line or font.text_length(candidate, fontsize=font_size) <= max_width:
+                if font.text_length(candidate, fontsize=font_size) <= max_width:
                     current_line = candidate
                     continue
 
@@ -2013,6 +2042,20 @@ def draw_shape(page: fitz.Page, ann: Dict[str, Any]) -> None:
     stroke_width = float(ann.get("strokeWidth", 2.0) or 2.0)
     rotation = float(ann.get("rotation", 0.0) or 0.0)
 
+    def _clamp01(value: Any, fallback: float) -> float:
+        try:
+            n = float(value)
+        except Exception:
+            return fallback
+        if n < 0.0:
+            return 0.0
+        if n > 1.0:
+            return 1.0
+        return n
+
+    stroke_opacity = _clamp01(ann.get("strokeOpacity", opacity), opacity)
+    fill_opacity = _clamp01(ann.get("fillOpacity", opacity), opacity)
+
     stroke = None if ann.get("strokeTransparent") else hex_to_rgb(ann.get("strokeColor") or "#000000")
     fill = None if ann.get("fillTransparent") else hex_to_rgb(ann.get("fillColor") or "#ffffff")
 
@@ -2043,7 +2086,13 @@ def draw_shape(page: fitz.Page, ann: Dict[str, Any]) -> None:
         s = page.new_shape()
         for p1, p2 in lines:
             s.draw_line(p1, p2)
-        s.finish(color=stroke, width=stroke_width, lineCap=1, stroke_opacity=opacity)
+        # PDF line cap style: 0=butt, 1=round, 2=square. Default to round
+        # to match the editor's default ctx.lineCap, but honor an explicit
+        # `lineCap` override coming from the annotation payload.
+        cap_value = (ann.get("lineCap") or "round")
+        cap_lookup = {"butt": 0, "round": 1, "square": 2}
+        line_cap = cap_lookup.get(str(cap_value).lower(), 1)
+        s.finish(color=stroke, width=stroke_width, lineCap=line_cap, stroke_opacity=stroke_opacity)
         s.commit(overlay=True)
 
     def draw_poly(points, close_path=True, line_join=1) -> None:
@@ -2056,8 +2105,8 @@ def draw_shape(page: fitz.Page, ann: Dict[str, Any]) -> None:
             closePath=close_path,
             lineCap=1,
             lineJoin=line_join,
-            stroke_opacity=opacity,
-            fill_opacity=opacity,
+            stroke_opacity=stroke_opacity,
+            fill_opacity=fill_opacity,
         )
         s.commit(overlay=True)
 
@@ -2106,15 +2155,29 @@ def draw_shape(page: fitz.Page, ann: Dict[str, Any]) -> None:
         p2 = rp(0.40, 0.75)
         p3 = rp(0.85, 0.15)
         s.draw_polyline([p1, p2, p3])
-        s.finish(color=stroke, fill=None, width=stroke_width, lineCap=1, lineJoin=1, stroke_opacity=opacity)
+        s.finish(color=stroke, fill=None, width=stroke_width, lineCap=1, lineJoin=1, stroke_opacity=stroke_opacity)
         s.commit(overlay=True)
         return
 
     if shape_type == "star":
-        points = [
-            rp(0.50, 0.05), rp(0.61, 0.38), rp(0.95, 0.38), rp(0.68, 0.58), rp(0.79, 0.91),
-            rp(0.50, 0.71), rp(0.21, 0.91), rp(0.32, 0.58), rp(0.05, 0.38), rp(0.39, 0.38),
-        ]
+        # Match the frontend canvas star: outerRadius = min(w,h)/2 inscribed in
+        # the annotation bounding box, innerRadius = outerRadius * 0.45, first
+        # point at the top (angle -pi/2), 10 vertices alternating outer/inner.
+        cx_n, cy_n = 0.5, 0.5
+        rect_w = max(1e-6, rect.width)
+        rect_h = max(1e-6, rect.height)
+        min_dim = min(rect_w, rect_h)
+        outer_x = (min_dim / 2.0) / rect_w
+        outer_y = (min_dim / 2.0) / rect_h
+        inner_ratio = 0.45
+        points = []
+        for i in range(10):
+            r_x = outer_x if i % 2 == 0 else outer_x * inner_ratio
+            r_y = outer_y if i % 2 == 0 else outer_y * inner_ratio
+            angle = (-math.pi / 2.0) + (i * math.pi / 5.0)
+            px = cx_n + math.cos(angle) * r_x
+            py = cy_n + math.sin(angle) * r_y
+            points.append(rp(px, py))
         points.append(points[0])
         draw_poly(points, close_path=True, line_join=1)
         return
@@ -2133,8 +2196,10 @@ def draw_shape(page: fitz.Page, ann: Dict[str, Any]) -> None:
         draw_open_lines([(rp(line_start_x, line_start_y), rp(line_end_x, line_end_y))])
         return
 
-    # Default rectangle
-    points = [rp(0.05, 0.05), rp(0.95, 0.05), rp(0.95, 0.95), rp(0.05, 0.95), rp(0.05, 0.05)]
+    # Default rectangle: use the full annotation bounds. The editor stores the
+    # square/rectangle box as the intended final geometry; insetting by 5% on
+    # each side shrinks exported bars relative to the DOM preview.
+    points = [rp(0.0, 0.0), rp(1.0, 0.0), rp(1.0, 1.0), rp(0.0, 1.0), rp(0.0, 0.0)]
     draw_poly(points, close_path=True, line_join=1)
 
 
@@ -2197,6 +2262,37 @@ def draw_eraser(page: fitz.Page, ann: Dict[str, Any]) -> None:
         page.draw_rect(rect, color=None, fill=(1, 1, 1), width=0, overlay=True)
 
 
+def resolve_promoted_source_text_color(ann: Dict[str, Any]) -> str:
+    if not bool(ann.get("promotedFromExtraction")) or bool(ann.get("styleDirty")):
+        return str(ann.get("textColor") or "#000000")
+    source_spans = ann.get("sourceSpans")
+    if not isinstance(source_spans, list) or not source_spans:
+        return str(ann.get("textColor") or "#000000")
+    dominant_span = None
+    dominant_score = -1.0
+    for span in source_spans:
+        if not isinstance(span, dict):
+            continue
+        bbox = span.get("bbox")
+        try:
+            width = max(0.0, float(bbox[2]) - float(bbox[0])) if isinstance(bbox, (list, tuple)) and len(bbox) >= 4 else 0.0
+        except Exception:
+            width = 0.0
+        text_weight = float(len(sanitize_pdf_text(span.get("text") or "").replace(" ", "")) or 1)
+        score = max(width, text_weight)
+        if score > dominant_score:
+            dominant_score = score
+            dominant_span = span
+    if not isinstance(dominant_span, dict):
+        return str(ann.get("textColor") or "#000000")
+    source_color = (
+        dominant_span.get("hex_color")
+        if dominant_span.get("hex_color") is not None
+        else dominant_span.get("color")
+    )
+    return str(source_color or ann.get("textColor") or "#000000")
+
+
 def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
     text = sanitize_pdf_text(ann.get("text") or "")
     if not text:
@@ -2211,7 +2307,7 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
         line_height = 0.0
     if line_height <= 0:
         line_height = size * 1.2
-    color = hex_to_rgb(ann.get("textColor") or "#000000")
+    color = hex_to_rgb(resolve_promoted_source_text_color(ann))
     background = str(ann.get("backgroundColor") or "").strip().lower()
     background_color = None if not background or background == "transparent" else hex_to_rgb(background)
     opacity = normalized_opacity(ann.get("opacity", 1.0) or 1.0)
@@ -2323,17 +2419,26 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
             if inner_rect.width > 1 and inner_rect.height > 1:
                 html_box = build_annotation_htmlbox_markup(ann, text)
                 html_css = build_annotation_htmlbox_css(ann, size, opacity)
+                # See apply_annotations_direct_new.py for the rationale: when
+                # rich HTML is present we must commit to insert_htmlbox or
+                # the per-span styling is silently dropped by the fallback.
+                has_rich_html = bool(
+                    sanitize_rich_text_html(ann.get("richTextHtml") or "").strip()
+                )
+                effective_scale_low = 0.1 if has_rich_html else 1
                 try:
                     spare_height, scale = page.insert_htmlbox(
                         inner_rect,
                         html_box,
                         css=html_css,
                         archive=html_archive,
-                        scale_low=1,
+                        scale_low=effective_scale_low,
                         opacity=opacity,
                         overlay=True,
                     )
                     if spare_height >= -0.001 and scale >= 0.999:
+                        return
+                    if has_rich_html and scale > 0:
                         return
                 except Exception:
                     pass
@@ -2454,7 +2559,7 @@ def draw_signature(page: fitz.Page, ann: Dict[str, Any]) -> None:
         return
 
     asset_file_path = resolve_annotation_image_path(ann)
-    if asset_file_path:
+    if asset_file_path and not is_direct_draw_annotation(ann):
         try:
             # Match the editor's resized box exactly. PyMuPDF keeps aspect ratio
             # by default, which would shrink one axis back toward the source image.
@@ -2463,15 +2568,140 @@ def draw_signature(page: fitz.Page, ann: Dict[str, Any]) -> None:
         except Exception:
             pass
 
+    image_bytes = load_annotation_image_bytes(ann)
+    if image_bytes is None and asset_file_path:
+        try:
+            page.insert_image(rect, filename=asset_file_path, overlay=True, keep_proportion=False)
+            return
+        except Exception:
+            return
+    if image_bytes is None:
+        return
+    page.insert_image(
+        rect,
+        stream=normalize_direct_draw_white_image_bytes(ann, image_bytes),
+        overlay=True,
+        keep_proportion=False,
+    )
+
+
+def is_direct_draw_annotation(ann: Dict[str, Any]) -> bool:
+    return str(ann.get("imageToolSource") or "").strip().lower() == "direct-draw"
+
+
+def load_annotation_image_bytes(ann: Dict[str, Any]) -> Optional[bytes]:
+    asset_file_path = resolve_annotation_image_path(ann)
+    if asset_file_path:
+        try:
+            with open(asset_file_path, "rb") as handle:
+                return handle.read()
+        except Exception:
+            pass
+
     data_url = str(ann.get("dataUrl") or "")
     if not data_url.startswith("data:image/"):
-        return
+        return None
     try:
         _, payload = data_url.split(",", 1)
-        img = base64.b64decode(payload)
+        return base64.b64decode(payload)
     except Exception:
-        return
-    page.insert_image(rect, stream=img, overlay=True, keep_proportion=False)
+        return None
+
+
+def normalize_direct_draw_white_image_bytes(ann: Dict[str, Any], image_bytes: bytes) -> bytes:
+    if Image is None or not image_bytes or not is_direct_draw_annotation(ann):
+        return image_bytes
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            rgba = image.convert("RGBA")
+            if not annotation_uses_white_direct_draw(ann, rgba):
+                return image_bytes
+            changed = False
+            pixels = rgba.load()
+            for y in range(rgba.height):
+                for x in range(rgba.width):
+                    r, g, b, a = pixels[x, y]
+                    if a <= 2:
+                        if a != 0 or r != 0 or g != 0 or b != 0:
+                            changed = True
+                        pixels[x, y] = (0, 0, 0, 0)
+                        continue
+                    if r != 255 or g != 255 or b != 255:
+                        changed = True
+                        pixels[x, y] = (255, 255, 255, a)
+            if not changed:
+                return image_bytes
+            output = io.BytesIO()
+            rgba.save(output, format="PNG")
+            return output.getvalue()
+    except Exception:
+        return image_bytes
+
+
+def annotation_uses_white_direct_draw(ann: Dict[str, Any], image: "Image.Image") -> bool:
+    declared_color = parse_annotation_hex_rgb(ann.get("drawStrokeColor"))
+    if declared_color is not None:
+        return is_near_white_rgb(declared_color)
+    return image_looks_like_white_direct_draw(image)
+
+
+def parse_annotation_hex_rgb(value: Any) -> Optional[tuple[int, int, int]]:
+    raw = str(value or "").strip()
+    if not raw.startswith("#"):
+        return None
+    hex_value = raw[1:]
+    if len(hex_value) == 3:
+        hex_value = "".join(ch * 2 for ch in hex_value)
+    if len(hex_value) != 6:
+        return None
+    try:
+        return (
+            int(hex_value[0:2], 16),
+            int(hex_value[2:4], 16),
+            int(hex_value[4:6], 16),
+        )
+    except Exception:
+        return None
+
+
+def is_near_white_rgb(rgb: tuple[int, int, int], threshold: int = 244, max_spread: int = 12) -> bool:
+    return min(rgb) >= threshold and (max(rgb) - min(rgb)) <= max_spread
+
+
+def image_looks_like_white_direct_draw(image: "Image.Image") -> bool:
+    weighted_alpha = 0
+    weighted_red = 0
+    weighted_green = 0
+    weighted_blue = 0
+    visible_samples = 0
+    bright_samples = 0
+
+    pixels = image.load()
+    for y in range(image.height):
+        for x in range(image.width):
+            r, g, b, a = pixels[x, y]
+            if a <= 15:
+                continue
+            weighted_alpha += a
+            weighted_red += r * a
+            weighted_green += g * a
+            weighted_blue += b * a
+            visible_samples += 1
+            if min(r, g, b) >= 208 and (max(r, g, b) - min(r, g, b)) <= 40:
+                bright_samples += 1
+
+    if weighted_alpha <= 0 or visible_samples <= 0:
+        return False
+
+    average_rgb = (
+        round(weighted_red / weighted_alpha),
+        round(weighted_green / weighted_alpha),
+        round(weighted_blue / weighted_alpha),
+    )
+    if is_near_white_rgb(average_rgb, threshold=232, max_spread=24):
+        return True
+
+    return (bright_samples / max(1, visible_samples)) >= 0.72
 
 
 def resolve_annotation_image_path(ann: Dict[str, Any]) -> Optional[str]:

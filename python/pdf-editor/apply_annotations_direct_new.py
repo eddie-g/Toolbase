@@ -19,6 +19,10 @@ from typing import Any, Dict, Optional, Tuple
 from urllib.parse import urlparse
 
 import fitz
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover - optional runtime dependency
+    Image = None
 
 from pdf_annotation_contract import (
     normalize_annotations_for_pdf_export,
@@ -67,14 +71,14 @@ FONT_FILE_VARIANTS = {
     "Arimo": {
         "normal": os.path.join(FONT_DIR, "Arimo-Regular.ttf"),
         "bold": os.path.join(FONT_DIR, "Arimo-Bold.ttf"),
-        "italic": os.path.join(FONT_DIR, "Arimo-Regular.ttf"),
-        "boldItalic": os.path.join(FONT_DIR, "Arimo-Bold.ttf"),
+        "italic": os.path.join(FONT_DIR, "NotoSans-Italic[wdth,wght].ttf"),
+        "boldItalic": os.path.join(FONT_DIR, "NotoSans-Italic[wdth,wght].ttf"),
     },
     "Gelasio": {
         "normal": os.path.join(FONT_DIR, "Gelasio-Regular.ttf"),
         "bold": os.path.join(FONT_DIR, "Gelasio-Bold.ttf"),
-        "italic": os.path.join(FONT_DIR, "Gelasio-Regular.ttf"),
-        "boldItalic": os.path.join(FONT_DIR, "Gelasio-Bold.ttf"),
+        "italic": os.path.join(FONT_DIR, "Gelasio-Italic[wght].ttf"),
+        "boldItalic": os.path.join(FONT_DIR, "Gelasio-Italic[wght].ttf"),
     },
     "Georgia": {
         "normal": os.path.join(FONT_DIR, "LiberationSerif-Regular.ttf"),
@@ -91,57 +95,70 @@ FONT_FILE_VARIANTS = {
     "Tinos": {
         "normal": os.path.join(FONT_DIR, "Tinos-Regular.ttf"),
         "bold": os.path.join(FONT_DIR, "Tinos-Bold.ttf"),
-        "italic": os.path.join(FONT_DIR, "Tinos-Regular.ttf"),
-        "boldItalic": os.path.join(FONT_DIR, "Tinos-Bold.ttf"),
+        "italic": os.path.join(FONT_DIR, "Tinos-Italic.ttf"),
+        "boldItalic": os.path.join(FONT_DIR, "Tinos-BoldItalic.ttf"),
     },
     "Cousine": {
         "normal": os.path.join(FONT_DIR, "Cousine-Regular.ttf"),
         "bold": os.path.join(FONT_DIR, "Cousine-Bold.ttf"),
-        "italic": os.path.join(FONT_DIR, "Cousine-Regular.ttf"),
-        "boldItalic": os.path.join(FONT_DIR, "Cousine-Bold.ttf"),
+        "italic": os.path.join(FONT_DIR, "Cousine-Italic.ttf"),
+        "boldItalic": os.path.join(FONT_DIR, "Cousine-BoldItalic.ttf"),
     },
     "Lato": {
         "normal": os.path.join(FONT_DIR, "Lato-Regular.ttf"),
         "bold": os.path.join(FONT_DIR, "Lato-Bold.ttf"),
-        "italic": os.path.join(FONT_DIR, "Lato-Regular.ttf"),
-        "boldItalic": os.path.join(FONT_DIR, "Lato-Bold.ttf"),
+        # No dedicated Lato italic shipped; fall back to Noto Sans Italic
+        # (variable font covers weights) so inline italic spans render
+        # slanted instead of upright. Worst case: slight face mismatch.
+        "italic": os.path.join(FONT_DIR, "NotoSans-Italic[wdth,wght].ttf"),
+        "boldItalic": os.path.join(FONT_DIR, "NotoSans-Italic[wdth,wght].ttf"),
     },
     "Montserrat": {
         "light": os.path.join(FONT_DIR, "Montserrat-Light.ttf"),
         "normal": os.path.join(FONT_DIR, "Montserrat-Regular.ttf"),
         "bold": os.path.join(FONT_DIR, "Montserrat-Bold.ttf"),
-        "italic": os.path.join(FONT_DIR, "Montserrat-Light.ttf"),
-        "boldItalic": os.path.join(FONT_DIR, "Montserrat-Bold.ttf"),
+        # No dedicated Montserrat italic shipped; fall back to Noto Sans
+        # Italic so inline italic spans render slanted.
+        "italic": os.path.join(FONT_DIR, "NotoSans-Italic[wdth,wght].ttf"),
+        "boldItalic": os.path.join(FONT_DIR, "NotoSans-Italic[wdth,wght].ttf"),
     },
     "OpenSans": {
         "normal": os.path.join(FONT_DIR, "OpenSans-Regular.ttf"),
         "bold": os.path.join(FONT_DIR, "OpenSans-Bold.ttf"),
-        "italic": os.path.join(FONT_DIR, "OpenSans-Regular.ttf"),
-        "boldItalic": os.path.join(FONT_DIR, "OpenSans-Bold.ttf"),
+        # No dedicated OpenSans italic shipped; fall back to Noto Sans
+        # Italic so inline italic spans render slanted.
+        "italic": os.path.join(FONT_DIR, "NotoSans-Italic[wdth,wght].ttf"),
+        "boldItalic": os.path.join(FONT_DIR, "NotoSans-Italic[wdth,wght].ttf"),
     },
     "Poppins": {
         "normal": os.path.join(FONT_DIR, "Poppins-Regular.ttf"),
         "bold": os.path.join(FONT_DIR, "Poppins-Bold.ttf"),
-        "italic": os.path.join(FONT_DIR, "Poppins-Regular.ttf"),
-        "boldItalic": os.path.join(FONT_DIR, "Poppins-Bold.ttf"),
+        # No dedicated Poppins italic shipped; fall back to Noto Sans
+        # Italic so inline italic spans render slanted.
+        "italic": os.path.join(FONT_DIR, "NotoSans-Italic[wdth,wght].ttf"),
+        "boldItalic": os.path.join(FONT_DIR, "NotoSans-Italic[wdth,wght].ttf"),
     },
     "Roboto": {
         "normal": os.path.join(FONT_DIR, "Roboto-Regular.ttf"),
         "bold": os.path.join(FONT_DIR, "Roboto-Bold.ttf"),
-        "italic": os.path.join(FONT_DIR, "Roboto-Regular.ttf"),
-        "boldItalic": os.path.join(FONT_DIR, "Roboto-Bold.ttf"),
+        # No dedicated Roboto italic shipped; fall back to Noto Sans
+        # Italic so inline italic spans render slanted.
+        "italic": os.path.join(FONT_DIR, "NotoSans-Italic[wdth,wght].ttf"),
+        "boldItalic": os.path.join(FONT_DIR, "NotoSans-Italic[wdth,wght].ttf"),
     },
     "SourceSansPro": {
         "normal": os.path.join(FONT_DIR, "SourceSans3-Regular.ttf"),
         "bold": os.path.join(FONT_DIR, "SourceSans3-Bold.ttf"),
-        "italic": os.path.join(FONT_DIR, "SourceSans3-Regular.ttf"),
-        "boldItalic": os.path.join(FONT_DIR, "SourceSans3-Bold.ttf"),
+        # No dedicated Source Sans italic shipped; fall back to Noto Sans
+        # Italic so inline italic spans render slanted.
+        "italic": os.path.join(FONT_DIR, "NotoSans-Italic[wdth,wght].ttf"),
+        "boldItalic": os.path.join(FONT_DIR, "NotoSans-Italic[wdth,wght].ttf"),
     },
     "Helvetica": {
         "normal": os.path.join(FONT_DIR, "Arimo-Regular.ttf"),
         "bold": os.path.join(FONT_DIR, "Arimo-Bold.ttf"),
-        "italic": os.path.join(FONT_DIR, "Arimo-Regular.ttf"),
-        "boldItalic": os.path.join(FONT_DIR, "Arimo-Bold.ttf"),
+        "italic": os.path.join(FONT_DIR, "NotoSans-Italic[wdth,wght].ttf"),
+        "boldItalic": os.path.join(FONT_DIR, "NotoSans-Italic[wdth,wght].ttf"),
     },
     "Verdana": {
         "normal": os.path.join(FONT_DIR, "Verdana-Regular.ttf"),
@@ -164,10 +181,84 @@ FONT_FILE_VARIANTS = {
     "Courier": {
         "normal": os.path.join(FONT_DIR, "Cousine-Regular.ttf"),
         "bold": os.path.join(FONT_DIR, "Cousine-Bold.ttf"),
-        "italic": os.path.join(FONT_DIR, "Cousine-Regular.ttf"),
-        "boldItalic": os.path.join(FONT_DIR, "Cousine-Bold.ttf"),
+        "italic": os.path.join(FONT_DIR, "Cousine-Italic.ttf"),
+        "boldItalic": os.path.join(FONT_DIR, "Cousine-BoldItalic.ttf"),
     },
 }
+
+
+# ── Popular Google Fonts available in the /edit-new editor ─────────────────
+# Each entry maps a family alias to its on-disk TTF files. Italic-less
+# families fall back to NotoSans-Italic so inline italic spans still render
+# slanted in the exported PDF. Variable fonts that cover the whole weight
+# axis (e.g. Mulish[wght].ttf) reuse the same file for both Regular and Bold.
+def _ff(reg, bold=None, italic=None, bold_italic=None,
+        italic_fallback="NotoSans-Italic[wdth,wght].ttf"):
+    rp = os.path.join(FONT_DIR, reg)
+    bp = os.path.join(FONT_DIR, bold) if bold else rp
+    ip = os.path.join(FONT_DIR, italic) if italic else os.path.join(FONT_DIR, italic_fallback)
+    bip = os.path.join(FONT_DIR, bold_italic) if bold_italic else ip
+    return {"normal": rp, "bold": bp, "italic": ip, "boldItalic": bip}
+
+
+GOOGLE_FONT_FILE_VARIANTS = {
+    "Inter":            _ff("Inter[opsz,wght].ttf",          italic="Inter-Italic[opsz,wght].ttf"),
+    "Nunito":           _ff("Nunito[wght].ttf",              italic="Nunito-Italic[wght].ttf"),
+    "Merriweather":     _ff("Merriweather[opsz,wdth,wght].ttf", italic="Merriweather-Italic[opsz,wdth,wght].ttf",
+                            italic_fallback="NotoSerif-Italic[wdth,wght].ttf"),
+    "PlayfairDisplay":  _ff("PlayfairDisplay[wght].ttf",     italic="PlayfairDisplay-Italic[wght].ttf",
+                            italic_fallback="NotoSerif-Italic[wdth,wght].ttf"),
+    "Raleway":          _ff("Raleway[wght].ttf",             italic="Raleway-Italic[wght].ttf"),
+    "WorkSans":         _ff("WorkSans[wght].ttf",            italic="WorkSans-Italic[wght].ttf"),
+    "NotoSans":         _ff("NotoSans[wdth,wght].ttf",       italic="NotoSans-Italic[wdth,wght].ttf"),
+    "NotoSerif":        _ff("NotoSerif[wdth,wght].ttf",      italic="NotoSerif-Italic[wdth,wght].ttf",
+                            italic_fallback="NotoSerif-Italic[wdth,wght].ttf"),
+    "Oswald":           _ff("Oswald[wght].ttf"),
+    "RobotoSlab":       _ff("RobotoSlab-Regular.ttf",   "RobotoSlab-Bold.ttf",
+                            italic_fallback="NotoSerif-Italic[wdth,wght].ttf"),
+    "RobotoMono":       _ff("RobotoMono-Regular.ttf",   "RobotoMono-Bold.ttf",
+                            italic="RobotoMono-Italic.ttf",  bold_italic="RobotoMono-BoldItalic.ttf"),
+    "RobotoCondensed":  _ff("RobotoCondensed-Regular.ttf","RobotoCondensed-Bold.ttf",
+                            italic="RobotoCondensed-Italic.ttf", bold_italic="RobotoCondensed-BoldItalic.ttf"),
+    "Ubuntu":           _ff("Ubuntu-Regular.ttf",       "Ubuntu-Bold.ttf",
+                            italic="Ubuntu-Italic.ttf", bold_italic="Ubuntu-BoldItalic.ttf"),
+    "Rubik":            _ff("Rubik-Regular.ttf",        "Rubik-Bold.ttf",
+                            italic="Rubik-Italic.ttf",  bold_italic="Rubik-BoldItalic.ttf"),
+    "DMSans":           _ff("DMSans-Regular.ttf",       "DMSans-Bold.ttf",
+                            italic="DMSans-Italic.ttf", bold_italic="DMSans-BoldItalic.ttf"),
+    "Mulish":           _ff("Mulish-Regular.ttf",       "Mulish-Bold.ttf",
+                            italic="Mulish-Italic.ttf", bold_italic="Mulish-BoldItalic.ttf"),
+    "Quicksand":        _ff("Quicksand-Regular.ttf",    "Quicksand-Bold.ttf"),
+    "Kanit":            _ff("Kanit-Regular.ttf",        "Kanit-Bold.ttf",
+                            italic="Kanit-Italic.ttf",  bold_italic="Kanit-BoldItalic.ttf"),
+    "FiraSans":         _ff("FiraSans-Regular.ttf",     "FiraSans-Bold.ttf",
+                            italic="FiraSans-Italic.ttf", bold_italic="FiraSans-BoldItalic.ttf"),
+    "Lora":             _ff("Lora-Regular.ttf",         "Lora-Bold.ttf",
+                            italic="Lora-Italic.ttf",   bold_italic="Lora-BoldItalic.ttf",
+                            italic_fallback="NotoSerif-Italic[wdth,wght].ttf"),
+    "Cabin":            _ff("Cabin-Regular.ttf",        "Cabin-Bold.ttf",
+                            italic="Cabin-Italic.ttf",  bold_italic="Cabin-BoldItalic.ttf"),
+    "Heebo":            _ff("Heebo-Regular.ttf",        "Heebo-Bold.ttf"),
+    "Karla":            _ff("Karla-Regular.ttf",        "Karla-Bold.ttf",
+                            italic="Karla-Italic.ttf",  bold_italic="Karla-BoldItalic.ttf"),
+    "Manrope":          _ff("Manrope-Regular.ttf",      "Manrope-Bold.ttf"),
+    "JosefinSans":      _ff("JosefinSans-Regular.ttf",  "JosefinSans-Bold.ttf",
+                            italic="JosefinSans-Italic.ttf", bold_italic="JosefinSans-BoldItalic.ttf"),
+    "Dosis":            _ff("Dosis-Regular.ttf",        "Dosis-Bold.ttf"),
+    "Barlow":           _ff("Barlow-Regular.ttf",       "Barlow-Bold.ttf",
+                            italic="Barlow-Italic.ttf", bold_italic="Barlow-BoldItalic.ttf"),
+    "BebasNeue":        _ff("BebasNeue-Regular.ttf",    "BebasNeue-Bold.ttf"),
+    "PTSans":           _ff("PTSans-Regular.ttf",       "PTSans-Bold.ttf",
+                            italic="PTSans-Italic.ttf", bold_italic="PTSans-BoldItalic.ttf"),
+    "CrimsonText":      _ff("CrimsonText-Regular.ttf",  "CrimsonText-Bold.ttf",
+                            italic="CrimsonText-Italic.ttf", bold_italic="CrimsonText-BoldItalic.ttf",
+                            italic_fallback="NotoSerif-Italic[wdth,wght].ttf"),
+    "Hind":             _ff("Hind-Regular.ttf",         "Hind-Bold.ttf"),
+    "Mukta":            _ff("Mukta-Regular.ttf",        "Mukta-Bold.ttf"),
+}
+
+FONT_FILE_VARIANTS.update(GOOGLE_FONT_FILE_VARIANTS)
+
 
 HTML_FONT_FAMILY_ALIASES = {
     "Arimo": [
@@ -261,6 +352,85 @@ HTML_FONT_FAMILY_ALIASES = {
     ],
 }
 
+
+# ── Aliases for the popular Google Fonts exposed in the /edit-new editor ────
+GOOGLE_FONT_HTML_ALIASES = {
+    "Inter":            ["Inter", "Inter-Regular"],
+    "Nunito":           ["Nunito", "Nunito-Regular"],
+    "Merriweather":     ["Merriweather", "Merriweather-Regular"],
+    "PlayfairDisplay":  ["Playfair Display", "PlayfairDisplay", "PlayfairDisplay-Regular"],
+    "Raleway":          ["Raleway", "Raleway-Regular"],
+    "WorkSans":         ["Work Sans", "WorkSans", "WorkSans-Regular"],
+    "NotoSans":         ["Noto Sans", "NotoSans", "NotoSans-Regular"],
+    "NotoSerif":        ["Noto Serif", "NotoSerif", "NotoSerif-Regular"],
+    "Oswald":           ["Oswald", "Oswald-Regular"],
+    "RobotoSlab":       ["Roboto Slab", "RobotoSlab", "RobotoSlab-Regular"],
+    "RobotoMono":       ["Roboto Mono", "RobotoMono", "RobotoMono-Regular"],
+    "RobotoCondensed":  ["Roboto Condensed", "RobotoCondensed", "RobotoCondensed-Regular"],
+    "Ubuntu":           ["Ubuntu", "Ubuntu-Regular"],
+    "Rubik":            ["Rubik", "Rubik-Regular"],
+    "DMSans":           ["DM Sans", "DMSans", "DMSans-Regular"],
+    "Mulish":           ["Mulish", "Mulish-Regular"],
+    "Quicksand":        ["Quicksand", "Quicksand-Regular"],
+    "Kanit":            ["Kanit", "Kanit-Regular"],
+    "FiraSans":         ["Fira Sans", "FiraSans", "FiraSans-Regular"],
+    "Lora":             ["Lora", "Lora-Regular"],
+    "Cabin":            ["Cabin", "Cabin-Regular"],
+    "Heebo":            ["Heebo", "Heebo-Regular"],
+    "Karla":            ["Karla", "Karla-Regular"],
+    "Manrope":          ["Manrope", "Manrope-Regular"],
+    "JosefinSans":      ["Josefin Sans", "JosefinSans", "JosefinSans-Regular"],
+    "Dosis":            ["Dosis", "Dosis-Regular"],
+    "Barlow":           ["Barlow", "Barlow-Regular"],
+    "BebasNeue":        ["Bebas Neue", "BebasNeue", "BebasNeue-Regular"],
+    "PTSans":           ["PT Sans", "PTSans", "PT_Sans", "PTSans-Regular"],
+    "CrimsonText":      ["Crimson Text", "CrimsonText", "CrimsonText-Regular"],
+    "Hind":             ["Hind", "Hind-Regular"],
+    "Mukta":            ["Mukta", "Mukta-Regular"],
+}
+
+HTML_FONT_FAMILY_ALIASES.update(GOOGLE_FONT_HTML_ALIASES)
+
+
+# Lowercase tokens used by ``normalize_font_family`` to detect a popular
+# Google family from a free-form ``ann.fontFamily`` string. The first matching
+# token wins, so order from longest/most-specific to shortest.
+GOOGLE_FONT_NORMALIZE_TOKENS = [
+    ("playfairdisplay",  "PlayfairDisplay"),
+    ("crimsontext",      "CrimsonText"),
+    ("robotocondensed",  "RobotoCondensed"),
+    ("robotomono",       "RobotoMono"),
+    ("robotoslab",       "RobotoSlab"),
+    ("josefinsans",      "JosefinSans"),
+    ("merriweather",     "Merriweather"),
+    ("ptsans",           "PTSans"),
+    ("pt_sans",          "PTSans"),
+    ("bebasneue",        "BebasNeue"),
+    ("worksans",         "WorkSans"),
+    ("dmsans",           "DMSans"),
+    ("notosans",         "NotoSans"),
+    ("notoserif",        "NotoSerif"),
+    ("firasans",         "FiraSans"),
+    ("quicksand",        "Quicksand"),
+    ("manrope",          "Manrope"),
+    ("raleway",          "Raleway"),
+    ("ubuntu",           "Ubuntu"),
+    ("rubik",            "Rubik"),
+    ("mulish",           "Mulish"),
+    ("kanit",            "Kanit"),
+    ("oswald",           "Oswald"),
+    ("nunito",           "Nunito"),
+    ("inter",            "Inter"),
+    ("lora",             "Lora"),
+    ("cabin",            "Cabin"),
+    ("heebo",            "Heebo"),
+    ("karla",            "Karla"),
+    ("dosis",            "Dosis"),
+    ("barlow",           "Barlow"),
+    ("hind",             "Hind"),
+    ("mukta",            "Mukta"),
+]
+
 EMBEDDED_FONT_METADATA_CACHE: dict[str, dict[str, Any]] = {}
 
 EMBEDDED_FONT_BYPASS_FAMILIES = {
@@ -287,6 +457,9 @@ EMBEDDED_FONT_BYPASS_FAMILIES = {
     "PlayfairDisplay",
     "Merriweather",
 }
+# Allow the popular Google Fonts we ship to bypass any embedded subset that
+# happens to share the same family name.
+EMBEDDED_FONT_BYPASS_FAMILIES.update(GOOGLE_FONT_FILE_VARIANTS.keys())
 
 
 def normalize_exact_font_family(value: Any) -> str:
@@ -426,6 +599,60 @@ def hex_to_rgb(value: Any) -> Tuple[float, float, float]:
         return (0.0, 0.0, 0.0)
 
 
+# CRITICAL FAILURE GUARD: keep the downloaded PDF visually consistent with the
+# editor when a text annotation has white (or near-white) text on a white /
+# transparent background. The editor's `resolveDisplayBgColor` substitutes a
+# dark slate (#2c3e50) placeholder behind such text so it is readable on the
+# white page; without the same substitution at export time the downloaded PDF
+# renders white-on-white = visually blank (see doc 2880 row 113884:
+# textColor="#ffffff", backgroundColor="#ffffff", backgroundColorExplicit=true).
+# Mirror the editor here so what the user sees in /edit-new is what gets
+# stamped into the PDF. Returns the (possibly substituted) background RGB or
+# None if no substitution is needed.
+_WHITE_TEXT_RE = re.compile(r"^#?f(?:ff|[e-f]{2})(?:f(?:ff|[e-f]{2})){0,2}$", re.IGNORECASE)
+_DISPLAY_BG_PLACEHOLDER_RGB = (44.0 / 255.0, 62.0 / 255.0, 80.0 / 255.0)  # #2c3e50
+
+
+def _text_color_is_white_like(text_color_raw: Any) -> bool:
+    text = str(text_color_raw or "").strip().replace(" ", "")
+    if not text:
+        return False
+    return bool(_WHITE_TEXT_RE.match(text))
+
+
+def _bg_is_effectively_white_or_missing(bg_raw: Any) -> bool:
+    bg = str(bg_raw or "").strip().lower()
+    if not bg or bg == "transparent":
+        return True
+    # Match #ffffff and any near-white hex (matches editor's _WHITE_TEXT_RE).
+    return bool(_WHITE_TEXT_RE.match(bg))
+
+
+def substitute_display_bg_for_invisible_text(
+    text_color_raw: Any,
+    bg_color_raw: Any,
+    bg_color_rgb: Optional[Tuple[float, float, float]],
+    annotation_id: str = "",
+) -> Optional[Tuple[float, float, float]]:
+    """Return a slate-placeholder bg RGB when text is white and bg is white or
+    transparent (so white text never renders against a white page in the
+    downloaded PDF). Otherwise return ``bg_color_rgb`` unchanged.
+    """
+    if not _text_color_is_white_like(text_color_raw):
+        return bg_color_rgb
+    if not _bg_is_effectively_white_or_missing(bg_color_raw):
+        return bg_color_rgb
+    print(
+        "[apply_annotations] CRITICAL: white text on white/transparent background"
+        f" for annotation {annotation_id!r} (textColor={text_color_raw!r},"
+        f" backgroundColor={bg_color_raw!r}); substituting #2c3e50 placeholder"
+        " background to match the editor's resolveDisplayBgColor display so the"
+        " download PDF is not visually blank.",
+        file=sys.stderr,
+    )
+    return _DISPLAY_BG_PLACEHOLDER_RGB
+
+
 def to_rect(page: fitz.Page, ann: Dict[str, Any]) -> Optional[fitz.Rect]:
     try:
         x = float(ann.get("pdfX", 0))
@@ -448,6 +675,13 @@ def normalize_font_family(value: Any) -> str:
         return exact_family
     lower = str(value or "").strip().lower().replace('"', "").replace("'", "")
     lower = lower.replace(" ", "").replace("-", "")
+
+    # Match popular Google Fonts first (long/specific tokens come first in
+    # GOOGLE_FONT_NORMALIZE_TOKENS so e.g. "robotocondensed" wins over
+    # "roboto").
+    for token, family in GOOGLE_FONT_NORMALIZE_TOKENS:
+        if token in lower:
+            return family
 
     if "arimo" in lower:
         return "Arimo"
@@ -555,6 +789,43 @@ def css_font_family(value: Any) -> str:
         return "TimesRoman, Tinos, Times New Roman, serif"
     if family == "Courier":
         return "Courier, Cousine, Courier New, monospace"
+    # Popular Google Fonts — exposed in /edit-new editor dropdown.
+    GOOGLE_CSS_FAMILIES = {
+        "Inter":           "Inter, Helvetica, Arial, sans-serif",
+        "Nunito":          "Nunito, Helvetica, Arial, sans-serif",
+        "Merriweather":    "Merriweather, Georgia, serif",
+        "PlayfairDisplay": '"Playfair Display", Georgia, serif',
+        "Raleway":         "Raleway, Helvetica, Arial, sans-serif",
+        "WorkSans":        '"Work Sans", Helvetica, Arial, sans-serif',
+        "NotoSans":        '"Noto Sans", Helvetica, Arial, sans-serif',
+        "NotoSerif":       '"Noto Serif", Georgia, serif',
+        "Oswald":          "Oswald, Impact, sans-serif",
+        "RobotoSlab":      '"Roboto Slab", Georgia, serif',
+        "RobotoMono":      '"Roboto Mono", Consolas, monospace',
+        "RobotoCondensed": '"Roboto Condensed", Arial, sans-serif',
+        "Ubuntu":          "Ubuntu, Helvetica, Arial, sans-serif",
+        "Rubik":           "Rubik, Helvetica, Arial, sans-serif",
+        "DMSans":          '"DM Sans", Helvetica, Arial, sans-serif',
+        "Mulish":          "Mulish, Helvetica, Arial, sans-serif",
+        "Quicksand":       "Quicksand, Helvetica, Arial, sans-serif",
+        "Kanit":           "Kanit, Helvetica, Arial, sans-serif",
+        "FiraSans":        '"Fira Sans", Helvetica, Arial, sans-serif',
+        "Lora":            "Lora, Georgia, serif",
+        "Cabin":           "Cabin, Helvetica, Arial, sans-serif",
+        "Heebo":           "Heebo, Helvetica, Arial, sans-serif",
+        "Karla":           "Karla, Helvetica, Arial, sans-serif",
+        "Manrope":         "Manrope, Helvetica, Arial, sans-serif",
+        "JosefinSans":     '"Josefin Sans", Helvetica, Arial, sans-serif',
+        "Dosis":           "Dosis, Helvetica, Arial, sans-serif",
+        "Barlow":          "Barlow, Helvetica, Arial, sans-serif",
+        "BebasNeue":       '"Bebas Neue", Impact, sans-serif',
+        "PTSans":          '"PT Sans", Helvetica, Arial, sans-serif',
+        "CrimsonText":     '"Crimson Text", Georgia, serif',
+        "Hind":            "Hind, Helvetica, Arial, sans-serif",
+        "Mukta":           "Mukta, Helvetica, Arial, sans-serif",
+    }
+    if family in GOOGLE_CSS_FAMILIES:
+        return GOOGLE_CSS_FAMILIES[family]
     return "Helvetica, Arimo, Arial, sans-serif"
 
 
@@ -661,6 +932,152 @@ def should_preserve_promoted_source_lines(ann: Dict[str, Any], text: str) -> boo
     return False
 
 
+def resolve_promoted_source_typography_annotation(ann: Dict[str, Any]) -> Dict[str, Any]:
+    if not bool(ann.get("promotedFromExtraction")) or bool(ann.get("styleDirty")):
+        return ann
+
+    source_spans = ann.get("sourceSpans")
+    if not isinstance(source_spans, list) or not source_spans:
+        return ann
+
+    dominant_span = None
+    dominant_score = -1.0
+    for span in source_spans:
+        if not isinstance(span, dict):
+            continue
+        bbox = span.get("bbox")
+        try:
+            width = max(0.0, float(bbox[2]) - float(bbox[0])) if isinstance(bbox, (list, tuple)) and len(bbox) >= 4 else 0.0
+        except Exception:
+            width = 0.0
+        text_weight = float(len(sanitize_pdf_text(span.get("text") or "").replace(" ", "")) or 1)
+        score = max(width, text_weight)
+        if score > dominant_score:
+            dominant_score = score
+            dominant_span = span
+
+    if not isinstance(dominant_span, dict):
+        return ann
+
+    exact_name = str(
+        dominant_span.get("embedded_font_name")
+        or dominant_span.get("font")
+        or ann.get("fontSourceName")
+        or ann.get("fontFamily")
+        or ""
+    ).strip()
+    source_family = str(
+        dominant_span.get("embedded_font_family")
+        or dominant_span.get("font")
+        or ann.get("fontFamily")
+        or ""
+    ).strip()
+    try:
+        source_font_size = float(
+            dominant_span.get("fontSize")
+            or dominant_span.get("font_size")
+            or ann.get("fontSize")
+            or 0
+        )
+    except Exception:
+        source_font_size = 0.0
+    try:
+        source_line_height = max(
+            float(ann.get("lineHeight") or 0.0),
+            float(source_font_size or 0.0) * 1.18,
+            max(
+                0.0,
+                float(dominant_span.get("bbox")[3]) - float(dominant_span.get("bbox")[1]),
+            ) if isinstance(dominant_span.get("bbox"), (list, tuple)) and len(dominant_span.get("bbox")) >= 4 else 0.0,
+        )
+    except Exception:
+        source_line_height = max(float(ann.get("lineHeight") or 0.0), float(source_font_size or 0.0) * 1.18)
+
+    resolved = dict(ann)
+    if exact_name:
+        resolved["fontSourceName"] = exact_name
+    normalized_family = normalize_font_family(exact_name or source_family)
+    if normalized_family:
+        resolved["fontFamily"] = normalized_family
+    if source_font_size > 0:
+        resolved["fontSize"] = source_font_size
+    if source_line_height > 0:
+        resolved["lineHeight"] = source_line_height
+    resolved["fontWeight"] = str(
+        dominant_span.get("fontWeight")
+        or dominant_span.get("font_weight")
+        or ann.get("fontWeight")
+        or "400"
+    )
+    resolved["fontStyle"] = str(
+        dominant_span.get("fontStyle")
+        or dominant_span.get("font_style")
+        or ann.get("fontStyle")
+        or "normal"
+    )
+    source_color = (
+        dominant_span.get("hex_color")
+        if dominant_span.get("hex_color") is not None
+        else dominant_span.get("color")
+    )
+    if source_color:
+        resolved["textColor"] = str(source_color)
+    return resolved
+
+
+_ANNOT_INLINE_ITALIC_FAMILY = "AnnotInlineItalic"
+_ANNOT_INLINE_BOLD_ITALIC_FAMILY = "AnnotInlineBoldItalic"
+
+
+def _resolve_inline_italic_font_files(ann: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+    """Return (italic_path, boldItalic_path) for the annotation's family.
+
+    MuPDF's HTML renderer cannot pick an @font-face italic variant via
+    ``font-style: italic`` on inline spans — it only switches faces by
+    explicit ``font-family``. To support per-selection italic styling inside
+    rich-HTML annotations we therefore register the italic and bold-italic
+    files of the annotation's chosen family under unique alias names and
+    rewrite the rich HTML to use those aliases (see
+    ``_rewrite_richhtml_inline_italic`` below).
+    """
+    raw_family = str(ann.get("fontFamily") or "").strip() or "Helvetica"
+    normalized = normalize_font_family(raw_family) or raw_family
+    variants = FONT_FILE_VARIANTS.get(normalized) or FONT_FILE_VARIANTS.get(raw_family) or {}
+    italic_path = variants.get("italic") if variants else None
+    bold_italic_path = variants.get("boldItalic") if variants else None
+    if not italic_path:
+        # Fall back to the Helvetica variants which are guaranteed to exist
+        # so MuPDF still has a face to substitute (worst case == upright).
+        italic_path = FONT_FILE_VARIANTS["Helvetica"]["italic"]
+    if not bold_italic_path:
+        bold_italic_path = FONT_FILE_VARIANTS["Helvetica"]["boldItalic"]
+    if italic_path and not os.path.exists(italic_path):
+        italic_path = None
+    if bold_italic_path and not os.path.exists(bold_italic_path):
+        bold_italic_path = None
+    return italic_path, bold_italic_path
+
+
+def _build_inline_italic_font_face_css(ann: Dict[str, Any]) -> str:
+    italic_path, bold_italic_path = _resolve_inline_italic_font_files(ann)
+    rules: list[str] = []
+    if italic_path:
+        rules.append(
+            "@font-face { "
+            f'font-family: "{_ANNOT_INLINE_ITALIC_FAMILY}"; '
+            f"src: url({os.path.basename(italic_path)}); "
+            "}"
+        )
+    if bold_italic_path:
+        rules.append(
+            "@font-face { "
+            f'font-family: "{_ANNOT_INLINE_BOLD_ITALIC_FAMILY}"; '
+            f"src: url({os.path.basename(bold_italic_path)}); "
+            "}"
+        )
+    return "\n".join(rules)
+
+
 def build_annotation_htmlbox_css(ann: Dict[str, Any], font_size: float, opacity: float) -> str:
     font_weight = resolve_annotation_font_weight(ann)
     font_style = resolve_annotation_font_style(ann)
@@ -668,17 +1085,34 @@ def build_annotation_htmlbox_css(ann: Dict[str, Any], font_size: float, opacity:
     text_decoration = "underline" if resolve_annotation_underline(ann) else "none"
     font_family = css_font_family(ann.get("fontFamily"))
     text_color = str(ann.get("textColor") or "#000000").strip() or "#000000"
+    # The htmlbox path renders text only — the background rectangle is drawn
+    # separately by draw_text() before the htmlbox call, where the white-text-
+    # on-white-bg slate placeholder substitution happens. So nothing to do here
+    # for the bg; we only keep the text color as-is. (Critically, do NOT flip
+    # the text color to black: the editor displays white text on the slate
+    # placeholder, and the downloaded PDF must match that.)
     preserve_extracted_lines = should_preserve_promoted_source_lines(ann, ann.get("text") or "")
     try:
         line_height_value = float(ann.get("lineHeight") or 0)
     except Exception:
         line_height_value = 0.0
-    line_height_css = f"{line_height_value}pt" if line_height_value > 0 else "normal"
+    if not preserve_extracted_lines:
+        line_height_value = max(line_height_value, float(font_size or 0.0) * 1.18)
+    # Browser side computes line-height as fontSizePx * 1.18 (see
+    # blockLineHeightPx in edit-new.blade.php). When the annotation has no
+    # explicit lineHeight persisted, match that ratio with a unitless value so
+    # rich-html spans with different per-span font-sizes also scale correctly
+    # (an absolute pt value would lock every span to the same line-height).
+    # MuPDF's "normal" defaults diverge from the browser and produced visibly
+    # tighter line spacing in the exported PDF vs. the editor.
+    line_height_css = f"{line_height_value}pt" if line_height_value > 0 else "1.18"
     white_space = "pre" if preserve_extracted_lines else "pre-wrap"
     overflow_wrap = "normal" if preserve_extracted_lines else "break-word"
     word_break = "normal" if preserve_extracted_lines else "break-word"
+    inline_italic_face_css = _build_inline_italic_font_face_css(ann)
     return (
         f"{HTML_FONT_FACE_CSS}\n"
+        f"{inline_italic_face_css}\n"
         "body { margin: 0; padding: 0; }\n"
         ".annotation-box {\n"
         "  margin: 0;\n"
@@ -705,39 +1139,152 @@ def build_annotation_htmlbox_css(ann: Dict[str, Any], font_size: float, opacity:
 
 
 def _strip_px_font_sizes_from_html(html_str: str) -> str:
-    """Remove font-size:Xpx declarations from inline style attributes.
+    """Remove screen-pixel layout adjustments from inline styles.
 
-    The richTextHtml editor stores font sizes as browser screen pixels which
-    reflect the current PDF zoom level.  PyMuPDF's insert_htmlbox treats CSS px
-    as an absolute unit at a different scale than the browser, so those px values
-    produce the wrong rendered size.  The outer .annotation-box CSS already sets
-    the correct font-size in PDF points; stripping the per-span px overrides lets
-    that outer size apply to all text, matching what the user intended.
+    The richTextHtml editor persists per-line CSS that was authored at the
+    browser's current zoom level: ``font-size`` and ``line-height``/
+    ``min-height`` in screen pixels, plus a ``transform: translateY(Xpx)`` /
+    ``transform-origin`` pair the editor uses to vertically nudge the
+    contenteditable so it visually centers inside the .rich-html-item
+    container.  PyMuPDF's insert_htmlbox treats CSS px as an absolute unit at
+    a different scale than the browser, so those values produce wrong sizes,
+    inflated line spacing, AND a stray vertical shift that moves the text up
+    out of its bounding box (visible as text drifting outside a shape it sat
+    inside in the editor).  The outer .annotation-box CSS already sets the
+    correct font-size and line-height in PDF points; stripping the per-element
+    px overrides AND the editor-side transform lets that outer sizing apply
+    to all text, matching what the user saw in the editor.
     """
     import re as _re
 
+    _PX_PROP_RE = _re.compile(
+        r"\b(?:font-size|line-height|min-height)\s*:\s*[\d.]+px\s*;?",
+        flags=_re.IGNORECASE,
+    )
+    # Editor-pixel transforms (translateY etc.) and their origin must go too.
+    # Their entire declaration is removed (we never want them in the PDF
+    # render even if the unit is non-px, because they were tuned against the
+    # editor's screen-pixel font metrics, not the PDF point metrics).
+    _TRANSFORM_PROP_RE = _re.compile(
+        r"\b(?:transform|transform-origin)\s*:[^;\"]*;?",
+        flags=_re.IGNORECASE,
+    )
+
     def _clean_style(m: "re.Match[str]") -> str:
         style = m.group(1)
-        cleaned = _re.sub(r"\bfont-size\s*:\s*[\d.]+px\s*;?", "", style, flags=_re.IGNORECASE)
+        cleaned = _PX_PROP_RE.sub("", style)
+        cleaned = _TRANSFORM_PROP_RE.sub("", cleaned)
         # Collapse any double-semicolons left behind
         cleaned = _re.sub(r";\s*;+", ";", cleaned).strip("; ")
         if cleaned.strip():
             return f'style="{cleaned}"'
         return ""  # Drop the attribute entirely when nothing remains
 
-    # Only touch style="..." attributes that actually contain a px font-size
+    # Touch any style="..." attribute that contains either a stripped px sizing
+    # property OR an editor-pixel transform.
     return _re.sub(
-        r'\bstyle="([^"]*\bfont-size\s*:\s*[\d.]+px[^"]*)"',
+        r'\bstyle="([^"]*\b(?:font-size|line-height|min-height|transform|transform-origin)\b[^"]*)"',
         _clean_style,
         html_str,
         flags=_re.IGNORECASE,
     )
 
 
+def _rewrite_richhtml_inline_italic(html_str: str) -> str:
+    """Translate inline italic markers into explicit font-family overrides.
+
+    MuPDF's HTML engine ignores ``font-style: italic``, ``<i>``, and ``<em>``
+    when picking @font-face variants — it only switches faces by
+    ``font-family``. To make per-selection italic styling actually render in
+    the downloaded PDF we rewrite the rich HTML so every italic-marker span
+    carries a ``font-family`` override pointing at the per-annotation italic
+    (or bold-italic) family alias registered by
+    ``_build_inline_italic_font_face_css``.
+
+    The same engine also ignores the long-form ``text-decoration-line``
+    property (only the legacy ``text-decoration`` shorthand draws an
+    underline stroke), so we normalise that here too.
+
+    The transformation is intentionally regex-based and idempotent: it never
+    drops existing styling, just augments it.
+    """
+    if not html_str:
+        return html_str
+
+    # MuPDF only honours the legacy `text-decoration` shorthand for
+    # underline drawing. Browsers emit `text-decoration-line: underline`
+    # for per-selection underline styling, which is silently ignored.
+    html_str = re.sub(
+        r"text-decoration-line\s*:",
+        "text-decoration:",
+        html_str,
+        flags=re.IGNORECASE,
+    )
+
+    italic_family = f'"{_ANNOT_INLINE_ITALIC_FAMILY}"'
+    bold_italic_family = f'"{_ANNOT_INLINE_BOLD_ITALIC_FAMILY}"'
+
+    def _style_has_italic(style_value: str) -> bool:
+        s = style_value.lower()
+        return ("font-style:italic" in s.replace(" ", "")) or ("font-style:oblique" in s.replace(" ", ""))
+
+    def _style_has_bold(style_value: str) -> bool:
+        s = style_value.lower().replace(" ", "")
+        if "font-weight:bold" in s:
+            return True
+        m = re.search(r"font-weight:(\d{3,4})", s)
+        if m:
+            try:
+                return int(m.group(1)) >= 600
+            except ValueError:
+                return False
+        return False
+
+    def _augment_style(style_value: str, family: str) -> str:
+        cleaned = style_value.strip().rstrip(";")
+        # Drop any existing font-family declaration so ours wins.
+        cleaned = re.sub(r"font-family\s*:[^;]*;?", "", cleaned, flags=re.IGNORECASE).strip().rstrip(";")
+        prefix = (cleaned + "; ") if cleaned else ""
+        return f'{prefix}font-family: {family}'
+
+    def _replace_span(match: "re.Match[str]") -> str:
+        style_value = match.group(1)
+        if not _style_has_italic(style_value):
+            return match.group(0)
+        family = bold_italic_family if _style_has_bold(style_value) else italic_family
+        new_style = _augment_style(style_value, family)
+        return f'<span style="{html.escape(new_style, quote=True)}"'
+
+    # Inject the italic family into every <span style="...font-style:italic..."> tag.
+    rewritten = re.sub(
+        r'<span\s+style="([^"]*)"',
+        _replace_span,
+        html_str,
+        flags=re.IGNORECASE,
+    )
+
+    # Map <i> and <em> tags to italic spans. Nested <b>/<strong> would still
+    # mark the run as bold, but the italic family alone is "italic-only" so
+    # we conservatively wrap with the italic family; a dedicated
+    # bold+italic tag is uncommon in browser-generated rich text so this
+    # covers the realistic editor output.
+    italic_family_attr = html.escape(f"font-family: {italic_family}", quote=True)
+    rewritten = re.sub(
+        r'<(i|em)(\s[^>]*)?>',
+        lambda m: f'<span style="{italic_family_attr}"{m.group(2) or ""}>',
+        rewritten,
+        flags=re.IGNORECASE,
+    )
+    rewritten = re.sub(r'</(i|em)>', '</span>', rewritten, flags=re.IGNORECASE)
+
+    return rewritten
+
+
 def build_annotation_htmlbox_markup(ann: Dict[str, Any], text: str) -> str:
     rich_html = sanitize_rich_text_html(ann.get("richTextHtml") or "").strip()
     if rich_html:
         rich_html = _strip_px_font_sizes_from_html(rich_html)
+        rich_html = _rewrite_richhtml_inline_italic(rich_html)
     inner_html = rich_html if rich_html else html.escape(sanitize_pdf_text(text))
     return f'<div class="annotation-box">{inner_html}</div>'
 
@@ -750,6 +1297,458 @@ class _RichTextTextNodeCounter(HTMLParser):
     def handle_data(self, data: str) -> None:
         if data and data.strip():
             self.text_chunks.append(data)
+
+
+_RICH_TEXT_BLOCK_TAGS = {"div", "p", "li", "ul", "ol"}
+
+
+def _normalize_rich_text_compare_text(value: Any) -> str:
+    normalized = sanitize_pdf_text(value).replace("\r\n", "\n").replace("\r", "\n")
+    normalized = re.sub(r"[ \t]+\n", "\n", normalized)
+    normalized = re.sub(r"\n[ \t]+", "\n", normalized)
+    normalized = re.sub(r"\n{3,}", "\n\n", normalized)
+    return normalized.strip()
+
+
+def _apply_inline_style_state(state: Dict[str, Any], style_value: str) -> Dict[str, Any]:
+    next_state = dict(state)
+    for declaration in str(style_value or "").split(";"):
+        if ":" not in declaration:
+            continue
+        prop, raw_value = declaration.split(":", 1)
+        prop = prop.strip().lower()
+        value = raw_value.strip().lower()
+        if not prop:
+            continue
+        if prop == "font-style":
+            if "oblique" in value:
+                next_state["font_style"] = "oblique"
+            elif "italic" in value:
+                next_state["font_style"] = "italic"
+            elif "normal" in value:
+                next_state["font_style"] = "normal"
+        elif prop == "font-weight":
+            if value == "bold":
+                next_state["font_weight"] = "700"
+            else:
+                match = re.search(r"\d{3,4}", value)
+                if match:
+                    next_state["font_weight"] = match.group(0)
+                elif "normal" in value:
+                    next_state["font_weight"] = "400"
+        elif prop in {"text-decoration", "text-decoration-line"}:
+            compact_value = value.replace(" ", "")
+            if "underline" in compact_value:
+                next_state["underline"] = True
+            elif "none" in compact_value:
+                next_state["underline"] = False
+        elif prop == "color":
+            normalized_color = normalize_css_color(value)
+            if normalized_color:
+                next_state["color"] = normalized_color
+        elif prop == "font-family":
+            font_family = parse_inline_font_family(value)
+            if font_family:
+                next_state["font_family"] = font_family
+                next_state["font_source_name"] = font_family
+    return next_state
+
+
+def normalize_css_color(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text.startswith("#"):
+        hex_digits = text[1:]
+        if len(hex_digits) == 3 and re.fullmatch(r"[0-9a-fA-F]{3}", hex_digits):
+            return "#" + "".join(ch * 2 for ch in hex_digits).lower()
+        if len(hex_digits) == 6 and re.fullmatch(r"[0-9a-fA-F]{6}", hex_digits):
+            return "#" + hex_digits.lower()
+        return ""
+
+    rgb_match = re.fullmatch(
+        r"rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*[\d.]+\s*)?\)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if rgb_match:
+        channels = [max(0, min(255, int(part))) for part in rgb_match.groups()[:3]]
+        return "#{:02x}{:02x}{:02x}".format(*channels)
+
+    return ""
+
+
+def parse_inline_font_family(value: Any) -> str:
+    families = [
+        part.strip().strip('"').strip("'")
+        for part in str(value or "").split(",")
+    ]
+    return next((family for family in families if family), "")
+
+
+class _RichTextLayoutParser(HTMLParser):
+    def __init__(self, base_style: Dict[str, Any]) -> None:
+        super().__init__(convert_charrefs=True)
+        self._state_stack: list[Dict[str, Any]] = [dict(base_style)]
+        self.ops: list[Dict[str, Any]] = []
+
+    def _append_break(self) -> None:
+        self.ops.append({"type": "break"})
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, Optional[str]]]) -> None:
+        lower_tag = str(tag or "").strip().lower()
+        if lower_tag == "br":
+            self._append_break()
+            return
+
+        next_state = dict(self._state_stack[-1])
+        if lower_tag in {"i", "em"}:
+            next_state["font_style"] = "italic"
+        elif lower_tag in {"b", "strong"}:
+            next_state["font_weight"] = "700"
+        elif lower_tag == "u":
+            next_state["underline"] = True
+
+        attrs_map = {str(name or "").strip().lower(): str(value or "") for name, value in attrs}
+        next_state = _apply_inline_style_state(next_state, attrs_map.get("style", ""))
+        self._state_stack.append(next_state)
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, Optional[str]]]) -> None:
+        self.handle_starttag(tag, attrs)
+        if str(tag or "").strip().lower() != "br" and len(self._state_stack) > 1:
+            self._state_stack.pop()
+
+    def handle_endtag(self, tag: str) -> None:
+        lower_tag = str(tag or "").strip().lower()
+        if lower_tag in _RICH_TEXT_BLOCK_TAGS:
+            self._append_break()
+        if len(self._state_stack) > 1:
+            self._state_stack.pop()
+
+    def handle_data(self, data: str) -> None:
+        if not data:
+            return
+        normalized_text = sanitize_pdf_text(data).replace("\r\n", "\n").replace("\r", "\n")
+        if not normalized_text:
+            return
+        self.ops.append({
+            "type": "text",
+            "text": normalized_text,
+            **dict(self._state_stack[-1]),
+        })
+
+
+def parse_rich_text_layout_ops(ann: Dict[str, Any]) -> list[Dict[str, Any]]:
+    rich_html = sanitize_rich_text_html(ann.get("richTextHtml") or "").strip()
+    if not rich_html:
+        return []
+
+    parser = _RichTextLayoutParser({
+        "font_family": ann.get("fontFamily") or "Helvetica",
+        "font_source_name": ann.get("fontSourceName") or ann.get("fontFamily") or "Helvetica",
+        "font_size": float(ann.get("fontSize") or 12),
+        "font_weight": resolve_annotation_font_weight(ann),
+        "font_style": resolve_annotation_font_style(ann),
+        "color": normalize_css_color(ann.get("textColor")) or str(ann.get("textColor") or "#000000"),
+        "underline": bool(resolve_annotation_underline(ann)),
+        "span_rotation": 0.0,
+        "documentId": ann.get("documentId"),
+        "__documentId": ann.get("__documentId"),
+        "promotedFromExtraction": ann.get("promotedFromExtraction"),
+        "promotedDirty": ann.get("promotedDirty"),
+        "userAuthored": ann.get("userAuthored"),
+        "styleDirty": ann.get("styleDirty"),
+        "richTextHtml": ann.get("richTextHtml"),
+    })
+    try:
+        parser.feed(_strip_px_font_sizes_from_html(rich_html))
+        parser.close()
+    except Exception:
+        return []
+
+    ops = list(parser.ops)
+    while ops and ops[-1].get("type") == "break":
+        ops.pop()
+    return ops
+
+
+def _rich_text_layout_ops_to_text(ops: list[Dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for entry in ops:
+        if entry.get("type") == "break":
+            parts.append("\n")
+        elif entry.get("type") == "text":
+            parts.append(sanitize_pdf_text(entry.get("text") or ""))
+    return "".join(parts)
+
+
+def _merge_rich_text_line_chars(chars: list[tuple[str, Dict[str, Any]]]) -> list[Dict[str, Any]]:
+    spans: list[Dict[str, Any]] = []
+    current_style: Optional[Dict[str, Any]] = None
+    current_chars: list[str] = []
+
+    def flush() -> None:
+        nonlocal current_style, current_chars
+        if current_style is None or not current_chars:
+            return
+        span = dict(current_style)
+        span["text"] = "".join(current_chars)
+        spans.append(span)
+        current_style = None
+        current_chars = []
+
+    for character, style in chars:
+        next_style = dict(style)
+        if current_style is None or _style_run_signature(next_style) != _style_run_signature(current_style):
+            flush()
+            current_style = next_style
+        current_chars.append(character)
+
+    flush()
+    return spans
+
+
+def wrap_rich_text_layout_ops(
+    ops: list[Dict[str, Any]],
+    max_width: float,
+) -> list[list[Dict[str, Any]]]:
+    if max_width <= 0:
+        return []
+
+    font_cache: Dict[tuple[Any, ...], fitz.Font] = {}
+    lines: list[list[tuple[str, Dict[str, Any]]]] = []
+    current_chars: list[tuple[str, Dict[str, Any]]] = []
+    current_width = 0.0
+    last_break_index: Optional[int] = None
+
+    def finalize_current_line() -> None:
+        nonlocal current_chars, current_width, last_break_index
+        lines.append(list(current_chars))
+        current_chars = []
+        current_width = 0.0
+        last_break_index = None
+
+    def process_char(character: str, style: Dict[str, Any]) -> None:
+        nonlocal current_width, last_break_index
+        char_width = _measure_style_run_text_width(character, style, font_cache)
+        if current_chars and (current_width + char_width) > (max_width + 0.01):
+            if last_break_index is not None and last_break_index > 0:
+                overflow_chars = current_chars[last_break_index:] + [(character, dict(style))]
+                current_chars[:] = current_chars[:last_break_index]
+                finalize_current_line()
+                for overflow_char, overflow_style in overflow_chars:
+                    process_char(overflow_char, overflow_style)
+                return
+            finalize_current_line()
+
+        current_chars.append((character, dict(style)))
+        current_width += char_width
+        if character.isspace():
+            last_break_index = len(current_chars)
+
+    for entry in ops:
+        if entry.get("type") == "break":
+            finalize_current_line()
+            continue
+        if entry.get("type") != "text":
+            continue
+        style = {
+            "font_family": entry.get("font_family"),
+            "font_source_name": entry.get("font_source_name"),
+            "font_size": float(entry.get("font_size") or 12),
+            "font_weight": entry.get("font_weight"),
+            "font_style": entry.get("font_style"),
+            "color": entry.get("color"),
+            "underline": bool(entry.get("underline")),
+            "span_rotation": entry.get("span_rotation") or 0.0,
+            "documentId": entry.get("documentId"),
+            "__documentId": entry.get("__documentId"),
+            "promotedFromExtraction": entry.get("promotedFromExtraction"),
+            "promotedDirty": entry.get("promotedDirty"),
+            "userAuthored": entry.get("userAuthored"),
+            "styleDirty": entry.get("styleDirty"),
+            "richTextHtml": entry.get("richTextHtml"),
+        }
+        for character in sanitize_pdf_text(entry.get("text") or ""):
+            if character == "\n":
+                finalize_current_line()
+                continue
+            process_char(character, style)
+
+    if current_chars or not lines:
+        finalize_current_line()
+
+    return [_merge_rich_text_line_chars(line_chars) for line_chars in lines]
+
+
+def build_wrapped_rich_text_span_layout(
+    ann: Dict[str, Any],
+    text_rect: fitz.Rect,
+    available_width: float,
+    padding_x: float,
+    padding_top: float,
+    line_height: float,
+    align: int,
+    font_ascender: float,
+) -> list[Dict[str, Any]]:
+    ops = parse_rich_text_layout_ops(ann)
+    if not ops:
+        return []
+
+    rendered_text = _rich_text_layout_ops_to_text(ops)
+    if _normalize_rich_text_compare_text(rendered_text) != _normalize_rich_text_compare_text(ann.get("text") or ""):
+        return []
+
+    wrapped_lines = wrap_rich_text_layout_ops(ops, available_width)
+    if not wrapped_lines:
+        return []
+
+    font_cache: Dict[tuple[Any, ...], fitz.Font] = {}
+    layout: list[Dict[str, Any]] = []
+    for line_index, line_runs in enumerate(wrapped_lines):
+        line_top = text_rect.y0 + padding_top + (line_index * line_height)
+        line_bottom = min(text_rect.y1, line_top + line_height)
+        line_rect = fitz.Rect(
+            text_rect.x0 + padding_x,
+            line_top,
+            text_rect.x1 - padding_x,
+            line_bottom,
+        )
+        baseline_y = line_top + (float(font_ascender) * float(ann.get("fontSize") or 12))
+        total_width = sum(
+            _measure_style_run_text_width(run.get("text") or "", run, font_cache)
+            for run in line_runs
+        )
+        draw_x = line_rect.x0
+        if align == 1:
+            draw_x = line_rect.x0 + max(0.0, (available_width - total_width) / 2.0)
+        elif align == 2:
+            draw_x = line_rect.x1 - total_width
+
+        spans: list[Dict[str, Any]] = []
+        cursor_x = draw_x
+        for run in line_runs:
+            run_text = sanitize_pdf_text(run.get("text") or "")
+            if run_text == "":
+                continue
+            run_width = _measure_style_run_text_width(run_text, run, font_cache)
+            spans.append({
+                **run,
+                "text": run_text,
+                "rect": fitz.Rect(cursor_x, line_top, cursor_x + max(run_width, 0.01), line_bottom),
+                "baseline_x": cursor_x,
+                "baseline_y": baseline_y,
+                "span_rotation": run.get("span_rotation") or 0.0,
+            })
+            cursor_x += run_width
+
+        layout.append({
+            "rect": line_rect,
+            "rotation": 0.0,
+            "spans": spans,
+        })
+
+    return layout
+
+
+class _RichTextUniformStyleInspector(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.text_parts: list[str] = []
+        self.text_segments: list[Dict[str, Any]] = []
+        self._state_stack: list[Dict[str, Any]] = [{
+            "font_style": "normal",
+            "font_weight": "400",
+            "underline": False,
+        }]
+
+    def _append_newline(self) -> None:
+        if self.text_parts and not self.text_parts[-1].endswith("\n"):
+            self.text_parts.append("\n")
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, Optional[str]]]) -> None:
+        lower_tag = str(tag or "").strip().lower()
+        if lower_tag == "br":
+            self._append_newline()
+            return
+
+        next_state = dict(self._state_stack[-1])
+        if lower_tag in {"i", "em"}:
+            next_state["font_style"] = "italic"
+        elif lower_tag in {"b", "strong"}:
+            next_state["font_weight"] = "700"
+        elif lower_tag == "u":
+            next_state["underline"] = True
+
+        attrs_map = {str(name or "").strip().lower(): str(value or "") for name, value in attrs}
+        next_state = _apply_inline_style_state(next_state, attrs_map.get("style", ""))
+        self._state_stack.append(next_state)
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, Optional[str]]]) -> None:
+        self.handle_starttag(tag, attrs)
+        if str(tag or "").strip().lower() != "br" and len(self._state_stack) > 1:
+            self._state_stack.pop()
+
+    def handle_endtag(self, tag: str) -> None:
+        lower_tag = str(tag or "").strip().lower()
+        if lower_tag in _RICH_TEXT_BLOCK_TAGS:
+            self._append_newline()
+        if len(self._state_stack) > 1:
+            self._state_stack.pop()
+
+    def handle_data(self, data: str) -> None:
+        if not data:
+            return
+        self.text_parts.append(data)
+        if data.strip():
+            self.text_segments.append({
+                "text": data,
+                **dict(self._state_stack[-1]),
+            })
+
+    def normalized_text(self) -> str:
+        return _normalize_rich_text_compare_text("".join(self.text_parts))
+
+
+def resolve_uniform_rich_text_styles(ann: Dict[str, Any], text: str) -> Dict[str, Any]:
+    rich_html = sanitize_rich_text_html(ann.get("richTextHtml") or "").strip()
+    if not rich_html:
+        return {}
+
+    parser = _RichTextUniformStyleInspector()
+    try:
+        parser.feed(rich_html)
+        parser.close()
+    except Exception:
+        return {}
+
+    if parser.normalized_text() != _normalize_rich_text_compare_text(text):
+        return {}
+
+    segments = [
+        segment
+        for segment in parser.text_segments
+        if sanitize_pdf_text(segment.get("text") or "").strip()
+    ]
+    if not segments:
+        return {}
+
+    all_italic = all(is_italic_style(segment.get("font_style")) for segment in segments)
+    all_oblique = all(
+        str(segment.get("font_style") or "").strip().lower() == "oblique"
+        for segment in segments
+    )
+    all_bold = all(is_bold_weight(segment.get("font_weight")) for segment in segments)
+    all_underline = all(bool(segment.get("underline")) for segment in segments)
+
+    result: Dict[str, Any] = {}
+    if all_italic:
+        result["font_style"] = "oblique" if all_oblique else "italic"
+    if all_bold:
+        result["font_weight"] = "700"
+    if all_underline:
+        result["underline"] = True
+    return result
 
 
 def has_single_run_rich_text(ann: Dict[str, Any], text: str) -> bool:
@@ -778,8 +1777,13 @@ def resolve_annotation_font_style(ann: Dict[str, Any]) -> str:
     if is_italic_style(font_style):
         return font_style
 
-    rich_html = str(ann.get("richTextHtml") or "").strip().lower()
     text = sanitize_pdf_text(ann.get("text") or "")
+    uniform_styles = resolve_uniform_rich_text_styles(ann, text)
+    uniform_font_style = str(uniform_styles.get("font_style") or "").strip()
+    if is_italic_style(uniform_font_style):
+        return uniform_font_style
+
+    rich_html = str(ann.get("richTextHtml") or "").strip().lower()
     if rich_html and has_single_run_rich_text(ann, text):
         if "font-style:italic" in rich_html or "font-style: italic" in rich_html:
             return "italic"
@@ -793,6 +1797,12 @@ def resolve_annotation_font_weight(ann: Dict[str, Any]) -> str:
     font_weight = str(ann.get("fontWeight") or "").strip() or "normal"
     if is_bold_weight(font_weight):
         return font_weight
+
+    text = str(ann.get("text") or "")
+    uniform_styles = resolve_uniform_rich_text_styles(ann, text)
+    uniform_font_weight = str(uniform_styles.get("font_weight") or "").strip()
+    if is_bold_weight(uniform_font_weight):
+        return uniform_font_weight
 
     rich_html = str(ann.get("richTextHtml") or "").strip().lower()
     text = str(ann.get("text") or "")
@@ -810,6 +1820,11 @@ def resolve_annotation_font_weight(ann: Dict[str, Any]) -> str:
 
 def resolve_annotation_underline(ann: Dict[str, Any]) -> bool:
     if bool(ann.get("underline")):
+        return True
+
+    text = str(ann.get("text") or "")
+    uniform_styles = resolve_uniform_rich_text_styles(ann, text)
+    if bool(uniform_styles.get("underline")):
         return True
 
     rich_html = str(ann.get("richTextHtml") or "").strip().lower()
@@ -841,6 +1856,17 @@ def is_italic_style(value: Any) -> bool:
 
 
 def resolve_embedded_font_entry(ann: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if (
+        bool(ann.get("promotedFromExtraction"))
+        and (
+            bool(ann.get("promotedDirty"))
+            or bool(ann.get("userAuthored"))
+            or bool(ann.get("styleDirty"))
+            or bool(str(ann.get("richTextHtml") or "").strip())
+        )
+    ):
+        return None
+
     document_id = ann.get("__documentId") or ann.get("documentId")
     metadata = load_embedded_font_metadata(document_id)
     if not metadata:
@@ -930,11 +1956,6 @@ def should_use_htmlbox_for_text(ann: Dict[str, Any], embedded_font_entry: Option
     rich_html = str(ann.get("richTextHtml") or "").strip()
     text = str(ann.get("text") or "")
     if rich_html and not has_single_run_rich_text(ann, text):
-        # Edited promoted-extraction paragraphs already carry explicit saved
-        # line breaks in `text`; replay them with direct line drawing so PyMuPDF's
-        # htmlbox renderer does not introduce browser-style word-spacing drift.
-        if bool(ann.get("promotedFromExtraction")) and bool(ann.get("promotedDirty")):
-            return False
         return True
     if not rich_html:
         return False
@@ -1235,7 +2256,11 @@ def normalize_exact_source_line_layout(
                 "font_size": float(span.get("fontSize") or span.get("font_size") or font_size or 0),
                 "font_weight": str(span.get("fontWeight") or span.get("font_weight") or ann.get("fontWeight") or "400"),
                 "font_style": str(span.get("fontStyle") or span.get("font_style") or ann.get("fontStyle") or "normal"),
-                "color": str(span.get("color") or ann.get("textColor") or "#000000"),
+                "color": str(
+                    (span.get("hex_color") if span.get("hex_color") is not None else span.get("color"))
+                    or ann.get("textColor")
+                    or "#000000"
+                ),
                 "underline": bool(span.get("underline")),
                 "rotation": span.get("rotation"),
                 "direction": span.get("direction"),
@@ -1310,7 +2335,8 @@ def normalize_exact_source_line_layout(
         dominant_source_font_style = str(dominant_source_span.get("font_style") or "").strip() or None
         dominant_source_underline = bool(dominant_source_span.get("underline"))
 
-    force_annotation_font_family = (
+    style_dirty = bool(ann.get("styleDirty"))
+    force_annotation_font_family = style_dirty and (
         bool(raw_annotation_font_family or raw_annotation_font_source_name)
         and (
             not dominant_source_font_family
@@ -1318,17 +2344,17 @@ def normalize_exact_source_line_layout(
             or normalize_exact_font_family(annotation_font_source_name) != normalize_exact_font_family(dominant_source_font_family)
         )
     )
-    force_annotation_text_color = (
+    force_annotation_text_color = style_dirty and (
         bool(annotation_text_color)
         and bool(dominant_source_color)
         and annotation_text_color.lower() != dominant_source_color.lower()
     )
-    force_annotation_font_weight = (
+    force_annotation_font_weight = style_dirty and (
         bool(raw_annotation_font_weight)
         and bool(dominant_source_font_weight)
         and annotation_font_weight.lower() != dominant_source_font_weight.lower()
     )
-    force_annotation_font_style = (
+    force_annotation_font_style = style_dirty and (
         bool(raw_annotation_font_style)
         and bool(dominant_source_font_style)
         and annotation_font_style.lower() != dominant_source_font_style.lower()
@@ -1340,7 +2366,7 @@ def normalize_exact_source_line_layout(
         except Exception:
             dominant_source_font_size = None
     font_size_tolerance = max(0.5, float(font_size or 0.0) * 0.02)
-    force_annotation_font_size = (
+    force_annotation_font_size = style_dirty and (
         float(font_size or 0.0) > 0
         and dominant_source_font_size is not None
         and abs(float(font_size) - float(dominant_source_font_size)) > font_size_tolerance
@@ -2048,6 +3074,13 @@ def _measure_style_run_text_width(
         "fontStyle": style.get("font_style"),
         "textColor": style.get("color"),
         "underline": style.get("underline"),
+        "documentId": style.get("documentId"),
+        "__documentId": style.get("__documentId"),
+        "promotedFromExtraction": style.get("promotedFromExtraction"),
+        "promotedDirty": style.get("promotedDirty"),
+        "userAuthored": style.get("userAuthored"),
+        "styleDirty": style.get("styleDirty"),
+        "richTextHtml": style.get("richTextHtml"),
     }
     font_size = float(style.get("font_size") or 0.0)
     if font_size <= 0:
@@ -2184,6 +3217,9 @@ def _map_source_styles_onto_saved_text(
             "color": span.get("color") or base_style.get("color"),
             "underline": bool(span.get("underline")) if span.get("underline") is not None else bool(base_style.get("underline")),
             "span_rotation": span.get("span_rotation") or base_style.get("span_rotation") or 0.0,
+            "documentId": base_style.get("documentId"),
+            "__documentId": base_style.get("__documentId"),
+            "promotedFromExtraction": base_style.get("promotedFromExtraction"),
         }
         for character in span_text:
             source_chars.append(character)
@@ -2384,6 +3420,9 @@ def build_dirty_promoted_style_mapped_span_layout(
             "color": line_entry.get("color") or ann.get("textColor") or "#000000",
             "underline": bool(line_entry.get("underline")) if line_entry.get("underline") is not None else bool(ann.get("underline")),
             "span_rotation": line_entry.get("rotation") or 0.0,
+            "documentId": ann.get("documentId"),
+            "__documentId": ann.get("__documentId"),
+            "promotedFromExtraction": ann.get("promotedFromExtraction"),
         }
 
         if _should_use_authoritative_dirty_promoted_base_style(
@@ -2404,7 +3443,7 @@ def build_dirty_promoted_style_mapped_span_layout(
 
         uniform_source_color, source_color_value = _source_line_uses_uniform_value(source_line_spans, "color")
         base_color_value = _normalized_style_value(base_style.get("color"))
-        if uniform_source_color and base_color_value and base_color_value != source_color_value:
+        if bool(ann.get("styleDirty")) and uniform_source_color and base_color_value and base_color_value != source_color_value:
             for run in mapped_runs:
                 run["color"] = base_style.get("color")
 
@@ -2687,8 +3726,12 @@ def draw_text_using_exact_source_spans(
             _word_extra_spacing = 0.0
             if span_target_extent > 1.0:
                 _measured_w = span_font.text_length(span_text, fontsize=span_font_size)
-                if _measured_w > span_target_extent:
-                    _space_w_reserve = 0.0 if span_rotation else span_font.text_length(" ", fontsize=span_font_size)
+                if _measured_w > span_target_extent + 0.05:
+                    _space_w_reserve = (
+                        0.0
+                        if span_rotation or " " not in span_text
+                        else span_font.text_length(" ", fontsize=span_font_size)
+                    )
                     _scale_target = max(
                         span_target_extent - _space_w_reserve,
                         span_target_extent * 0.95,
@@ -2853,23 +3896,20 @@ def normalized_opacity(value: Any) -> float:
 
 
 def wrap_text_to_width(font: fitz.Font, text: str, font_size: float, max_width: float) -> list[str]:
-    # Mirror the edit-new.blade.php renderer (buildEditedLines / renderPlainEditorHTML):
-    # single "\n" is a soft break that reflows to a space; only "\n\n+" is a hard
-    # paragraph break that yields a visible blank line. Otherwise the downloaded PDF
-    # shows paragraph gaps between every wrapped source line.
+    # Mirror the edit-new.blade.php renderer (renderPlainEditorHTML):
+    #   const normalized = String(text ?? '')
+    #       .replace(/\r\n?/g, '\n')
+    #       .replace(/\n{2,}/g, '\n');   // collapse 2+ consecutive newlines to 1
+    #   const paragraphs = normalized.split('\n');
+    #   innerHtml = paragraphs.map(p => escapeHtml(p) || '<br>').join('<br>');
+    # Every "\n" is therefore a HARD line break; multiple consecutive newlines
+    # collapse to a single hard break (no extra blank line). Leading whitespace
+    # inside each paragraph is preserved (white-space: pre-wrap in the editor),
+    # which matters for indented numbered lists like "    1. blah".
     safe_text = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
-    normalized = (
-        safe_text
-        .replace("\n\n", "\x00")  # mark hard breaks
-    )
-    # Collapse any remaining 2+ consecutive \n (already caught by the 2-char replace
-    # but handle 3+ explicitly in case of e.g. "\n\n\n").
-    while "\n\x00" in normalized:
-        normalized = normalized.replace("\n\x00", "\x00")
-    while "\x00\n" in normalized:
-        normalized = normalized.replace("\x00\n", "\x00")
-    normalized = normalized.replace("\n", " ").replace("\x00", "\n")
-    paragraphs = normalized.split("\n")
+    while "\n\n" in safe_text:
+        safe_text = safe_text.replace("\n\n", "\n")
+    paragraphs = safe_text.split("\n")
     lines: list[str] = []
 
     def push_wrapped_word(word: str) -> None:
@@ -2884,32 +3924,85 @@ def wrap_text_to_width(font: fitz.Font, text: str, font_size: float, max_width: 
         if segment:
             lines.append(segment)
 
-    for idx, paragraph in enumerate(paragraphs):
-        words = [word for word in paragraph.split() if word]
-        if not words:
+    for paragraph in paragraphs:
+        if paragraph == "":
             lines.append("")
-        else:
-            current_line = ""
-            for word in words:
-                candidate = f"{current_line} {word}".strip() if current_line else word
-                if not current_line or font.text_length(candidate, fontsize=font_size) <= max_width:
-                    current_line = candidate
-                    continue
-
-                if current_line:
-                    lines.append(current_line)
-                    current_line = ""
-
-                if font.text_length(word, fontsize=font_size) <= max_width:
-                    current_line = word
+            continue
+        # Preserve leading whitespace (e.g. "    1. blah") so indented lines
+        # don't collapse flush-left after the editor → PDF round-trip.
+        leading = ""
+        for ch in paragraph:
+            if ch == " " or ch == "\t":
+                leading += ch
+            else:
+                break
+        rest = paragraph[len(leading):]
+        # Tokenize the remainder while preserving runs of spaces between words
+        # (so "3.  ok" keeps both spaces, matching white-space: pre-wrap in
+        # the editor). Tokens alternate between word and whitespace runs; the
+        # wrapping logic below treats a whitespace run as part of the
+        # following word's break candidate.
+        tokens: list[str] = []
+        if rest:
+            buf = ""
+            in_space = False
+            for ch in rest:
+                is_space = (ch == " " or ch == "\t")
+                if buf == "":
+                    buf = ch
+                    in_space = is_space
+                elif is_space == in_space:
+                    buf += ch
                 else:
-                    push_wrapped_word(word)
-
+                    tokens.append(buf)
+                    buf = ch
+                    in_space = is_space
+            if buf:
+                tokens.append(buf)
+        if not tokens:
+            # Paragraph was only whitespace.
+            lines.append(leading)
+            continue
+        # Reassemble into [(separator_before_word, word)] pairs. The first
+        # word's separator is "" (or the leading whitespace if the rest
+        # started with spaces).
+        pairs: list[tuple[str, str]] = []
+        i = 0
+        sep = ""
+        if tokens and (tokens[0].startswith(" ") or tokens[0].startswith("\t")):
+            sep = tokens[0]
+            i = 1
+        while i < len(tokens):
+            word = tokens[i]
+            i += 1
+            next_sep = ""
+            if i < len(tokens) and (tokens[i].startswith(" ") or tokens[i].startswith("\t")):
+                next_sep = tokens[i]
+                i += 1
+            pairs.append((sep, word))
+            sep = next_sep
+        if not pairs:
+            lines.append(leading + sep)
+            continue
+        first_sep, first_word = pairs[0]
+        current_line = leading + first_sep + first_word
+        if font.text_length(current_line, fontsize=font_size) > max_width:
+            push_wrapped_word(current_line)
+            current_line = ""
+        for sep_before, word in pairs[1:]:
+            candidate = f"{current_line}{sep_before}{word}" if current_line else word
+            if font.text_length(candidate, fontsize=font_size) <= max_width:
+                current_line = candidate
+                continue
             if current_line:
                 lines.append(current_line)
-
-        if idx < len(paragraphs) - 1:
-            lines.append("")
+                current_line = ""
+            if font.text_length(word, fontsize=font_size) <= max_width:
+                current_line = word
+            else:
+                push_wrapped_word(word)
+        if current_line:
+            lines.append(current_line)
 
     return lines or [""]
 
@@ -3418,6 +4511,20 @@ def draw_shape(page: fitz.Page, ann: Dict[str, Any]) -> None:
     stroke_width = float(ann.get("strokeWidth", 2.0) or 2.0)
     rotation = float(ann.get("rotation", 0.0) or 0.0)
 
+    def _clamp01(value: Any, fallback: float) -> float:
+        try:
+            n = float(value)
+        except Exception:
+            return fallback
+        if n < 0.0:
+            return 0.0
+        if n > 1.0:
+            return 1.0
+        return n
+
+    stroke_opacity = _clamp01(ann.get("strokeOpacity", opacity), opacity)
+    fill_opacity = _clamp01(ann.get("fillOpacity", opacity), opacity)
+
     stroke = None if ann.get("strokeTransparent") else hex_to_rgb(ann.get("strokeColor") or "#000000")
     fill = None if ann.get("fillTransparent") else hex_to_rgb(ann.get("fillColor") or "#ffffff")
 
@@ -3448,7 +4555,10 @@ def draw_shape(page: fitz.Page, ann: Dict[str, Any]) -> None:
         s = page.new_shape()
         for p1, p2 in lines:
             s.draw_line(p1, p2)
-        s.finish(color=stroke, width=stroke_width, lineCap=1, stroke_opacity=opacity)
+        cap_value = (ann.get("lineCap") or "round")
+        cap_lookup = {"butt": 0, "round": 1, "square": 2}
+        line_cap = cap_lookup.get(str(cap_value).lower(), 1)
+        s.finish(color=stroke, width=stroke_width, lineCap=line_cap, stroke_opacity=stroke_opacity)
         s.commit(overlay=True)
 
     def draw_poly(points, close_path=True, line_join=1) -> None:
@@ -3461,8 +4571,8 @@ def draw_shape(page: fitz.Page, ann: Dict[str, Any]) -> None:
             closePath=close_path,
             lineCap=1,
             lineJoin=line_join,
-            stroke_opacity=opacity,
-            fill_opacity=opacity,
+            stroke_opacity=stroke_opacity,
+            fill_opacity=fill_opacity,
         )
         s.commit(overlay=True)
 
@@ -3511,21 +4621,49 @@ def draw_shape(page: fitz.Page, ann: Dict[str, Any]) -> None:
         p2 = rp(0.40, 0.75)
         p3 = rp(0.85, 0.15)
         s.draw_polyline([p1, p2, p3])
-        s.finish(color=stroke, fill=None, width=stroke_width, lineCap=1, lineJoin=1, stroke_opacity=opacity)
+        s.finish(color=stroke, fill=None, width=stroke_width, lineCap=1, lineJoin=1, stroke_opacity=stroke_opacity)
         s.commit(overlay=True)
         return
 
     if shape_type == "star":
-        points = [
-            rp(0.50, 0.05), rp(0.61, 0.38), rp(0.95, 0.38), rp(0.68, 0.58), rp(0.79, 0.91),
-            rp(0.50, 0.71), rp(0.21, 0.91), rp(0.32, 0.58), rp(0.05, 0.38), rp(0.39, 0.38),
-        ]
+        # Match the frontend canvas star: outerRadius = min(w,h)/2 inscribed in
+        # the annotation bounding box, innerRadius = outerRadius * 0.45, first
+        # point at the top (angle -pi/2), 10 vertices alternating outer/inner.
+        cx_n, cy_n = 0.5, 0.5
+        rect_w = max(1e-6, rect.width)
+        rect_h = max(1e-6, rect.height)
+        min_dim = min(rect_w, rect_h)
+        outer_x = (min_dim / 2.0) / rect_w
+        outer_y = (min_dim / 2.0) / rect_h
+        inner_ratio = 0.45
+        points = []
+        for i in range(10):
+            r_x = outer_x if i % 2 == 0 else outer_x * inner_ratio
+            r_y = outer_y if i % 2 == 0 else outer_y * inner_ratio
+            angle = (-math.pi / 2.0) + (i * math.pi / 5.0)
+            px = cx_n + math.cos(angle) * r_x
+            py = cy_n + math.sin(angle) * r_y
+            points.append(rp(px, py))
         points.append(points[0])
         draw_poly(points, close_path=True, line_join=1)
         return
 
     if shape_type == "polygon":
-        points = [rp(0.50, 0.05), rp(0.90, 0.27), rp(0.90, 0.73), rp(0.50, 0.95), rp(0.10, 0.73), rp(0.10, 0.27)]
+        raw_points = ann.get("polygonPoints")
+        unit_points = []
+        if isinstance(raw_points, list):
+            for point in raw_points:
+                if not isinstance(point, dict):
+                    continue
+                try:
+                    px = max(0.0, min(1.0, float(point.get("x", 0.0))))
+                    py = max(0.0, min(1.0, float(point.get("y", 0.0))))
+                except Exception:
+                    continue
+                unit_points.append((px, py))
+        if len(unit_points) < 3:
+            unit_points = [(0.50, 0.05), (0.90, 0.27), (0.90, 0.73), (0.50, 0.95), (0.10, 0.73), (0.10, 0.27)]
+        points = [rp(px, py) for px, py in unit_points]
         points.append(points[0])
         draw_poly(points, close_path=True, line_join=1)
         return
@@ -3538,8 +4676,10 @@ def draw_shape(page: fitz.Page, ann: Dict[str, Any]) -> None:
         draw_open_lines([(rp(line_start_x, line_start_y), rp(line_end_x, line_end_y))])
         return
 
-    # Default rectangle
-    points = [rp(0.05, 0.05), rp(0.95, 0.05), rp(0.95, 0.95), rp(0.05, 0.95), rp(0.05, 0.05)]
+    # Default rectangle: use the full annotation bounds. The editor stores the
+    # square/rectangle box as the intended final geometry; insetting by 5% on
+    # each side shrinks exported bars relative to the DOM preview.
+    points = [rp(0.0, 0.0), rp(1.0, 0.0), rp(1.0, 1.0), rp(0.0, 1.0), rp(0.0, 0.0)]
     draw_poly(points, close_path=True, line_join=1)
 
 
@@ -3609,41 +4749,48 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
     _ann_id = str(ann.get("id") or "")
     if "leader-for-" in _ann_id:
         return
-    text = sanitize_pdf_text(ann.get("text") or "")
+    render_ann = resolve_promoted_source_typography_annotation(ann)
+    text = sanitize_pdf_text(render_ann.get("text") or "")
     if not text:
         return
     # Always use `fontSize` (PDF points, set by the editor as px/currentScale) rather than
     # `requestedFontSize` which stores the browser screen-pixel value (fontSize × zoom factor)
     # and must not be treated as PDF points.
-    size = float(ann.get("fontSize", 12) or 12)
+    size = float(render_ann.get("fontSize", 12) or 12)
     try:
-        line_height = float(ann.get("lineHeight") or 0)
+        line_height = float(render_ann.get("lineHeight") or 0)
     except Exception:
         line_height = 0.0
-    if line_height <= 0:
-        line_height = size * 1.2
-    color = hex_to_rgb(ann.get("textColor") or "#000000")
-    background = str(ann.get("backgroundColor") or "").strip().lower()
+    color = hex_to_rgb(render_ann.get("textColor") or "#000000")
+    background = str(render_ann.get("backgroundColor") or "").strip().lower()
     background_color = None if not background or background == "transparent" else hex_to_rgb(background)
-    opacity = normalized_opacity(ann.get("opacity", 1.0) or 1.0)
-    rotation = normalize_rotation_degrees(ann.get("rotation", 0.0))
-    fontname = resolve_text_fontname(ann)
-    align = parse_text_align(ann.get("textAlign"))
-    preserve_extracted_lines = should_preserve_promoted_source_lines(ann, text)
+    background_color = substitute_display_bg_for_invisible_text(
+        render_ann.get("textColor"), background, background_color, str(ann.get("id") or "")
+    )
+    opacity = normalized_opacity(render_ann.get("opacity", 1.0) or 1.0)
+    rotation = normalize_rotation_degrees(render_ann.get("rotation", 0.0))
+    fontname = resolve_text_fontname(render_ann)
+    align = parse_text_align(render_ann.get("textAlign"))
+    preserve_extracted_lines = should_preserve_promoted_source_lines(render_ann, text)
+    if preserve_extracted_lines:
+        if line_height <= 0:
+            line_height = size * 1.2
+    else:
+        line_height = max(line_height, size * 1.18)
     rect = to_rect(page, ann)
     custom_font = None
     html_archive = None
-    embedded_font_entry = resolve_embedded_font_entry(ann)
-    prefer_pdf_font_text_rendering = should_prefer_pdf_font_text_rendering(ann, embedded_font_entry, text)
-    fontfile = None if prefer_pdf_font_text_rendering else resolve_text_fontfile(ann)
+    embedded_font_entry = resolve_embedded_font_entry(render_ann)
+    prefer_pdf_font_text_rendering = should_prefer_pdf_font_text_rendering(render_ann, embedded_font_entry, text)
+    fontfile = None if prefer_pdf_font_text_rendering else resolve_text_fontfile(render_ann)
     if fontfile:
         try:
             custom_font = fitz.Font(fontfile=fontfile)
-            fontname = resolve_text_font_resource_name(ann)
+            fontname = resolve_text_font_resource_name(render_ann)
             page.insert_font(fontname=fontname, fontfile=fontfile)
         except Exception:
             custom_font = None
-            fontname = resolve_text_fontname(ann)
+            fontname = resolve_text_fontname(render_ann)
     if rect is not None and not rect.is_empty:
         pivot = fitz.Point((rect.x0 + rect.x1) / 2.0, (rect.y0 + rect.y1) / 2.0)
         morph = build_rotation_morph(rotation, pivot)
@@ -3718,7 +4865,7 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
             return
         if (
             abs(rotation) < 1e-6
-            and should_use_htmlbox_for_text(ann, embedded_font_entry)
+            and should_use_htmlbox_for_text(render_ann, embedded_font_entry)
             and not prefer_pdf_font_text_rendering
         ):
             try:
@@ -3727,6 +4874,7 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
                 html_archive = None
         preview_font = custom_font or fitz.Font(fontname)
         use_flush_dirty_promoted_padding = bool(ann.get("promotedFromExtraction")) and bool(ann.get("promotedDirty"))
+        use_flush_user_authored_padding = bool(ann.get("userAuthored")) or bool(ann.get("userCreated"))
         use_flush_single_line_padding = should_drop_preview_side_padding_for_single_line_text(
             ann,
             text,
@@ -3739,16 +4887,32 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
         use_flush_preview_padding = (
             preserve_extracted_lines
             or use_flush_dirty_promoted_padding
+            or use_flush_user_authored_padding
             or use_flush_single_line_padding
         )
         preview_padding_x = 0.0 if use_flush_preview_padding else min(6.0, max(1.0, rect.width * 0.03))
         preview_padding_top = 0.0 if use_flush_preview_padding else min(2.0, max(0.5, rect.height * 0.01))
         preview_available_width = max(1.0, rect.width - (preview_padding_x * 2.0))
+        rich_layout_ops = parse_rich_text_layout_ops(ann)
+        rich_layout_text_matches = (
+            bool(rich_layout_ops)
+            and _normalize_rich_text_compare_text(_rich_text_layout_ops_to_text(rich_layout_ops))
+            == _normalize_rich_text_compare_text(text)
+        )
+        rich_wrapped_lines = (
+            wrap_rich_text_layout_ops(rich_layout_ops, preview_available_width)
+            if rich_layout_text_matches and not preserve_extracted_lines
+            else []
+        )
         explicit_text_lines = split_text_preserving_manual_line_breaks(text)
         preview_lines = (
             explicit_text_lines
             if preserve_extracted_lines
-            else wrap_text_to_width(preview_font, text, size, preview_available_width)
+            else (
+                ["" for _ in rich_wrapped_lines]
+                if rich_wrapped_lines
+                else wrap_text_to_width(preview_font, text, size, preview_available_width)
+            )
         )
         ascender, descender = resolve_font_vertical_metrics(preview_font)
         effective_line_height = line_height if line_height > 0 else (size * (ascender + descender))
@@ -3762,9 +4926,43 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
             padding_top=preview_padding_top,
             padding_bottom=max(1.0, size * descender * 0.35),
         )
+        if rich_wrapped_lines:
+            rich_span_layout = build_wrapped_rich_text_span_layout(
+                ann,
+                text_rect,
+                preview_available_width,
+                preview_padding_x,
+                preview_padding_top,
+                effective_line_height,
+                align,
+                ascender,
+            )
+            if rich_span_layout and draw_text_using_exact_source_spans(
+                page,
+                ann,
+                rich_span_layout,
+                opacity,
+                morph,
+            ):
+                return
         if html_archive is not None:
-            padding_x = 0.0 if use_flush_preview_padding else 6.0
-            padding_y = 0.0 if use_flush_preview_padding else 2.0
+            # Rich-html annotations (editor-authored with per-selection
+            # formatting) have no horizontal/vertical padding in the browser's
+            # rich-html-item overlay — the contenteditable fills the full
+            # pdfWidth/pdfHeight box. Using 6pt padding here shrinks the
+            # effective text width versus the editor and causes word-wrap
+            # points to differ between the on-screen view and the exported
+            # PDF (off by roughly one word per line). Zero the padding for
+            # that case so the PDF wrap matches what the user saw.
+            has_rich_html_payload = bool(
+                sanitize_rich_text_html(ann.get("richTextHtml") or "").strip()
+            )
+            if use_flush_preview_padding or has_rich_html_payload:
+                padding_x = 0.0
+                padding_y = 0.0
+            else:
+                padding_x = 6.0
+                padding_y = 2.0
             # For promoted-extraction annotations, text must never be clipped on
             # the right: the CSS uses white-space:pre / no wrapping, so if the
             # render font is slightly wider than the source PDF font the last
@@ -3782,20 +4980,52 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
                 inner_x1,
                 text_rect.y1 - padding_y,
             )
+            # Honor verticalAlign (middle / bottom) by shrinking the htmlbox
+            # downward from the top so the rendered text block sits where the
+            # editor's flex column-justify-content placed it. MuPDF's HTML
+            # engine has no usable flex/table-cell vertical centering, so we
+            # pre-compute spare vertical space here.
+            v_align = str(ann.get("verticalAlign") or "top").strip().lower()
+            if v_align in {"middle", "center", "bottom"}:
+                approx_line_count = max(1, len(rich_wrapped_lines or preview_lines or [""]))
+                # Use actual rendered glyph block height (ascender+descender +
+                # inter-line gaps), not lines*line_height, so the offset never
+                # pushes content past inner_rect.y1 and clips the text.
+                approx_text_height = (max(0, approx_line_count - 1) * effective_line_height) + (size * (ascender + descender))
+                spare = inner_rect.height - approx_text_height
+                if spare > 0.5:
+                    offset = spare * 0.5 if v_align in {"middle", "center"} else spare
+                    inner_rect = fitz.Rect(
+                        inner_rect.x0,
+                        inner_rect.y0 + offset,
+                        inner_rect.x1,
+                        inner_rect.y1,
+                    )
             if inner_rect.width > 1 and inner_rect.height > 1:
-                html_box = build_annotation_htmlbox_markup(ann, text)
-                html_css = build_annotation_htmlbox_css(ann, size, opacity)
+                html_box = build_annotation_htmlbox_markup(render_ann, text)
+                html_css = build_annotation_htmlbox_css(render_ann, size, opacity)
+                # When the annotation carries per-selection rich HTML
+                # (bold/italic/font/colour spans baked in by the editor) we
+                # MUST commit to the htmlbox path: falling through to the
+                # plain insert_text loop below silently strips every span
+                # style.  Allow insert_htmlbox to scale the content down so
+                # it still fits the box and always return on success even if
+                # the result was scaled or barely overflowed.
+                has_rich_html = has_rich_html_payload
+                effective_scale_low = 0.1 if has_rich_html else 1
                 try:
                     spare_height, scale = page.insert_htmlbox(
                         inner_rect,
                         html_box,
                         css=html_css,
                         archive=html_archive,
-                        scale_low=1,
+                        scale_low=effective_scale_low,
                         opacity=opacity,
                         overlay=True,
                     )
                     if spare_height >= -0.001 and scale >= 0.999:
+                        return
+                    if has_rich_html and scale > 0:
                         return
                 except Exception:
                     pass
@@ -3805,6 +5035,28 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
         available_width = preview_available_width
         lines = preview_lines
         baseline_y = text_rect.y0 + padding_top + (size * ascender)
+        # Vertical alignment offset: shift the first-line baseline down so the
+        # block of `lines` lands centered or bottom-aligned inside text_rect,
+        # matching the editor's flex column-justify-content placement.
+        v_align_plain = str(ann.get("verticalAlign") or "top").strip().lower()
+        if v_align_plain in {"middle", "center", "bottom"} and lines:
+            # Use the actual rendered glyph block height: (n-1) line gaps plus
+            # one full line of ascender+descender. Using `lines*line_height`
+            # underestimates the visual height when ascender+descender exceeds
+            # line_height (eg. Garamond 29pt has ~39pt glyph height vs 34pt
+            # line_height) and the resulting offset pushes the baseline so far
+            # down that line_baseline_y + descender > text_rect.y1, which trips
+            # the per-line break below and yields a blank PDF.
+            glyph_block_height = (max(0, len(lines) - 1) * effective_line_height) + (size * (ascender + descender))
+            avail = (text_rect.y1 - text_rect.y0) - padding_top
+            spare = avail - glyph_block_height
+            if spare > 0.5:
+                offset = spare * 0.5 if v_align_plain in {"middle", "center"} else spare
+                # Clamp so the first line's bottom (baseline + descender) still
+                # fits within text_rect.y1 — otherwise the loop's overflow
+                # guard breaks out and nothing is drawn.
+                max_offset = max(0.0, text_rect.y1 - (baseline_y + size * descender))
+                baseline_y += min(offset, max_offset)
 
         for line_index, line in enumerate(lines):
             line_baseline_y = baseline_y + (line_index * effective_line_height)
@@ -3916,7 +5168,7 @@ def draw_signature(page: fitz.Page, ann: Dict[str, Any]) -> None:
         return
 
     asset_file_path = resolve_annotation_image_path(ann)
-    if asset_file_path:
+    if asset_file_path and not is_direct_draw_annotation(ann):
         try:
             # Match the editor's resized box exactly. PyMuPDF keeps aspect ratio
             # by default, which would shrink one axis back toward the source image.
@@ -3925,15 +5177,148 @@ def draw_signature(page: fitz.Page, ann: Dict[str, Any]) -> None:
         except Exception:
             pass
 
+    image_bytes = load_annotation_image_bytes(ann)
+    if image_bytes is None and asset_file_path:
+        try:
+            page.insert_image(rect, filename=asset_file_path, overlay=True, keep_proportion=False)
+            return
+        except Exception:
+            return
+    if image_bytes is None:
+        return
+    # Layering for direct-draw (marker / pen tool) strokes is handled by the
+    # editor — see placeImageBackedAnnotationAtPageBox in edit-new.blade.php,
+    # which inserts the annotation in the array before the first text
+    # annotation. The exporter iterates in array order with overlay=True, so
+    # text annotations (which erase + re-stamp their bbox via draw_text)
+    # naturally render ON TOP of the marker, while shape annotations (drawn
+    # earlier in the loop) end up UNDERNEATH it. This matches the editor
+    # canvas draw order and keeps signatures/regular images on top as before.
+    page.insert_image(
+        rect,
+        stream=normalize_direct_draw_white_image_bytes(ann, image_bytes),
+        overlay=True,
+        keep_proportion=False,
+    )
+
+
+def is_direct_draw_annotation(ann: Dict[str, Any]) -> bool:
+    return str(ann.get("imageToolSource") or "").strip().lower() == "direct-draw"
+
+
+def load_annotation_image_bytes(ann: Dict[str, Any]) -> Optional[bytes]:
+    asset_file_path = resolve_annotation_image_path(ann)
+    if asset_file_path:
+        try:
+            with open(asset_file_path, "rb") as handle:
+                return handle.read()
+        except Exception:
+            pass
+
     data_url = str(ann.get("dataUrl") or "")
     if not data_url.startswith("data:image/"):
-        return
+        return None
     try:
         _, payload = data_url.split(",", 1)
-        img = base64.b64decode(payload)
+        return base64.b64decode(payload)
     except Exception:
-        return
-    page.insert_image(rect, stream=img, overlay=True, keep_proportion=False)
+        return None
+
+
+def normalize_direct_draw_white_image_bytes(ann: Dict[str, Any], image_bytes: bytes) -> bytes:
+    if Image is None or not image_bytes or not is_direct_draw_annotation(ann):
+        return image_bytes
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            rgba = image.convert("RGBA")
+            if not annotation_uses_white_direct_draw(ann, rgba):
+                return image_bytes
+            changed = False
+            pixels = rgba.load()
+            for y in range(rgba.height):
+                for x in range(rgba.width):
+                    r, g, b, a = pixels[x, y]
+                    if a <= 2:
+                        if a != 0 or r != 0 or g != 0 or b != 0:
+                            changed = True
+                        pixels[x, y] = (0, 0, 0, 0)
+                        continue
+                    if r != 255 or g != 255 or b != 255:
+                        changed = True
+                        pixels[x, y] = (255, 255, 255, a)
+            if not changed:
+                return image_bytes
+            output = io.BytesIO()
+            rgba.save(output, format="PNG")
+            return output.getvalue()
+    except Exception:
+        return image_bytes
+
+
+def annotation_uses_white_direct_draw(ann: Dict[str, Any], image: "Image.Image") -> bool:
+    declared_color = parse_annotation_hex_rgb(ann.get("drawStrokeColor"))
+    if declared_color is not None:
+        return is_near_white_rgb(declared_color)
+    return image_looks_like_white_direct_draw(image)
+
+
+def parse_annotation_hex_rgb(value: Any) -> Optional[tuple[int, int, int]]:
+    raw = str(value or "").strip()
+    if not raw.startswith("#"):
+        return None
+    hex_value = raw[1:]
+    if len(hex_value) == 3:
+        hex_value = "".join(ch * 2 for ch in hex_value)
+    if len(hex_value) != 6:
+        return None
+    try:
+        return (
+            int(hex_value[0:2], 16),
+            int(hex_value[2:4], 16),
+            int(hex_value[4:6], 16),
+        )
+    except Exception:
+        return None
+
+
+def is_near_white_rgb(rgb: tuple[int, int, int], threshold: int = 244, max_spread: int = 12) -> bool:
+    return min(rgb) >= threshold and (max(rgb) - min(rgb)) <= max_spread
+
+
+def image_looks_like_white_direct_draw(image: "Image.Image") -> bool:
+    weighted_alpha = 0
+    weighted_red = 0
+    weighted_green = 0
+    weighted_blue = 0
+    visible_samples = 0
+    bright_samples = 0
+
+    pixels = image.load()
+    for y in range(image.height):
+        for x in range(image.width):
+            r, g, b, a = pixels[x, y]
+            if a <= 15:
+                continue
+            weighted_alpha += a
+            weighted_red += r * a
+            weighted_green += g * a
+            weighted_blue += b * a
+            visible_samples += 1
+            if min(r, g, b) >= 208 and (max(r, g, b) - min(r, g, b)) <= 40:
+                bright_samples += 1
+
+    if weighted_alpha <= 0 or visible_samples <= 0:
+        return False
+
+    average_rgb = (
+        round(weighted_red / weighted_alpha),
+        round(weighted_green / weighted_alpha),
+        round(weighted_blue / weighted_alpha),
+    )
+    if is_near_white_rgb(average_rgb, threshold=232, max_spread=24):
+        return True
+
+    return (bright_samples / max(1, visible_samples)) >= 0.72
 
 
 def resolve_annotation_image_path(ann: Dict[str, Any]) -> Optional[str]:
@@ -3997,8 +5382,99 @@ def candidate_annotation_asset_paths(relative_path: str) -> list[str]:
     return candidates
 
 
+def annotation_layer_order(ann: Dict[str, Any]) -> int:
+    """Stable layering key for the export draw order.
+
+    Lower values are processed first (drawn underneath). The editor renders
+    text annotations in a DOM layer (rich-html-layer, z-index 4) that sits
+    above the canvas where direct-draw lives, so direct-draw is forced to be
+    visually below text in the editor. To keep editor and PDF in sync we
+    use the same order in the exporter:
+        0 — shapes / tables / erasers   (background marks)
+        1 — direct-draw (marker / pen)  (above shapes, below text)
+        2 — text                        (above marker, re-stamps its bbox)
+        3 — signatures and regular images (intentional foreground overlays)
+    A stable sort preserves the relative order within each layer so the
+    user's manual "send to back" / "bring to front" within a layer still
+    works.
+    """
+    if not isinstance(ann, dict):
+        return 2
+    kind = str(ann.get("type") or "").lower()
+    if kind in ("shape", "table", "eraser"):
+        return 0
+    if kind in ("image", "signature"):
+        return 1 if is_direct_draw_annotation(ann) else 3
+    return 2
+
+
+def _annotations_overlap_in_page_space(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
+    """True when two annotations are on the same page and their pdf bboxes overlap.
+
+    Works in the editor's pdf-lib convention (bottom-origin y); a positive
+    overlap in that space is equivalent to a positive overlap on the page.
+    """
+    try:
+        if int(a.get("pageIndex", -1)) != int(b.get("pageIndex", -2)):
+            return False
+        ax = float(a.get("pdfX") or 0.0)
+        ay = float(a.get("pdfY") or 0.0)
+        aw = float(a.get("pdfWidth") or 0.0)
+        ah = float(a.get("pdfHeight") or 0.0)
+        bx = float(b.get("pdfX") or 0.0)
+        by = float(b.get("pdfY") or 0.0)
+        bw = float(b.get("pdfWidth") or 0.0)
+        bh = float(b.get("pdfHeight") or 0.0)
+    except (TypeError, ValueError):
+        return False
+    if aw <= 0 or ah <= 0 or bw <= 0 or bh <= 0:
+        return False
+    return (ax < bx + bw) and (ax + aw > bx) and (ay < by + bh) and (ay + ah > by)
+
+
+def _suppress_promoted_source_erase_over_user_shapes(annotations: list) -> None:
+    """Avoid wiping out user-drawn shape backgrounds behind re-stamped text.
+
+    `erase_promoted_source_text_region` redacts the promoted text annotation's
+    current bbox with a white (or text-background-coloured) fill before
+    re-drawing the glyphs. That's correct when the text re-stamp needs to
+    cover its original extracted location, but after we re-sort so shapes
+    are drawn before text (see `annotation_layer_order`), the redaction now
+    falls on top of any user-drawn shape the text was dragged onto,
+    punching a white hole through the shape.
+
+    For each promoted-dirty text annotation that sits on top of a shape
+    (or table) annotation drawn earlier in this export pass, mark
+    `skipPromotedSourceErase` so the glyphs are stamped straight onto the
+    shape fill. The text itself is drawn by a separate code path below the
+    redact step, so skipping the redact does not affect text visibility.
+    """
+    if not isinstance(annotations, list):
+        return
+    for index, ann in enumerate(annotations):
+        if not isinstance(ann, dict):
+            continue
+        if str(ann.get("type") or "").lower() != "text":
+            continue
+        if not (bool(ann.get("promotedFromExtraction")) and bool(ann.get("promotedDirty"))):
+            continue
+        if bool(ann.get("skipPromotedSourceErase")):
+            continue
+        for earlier in annotations[:index]:
+            if not isinstance(earlier, dict):
+                continue
+            earlier_kind = str(earlier.get("type") or "").lower()
+            if earlier_kind not in ("shape", "table"):
+                continue
+            if _annotations_overlap_in_page_space(ann, earlier):
+                ann["skipPromotedSourceErase"] = True
+                break
+
+
 def apply_annotations(pdf_path: str, annotations: list) -> None:
     annotations = normalize_annotations_for_pdf_export(annotations)
+    annotations = sorted(annotations, key=annotation_layer_order)
+    _suppress_promoted_source_erase_over_user_shapes(annotations)
     doc = fitz.open(pdf_path)
     temp_path = pdf_path + ".ann.tmp"
     try:
