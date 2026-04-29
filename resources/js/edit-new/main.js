@@ -84,6 +84,7 @@ import {
 import { fontDisplayScale, canvasLogicalHeight } from './util/dom-metrics.js';
 import { populateFontDropdown as populateFontDropdownImpl } from './render/font-dropdown.js';
 import { activeState, setActiveState, clearActiveState } from './store/active-state.js';
+import { hoverState, setHoverState, clearHoverState } from './store/hover-state.js';
 
 (function () {
 
@@ -346,7 +347,9 @@ import { activeState, setActiveState, clearActiveState } from './store/active-st
     // activeState moved to ./store/active-state.js (Phase 5a). Reads use
     // the imported live binding directly; reassignments go through
     // setActiveState/clearActiveState.
-    let hoverState  = { pi: null, uid: null };
+    // hoverState moved to ./store/hover-state.js (Phase 5b). Reads use
+    // the imported live binding; writes go through setHoverState/
+    // clearHoverState.
     let dragState   = { active: false, pi: null, uid: null, offsetXPts: 0, offsetYPts: 0, startPt: null, startBox: null };
     let resizeState = { active: false, pi: null, uid: null, handle: null, startPt: null, startBox: null, startFontSize: null, startLineGeometry: null };
     let rotateState = { active: false, pi: null, uid: null, pointerId: null, grabAngleOffset: 0 };
@@ -5293,7 +5296,7 @@ import { activeState, setActiveState, clearActiveState } from './store/active-st
             clearActiveDrawSession();
         }
         drawModeActive = nextState;
-        hoverState = { pi: null, uid: null };
+        clearHoverState();
         syncCanvasCursors();
         syncDrawToolPanelUi();
         updateEditModeUi();
@@ -5395,7 +5398,7 @@ import { activeState, setActiveState, clearActiveState } from './store/active-st
         setAddTextMode(false); // always exit addTextMode when edit mode changes
         setShapeMode(false);
         if (!editModeEnabled) {
-            hoverState = { pi: null, uid: null };
+            clearHoverState();
             clearActiveAnnotation();
         }
         updateEditModeUi();
@@ -6042,7 +6045,7 @@ import { activeState, setActiveState, clearActiveState } from './store/active-st
     function cancelEraseMode() {
         if (!eraseMode) return;
         eraseMode = false;
-        hoverState = { pi: null, uid: null };
+        clearHoverState();
         syncCanvasCursors();
         updateEditModeUi();
         redrawAllOverlays();
@@ -6062,7 +6065,7 @@ import { activeState, setActiveState, clearActiveState } from './store/active-st
             clearActiveAnnotation();
         }
         eraseMode = nextState;
-        hoverState = { pi: null, uid: null };
+        clearHoverState();
         syncCanvasCursors();
         updateEditModeUi();
         redrawAllOverlays();
@@ -7935,7 +7938,7 @@ import { activeState, setActiveState, clearActiveState } from './store/active-st
         if (annotationId) pendingDeletedAnnotationIds.add(annotationId);
         if (promotedSourceKey) pendingDeletedPromotedSourceKeys.add(promotedSourceKey);
         delete editedTexts[ann._uid];
-        if (hoverState.uid === ann._uid) hoverState = { pi: null, uid: null };
+        if (hoverState.uid === ann._uid) clearHoverState();
         clearActiveAnnotation();
         redrawOverlay(pi);
         markDirty();
@@ -8173,7 +8176,7 @@ import { activeState, setActiveState, clearActiveState } from './store/active-st
         if (promotedSourceKey) pendingDeletedPromotedSourceKeys.add(promotedSourceKey);
         delete editedTexts[ann._uid];
         data.annotations.splice(index, 1, cutA, cutB);
-        if (hoverState.uid === ann._uid) hoverState = { pi: null, uid: null };
+        if (hoverState.uid === ann._uid) clearHoverState();
         resetShapeCutState();
         selectAnnotation(cutA, pi);
         redrawOverlay(pi);
@@ -9302,7 +9305,7 @@ import { activeState, setActiveState, clearActiveState } from './store/active-st
                 const canErase = isDirectDrawAnnotation(ann) && !isAnnotationLocked(ann);
                 const nextUid = canErase ? ann._uid : null;
                 if (nextUid !== hoverState.uid || pi !== hoverState.pi) {
-                    hoverState = { pi, uid: nextUid };
+                    setHoverState(pi, nextUid);
                     redrawOverlay(pi);
                 }
                 oc.style.cursor = ann && !canErase ? 'not-allowed' : 'crosshair';
@@ -9315,7 +9318,7 @@ import { activeState, setActiveState, clearActiveState } from './store/active-st
                 const ann = findAnnotationAt(pt.x, pt.y, data.annotations, data.scale, data.canvasHeight);
                 const nextUid = ann?._uid || null;
                 if (nextUid !== hoverState.uid || pi !== hoverState.pi) {
-                    hoverState = { pi, uid: nextUid };
+                    setHoverState(pi, nextUid);
                     redrawOverlay(pi);
                 }
                 oc.style.cursor = nextUid ? 'not-allowed' : 'crosshair';
@@ -9323,7 +9326,7 @@ import { activeState, setActiveState, clearActiveState } from './store/active-st
             }
             if (shapeCutState.armed && shapeCutState.pi === pi) {
                 if (hoverState.pi === pi) {
-                    hoverState = { pi: null, uid: null };
+                    clearHoverState();
                     redrawOverlay(pi);
                 }
                 oc.style.cursor = 'crosshair';
@@ -9331,7 +9334,7 @@ import { activeState, setActiveState, clearActiveState } from './store/active-st
             }
             if (!editModeEnabled && !addTextMode && !shapeMode && !hasActiveBoxSelection()) {
                 if (hoverState.pi === pi) {
-                    hoverState = { pi: null, uid: null };
+                    clearHoverState();
                     redrawOverlay(pi);
                 }
                 oc.style.cursor = 'default';
@@ -9343,7 +9346,7 @@ import { activeState, setActiveState, clearActiveState } from './store/active-st
             const ann = findAnnotationAt(pt.x, pt.y, data.annotations, data.scale, data.canvasHeight);
             if (addTextMode) {
                 if (hoverState.pi === pi) {
-                    hoverState = { pi: null, uid: null };
+                    clearHoverState();
                     redrawOverlay(pi);
                 }
                 oc.style.cursor = 'crosshair';
@@ -9352,7 +9355,7 @@ import { activeState, setActiveState, clearActiveState } from './store/active-st
             if (!editModeEnabled && !shapeMode && hasActiveBoxSelection()) {
                 const nextUid = ann && isBoxAnnotation(ann) ? ann._uid : null;
                 if (nextUid !== hoverState.uid || pi !== hoverState.pi) {
-                    hoverState = { pi, uid: nextUid };
+                    setHoverState(pi, nextUid);
                     redrawOverlay(pi);
                 }
                 oc.style.cursor = nextUid
@@ -9367,7 +9370,7 @@ import { activeState, setActiveState, clearActiveState } from './store/active-st
                 const ann = findAnnotationAt(pt.x, pt.y, data.annotations, data.scale, data.canvasHeight);
                 const nextUid = ann && isShapeAnnotation(ann) ? ann._uid : null;
                 if (nextUid !== hoverState.uid || pi !== hoverState.pi) {
-                    hoverState = { pi, uid: nextUid };
+                    setHoverState(pi, nextUid);
                     redrawOverlay(pi);
                 }
                 oc.style.cursor = nextUid
@@ -9377,7 +9380,7 @@ import { activeState, setActiveState, clearActiveState } from './store/active-st
             }
             const nextUid = ann?._uid || null;
             if (nextUid === hoverState.uid && pi === hoverState.pi) return;
-            hoverState  = { pi, uid: nextUid };
+            setHoverState(pi, nextUid);
             oc.style.cursor = nextUid
                 ? (isAnnotationLocked(ann) ? 'not-allowed' : (isTextAnnotation(ann) ? 'text' : 'move'))
                 : 'default';
@@ -9391,7 +9394,7 @@ import { activeState, setActiveState, clearActiveState } from './store/active-st
             }
             if (drawModeActive) {
                 if (hoverState.pi === pi) {
-                    hoverState = { pi: null, uid: null };
+                    clearHoverState();
                     redrawOverlay(pi);
                 }
                 oc.style.cursor = currentCanvasCursor();
@@ -9402,7 +9405,7 @@ import { activeState, setActiveState, clearActiveState } from './store/active-st
                 return;
             }
             if (hoverState.pi !== pi) return;
-            hoverState  = { pi: null, uid: null };
+            clearHoverState();
             oc.style.cursor = currentCanvasCursor();
             redrawOverlay(pi);
         });
