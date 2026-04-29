@@ -148,6 +148,16 @@ import { generateAnnotationId } from './annotations/id.js';
 import { canvasPointFromEvent } from './util/canvas-point.js';
 import { normalizeTextForDomReflow, normalizeRichHtmlForReflow } from './text/dom-reflow.js';
 import { editorIsEditingAnnotation } from './editor/is-editing.js';
+import {
+    activeEditorForPage,
+    setEditorEditingAnnotation,
+    clearEditorEditingState,
+} from './editor/active-editor-element.js';
+import {
+    getEditorPlainText,
+    stripEditorSentinels,
+    richHtmlHasInlineSelectionFormatting,
+} from './editor/plain-text.js';
 import { annIsPromotedFromExtraction } from './annotations/promoted.js';
 import { shouldRenderTextInRichHtmlLayer, activeEditorCanvasOwnsPaint } from './render/text-routing.js';
 import { sourceLineRectWithinAnnotation } from './annotations/source-line-rect.js';
@@ -5421,48 +5431,8 @@ import {
         setSignatureDirtyState(hasSignatureDrawContent());
     }
 
-    function getEditorPlainText(editor) {
-        if (!editor) return '';
-        // Walk the DOM rather than using innerText. The source-flow editor
-        // emits `[data-source-gap]` spans containing literal multi-space runs
-        // sized to pixel width (see renderEditorGapHtml) — innerText would
-        // capture those and inflate canonical text by 4-8x per gap on every
-        // edit-text round trip, which then gets persisted back into ann.text
-        // by saveAllChanges, ballooning whitespace each session.
-        // Treat each gap as a single space, mirroring the canonical token
-        // separator in extracted text. BR -> '\n', block-level elements get
-        // a trailing newline to preserve line structure.
-        let out = '';
-        const isBlockTag = (tag) => tag === 'DIV' || tag === 'P' || tag === 'LI' || tag === 'TR';
-        const walk = (node) => {
-            if (node.nodeType === Node.TEXT_NODE) { out += node.nodeValue; return; }
-            if (node.nodeType !== Node.ELEMENT_NODE) return;
-            if (node.dataset && node.dataset.sourceGap === '1') { out += ' '; return; }
-            const tag = node.nodeName;
-            if (tag === 'BR') { out += '\n'; return; }
-            const before = out.length;
-            for (const child of node.childNodes) walk(child);
-            if (isBlockTag(tag) && out.length > before && !out.endsWith('\n')) out += '\n';
-        };
-        for (const child of editor.childNodes) walk(child);
-        return out
-            .replace(/\r/g, '')
-            .replace(/\u00a0/g, ' ')
-            .replace(/\u200b/g, '')
-            .replace(/\n$/, '');
-    }
-
-    function stripEditorSentinels(value) {
-        return String(value ?? '').replace(/\u200b/g, '');
-    }
-
-    function richHtmlHasInlineSelectionFormatting(html) {
-        const raw = String(html ?? '');
-        if (!raw.trim()) return false;
-        const tmp = document.createElement('div');
-        tmp.innerHTML = raw;
-        return Boolean(tmp.querySelector('span[style], font, b, strong, i, em, u'));
-    }
+    // getEditorPlainText, stripEditorSentinels, richHtmlHasInlineSelectionFormatting
+    // moved to ./editor/plain-text.js (Phase 7an).
 
     function normalizeRichHtmlForDisplay(html, ann = null) {
         const raw = stripEditorSentinels(html);
@@ -8685,16 +8655,8 @@ import {
         return ann ? { ann, pi, data } : null;
     }
 
-    function activeEditorForPage(pi) {
-        if (pi === null || pi === undefined) return null;
-        return document.getElementById('ae-' + (Number(pi) + 1));
-    }
-
-    function setEditorEditingAnnotation(ae, ann) {
-        if (!(ae instanceof HTMLElement) || !ann) return;
-        ae.dataset.editing = '1';
-        ae.dataset.editingUid = String(ann._uid || '');
-    }
+    // activeEditorForPage, setEditorEditingAnnotation moved to
+    // ./editor/active-editor-element.js (Phase 7an).
 
     // ── Debug: preview what syncActiveEditor would put into ae when "Edit text"
     // is hit on a given annotation. Pure capture — no permanent state mutation.
@@ -9398,12 +9360,7 @@ import {
         });
     }
 
-    function clearEditorEditingState(ae) {
-        if (!(ae instanceof HTMLElement)) return;
-        delete ae.dataset.editing;
-        delete ae.dataset.editingUid;
-    }
-
+    // clearEditorEditingState moved to ./editor/active-editor-element.js (Phase 7an).
     // editorIsEditingAnnotation moved to ./editor/is-editing.js (Phase 7ah).
 
     // Return the active editor element and the current selection range if
