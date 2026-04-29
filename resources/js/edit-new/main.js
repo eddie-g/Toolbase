@@ -77,6 +77,10 @@ import {
     normalizeImageAnnotation,
     correctedSourceBlockBox,
 } from './annotations/normalize.js';
+import {
+    getShapePolygonPointsPdf,
+    getShapePolygonPointsCanvas,
+} from './annotations/polygon-points.js';
 
 (function () {
 
@@ -1966,37 +1970,8 @@ import {
     }
 
 
-    function getShapePolygonPointsPdf(ann) {
-        if (!isShapeAnnotation(ann) || isLineShape(ann)) return [];
-        const box = resolveAnnBox(ann);
-        if (!box) return [];
-        const vertices = getShapeUnitVertices(ann);
-        if (!vertices.length) return [];
-        const width = Math.max(1, Number(box.w) || 1);
-        const height = Math.max(1, Number(box.h) || 1);
-        const cx = box.x + (width / 2);
-        const cy = box.y + (height / 2);
-        const rotation = (Number(ann.rotation) || 0) * (Math.PI / 180);
-        const cosRotation = Math.cos(rotation);
-        const sinRotation = Math.sin(rotation);
-        return vertices.map((point) => {
-            const dx = (point.x - 0.5) * width;
-            const dyDown = (point.y - 0.5) * height;
-            const rotatedX = (dx * cosRotation) - (dyDown * sinRotation);
-            const rotatedYDown = (dx * sinRotation) + (dyDown * cosRotation);
-            return {
-                x: cx + rotatedX,
-                y: cy - rotatedYDown,
-            };
-        });
-    }
+    // getShapePolygonPointsPdf, getShapePolygonPointsCanvas moved to ./annotations/polygon-points.js.
 
-    function getShapePolygonPointsCanvas(ann, scale, canvasHeight) {
-        return getShapePolygonPointsPdf(ann).map((point) => ({
-            x: point.x * scale,
-            y: canvasHeight - (point.y * scale),
-        }));
-    }
 
 
     function shapeContainsCanvasPoint(ann, x, y, scale, canvasHeight) {
