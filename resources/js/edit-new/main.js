@@ -72,6 +72,11 @@ import {
     annTextIsEdited,
     annotationDimensionsChanged,
 } from './annotations/state.js';
+import {
+    normalizeShapeAnnotation,
+    normalizeImageAnnotation,
+    correctedSourceBlockBox,
+} from './annotations/normalize.js';
 
 (function () {
 
@@ -414,55 +419,8 @@ import {
     // normalizePolygonPointList, getShapeUnitVertices, pointInPolygon,
     // distanceToSegment) live in ./annotations/shape-geometry.js.
 
-    function normalizeShapeAnnotation(ann) {
-        if (!isShapeAnnotation(ann)) return ann;
-        ann.shapeType = normalizeShapeType(ann.shapeType);
-        ann.strokeColor = normalizeHexColor(ann.strokeColor, '#0f172a');
-        ann.fillColor = normalizeHexColor(ann.fillColor, '#22c55e');
-        ann.strokeOpacity = clamp01(ann.strokeOpacity ?? ann.opacity ?? 1, 1);
-        ann.fillOpacity = clamp01(ann.fillOpacity ?? (ann.fillTransparent ? 0 : 0.22), ann.fillTransparent ? 0 : 0.22);
-        ann.strokeWidth = Math.max(1, Number(ann.strokeWidth) || 3);
-        ann.strokeTransparent = Boolean(ann.strokeTransparent);
-        ann.fillTransparent = Boolean(ann.fillTransparent);
-        if (ann.shapeType === 'polygon') {
-            ann.polygonPoints = normalizePolygonPointList(ann.polygonPoints, defaultPolygonUnitPoints());
-        }
-        if (isLineShape(ann)) {
-            // Line endpoint convention: Y is image-y-down (0 = visual top of
-            // bounding box, 1 = visual bottom). This matches /edit and the
-            // Python PDF exporter (apply_annotations_direct*.py) which both
-            // interpret lineStartY/lineEndY the same way. The default for a
-            // freshly-defaulted line is top-left → bottom-right (↘).
-            ann.lineStartX = clamp01(ann.lineStartX, 0);
-            ann.lineStartY = clamp01(ann.lineStartY, 0);
-            ann.lineEndX = clamp01(ann.lineEndX, 1);
-            ann.lineEndY = clamp01(ann.lineEndY, 1);
-            const cap = String(ann.lineCap || 'round').toLowerCase();
-            ann.lineCap = (cap === 'butt' || cap === 'square') ? cap : 'round';
-        }
-        return ann;
-    }
+    // normalizeShapeAnnotation, normalizeImageAnnotation moved to ./annotations/normalize.js.
 
-    function normalizeImageAnnotation(ann) {
-        if (!isImageBackedAnnotation(ann)) return ann;
-        if (String(ann.type || '').toLowerCase() === 'signature') {
-            ann.signatureSourceMode = normalizeSignatureSourceMode(ann.signatureSourceMode);
-        } else {
-            delete ann.signatureSourceMode;
-        }
-        ann.opacity = clamp01(ann.opacity ?? 1, 1);
-        ann.rotation = Number(ann.rotation) || 0;
-        ann.fileName = String(ann.fileName || (String(ann.type || '').toLowerCase() === 'signature' ? 'signature.png' : 'image.png'));
-        ann.mimeType = String(ann.mimeType || 'image/png');
-        ann.intrinsicWidth = Math.max(1, Number(ann.intrinsicWidth || ann.width || ann.imageWidth) || 1);
-        ann.intrinsicHeight = Math.max(1, Number(ann.intrinsicHeight || ann.height || ann.imageHeight) || 1);
-        if (isDirectDrawAnnotation(ann) && ann.drawStrokeColor) {
-            ann.drawStrokeColor = normalizeHexColor(ann.drawStrokeColor, '#111827');
-        } else {
-            delete ann.drawStrokeColor;
-        }
-        return ann;
-    }
 
     function normalizeTextBackgroundColorValue(value, explicit = false) {
         const raw = String(value ?? '').trim();
@@ -1591,34 +1549,8 @@ import {
     // pdfHeight that would otherwise push the rendered text up by one or
     // more line-heights and overlap the annotation above. We never mutate
     // the stored annotation; this is render-only correction.
-    function correctedSourceBlockBox(ann, box) {
-        if (!ann || !box) return null;
-        const isPromoted = ann.promotedFromExtraction === true
-            || (Array.isArray(ann.sourceSpans) && ann.sourceSpans.length > 0)
-            || (Array.isArray(ann.sourceLineBBoxes) && ann.sourceLineBBoxes.length > 0);
-        if (!isPromoted) return null;
-        const sBT = Number(ann.sourceBlockTop);
-        const sBL = Number(ann.sourceBlockLeft);
-        const sBW = Number(ann.sourceBlockWidth);
-        const sBH = Number(ann.sourceBlockHeight);
-        if (![sBT, sBL, sBW, sBH].every(Number.isFinite) || sBW <= 0 || sBH <= 0) return null;
-        // Only apply when the visible text matches the original extraction.
-        const txt = String(ann.text ?? '');
-        const orig = String(ann.originalText ?? '');
-        if (!orig || txt !== orig) return null;
-        // Only apply when the annotation hasn't been moved away from its
-        // recorded original position (allow ~5pt slop because some loaders
-        // re-snap x to the dominant span x).
-        const origBox = ann._originalBox;
-        if (origBox) {
-            if (Math.abs(box.y - origBox.y) > 0.5) return null;
-        }
-        // Only kick in when the stored pdfHeight is bloated past the natural
-        // source block height (the bug case). A box that exactly matches the
-        // source block needs no correction.
-        if (!(box.h > sBH + 1)) return null;
-        return { left: sBL, top: sBT, width: sBW, height: sBH };
-    }
+    // correctedSourceBlockBox moved to ./annotations/normalize.js.
+
 
 
     // Defense against `pdfHeight` bloat for promoted-from-extraction
