@@ -33,6 +33,19 @@ import {
 import { createAutoSave } from './persistence/autosave.js';
 import { cloneSerializableValue } from './util/clone.js';
 import { createEmbeddedFontRegistry } from './render/embedded-fonts.js';
+import {
+    isShapeAnnotation,
+    isImageBackedAnnotation,
+    isDirectDrawAnnotation,
+    canRemoveBackgroundFromImageAnnotation,
+    normalizeSignatureSourceMode,
+    getSignatureAnnotationLabel,
+    getAnnotationDisplayLabel,
+    isBoxAnnotation,
+    isTextAnnotation,
+    isAnnotationLocked,
+    isLineShape,
+} from './annotations/types.js';
 
 (function () {
 
@@ -370,58 +383,7 @@ import { createEmbeddedFontRegistry } from './render/embedded-fonts.js';
     const shapeHitTestCtx = shapeHitTestCanvas.getContext('2d');
     const signatureFontLoadPromises = new Map();
 
-    function isShapeAnnotation(ann) {
-        return String(ann?.type || '') === 'shape';
-    }
-
-    function isImageBackedAnnotation(ann) {
-        const type = String(ann?.type || '').toLowerCase();
-        return type === 'signature' || type === 'image';
-    }
-
-    function isDirectDrawAnnotation(ann) {
-        return isImageBackedAnnotation(ann) && String(ann?.imageToolSource || '') === 'direct-draw';
-    }
-
-    function canRemoveBackgroundFromImageAnnotation(ann) {
-        return String(ann?.type || '').toLowerCase() === 'image' && !isDirectDrawAnnotation(ann);
-    }
-
-    function normalizeSignatureSourceMode(value) {
-        const raw = String(value || '').toLowerCase();
-        return ['draw', 'type', 'upload'].includes(raw) ? raw : 'draw';
-    }
-
-    function getSignatureAnnotationLabel(mode) {
-        const normalized = normalizeSignatureSourceMode(mode);
-        if (normalized === 'type') return 'Typed signature';
-        if (normalized === 'upload') return 'Uploaded signature';
-        return 'Drawn signature';
-    }
-
-    function getAnnotationDisplayLabel(ann) {
-        const type = String(ann?.type || '').toLowerCase();
-        if (type === 'signature') return getSignatureAnnotationLabel(ann?.signatureSourceMode);
-        if (type === 'image') return 'Image';
-        return '';
-    }
-
-    function isBoxAnnotation(ann) {
-        return isShapeAnnotation(ann) || isImageBackedAnnotation(ann);
-    }
-
-    function isTextAnnotation(ann) {
-        return !isBoxAnnotation(ann);
-    }
-
-    function isAnnotationLocked(ann) {
-        return Boolean(ann?.locked);
-    }
-
-    function isLineShape(annOrType) {
-        const shapeType = typeof annOrType === 'string' ? annOrType : annOrType?.shapeType;
-        return String(shapeType || '') === 'line';
-    }
+    // Annotation type predicates + label helpers live in ./annotations/types.js.
 
     function normalizeShapeType(shapeType) {
         const raw = String(shapeType || '').toLowerCase();
