@@ -146,6 +146,7 @@ import {
 import { sliderValueToFontPt, fontPtToSliderValue, FONT_SLIDER_MIN_PT, FONT_SLIDER_MAX_PT } from './text/font-slider.js';
 import { generateAnnotationId } from './annotations/id.js';
 import { canvasPointFromEvent } from './util/canvas-point.js';
+import { normalizeTextForDomReflow, normalizeRichHtmlForReflow } from './text/dom-reflow.js';
 import {
     buildAcroFieldLookup,
     normalizeAcroRect,
@@ -2088,81 +2089,11 @@ import {
             || (Array.isArray(ann.sourceLineBBoxes) && ann.sourceLineBBoxes.length > 0);
     }
 
-    // Plain-text reflow helper: a promoted-extraction annotation's `text`
-    // / `editedTexts` value contains a literal `\n` at every PDF source-line
-    // boundary. With CSS `white-space: pre-wrap` those `\n` render as hard
-    // breaks, so when the user shrinks the bounding box the text never
-    // reflows to the new width.
-    //
-    // Collapse runs of single `\n` (soft, source-imposed breaks) to a single
-    // space so the browser can wrap freely. Preserve `\n\n+` (paragraph
-    // breaks the user typed via Enter).
-    function normalizeTextForDomReflow(text) {
-        const s = String(text ?? '');
-        if (!s || s.indexOf('\n') === -1) return s;
-        return s
-            .replace(/\r\n?/g, '\n')
-            .replace(/\n{2,}/g, '\x00')      // protect paragraph breaks
-            .replace(/\n+/g, ' ')             // soft breaks → space
-            .replace(/\x00/g, '\n\n')         // restore paragraph breaks
-            .replace(/[ \t]{2,}/g, ' ');
-    }
-
-    // Rich-HTML reflow helper. The editor saves `_richHtml` as one
-    // `<div data-line-index="N">` block per PDF source line. Each div is
-    // `display:block`, so the breaks between them are HARD — CSS word-wrap
-    // can never reflow text across them when the box is resized.
-    //
-    // Merge all top-level `data-line-index` blocks into the first block,
-    // joining their inner HTML with a literal space. Inline `<br>` /
-    // `<br><br>` runs inside the merged content are preserved verbatim:
-    // those represent explicit hard breaks the user typed via Enter
-    // (single `<br>` = soft, `<br><br>+` = paragraph). Stray `\n` inside
-    // text nodes is also collapsed (soft → space, double+ → preserved).
-    function normalizeRichHtmlForReflow(html) {
-        const src = String(html ?? '');
-        if (!src) return src;
-        const tmp = document.createElement('div');
-        tmp.innerHTML = src;
-
-        const collapseNewlines = (root) => {
-            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
-            const textNodes = [];
-            let n;
-            while ((n = walker.nextNode())) textNodes.push(n);
-            textNodes.forEach((tn) => {
-                const v = tn.nodeValue;
-                if (!v || v.indexOf('\n') === -1) return;
-                tn.nodeValue = v
-                    .replace(/\r\n?/g, '\n')
-                    .replace(/\n{2,}/g, '\x00')
-                    .replace(/\n+/g, ' ')
-                    .replace(/\x00/g, '\n\n')
-                    .replace(/[ \t]{2,}/g, ' ');
-            });
-        };
-
-        const blocks = Array.from(tmp.children).filter(
-            (el) => el.tagName === 'DIV' && el.hasAttribute('data-line-index')
-        );
-
-        if (blocks.length >= 2) {
-            const first = blocks[0];
-            const parts = blocks
-                .map((b) => b.innerHTML.trim())
-                .filter((s) => s.length > 0);
-            first.innerHTML = parts.join(' ');
-            for (let i = 1; i < blocks.length; i++) {
-                if (blocks[i].parentNode) blocks[i].parentNode.removeChild(blocks[i]);
-            }
-            collapseNewlines(first);
-        } else if (blocks.length === 1) {
-            collapseNewlines(blocks[0]);
-        } else {
-            collapseNewlines(tmp);
-        }
-        return tmp.innerHTML;
-    }
+    // normalizeTextForDomReflow / normalizeRichHtmlForReflow moved to
+    // ./text/dom-reflow.js (Phase 7ag). Both helpers had duplicate inline
+    // copies (here and ~3114); the second always shadowed the first via
+    // function-declaration hoisting, so the canonical second-version
+    // behavior is preserved in the module.
 
     // Builds the rich-html layer for a page: renders a positioned <div> mirroring the
     // active-editor styling for every annotation that should use DOM layout.
@@ -3103,99 +3034,8 @@ import {
     }
 
     // measureEditedTextHeightPts moved to ./text/measure.js (Phase 7e).
-
-    /**
-     * Collapse single \n (PDF-extraction source line-break positions) into spaces
-     * so CSS word-wrap can reflow the text to a resized box width.  Double \n\n+
-     * sequences (explicit paragraph breaks, e.g. from Enter key) are preserved.
-     * Only call this when the annotation was promoted from extraction, the text
-     * is unedited, and the bounding box dimensions have changed (resize).
-     */
-    function normalizeTextForDomReflow(text) {
-        return String(text ?? '')
-            .replace(/\r\n?/g, '\n')
-            // Protect double-newlines (explicit paragraph breaks)
-            .replace(/\n{2,}/g, '\x00')
-            // Collapse single \n (extraction line-break) → space
-            .replace(/\n/g, ' ')
-            // Restore double-newlines
-            .replace(/\x00/g, '\n\n')
-            // Collapse runs of spaces that straddled line-breaks
-            .replace(/[ \t]{2,}/g, ' ')
-            .trim();
-    }
-
-    /**
-     * HTML counterpart of normalizeTextForDomReflow for `_richHtml` content.
-     *
-     * The editor saves `_richHtml` as one `<div data-line-index="N">` block
-     * per PDF source line.  Each div is `display:block` so the line breaks
-     * between them are HARD — CSS word-wrap can never reflow text across
-     * them.  When the user resizes the bounding box, those source-line
-     * positions stay frozen.
-     *
-     * To enable reflow we merge all `<div data-line-index>` blocks at the
-     * top level into a single block, joining their content with a space (so
-     * adjacent words don't fuse).  Inline `<br>` / `<br><br>` runs inside
-     * the merged content are preserved verbatim — those represent explicit
-     * hard breaks the user typed via Enter (single `<br>` = soft, `<br><br>`+
-     * = paragraph), and the editor's wrap logic + Enter handling already
-     * produce these inside an existing block rather than spawning new
-     * data-line-index divs.
-     *
-     * Also collapses literal `\n` characters inside text nodes (since
-     * `white-space:pre-wrap` would render them as hard breaks).
-     */
-    function normalizeRichHtmlForReflow(html) {
-        const src = String(html ?? '');
-        if (!src) return src;
-        const tmp = document.createElement('div');
-        tmp.innerHTML = src;
-
-        // Collapse stray \n in every text node (single \n → space, \n\n+ → preserved).
-        const collapseNewlines = (root) => {
-            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
-            const textNodes = [];
-            let n;
-            while ((n = walker.nextNode())) textNodes.push(n);
-            textNodes.forEach((tn) => {
-                const v = tn.nodeValue;
-                if (!v || v.indexOf('\n') === -1) return;
-                tn.nodeValue = v
-                    .replace(/\r\n?/g, '\n')
-                    .replace(/\n{2,}/g, '\x00')
-                    .replace(/\n/g, ' ')
-                    .replace(/\x00/g, '\n\n')
-                    .replace(/[ \t]{2,}/g, ' ');
-            });
-        };
-
-        // Find top-level data-line-index blocks (children of tmp).
-        const blocks = Array.from(tmp.children).filter(
-            (el) => el.tagName === 'DIV' && el.hasAttribute('data-line-index')
-        );
-
-        if (blocks.length >= 2) {
-            // Merge all into the first block, joining inner HTML with a literal space.
-            // Each block's inner HTML is added verbatim (preserving inline <br>s and
-            // styled spans like the bold "market") with " " between consecutive blocks.
-            const first = blocks[0];
-            const mergedParts = blocks.map((b) => b.innerHTML.trim()).filter((s) => s.length > 0);
-            const joined = mergedParts.join(' ');
-            first.innerHTML = joined;
-            // Remove the residual blocks.
-            for (let i = 1; i < blocks.length; i++) {
-                if (blocks[i].parentNode) blocks[i].parentNode.removeChild(blocks[i]);
-            }
-            collapseNewlines(first);
-        } else if (blocks.length === 1) {
-            collapseNewlines(blocks[0]);
-        } else {
-            collapseNewlines(tmp);
-        }
-
-        return tmp.innerHTML;
-    }
+    // normalizeTextForDomReflow / normalizeRichHtmlForReflow (second copy)
+    // also moved to ./text/dom-reflow.js (Phase 7ag).
 
     const autoWidthMeasureCanvas = document.createElement('canvas');
     const autoWidthMeasureCtx = autoWidthMeasureCanvas.getContext('2d');
