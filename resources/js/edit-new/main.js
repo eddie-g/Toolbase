@@ -128,6 +128,12 @@ import {
 } from './annotations/source-text-match.js';
 import { resolveDisplayBgColor, WHITE_TEXT_RE } from './annotations/display-bg-color.js';
 import {
+    buildAcroFieldLookup,
+    normalizeAcroRect,
+    normalizeAcroTextColor,
+    acroFieldKey,
+} from './acroform/normalize.js';
+import {
     loadImageSource,
     toTransparentPngFileName,
     buildWhiteMatteCandidateMask,
@@ -1116,52 +1122,8 @@ import {
 
     // ensureMeasureCtx / ctxFont / measureTextWidth moved to ./text/measure-width.js (Phase 7j).
 
-    // ── AcroForm helpers ──────────────────────────────────────────────────────
-    function buildAcroFieldLookup(entries) {
-        const lookup = {};
-        (Array.isArray(entries) ? entries : []).forEach((entry) => {
-            const keys = [
-                String(entry?.key || '').trim(),
-                String(entry?.fieldName || '').trim(),
-            ].filter(Boolean);
-            keys.forEach((key) => { lookup[key] = entry; });
-        });
-        return lookup;
-    }
-
-    function normalizeAcroRect(rectLike) {
-        if (!Array.isArray(rectLike) || rectLike.length < 4) return null;
-        const rect = rectLike.slice(0, 4).map((value) => Number(value));
-        return rect.every((value) => Number.isFinite(value)) ? rect : null;
-    }
-
-    function normalizeAcroTextColor(colorLike) {
-        if (typeof colorLike === 'string') {
-            const value = colorLike.trim();
-            if (!value) return null;
-            if (/^#[0-9a-f]{6}$/i.test(value)) return value.toLowerCase();
-            if (/^[0-9a-f]{6}$/i.test(value)) return `#${value.toLowerCase()}`;
-            return null;
-        }
-
-        if (Array.isArray(colorLike) && colorLike.length > 0) {
-            const values = colorLike.slice(0, 3).map((value) => Number(value));
-            if (!values.every((value) => Number.isFinite(value))) return null;
-            const rgb = values.map((value) => (
-                value <= 1
-                    ? Math.max(0, Math.min(255, Math.round(value * 255)))
-                    : Math.max(0, Math.min(255, Math.round(value)))
-            ));
-            while (rgb.length < 3) rgb.push(rgb[0]);
-            return `#${rgb.map((value) => value.toString(16).padStart(2, '0')).join('')}`;
-        }
-
-        return null;
-    }
-
-    function acroFieldKey(annotation) {
-        return String(annotation?.fieldName || annotation?.id || annotation?.fullName || '').trim();
-    }
+    // buildAcroFieldLookup / normalizeAcroRect / normalizeAcroTextColor /
+    // acroFieldKey moved to ./acroform/normalize.js (Phase 7v).
 
     async function ensureAcroPdfLoaded(documentInfo) {
         if (_acroPdfDoc) return;
