@@ -22,6 +22,7 @@ import {
 } from './render/font-utils.js';
 import { clamp01 } from './util/math.js';
 import { normalizeHexColor, hexToRgbaString } from './util/color.js';
+import { safeLocalStorageGet, safeLocalStorageSet } from './util/storage.js';
 
 (function () {
 
@@ -757,23 +758,6 @@ import { normalizeHexColor, hexToRgbaString } from './util/color.js';
         } finally {
             imageBackgroundRemovalState = { active: false, uid: null };
             syncActiveEditor(true);
-        }
-    }
-
-    function safeLocalStorageGet(key) {
-        try {
-            return localStorage.getItem(key);
-        } catch (_error) {
-            return null;
-        }
-    }
-
-    function safeLocalStorageSet(key, value) {
-        try {
-            localStorage.setItem(key, value);
-            return true;
-        } catch (_error) {
-            return false;
         }
     }
 
