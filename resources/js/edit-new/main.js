@@ -61,6 +61,11 @@ import {
     annotationOffset,
     annotationSourceOffset,
 } from './annotations/box.js';
+import {
+    computeLineBoxGeometry,
+    snapLineEndpoint,
+    normalizeRotationDegrees,
+} from './util/geometry.js';
 
 (function () {
 
@@ -699,6 +704,8 @@ import {
         };
     }
 
+    // computeLineBoxGeometry lives in ./util/geometry.js.
+
     async function removeBackgroundFromImageAnnotation(ann, pi) {
         if (!canRemoveBackgroundFromImageAnnotation(ann)) return false;
         if (isAnnotationLocked(ann)) return false;
@@ -716,60 +723,6 @@ import {
         }
     }
 
-    function computeLineBoxGeometry(startX, startY, endX, endY) {
-        const safeStartX = Number(startX) || 0;
-        const safeStartY = Number(startY) || 0;
-        const safeEndX = Number(endX) || 0;
-        const safeEndY = Number(endY) || 0;
-        const left = Math.min(safeStartX, safeEndX);
-        const bottom = Math.min(safeStartY, safeEndY);
-        const top = Math.max(safeStartY, safeEndY);
-        const width = Math.max(1, Math.abs(safeEndX - safeStartX));
-        const height = Math.max(1, Math.abs(safeEndY - safeStartY));
-        // Inputs (startX/Y, endX/Y) are PDF-y-up coordinates from
-        // pdfPtFromClient (larger Y = visual top). Storage convention is
-        // image-y-down (0 = visual top of bounding box, 1 = visual bottom)
-        // to match /edit and the Python PDF exporter. Flip Y here so the
-        // editor preview, the saved JSON, and the downloaded PDF all agree.
-        return {
-            left,
-            bottom,
-            width,
-            height,
-            lineStartX: clamp01((safeStartX - left) / width, 0),
-            lineStartY: clamp01((top - safeStartY) / height, 0),
-            lineEndX: clamp01((safeEndX - left) / width, 1),
-            lineEndY: clamp01((top - safeEndY) / height, 1),
-        };
-    }
-
-    // Mirrors /edit's snapLineEndpoint: when the drag angle is within ~8° of
-    // any 45° step (0°/45°/90°/...), snap the end point onto that ray so
-    // straight horizontal / vertical / diagonal lines are easy to draw.
-    function snapLineEndpoint(startX, startY, endX, endY) {
-        const sx = Number(startX) || 0;
-        const sy = Number(startY) || 0;
-        const ex = Number(endX) || 0;
-        const ey = Number(endY) || 0;
-        const dx = ex - sx;
-        const dy = ey - sy;
-        const distance = Math.hypot(dx, dy);
-        if (distance < 1) return { x: ex, y: ey };
-
-        const angle = Math.atan2(dy, dx);
-        const snapStep = Math.PI / 4;
-        const snapThreshold = (8 * Math.PI) / 180;
-        const snappedAngle = Math.round(angle / snapStep) * snapStep;
-        let angleDelta = angle - snappedAngle;
-        while (angleDelta > Math.PI) angleDelta -= Math.PI * 2;
-        while (angleDelta < -Math.PI) angleDelta += Math.PI * 2;
-        if (Math.abs(angleDelta) > snapThreshold) return { x: ex, y: ey };
-
-        return {
-            x: sx + Math.cos(snappedAngle) * distance,
-            y: sy + Math.sin(snappedAngle) * distance,
-        };
-    }
 
     function currentShapeDefaults() {
         return {
@@ -7460,14 +7413,7 @@ import {
         markDirty();
     }
 
-    // ── Rotation helpers ──────────────────────────────────────────────────
-    function normalizeRotationDegrees(angle) {
-        const a = Number(angle);
-        if (!Number.isFinite(a)) return 0;
-        let n = a % 360;
-        if (n < 0) n += 360;
-        return n;
-    }
+    // Rotation helpers (normalizeRotationDegrees lives in ./util/geometry.js)
     function getRotationCenterClient(pi, ann) {
         const data = pageData[pi];
         if (!data) return null;
