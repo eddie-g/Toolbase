@@ -3,19 +3,14 @@
  * Extracted verbatim from resources/views/documents/edit-new.blade.php
  * (the previous inline <script> block).
  *
- * Server-side values (URLs, doc id, CSRF) are read from the
- * `#edit-new-root` element's data-* attributes — see the blade view.
+ * Server-side values (URLs, doc id, CSRF) are imported from ./config.js,
+ * which reads them from the `#edit-new-root` data-* attributes — see the
+ * blade view.
  */
 
+import { CSRF, INFO_URL, SAVE_URL, DOWNLOAD_URL, DOC_ID } from './config.js';
+
 (function () {
-    const __editNewRoot = document.getElementById('edit-new-root');
-    if (!__editNewRoot) { throw new Error('edit-new-root element missing'); }
-    const __editNewCfg = __editNewRoot.dataset;
-    const CSRF        = document.querySelector('meta[name="csrf-token"]')?.content || __editNewCfg.csrf || '';
-    const INFO_URL    = __editNewCfg.infoUrl;
-    const SAVE_URL    = __editNewCfg.saveUrl;
-    const DOWNLOAD_URL = __editNewCfg.downloadUrl;
-    const DOC_ID      = __editNewCfg.docId;
 
     /* ──────────────────────────────────────────────────────────────────────
        Document rename: click the title (or the pencil button) to enter
