@@ -103,6 +103,14 @@ import {
     setShapeModeFlag,
     setEraseModeFlag,
 } from './store/editor-modes.js';
+import {
+    currentZoomPercent,
+    suppressEditorAutofit,
+    suppressEditorAutofitResetToken,
+    setCurrentZoomPercent,
+    setSuppressEditorAutofit,
+    bumpSuppressEditorAutofitResetToken,
+} from './store/zoom-state.js';
 
 (function () {
 
@@ -399,9 +407,9 @@ import {
     let markupToolStrokes = [];
     let markupToolActiveStroke = null;
     // eraseMode moved to ./store/editor-modes.js (Phase 5d).
-    let currentZoomPercent = initialZoomPercent;
-    let suppressEditorAutofit = false;
-    let suppressEditorAutofitResetToken = 0;
+    // currentZoomPercent / suppressEditorAutofit / suppressEditorAutofitResetToken
+    // moved to ./store/zoom-state.js (Phase 5e). Initial value seeded below.
+    setCurrentZoomPercent(initialZoomPercent);
     let currentShapeType = 'circle';
     let currentShapeStrokeColor = '#0f172a';
     let currentShapeStrokeOpacity = 1;
@@ -984,12 +992,12 @@ import {
     }
 
     function beginViewportScaleUpdate() {
-        suppressEditorAutofit = true;
-        const token = ++suppressEditorAutofitResetToken;
+        setSuppressEditorAutofit(true);
+        const token = bumpSuppressEditorAutofitResetToken();
         requestAnimationFrame(() => {
             requestAnimationFrame(() => {
                 if (suppressEditorAutofitResetToken === token) {
-                    suppressEditorAutofit = false;
+                    setSuppressEditorAutofit(false);
                 }
             });
         });
@@ -997,7 +1005,7 @@ import {
 
     function updateZoom(value) {
         const zoomValue = Math.max(ZOOM_MIN_PERCENT, Math.min(ZOOM_MAX_PERCENT, parseInt(value, 10)));
-        currentZoomPercent = zoomValue;
+        setCurrentZoomPercent(zoomValue);
         if (zoomLabel) zoomLabel.textContent = `${zoomValue}%`;
         beginViewportScaleUpdate();
         applyAllPageScales();
