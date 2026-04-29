@@ -246,6 +246,7 @@ import { currentCanvasCursor, syncCanvasCursors } from './cursor/canvas-cursor.j
 import {
     setDrawToolStatus as _setDrawToolStatus,
     clearActiveDrawSession,
+    cancelDirectDrawPointer,
 } from './draw/session.js';
 import {
     renderEditorSpanHtml,
@@ -4456,13 +4457,7 @@ import {
         return true;
     }
 
-    function cancelDirectDrawPointer(oc, pointerId = null) {
-        if (!activeDrawSession) return;
-        if (activeDrawSession.overlay !== oc) return;
-        if (pointerId !== null && activeDrawSession.pointerId !== pointerId) return;
-        oc.releasePointerCapture?.(activeDrawSession.pointerId);
-        clearActiveDrawSession();
-    }
+    // cancelDirectDrawPointer moved to ./draw/session.js (Phase 7bw).
 
     // currentCanvasCursor moved to ./cursor/canvas-cursor.js (Phase 7be).
     // syncCanvasCursors moved to ./cursor/canvas-cursor.js (Phase 7bv).

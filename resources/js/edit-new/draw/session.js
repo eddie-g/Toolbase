@@ -24,3 +24,16 @@ export function clearActiveDrawSession() {
     }
     setActiveDrawSession(null);
 }
+
+/**
+ * Release the pointer capture (when applicable) and tear down the
+ * in-flight pen stroke for the given overlay. No-op if there is no
+ * active session or it belongs to a different overlay / pointer.
+ */
+export function cancelDirectDrawPointer(oc, pointerId = null) {
+    if (!activeDrawSession) return;
+    if (activeDrawSession.overlay !== oc) return;
+    if (pointerId !== null && activeDrawSession.pointerId !== pointerId) return;
+    oc.releasePointerCapture?.(activeDrawSession.pointerId);
+    clearActiveDrawSession();
+}
