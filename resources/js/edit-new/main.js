@@ -62,6 +62,11 @@ import {
     annotationSourceOffset,
 } from './annotations/box.js';
 import {
+    shouldClampToSourceHeight,
+    normalizePromotedAnnotationGeometry,
+    setAnnotationBox,
+} from './annotations/geometry-writes.js';
+import {
     computeLineBoxGeometry,
     snapLineEndpoint,
     normalizeRotationDegrees,
@@ -1610,88 +1615,8 @@ import { pageData } from './store/page-data.js';
 
 
 
-    // Defense against `pdfHeight` bloat for promoted-from-extraction
-    // annotations. The bug: somewhere upstream (auto-grow on a stale
-    // lineHeight, a buggy resize math path, etc.) writes a `pdfHeight`
-    // larger than `sourceBlockHeight` even though the visible text is
-    // unchanged from the source. Because rendering anchors at the box
-    // TOP (`pdfY + pdfHeight`), the inflation pushes the visual top
-    // upward and overlaps the annotation above. We don't try to find
-    // the offending caller — instead we refuse to write a bloated
-    // height in the first place (and heal already-saved bloat at
-    // hydration time, see normalizePromotedAnnotationGeometry).
-    function shouldClampToSourceHeight(ann, requestedH) {
-        if (!ann || !Number.isFinite(requestedH)) return null;
-        const isPromoted = ann.promotedFromExtraction === true
-            || (Array.isArray(ann.sourceSpans) && ann.sourceSpans.length > 0)
-            || (Array.isArray(ann.sourceLineBBoxes) && ann.sourceLineBBoxes.length > 0);
-        if (!isPromoted) return null;
-        const sH = Number(ann.sourceBlockHeight);
-        if (!Number.isFinite(sH) || sH <= 0) return null;
-        const txt = String(ann.text ?? '');
-        const orig = String(ann.originalText ?? '');
-        if (!orig || txt !== orig) return null;
-        if (requestedH <= sH + 1) return null;
-        return sH;
-    }
-
-    // Heal an already-saved annotation whose `pdfHeight` is larger than
-    // its `sourceBlockHeight` even though the visible text still equals
-    // the original. Run during hydration so reload immediately corrects
-    // bad data persisted by older buggy code paths.
-    function normalizePromotedAnnotationGeometry(ann) {
-        if (!ann) return;
-        const clamped = shouldClampToSourceHeight(ann, Number(ann.pdfHeight));
-        if (clamped == null) return;
-        // Heal-only: do NOT bump pdfY here. The original bloat path inflated
-        // h while leaving pdfY anchored at the source-block bottom, so just
-        // resetting h restores the source-block top. (The setAnnotationBox
-        // y-bump only applies to live writes where the caller computed pdfY
-        // assuming the requested h.)
-        ann.pdfHeight = clamped;
-        if (ann.annotation_data && typeof ann.annotation_data === 'object') {
-            ann.annotation_data.pdfHeight = clamped;
-        }
-        // Also reset lineHeight back to the source per-line height so the
-        // DOM rich-html layer doesn't paint taller than the corrected box.
-        const sH = Number(ann.sourceBlockHeight);
-        const lineCount = Math.max(1, Array.isArray(ann.sourceTextLines) ? ann.sourceTextLines.length : 1);
-        if (Number.isFinite(sH) && sH > 0) {
-            const naturalLineHeight = sH / lineCount;
-            if (Number.isFinite(naturalLineHeight) && naturalLineHeight > 0) {
-                ann.lineHeight = naturalLineHeight;
-                if (ann.annotation_data && typeof ann.annotation_data === 'object') {
-                    ann.annotation_data.lineHeight = naturalLineHeight;
-                }
-            }
-        }
-    }
-
-    function setAnnotationBox(ann, b) {
-        const oldW = Number(ann.pdfWidth);
-        const oldH = Number(ann.pdfHeight);
-        // Refuse to bloat pdfHeight past sourceBlockHeight when the visible text
-        // still matches the source — see shouldClampToSourceHeight above.
-        // The caller computed `b.y` assuming the requested `b.h`. Rendering
-        // anchors at the visual TOP = `pdfY + pdfHeight` (PDF y-up). If we
-        // silently clamp h smaller without adjusting y, the visible top drops
-        // by (b.h - clampedH) pts — text "slides down". Bump y up by the same
-        // delta so the visual top stays where the caller intended.
-        const clampedH = shouldClampToSourceHeight(ann, Number(b.h));
-        const finalH = clampedH != null ? clampedH : b.h;
-        const finalY = clampedH != null ? (Number(b.y) + (Number(b.h) - clampedH)) : b.y;
-        ann.pdfX = b.x; ann.pdfY = finalY; ann.pdfWidth = b.w; ann.pdfHeight = finalH;
-        if (ann.annotation_data && typeof ann.annotation_data === 'object') {
-            ann.annotation_data.pdfX = b.x; ann.annotation_data.pdfY = finalY;
-            ann.annotation_data.pdfWidth = b.w; ann.annotation_data.pdfHeight = finalH;
-        }
-        // One-way conversion to user-authored on resize (dimension change).
-        // Pure moves (same w/h) don't trigger conversion — only an actual resize does.
-        if (Number.isFinite(oldW) && Number.isFinite(oldH)
-            && (Math.abs(oldW - b.w) > 0.25 || Math.abs(oldH - finalH) > 0.25)) {
-            markUserAuthored(ann);
-        }
-    }
+    // shouldClampToSourceHeight, normalizePromotedAnnotationGeometry, and
+    // setAnnotationBox moved to ./annotations/geometry-writes.js (Phase 7a).
 
     function boxesRoughlyEqual(a, b, epsilon = 0.05) {
         if (!a || !b) return false;
@@ -7264,7 +7189,6 @@ import { pageData } from './store/page-data.js';
         markDirty: () => markDirty(),
     });
     installPointerDispatcher({
-        setAnnotationBox: (ann, box) => setAnnotationBox(ann, box),
         redrawOverlay: (pi) => redrawOverlay(pi),
         syncActiveEditor: (force) => syncActiveEditor(force),
         updateFormatBar: () => updateFormatBar(),

@@ -11,12 +11,10 @@
  *   - window pointerup   → endRotate
  *   - window pointercancel → endRotate
  *
- * The `installPointerDispatcher(deps)` function attaches all listeners
- * once during editor bootstrap. State + pure helpers are imported
- * directly; the still-monolithic main.js helpers (setAnnotationBox,
- * redrawOverlay, syncActiveEditor, updateFormatBar,
- * measureEditedTextHeightPts) and the editedTexts uid→string map
- * flow in via deps and will be cleaned up once those move to modules.
+ * State + pure helpers are imported directly. The still-monolithic main.js
+ * helpers (redrawOverlay, syncActiveEditor, updateFormatBar,
+ * measureEditedTextHeightPts) and the editedTexts uid->string map flow
+ * in via deps and will be cleaned up once those move to modules.
  */
 
 import { dragState, resizeState, rotateState } from '../store/interaction-state.js';
@@ -24,6 +22,7 @@ import { pageData } from '../store/page-data.js';
 import { pdfPtFromClient } from '../render/coords.js';
 import { isShapeAnnotation, isLineShape, isTextAnnotation } from '../annotations/types.js';
 import { snapLineEndpoint, computeLineBoxGeometry, normalizeRotationDegrees } from '../util/geometry.js';
+import { setAnnotationBox } from '../annotations/geometry-writes.js';
 import { endDrag } from './drag.js';
 import { endResize } from './resize.js';
 import { endRotate, getRotationCenterClient, pointerAngleDeg } from './rotate.js';
@@ -48,7 +47,6 @@ export function scaledResizeFontSize(startFontSize, startBox, nextWidth, nextHei
  * drag / resize / rotate. Call once at editor bootstrap.
  *
  * @param {Object} deps
- * @param {(ann: Object, box: {x:number,y:number,w:number,h:number}) => void} deps.setAnnotationBox
  * @param {(pi: number) => void} deps.redrawOverlay
  * @param {(forceRebuild?: boolean) => void} deps.syncActiveEditor
  * @param {() => void} deps.updateFormatBar
@@ -57,7 +55,6 @@ export function scaledResizeFontSize(startFontSize, startBox, nextWidth, nextHei
  */
 export function installPointerDispatcher(deps) {
     const {
-        setAnnotationBox,
         redrawOverlay,
         syncActiveEditor,
         updateFormatBar,
