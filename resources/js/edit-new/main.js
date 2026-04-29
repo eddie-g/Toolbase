@@ -242,7 +242,7 @@ import {
     showSaveToast as _showSaveToast,
 } from './ui/banner.js';
 import { updateSaveUi as _updateSaveUi } from './ui/save-ui.js';
-import { currentCanvasCursor } from './cursor/canvas-cursor.js';
+import { currentCanvasCursor, syncCanvasCursors } from './cursor/canvas-cursor.js';
 import {
     setDrawToolStatus as _setDrawToolStatus,
     clearActiveDrawSession,
@@ -4465,13 +4465,7 @@ import {
     }
 
     // currentCanvasCursor moved to ./cursor/canvas-cursor.js (Phase 7be).
-
-    function syncCanvasCursors() {
-        Object.keys(pageData).forEach((piStr) => {
-            const oc = document.getElementById('oc-' + (Number(piStr) + 1));
-            if (oc) oc.style.cursor = currentCanvasCursor();
-        });
-    }
+    // syncCanvasCursors moved to ./cursor/canvas-cursor.js (Phase 7bv).
 
     function openMarkupToolModal(initialMode = 'draw') {
         if (!markupToolModal || editModeEnabled) return;

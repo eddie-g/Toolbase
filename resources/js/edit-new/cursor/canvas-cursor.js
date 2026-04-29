@@ -17,6 +17,7 @@ import { addTextMode, shapeMode, eraseMode } from '../store/editor-modes.js';
 import { drawModeActive } from '../store/draw-tool-state.js';
 import { signaturePlacementState } from '../store/signature-state.js';
 import { shapeCutState } from '../store/interaction-state.js';
+import { pageData } from '../store/page-data.js';
 
 export function currentCanvasCursor() {
     if (signaturePlacementState.active) return 'copy';
@@ -24,4 +25,17 @@ export function currentCanvasCursor() {
     if (shapeCutState.armed) return 'crosshair';
     if (addTextMode || shapeMode) return 'crosshair';
     return 'default';
+}
+
+/**
+ * Walk every page-overlay canvas (`oc-{n}`) and assign the current
+ * cursor returned by `currentCanvasCursor()`. Pure DOM-write helper
+ * — no closure-local refs.
+ */
+export function syncCanvasCursors() {
+    const cursor = currentCanvasCursor();
+    Object.keys(pageData).forEach((piStr) => {
+        const oc = document.getElementById('oc-' + (Number(piStr) + 1));
+        if (oc) oc.style.cursor = cursor;
+    });
 }
