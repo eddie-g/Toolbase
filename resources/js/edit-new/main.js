@@ -92,6 +92,12 @@ import {
     getShapePolygonPointsCanvas,
 } from './annotations/polygon-points.js';
 import { fontDisplayScale, canvasLogicalHeight, canvasLogicalWidth } from './util/dom-metrics.js';
+import {
+    overlayDevicePixelRatio,
+    overlayZoomMultiplier,
+    overlayBackingScale,
+    sizeOverlayCanvas,
+} from './render/overlay-sizing.js';
 import { measureTextWidth, ctxFont } from './text/measure-width.js';
 import { wrapParagraph } from './text/wrap.js';
 import {
@@ -869,38 +875,8 @@ import {
     // FIT-scale CSS-pixel space (so every existing call site is unchanged),
     // and absorb both factors into the canvas backing store + the
     // `setTransform` we apply at the start of `redrawOverlay`.
-    function overlayDevicePixelRatio() {
-        const raw = Number(window.devicePixelRatio) || 1;
-        // Clamp: < 1 is meaningless for sharpening; > 3 wastes memory without
-        // visible benefit (a 2000×2600-pixel page at dpr=4 is 80 MP).
-        if (!Number.isFinite(raw) || raw < 1) return 1;
-        return Math.min(3, raw);
-    }
-
-    function overlayZoomMultiplier() {
-        const z = Number(currentZoomPercent);
-        if (!Number.isFinite(z) || z <= 0) return 1;
-        return z / 100;
-    }
-
-    function overlayBackingScale() {
-        return overlayDevicePixelRatio() * overlayZoomMultiplier();
-    }
-
-    function sizeOverlayCanvas(canvas, cssW, cssH) {
-        if (!canvas) return;
-        const backing = overlayBackingScale();
-        const w = Math.max(1, Math.round(cssW));
-        const h = Math.max(1, Math.round(cssH));
-        canvas.width = Math.max(1, Math.round(w * backing));
-        canvas.height = Math.max(1, Math.round(h * backing));
-        // Stash the FIT-scale logical (CSS) dimensions so drawing/hit-testing
-        // code can keep working in fit-scale CSS pixel coords regardless of
-        // the backing-store DPR or zoom.
-        canvas.__cssWidth = w;
-        canvas.__cssHeight = h;
-        canvas.__backingScale = backing;
-    }
+    // overlayDevicePixelRatio / overlayZoomMultiplier / overlayBackingScale /
+    // sizeOverlayCanvas moved to ./render/overlay-sizing.js (Phase 7p).
 
     // canvasLogicalWidth moved to ./util/dom-metrics.js (Phase 5.5b).
 
