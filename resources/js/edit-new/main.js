@@ -193,6 +193,7 @@ import {
     getSignatureSmoothingAmount as _getSignatureSmoothingAmount,
     hasSignatureDrawContent,
 } from './signature/canvas.js';
+import { paintSmoothStroke } from './draw/smooth-stroke.js';
 import {
     dbgEscape as _dbgEscape,
     dbgPrettyHtml as _dbgPrettyHtml,
@@ -4084,51 +4085,10 @@ import {
     const clearMarkupToolDrawingState = () => _clearMarkupToolDrawingState(markupToolCanvas);
     const getMarkupToolSmoothingAmount = () => _getMarkupToolSmoothingAmount(markupToolSmoothingInput);
 
-    function paintMarkupToolStroke(stroke) {
-        const points = Array.isArray(stroke?.points) ? stroke.points : [];
-        if (!markupToolCtx || !points.length) return;
-
-        const smooth = getMarkupToolSmoothingAmount();
-        const color = stroke?.color || '#0f172a';
-        const width = Math.max(1, Number(stroke?.width) || 4);
-
-        markupToolCtx.save();
-        markupToolCtx.lineCap = 'round';
-        markupToolCtx.lineJoin = 'round';
-        markupToolCtx.strokeStyle = color;
-        markupToolCtx.fillStyle = color;
-        markupToolCtx.lineWidth = width;
-
-        if (points.length === 1) {
-            markupToolCtx.beginPath();
-            markupToolCtx.arc(points[0].x, points[0].y, Math.max(1, width / 2), 0, Math.PI * 2);
-            markupToolCtx.fill();
-            markupToolCtx.restore();
-            return;
-        }
-
-        markupToolCtx.beginPath();
-        markupToolCtx.moveTo(points[0].x, points[0].y);
-        if (smooth <= 0.01 || points.length === 2) {
-            for (let index = 1; index < points.length; index += 1) {
-                markupToolCtx.lineTo(points[index].x, points[index].y);
-            }
-        } else {
-            for (let index = 1; index < points.length - 1; index += 1) {
-                const current = points[index];
-                const next = points[index + 1];
-                const midX = (current.x + next.x) / 2;
-                const midY = (current.y + next.y) / 2;
-                const endX = current.x + ((midX - current.x) * smooth);
-                const endY = current.y + ((midY - current.y) * smooth);
-                markupToolCtx.quadraticCurveTo(current.x, current.y, endX, endY);
-            }
-            const last = points[points.length - 1];
-            markupToolCtx.lineTo(last.x, last.y);
-        }
-        markupToolCtx.stroke();
-        markupToolCtx.restore();
-    }
+    // paintMarkupToolStroke moved to ./draw/smooth-stroke.js (Phase 7aw).
+    const paintMarkupToolStroke = (stroke) => paintSmoothStroke(
+        markupToolCtx, stroke, getMarkupToolSmoothingAmount(), '#0f172a', 4
+    );
 
     function renderMarkupToolDrawPreview() {
         if (!markupToolCanvas || !markupToolCtx) return;
@@ -4657,50 +4617,10 @@ import {
     const clearSignatureDrawingState = () => _clearSignatureDrawingState(signatureCanvas);
     const getSignatureSmoothingAmount = () => _getSignatureSmoothingAmount(signatureSmoothingInput);
 
-    function paintSignatureStroke(stroke) {
-        const points = Array.isArray(stroke?.points) ? stroke.points : [];
-        if (!signatureCtx || !points.length) return;
-        const smooth = getSignatureSmoothingAmount();
-        const color = stroke?.color || '#111827';
-        const width = Math.max(1, Number(stroke?.width) || 3);
-
-        signatureCtx.save();
-        signatureCtx.lineCap = 'round';
-        signatureCtx.lineJoin = 'round';
-        signatureCtx.strokeStyle = color;
-        signatureCtx.fillStyle = color;
-        signatureCtx.lineWidth = width;
-
-        if (points.length === 1) {
-            signatureCtx.beginPath();
-            signatureCtx.arc(points[0].x, points[0].y, Math.max(1, width / 2), 0, Math.PI * 2);
-            signatureCtx.fill();
-            signatureCtx.restore();
-            return;
-        }
-
-        signatureCtx.beginPath();
-        signatureCtx.moveTo(points[0].x, points[0].y);
-        if (smooth <= 0.01 || points.length === 2) {
-            for (let index = 1; index < points.length; index += 1) {
-                signatureCtx.lineTo(points[index].x, points[index].y);
-            }
-        } else {
-            for (let index = 1; index < points.length - 1; index += 1) {
-                const current = points[index];
-                const next = points[index + 1];
-                const midX = (current.x + next.x) / 2;
-                const midY = (current.y + next.y) / 2;
-                const endX = current.x + ((midX - current.x) * smooth);
-                const endY = current.y + ((midY - current.y) * smooth);
-                signatureCtx.quadraticCurveTo(current.x, current.y, endX, endY);
-            }
-            const last = points[points.length - 1];
-            signatureCtx.lineTo(last.x, last.y);
-        }
-        signatureCtx.stroke();
-        signatureCtx.restore();
-    }
+    // paintSignatureStroke moved to ./draw/smooth-stroke.js (Phase 7aw).
+    const paintSignatureStroke = (stroke) => paintSmoothStroke(
+        signatureCtx, stroke, getSignatureSmoothingAmount(), '#111827', 3
+    );
 
     function renderDrawSignaturePreview() {
         if (!signatureCanvas || !signatureCtx) return;
