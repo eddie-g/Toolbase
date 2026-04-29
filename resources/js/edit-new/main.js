@@ -167,6 +167,11 @@ import {
 } from './draw/primitives.js';
 import { getImageAnnotationSource } from './annotations/image-source.js';
 import {
+    getAvailablePageWidth as _getAvailablePageWidth,
+    getFitScaleForWidth as _getFitScaleForWidth,
+    getAppliedScale,
+} from './viewport/scale.js';
+import {
     dbgEscape as _dbgEscape,
     dbgPrettyHtml as _dbgPrettyHtml,
     dbgFormatStyle as _dbgFormatStyle,
@@ -885,18 +890,12 @@ import {
         if (redoButton) redoButton.disabled = redoStack.length === 0;
     }
 
-    function getAvailablePageWidth() {
-        return Math.max(wrap.clientWidth - 32, 200);
-    }
-
-    function getFitScaleForWidth(pageWidthPts) {
-        return pageWidthPts > 0 ? (getAvailablePageWidth() / pageWidthPts) : 1;
-    }
-
-    function getAppliedScale(data) {
-        if (!data) return 1;
-        return (data.fitScale || 1) * (currentZoomPercent / 100);
-    }
+    // getAvailablePageWidth, getFitScaleForWidth, getAppliedScale moved to
+    // ./viewport/scale.js (Phase 7aq). The two width-dependent helpers are
+    // re-bound here as zero-arg wrappers so call sites don't have to thread
+    // the wrap container through every invocation.
+    const getAvailablePageWidth = () => _getAvailablePageWidth(wrap);
+    const getFitScaleForWidth = (pageWidthPts) => _getFitScaleForWidth(pageWidthPts, wrap);
 
     // fontDisplayScale moved to ./util/dom-metrics.js.
 
