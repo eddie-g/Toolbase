@@ -206,6 +206,8 @@ import {
     resetShapeCutState,
     armShapeCutState,
 } from './shape/cut-mode.js';
+import { getActiveEditorSelection } from './editor/active-selection.js';
+import { cancelTextCreationPreview } from './interactions/text-creation.js';
 import {
     dbgEscape as _dbgEscape,
     dbgPrettyHtml as _dbgPrettyHtml,
@@ -5998,12 +6000,7 @@ import {
         syncShapePanelUi();
     }
 
-    function cancelTextCreationPreview() {
-        if (textCreationState.previewEl) {
-            textCreationState.previewEl.remove();
-        }
-        setTextCreationState({ active: false, pi: null, pointerId: null, startX: 0, startY: 0, rect: null, previewEl: null, moved: false });
-    }
+    // cancelTextCreationPreview moved to ./interactions/text-creation.js (Phase 7az).
 
     function cancelShapeCreationPreview() {
         setShapeCreationState({ active: false, pi: null, pointerId: null, startPt: null, currentPt: null, previewAnn: null, constrain: false });
@@ -9071,17 +9068,7 @@ import {
     // is not collapsed — i.e. the user actually has characters highlighted.
     // Used to route format-bar actions to per-selection formatting via
     // document.execCommand, instead of setting annotation-level properties.
-    function getActiveEditorSelection() {
-        const active = getActiveAnnAndPage();
-        if (!active) return null;
-        const ae = document.getElementById('ae-' + (active.pi + 1));
-        if (!(ae instanceof HTMLElement) || ae.style.display === 'none') return null;
-        const selection = window.getSelection();
-        if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
-        const range = selection.getRangeAt(0);
-        if (!ae.contains(range.startContainer) || !ae.contains(range.endContainer)) return null;
-        return { ae, range, selection, active };
-    }
+    // getActiveEditorSelection moved to ./editor/active-selection.js (Phase 7az).
 
     // Persist the editor's current innerHTML on the annotation so subsequent
     // syncActiveEditor calls (triggered by redraw, resize etc.) don't flatten
