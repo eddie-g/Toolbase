@@ -14,6 +14,12 @@ import {
     saveAnnotations,
     downloadAnnotatedPdf,
 } from './persistence/api.js';
+import {
+    normalizeFontName,
+    fontFileFormat,
+    isSubsetEmbeddedFontData,
+    shouldBypassEmbeddedFont,
+} from './render/font-utils.js';
 
 (function () {
 
@@ -1274,42 +1280,6 @@ import {
         CrimsonText:      "'Crimson Text', Georgia, 'Times New Roman', serif",
         Hind:             "'Hind', Arial, Helvetica, sans-serif",
         Mukta:            "'Mukta', Arial, Helvetica, sans-serif",
-    };
-
-    const normalizeFontName = (name) => {
-        let s = String(name || '').replace(/^PDF_/i, '').trim();
-        if (!s) return '';
-        s = s.replace(/PSMT$/i, '').replace(/PS(-\w+MT)$/i, '$1').trim();
-        if (s.includes('+')) { const p = s.split('+', 2); if (p[0].length === 6) s = p[1]; }
-        return s;
-    };
-
-    const fontFileFormat = (fileExt) => {
-        const ext = String(fileExt || 'ttf').toLowerCase();
-        if (ext === 'woff2') return 'woff2';
-        if (ext === 'woff') return 'woff';
-        return (ext === 'otf' || ext === 'cff') ? 'opentype' : 'truetype';
-    };
-
-    const PDF_SUBSET_FONT_RE = /^[A-Z]{6}\+/;
-    const isSubsetEmbeddedFontData = (fontData) => {
-        const pdfName = String(fontData?.pdf_font_name || '').trim();
-        return PDF_SUBSET_FONT_RE.test(pdfName);
-    };
-
-    const shouldBypassEmbeddedFont = (name, family = '', fontData = null) => {
-        const rawName = normalizeFontName(name);
-        const rawFamily = normalizeFontName(family);
-        // PDF subset fonts frequently have PDF-private glyph encodings. They
-        // render correctly inside the PDF because the content stream uses the
-        // subset's character codes, but rendering Unicode text through the same
-        // font in browser canvas/DOM can map letters to the wrong glyphs. Use
-        // browser/system families for the overlay unless the font is a real,
-        // non-subset face.
-        return isSubsetEmbeddedFontData(fontData)
-            || /^Free(?:Sans|Serif|Mono)/i.test(rawName)
-            || /^Free(?:Sans|Serif|Mono)/i.test(rawFamily)
-            || /^ArialMT$/i.test(rawName);
     };
 
     const loadEmbeddedFontFaces = (embeddedFonts) => {
