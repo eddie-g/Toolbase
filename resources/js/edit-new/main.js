@@ -101,6 +101,7 @@ import {
     getRotationCenterClient,
     pointerAngleDeg,
 } from './interactions/rotate.js';
+import { installPointerDispatcher } from './interactions/pointer-dispatcher.js';
 import { activeState, setActiveState, clearActiveState } from './store/active-state.js';
 import { hoverState, setHoverState, clearHoverState } from './store/hover-state.js';
 import {
@@ -7262,6 +7263,21 @@ import { pageData } from './store/page-data.js';
         hasActiveBoxSelection: () => hasActiveBoxSelection(),
         markDirty: () => markDirty(),
     });
+    installPointerDispatcher({
+        setAnnotationBox: (ann, box) => setAnnotationBox(ann, box),
+        redrawOverlay: (pi) => redrawOverlay(pi),
+        syncActiveEditor: (force) => syncActiveEditor(force),
+        updateFormatBar: () => updateFormatBar(),
+        measureEditedTextHeightPts: (ann, text, scale, w) => measureEditedTextHeightPts(ann, text, scale, w),
+        editedTexts,
+    });
+
+    // Rotation helpers (getRotationCenterClient, pointerAngleDeg, beginRotate,
+    // endRotate) moved to ./interactions/rotate.js (Phase 6c).
+
+    // shouldScaleFontOnResize / scaledResizeFontSize and the window-level
+    // mousemove / mouseup / pointer* listeners moved to
+    // ./interactions/pointer-dispatcher.js (Phase 6d).
 
     // beginResize / endResize moved to ./interactions/resize.js (Phase 6b).
     // endDrag moved to ./interactions/drag.js (Phase 6a).
@@ -7269,218 +7285,8 @@ import { pageData } from './store/page-data.js';
     // Rotation helpers (getRotationCenterClient, pointerAngleDeg, beginRotate,
     // endRotate) moved to ./interactions/rotate.js (Phase 6c).
 
-    function shouldScaleFontOnResize(ann) {
-        return false;
-    }
+    // (mousemove / mouseup / pointer* handlers moved to pointer-dispatcher.js — Phase 6d)
 
-    function scaledResizeFontSize(startFontSize, startBox, nextWidth, nextHeight) {
-        const baselineFontSize = Math.max(1, Number(startFontSize) || 12);
-        const widthScale = (Number(startBox?.w) || 0) > 0 ? (nextWidth / startBox.w) : 1;
-        const heightScale = (Number(startBox?.h) || 0) > 0 ? (nextHeight / startBox.h) : 1;
-        const scaleFactor = Math.sqrt(
-            Math.max(0.01, Number.isFinite(widthScale) ? widthScale : 1)
-            * Math.max(0.01, Number.isFinite(heightScale) ? heightScale : 1)
-        );
-        return Math.max(6, Math.min(144, baselineFontSize * scaleFactor));
-    }
-
-    window.addEventListener('mousemove', (e) => {
-        if (dragState.active) {
-            const { pi, uid, startPt, startBox, offsetXPts, offsetYPts } = dragState;
-            const data = pageData[pi];
-            const ann  = data?.annotations.find(a => a._uid === uid);
-            if (!ann || !startPt || !startBox) return;
-            const pt  = pdfPtFromClient(e.clientX, e.clientY, pi);
-            if (!pt) return;
-            const fallbackX = pt.x - offsetXPts;
-            const fallbackY = pt.y - offsetYPts;
-            const nextX = Number.isFinite(startPt.x)
-                ? startBox.x + (pt.x - startPt.x)
-                : fallbackX;
-            const nextY = Number.isFinite(startPt.y)
-                ? startBox.y + (pt.y - startPt.y)
-                : fallbackY;
-            setAnnotationBox(ann, {
-                x: Math.min(Math.max(0, nextX), Math.max(0, data.wPts - startBox.w)),
-                y: Math.min(Math.max(0, nextY), Math.max(0, data.hPts - startBox.h)),
-                w: startBox.w, h: startBox.h,
-            });
-            redrawOverlay(pi);
-            syncActiveEditor();
-            return;
-        }
-
-        if (!resizeState.active) return;
-        const { pi, uid, handle, startPt, startBox, startFontSize, startLineGeometry } = resizeState;
-        const data = pageData[pi];
-        const ann = data?.annotations.find(a => a._uid === uid);
-        const pt = pdfPtFromClient(e.clientX, e.clientY, pi);
-        if (!ann || !pt || !startPt || !startBox) return;
-
-        if (isShapeAnnotation(ann) && isLineShape(ann) && (handle === 'line-start' || handle === 'line-end')) {
-            const geometry = startLineGeometry || {
-                lineStartX: 0,
-                lineStartY: 0,
-                lineEndX: 1,
-                lineEndY: 1,
-            };
-            // geometry.line*Y is image-y-down (0 = visual top of box,
-            // 1 = visual bottom). startBox.y is the PDF-y of the bottom
-            // edge (PDF-y-up), so the visual top of the box is
-            // startBox.y + startBox.h. Flip to PDF-y-up before passing
-            // back into computeLineBoxGeometry, which expects PDF-up.
-            const startPoint = {
-                x: startBox.x + (startBox.w * geometry.lineStartX),
-                y: startBox.y + (startBox.h * (1 - geometry.lineStartY)),
-            };
-            const endPoint = {
-                x: startBox.x + (startBox.w * geometry.lineEndX),
-                y: startBox.y + (startBox.h * (1 - geometry.lineEndY)),
-            };
-            const draggedPoint = {
-                x: Math.max(0, Math.min(data.wPts, pt.x)),
-                y: Math.max(0, Math.min(data.hPts, pt.y)),
-            };
-            const nextGeometry = handle === 'line-start'
-                ? (() => {
-                    const snappedStart = snapLineEndpoint(endPoint.x, endPoint.y, draggedPoint.x, draggedPoint.y);
-                    return computeLineBoxGeometry(snappedStart.x, snappedStart.y, endPoint.x, endPoint.y);
-                })()
-                : (() => {
-                    const snappedEnd = snapLineEndpoint(startPoint.x, startPoint.y, draggedPoint.x, draggedPoint.y);
-                    return computeLineBoxGeometry(startPoint.x, startPoint.y, snappedEnd.x, snappedEnd.y);
-                })();
-
-            setAnnotationBox(ann, {
-                x: nextGeometry.left,
-                y: nextGeometry.bottom,
-                w: nextGeometry.width,
-                h: nextGeometry.height,
-            });
-            ann.lineStartX = nextGeometry.lineStartX;
-            ann.lineStartY = nextGeometry.lineStartY;
-            ann.lineEndX = nextGeometry.lineEndX;
-            ann.lineEndY = nextGeometry.lineEndY;
-
-            redrawOverlay(pi);
-            syncActiveEditor();
-            updateFormatBar();
-            return;
-        }
-
-        const minWidthPts = isShapeAnnotation(ann) ? (isLineShape(ann) ? 4 : 8) : 12;
-        const currentText = editedTexts[ann._uid] ?? String(ann.text ?? '');
-        const right = startBox.x + startBox.w;
-        const top = startBox.y + startBox.h;
-
-        let nextLeft = startBox.x;
-        let nextRight = right;
-        let nextBottom = startBox.y;
-        let nextTop = top;
-
-        if (handle.includes('w')) {
-            nextLeft = Math.min(pt.x, right - minWidthPts);
-        }
-        if (handle.includes('e')) {
-            nextRight = Math.max(pt.x, startBox.x + minWidthPts);
-        }
-        if (handle.includes('s')) {
-            nextBottom = pt.y;
-        }
-        if (handle.includes('n')) {
-            nextTop = pt.y;
-        }
-
-        nextLeft = Math.max(0, nextLeft);
-        nextBottom = Math.max(0, nextBottom);
-        nextRight = Math.min(data.wPts, nextRight);
-        nextTop = Math.min(data.hPts, nextTop);
-
-        let nextWidth = Math.max(minWidthPts, nextRight - nextLeft);
-        let nextHeight = Math.max(isShapeAnnotation(ann) ? (isLineShape(ann) ? 4 : 8) : 8, nextTop - nextBottom);
-
-        if (isShapeAnnotation(ann)) {
-            nextBottom = Math.max(0, nextBottom);
-            nextTop = Math.min(data.hPts, nextTop);
-            nextWidth = Math.max(minWidthPts, nextRight - nextLeft);
-            nextHeight = Math.max(isLineShape(ann) ? 4 : 8, nextTop - nextBottom);
-        } else if (shouldScaleFontOnResize(ann) && startFontSize) {
-            const previousFontSize = ann.fontSize;
-            ann.fontSize = scaledResizeFontSize(startFontSize, startBox, nextWidth, nextHeight);
-            const scaledMinHeightPts = Math.max(8, measureEditedTextHeightPts(ann, currentText, data.scale, nextWidth));
-            ann.fontSize = previousFontSize;
-
-            if (handle.includes('s')) {
-                nextBottom = Math.min(nextBottom, nextTop - scaledMinHeightPts);
-            }
-            if (handle.includes('n')) {
-                nextTop = Math.max(nextTop, nextBottom + scaledMinHeightPts);
-            }
-            nextBottom = Math.max(0, nextBottom);
-            nextTop = Math.min(data.hPts, nextTop);
-            nextHeight = Math.max(scaledMinHeightPts, nextTop - nextBottom);
-        } else {
-            const minHeightPts = Math.max(8, measureEditedTextHeightPts(ann, currentText, data.scale, nextWidth));
-            if (handle.includes('s')) {
-                nextBottom = Math.min(nextBottom, nextTop - minHeightPts);
-            }
-            if (handle.includes('n')) {
-                nextTop = Math.max(nextTop, nextBottom + minHeightPts);
-            }
-            nextBottom = Math.max(0, nextBottom);
-            nextTop = Math.min(data.hPts, nextTop);
-            nextHeight = Math.max(minHeightPts, nextTop - nextBottom);
-        }
-        nextWidth = Math.max(minWidthPts, nextRight - nextLeft);
-
-        if (isTextAnnotation(ann)) {
-            ann._pageBoundsConstrained = false;
-        }
-        setAnnotationBox(ann, {
-            x: nextLeft,
-            y: nextBottom,
-            w: nextWidth,
-            h: nextHeight,
-        });
-        if (shouldScaleFontOnResize(ann) && startFontSize) {
-            ann.fontSize = scaledResizeFontSize(startFontSize, startBox, nextWidth, nextHeight);
-        }
-
-        redrawOverlay(pi);
-        syncActiveEditor();
-        updateFormatBar();
-    });
-
-    window.addEventListener('mouseup', () => {
-        if (dragState.active) endDrag();
-        if (resizeState.active) endResize();
-    });
-
-    window.addEventListener('pointermove', (e) => {
-        if (!rotateState.active) return;
-        if (rotateState.pointerId !== null && e.pointerId !== rotateState.pointerId) return;
-        const { pi, uid, grabAngleOffset } = rotateState;
-        const data = pageData[pi];
-        const ann = data?.annotations.find(a => a._uid === uid);
-        if (!ann) return;
-        const center = getRotationCenterClient(pi, ann);
-        if (!center) return;
-        const pAngle = pointerAngleDeg(e.clientX, e.clientY, center);
-        const handleAngle = normalizeRotationDegrees(pAngle - grabAngleOffset);
-        ann.rotation = normalizeRotationDegrees(handleAngle - 90);
-        redrawOverlay(pi);
-        syncActiveEditor(true);
-    });
-    window.addEventListener('pointerup', (e) => {
-        if (!rotateState.active) return;
-        if (rotateState.pointerId !== null && e.pointerId !== rotateState.pointerId) return;
-        endRotate();
-    });
-    window.addEventListener('pointercancel', (e) => {
-        if (!rotateState.active) return;
-        if (rotateState.pointerId !== null && e.pointerId !== rotateState.pointerId) return;
-        endRotate();
-    });
     window.addEventListener('keydown', (e) => {
         if (markupToolModal?.classList.contains('is-open') && e.key === 'Escape') {
             e.preventDefault();
