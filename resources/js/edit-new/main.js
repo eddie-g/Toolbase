@@ -127,6 +127,9 @@ import {
     annotationTextMatchesSource,
 } from './annotations/source-text-match.js';
 import { resolveDisplayBgColor, WHITE_TEXT_RE } from './annotations/display-bg-color.js';
+import { sourceVisualRectPx, sourceVisualOriginPts } from './annotations/source-visual.js';
+import { annotationUsesStoredBoxForDisplay } from './annotations/uses-stored-box.js';
+import { lineSelectionRectPx, annRectPx } from './annotations/canvas-rect.js';
 import {
     buildAcroFieldLookup,
     normalizeAcroRect,
@@ -1320,141 +1323,11 @@ import {
     // hydrator restores `_userAuthored` from `userAuthored` OR `promotedDirty`
     // (legacy flag already persisted).
 
-    function sourceVisualRectPx(ann, scale) {
-        const sourceOffset = annotationSourceOffset(ann);
-        const lines = renderableSourceLines(ann);
-        if (lines.length) {
-            const xs = lines.map((line) => Number(line.bbox?.[0]) + sourceOffset.dx).filter(Number.isFinite);
-            const ys = lines.map((line) => Number(line.bbox?.[1]) + sourceOffset.dy).filter(Number.isFinite);
-            const xe = lines.map((line) => Number(line.bbox?.[2]) + sourceOffset.dx).filter(Number.isFinite);
-            const ye = lines.map((line) => Number(line.bbox?.[3]) + sourceOffset.dy).filter(Number.isFinite);
-            if (xs.length && ys.length && xe.length && ye.length) {
-                const left = Math.min(...xs) * scale;
-                const top = Math.min(...ys) * scale;
-                const right = Math.max(...xe) * scale;
-                const bottom = Math.max(...ye) * scale;
-                return {
-                    left,
-                    top,
-                    width: Math.max(2, right - left),
-                    height: Math.max(2, bottom - top),
-                };
-            }
-        }
+    // sourceVisualRectPx / sourceVisualOriginPts moved to ./annotations/source-visual.js (Phase 7x).
 
-        const sL = Number(ann?.sourceBlockLeft);
-        const sT = Number(ann?.sourceBlockTop);
-        const sW = Number(ann?.sourceBlockWidth);
-        const sH = Number(ann?.sourceBlockHeight);
-        if ([sL, sT, sW, sH].every(Number.isFinite) && sW > 0 && sH > 0) {
-            return {
-                left: (sL + sourceOffset.dx) * scale,
-                top: (sT + sourceOffset.dy) * scale,
-                width: Math.max(2, sW * scale),
-                height: Math.max(2, sH * scale),
-            };
-        }
+    // annotationUsesStoredBoxForDisplay moved to ./annotations/uses-stored-box.js (Phase 7y).
 
-        return null;
-    }
-
-    function sourceVisualOriginPts(ann) {
-        const sourceOffset = annotationSourceOffset(ann);
-        const lines = renderableSourceLines(ann);
-        if (lines.length) {
-            const xs = lines.map((line) => Number(line.bbox?.[0]) + sourceOffset.dx).filter(Number.isFinite);
-            const ys = lines.map((line) => Number(line.bbox?.[1]) + sourceOffset.dy).filter(Number.isFinite);
-            if (xs.length && ys.length) {
-                return {
-                    left: Math.min(...xs),
-                    top: Math.min(...ys),
-                };
-            }
-        }
-
-        const sL = Number(ann?.sourceBlockLeft);
-        const sT = Number(ann?.sourceBlockTop);
-        if ([sL, sT].every(Number.isFinite)) {
-            return {
-                left: sL + sourceOffset.dx,
-                top: sT + sourceOffset.dy,
-            };
-        }
-
-        return null;
-    }
-
-    function annotationUsesStoredBoxForDisplay(ann) {
-        const currentText = editedTexts[ann?._uid];
-        const editedInSession = currentText !== undefined && currentText !== String(ann?.text ?? '');
-        const annBgColor = resolveDisplayBgColor(ann);
-        const annOpacity = Math.min(1, Math.max(0, parseFloat(ann?.opacity ?? 1)));
-        const styleChanged = Boolean(
-            (annBgColor && annBgColor !== '#ffffff' && annBgColor !== 'transparent')
-            || annOpacity < 0.999
-            || ann?.underline
-            || (String(ann?.verticalAlign || 'top').toLowerCase() !== 'top')
-            || (String(ann?.textAlign || 'left').toLowerCase() !== 'left')
-        );
-        // Keep the DOM/editor geometry aligned with the export/canvas paths.
-        // Once a promoted annotation becomes user-authored (style change, text
-        // edit, resize, rich formatting), it must render from its stored box
-        // instead of the original source block geometry.
-        return editedInSession
-            || annTextIsEdited(ann)
-            || annotationDimensionsChanged(ann)
-            || styleChanged
-            || isUserAuthoredAnnotation(ann)
-            || Boolean(ann?._richHtml);
-    }
-
-    // Convert PDF-space box to canvas-pixel rect { left, top, width, height }
-    function lineSelectionRectPx(ann, scale, canvasHeight, extraPaddingPx = 14) {
-        if (!isShapeAnnotation(ann) || !isLineShape(ann)) return null;
-        const box = resolveAnnBox(ann);
-        if (!box) return null;
-        const left = box.x * scale;
-        const top = canvasHeight - (box.y + box.h) * scale;
-        const width = Math.max(1, box.w * scale);
-        const height = Math.max(1, box.h * scale);
-        const lineGeometry = {
-            lineStartX: clamp01(ann.lineStartX, 0),
-            lineStartY: clamp01(ann.lineStartY, 0),
-            lineEndX: clamp01(ann.lineEndX, 1),
-            lineEndY: clamp01(ann.lineEndY, 1),
-        };
-        const x1 = left + (width * lineGeometry.lineStartX);
-        const y1 = top + (height * lineGeometry.lineStartY);
-        const x2 = left + (width * lineGeometry.lineEndX);
-        const y2 = top + (height * lineGeometry.lineEndY);
-        const strokePx = Math.max(0, (Number(ann.strokeWidth) || 0) * scale);
-        const clearance = (strokePx / 2) + Math.max(0, Number(extraPaddingPx) || 0);
-        return {
-            left: Math.min(x1, x2) - clearance,
-            top: Math.min(y1, y2) - clearance,
-            width: Math.abs(x2 - x1) + (clearance * 2),
-            height: Math.abs(y2 - y1) + (clearance * 2),
-        };
-    }
-
-    function annRectPx(ann, scale, canvasHeight, opts = {}) {
-        if (opts.expandLine !== false) {
-            const lineRect = lineSelectionRectPx(ann, scale, canvasHeight);
-            if (lineRect) return lineRect;
-        }
-        if (!annotationUsesStoredBoxForDisplay(ann)) {
-            const sourceRect = sourceVisualRectPx(ann, scale);
-            if (sourceRect) return sourceRect;
-        }
-        const box = resolveAnnBox(ann);
-        if (!box) return null;
-        return {
-            left:   box.x * scale,
-            top:    canvasHeight - (box.y + box.h) * scale,
-            width:  box.w * scale,
-            height: box.h * scale,
-        };
-    }
+    // lineSelectionRectPx / annRectPx moved to ./annotations/canvas-rect.js (Phase 7z).
 
     // drawShapePath moved to ./shapes/path.js (Phase 7s).
 
