@@ -6,9 +6,6 @@
  * / pointerup window listeners that drive an in-flight rotation still
  * live in main.js and call back into `getRotationCenterClient` /
  * `pointerAngleDeg` (re-exported here).
- *
- * Still-monolithic main.js helpers (hasActiveBoxSelection)
- * flow in via `configureRotateInteractions(deps)`.
  */
 
 import { activeState } from '../store/active-state.js';
@@ -22,12 +19,6 @@ import { markUserAuthored } from '../annotations/state.js';
 import { pushUndo } from '../history/undo-redo.js';
 import { markDirty } from '../store/lifecycle-flags.js';
 import { hasActiveBoxSelection } from '../selection/active.js';
-
-let _deps = null;
-
-export function configureRotateInteractions(deps) {
-    _deps = deps;
-}
 
 export function getRotationCenterClient(pi, ann) {
     const data = pageData[pi];
@@ -51,7 +42,6 @@ export function pointerAngleDeg(clientX, clientY, center) {
 }
 
 export function beginRotate(e, pi) {
-    if (!_deps) return;
     if (!editModeEnabled && !addTextMode && !shapeMode && !hasActiveBoxSelection()) return;
     const data = pageData[pi];
     const ann = data?.annotations.find(a => a._uid === activeState.uid);
@@ -83,7 +73,6 @@ export function beginRotate(e, pi) {
 }
 
 export function endRotate() {
-    if (!_deps) return;
     if (!rotateState.active) return;
     const rot = document.getElementById('rh-' + (rotateState.pi + 1) + '-rot');
     if (rot) rot.classList.remove('is-active');

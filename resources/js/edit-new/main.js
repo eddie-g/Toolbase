@@ -100,7 +100,6 @@ import {
     endResize,
 } from './interactions/resize.js';
 import {
-    configureRotateInteractions,
     beginRotate,
     endRotate,
     getRotationCenterClient,
@@ -7131,7 +7130,6 @@ import {
     configureResizeInteractions({
         editableLineStyle: (ann, lineIndex) => editableLineStyle(ann, lineIndex),
     });
-    configureRotateInteractions({});
     installPointerDispatcher({
         redrawOverlay: (pi) => redrawOverlay(pi),
         syncActiveEditor: (force) => syncActiveEditor(force),
