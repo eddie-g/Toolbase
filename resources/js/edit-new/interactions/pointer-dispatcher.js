@@ -12,9 +12,8 @@
  *   - window pointercancel → endRotate
  *
  * State + pure helpers are imported directly. The still-monolithic main.js
- * helpers (redrawOverlay, syncActiveEditor, updateFormatBar,
- * measureEditedTextHeightPts) flow in via deps and will be cleaned up
- * once those move to modules.
+ * helpers (redrawOverlay, syncActiveEditor, updateFormatBar) flow in via
+ * deps and will be cleaned up once those move to modules.
  */
 
 import { dragState, resizeState, rotateState } from '../store/interaction-state.js';
@@ -24,6 +23,7 @@ import { isShapeAnnotation, isLineShape, isTextAnnotation } from '../annotations
 import { snapLineEndpoint, computeLineBoxGeometry, normalizeRotationDegrees } from '../util/geometry.js';
 import { setAnnotationBox } from '../annotations/geometry-writes.js';
 import { editedTexts } from '../store/edited-texts.js';
+import { measureEditedTextHeightPts } from '../text/measure.js';
 import { endDrag } from './drag.js';
 import { endResize } from './resize.js';
 import { endRotate, getRotationCenterClient, pointerAngleDeg } from './rotate.js';
@@ -51,14 +51,12 @@ export function scaledResizeFontSize(startFontSize, startBox, nextWidth, nextHei
  * @param {(pi: number) => void} deps.redrawOverlay
  * @param {(forceRebuild?: boolean) => void} deps.syncActiveEditor
  * @param {() => void} deps.updateFormatBar
- * @param {(ann: Object, text: string, scale: number, overrideWidthPts?: number|null) => number} deps.measureEditedTextHeightPts
  */
 export function installPointerDispatcher(deps) {
     const {
         redrawOverlay,
         syncActiveEditor,
         updateFormatBar,
-        measureEditedTextHeightPts,
     } = deps;
 
     window.addEventListener('mousemove', (e) => {

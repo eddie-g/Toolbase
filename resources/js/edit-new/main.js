@@ -263,6 +263,10 @@ import {
     performRedo,
     updateHistoryUi,
 } from './history/undo-redo.js';
+import {
+    configureMeasure,
+    measureEditedTextHeightPts,
+} from './text/measure.js';
 
 (function () {
 
@@ -4182,40 +4186,7 @@ import {
         return `<div data-line-index="0" style="display:block;width:100%;box-sizing:border-box;font-family:inherit;font-size:inherit;font-weight:inherit;font-style:inherit;letter-spacing:inherit;color:inherit;text-decoration:${ann.underline ? 'underline' : 'none'};line-height:${lineHeightPx.toFixed(2)}px;min-height:${lineHeightPx.toFixed(2)}px;text-align:${lineAlign};transform:translateY(-${topShiftPx.toFixed(2)}px);transform-origin:top left;padding:0;margin:0;white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word;">${innerHtml}</div>`;
     }
 
-    function measureEditedTextHeightPts(ann, text, scale, overrideWidthPts = null) {
-        // Mirror the wrap logic in buildEditedLines / renderPlainEditorHTML so the
-        // measured height reflects the actual number of rendered (wrapped) lines,
-        // not just the count of `\n`s in the source string. Otherwise a long
-        // single-line paragraph collapses the annotation box to one line-height
-        // when the user changes font size.
-        const maxSourceIndex = Math.max(0, renderableSourceLines(ann).length - 1);
-        const box = resolveAnnBox(ann);
-        const normalized = String(text ?? '')
-            .replace(/\r\n?/g, '\n');
-        const paragraphs = normalized.split('\n');
-        const widthPts = Number.isFinite(Number(overrideWidthPts)) && Number(overrideWidthPts) > 0
-            ? Number(overrideWidthPts)
-            : (box ? box.w : 0);
-        const maxWidthPx = Math.max(10, widthPts * scale);
-        let totalLineCount = 0;
-        const perLineHeightPx = [];
-        paragraphs.forEach((para, pIdx) => {
-            const lineIndex = Math.min(pIdx, maxSourceIndex);
-            const style = editableLineStyle(ann, lineIndex);
-            const stylePx = { ...style, fontSizePx: style.fontSizePt * fontDisplayScale(scale) };
-            const wrapped = box ? wrapParagraph(para, maxWidthPx, stylePx) : [para];
-            wrapped.forEach(() => {
-                const si = Math.min(totalLineCount, maxSourceIndex);
-                perLineHeightPx.push(blockLineHeightPx(ann, si, scale, editableLineStyle(ann, si)));
-                totalLineCount++;
-            });
-        });
-        if (!perLineHeightPx.length) {
-            perLineHeightPx.push(blockLineHeightPx(ann, 0, scale, editableLineStyle(ann, 0)));
-        }
-        const totalHeightPx = perLineHeightPx.reduce((a, b) => a + b, 0);
-        return Math.max(1, totalHeightPx / Math.max(scale, 0.0001));
-    }
+    // measureEditedTextHeightPts moved to ./text/measure.js (Phase 7e).
 
     /**
      * Collapse single \n (PDF-extraction source line-break positions) into spaces
@@ -7184,7 +7155,6 @@ import {
         redrawOverlay: (pi) => redrawOverlay(pi),
         syncActiveEditor: (force) => syncActiveEditor(force),
         updateFormatBar: () => updateFormatBar(),
-        measureEditedTextHeightPts: (ann, text, scale, w) => measureEditedTextHeightPts(ann, text, scale, w),
     });
     configureHistory({
         undoButton,
@@ -7192,6 +7162,12 @@ import {
         clearActiveAnnotation: () => clearActiveAnnotation(),
         redrawOverlay: (pi) => redrawOverlay(pi),
         markDirty: () => markDirty(),
+    });
+    configureMeasure({
+        renderableSourceLines: (ann) => renderableSourceLines(ann),
+        editableLineStyle: (ann, lineIndex) => editableLineStyle(ann, lineIndex),
+        wrapParagraph: (text, maxWidthPx, stylePx) => wrapParagraph(text, maxWidthPx, stylePx),
+        blockLineHeightPx: (ann, lineIndex, scale, style) => blockLineHeightPx(ann, lineIndex, scale, style),
     });
 
     // Rotation helpers (getRotationCenterClient, pointerAngleDeg, beginRotate,
