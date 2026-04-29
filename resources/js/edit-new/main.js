@@ -226,6 +226,7 @@ import {
     setShapeConstrainShiftAttached,
     setShapeConstrainUserDismissedTip,
 } from './store/misc-state.js';
+import { pageData } from './store/page-data.js';
 
 (function () {
 
@@ -478,7 +479,8 @@ import {
 
     // ── Module-level state ─────────────────────────────────────────────────────
     // _pdfDoc + _acroPdfDoc moved to ./store/pdf-docs.js (Phase 5l).
-    const pageData    = {};   // pi → { wPts, hPts, scale, canvasWidth, canvasHeight, annotations }
+    // pageData moved to ./store/page-data.js (Phase 5.5a).
+    //   pi → { wPts, hPts, scale, canvasWidth, canvasHeight, annotations }
     const editedTexts = {};   // uid → string
     // acroFormEntries / acroFieldLookup / acroWidgetsByPage moved to
     // ./store/acro-state.js (Phase 5f).
