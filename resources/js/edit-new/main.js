@@ -158,6 +158,7 @@ import {
     getEditorPlainText,
     stripEditorSentinels,
     richHtmlHasInlineSelectionFormatting,
+    normalizeRichHtmlForDisplay,
 } from './editor/plain-text.js';
 import {
     createDrawLayer,
@@ -5394,36 +5395,7 @@ import {
     // getEditorPlainText, stripEditorSentinels, richHtmlHasInlineSelectionFormatting
     // moved to ./editor/plain-text.js (Phase 7an).
 
-    function normalizeRichHtmlForDisplay(html, ann = null) {
-        const raw = stripEditorSentinels(html);
-        if (!raw.trim()) return '';
-        const tmp = document.createElement('div');
-        tmp.innerHTML = raw;
-        const align = ann ? (ann.textAlign || 'left') : null;
-        const decoration = ann ? (ann.underline ? 'underline' : 'none') : null;
-        tmp.querySelectorAll('[data-line-index]').forEach((el) => {
-            el.style.lineHeight = 'inherit';
-            el.style.minHeight = '0';
-            el.style.height = 'auto';
-            el.style.transform = 'none';
-            el.style.removeProperty('transform-origin');
-            el.style.display = 'block';
-            el.style.width = '100%';
-            el.style.boxSizing = 'border-box';
-            el.style.whiteSpace = 'pre-wrap';
-            el.style.overflowWrap = 'break-word';
-            el.style.wordBreak = 'break-word';
-            if (align) el.style.textAlign = align;
-            if (decoration) el.style.textDecoration = decoration;
-        });
-        tmp.querySelectorAll('[data-source-span], [data-line-content]').forEach((el) => {
-            el.style.whiteSpace = 'normal';
-            el.style.overflowWrap = 'break-word';
-            el.style.wordBreak = 'break-word';
-            el.style.maxWidth = '100%';
-        });
-        return tmp.innerHTML;
-    }
+    // normalizeRichHtmlForDisplay moved to ./editor/plain-text.js (Phase 7ar).
 
     // canonicalTextLength / domTextOffsetForCanonicalOffset / childIndex /
     // editorDomPositionToTextOffset / getEditorSelectionOffsets /
