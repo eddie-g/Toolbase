@@ -203,6 +203,7 @@ import {
     clearSignatureDrawingState as _clearSignatureDrawingState,
     getSignatureSmoothingAmount as _getSignatureSmoothingAmount,
     hasSignatureDrawContent,
+    renderDrawSignaturePreview as _renderDrawSignaturePreview,
 } from './signature/canvas.js';
 import {
     syncSignatureColorLabels as _syncSignatureColorLabels,
@@ -4532,16 +4533,8 @@ import {
     const getSignatureSmoothingAmount = () => _getSignatureSmoothingAmount(signatureSmoothingInput);
 
     // paintSignatureStroke moved to ./draw/smooth-stroke.js (Phase 7aw).
-    const paintSignatureStroke = (stroke) => paintSmoothStroke(
-        signatureCtx, stroke, getSignatureSmoothingAmount(), '#111827', 3
-    );
-
-    function renderDrawSignaturePreview() {
-        if (!signatureCanvas || !signatureCtx) return;
-        clearSignatureCanvas();
-        signatureStrokes.forEach((stroke) => paintSignatureStroke(stroke));
-        if (signatureActiveStroke) paintSignatureStroke(signatureActiveStroke);
-    }
+    // renderDrawSignaturePreview moved to ./signature/canvas.js (Phase 7bu).
+    const renderDrawSignaturePreview = () => _renderDrawSignaturePreview(signatureCanvas, signatureSmoothingInput);
 
     // syncSignatureColorLabels + updateSignatureModalCopy moved to ./signature/labels.js (Phase 7bh).
     const syncSignatureColorLabels = () => _syncSignatureColorLabels({

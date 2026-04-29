@@ -9,6 +9,7 @@
  */
 
 import { clamp01 } from '../util/math.js';
+import { paintSmoothStroke } from '../draw/smooth-stroke.js';
 import {
     signatureCtx,
     signatureStrokes,
@@ -39,4 +40,19 @@ export function getSignatureSmoothingAmount(smoothingInput) {
 export function hasSignatureDrawContent() {
     return signatureStrokes.some((stroke) => Array.isArray(stroke?.points) && stroke.points.length > 0)
         || (Array.isArray(signatureActiveStroke?.points) && signatureActiveStroke.points.length > 0);
+}
+
+/**
+ * Repaint the signature composer canvas: clear it, then paint every
+ * persisted stroke followed by the in-progress one (if any). Defaults
+ * to gray-900 / 3px (the signature tool baseline). Pure DOM-write
+ * helper depending on the signature store + the smooth-stroke painter.
+ */
+export function renderDrawSignaturePreview(signatureCanvas, smoothingInput) {
+    if (!signatureCanvas || !signatureCtx) return;
+    clearSignatureCanvas(signatureCanvas);
+    const smoothing = getSignatureSmoothingAmount(smoothingInput);
+    const paint = (stroke) => paintSmoothStroke(signatureCtx, stroke, smoothing, '#111827', 3);
+    signatureStrokes.forEach(paint);
+    if (signatureActiveStroke) paint(signatureActiveStroke);
 }
