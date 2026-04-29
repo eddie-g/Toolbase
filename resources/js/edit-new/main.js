@@ -24,6 +24,12 @@ import { clamp01 } from './util/math.js';
 import { normalizeHexColor, hexToRgbaString } from './util/color.js';
 import { safeLocalStorageGet, safeLocalStorageSet } from './util/storage.js';
 import { getSessionId } from './persistence/session.js';
+import { escapeHtml } from './util/html.js';
+import {
+    SIGNATURE_LIBRARY_LIMIT,
+    readSignatureLibrary,
+    writeSignatureLibrary,
+} from './persistence/signature-library.js';
 
 (function () {
 
@@ -269,8 +275,6 @@ import { getSessionId } from './persistence/session.js';
     // ── Session ID (persisted per-document so saves survive reload) ───────────
     // getSessionId() lives in ./persistence/session.js so any module can
     // request the per-document session id without depending on main.js.
-    const SIGNATURE_LIBRARY_KEY = 'edit_new_signature_library_v1';
-    const SIGNATURE_LIBRARY_LIMIT = 8;
     const ZOOM_MIN_PERCENT = 50;
     const ZOOM_MAX_PERCENT = 400;
     const ZOOM_STEP_PERCENT = 30;
@@ -4064,9 +4068,7 @@ import { getSessionId } from './persistence/session.js';
     }
 
     // ── Active editor ─────────────────────────────────────────────────────────
-    function escapeHtml(s) {
-        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    }
+    // escapeHtml lives in ./util/html.js — imported at the top of the file.
 
     function sourceLineRectWithinAnnotation(ann, lineIndex, scale) {
         const lineBBox = Array.isArray(renderableSourceLines(ann)[lineIndex]?.bbox) ? renderableSourceLines(ann)[lineIndex].bbox : null;
@@ -6761,7 +6763,7 @@ import { getSessionId } from './persistence/session.js';
     }
 
     function persistSavedSignatureLibrary() {
-        return safeLocalStorageSet(SIGNATURE_LIBRARY_KEY, JSON.stringify(savedSignatureLibrary));
+        return writeSignatureLibrary(savedSignatureLibrary);
     }
 
     function renderSavedSignatureLibrary() {
@@ -6800,20 +6802,7 @@ import { getSessionId } from './persistence/session.js';
     }
 
     function loadSavedSignatureLibrary() {
-        const raw = safeLocalStorageGet(SIGNATURE_LIBRARY_KEY);
-        if (!raw) {
-            savedSignatureLibrary = [];
-            renderSavedSignatureLibrary();
-            return;
-        }
-        try {
-            const parsed = JSON.parse(raw);
-            savedSignatureLibrary = Array.isArray(parsed)
-                ? parsed.filter((entry) => entry && typeof entry === 'object' && entry.asset && typeof entry.asset === 'object')
-                : [];
-        } catch (_error) {
-            savedSignatureLibrary = [];
-        }
+        savedSignatureLibrary = readSignatureLibrary();
         renderSavedSignatureLibrary();
     }
 
