@@ -166,6 +166,30 @@ import {
     setCurrentShapeFillOpacity,
     setCurrentShapeFillTransparent,
 } from './store/shape-defaults.js';
+import {
+    signatureMode,
+    signatureDirty,
+    signatureDrawing,
+    signatureStrokes,
+    signatureActiveStroke,
+    signatureImageAsset,
+    signatureEditTarget,
+    savedSignatureLibrary,
+    signaturePlacementState,
+    signatureCtx,
+    signatureTypedRenderToken,
+    setSignatureMode,
+    setSignatureDirty,
+    setSignatureDrawing,
+    setSignatureStrokes,
+    setSignatureActiveStroke,
+    setSignatureImageAsset,
+    setSignatureEditTarget,
+    setSavedSignatureLibrary,
+    setSignaturePlacementState,
+    setSignatureCtx,
+    bumpSignatureTypedRenderToken,
+} from './store/signature-state.js';
 
 (function () {
 
@@ -436,15 +460,8 @@ import {
     // isDirty / isSaving / isDownloadingPdf moved to ./store/lifecycle-flags.js (Phase 5c).
     // editModeEnabled / addTextMode / shapeMode / eraseMode moved to
     // ./store/editor-modes.js (Phase 5d).
-    let signatureMode = 'draw';
-    let signatureDirty = false;
-    let signatureDrawing = false;
-    let signatureStrokes = [];
-    let signatureActiveStroke = null;
-    let signatureImageAsset = null;
-    let signatureEditTarget = null;
-    let savedSignatureLibrary = [];
-    let signaturePlacementState = { active: false, asset: null, type: 'signature', toolSource: null };
+    // signature* + savedSignatureLibrary + signaturePlacementState moved to
+    // ./store/signature-state.js (Phase 5j).
     // drawModeActive / drawToolType / drawStrokeColor / drawOpacity /
     // drawBrushSize / activeDrawSession moved to ./store/draw-tool-state.js
     // (Phase 5h).
@@ -481,8 +498,8 @@ import {
     });
     const loadEmbeddedFontFaces = embeddedFontRegistry.loadFaces;
     let markupToolCtx = null;
-    let signatureCtx = null;
-    let signatureTypedRenderToken = 0;
+    // signatureCtx + signatureTypedRenderToken moved to
+    // ./store/signature-state.js (Phase 5j).
     const pendingDeletedAnnotationIds = new Set();
     const pendingDeletedPromotedSourceKeys = new Set();
     const annotationImageCache = new Map();
@@ -5477,7 +5494,7 @@ import {
     }
 
     function setSignatureDirtyState(dirty) {
-        signatureDirty = !!dirty;
+        setSignatureDirty(!!dirty);
         if (signatureApplyBtn) signatureApplyBtn.disabled = !signatureDirty;
         updateSignatureLibrarySaveUi();
     }
@@ -6140,9 +6157,9 @@ import {
     }
 
     function clearSignatureDrawingState() {
-        signatureDrawing = false;
-        signatureStrokes = [];
-        signatureActiveStroke = null;
+        setSignatureDrawing(false);
+        setSignatureStrokes([]);
+        setSignatureActiveStroke(null);
         clearSignatureCanvas();
     }
 
@@ -6299,7 +6316,7 @@ import {
     }
 
     function loadSavedSignatureLibrary() {
-        savedSignatureLibrary = readSignatureLibrary();
+        setSavedSignatureLibrary(readSignatureLibrary());
         renderSavedSignatureLibrary();
     }
 
@@ -6345,9 +6362,9 @@ import {
             return;
         }
         const previousLibrary = savedSignatureLibrary.slice();
-        savedSignatureLibrary = [entry, ...savedSignatureLibrary].slice(0, SIGNATURE_LIBRARY_LIMIT);
+        setSavedSignatureLibrary([entry, ...savedSignatureLibrary].slice(0, SIGNATURE_LIBRARY_LIMIT));
         if (!persistSavedSignatureLibrary()) {
-            savedSignatureLibrary = previousLibrary;
+            setSavedSignatureLibrary(previousLibrary);
             setSignatureStatus('Unable to save signature in this browser.', 'error');
             return;
         }
@@ -6361,7 +6378,7 @@ import {
         if (!entry?.asset) return;
 
         resetSignatureComposer();
-        signatureEditTarget = null;
+        setSignatureEditTarget(null);
         updateSignatureModalCopy();
         updateSignatureModeUi();
 
@@ -6389,9 +6406,9 @@ import {
         const nextLibrary = savedSignatureLibrary.filter((item) => String(item.id || '') !== String(entryId || ''));
         if (nextLibrary.length === savedSignatureLibrary.length) return;
         const previousLibrary = savedSignatureLibrary.slice();
-        savedSignatureLibrary = nextLibrary;
+        setSavedSignatureLibrary(nextLibrary);
         if (!persistSavedSignatureLibrary()) {
-            savedSignatureLibrary = previousLibrary;
+            setSavedSignatureLibrary(previousLibrary);
             setSignatureStatus('Unable to update saved signatures in this browser.', 'error');
             return;
         }
@@ -6400,10 +6417,10 @@ import {
     }
 
     function resetSignatureComposer() {
-        signatureMode = 'draw';
-        signatureImageAsset = null;
-        signatureEditTarget = null;
-        signatureTypedRenderToken += 1;
+        setSignatureMode('draw');
+        setSignatureImageAsset(null);
+        setSignatureEditTarget(null);
+        bumpSignatureTypedRenderToken();
         if (signatureSaveNameInput) signatureSaveNameInput.value = '';
         if (signatureTextInput) signatureTextInput.value = '';
         if (signatureImageInput) signatureImageInput.value = '';
@@ -6514,7 +6531,7 @@ import {
     }
 
     async function renderTypedSignaturePreview() {
-        const renderToken = ++signatureTypedRenderToken;
+        const renderToken = bumpSignatureTypedRenderToken();
         if (signatureMode !== 'type' || !signatureCanvas || !signatureCtx) return;
         const text = String(signatureTextInput?.value || '').trim();
         clearSignatureCanvas();
@@ -6612,7 +6629,7 @@ import {
     }
 
     function setSignatureMode(nextMode) {
-        signatureMode = ['draw', 'type', 'upload'].includes(String(nextMode)) ? String(nextMode) : 'draw';
+        setSignatureMode(['draw', 'type', 'upload'].includes(String(nextMode)) ? String(nextMode) : 'draw');
         updateSignatureModeUi();
     }
 
@@ -6703,8 +6720,8 @@ import {
             if (signatureWidthInput) signatureWidthInput.value = String(Math.max(1, Number(composer.strokeWidth) || 3));
             if (signatureSmoothingInput) signatureSmoothingInput.value = String(Math.max(0, Math.min(100, Number(composer.smoothing) || 58)));
             syncSignatureColorLabels();
-            signatureStrokes = cloneSerializableValue(composer.strokes, []);
-            signatureActiveStroke = null;
+            setSignatureStrokes(cloneSerializableValue(composer.strokes, []));
+            setSignatureActiveStroke(null);
             setSignatureMode('draw');
             renderDrawSignaturePreview();
             setSignatureDirtyState(hasSignatureDrawContent());
@@ -6713,7 +6730,7 @@ import {
         }
 
         const imageSource = getImageAnnotationSource(ann);
-        signatureImageAsset = {
+        setSignatureImageAsset({
             dataUrl: String(composer?.imageAsset?.dataUrl || '').trim(),
             src: String(composer?.imageAsset?.src || imageSource || '').trim(),
             width: Math.max(1, Number(composer?.imageAsset?.width || ann.intrinsicWidth || ann.pdfWidth || 1) || 1),
@@ -6721,7 +6738,7 @@ import {
             fileName: String(composer?.imageAsset?.fileName || ann.fileName || 'signature.png'),
             mimeType: String(composer?.imageAsset?.mimeType || ann.mimeType || 'image/png'),
             assetPath: String(composer?.imageAsset?.assetPath || ann.assetPath || ann.imagePath || ''),
-        };
+        });
         if (signatureImageName) {
             signatureImageName.textContent = `${signatureImageAsset.fileName} • ${signatureImageAsset.width}×${signatureImageAsset.height}`;
         }
@@ -6757,7 +6774,7 @@ import {
         setShapeMode(false);
         cancelSignaturePlacement();
         resetSignatureComposer();
-        signatureEditTarget = { pi, uid: ann._uid };
+        setSignatureEditTarget({ pi, uid: ann._uid });
         updateSignatureModalCopy();
         updateSignatureModeUi();
         signatureModal.classList.add('is-open');
@@ -6778,23 +6795,23 @@ import {
         signatureModal.classList.remove('is-open');
         signatureModal.setAttribute('aria-hidden', 'true');
         document.body.classList.remove('signature-modal-open');
-        signatureDrawing = false;
-        signatureActiveStroke = null;
-        signatureEditTarget = null;
+        setSignatureDrawing(false);
+        setSignatureActiveStroke(null);
+        setSignatureEditTarget(null);
         updateSignatureModalCopy();
         updateEditModeUi();
     }
 
     function cancelSignaturePlacement() {
         if (!signaturePlacementState.active) return;
-        signaturePlacementState = { active: false, asset: null, type: 'signature', toolSource: null };
+        setSignaturePlacementState({ active: false, asset: null, type: 'signature', toolSource: null });
         syncCanvasCursors();
         updateEditModeUi();
     }
 
     function beginSignaturePlacement(asset, type = 'signature') {
         if (!asset?.dataUrl && !asset?.src) return;
-        signaturePlacementState = {
+        setSignaturePlacementState({
             active: true,
             asset: {
                 dataUrl: asset.dataUrl || '',
@@ -6809,7 +6826,7 @@ import {
             },
             type: String(type || 'signature').toLowerCase() === 'image' ? 'image' : 'signature',
             toolSource: asset.toolSource || null,
-        };
+        });
         syncCanvasCursors();
         clearActiveAnnotation();
         updateEditModeUi();
@@ -6830,12 +6847,12 @@ import {
         const point = getSignatureCanvasPoint(event);
         if (!point) return;
         event.preventDefault();
-        signatureDrawing = true;
-        signatureActiveStroke = {
+        setSignatureDrawing(true);
+        setSignatureActiveStroke({
             color: signatureColorInput?.value || '#111827',
             width: Math.max(1, Number(signatureWidthInput?.value) || 3),
             points: [point],
-        };
+        });
         renderDrawSignaturePreview();
         setSignatureDirtyState(true);
         setSignatureStatus('Signature ready to place.', 'ready');
@@ -6851,11 +6868,11 @@ import {
 
     function endSignatureStroke() {
         if (!signatureDrawing) return;
-        signatureDrawing = false;
+        setSignatureDrawing(false);
         if (signatureActiveStroke?.points?.length) {
             signatureStrokes.push(signatureActiveStroke);
         }
-        signatureActiveStroke = null;
+        setSignatureActiveStroke(null);
         renderDrawSignaturePreview();
         setSignatureDirtyState(hasSignatureDrawContent());
     }
@@ -10030,7 +10047,7 @@ import {
         syncMarkupToolLabels();
     }
     if (signatureCanvas) {
-        signatureCtx = signatureCanvas.getContext('2d');
+        setSignatureCtx(signatureCanvas.getContext('2d'));
         clearSignatureCanvas();
         syncSignatureColorLabels();
     }
@@ -10368,7 +10385,7 @@ import {
     if (signatureClearBtn) {
         signatureClearBtn.addEventListener('click', () => {
             clearSignatureDrawingState();
-            signatureImageAsset = null;
+            setSignatureImageAsset(null);
             if (signatureTextInput) signatureTextInput.value = '';
             if (signatureImageInput) signatureImageInput.value = '';
             if (signatureImageName) signatureImageName.textContent = 'No file selected';
@@ -10465,7 +10482,7 @@ import {
             const file = signatureImageInput.files?.[0];
             if (!file) return;
             try {
-                signatureImageAsset = await normalizeImportedImageAsset(file);
+                setSignatureImageAsset(await normalizeImportedImageAsset(file));
                 if (signatureImageName) {
                     signatureImageName.textContent = `${signatureImageAsset.fileName} • ${signatureImageAsset.width}×${signatureImageAsset.height}`;
                 }
@@ -10473,7 +10490,7 @@ import {
                 await renderSignatureImagePreview();
                 setSignatureStatus('Image imported and ready to place.', 'ready');
             } catch (error) {
-                signatureImageAsset = null;
+                setSignatureImageAsset(null);
                 if (signatureImageName) signatureImageName.textContent = 'No file selected';
                 setSignatureStatus(error?.message || 'Failed to import image.', 'error');
                 setSignatureDirtyState(false);
