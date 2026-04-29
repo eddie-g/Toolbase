@@ -200,6 +200,7 @@ import {
 import {
     syncSignatureColorLabels as _syncSignatureColorLabels,
     updateSignatureModalCopy as _updateSignatureModalCopy,
+    makeSavedSignatureName as _makeSavedSignatureName,
 } from './signature/labels.js';
 import {
     updateSignatureLibraryLoadUi as _updateSignatureLibraryLoadUi,
@@ -4605,11 +4606,8 @@ import {
         renderSavedSignatureLibrary();
     }
 
-    function makeSavedSignatureName() {
-        const explicitName = String(signatureSaveNameInput?.value || '').trim();
-        if (explicitName) return explicitName;
-        return `Signature ${savedSignatureLibrary.length + 1}`;
-    }
+    // makeSavedSignatureName moved to ./signature/labels.js (Phase 7bm).
+    const makeSavedSignatureName = () => _makeSavedSignatureName(signatureSaveNameInput);
 
     function buildSignatureLibraryEntry() {
         const currentAsset = buildCurrentSignatureAsset();
