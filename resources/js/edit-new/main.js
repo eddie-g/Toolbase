@@ -190,6 +190,20 @@ import {
     setSignatureCtx,
     bumpSignatureTypedRenderToken,
 } from './store/signature-state.js';
+import {
+    markupToolMode,
+    markupToolDirty,
+    markupToolDrawing,
+    markupToolStrokes,
+    markupToolActiveStroke,
+    markupToolCtx,
+    setMarkupToolMode,
+    setMarkupToolDirty,
+    setMarkupToolDrawing,
+    setMarkupToolStrokes,
+    setMarkupToolActiveStroke,
+    setMarkupToolCtx,
+} from './store/markup-tool-state.js';
 
 (function () {
 
@@ -466,11 +480,7 @@ import {
     // drawBrushSize / activeDrawSession moved to ./store/draw-tool-state.js
     // (Phase 5h).
     let imageBackgroundRemovalState = { active: false, uid: null };
-    let markupToolMode = 'draw';
-    let markupToolDirty = false;
-    let markupToolDrawing = false;
-    let markupToolStrokes = [];
-    let markupToolActiveStroke = null;
+    // markupTool* moved to ./store/markup-tool-state.js (Phase 5k).
     // eraseMode moved to ./store/editor-modes.js (Phase 5d).
     // currentZoomPercent / suppressEditorAutofit / suppressEditorAutofitResetToken
     // moved to ./store/zoom-state.js (Phase 5e). Initial value seeded below.
@@ -497,7 +507,7 @@ import {
         },
     });
     const loadEmbeddedFontFaces = embeddedFontRegistry.loadFaces;
-    let markupToolCtx = null;
+    // markupToolCtx moved to ./store/markup-tool-state.js (Phase 5k).
     // signatureCtx + signatureTypedRenderToken moved to
     // ./store/signature-state.js (Phase 5j).
     const pendingDeletedAnnotationIds = new Set();
@@ -5507,7 +5517,7 @@ import {
     }
 
     function setMarkupToolDirtyState(dirty) {
-        markupToolDirty = !!dirty;
+        setMarkupToolDirty(!!dirty);
         if (markupToolApplyBtn) {
             markupToolApplyBtn.disabled = markupToolMode === 'draw' ? !markupToolDirty : false;
         }
@@ -5521,9 +5531,9 @@ import {
     }
 
     function clearMarkupToolDrawingState() {
-        markupToolDrawing = false;
-        markupToolStrokes = [];
-        markupToolActiveStroke = null;
+        setMarkupToolDrawing(false);
+        setMarkupToolStrokes([]);
+        setMarkupToolActiveStroke(null);
         clearMarkupToolCanvas();
     }
 
@@ -5632,12 +5642,12 @@ import {
     }
 
     function setMarkupToolMode(nextMode) {
-        markupToolMode = String(nextMode || '') === 'erase' ? 'erase' : 'draw';
+        setMarkupToolMode(String(nextMode || '') === 'erase' ? 'erase' : 'draw');
         updateMarkupToolUi();
     }
 
     function resetMarkupToolComposer() {
-        markupToolMode = 'draw';
+        setMarkupToolMode('draw');
         if (markupToolColorInput) markupToolColorInput.value = '#0f172a';
         if (markupToolWidthInput) markupToolWidthInput.value = '4';
         if (markupToolSmoothingInput) markupToolSmoothingInput.value = '58';
@@ -5674,12 +5684,12 @@ import {
         const point = getMarkupToolCanvasPoint(event);
         if (!point) return;
         event.preventDefault();
-        markupToolDrawing = true;
-        markupToolActiveStroke = {
+        setMarkupToolDrawing(true);
+        setMarkupToolActiveStroke({
             color: markupToolColorInput?.value || '#0f172a',
             width: Math.max(1, Number(markupToolWidthInput?.value) || 4),
             points: [point],
-        };
+        });
         markupToolCanvas?.setPointerCapture?.(event.pointerId);
         renderMarkupToolDrawPreview();
     }
@@ -5694,10 +5704,10 @@ import {
 
     function endMarkupToolStroke(event) {
         if (!markupToolDrawing || markupToolMode !== 'draw') return;
-        markupToolDrawing = false;
+        setMarkupToolDrawing(false);
         markupToolCanvas?.releasePointerCapture?.(event?.pointerId);
         if (markupToolActiveStroke?.points?.length) markupToolStrokes.push(markupToolActiveStroke);
-        markupToolActiveStroke = null;
+        setMarkupToolActiveStroke(null);
         renderMarkupToolDrawPreview();
         const hasContent = hasMarkupToolDrawContent();
         setMarkupToolDirtyState(hasContent);
@@ -6115,8 +6125,8 @@ import {
         markupToolModal.classList.remove('is-open');
         markupToolModal.setAttribute('aria-hidden', 'true');
         document.body.classList.remove('markup-tool-modal-open');
-        markupToolDrawing = false;
-        markupToolActiveStroke = null;
+        setMarkupToolDrawing(false);
+        setMarkupToolActiveStroke(null);
         updateEditModeUi();
     }
 
@@ -10042,7 +10052,7 @@ import {
         });
     }
     if (markupToolCanvas) {
-        markupToolCtx = markupToolCanvas.getContext('2d');
+        setMarkupToolCtx(markupToolCanvas.getContext('2d'));
         clearMarkupToolCanvas();
         syncMarkupToolLabels();
     }
