@@ -183,6 +183,11 @@ import {
     hasMarkupToolDrawContent,
 } from './markup-tool/state.js';
 import {
+    setSignatureStatus as _setSignatureStatus,
+    setSignatureDirtyState as _setSignatureDirtyState,
+    updateSignatureLibrarySaveUi as _updateSignatureLibrarySaveUi,
+} from './signature/status.js';
+import {
     dbgEscape as _dbgEscape,
     dbgPrettyHtml as _dbgPrettyHtml,
     dbgFormatStyle as _dbgFormatStyle,
@@ -4061,18 +4066,10 @@ import {
         }
     }
 
-    function setSignatureStatus(message, tone = 'default') {
-        if (!signatureStatus) return;
-        signatureStatus.textContent = String(message || '');
-        signatureStatus.classList.toggle('is-error', tone === 'error');
-        signatureStatus.classList.toggle('is-ready', tone === 'ready');
-    }
-
-    function setSignatureDirtyState(dirty) {
-        setSignatureDirty(!!dirty);
-        if (signatureApplyBtn) signatureApplyBtn.disabled = !signatureDirty;
-        updateSignatureLibrarySaveUi();
-    }
+    // signature status helpers moved to ./signature/status.js (Phase 7au).
+    const setSignatureStatus = (m, t) => _setSignatureStatus(signatureStatus, m, t);
+    const setSignatureDirtyState = (d) => _setSignatureDirtyState(signatureApplyBtn, signatureSaveBtn, d);
+    const updateSignatureLibrarySaveUi = () => _updateSignatureLibrarySaveUi(signatureSaveBtn);
 
     // markup-tool helpers moved to ./markup-tool/state.js (Phase 7at).
     const setMarkupToolStatus = (m, t) => _setMarkupToolStatus(markupToolStatus, m, t);
@@ -4745,9 +4742,7 @@ import {
 
     // signatureModeLabel moved to ./annotations/types.js (Phase 7ao).
 
-    function updateSignatureLibrarySaveUi() {
-        if (signatureSaveBtn) signatureSaveBtn.disabled = !signatureDirty;
-    }
+    // updateSignatureLibrarySaveUi moved to ./signature/status.js (Phase 7au).
 
     function updateSignatureLibraryLoadUi() {
         if (!signatureLibrarySelect) return;
