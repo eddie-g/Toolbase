@@ -20,6 +20,8 @@ import {
     isSubsetEmbeddedFontData,
     shouldBypassEmbeddedFont,
 } from './render/font-utils.js';
+import { clamp01 } from './util/math.js';
+import { normalizeHexColor, hexToRgbaString } from './util/color.js';
 
 (function () {
 
@@ -358,12 +360,6 @@ import {
     const shapeHitTestCtx = shapeHitTestCanvas.getContext('2d');
     const signatureFontLoadPromises = new Map();
 
-    function clamp01(value, fallback = 0) {
-        const numeric = Number(value);
-        if (!Number.isFinite(numeric)) return fallback;
-        return Math.max(0, Math.min(1, numeric));
-    }
-
     function isShapeAnnotation(ann) {
         return String(ann?.type || '') === 'shape';
     }
@@ -415,26 +411,6 @@ import {
     function isLineShape(annOrType) {
         const shapeType = typeof annOrType === 'string' ? annOrType : annOrType?.shapeType;
         return String(shapeType || '') === 'line';
-    }
-
-    function normalizeHexColor(value, fallback) {
-        const raw = String(value || '').trim();
-        if (/^#[0-9a-f]{6}$/i.test(raw)) return raw.toLowerCase();
-        if (/^#[0-9a-f]{3}$/i.test(raw)) {
-            const [, r, g, b] = raw;
-            return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
-        }
-        return fallback;
-    }
-
-    function hexToRgbaString(hex, opacity) {
-        const normalized = normalizeHexColor(hex, '#000000');
-        const safeOpacity = clamp01(opacity, 1);
-        const intValue = parseInt(normalized.slice(1), 16);
-        const r = (intValue >> 16) & 255;
-        const g = (intValue >> 8) & 255;
-        const b = intValue & 255;
-        return `rgba(${r}, ${g}, ${b}, ${safeOpacity})`;
     }
 
     function normalizeShapeType(shapeType) {
