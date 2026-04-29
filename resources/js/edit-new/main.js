@@ -134,6 +134,20 @@ import {
     setShapeCreationState,
     setShapeCutState,
 } from './store/interaction-state.js';
+import {
+    drawModeActive,
+    drawToolType,
+    drawStrokeColor,
+    drawOpacity,
+    drawBrushSize,
+    activeDrawSession,
+    setDrawModeActive,
+    setDrawToolType,
+    setDrawStrokeColor,
+    setDrawOpacity,
+    setDrawBrushSize,
+    setActiveDrawSession,
+} from './store/draw-tool-state.js';
 
 (function () {
 
@@ -413,12 +427,9 @@ import {
     let signatureEditTarget = null;
     let savedSignatureLibrary = [];
     let signaturePlacementState = { active: false, asset: null, type: 'signature', toolSource: null };
-    let drawModeActive = false;
-    let drawToolType = 'pen';
-    let drawStrokeColor = '#111827';
-    let drawOpacity = 1;
-    let drawBrushSize = 10;
-    let activeDrawSession = null;
+    // drawModeActive / drawToolType / drawStrokeColor / drawOpacity /
+    // drawBrushSize / activeDrawSession moved to ./store/draw-tool-state.js
+    // (Phase 5h).
     let imageBackgroundRemovalState = { active: false, uid: null };
     let markupToolMode = 'draw';
     let markupToolDirty = false;
@@ -5293,7 +5304,7 @@ import {
         if (activeDrawSession?.layer?.parentNode) {
             activeDrawSession.layer.parentNode.removeChild(activeDrawSession.layer);
         }
-        activeDrawSession = null;
+        setActiveDrawSession(null);
     }
 
     function syncDrawToolPanelUi() {
@@ -5330,11 +5341,11 @@ import {
             setShapeMode(false);
             cancelShapeCutMode({ redraw: false });
             clearActiveAnnotation();
-            drawToolType = String(nextTool || '') === 'eraser' ? 'eraser' : 'pen';
+            setDrawToolType(nextTool);
         } else {
             clearActiveDrawSession();
         }
-        drawModeActive = nextState;
+        setDrawModeActive(nextState);
         clearHoverState();
         syncCanvasCursors();
         syncDrawToolPanelUi();
@@ -5730,7 +5741,7 @@ import {
         ctx.lineJoin = 'round';
         ctx.imageSmoothingEnabled = true;
         paintDrawDot(ctx, point.x, point.y, drawBrushSize, drawStrokeColor);
-        activeDrawSession = {
+        setActiveDrawSession({
             kind: 'pen',
             pi,
             overlay: oc,
@@ -5746,7 +5757,7 @@ import {
             minY: point.y - (drawBrushSize / 2),
             maxX: point.x + (drawBrushSize / 2),
             maxY: point.y + (drawBrushSize / 2),
-        };
+        });
         return true;
     }
 
@@ -5972,7 +5983,7 @@ import {
         oc.setPointerCapture?.(event.pointerId);
         const localPoint = localPointFromDrawSession({ layer, left, top, displayWidth, displayHeight }, point);
         paintDrawDot(ctx, localPoint.x, localPoint.y, drawBrushSize, '#000000', 'destination-out');
-        activeDrawSession = {
+        setActiveDrawSession({
             kind: 'eraser',
             pi,
             overlay: oc,
@@ -5988,7 +5999,7 @@ import {
             lastPoint: localPoint,
             lastMidPoint: { x: localPoint.x, y: localPoint.y },
             dirty: true,
-        };
+        });
         setDrawToolStatus('Erasing the selected drawing. Release to save the change.');
         return true;
     }
@@ -10024,7 +10035,7 @@ import {
     }
     drawToolButtons.forEach((button) => {
         button.addEventListener('click', () => {
-            drawToolType = button.dataset.drawDirectTool === 'eraser' ? 'eraser' : 'pen';
+            setDrawToolType(button.dataset.drawDirectTool);
             if (!drawModeActive) {
                 setDrawMode(true, drawToolType);
                 return;
@@ -10035,25 +10046,25 @@ import {
     });
     drawColorSwatches.forEach((button) => {
         button.addEventListener('click', () => {
-            drawStrokeColor = normalizeHexColor(button.dataset.drawColor, drawStrokeColor);
+            setDrawStrokeColor(normalizeHexColor(button.dataset.drawColor, drawStrokeColor));
             syncDrawToolPanelUi();
         });
     });
     if (drawToolColorInput) {
         drawToolColorInput.addEventListener('input', () => {
-            drawStrokeColor = normalizeHexColor(drawToolColorInput.value, drawStrokeColor);
+            setDrawStrokeColor(normalizeHexColor(drawToolColorInput.value, drawStrokeColor));
             syncDrawToolPanelUi();
         });
     }
     if (drawToolSizeInput) {
         drawToolSizeInput.addEventListener('input', () => {
-            drawBrushSize = Math.max(2, Number(drawToolSizeInput.value) || 10);
+            setDrawBrushSize(Number(drawToolSizeInput.value));
             syncDrawToolPanelUi();
         });
     }
     if (drawToolOpacityInput) {
         drawToolOpacityInput.addEventListener('input', () => {
-            drawOpacity = clamp01((Number(drawToolOpacityInput.value) || 100) / 100, 1);
+            setDrawOpacity(clamp01((Number(drawToolOpacityInput.value) || 100) / 100, 1));
             syncDrawToolPanelUi();
         });
     }
