@@ -26,3 +26,13 @@ export function hasActiveShapeSelection() {
     const ann = activeAnnotation();
     return Boolean(ann && isShapeAnnotation(ann));
 }
+
+// Resolve the {ann, pi, data} triple for the currently-selected
+// annotation, or null if nothing is active. Many call sites in
+// main.js use this as a single guarded lookup.
+export function getActiveAnnAndPage() {
+    const { pi, uid } = activeState;
+    const data = pi !== null ? pageData[pi] : null;
+    const ann  = data ? data.annotations.find((a) => a._uid === uid) : null;
+    return ann ? { ann, pi, data } : null;
+}

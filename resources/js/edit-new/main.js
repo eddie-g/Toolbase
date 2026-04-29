@@ -166,6 +166,11 @@ import {
     localPointFromDrawSession,
 } from './draw/primitives.js';
 import { getImageAnnotationSource } from './annotations/image-source.js';
+import {
+    dbgEscape as _dbgEscape,
+    dbgPrettyHtml as _dbgPrettyHtml,
+    dbgFormatStyle as _dbgFormatStyle,
+} from './editor/debug-modal-format.js';
 import { annIsPromotedFromExtraction } from './annotations/promoted.js';
 import { shouldRenderTextInRichHtmlLayer, activeEditorCanvasOwnsPaint } from './render/text-routing.js';
 import { sourceLineRectWithinAnnotation } from './annotations/source-line-rect.js';
@@ -213,7 +218,7 @@ import {
 import { installPointerDispatcher } from './interactions/pointer-dispatcher.js';
 import { activeState, setActiveState, clearActiveState } from './store/active-state.js';
 import { hoverState, setHoverState, clearHoverState } from './store/hover-state.js';
-import { hasActiveBoxSelection, hasActiveShapeSelection } from './selection/active.js';
+import { hasActiveBoxSelection, hasActiveShapeSelection, getActiveAnnAndPage } from './selection/active.js';
 import {
     isDirty,
     isSaving,
@@ -8604,12 +8609,7 @@ import {
         });
     }
 
-    function getActiveAnnAndPage() {
-        const { pi, uid } = activeState;
-        const data = pi !== null ? pageData[pi] : null;
-        const ann  = data ? data.annotations.find(a => a._uid === uid) : null;
-        return ann ? { ann, pi, data } : null;
-    }
+    // getActiveAnnAndPage moved to ./selection/active.js (Phase 7ap).
 
     // activeEditorForPage, setEditorEditingAnnotation moved to
     // ./editor/active-editor-element.js (Phase 7an).
@@ -8928,36 +8928,8 @@ import {
         }
     }
 
-    function _dbgEscape(s) {
-        return String(s ?? '')
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;');
-    }
-
-    function _dbgPrettyHtml(html) {
-        // Light pretty-print: insert newline before each top-level/inner block tag.
-        // Not a full formatter — readable enough to scan.
-        const TAGS = ['div', 'p', 'br', 'span'];
-        let out = String(html ?? '');
-        TAGS.forEach((t) => {
-            out = out.replace(new RegExp('<' + t + '\\b', 'gi'), '\n<' + t);
-            out = out.replace(new RegExp('</' + t + '>', 'gi'), '</' + t + '>\n');
-        });
-        return out
-            .split('\n')
-            .map((l) => l.trim())
-            .filter((l) => l.length > 0)
-            .join('\n');
-    }
-
-    function _dbgFormatStyle(cssText) {
-        return String(cssText || '')
-            .split(';')
-            .map((s) => s.trim())
-            .filter((s) => s.length > 0)
-            .join(';\n');
-    }
+    // _dbgEscape, _dbgPrettyHtml, _dbgFormatStyle moved to
+    // ./editor/debug-modal-format.js (Phase 7ap).
 
     function openEditorHtmlDebugModal(ann, pi) {
         // Close any existing instance.
