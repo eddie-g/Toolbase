@@ -23,6 +23,7 @@ import {
 import { clamp01 } from './util/math.js';
 import { normalizeHexColor, hexToRgbaString } from './util/color.js';
 import { safeLocalStorageGet, safeLocalStorageSet } from './util/storage.js';
+import { getSessionId } from './persistence/session.js';
 
 (function () {
 
@@ -266,24 +267,14 @@ import { safeLocalStorageGet, safeLocalStorageSet } from './util/storage.js';
     const pageNextBtn = document.getElementById('page-next');
 
     // ── Session ID (persisted per-document so saves survive reload) ───────────
-    const SESSION_KEY = `edit_new_session_${DOC_ID}`;
+    // getSessionId() lives in ./persistence/session.js so any module can
+    // request the per-document session id without depending on main.js.
     const SIGNATURE_LIBRARY_KEY = 'edit_new_signature_library_v1';
     const SIGNATURE_LIBRARY_LIMIT = 8;
     const ZOOM_MIN_PERCENT = 50;
     const ZOOM_MAX_PERCENT = 400;
     const ZOOM_STEP_PERCENT = 30;
     const initialZoomPercent = window.innerWidth < 768 ? 100 : 130;
-    function getSessionId() {
-        let id = localStorage.getItem(SESSION_KEY);
-        if (!id) {
-            id = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
-                const r = Math.random() * 16 | 0;
-                return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
-            });
-            localStorage.setItem(SESSION_KEY, id);
-        }
-        return id;
-    }
 
     // ── Module-level state ─────────────────────────────────────────────────────
     let _pdfDoc       = null;
