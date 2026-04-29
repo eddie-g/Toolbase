@@ -133,6 +133,7 @@ import {
     normalizeAcroTextColor,
     acroFieldKey,
 } from './acroform/normalize.js';
+import { normalizeAcroWidget } from './acroform/widget.js';
 import {
     loadImageSource,
     toTransparentPngFileName,
@@ -1140,49 +1141,7 @@ import {
         setAcroPdfDoc(await pdfjsLib.getDocument({ data: await resp.arrayBuffer() }).promise);
     }
 
-    function normalizeAcroWidget(annotation, pageNumber) {
-        const fieldKey = acroFieldKey(annotation);
-        const dbEntry = acroFieldLookup[fieldKey] || null;
-        const rect = normalizeAcroRect(dbEntry?.rect || annotation?.rect);
-        if (!rect) return null;
-
-        const [x0, y0, x1, y1] = rect;
-        const left = Math.min(x0, x1);
-        const right = Math.max(x0, x1);
-        const bottom = Math.min(y0, y1);
-        const top = Math.max(y0, y1);
-        const fieldType = String(dbEntry?.fieldType || annotation?.fieldType || '').trim().toUpperCase();
-        const checkBox = Boolean(dbEntry?.checkBox ?? annotation?.checkBox);
-        const radioButton = Boolean(dbEntry?.radioButton ?? annotation?.radioButton);
-
-        // Ignore non-interactive push buttons such as hyperlink widgets. edit-new should
-        // only expose fillable fields: text, choice, and checkbox/radio buttons.
-        if (fieldType === 'BTN' && !checkBox && !radioButton) return null;
-        if (fieldType === 'SIG') return null;
-
-        return {
-            key: fieldKey || `acro-${pageNumber}-${Math.random().toString(36).slice(2)}`,
-            pageIndex: pageNumber - 1,
-            fieldName: String(dbEntry?.fieldName || annotation?.fieldName || fieldKey || '').trim(),
-            fieldType,
-            value: dbEntry?.value ?? annotation?.fieldValue ?? '',
-            exportValue: String(dbEntry?.exportValue || annotation?.exportValue || '').trim(),
-            checkBox,
-            radioButton,
-            combo: Boolean(dbEntry?.combo ?? annotation?.combo),
-            multiLine: Boolean(dbEntry?.multiLine ?? annotation?.multiLine),
-            multiSelect: Boolean(dbEntry?.multiSelect ?? annotation?.multiSelect),
-            readOnly: Boolean(annotation?.readOnly),
-            textColor: normalizeAcroTextColor(
-                dbEntry?.textColor
-                ?? annotation?.textColor
-                ?? annotation?.fontColor
-                ?? annotation?.color
-                ?? annotation?.defaultAppearanceData?.fontColor
-            ) || '#0f172a',
-            rect: [left, bottom, right, top],
-        };
-    }
+    // normalizeAcroWidget moved to ./acroform/widget.js (Phase 7w).
 
     async function ensureAcroWidgetsForPage(pageNumber, documentInfo) {
         const pageKey = String(pageNumber);
