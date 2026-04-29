@@ -111,6 +111,15 @@ import {
     setSuppressEditorAutofit,
     bumpSuppressEditorAutofitResetToken,
 } from './store/zoom-state.js';
+import {
+    acroFormEntries,
+    acroFieldLookup,
+    acroWidgetsByPage,
+    setAcroFormEntries,
+    setAcroFieldLookup,
+    setAcroWidgetsByPage,
+    setAcroWidgetsForPage,
+} from './store/acro-state.js';
 
 (function () {
 
@@ -366,9 +375,8 @@ import {
     let _acroPdfDoc   = null;
     const pageData    = {};   // pi → { wPts, hPts, scale, canvasWidth, canvasHeight, annotations }
     const editedTexts = {};   // uid → string
-    let acroFormEntries = [];
-    let acroFieldLookup = {};
-    let acroWidgetsByPage = {};
+    // acroFormEntries / acroFieldLookup / acroWidgetsByPage moved to
+    // ./store/acro-state.js (Phase 5f).
 
     // activeState moved to ./store/active-state.js (Phase 5a). Reads use
     // the imported live binding directly; reassignments go through
@@ -1364,10 +1372,7 @@ import {
             .map((annotation) => normalizeAcroWidget(annotation, pageNumber))
             .filter(Boolean);
 
-        acroWidgetsByPage = {
-            ...acroWidgetsByPage,
-            [pageKey]: normalized,
-        };
+        setAcroWidgetsForPage(pageKey, normalized);
         return normalized;
     }
 
@@ -11963,9 +11968,9 @@ import {
         loadEmbeddedFontFaces(preferredEmbeddedFonts);
         populateFontDropdown();
 
-        acroFormEntries = Array.isArray(data.acro_form_entries) ? data.acro_form_entries : [];
-        acroFieldLookup = buildAcroFieldLookup(acroFormEntries);
-        acroWidgetsByPage = {};
+        setAcroFormEntries(Array.isArray(data.acro_form_entries) ? data.acro_form_entries : []);
+        setAcroFieldLookup(buildAcroFieldLookup(acroFormEntries));
+        setAcroWidgetsByPage({});
 
         // Resolve the span-origin-based box (sourceBlockLeft/Top) as the "original" reference
         // so annotationOffset() correctly reflects the drag displacement even after a save+reload,
