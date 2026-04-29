@@ -177,6 +177,7 @@ import {
 } from './viewport/scale.js';
 import { pickViewportTargetPage } from './viewport/picker.js';
 import { getCurrentVisiblePageIndex as _getCurrentVisiblePageIndex } from './viewport/current-page.js';
+import { updatePageControls as _updatePageControls } from './viewport/page-controls.js';
 import {
     setMarkupToolStatus as _setMarkupToolStatus,
     setMarkupToolDirtyState as _setMarkupToolDirtyState,
@@ -1066,16 +1067,8 @@ import {
         applyAllPageScales();
     }
 
-    function updatePageControls(totalPages = 1) {
-        if (pageTotalLabel) pageTotalLabel.textContent = String(totalPages || 1);
-        if (pageJumpInput) {
-            pageJumpInput.max = String(totalPages || 1);
-            const current = parseInt(pageJumpInput.value || '1', 10);
-            if (!Number.isFinite(current) || current < 1 || current > (totalPages || 1)) {
-                pageJumpInput.value = '1';
-            }
-        }
-    }
+    // updatePageControls moved to ./viewport/page-controls.js (Phase 7bo).
+    const updatePageControls = (totalPages = 1) => _updatePageControls({ pageTotalLabel, pageJumpInput }, totalPages);
 
     function scrollToPage(pageNumber) {
         const totalPages = _pdfDoc?.numPages || Object.keys(pageData).length || 1;
