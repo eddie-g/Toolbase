@@ -87,6 +87,8 @@ import {
     getShapePolygonPointsCanvas,
 } from './annotations/polygon-points.js';
 import { fontDisplayScale, canvasLogicalHeight, canvasLogicalWidth } from './util/dom-metrics.js';
+import { measureTextWidth, ctxFont } from './text/measure-width.js';
+import { wrapParagraph } from './text/wrap.js';
 import { pdfPtFromClient } from './render/coords.js';
 import { populateFontDropdown as populateFontDropdownImpl } from './render/font-dropdown.js';
 import {
@@ -1329,20 +1331,7 @@ import {
         return 'transparent';
     };
 
-    const ensureMeasureCtx = () => {
-        if (!(measureCanvas instanceof HTMLCanvasElement)) setMeasureCanvas(document.createElement('canvas'));
-        return measureCanvas.getContext('2d');
-    };
-
-    const ctxFont = (style) =>
-        `${style.fontStyle || 'normal'} ${style.fontWeight || '400'} ${Math.max(1, Number(style.fontSizePx) || 1)}px ${style.fontFamily}`;
-
-    const measureTextWidth = (text, style) => {
-        const ctx = ensureMeasureCtx();
-        if (!ctx) return 0;
-        ctx.font = ctxFont(style);
-        return ctx.measureText(String(text || '')).width || 0;
-    };
+    // ensureMeasureCtx / ctxFont / measureTextWidth moved to ./text/measure-width.js (Phase 7j).
 
     // ── AcroForm helpers ──────────────────────────────────────────────────────
     function buildAcroFieldLookup(entries) {
@@ -2759,28 +2748,7 @@ import {
         return true;
     }
 
-    function wrapParagraph(text, maxWidthPx, style) {
-        const content = String(text || '');
-        if (!content) return [''];
-        const words = content.split(/(\s+)/).filter(p => p !== '');
-        const lines = [];
-        let current = '';
-        words.forEach((piece) => {
-            const candidate = current + piece;
-            if (!current || measureTextWidth(candidate, style) <= maxWidthPx) { current = candidate; return; }
-            if (current.trim()) { lines.push(current.trimEnd()); current = piece.trimStart(); return; }
-            let remainder = piece;
-            while (remainder) {
-                let splitIndex = remainder.length;
-                while (splitIndex > 1 && measureTextWidth(remainder.slice(0, splitIndex), style) > maxWidthPx) splitIndex--;
-                lines.push(remainder.slice(0, splitIndex));
-                remainder = remainder.slice(splitIndex);
-            }
-            current = '';
-        });
-        if (current || !lines.length) lines.push(current.trimEnd());
-        return lines;
-    }
+    // wrapParagraph moved to ./text/wrap.js (Phase 7j).
 
     function buildEditedLines(ann, text, scale, pageWidthPts, pageHeightPts) {
         const box = resolveAnnBox(ann);
@@ -7144,7 +7112,6 @@ import {
     configureMeasure({
         renderableSourceLines: (ann) => renderableSourceLines(ann),
         editableLineStyle: (ann, lineIndex) => editableLineStyle(ann, lineIndex),
-        wrapParagraph: (text, maxWidthPx, stylePx) => wrapParagraph(text, maxWidthPx, stylePx),
         blockLineHeightPx: (ann, lineIndex, scale, style) => blockLineHeightPx(ann, lineIndex, scale, style),
     });
 

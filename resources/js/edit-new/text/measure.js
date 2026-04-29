@@ -9,29 +9,27 @@
  * when the user changes font size.
  *
  * Wired via configureMeasure(deps) once at boot. The collaborators
- * (renderableSourceLines, editableLineStyle, wrapParagraph, blockLineHeightPx)
+ * (renderableSourceLines, editableLineStyle, blockLineHeightPx)
  * still live in main.js and can be moved later without changing this API.
  */
 
 import { resolveAnnBox } from '../annotations/box.js';
 import { fontDisplayScale } from '../util/dom-metrics.js';
+import { wrapParagraph } from './wrap.js';
 
 let renderableSourceLines = () => [];
 let editableLineStyle = () => ({ fontSizePt: 12 });
-let wrapParagraph = (text) => [text];
 let blockLineHeightPx = () => 14;
 
 /**
  * @param {Object} deps
  * @param {(ann: Object) => Array} deps.renderableSourceLines
  * @param {(ann: Object, lineIndex?: number) => Object} deps.editableLineStyle
- * @param {(text: string, maxWidthPx: number, stylePx: Object) => string[]} deps.wrapParagraph
  * @param {(ann: Object, lineIndex: number, scale: number, style: Object) => number} deps.blockLineHeightPx
  */
 export function configureMeasure(deps) {
     if (typeof deps.renderableSourceLines === 'function') renderableSourceLines = deps.renderableSourceLines;
     if (typeof deps.editableLineStyle === 'function') editableLineStyle = deps.editableLineStyle;
-    if (typeof deps.wrapParagraph === 'function') wrapParagraph = deps.wrapParagraph;
     if (typeof deps.blockLineHeightPx === 'function') blockLineHeightPx = deps.blockLineHeightPx;
 }
 
