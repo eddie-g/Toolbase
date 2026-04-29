@@ -210,6 +210,22 @@ import {
     setPdfDoc,
     setAcroPdfDoc,
 } from './store/pdf-docs.js';
+import {
+    measureCanvas,
+    _annClipboard,
+    imageImportPendingAsset,
+    imageBackgroundRemovalState,
+    _formatBarMousedownTs,
+    shapeConstrainShiftAttached,
+    shapeConstrainUserDismissedTip,
+    setMeasureCanvas,
+    setAnnClipboard,
+    setImageImportPendingAsset,
+    setImageBackgroundRemovalState,
+    setFormatBarMousedownTs,
+    setShapeConstrainShiftAttached,
+    setShapeConstrainUserDismissedTip,
+} from './store/misc-state.js';
 
 (function () {
 
@@ -484,7 +500,7 @@ import {
     // drawModeActive / drawToolType / drawStrokeColor / drawOpacity /
     // drawBrushSize / activeDrawSession moved to ./store/draw-tool-state.js
     // (Phase 5h).
-    let imageBackgroundRemovalState = { active: false, uid: null };
+    // imageBackgroundRemovalState moved to ./store/misc-state.js (Phase 5m).
     // markupTool* moved to ./store/markup-tool-state.js (Phase 5k).
     // eraseMode moved to ./store/editor-modes.js (Phase 5d).
     // currentZoomPercent / suppressEditorAutofit / suppressEditorAutofitResetToken
@@ -492,7 +508,7 @@ import {
     setCurrentZoomPercent(initialZoomPercent);
     // currentShape* defaults moved to ./store/shape-defaults.js (Phase 5i).
 
-    let measureCanvas = null;
+    // measureCanvas moved to ./store/misc-state.js (Phase 5m).
     // Embedded-PDF-font registry. Owns the @font-face injection, the
     // per-family async health check, and the broken-key set. The registry
     // is wired below (after shouldBypassEmbeddedFont and fontFileFormat are
@@ -782,7 +798,7 @@ import {
         if (!canRemoveBackgroundFromImageAnnotation(ann)) return false;
         if (isAnnotationLocked(ann)) return false;
         if (imageBackgroundRemovalState.active) return false;
-        imageBackgroundRemovalState = { active: true, uid: ann._uid };
+        setImageBackgroundRemovalState({ active: true, uid: ann._uid });
         syncActiveEditor(true);
         try {
             const asset = await buildBackgroundRemovedImageAsset(ann);
@@ -790,7 +806,7 @@ import {
             showToast('Background removed');
             return true;
         } finally {
-            imageBackgroundRemovalState = { active: false, uid: null };
+            setImageBackgroundRemovalState({ active: false, uid: null });
             syncActiveEditor(true);
         }
     }
@@ -1302,7 +1318,7 @@ import {
     };
 
     const ensureMeasureCtx = () => {
-        if (!(measureCanvas instanceof HTMLCanvasElement)) measureCanvas = document.createElement('canvas');
+        if (!(measureCanvas instanceof HTMLCanvasElement)) setMeasureCanvas(document.createElement('canvas'));
         return measureCanvas.getContext('2d');
     };
 
@@ -4441,7 +4457,7 @@ import {
     }
 
     // Module-scoped clipboard for Ctrl+C / Ctrl+V annotation copy/paste.
-    let _annClipboard = null;
+    // _annClipboard moved to ./store/misc-state.js (Phase 5m).
 
     function syncActiveEditor(forceRebuild = false) {
         const { pi, uid } = activeState;
@@ -7631,10 +7647,10 @@ import {
             const { ann } = active;
             // Snapshot a deep-ish copy so future mutations to the source don't
             // leak into the clipboard.
-            _annClipboard = {
+            setAnnClipboard({
                 ann: JSON.parse(JSON.stringify(ann)),
                 text: String(editedTexts[ann._uid] ?? ann.text ?? ''),
-            };
+            });
             return;
         }
 
@@ -8316,8 +8332,8 @@ import {
     // pointer tells the user about the modifier, and disappears once Shift
     // is actually pressed (so it doesn't keep interrupting experienced users).
     const shapeConstrainTipEl = document.getElementById('shape-constrain-tip');
-    let shapeConstrainShiftAttached = false;
-    let shapeConstrainUserDismissedTip = false;
+    // shapeConstrainShiftAttached + shapeConstrainUserDismissedTip moved to
+    // ./store/misc-state.js (Phase 5m).
 
     function handleShapeConstrainShiftEvent(event) {
         if (event.key !== 'Shift') return;
@@ -8325,7 +8341,7 @@ import {
         if (shapeCreationState.constrain === wantConstrain) return;
         shapeCreationState.constrain = wantConstrain;
         if (wantConstrain) {
-            shapeConstrainUserDismissedTip = true;
+            setShapeConstrainUserDismissedTip(true);
             hideShapeConstrainTip();
         }
         if (!shapeCreationState.active || shapeCreationState.pi === null) return;
@@ -8341,14 +8357,14 @@ import {
 
     function attachShapeConstrainShiftListener() {
         if (shapeConstrainShiftAttached) return;
-        shapeConstrainShiftAttached = true;
+        setShapeConstrainShiftAttached(true);
         window.addEventListener('keydown', handleShapeConstrainShiftEvent, true);
         window.addEventListener('keyup', handleShapeConstrainShiftEvent, true);
     }
 
     function detachShapeConstrainShiftListener() {
         if (!shapeConstrainShiftAttached) return;
-        shapeConstrainShiftAttached = false;
+        setShapeConstrainShiftAttached(false);
         window.removeEventListener('keydown', handleShapeConstrainShiftEvent, true);
         window.removeEventListener('keyup', handleShapeConstrainShiftEvent, true);
     }
@@ -9142,7 +9158,7 @@ import {
             });
             attachShapeConstrainShiftListener();
             if (initialConstrain) {
-                shapeConstrainUserDismissedTip = true;
+                setShapeConstrainUserDismissedTip(true);
             } else {
                 showShapeConstrainTip(event.clientX, event.clientY);
             }
@@ -9165,7 +9181,7 @@ import {
             // correct if the event was dispatched without focus).
             shapeCreationState.constrain = Boolean(event.shiftKey);
             if (shapeCreationState.constrain) {
-                shapeConstrainUserDismissedTip = true;
+                setShapeConstrainUserDismissedTip(true);
                 hideShapeConstrainTip();
             } else if (!shapeConstrainUserDismissedTip) {
                 showShapeConstrainTip(event.clientX, event.clientY);
@@ -10180,7 +10196,7 @@ import {
         'image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp', 'image/svg+xml',
     ]);
     const IMAGE_IMPORT_MAX_BYTES = 25 * 1024 * 1024; // 25 MB
-    let imageImportPendingAsset = null;
+    // imageImportPendingAsset moved to ./store/misc-state.js (Phase 5m).
 
     function setImageImportStatus(text, isError = false) {
         if (!imageImportStatus) return;
@@ -10188,7 +10204,7 @@ import {
         imageImportStatus.style.color = isError ? '#b91c1c' : '';
     }
     function clearImageImportSelection() {
-        imageImportPendingAsset = null;
+        setImageImportPendingAsset(null);
         if (imageImportFileInput) imageImportFileInput.value = '';
         if (imageImportPreview) imageImportPreview.hidden = true;
         if (imageImportPreviewImg) imageImportPreviewImg.removeAttribute('src');
@@ -10234,13 +10250,13 @@ import {
             probe.onload = () => {
                 const w = probe.naturalWidth || probe.width || 1;
                 const h = probe.naturalHeight || probe.height || 1;
-                imageImportPendingAsset = {
+                setImageImportPendingAsset({
                     dataUrl,
                     fileName: file.name || 'image',
                     mimeType: mime,
                     width: w,
                     height: h,
-                };
+                });
                 if (imageImportPreviewImg) imageImportPreviewImg.src = dataUrl;
                 if (imageImportPreviewName) imageImportPreviewName.textContent = file.name || 'image';
                 if (imageImportPreviewDims) imageImportPreviewDims.textContent = `${w} × ${h} px`;
@@ -10726,10 +10742,10 @@ import {
     // ── Text Format Bar event listeners ───────────────────────────────────────
     // Track pointer-down on the format bar so the ae blur handler doesn't clear
     // the active annotation when the user clicks a color picker or other control.
-    let _formatBarMousedownTs = 0;
+    // _formatBarMousedownTs moved to ./store/misc-state.js (Phase 5m).
     if (annFormatBar) {
         annFormatBar.addEventListener('mousedown', (e) => {
-            _formatBarMousedownTs = Date.now();
+            setFormatBarMousedownTs(Date.now());
             // Prevent the format-bar button/control from stealing focus away from
             // the active editor. This preserves the user's selection so per-selection
             // commands (bold/italic/underline/color on a highlighted word) can run
