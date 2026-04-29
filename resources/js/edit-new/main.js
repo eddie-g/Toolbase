@@ -136,6 +136,16 @@ import {
     updateAcroEntry,
     drawAcroOverlay,
 } from './acroform/render.js';
+import { traceRoundedRectPath, drawAnnotationTypeBadge } from './render/badge.js';
+import {
+    crossProduct2d,
+    dedupePolygonVertices,
+    computePolygonArea,
+    clipPolygonAgainstInfiniteLine,
+} from './util/polygon-clip.js';
+import { sliderValueToFontPt, fontPtToSliderValue, FONT_SLIDER_MIN_PT, FONT_SLIDER_MAX_PT } from './text/font-slider.js';
+import { generateAnnotationId } from './annotations/id.js';
+import { canvasPointFromEvent } from './util/canvas-point.js';
 import {
     buildAcroFieldLookup,
     normalizeAcroRect,
@@ -2302,43 +2312,7 @@ import {
         });
     }
 
-    function traceRoundedRectPath(ctx, x, y, width, height, radius) {
-        const safeRadius = Math.max(0, Math.min(Number(radius) || 0, width / 2, height / 2));
-        ctx.beginPath();
-        ctx.moveTo(x + safeRadius, y);
-        ctx.lineTo(x + width - safeRadius, y);
-        ctx.quadraticCurveTo(x + width, y, x + width, y + safeRadius);
-        ctx.lineTo(x + width, y + height - safeRadius);
-        ctx.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height);
-        ctx.lineTo(x + safeRadius, y + height);
-        ctx.quadraticCurveTo(x, y + height, x, y + height - safeRadius);
-        ctx.lineTo(x, y + safeRadius);
-        ctx.quadraticCurveTo(x, y, x + safeRadius, y);
-        ctx.closePath();
-    }
-
-    function drawAnnotationTypeBadge(ctx, rect, label) {
-        const text = String(label || '').trim();
-        if (!text || !rect) return;
-        ctx.save();
-        ctx.font = '700 11px system-ui, sans-serif';
-        ctx.textBaseline = 'middle';
-        const paddingX = 8;
-        const badgeHeight = 22;
-        const badgeWidth = Math.ceil(ctx.measureText(text).width) + (paddingX * 2);
-        const badgeX = Math.max(4, Math.min(rect.left + 4, canvasLogicalWidth(ctx.canvas) - badgeWidth - 4));
-        const canPlaceAbove = rect.top >= (badgeHeight + 10);
-        const badgeY = canPlaceAbove ? (rect.top - badgeHeight - 4) : Math.max(4, rect.top + 4);
-        traceRoundedRectPath(ctx, badgeX, badgeY, badgeWidth, badgeHeight, 11);
-        ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(96, 165, 250, 0.5)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        ctx.fillStyle = '#f8fafc';
-        ctx.fillText(text, badgeX + paddingX, badgeY + (badgeHeight / 2));
-        ctx.restore();
-    }
+    // traceRoundedRectPath / drawAnnotationTypeBadge moved to ./render/badge.js (Phase 7ab).
 
     function redrawOverlay(pi) {
         const data = pageData[pi];
@@ -2491,22 +2465,7 @@ import {
         return hits.length ? hits[0].ann : null;
     }
 
-    function canvasPointFromEvent(e, canvas) {
-        const r = canvas.getBoundingClientRect();
-        if (!r.width || !r.height) return null;
-        // Return coordinates in the canvas's LOGICAL (CSS-pixel) space, not
-        // its backing-store space. The ratio used to be `canvas.width /
-        // r.width`, which happened to equal 1 when the canvas was sized 1:1.
-        // After the HiDPI overlay change, `canvas.width` is `cssW * dpr`, so
-        // we must read the logical width to keep downstream hit-testing code
-        // (pdfPtFromClient, shape hit tests, …) unchanged.
-        const logicalW = canvasLogicalWidth(canvas);
-        const logicalH = canvasLogicalHeight(canvas);
-        return {
-            x: (e.clientX - r.left) * (logicalW / r.width),
-            y: (e.clientY - r.top)  * (logicalH / r.height),
-        };
-    }
+    // canvasPointFromEvent moved to ./util/canvas-point.js (Phase 7af).
 
     // ── Active editor ─────────────────────────────────────────────────────────
     // escapeHtml lives in ./util/html.js — imported at the top of the file.
@@ -3301,23 +3260,8 @@ import {
         return setAnnotationBoxWithinPage(ann, pi, { x: box.x, y: newY, w: box.w, h: grownHeightPts });
     }
 
-    // Font-size slider mapping. The UI slider is 0–100 with the midpoint mapped
-    // to 12pt via an exponential curve between 2pt (slider=0) and 72pt (slider=100):
-    //   pt = 2 * (72/2)^(slider/100)  →  slider=50 → pt = sqrt(2*72) = 12.
-    const FONT_SLIDER_MIN_PT = 2;
-    const FONT_SLIDER_MAX_PT = 72;
-    function sliderValueToFontPt(value) {
-        const t = Math.min(1, Math.max(0, Number(value) / 100));
-        const ratio = FONT_SLIDER_MAX_PT / FONT_SLIDER_MIN_PT;
-        const pt = FONT_SLIDER_MIN_PT * Math.pow(ratio, t);
-        return Math.max(FONT_SLIDER_MIN_PT, Math.min(FONT_SLIDER_MAX_PT, Math.round(pt)));
-    }
-    function fontPtToSliderValue(pt) {
-        const clamped = Math.max(FONT_SLIDER_MIN_PT, Math.min(FONT_SLIDER_MAX_PT, Number(pt) || 12));
-        const ratio = FONT_SLIDER_MAX_PT / FONT_SLIDER_MIN_PT;
-        const t = Math.log(clamped / FONT_SLIDER_MIN_PT) / Math.log(ratio);
-        return Math.round(Math.min(100, Math.max(0, t * 100)));
-    }
+    // FONT_SLIDER_MIN_PT / FONT_SLIDER_MAX_PT / sliderValueToFontPt /
+    // fontPtToSliderValue moved to ./text/font-slider.js (Phase 7ad).
 
     // Module-scoped clipboard for Ctrl+C / Ctrl+V annotation copy/paste.
     // _annClipboard moved to ./store/misc-state.js (Phase 5m).
@@ -6672,81 +6616,8 @@ import {
         armShapeCutMode(ann, pi);
     }
 
-    function crossProduct2d(ax, ay, bx, by) {
-        return (ax * by) - (ay * bx);
-    }
-
-    function dedupePolygonVertices(points, epsilon = 0.01) {
-        if (!Array.isArray(points)) return [];
-        const deduped = [];
-        points.forEach((point) => {
-            const x = Number(point?.x);
-            const y = Number(point?.y);
-            if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-            const previous = deduped[deduped.length - 1];
-            if (previous && Math.hypot(previous.x - x, previous.y - y) <= epsilon) return;
-            deduped.push({ x, y });
-        });
-        if (deduped.length > 1) {
-            const first = deduped[0];
-            const last = deduped[deduped.length - 1];
-            if (Math.hypot(first.x - last.x, first.y - last.y) <= epsilon) {
-                deduped.pop();
-            }
-        }
-        return deduped;
-    }
-
-    function computePolygonArea(points) {
-        if (!Array.isArray(points) || points.length < 3) return 0;
-        let area = 0;
-        for (let index = 0; index < points.length; index += 1) {
-            const current = points[index];
-            const next = points[(index + 1) % points.length];
-            area += ((Number(current?.x) || 0) * (Number(next?.y) || 0)) - ((Number(next?.x) || 0) * (Number(current?.y) || 0));
-        }
-        return area / 2;
-    }
-
-    function clipPolygonAgainstInfiniteLine(points, lineStart, lineEnd, keepPositive) {
-        const cleaned = dedupePolygonVertices(points);
-        if (cleaned.length < 3) return [];
-        const dirX = (Number(lineEnd?.x) || 0) - (Number(lineStart?.x) || 0);
-        const dirY = (Number(lineEnd?.y) || 0) - (Number(lineStart?.y) || 0);
-        const epsilon = 1e-6;
-        const isInside = (point) => {
-            const side = crossProduct2d(dirX, dirY, (Number(point?.x) || 0) - (Number(lineStart?.x) || 0), (Number(point?.y) || 0) - (Number(lineStart?.y) || 0));
-            return keepPositive ? side >= -epsilon : side <= epsilon;
-        };
-        const intersectionPoint = (from, to) => {
-            const edgeX = (Number(to?.x) || 0) - (Number(from?.x) || 0);
-            const edgeY = (Number(to?.y) || 0) - (Number(from?.y) || 0);
-            const denom = crossProduct2d(dirX, dirY, edgeX, edgeY);
-            if (Math.abs(denom) < epsilon) return null;
-            const startOffsetX = (Number(lineStart?.x) || 0) - (Number(from?.x) || 0);
-            const startOffsetY = (Number(lineStart?.y) || 0) - (Number(from?.y) || 0);
-            const t = crossProduct2d(dirX, dirY, startOffsetX, startOffsetY) / denom;
-            return {
-                x: (Number(from?.x) || 0) + (edgeX * t),
-                y: (Number(from?.y) || 0) + (edgeY * t),
-            };
-        };
-
-        const output = [];
-        let previous = cleaned[cleaned.length - 1];
-        let previousInside = isInside(previous);
-        cleaned.forEach((current) => {
-            const currentInside = isInside(current);
-            if (currentInside !== previousInside) {
-                const intersection = intersectionPoint(previous, current);
-                if (intersection) output.push(intersection);
-            }
-            if (currentInside) output.push({ x: Number(current.x), y: Number(current.y) });
-            previous = current;
-            previousInside = currentInside;
-        });
-        return dedupePolygonVertices(output);
-    }
+    // crossProduct2d / dedupePolygonVertices / computePolygonArea /
+    // clipPolygonAgainstInfiniteLine moved to ./util/polygon-clip.js (Phase 7ac).
 
     function createPolygonAnnotationFromPdfPoints(templateAnn, pi, points) {
         const cleaned = dedupePolygonVertices(points);
@@ -6953,9 +6824,7 @@ import {
         redrawAllOverlays();
     }
 
-    function generateAnnotationId() {
-        return 'ann_' + Date.now() + '_' + Math.random().toString(36).slice(2, 11);
-    }
+    // generateAnnotationId moved to ./annotations/id.js (Phase 7ae).
 
     function createNewTextAnnotation(canvasX, canvasY, pi, canvasWidth = null, canvasHeight = null) {
         if (!addTextMode) return;
