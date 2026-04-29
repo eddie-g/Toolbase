@@ -9,6 +9,11 @@
  */
 
 import { CSRF, INFO_URL, SAVE_URL, DOWNLOAD_URL, DOC_ID } from './config.js';
+import {
+    fetchDocumentInfo,
+    saveAnnotations,
+    downloadAnnotatedPdf,
+} from './persistence/api.js';
 
 (function () {
 
@@ -250,7 +255,6 @@ import { CSRF, INFO_URL, SAVE_URL, DOWNLOAD_URL, DOC_ID } from './config.js';
     const pageTotalLabel = document.getElementById('page-total');
     const pagePrevBtn = document.getElementById('page-prev');
     const pageNextBtn = document.getElementById('page-next');
-    const INFO_URL_OBJ = new URL(INFO_URL, window.location.origin);
 
     // ── Session ID (persisted per-document so saves survive reload) ───────────
     const SESSION_KEY = `edit_new_session_${DOC_ID}`;
@@ -271,7 +275,6 @@ import { CSRF, INFO_URL, SAVE_URL, DOWNLOAD_URL, DOC_ID } from './config.js';
         }
         return id;
     }
-    INFO_URL_OBJ.searchParams.set('session_id', getSessionId());
 
     // ── Module-level state ─────────────────────────────────────────────────────
     let _pdfDoc       = null;
@@ -8526,34 +8529,14 @@ import { CSRF, INFO_URL, SAVE_URL, DOWNLOAD_URL, DOC_ID } from './config.js';
         const deletedPromotedSourceKeys = Array.from(pendingDeletedPromotedSourceKeys);
 
         try {
-            const response = await fetch(DOWNLOAD_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Accept: 'application/pdf, application/json', 'X-CSRF-TOKEN': CSRF },
-                credentials: 'same-origin',
-                body: JSON.stringify({
-                    annotations: sessionAnnotations,
-                    session_annotations: sessionAnnotations,
-                    acro_form_entries: acroFormEntries,
-                    deleted_promoted_source_keys: deletedPromotedSourceKeys,
-                    use_exact_download_path: true,
-                    session_id: getSessionId(),
-                }),
+            const pdfBlob = await downloadAnnotatedPdf({
+                annotations: sessionAnnotations,
+                session_annotations: sessionAnnotations,
+                acro_form_entries: acroFormEntries,
+                deleted_promoted_source_keys: deletedPromotedSourceKeys,
+                use_exact_download_path: true,
+                session_id: getSessionId(),
             });
-
-            if (!response.ok) {
-                let message = 'Failed to generate PDF.';
-                const contentType = String(response.headers.get('content-type') || '');
-                if (contentType.includes('application/json')) {
-                    const result = await response.json().catch(() => ({}));
-                    message = result.message || message;
-                } else {
-                    const text = await response.text().catch(() => '');
-                    if (text) message = text;
-                }
-                throw new Error(message);
-            }
-
-            const pdfBlob = await response.blob();
             const blobUrl = URL.createObjectURL(pdfBlob);
             if (popup && !popup.closed) {
                 popup.location.replace(blobUrl);
@@ -8597,23 +8580,14 @@ import { CSRF, INFO_URL, SAVE_URL, DOWNLOAD_URL, DOC_ID } from './config.js';
         const deletedPromotedSourceKeys = Array.from(pendingDeletedPromotedSourceKeys);
 
         try {
-            const response = await fetch(SAVE_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': CSRF },
-                credentials: 'same-origin',
-                body: JSON.stringify({
-                    annotations: sessionAnnotations,
-                    session_annotations: sessionAnnotations,
-                    acro_form_entries: acroFormEntries,
-                    deleted_annotation_ids: deletedAnnotationIds,
-                    deleted_promoted_source_keys: deletedPromotedSourceKeys,
-                    session_id: getSessionId(),
-                }),
+            await saveAnnotations({
+                annotations: sessionAnnotations,
+                session_annotations: sessionAnnotations,
+                acro_form_entries: acroFormEntries,
+                deleted_annotation_ids: deletedAnnotationIds,
+                deleted_promoted_source_keys: deletedPromotedSourceKeys,
+                session_id: getSessionId(),
             });
-            const result = await response.json().catch(() => ({}));
-            if (!response.ok || !result.success) {
-                throw new Error(result.message || 'Save failed');
-            }
 
             Object.values(pageData).forEach((data) => {
                 (data.annotations || []).forEach((ann) => {
@@ -12635,10 +12609,7 @@ import { CSRF, INFO_URL, SAVE_URL, DOWNLOAD_URL, DOC_ID } from './config.js';
         loadSavedSignatureLibrary();
         updateZoom(currentZoomPercent);
         try {
-            const resp = await fetch(INFO_URL_OBJ.toString(), { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
-            if (!resp.ok) throw new Error('HTTP ' + resp.status);
-            data = await resp.json();
-            if (!data.success) throw new Error(data.message || 'Failed to load document info.');
+            data = await fetchDocumentInfo(getSessionId());
         } catch (e) { showError(String(e)); return; }
 
         const embeddedFontsBySource = data.embedded_fonts_by_source && typeof data.embedded_fonts_by_source === 'object'
