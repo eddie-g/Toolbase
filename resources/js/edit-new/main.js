@@ -66,6 +66,12 @@ import {
     snapLineEndpoint,
     normalizeRotationDegrees,
 } from './util/geometry.js';
+import {
+    isUserAuthoredAnnotation,
+    markUserAuthored,
+    annTextIsEdited,
+    annotationDimensionsChanged,
+} from './annotations/state.js';
 
 (function () {
 
@@ -1614,21 +1620,6 @@ import {
         return { left: sBL, top: sBT, width: sBW, height: sBH };
     }
 
-    function annotationDimensionsChanged(ann) {
-        const cur = resolveAnnBox(ann);
-        if (!cur) return false;
-        // Use _originalPdfBox (captured from the loaded pdfWidth/pdfHeight) when available,
-        // instead of _originalBox (which reflects the span-origin visual block and can be
-        // a few pts smaller/larger than the stored pdfW/H — that false-positive would force
-        // syncActiveEditor into the plain-text editor render, making selected/clicked mode
-        // look different from the unselected canvas render).
-        const origPdf = ann._originalPdfBox;
-        const orig = (origPdf && [origPdf.x, origPdf.y, origPdf.w, origPdf.h].every(Number.isFinite))
-            ? origPdf
-            : resolveOriginalAnnBox(ann);
-        if (!orig) return false;
-        return Math.abs(cur.w - orig.w) > 0.25 || Math.abs(cur.h - orig.h) > 0.25;
-    }
 
     // Defense against `pdfHeight` bloat for promoted-from-extraction
     // annotations. The bug: somewhere upstream (auto-grow on a stale
@@ -1771,24 +1762,6 @@ import {
     // Persistence: flagged onto `userAuthored` in the saved payload; the load
     // hydrator restores `_userAuthored` from `userAuthored` OR `promotedDirty`
     // (legacy flag already persisted).
-    function isUserAuthoredAnnotation(ann) {
-        if (!ann) return false;
-        if (ann._userAuthored) return true;
-        if (ann.userAuthored) return true;
-        if (ann.promotedDirty) return true;
-        if (!ann.promotedFromExtraction) return true;
-        return false;
-    }
-
-    function markUserAuthored(ann) {
-        if (!ann || ann._userAuthored) return;
-        ann._userAuthored = true;
-        ann.promotedDirty = true;
-        if (ann.annotation_data && typeof ann.annotation_data === 'object') {
-            ann.annotation_data.userAuthored = true;
-            ann.annotation_data.promotedDirty = true;
-        }
-    }
 
     function sourceVisualRectPx(ann, scale) {
         const sourceOffset = annotationSourceOffset(ann);
@@ -2986,14 +2959,6 @@ import {
         return lines;
     }
 
-    // True if the saved ann.text has been edited away from its originalText (the value at extraction).
-    function annTextIsEdited(ann) {
-        const saved    = String(ann.text ?? '');
-        const original = String(ann.originalText ?? '');
-        if (!original) return false; // no baseline to compare against
-        const norm = s => s.replace(/[\s\n]+/g, ' ').trim();
-        return norm(saved) !== norm(original);
-    }
 
     function drawEditedAnnotation(ann, ctx, scale, pageWidthPts, pageHeightPts) {
         if (!resolveAnnBox(ann)) return;
