@@ -81,6 +81,7 @@ import {
     getShapePolygonPointsPdf,
     getShapePolygonPointsCanvas,
 } from './annotations/polygon-points.js';
+import { fontDisplayScale, canvasLogicalHeight } from './util/dom-metrics.js';
 
 (function () {
 
@@ -845,13 +846,7 @@ import {
         return (data.fitScale || 1) * (currentZoomPercent / 100);
     }
 
-    // Annotation TEXT scales with the page during zoom (uniform zoom: page +
-    // text shrink/grow together). Helper kept as identity so all call sites
-    // continue to compile; a previous experiment returned fit-scale here to
-    // keep glyphs constant pixel-size, but uniform scaling is the desired UX.
-    function fontDisplayScale(scale) {
-        return Number(scale) || 0;
-    }
+    // fontDisplayScale moved to ./util/dom-metrics.js.
 
     function updatePageCardWidth(pi, canvasWidth) {
         const card = document.getElementById(`card-${pi + 1}`);
@@ -910,10 +905,7 @@ import {
         return canvas.__cssWidth ?? canvas.width;
     }
 
-    function canvasLogicalHeight(canvas) {
-        if (!canvas) return 0;
-        return canvas.__cssHeight ?? canvas.height;
-    }
+    // canvasLogicalHeight moved to ./util/dom-metrics.js.
 
     function applyPageScale(pi) {
         const data = pageData[pi];
