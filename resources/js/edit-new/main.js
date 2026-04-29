@@ -93,6 +93,16 @@ import {
     setSaving,
     setDownloadingPdf,
 } from './store/lifecycle-flags.js';
+import {
+    editModeEnabled,
+    addTextMode,
+    shapeMode,
+    eraseMode,
+    setEditModeEnabledFlag,
+    setAddTextModeFlag,
+    setShapeModeFlag,
+    setEraseModeFlag,
+} from './store/editor-modes.js';
 
 (function () {
 
@@ -365,9 +375,8 @@ import {
     let shapeCreationState = { active: false, pi: null, pointerId: null, startPt: null, currentPt: null, previewAnn: null, constrain: false };
     let shapeCutState = { armed: false, pi: null, uid: null, pointerId: null, startPt: null, currentPt: null };
     // isDirty / isSaving / isDownloadingPdf moved to ./store/lifecycle-flags.js (Phase 5c).
-    let editModeEnabled = false;
-    let addTextMode = false;
-    let shapeMode = false;
+    // editModeEnabled / addTextMode / shapeMode / eraseMode moved to
+    // ./store/editor-modes.js (Phase 5d).
     let signatureMode = 'draw';
     let signatureDirty = false;
     let signatureDrawing = false;
@@ -389,7 +398,7 @@ import {
     let markupToolDrawing = false;
     let markupToolStrokes = [];
     let markupToolActiveStroke = null;
-    let eraseMode = false;
+    // eraseMode moved to ./store/editor-modes.js (Phase 5d).
     let currentZoomPercent = initialZoomPercent;
     let suppressEditorAutofit = false;
     let suppressEditorAutofitResetToken = 0;
@@ -5400,7 +5409,7 @@ import {
             closeMarkupToolModal();
             setDrawMode(false);
         }
-        editModeEnabled = nextState;
+        setEditModeEnabledFlag(nextState);
         setAddTextMode(false); // always exit addTextMode when edit mode changes
         setShapeMode(false);
         if (!editModeEnabled) {
@@ -6050,7 +6059,7 @@ import {
 
     function cancelEraseMode() {
         if (!eraseMode) return;
-        eraseMode = false;
+        setEraseModeFlag(false);
         clearHoverState();
         syncCanvasCursors();
         updateEditModeUi();
@@ -6070,7 +6079,7 @@ import {
             cancelShapeCutMode({ redraw: false });
             clearActiveAnnotation();
         }
-        eraseMode = nextState;
+        setEraseModeFlag(nextState);
         clearHoverState();
         syncCanvasCursors();
         updateEditModeUi();
@@ -8198,7 +8207,7 @@ import {
             setDrawMode(false);
             cancelShapeCutMode({ redraw: false });
         }
-        addTextMode = !editModeEnabled && !shapeMode && !!active;
+        setAddTextModeFlag(!editModeEnabled && !shapeMode && !!active);
         if (!addTextMode && textCreationState.active) cancelTextCreationPreview();
         if (addTextBtn) addTextBtn.classList.toggle('active', addTextMode);
         if (ftbAddText) ftbAddText.classList.toggle('is-active', addTextMode);
@@ -8304,7 +8313,7 @@ import {
             syncShapePanelUi();
             return;
         }
-        shapeMode = nextState;
+        setShapeModeFlag(nextState);
         if (shapeMode) {
             setAddTextMode(false);
         } else if (shapeCreationState.active) {
