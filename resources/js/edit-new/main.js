@@ -230,6 +230,7 @@ import {
     showErrorBanner as _showErrorBanner,
     showSaveToast as _showSaveToast,
 } from './ui/banner.js';
+import { updateSaveUi as _updateSaveUi } from './ui/save-ui.js';
 import { currentCanvasCursor } from './cursor/canvas-cursor.js';
 import {
     setDrawToolStatus as _setDrawToolStatus,
@@ -3809,21 +3810,8 @@ import {
         syncShapePanelUi();
     }
 
-    function updateSaveUi() {
-        if (saveButton) {
-            saveButton.disabled = isSaving;
-            saveButton.textContent = isSaving ? 'Saving...' : 'Save';
-        }
-        if (downloadPdfButton) {
-            downloadPdfButton.disabled = isDownloadingPdf;
-            downloadPdfButton.textContent = isDownloadingPdf ? 'Preparing PDF...' : 'Download PDF';
-        }
-        if (saveStatus) {
-            saveStatus.textContent = isDownloadingPdf
-                ? 'Preparing PDF...'
-                : (isSaving ? 'Saving...' : (isDirty ? 'Unsaved changes' : 'Saved'));
-        }
-    }
+    // updateSaveUi moved to ./ui/save-ui.js (Phase 7bl).
+    const updateSaveUi = () => _updateSaveUi({ saveButton, downloadPdfButton, saveStatus });
 
     function redrawAllOverlays() {
         Object.keys(pageData).forEach((pi) => redrawOverlay(Number(pi)));
