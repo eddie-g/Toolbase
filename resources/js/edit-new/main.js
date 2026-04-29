@@ -204,6 +204,12 @@ import {
     setMarkupToolActiveStroke,
     setMarkupToolCtx,
 } from './store/markup-tool-state.js';
+import {
+    _pdfDoc,
+    _acroPdfDoc,
+    setPdfDoc,
+    setAcroPdfDoc,
+} from './store/pdf-docs.js';
 
 (function () {
 
@@ -455,8 +461,7 @@ import {
     const initialZoomPercent = window.innerWidth < 768 ? 100 : 130;
 
     // ── Module-level state ─────────────────────────────────────────────────────
-    let _pdfDoc       = null;
-    let _acroPdfDoc   = null;
+    // _pdfDoc + _acroPdfDoc moved to ./store/pdf-docs.js (Phase 5l).
     const pageData    = {};   // pi → { wPts, hPts, scale, canvasWidth, canvasHeight, annotations }
     const editedTexts = {};   // uid → string
     // acroFormEntries / acroFieldLookup / acroWidgetsByPage moved to
@@ -1364,13 +1369,13 @@ import {
         // The clean PDF preserves acroform widget annotations, so there is no need for a
         // separate HTTP request.  This also avoids Chromium aborting a PDF-type XHR when
         // headless mode's PDF-viewer handler intercepts the download.
-        if (_pdfDoc) { _acroPdfDoc = _pdfDoc; return; }
+        if (_pdfDoc) { setAcroPdfDoc(_pdfDoc); return; }
         // Fallback: fetch the original file as an ArrayBuffer so browser PDF handling
         // does not interfere, then hand it to pdf.js directly.
         if (!documentInfo?.file_url) return;
         const resp = await fetch(documentInfo.file_url, { credentials: 'same-origin' }).catch(() => null);
         if (!resp?.ok) return;
-        _acroPdfDoc = await pdfjsLib.getDocument({ data: await resp.arrayBuffer() }).promise;
+        setAcroPdfDoc(await pdfjsLib.getDocument({ data: await resp.arrayBuffer() }).promise);
     }
 
     function normalizeAcroWidget(annotation, pageNumber) {
@@ -12169,12 +12174,12 @@ import {
             let lastErr = null;
             for (const url of candidateUrls) {
                 try {
-                    _pdfDoc = await pdfjsLib.getDocument(url).promise;
+                    setPdfDoc(await pdfjsLib.getDocument(url).promise);
                     lastErr = null;
                     break;
                 } catch (err) {
                     lastErr = err;
-                    _pdfDoc = null;
+                    setPdfDoc(null);
                 }
             }
             if (!_pdfDoc) throw lastErr || new Error('No PDF source URL succeeded.');
