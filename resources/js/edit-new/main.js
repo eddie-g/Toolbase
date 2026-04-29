@@ -226,6 +226,10 @@ import {
     clearActiveDrawSession,
 } from './draw/session.js';
 import {
+    renderEditorSpanHtml,
+    renderEditorGapHtml,
+} from './editor/source-flow/spans.js';
+import {
     dbgEscape as _dbgEscape,
     dbgPrettyHtml as _dbgPrettyHtml,
     dbgFormatStyle as _dbgFormatStyle,
@@ -2386,21 +2390,7 @@ import {
         };
     }
 
-    function renderEditorSpanHtml(style, text) {
-        return `<span style="font-family:${style.fontFamily};font-size:${style.fontSizePx.toFixed(2)}px;font-weight:${style.fontWeight};font-style:${style.fontStyle};color:${style.color};white-space:pre;">${escapeHtml(text)}</span>`;
-    }
-
-    // Render an inter-span gap as a fixed-pixel-width inline-block so the visual
-    // gap matches the canvas exactly. We still emit literal space characters
-    // inside (preserving getEditorPlainText() == ann.text parity) but the
-    // wrapper's explicit width pins the visual gap to gapPx regardless of the
-    // rendered font's space-glyph width — which is what was causing the
-    // "spacing collapses on Edit text" regression on bold-led leader lines.
-    function renderEditorGapHtml(style, gapPx, spaceCount) {
-        const safeGap = Math.max(0, Number(gapPx) || 0);
-        const safeCount = Math.max(1, Number(spaceCount) || 1);
-        return `<span data-source-gap="1" style="display:inline-block;width:${safeGap.toFixed(2)}px;min-width:${safeGap.toFixed(2)}px;font-family:${style.fontFamily};font-size:${style.fontSizePx.toFixed(2)}px;font-weight:${style.fontWeight};font-style:${style.fontStyle};color:${style.color};white-space:pre;overflow:hidden;vertical-align:baseline;">${' '.repeat(safeCount)}</span>`;
-    }
+    // renderEditorSpanHtml + renderEditorGapHtml moved to ./editor/source-flow/spans.js (Phase 7bg).
 
     function buildLineInnerHtml(ann, lineIndex, scale, spans) {
         if (!Array.isArray(spans) || !spans.length) return '';
