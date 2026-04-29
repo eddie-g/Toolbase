@@ -32,6 +32,7 @@ import {
 } from './persistence/signature-library.js';
 import { createAutoSave } from './persistence/autosave.js';
 import { cloneSerializableValue } from './util/clone.js';
+import { createEmbeddedFontRegistry } from './render/embedded-fonts.js';
 
 (function () {
 
@@ -340,14 +341,25 @@ import { cloneSerializableValue } from './util/clone.js';
     let currentShapeFillTransparent = false;
 
     let measureCanvas = null;
-    let overlayEmbeddedFonts = null;
-    // Embedded-font runtime safety net: any PDF_<cleanName> family whose
-    // canvas fillText paints zero ink pixels is recorded here. fallbackFontFamily
-    // skips these entries so the engine falls back to a system family that can
-    // actually render glyphs. Prevents the silent-text-vanishing failure mode
-    // (see /memories/repo/edit-new-broken-runtime-extracted-fonts.md).
-    const brokenEmbeddedFontKeys = new Set();
-    let embeddedFontHealthCheckToken = 0;
+    // Embedded-PDF-font registry. Owns the @font-face injection, the
+    // per-family async health check, and the broken-key set. The registry
+    // is wired below (after shouldBypassEmbeddedFont and fontFileFormat are
+    // in scope via imports) and queried from fallbackFontFamily /
+    // populateFontDropdown via getEmbeddedFonts() and isBroken().
+    // See /memories/repo/edit-new-broken-runtime-extracted-fonts.md.
+    const embeddedFontRegistry = createEmbeddedFontRegistry({
+        shouldBypassEmbeddedFont,
+        fontFileFormat,
+        onValidationChange: () => {
+            // Force a re-render so previously-invisible spans repaint with the
+            // system fallback now that fallbackFontFamily will skip the broken
+            // families.
+            try {
+                if (typeof redrawAllOverlays === 'function') redrawAllOverlays();
+            } catch (_) {}
+        },
+    });
+    const loadEmbeddedFontFaces = embeddedFontRegistry.loadFaces;
     let markupToolCtx = null;
     let signatureCtx = null;
     let signatureTypedRenderToken = 0;
@@ -1233,172 +1245,9 @@ import { cloneSerializableValue } from './util/clone.js';
         Mukta:            "'Mukta', Arial, Helvetica, sans-serif",
     };
 
-    const loadEmbeddedFontFaces = (embeddedFonts) => {
-        overlayEmbeddedFonts = embeddedFonts && typeof embeddedFonts === 'object' ? embeddedFonts : null;
-        // Reset broken-font set on every reload — must re-validate against the
-        // freshly registered @font-face URLs.
-        brokenEmbeddedFontKeys.clear();
-
-        const existing = document.getElementById('edit-new-embedded-fonts');
-        if (existing) existing.remove();
-        if (!overlayEmbeddedFonts) return;
-
-        let css = '';
-        for (const [fontKey, fontData] of Object.entries(overlayEmbeddedFonts)) {
-            const cleanName = String(fontData?.clean_name || fontKey || '').trim();
-            const family = String(fontData?.family || fontKey || '').trim();
-            if (!cleanName) continue;
-            if (shouldBypassEmbeddedFont(cleanName, family, fontData)) continue;
-
-            let filePath = String(fontData?.file_path || '').trim();
-            if (!filePath) continue;
-
-            let fileExt = String(fontData?.file_ext || 'ttf').toLowerCase();
-            if (fileExt === 'cff') {
-                filePath = filePath.replace(/\.cff$/i, '.otf');
-                fileExt = 'otf';
-            }
-            if (fileExt === 'cid') continue;
-
-            const format = fontFileFormat(fileExt);
-            const weight = String(fontData?.css_weight || '400');
-            const fontStyle = String(fontData?.css_style || 'normal');
-            const fontStretch = String(fontData?.css_stretch || 'normal');
-            const exactFamily = `PDF_${cleanName}`;
-            const familyAlias = family ? `PDF_${family}` : '';
-
-            css += `@font-face { font-family: '${exactFamily}'; src: url('${filePath}') format('${format}'); font-weight: ${weight}; font-style: ${fontStyle};${fontStretch !== 'normal' ? ` font-stretch: ${fontStretch};` : ''} font-display: block; }\n`;
-            if (familyAlias && familyAlias !== exactFamily) {
-                css += `@font-face { font-family: '${familyAlias}'; src: url('${filePath}') format('${format}'); font-weight: ${weight}; font-style: ${fontStyle};${fontStretch !== 'normal' ? ` font-stretch: ${fontStretch};` : ''} font-display: block; }\n`;
-            }
-        }
-
-        if (!css) return;
-
-        const style = document.createElement('style');
-        style.id = 'edit-new-embedded-fonts';
-        style.textContent = css;
-        document.head.appendChild(style);
-
-        // Kick off async health check: paint a sample with each registered
-        // embedded family and flag any that produce zero ink pixels. Such a
-        // font is broken (loaded but with empty glyph outlines) and would
-        // otherwise silently render every span using it as blank space.
-        validateEmbeddedFontsHealth();
-    };
-
-    // Render-test every registered PDF_<cleanName> family. Any family that
-    // measures correctly but draws nothing gets added to brokenEmbeddedFontKeys
-    // so fallbackFontFamily can route around it. After the sweep, request a
-    // full re-render so any spans that were silently invisible repaint with
-    // a working system fallback.
-    const validateEmbeddedFontsHealth = () => {
-        if (!overlayEmbeddedFonts || typeof overlayEmbeddedFonts !== 'object') return;
-        const token = ++embeddedFontHealthCheckToken;
-
-        const probeText = 'AHSx0';
-        const probeSize = 24;
-        const families = [];
-        for (const [fontKey, fontData] of Object.entries(overlayEmbeddedFonts)) {
-            const cleanName = String(fontData?.clean_name || fontKey || '').trim();
-            if (!cleanName) continue;
-            if (shouldBypassEmbeddedFont(cleanName, String(fontData?.family || ''), fontData)) continue;
-            const cssWeight = String(fontData?.css_weight || '400');
-            const cssStyle = String(fontData?.css_style || 'normal');
-            families.push({ cleanName, cssWeight, cssStyle });
-        }
-        if (!families.length) return;
-
-        const fontReady = (typeof document !== 'undefined' && document.fonts && document.fonts.ready)
-            ? document.fonts.ready
-            : Promise.resolve();
-
-        fontReady.then(async () => {
-            if (token !== embeddedFontHealthCheckToken) return;
-
-            // Force every PDF_<cleanName> face to actually load. document.fonts.ready
-            // does NOT lazy-load @font-face rules added via <style> injection until
-            // they are first *used*, so without this step every probe below would
-            // paint with a system fallback while the real font hasn't started
-            // downloading — yielding a false-pass.
-            try {
-                const loaders = families.map(({ cleanName, cssWeight, cssStyle }) => {
-                    const face = `${cssStyle} ${cssWeight} ${probeSize}px 'PDF_${cleanName}'`;
-                    try { return document.fonts.load(face).catch(() => null); } catch (_) { return null; }
-                }).filter(Boolean);
-                if (loaders.length) await Promise.all(loaders);
-            } catch (_) {}
-            if (token !== embeddedFontHealthCheckToken) return;
-
-            const canvas = document.createElement('canvas');
-            canvas.width = 96;
-            canvas.height = 32;
-            const ctx = canvas.getContext('2d', { willReadFrequently: true });
-            if (!ctx) return;
-
-            // Establish a baseline ink count using a guaranteed-renderable font
-            // so we don't get false positives from canvas APIs that report 0.
-            ctx.fillStyle = '#000';
-            ctx.textBaseline = 'top';
-            ctx.font = `${probeSize}px Helvetica, Arial, sans-serif`;
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.fillText(probeText, 2, 2);
-            let baselineInk = 0;
-            try {
-                const img = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-                for (let i = 3; i < img.length; i += 4) if (img[i] > 8) baselineInk++;
-            } catch (_) { return; /* tainted canvas — skip the check entirely */ }
-            if (baselineInk < 5) return; // canvas readback unreliable; bail
-
-            let foundBroken = false;
-            const newlyBroken = [];
-
-            const probeOne = ({ cleanName, cssWeight, cssStyle }) => {
-                const family = `PDF_${cleanName}`;
-                // Render at the face's *registered* weight/style. Using the
-                // generic font shorthand without these attributes would cause
-                // the browser to substitute a different (unregistered) variant.
-                // The trailing __pdf_no_such_family__ ensures that if the
-                // PDF_<name> face is not loaded we don't fall back to a system
-                // font that *can* render the glyphs — that would produce a
-                // false-pass. (If the face IS loaded but its outlines are
-                // empty, fillText paints nothing, which is what we want to
-                // detect.)
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                ctx.font = `${cssStyle} ${cssWeight} ${probeSize}px '${family}', __pdf_no_such_family__`;
-                try { ctx.fillText(probeText, 2, 2); } catch (_) { return; }
-
-                let ink = 0;
-                try {
-                    const img = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-                    for (let i = 3; i < img.length; i += 4) if (img[i] > 8) ink++;
-                } catch (_) { return; }
-
-                if (ink < 3) {
-                    brokenEmbeddedFontKeys.add(cleanName);
-                    newlyBroken.push(cleanName);
-                    foundBroken = true;
-                }
-            };
-
-            families.forEach(probeOne);
-
-            if (foundBroken) {
-                console.warn(
-                    '[edit-new] Embedded PDF font(s) registered but render empty; '
-                    + 'falling back to system fonts for: ' + newlyBroken.join(', ')
-                );
-                // Force a re-render so previously-invisible spans repaint with
-                // the system fallback now that fallbackFontFamily will skip the
-                // broken families.
-                try {
-                    if (typeof redrawAllOverlays === 'function') {
-                        redrawAllOverlays();
-                    }
-                } catch (_) {}
-            }
-        }).catch(() => {});
-    };
+    // loadEmbeddedFontFaces + the async health-check live in
+    // ./render/embedded-fonts.js. The registry is constructed near the top of
+    // this file (search for `createEmbeddedFontRegistry`).
 
     // Inject a "PDF Embedded Fonts" section at the top of the font-family picker.
     // Embedded font names use the PDF's clean_name (e.g. "TahomaUnicode"). When the
@@ -1416,12 +1265,13 @@ import { cloneSerializableValue } from './util/clone.js';
         // garbage for missing characters.
         const embeddedSet = new Set();
         const SUBSET_PREFIX_RE = /^[A-Z]{6}\+/;
+        const overlayEmbeddedFonts = embeddedFontRegistry.getEmbeddedFonts();
         if (overlayEmbeddedFonts && typeof overlayEmbeddedFonts === 'object') {
             Object.entries(overlayEmbeddedFonts).forEach(([fontKey, fontData]) => {
                 const cleanName = String(fontData?.clean_name || fontKey || '').trim();
                 if (!cleanName) return;
                 if (shouldBypassEmbeddedFont(cleanName, String(fontData?.family || ''), fontData)) return;
-                if (brokenEmbeddedFontKeys.has(cleanName)) return;
+                if (embeddedFontRegistry.isBroken(cleanName)) return;
                 const pdfName = String(fontData?.pdf_font_name || '').trim();
                 if (SUBSET_PREFIX_RE.test(pdfName)) return;
                 embeddedSet.add(cleanName);
@@ -1491,6 +1341,7 @@ import { cloneSerializableValue } from './util/clone.js';
         const rawExact = normalizeFontName(name);
         const rawFamily = normalizeFontName(family);
 
+        const overlayEmbeddedFonts = embeddedFontRegistry.getEmbeddedFonts();
         if (overlayEmbeddedFonts) {
             const entries = Object.entries(overlayEmbeddedFonts);
             if (rawExact) {
@@ -1500,7 +1351,7 @@ import { cloneSerializableValue } from './util/clone.js';
                     const embeddedFamily = String(fontData?.family || fontKey || '').trim();
                     if (!cleanName || shouldBypassEmbeddedFont(cleanName, embeddedFamily, fontData)) continue;
                     if (normalizeFontName(cleanName).toLowerCase() === rawExact.toLowerCase()) {
-                        if (brokenEmbeddedFontKeys.has(cleanName)) {
+                        if (embeddedFontRegistry.isBroken(cleanName)) {
                             // Exact-name match exists but its outlines are
                             // broken. Don't fall through to a same-family
                             // entry of the wrong weight (e.g. picking the
@@ -1524,7 +1375,7 @@ import { cloneSerializableValue } from './util/clone.js';
                     const cleanName = String(fontData?.clean_name || fontKey || '').trim();
                     const embeddedFamily = String(fontData?.family || fontKey || '').trim();
                     if (!cleanName || !embeddedFamily || shouldBypassEmbeddedFont(cleanName, embeddedFamily, fontData)) continue;
-                    if (brokenEmbeddedFontKeys.has(cleanName)) continue;
+                    if (embeddedFontRegistry.isBroken(cleanName)) continue;
                     if (normalizeFontName(embeddedFamily).toLowerCase() === rawFamily.toLowerCase()) {
                         const fallback = systemFallbackFontFamily('', embeddedFamily);
                         return `'PDF_${cleanName}', ${fallback}`;
