@@ -84,6 +84,7 @@ import {
     annotationDimensionsChanged,
     annotationPositionChanged,
     normalizeAnnotationTextForDirtyComparison,
+    persistRichEditorHtml,
 } from './annotations/state.js';
 import {
     normalizeShapeAnnotation,
@@ -8927,12 +8928,7 @@ import {
     // Persist the editor's current innerHTML on the annotation so subsequent
     // syncActiveEditor calls (triggered by redraw, resize etc.) don't flatten
     // per-selection formatting back to annotation-level uniform styling.
-    function persistRichEditorHtml(active, ae) {
-        active.ann._richHtml = ae.innerHTML;
-        active.ann._styleDirty = true;
-        markUserAuthored(active.ann);
-        markDirty();
-    }
+    // persistRichEditorHtml moved to ./annotations/state.js (Phase 7bn).
 
     function applySelectionFormat(command, valueArg) {
         const info = getActiveEditorSelection();

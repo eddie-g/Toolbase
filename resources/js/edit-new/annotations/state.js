@@ -4,6 +4,7 @@
 // resized away from the originally captured PDF box. No DOM, no editor state.
 
 import { resolveAnnBox, resolveOriginalAnnBox } from './box.js';
+import { markDirty } from '../store/lifecycle-flags.js';
 
 /**
  * True if the annotation should be treated as user-authored: explicitly
@@ -79,4 +80,17 @@ export function annotationPositionChanged(ann) {
  */
 export function normalizeAnnotationTextForDirtyComparison(value) {
     return String(value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+/**
+ * Stamp the latest contenteditable HTML onto the annotation as the
+ * canonical rich-text source, mark it user-authored + style-dirty,
+ * and flag the global save state dirty. Called after any rich-text
+ * format command applied via the format bar.
+ */
+export function persistRichEditorHtml(active, ae) {
+    active.ann._richHtml = ae.innerHTML;
+    active.ann._styleDirty = true;
+    markUserAuthored(active.ann);
+    markDirty();
 }
