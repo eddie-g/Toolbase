@@ -5,7 +5,7 @@
  * that mutates the box while a resize is in flight still lives in
  * main.js for now; it will move into a shared dispatcher in 6d.
  *
- * `hasActiveBoxSelection`, `markDirty`, and `editableLineStyle`
+ * `hasActiveBoxSelection` and `editableLineStyle`
  * are still defined inside main.js, so the module receives them via
  * `configureResizeInteractions(deps)` once at boot.
  */
@@ -19,6 +19,7 @@ import { resolveAnnBox } from '../annotations/box.js';
 import { pdfPtFromClient } from '../render/coords.js';
 import { clamp01 } from '../util/math.js';
 import { pushUndo } from '../history/undo-redo.js';
+import { markDirty } from '../store/lifecycle-flags.js';
 
 let _deps = null;
 
@@ -63,5 +64,5 @@ export function endResize() {
     if (!_deps) return;
     if (!resizeState.active) return;
     setResizeState({ active: false, pi: null, uid: null, handle: null, startPt: null, startBox: null, startFontSize: null, startLineGeometry: null });
-    _deps.markDirty();
+    markDirty();
 }

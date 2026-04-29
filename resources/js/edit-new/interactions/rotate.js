@@ -7,8 +7,8 @@
  * live in main.js and call back into `getRotationCenterClient` /
  * `pointerAngleDeg` (re-exported here).
  *
- * Still-monolithic main.js helpers (hasActiveBoxSelection,
- * markDirty) flow in via `configureRotateInteractions(deps)`.
+ * Still-monolithic main.js helpers (hasActiveBoxSelection)
+ * flow in via `configureRotateInteractions(deps)`.
  */
 
 import { activeState } from '../store/active-state.js';
@@ -20,6 +20,7 @@ import { resolveAnnBox } from '../annotations/box.js';
 import { normalizeRotationDegrees } from '../util/geometry.js';
 import { markUserAuthored } from '../annotations/state.js';
 import { pushUndo } from '../history/undo-redo.js';
+import { markDirty } from '../store/lifecycle-flags.js';
 
 let _deps = null;
 
@@ -86,5 +87,5 @@ export function endRotate() {
     const rot = document.getElementById('rh-' + (rotateState.pi + 1) + '-rot');
     if (rot) rot.classList.remove('is-active');
     setRotateState({ active: false, pi: null, uid: null, pointerId: null, grabAngleOffset: 0 });
-    _deps.markDirty();
+    markDirty();
 }

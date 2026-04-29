@@ -10,8 +10,8 @@
  * at the top of the corresponding stack.
  *
  * The bootstrap entrypoint `configureHistory(deps)` wires in the still-
- * monolithic main.js helpers (`clearActiveAnnotation`, `redrawOverlay`,
- * `markDirty`) and the two undo/redo `<button>` elements. Once those
+ * monolithic main.js helpers (`clearActiveAnnotation`, `redrawOverlay`)
+ * and the two undo/redo `<button>` elements. Once those
  * helpers move to modules the deps wiring evaporates without changing
  * this module's API.
  */
@@ -23,6 +23,7 @@ import {
     pendingDeletedAnnotationIds,
     pendingDeletedPromotedSourceKeys,
 } from '../store/pending-deletes.js';
+import { markDirty } from '../store/lifecycle-flags.js';
 
 const HISTORY_LIMIT = 100;
 const undoStack = [];
@@ -32,7 +33,6 @@ let undoButton = null;
 let redoButton = null;
 let clearActiveAnnotation = () => {};
 let redrawOverlay = () => {};
-let markDirty = () => {};
 
 /**
  * Wire collaborators. Call once during editor bootstrap.
@@ -42,14 +42,12 @@ let markDirty = () => {};
  * @param {HTMLButtonElement|null} deps.redoButton
  * @param {() => void} deps.clearActiveAnnotation
  * @param {(pi: number) => void} deps.redrawOverlay
- * @param {() => void} deps.markDirty
  */
 export function configureHistory(deps) {
     undoButton = deps.undoButton ?? null;
     redoButton = deps.redoButton ?? null;
     if (typeof deps.clearActiveAnnotation === 'function') clearActiveAnnotation = deps.clearActiveAnnotation;
     if (typeof deps.redrawOverlay === 'function') redrawOverlay = deps.redrawOverlay;
-    if (typeof deps.markDirty === 'function') markDirty = deps.markDirty;
     updateHistoryUi();
 }
 

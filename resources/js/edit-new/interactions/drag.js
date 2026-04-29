@@ -7,7 +7,7 @@
  * it will be extracted in a follow-up commit once `resize` and `rotate`
  * are also factored out.
  *
- * Several main.js helpers (syncActiveEditor, markDirty,
+ * Several main.js helpers (syncActiveEditor,
  * hasActiveBoxSelection) are not yet importable from a module, so they
  * are passed in via `configureDragInteractions(deps)` at boot.
  */
@@ -20,6 +20,7 @@ import { isAnnotationLocked, isBoxAnnotation } from '../annotations/types.js';
 import { resolveAnnBox } from '../annotations/box.js';
 import { pdfPtFromClient } from '../render/coords.js';
 import { pushUndo } from '../history/undo-redo.js';
+import { markDirty } from '../store/lifecycle-flags.js';
 
 let _deps = null;
 
@@ -30,7 +31,6 @@ let _deps = null;
  * @param {Object} deps
  * @param {() => boolean} deps.hasActiveBoxSelection
  * @param {(restore?: boolean) => void} deps.syncActiveEditor
- * @param {() => void}    deps.markDirty
  */
 export function configureDragInteractions(deps) {
     _deps = deps;
@@ -76,5 +76,5 @@ export function endDrag() {
     document.body.style.cursor = '';
     // Restore the shape action bar (hidden during drag).
     if (pi !== null) _deps.syncActiveEditor(true);
-    _deps.markDirty();
+    markDirty();
 }

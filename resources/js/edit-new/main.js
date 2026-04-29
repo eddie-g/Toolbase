@@ -116,6 +116,9 @@ import {
     setDirty,
     setSaving,
     setDownloadingPdf,
+    markDirty,
+    markClean,
+    configureLifecycle,
 } from './store/lifecycle-flags.js';
 import {
     editModeEnabled,
@@ -7087,16 +7090,9 @@ import {
         editor.focus({ preventScroll: true });
     }
 
-    function markDirty() {
-        setDirty(true);
-        updateSaveUi();
-        scheduleAutoSave();
-    }
-
-    function markClean() {
-        setDirty(false);
-        updateSaveUi();
-    }
+    // markDirty / markClean moved to ./store/lifecycle-flags.js (Phase 7g);
+    // configureLifecycle({updateSaveUi, scheduleAutoSave}) below wires the
+    // side-effect callbacks they need.
 
     // Auto-save: debounce for 800ms of idle time after the last edit. The
     // factory in ./persistence/autosave.js owns the timer; this file just
@@ -7113,6 +7109,10 @@ import {
     const scheduleAutoSave = autoSave.schedule;
     const triggerAutoSave = autoSave.trigger;
     const flushAutoSaveIfPending = autoSave.flushIfPending;
+    configureLifecycle({
+        updateSaveUi: () => updateSaveUi(),
+        scheduleAutoSave: () => scheduleAutoSave(),
+    });
 
     // Test-only: force a save POST to /save-annotation-state regardless of the
     // current dirty/timer state. Used by automated tests that need to observe
@@ -7137,16 +7137,13 @@ import {
     configureDragInteractions({
         hasActiveBoxSelection: () => hasActiveBoxSelection(),
         syncActiveEditor: (restore) => syncActiveEditor(restore),
-        markDirty: () => markDirty(),
     });
     configureResizeInteractions({
         hasActiveBoxSelection: () => hasActiveBoxSelection(),
-        markDirty: () => markDirty(),
         editableLineStyle: (ann, lineIndex) => editableLineStyle(ann, lineIndex),
     });
     configureRotateInteractions({
         hasActiveBoxSelection: () => hasActiveBoxSelection(),
-        markDirty: () => markDirty(),
     });
     installPointerDispatcher({
         redrawOverlay: (pi) => redrawOverlay(pi),
@@ -7158,7 +7155,6 @@ import {
         redoButton,
         clearActiveAnnotation: () => clearActiveAnnotation(),
         redrawOverlay: (pi) => redrawOverlay(pi),
-        markDirty: () => markDirty(),
     });
     configureMeasure({
         renderableSourceLines: (ann) => renderableSourceLines(ann),
