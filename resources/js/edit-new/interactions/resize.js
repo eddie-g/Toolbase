@@ -5,8 +5,8 @@
  * that mutates the box while a resize is in flight still lives in
  * main.js for now; it will move into a shared dispatcher in 6d.
  *
- * `hasActiveBoxSelection` and `editableLineStyle`
- * are still defined inside main.js, so the module receives them via
+ * `editableLineStyle`
+ * is still defined inside main.js, so the module receives it via
  * `configureResizeInteractions(deps)` once at boot.
  */
 
@@ -20,6 +20,7 @@ import { pdfPtFromClient } from '../render/coords.js';
 import { clamp01 } from '../util/math.js';
 import { pushUndo } from '../history/undo-redo.js';
 import { markDirty } from '../store/lifecycle-flags.js';
+import { hasActiveBoxSelection } from '../selection/active.js';
 
 let _deps = null;
 
@@ -29,7 +30,7 @@ export function configureResizeInteractions(deps) {
 
 export function beginResize(e, pi, handle) {
     if (!_deps) return;
-    if (!editModeEnabled && !addTextMode && !shapeMode && !_deps.hasActiveBoxSelection()) return;
+    if (!editModeEnabled && !addTextMode && !shapeMode && !hasActiveBoxSelection()) return;
     const data = pageData[pi];
     const ann = data?.annotations.find(a => a._uid === activeState.uid);
     const box = ann ? resolveAnnBox(ann) : null;

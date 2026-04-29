@@ -109,6 +109,7 @@ import {
 import { installPointerDispatcher } from './interactions/pointer-dispatcher.js';
 import { activeState, setActiveState, clearActiveState } from './store/active-state.js';
 import { hoverState, setHoverState, clearHoverState } from './store/hover-state.js';
+import { hasActiveBoxSelection, hasActiveShapeSelection } from './selection/active.js';
 import {
     isDirty,
     isSaving,
@@ -870,17 +871,7 @@ import {
         };
     }
 
-    function hasActiveBoxSelection() {
-        const data = activeState.pi !== null ? pageData[activeState.pi] : null;
-        const ann = data ? data.annotations.find((item) => item._uid === activeState.uid) : null;
-        return Boolean(ann && isBoxAnnotation(ann));
-    }
-
-    function hasActiveShapeSelection() {
-        const data = activeState.pi !== null ? pageData[activeState.pi] : null;
-        const ann = data ? data.annotations.find((item) => item._uid === activeState.uid) : null;
-        return Boolean(ann && isShapeAnnotation(ann));
-    }
+    // hasActiveBoxSelection / hasActiveShapeSelection moved to ./selection/active.js (Phase 7h).
 
     function setAnnotationLocked(ann, pi, locked) {
         if (!ann) return;
@@ -7135,16 +7126,12 @@ import {
     // beginDrag / endDrag moved to ./interactions/drag.js (Phase 6a) and are
     // wired to main.js helpers via configureDragInteractions() below.
     configureDragInteractions({
-        hasActiveBoxSelection: () => hasActiveBoxSelection(),
         syncActiveEditor: (restore) => syncActiveEditor(restore),
     });
     configureResizeInteractions({
-        hasActiveBoxSelection: () => hasActiveBoxSelection(),
         editableLineStyle: (ann, lineIndex) => editableLineStyle(ann, lineIndex),
     });
-    configureRotateInteractions({
-        hasActiveBoxSelection: () => hasActiveBoxSelection(),
-    });
+    configureRotateInteractions({});
     installPointerDispatcher({
         redrawOverlay: (pi) => redrawOverlay(pi),
         syncActiveEditor: (force) => syncActiveEditor(force),

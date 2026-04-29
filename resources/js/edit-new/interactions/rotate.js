@@ -21,6 +21,7 @@ import { normalizeRotationDegrees } from '../util/geometry.js';
 import { markUserAuthored } from '../annotations/state.js';
 import { pushUndo } from '../history/undo-redo.js';
 import { markDirty } from '../store/lifecycle-flags.js';
+import { hasActiveBoxSelection } from '../selection/active.js';
 
 let _deps = null;
 
@@ -51,7 +52,7 @@ export function pointerAngleDeg(clientX, clientY, center) {
 
 export function beginRotate(e, pi) {
     if (!_deps) return;
-    if (!editModeEnabled && !addTextMode && !shapeMode && !_deps.hasActiveBoxSelection()) return;
+    if (!editModeEnabled && !addTextMode && !shapeMode && !hasActiveBoxSelection()) return;
     const data = pageData[pi];
     const ann = data?.annotations.find(a => a._uid === activeState.uid);
     if (!ann) return;

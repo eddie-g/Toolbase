@@ -21,6 +21,7 @@ import { resolveAnnBox } from '../annotations/box.js';
 import { pdfPtFromClient } from '../render/coords.js';
 import { pushUndo } from '../history/undo-redo.js';
 import { markDirty } from '../store/lifecycle-flags.js';
+import { hasActiveBoxSelection } from '../selection/active.js';
 
 let _deps = null;
 
@@ -29,7 +30,6 @@ let _deps = null;
  * Call once during editor bootstrap.
  *
  * @param {Object} deps
- * @param {() => boolean} deps.hasActiveBoxSelection
  * @param {(restore?: boolean) => void} deps.syncActiveEditor
  */
 export function configureDragInteractions(deps) {
@@ -38,7 +38,7 @@ export function configureDragInteractions(deps) {
 
 export function beginDrag(e, pi) {
     if (!_deps) return;
-    if (!editModeEnabled && !addTextMode && !shapeMode && !_deps.hasActiveBoxSelection()) return;
+    if (!editModeEnabled && !addTextMode && !shapeMode && !hasActiveBoxSelection()) return;
     const data = pageData[pi];
     const ann  = data?.annotations.find(a => a._uid === activeState.uid);
     const box  = ann ? resolveAnnBox(ann) : null;
