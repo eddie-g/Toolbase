@@ -13,8 +13,8 @@
  *
  * State + pure helpers are imported directly. The still-monolithic main.js
  * helpers (redrawOverlay, syncActiveEditor, updateFormatBar,
- * measureEditedTextHeightPts) and the editedTexts uid->string map flow
- * in via deps and will be cleaned up once those move to modules.
+ * measureEditedTextHeightPts) flow in via deps and will be cleaned up
+ * once those move to modules.
  */
 
 import { dragState, resizeState, rotateState } from '../store/interaction-state.js';
@@ -23,6 +23,7 @@ import { pdfPtFromClient } from '../render/coords.js';
 import { isShapeAnnotation, isLineShape, isTextAnnotation } from '../annotations/types.js';
 import { snapLineEndpoint, computeLineBoxGeometry, normalizeRotationDegrees } from '../util/geometry.js';
 import { setAnnotationBox } from '../annotations/geometry-writes.js';
+import { editedTexts } from '../store/edited-texts.js';
 import { endDrag } from './drag.js';
 import { endResize } from './resize.js';
 import { endRotate, getRotationCenterClient, pointerAngleDeg } from './rotate.js';
@@ -51,7 +52,6 @@ export function scaledResizeFontSize(startFontSize, startBox, nextWidth, nextHei
  * @param {(forceRebuild?: boolean) => void} deps.syncActiveEditor
  * @param {() => void} deps.updateFormatBar
  * @param {(ann: Object, text: string, scale: number, overrideWidthPts?: number|null) => number} deps.measureEditedTextHeightPts
- * @param {Object<string,string>} deps.editedTexts  // uid → string, mutated by key
  */
 export function installPointerDispatcher(deps) {
     const {
@@ -59,7 +59,6 @@ export function installPointerDispatcher(deps) {
         syncActiveEditor,
         updateFormatBar,
         measureEditedTextHeightPts,
-        editedTexts,
     } = deps;
 
     window.addEventListener('mousemove', (e) => {

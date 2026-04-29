@@ -251,6 +251,7 @@ import {
     setShapeConstrainUserDismissedTip,
 } from './store/misc-state.js';
 import { pageData } from './store/page-data.js';
+import { editedTexts } from './store/edited-texts.js';
 
 (function () {
 
@@ -505,7 +506,7 @@ import { pageData } from './store/page-data.js';
     // _pdfDoc + _acroPdfDoc moved to ./store/pdf-docs.js (Phase 5l).
     // pageData moved to ./store/page-data.js (Phase 5.5a).
     //   pi → { wPts, hPts, scale, canvasWidth, canvasHeight, annotations }
-    const editedTexts = {};   // uid → string
+    // editedTexts moved to ./store/edited-texts.js (Phase 7b).
     // acroFormEntries / acroFieldLookup / acroWidgetsByPage moved to
     // ./store/acro-state.js (Phase 5f).
 
@@ -7193,7 +7194,6 @@ import { pageData } from './store/page-data.js';
         syncActiveEditor: (force) => syncActiveEditor(force),
         updateFormatBar: () => updateFormatBar(),
         measureEditedTextHeightPts: (ann, text, scale, w) => measureEditedTextHeightPts(ann, text, scale, w),
-        editedTexts,
     });
 
     // Rotation helpers (getRotationCenterClient, pointerAngleDeg, beginRotate,
