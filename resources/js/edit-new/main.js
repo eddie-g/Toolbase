@@ -195,6 +195,12 @@ import {
 } from './signature/canvas.js';
 import { paintSmoothStroke } from './draw/smooth-stroke.js';
 import {
+    positionShapeConstrainTip as _positionShapeConstrainTip,
+    showShapeConstrainTip as _showShapeConstrainTip,
+    hideShapeConstrainTip as _hideShapeConstrainTip,
+} from './shape/constrain-tip.js';
+import { setImageImportStatus as _setImageImportStatus } from './image-import/status.js';
+import {
     dbgEscape as _dbgEscape,
     dbgPrettyHtml as _dbgPrettyHtml,
     dbgFormatStyle as _dbgFormatStyle,
@@ -6072,31 +6078,10 @@ import {
         window.removeEventListener('keyup', handleShapeConstrainShiftEvent, true);
     }
 
-    function positionShapeConstrainTip(clientX, clientY) {
-        if (!shapeConstrainTipEl) return;
-        const margin = 14;
-        const tipW = shapeConstrainTipEl.offsetWidth || 0;
-        const tipH = shapeConstrainTipEl.offsetHeight || 0;
-        const viewportW = window.innerWidth || document.documentElement.clientWidth || 1024;
-        const viewportH = window.innerHeight || document.documentElement.clientHeight || 768;
-        let left = clientX + margin;
-        let top = clientY + margin;
-        if (left + tipW + 4 > viewportW) left = Math.max(4, clientX - tipW - margin);
-        if (top + tipH + 4 > viewportH) top = Math.max(4, clientY - tipH - margin);
-        shapeConstrainTipEl.style.left = `${Math.max(4, left)}px`;
-        shapeConstrainTipEl.style.top = `${Math.max(4, top)}px`;
-    }
-
-    function showShapeConstrainTip(clientX, clientY) {
-        if (!shapeConstrainTipEl || shapeConstrainUserDismissedTip) return;
-        positionShapeConstrainTip(clientX, clientY);
-        shapeConstrainTipEl.classList.add('show');
-    }
-
-    function hideShapeConstrainTip() {
-        if (!shapeConstrainTipEl) return;
-        shapeConstrainTipEl.classList.remove('show');
-    }
+    // shape constrain-tip helpers moved to ./shape/constrain-tip.js (Phase 7ax).
+    const positionShapeConstrainTip = (cx, cy) => _positionShapeConstrainTip(shapeConstrainTipEl, cx, cy);
+    const showShapeConstrainTip = (cx, cy) => _showShapeConstrainTip(shapeConstrainTipEl, cx, cy);
+    const hideShapeConstrainTip = () => _hideShapeConstrainTip(shapeConstrainTipEl);
 
     function setShapeMode(active) {
         if (active) {
@@ -7893,11 +7878,8 @@ import {
     const IMAGE_IMPORT_MAX_BYTES = 25 * 1024 * 1024; // 25 MB
     // imageImportPendingAsset moved to ./store/misc-state.js (Phase 5m).
 
-    function setImageImportStatus(text, isError = false) {
-        if (!imageImportStatus) return;
-        imageImportStatus.textContent = text || '';
-        imageImportStatus.style.color = isError ? '#b91c1c' : '';
-    }
+    // setImageImportStatus moved to ./image-import/status.js (Phase 7ax).
+    const setImageImportStatus = (text, isError = false) => _setImageImportStatus(imageImportStatus, text, isError);
     function clearImageImportSelection() {
         setImageImportPendingAsset(null);
         if (imageImportFileInput) imageImportFileInput.value = '';
