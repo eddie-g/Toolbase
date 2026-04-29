@@ -84,6 +84,11 @@ import {
 import { fontDisplayScale, canvasLogicalHeight, canvasLogicalWidth } from './util/dom-metrics.js';
 import { pdfPtFromClient } from './render/coords.js';
 import { populateFontDropdown as populateFontDropdownImpl } from './render/font-dropdown.js';
+import {
+    configureDragInteractions,
+    beginDrag,
+    endDrag,
+} from './interactions/drag.js';
 import { activeState, setActiveState, clearActiveState } from './store/active-state.js';
 import { hoverState, setHoverState, clearHoverState } from './store/hover-state.js';
 import {
@@ -7226,37 +7231,14 @@ import { pageData } from './store/page-data.js';
 
     // ── Drag-to-reposition ────────────────────────────────────────────────────
     // pdfPtFromClient moved to ./render/coords.js (Phase 5.5b).
-
-    function beginDrag(e, pi) {
-        if (!editModeEnabled && !addTextMode && !shapeMode && !hasActiveBoxSelection()) return;
-        const data = pageData[pi];
-        const ann  = data?.annotations.find(a => a._uid === activeState.uid);
-        const box  = ann ? resolveAnnBox(ann) : null;
-        const pt   = ann ? pdfPtFromClient(e.clientX, e.clientY, pi) : null;
-        if (!ann || !box || !pt) return;
-        if (isAnnotationLocked(ann)) return;
-        pushUndo();
-        setDragState({
-            active: true,
-            pi,
-            uid: ann._uid,
-            offsetXPts: pt.x - box.x,
-            offsetYPts: pt.y - box.y,
-            startPt: { ...pt },
-            startBox: { ...box },
-        });
-        // Hide the shape action bar / text hover menu while dragging so they don't
-        // follow the cursor and re-trigger hover/scale transitions on every mousemove.
-        if (isBoxAnnotation(ann)) {
-            const sh = document.getElementById('sh-' + (pi + 1));
-            if (sh) sh.style.display = 'none';
-            document.body.style.cursor = 'grabbing';
-        } else {
-            const tm = document.getElementById('tm-' + (pi + 1));
-            if (tm) tm.style.display = 'none';
-            document.body.style.cursor = 'grabbing';
-        }
-    }
+    // beginDrag / endDrag moved to ./interactions/drag.js (Phase 6a) and are
+    // wired to main.js helpers via configureDragInteractions() below.
+    configureDragInteractions({
+        pushUndo: () => pushUndo(),
+        hasActiveBoxSelection: () => hasActiveBoxSelection(),
+        syncActiveEditor: (restore) => syncActiveEditor(restore),
+        markDirty: () => markDirty(),
+    });
 
     function beginResize(e, pi, handle) {
         if (!editModeEnabled && !addTextMode && !shapeMode && !hasActiveBoxSelection()) return;
@@ -7290,15 +7272,7 @@ import { pageData } from './store/page-data.js';
         });
     }
 
-    function endDrag() {
-        if (!dragState.active) return;
-        const pi = dragState.pi;
-        setDragState({ active: false, pi: null, uid: null, offsetXPts: 0, offsetYPts: 0, startPt: null, startBox: null });
-        document.body.style.cursor = '';
-        // Restore the shape action bar (hidden during drag).
-        if (pi !== null) syncActiveEditor(true);
-        markDirty();
-    }
+    // endDrag moved to ./interactions/drag.js (Phase 6a).
 
     function endResize() {
         if (!resizeState.active) return;
