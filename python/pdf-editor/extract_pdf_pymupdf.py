@@ -139,11 +139,18 @@ def _link_region_display_text(link_region):
 
 
 def cff_raw_to_otf(cff_data: bytes, font_name: str = 'UnknownFont',
-                   css_weight: int = 400, css_stretch: str = 'normal') -> bytes:
+                   css_weight: int = 400, css_stretch: str = 'normal',
+                   gid_to_unicode=None) -> bytes:
     """
     Wrap a raw CFF blob (as extracted by PyMuPDF) in a minimal but valid
     OpenType ("OTTO") container that web browsers can load via @font-face.
     Returns the OTF binary or raises on failure.
+
+    gid_to_unicode (optional): {glyph_index: unicode_codepoint} reconstructed
+    from page.get_texttrace(). When provided, this is the authoritative
+    cmap source — required for CFF subsets whose glyph names are non-standard
+    (e.g. ``cid00065``) and would otherwise produce an empty cmap, causing
+    browsers to fall back to Arial.
     """
     try:
         from io import BytesIO as _BytesIO
@@ -279,12 +286,39 @@ def cff_raw_to_otf(cff_data: bytes, font_name: str = 'UnknownFont',
         name_table.names.append(nr)
     font['name'] = name_table
 
+    # Build cmap, preferring the gid→unicode trace map (authoritative for
+    # PDF subsets) over glyph-name lookup (fails for cidNNNNN-style names).
+    cmap_entries = {}
+    if gid_to_unicode:
+        for gid, codepoint in gid_to_unicode.items():
+            if not isinstance(gid, int) or not isinstance(codepoint, int):
+                continue
+            if gid < 0 or gid >= len(glyphs):
+                continue
+            if codepoint <= 0 or codepoint > 0x10FFFF:
+                continue
+            glyph_name = glyphs[gid]
+            if glyph_name == '.notdef':
+                continue
+            cmap_entries.setdefault(codepoint, glyph_name)
+    if not cmap_entries:
+        # Fallback: glyph-name lookup via Adobe glyph list. Works for fonts
+        # that kept readable glyph names (Type1-derived CFF).
+        for g in glyphs:
+            cp = _GLYPH_NAME_TO_UNICODE.get(g)
+            if cp is not None and g != '.notdef':
+                cmap_entries.setdefault(cp, g)
+    if not cmap_entries:
+        # Last-ditch: ASCII 32..126 sequential — keeps font loadable so the
+        # browser at least uses its metrics instead of falling back to Arial.
+        for codepoint, g in zip(range(32, 127), [g for g in glyphs if g != '.notdef']):
+            cmap_entries.setdefault(codepoint, g)
+
     cmap_t = table__c_m_a_p()
     cmap_t.tableVersion = 0
     fmt4 = cmap_format_4(4)
     fmt4.platformID = 3; fmt4.platEncID = 1; fmt4.language = 0
-    fmt4.cmap = {_GLYPH_NAME_TO_UNICODE[g]: g
-                 for g in glyphs if g in _GLYPH_NAME_TO_UNICODE}
+    fmt4.cmap = {cp: g for cp, g in cmap_entries.items() if cp <= 0xFFFF}
     cmap_t.tables = [fmt4]
     font['cmap'] = cmap_t
 
@@ -399,7 +433,81 @@ def _needs_truetype_web_repair(ttf_data: bytes) -> bool:
         return False
 
     required_tables = {'head', 'hhea', 'maxp', 'hmtx', 'name', 'OS/2', 'cmap'}
-    return any(table not in font for table in required_tables)
+    if any(table not in font for table in required_tables):
+        return True
+
+    # #4: a present-but-empty cmap is just as broken as a missing one — the
+    # browser will load the font but can't map any character to a glyph and
+    # silently falls back to the next family in the @font-face stack (Arial).
+    try:
+        cmap = font['cmap']
+        total_entries = 0
+        for sub in getattr(cmap, 'tables', []) or []:
+            total_entries += len(getattr(sub, 'cmap', {}) or {})
+        if total_entries == 0:
+            return True
+    except Exception:
+        return True
+    return False
+
+
+def _truetype_glyph_health(ttf_data: bytes):
+    """
+    Inspect a TrueType font and return (cmap_count, empty_count, filled_count)
+    for the glyphs reachable via the best cmap. An "empty" glyph has
+    numberOfContours == 0 and is not a composite — i.e. it would render
+    nothing on a canvas even though the font reports a width via hmtx.
+
+    Returns (0, 0, 0) on parse failure.
+    """
+    try:
+        from io import BytesIO
+        from fontTools.ttLib import TTFont
+        font = TTFont(BytesIO(ttf_data))
+    except Exception:
+        return (0, 0, 0)
+
+    if 'glyf' not in font:
+        # CFF/OTF fonts don't have a glyf table; skip this check (their
+        # outline integrity is checked elsewhere via cff_raw_to_otf).
+        return (0, 0, 0)
+
+    try:
+        cmap = font.getBestCmap() or {}
+        glyf = font['glyf']
+    except Exception:
+        return (0, 0, 0)
+
+    empty = 0
+    filled = 0
+    for glyph_name in cmap.values():
+        try:
+            g = glyf[glyph_name]
+        except Exception:
+            continue
+        if g.numberOfContours == 0 and not g.isComposite():
+            empty += 1
+        else:
+            filled += 1
+    return (len(cmap), empty, filled)
+
+
+def _is_truetype_glyph_outline_broken(ttf_data: bytes) -> bool:
+    """
+    Worst-case font corruption: cmap is intact, hmtx reports widths, but the
+    actual glyph outlines are empty so canvas fillText paints nothing. This
+    is the silent-text-vanishing failure mode (see
+    /memories/repo/edit-new-broken-runtime-extracted-fonts.md). Returns True
+    if more than half of the cmap-mapped glyphs are empty. Always tolerates
+    .notdef being empty.
+    """
+    cmap_count, empty, filled = _truetype_glyph_health(ttf_data)
+    if cmap_count == 0:
+        return False  # not a glyf-based font, or unparseable — handled elsewhere
+    # Allow a small slop for .notdef and a couple of intentionally-empty glyphs.
+    if cmap_count <= 4:
+        return empty > 1 and filled == 0
+    return empty > (cmap_count // 2)
 
 
 def repair_truetype_for_web(ttf_data: bytes, font_name: str = 'UnknownFont',
@@ -1472,6 +1580,21 @@ def extract_embedded_fonts(pdf_path, document_id, output_dir=None):
                     actual_content = content
                     print(f"    ⚠ TrueType web repair failed for {clean_name}: {ttf_err}")
 
+            # Final integrity gate: if the TrueType outlines are mostly empty
+            # the browser will load the font and silently render nothing for
+            # every span that picks it up (see /memories/repo/edit-new-broken-
+            # runtime-extracted-fonts.md). Refuse to ship such a font: skip
+            # both the file write and the embedded_fonts entry so the editor
+            # falls back to a system family that actually paints glyphs.
+            if actual_ext == 'ttf' and _is_truetype_glyph_outline_broken(actual_content):
+                cmap_count, empty_count, _filled = _truetype_glyph_health(actual_content)
+                print(
+                    f"  ⛔ Skipping {clean_name}: TrueType outlines broken "
+                    f"({empty_count}/{cmap_count} cmap glyphs are empty). "
+                    f"Editor will fall back to system font."
+                )
+                continue
+
             filename = f"{safe_name}.{actual_ext}"
             filepath = os.path.join(output_dir, filename)
             with open(filepath, 'wb') as f:
@@ -1482,12 +1605,21 @@ def extract_embedded_fonts(pdf_path, document_id, output_dir=None):
             actual_path = filepath
             web_path = f"/fonts/runtime-extracted/{document_id}/{filename}"
             if ext == 'cff':
+                # #4: pass the authoritative gid→unicode trace map so the
+                # generated OTF's cmap covers the codepoints actually used
+                # by the document (CFF subsets with cidNNNNN glyph names
+                # otherwise produce an empty cmap and the browser falls
+                # back to Arial).
+                cff_gid_to_unicode = _lookup_doc_font_unicode_map(font_unicode_maps, font_name)
+                if not cff_gid_to_unicode:
+                    cff_gid_to_unicode = _lookup_doc_font_unicode_map(font_unicode_maps, clean_name)
                 try:
                     otf_data = cff_raw_to_otf(
                         content,
                         font_name=clean_name,
                         css_weight=int(css_weight),
                         css_stretch=css_stretch,
+                        gid_to_unicode=cff_gid_to_unicode or None,
                     )
                     otf_filename = f"{safe_name}.otf"
                     otf_filepath = os.path.join(output_dir, otf_filename)

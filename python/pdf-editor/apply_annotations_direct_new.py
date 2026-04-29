@@ -1280,10 +1280,54 @@ def _rewrite_richhtml_inline_italic(html_str: str) -> str:
     return rewritten
 
 
+def _rewrite_kerning_spacer_widths_to_pt(html_str: str) -> str:
+    """Convert editor-zoom-pixel widths on kerning spacer spans to PDF points.
+
+    The editor emits leader-dot / inter-span gap spacers as
+    ``<span data-kerning-offset="GAP_PT" ...
+    style="display:inline-block; ... width:GAP_PXpx;min-width:GAP_PXpx; ...">``
+    where ``GAP_PT`` is the original PDF-point gap and ``GAP_PX`` is that gap
+    scaled by the current editor zoom (so it looks right on screen).
+
+    PyMuPDF's ``insert_htmlbox`` interprets CSS px against its own
+    px-per-pt mapping (1px = 0.75pt at 96dpi), not the editor's zoom, so the
+    pixel widths produce wildly wrong leader-dot spacing in the downloaded
+    PDF (dots collapse together or fly apart depending on zoom).
+
+    The ``data-kerning-offset`` attribute already carries the source-of-truth
+    gap in PDF points. Rewrite the inline ``width``/``min-width`` to use
+    that value with a ``pt`` unit so MuPDF lays out the gaps at their
+    original PDF-point widths regardless of the editor's zoom at save time.
+    """
+    if not html_str or "data-kerning-offset" not in html_str:
+        return html_str
+    import re as _re
+    span_re = _re.compile(
+        r'(<span\b[^>]*\bdata-kerning-offset="([\d.]+)"[^>]*?\bstyle=")([^"]*)(")',
+        flags=_re.IGNORECASE,
+    )
+    width_re = _re.compile(r"\b(min-width|width)\s*:\s*[\d.]+px", flags=_re.IGNORECASE)
+
+    def _rewrite(m: "re.Match[str]") -> str:
+        prefix, gap_pt, style, suffix = m.group(1), m.group(2), m.group(3), m.group(4)
+        try:
+            gap = float(gap_pt)
+        except (TypeError, ValueError):
+            return m.group(0)
+        if gap <= 0:
+            return m.group(0)
+        replacement = f"{gap:.2f}pt"
+        new_style = width_re.sub(lambda mm: f"{mm.group(1)}:{replacement}", style)
+        return f"{prefix}{new_style}{suffix}"
+
+    return span_re.sub(_rewrite, html_str)
+
+
 def build_annotation_htmlbox_markup(ann: Dict[str, Any], text: str) -> str:
     rich_html = sanitize_rich_text_html(ann.get("richTextHtml") or "").strip()
     if rich_html:
         rich_html = _strip_px_font_sizes_from_html(rich_html)
+        rich_html = _rewrite_kerning_spacer_widths_to_pt(rich_html)
         rich_html = _rewrite_richhtml_inline_italic(rich_html)
     inner_html = rich_html if rich_html else html.escape(sanitize_pdf_text(text))
     return f'<div class="annotation-box">{inner_html}</div>'

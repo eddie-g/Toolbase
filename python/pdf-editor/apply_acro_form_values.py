@@ -44,23 +44,46 @@ def apply_widget_value(widget: fitz.Widget, entry: Dict[str, Any]) -> bool:
     field_type = str(entry.get("fieldType") or "").upper()
     raw_value = entry.get("value")
 
+    # PyMuPDF's Widget.update() calls _validate(), which raises
+    # `ValueError: bad rect` for widgets whose annotation rectangle is empty
+    # (x0 >= x1 or y0 >= y1) or otherwise non-finite. Some PDFs ship with
+    # such degenerate widgets (often hidden / invisible signature or
+    # placeholder fields). Updating them aborts the entire AcroForm pass and
+    # propagates as a 500 to the download endpoint. Skip them defensively
+    # rather than failing the whole download.
+    try:
+        rect = widget.rect
+        if (
+            rect is None
+            or not rect.is_valid
+            or rect.is_empty
+            or not (rect.x0 < rect.x1 and rect.y0 < rect.y1)
+        ):
+            return False
+    except Exception:
+        return False
+
+    def _safe_update() -> bool:
+        try:
+            widget.update()
+            return True
+        except ValueError:
+            return False
+
     if field_type == "BTN":
         is_checkbox = bool(entry.get("checkBox"))
         is_radio = bool(entry.get("radioButton"))
         if is_checkbox:
             widget.field_value = widget.on_state() if normalize_checkbox_value(raw_value) else "Off"
-            widget.update()
-            return True
+            return _safe_update()
         if is_radio:
             desired_value = str(raw_value or "").strip()
             on_state = str(widget.on_state() or "").strip()
             widget.field_value = on_state if desired_value and desired_value == on_state else "Off"
-            widget.update()
-            return True
+            return _safe_update()
 
     widget.field_value = normalize_text_value(raw_value)
-    widget.update()
-    return True
+    return _safe_update()
 
 
 def main() -> int:

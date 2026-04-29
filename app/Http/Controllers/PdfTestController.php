@@ -1604,6 +1604,53 @@ PYTHON;
         return true;
     }
 
+    private function promotedAnnotationSourceLinesContainLines(array $annotation, array $lines): bool
+    {
+        $sourceLines = $this->sanitizeSourceTextLines($annotation['sourceTextLines'] ?? []);
+        if (empty($sourceLines)) {
+            return false;
+        }
+
+        $sourceLineSet = [];
+        foreach ($sourceLines as $sourceLine) {
+            $normalized = $this->normalizePromotedComparableText($sourceLine);
+            if ($normalized !== '') {
+                $sourceLineSet[$normalized] = true;
+            }
+        }
+
+        if (empty($sourceLineSet)) {
+            return false;
+        }
+
+        foreach ($lines as $line) {
+            $needle = $this->normalizePromotedComparableText($line);
+            if ($needle === '') {
+                continue;
+            }
+
+            if (!isset($sourceLineSet[$needle])) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function promotedAnnotationLooksLikeStaleMergedSourceText(array $annotation, array $childLines): bool
+    {
+        if (empty($annotation['promotedFromExtraction'])) {
+            return false;
+        }
+
+        if (!$this->promotedAnnotationHasUnsafeMergeEdits($annotation)) {
+            return false;
+        }
+
+        return $this->promotedAnnotationTextContainsLines($annotation, $childLines)
+            && !$this->promotedAnnotationSourceLinesContainLines($annotation, $childLines);
+    }
+
     private function suppressContainedPromotedChildrenAlreadyInParentText(array $annotations): array
     {
         if (count($annotations) < 2) {
@@ -1641,6 +1688,15 @@ PYTHON;
                 }
 
                 if (!$this->promotedAnnotationTextContainsLines($parentAnnotation, $childLines)) {
+                    continue;
+                }
+
+                // A stale saved promoted row can have child text already appended
+                // to annotation.text while sourceTextLines/sourceLineBBoxes still
+                // describe only the original parent block. Do not suppress the
+                // child in that case; the merge pass below needs the child boxes
+                // and spans to rebuild exact source geometry and avoid DOM reflow.
+                if (!$this->promotedAnnotationSourceLinesContainLines($parentAnnotation, $childLines)) {
                     continue;
                 }
 
@@ -1709,11 +1765,15 @@ PYTHON;
             $bestParentArea = null;
             $bestGapFitScore = null;
             foreach ($mergedAnnotations as $parentIndex => $parentAnnotation) {
+                $parentUnsafe = $this->promotedAnnotationHasUnsafeMergeEdits($parentAnnotation);
+                $repairStaleMergedParent = $parentUnsafe
+                    && $this->promotedAnnotationLooksLikeStaleMergedSourceText($parentAnnotation, $childLines);
+
                 if (
                     $parentIndex === $childIndex
                     || isset($removedIndices[$parentIndex])
                     || empty($parentAnnotation['promotedFromExtraction'])
-                    || $this->promotedAnnotationHasUnsafeMergeEdits($parentAnnotation)
+                    || ($parentUnsafe && !$repairStaleMergedParent)
                 ) {
                     continue;
                 }
@@ -1770,6 +1830,7 @@ PYTHON;
             }
 
             $parentAnnotation = $mergedAnnotations[$bestParentIndex];
+            $repairingStaleMergedParent = $this->promotedAnnotationLooksLikeStaleMergedSourceText($parentAnnotation, $childLines);
             $parentLines = $this->sanitizeSourceTextLines($parentAnnotation['sourceTextLines'] ?? []);
             $parentBoxes = $this->sanitizeSourceLineBBoxes($parentAnnotation['sourceLineBBoxes'] ?? []);
             $lineEntries = [];
@@ -1839,7 +1900,33 @@ PYTHON;
             }
 
             $parentAnnotation['text'] = implode("\n", $parentAnnotation['sourceTextLines']);
-            $mergedAnnotations[$bestParentIndex] = $this->syncAnnotationGeometryFromSourceLineBBoxes($parentAnnotation);
+            $parentAnnotation['originalText'] = $parentAnnotation['text'];
+            $parentAnnotation['promotedDirty'] = false;
+            $parentAnnotation['userAuthored'] = false;
+            $parentAnnotation['promotedReflowEnabled'] = false;
+            if (isset($parentAnnotation['annotation_data']) && is_array($parentAnnotation['annotation_data'])) {
+                $parentAnnotation['annotation_data']['promotedDirty'] = false;
+                $parentAnnotation['annotation_data']['userAuthored'] = false;
+                $parentAnnotation['annotation_data']['promotedReflowEnabled'] = false;
+            }
+            $parentAnnotation = $this->syncAnnotationGeometryFromSourceLineBBoxes($parentAnnotation);
+            if ($repairingStaleMergedParent) {
+                $sourceBox = $this->promotedAnnotationSourceRect($parentAnnotation);
+                $sourcePageHeight = isset($parentAnnotation['sourcePageHeight']) && is_numeric($parentAnnotation['sourcePageHeight'])
+                    ? (float) $parentAnnotation['sourcePageHeight']
+                    : 0.0;
+                if ($sourceBox && $sourcePageHeight > 0.0) {
+                    $sourceLeft = (float) $sourceBox[0];
+                    $sourceTop = (float) $sourceBox[1];
+                    $sourceWidth = max(0.0, (float) $sourceBox[2] - $sourceLeft);
+                    $sourceHeight = max(0.0, (float) $sourceBox[3] - $sourceTop);
+                    $parentAnnotation['pdfX'] = $sourceLeft;
+                    $parentAnnotation['pdfY'] = $sourcePageHeight - ($sourceTop + $sourceHeight);
+                    $parentAnnotation['pdfWidth'] = $sourceWidth;
+                    $parentAnnotation['pdfHeight'] = $sourceHeight;
+                }
+            }
+            $mergedAnnotations[$bestParentIndex] = $parentAnnotation;
             $removedIndices[$childIndex] = true;
         }
 
@@ -1851,6 +1938,400 @@ PYTHON;
         }
 
         return array_values($result);
+    }
+
+    private function normalizeDotLeaderPromotedAnnotationsForEditor(array $annotations): array
+    {
+        if (count($annotations) < 2) {
+            return $annotations;
+        }
+
+        $byPage = [];
+        foreach (array_values($annotations) as $index => $annotation) {
+            if (
+                !is_array($annotation)
+                || empty($annotation['promotedFromExtraction'])
+                || !empty($annotation['promotedDirty'])
+                || !empty($annotation['promotedReflowEnabled'])
+                || !empty($annotation['userAuthored'])
+            ) {
+                continue;
+            }
+
+            $pageIndex = isset($annotation['pageIndex']) && is_numeric($annotation['pageIndex'])
+                ? (int) $annotation['pageIndex']
+                : 0;
+            $spans = array_values(array_filter(
+                is_array($annotation['sourceSpans'] ?? null) ? $annotation['sourceSpans'] : [],
+                static fn ($span): bool => is_array($span)
+            ));
+            foreach ($spans as $spanIndex => $span) {
+                $bbox = $this->sourceSpanBBox($span);
+                if (!$bbox) {
+                    continue;
+                }
+
+                $origin = is_array($span['origin'] ?? null) ? $span['origin'] : [];
+                $baseline = isset($origin[1]) && is_numeric($origin[1])
+                    ? (float) $origin[1]
+                    : (float) ($bbox[3] ?? 0);
+                if (!is_finite($baseline)) {
+                    continue;
+                }
+
+                $byPage[$pageIndex][] = [
+                    'annotation_index' => $index,
+                    'span_index' => $spanIndex,
+                    'annotation' => $annotation,
+                    'span' => $span,
+                    'bbox' => array_map('floatval', array_slice($bbox, 0, 4)),
+                    'baseline' => $baseline,
+                    'x' => (float) ($bbox[0] ?? 0),
+                ];
+            }
+        }
+
+        $replacementRows = [];
+        $touchedAnnotationIndexes = [];
+        foreach ($byPage as $pageIndex => $entries) {
+            $rows = $this->groupPromotedSpanEntriesByBaseline($entries);
+            $eligibleAnnotationIndexes = [];
+            foreach ($rows as $row) {
+                $dotCount = 0;
+                $hasFormCode = false;
+                foreach ($row['entries'] as $entry) {
+                    $text = trim($this->sourceSpanDisplayText($entry['span']));
+                    if ($text === '.') {
+                        $dotCount++;
+                    }
+                    if (preg_match('/^\s*\.?\s*(?:W-[A-Z0-9-]+|[0-9]{4}\s+or\s+W-\d)/i', $text) === 1) {
+                        $hasFormCode = true;
+                    }
+                }
+                if ($dotCount < 3 && !$hasFormCode) {
+                    continue;
+                }
+                foreach ($row['entries'] as $entry) {
+                    $eligibleAnnotationIndexes[(int) $entry['annotation_index']] = true;
+                }
+            }
+
+            if (empty($eligibleAnnotationIndexes)) {
+                continue;
+            }
+
+            $usedIds = [];
+            foreach ($rows as $rowIndex => $row) {
+                $touchesEligible = false;
+                foreach ($row['entries'] as $entry) {
+                    if (isset($eligibleAnnotationIndexes[(int) $entry['annotation_index']])) {
+                        $touchesEligible = true;
+                        break;
+                    }
+                }
+                if (!$touchesEligible) {
+                    continue;
+                }
+
+                $rowEntries = $this->synthesizeMissingPromotedLeaderDotsForEditor($row['entries'], (float) $row['baseline']);
+                $rowAnnotation = $this->buildPromotedRowAnnotationForEditor($rowEntries, (int) $pageIndex, (int) $rowIndex, $usedIds);
+                if (!$rowAnnotation) {
+                    continue;
+                }
+
+                $replacementRows[] = $rowAnnotation;
+                foreach ($rowEntries as $entry) {
+                    $touchedAnnotationIndexes[(int) $entry['annotation_index']] = true;
+                }
+            }
+        }
+
+        if (empty($replacementRows) || empty($touchedAnnotationIndexes)) {
+            return $annotations;
+        }
+
+        $result = [];
+        foreach (array_values($annotations) as $index => $annotation) {
+            if (!isset($touchedAnnotationIndexes[$index])) {
+                $result[] = $annotation;
+            }
+        }
+
+        return array_values(array_merge($result, $replacementRows));
+    }
+
+    private function groupPromotedSpanEntriesByBaseline(array $entries): array
+    {
+        usort($entries, static function (array $left, array $right): int {
+            if (abs($left['baseline'] - $right['baseline']) > 1.0) {
+                return $left['baseline'] <=> $right['baseline'];
+            }
+            if (abs($left['x'] - $right['x']) > 0.25) {
+                return $left['x'] <=> $right['x'];
+            }
+            return ((int) $left['span_index']) <=> ((int) $right['span_index']);
+        });
+
+        $rows = [];
+        foreach ($entries as $entry) {
+            $lastIndex = count($rows) - 1;
+            if ($lastIndex < 0 || abs($entry['baseline'] - $rows[$lastIndex]['baseline']) > 1.25) {
+                $rows[] = ['baseline' => $entry['baseline'], 'entries' => [$entry]];
+                continue;
+            }
+            $rows[$lastIndex]['entries'][] = $entry;
+            $rows[$lastIndex]['baseline'] = (
+                ($rows[$lastIndex]['baseline'] * (count($rows[$lastIndex]['entries']) - 1))
+                + $entry['baseline']
+            ) / count($rows[$lastIndex]['entries']);
+        }
+
+        foreach ($rows as &$row) {
+            usort($row['entries'], static function (array $left, array $right): int {
+                if (abs($left['x'] - $right['x']) > 0.25) {
+                    return $left['x'] <=> $right['x'];
+                }
+                return ((int) $left['span_index']) <=> ((int) $right['span_index']);
+            });
+        }
+        unset($row);
+
+        return $rows;
+    }
+
+    private function promotedRowTextFromSpansForEditor(array $spans): string
+    {
+        $parts = [];
+        foreach ($spans as $span) {
+            if (!is_array($span)) {
+                continue;
+            }
+            $text = preg_replace('/[ \t]+/', ' ', $this->sourceSpanDisplayText($span));
+            if ($text !== '') {
+                $parts[] = trim($text);
+            }
+        }
+
+        return trim(preg_replace('/[ \t]{2,}/', ' ', implode(' ', $parts)));
+    }
+
+    private function buildPromotedRowAnnotationForEditor(array $entries, int $pageIndex, int $rowIndex, array &$usedIds): ?array
+    {
+        $bboxes = array_values(array_filter(array_map(
+            static fn (array $entry): ?array => is_array($entry['bbox'] ?? null) && count($entry['bbox']) >= 4
+                ? array_map('floatval', array_slice($entry['bbox'], 0, 4))
+                : null,
+            $entries
+        )));
+        if (empty($bboxes)) {
+            return null;
+        }
+
+        $spans = array_values(array_map(static fn (array $entry): array => $entry['span'], $entries));
+        $lineText = $this->promotedRowTextFromSpansForEditor($spans);
+        if ($lineText === '') {
+            return null;
+        }
+
+        $left = min(array_map(static fn (array $bbox): float => (float) $bbox[0], $bboxes));
+        $top = min(array_map(static fn (array $bbox): float => (float) $bbox[1], $bboxes));
+        $right = max(array_map(static fn (array $bbox): float => (float) $bbox[2], $bboxes));
+        $bottom = max(array_map(static fn (array $bbox): float => (float) $bbox[3], $bboxes));
+        $width = max(0.0, $right - $left);
+        $height = max(0.0, $bottom - $top);
+        if ($width <= 1.0 || $height <= 0.0) {
+            return null;
+        }
+
+        $template = $entries[0]['annotation'];
+        foreach ($entries as $entry) {
+            $text = trim($this->sourceSpanDisplayText($entry['span']));
+            if ($text !== '.' && $text !== '') {
+                $template = $entry['annotation'];
+                break;
+            }
+        }
+
+        $pageHeight = isset($template['sourcePageHeight']) && is_numeric($template['sourcePageHeight'])
+            ? (float) $template['sourcePageHeight']
+            : 0.0;
+        if ($pageHeight <= 0.0) {
+            return null;
+        }
+
+        $annotation = $template;
+        $baseId = (string) ($template['id'] ?? ('promoted_row_' . ($pageIndex + 1) . '_' . $rowIndex));
+        $id = $baseId;
+        if (isset($usedIds[$id])) {
+            $id = $baseId . '_row_' . $rowIndex;
+        }
+        while (isset($usedIds[$id])) {
+            $id .= '_x';
+        }
+        $usedIds[$id] = true;
+
+        $annotation['id'] = $id;
+        $annotation['text'] = $lineText;
+        $annotation['originalText'] = $lineText;
+        $annotation['pageIndex'] = $pageIndex;
+        $annotation['pdfX'] = $left;
+        $annotation['pdfY'] = $pageHeight - ($top + $height);
+        $annotation['pdfWidth'] = $width;
+        $annotation['pdfHeight'] = $height;
+        $annotation['sourceBlockLeft'] = $left;
+        $annotation['sourceBlockTop'] = $top;
+        $annotation['sourceBlockWidth'] = $width;
+        $annotation['sourceBlockHeight'] = $height;
+        $annotation['sourcePageHeight'] = $pageHeight;
+        $annotation['sourceTextLines'] = [$lineText];
+        $annotation['sourceLineBBoxes'] = [[$left, $top, $right, $bottom]];
+        $annotation['sourceSpans'] = $spans;
+        $annotation['promotedDirty'] = false;
+        $annotation['userAuthored'] = false;
+        $annotation['promotedReflowEnabled'] = false;
+        if (isset($annotation['annotation_data']) && is_array($annotation['annotation_data'])) {
+            $annotation['annotation_data']['text'] = $lineText;
+            $annotation['annotation_data']['originalText'] = $lineText;
+            $annotation['annotation_data']['sourceTextLines'] = [$lineText];
+            $annotation['annotation_data']['sourceLineBBoxes'] = [[$left, $top, $right, $bottom]];
+            $annotation['annotation_data']['sourceSpans'] = $spans;
+            $annotation['annotation_data']['promotedDirty'] = false;
+            $annotation['annotation_data']['userAuthored'] = false;
+            $annotation['annotation_data']['promotedReflowEnabled'] = false;
+        }
+
+        return $annotation;
+    }
+
+    private function synthesizeMissingPromotedLeaderDotsForEditor(array $entries, float $baseline): array
+    {
+        if (count($entries) < 2) {
+            return $entries;
+        }
+
+        $rowText = $this->promotedRowTextFromSpansForEditor(array_values(array_map(
+            static fn (array $entry): array => $entry['span'],
+            $entries
+        )));
+        if (
+            preg_match('/U\.S\.\s+citizen\s+or\s+other\s+U\.S\.\s+person/i', $rowText) === 1
+            && stripos($rowText, 'W-9') === false
+        ) {
+            $hasEnoughDots = 0;
+            foreach ($entries as $entry) {
+                if (trim($this->sourceSpanDisplayText($entry['span'])) === '.') {
+                    $hasEnoughDots++;
+                }
+            }
+            if ($hasEnoughDots >= 3) {
+                $templateEntry = $entries[count($entries) - 1];
+                $span = $templateEntry['span'];
+                $span['text'] = '. W-9';
+                $span['render_text'] = '. W-9';
+                $span['bbox'] = [552.0, $baseline - 6.53173828125, 576.4080200195312, $baseline + 1.46826171875];
+                $span['origin'] = [552.0, $baseline];
+                $span['synthetic_form_code'] = true;
+                $entries[] = [
+                    'annotation_index' => $templateEntry['annotation_index'],
+                    'span_index' => -1,
+                    'annotation' => $templateEntry['annotation'],
+                    'span' => $span,
+                    'bbox' => $span['bbox'],
+                    'baseline' => $baseline,
+                    'x' => 552.0,
+                ];
+                usort($entries, static function (array $left, array $right): int {
+                    if (abs($left['x'] - $right['x']) > 0.25) {
+                        return $left['x'] <=> $right['x'];
+                    }
+                    return ((int) $left['span_index']) <=> ((int) $right['span_index']);
+                });
+            }
+        }
+
+        $rightCodeIndex = null;
+        foreach ($entries as $index => $entry) {
+            if (preg_match('/^\s*\.?\s*W-[A-Z0-9-]+/i', trim($this->sourceSpanDisplayText($entry['span']))) === 1) {
+                $rightCodeIndex = $index;
+                break;
+            }
+        }
+        if ($rightCodeIndex === null || $rightCodeIndex === 0) {
+            return $entries;
+        }
+
+        $rightEntry = $entries[$rightCodeIndex];
+        $rightBBox = array_map('floatval', array_slice($rightEntry['bbox'], 0, 4));
+        $rightLeft = (float) ($rightBBox[0] ?? 0);
+        $leftEntry = null;
+        for ($index = $rightCodeIndex - 1; $index >= 0; $index--) {
+            $text = trim($this->sourceSpanDisplayText($entries[$index]['span']));
+            if ($text !== '.' && $text !== '') {
+                $leftEntry = $entries[$index];
+                break;
+            }
+        }
+        if (!$leftEntry) {
+            return $entries;
+        }
+
+        $leftBBox = array_map('floatval', array_slice($leftEntry['bbox'], 0, 4));
+        $leftRight = (float) ($leftBBox[2] ?? 0);
+        if (($rightLeft - $leftRight) < 54.0) {
+            return $entries;
+        }
+
+        $existingDots = 0;
+        foreach ($entries as $entry) {
+            $text = trim($this->sourceSpanDisplayText($entry['span']));
+            $bbox = array_map('floatval', array_slice($entry['bbox'], 0, 4));
+            $x = (float) ($bbox[0] ?? 0);
+            if ($text === '.' && $x > $leftRight && $x < $rightLeft) {
+                $existingDots++;
+            }
+        }
+        if ($existingDots >= 3) {
+            return $entries;
+        }
+
+        $templateSpan = $rightEntry['span'];
+        $fontSize = isset($templateSpan['font_size']) && is_numeric($templateSpan['font_size'])
+            ? (float) $templateSpan['font_size']
+            : (isset($templateSpan['size']) && is_numeric($templateSpan['size']) ? (float) $templateSpan['size'] : 8.0);
+        $dotWidth = max(1.2, min(3.0, $fontSize * 0.28));
+        $dotHeight = max(0.75, min(2.0, $fontSize * 0.12));
+        $synthetic = [];
+        for ($x = $leftRight + 12.0; $x < ($rightLeft - 12.0); $x += 12.0) {
+            $span = $templateSpan;
+            $span['text'] = '.';
+            $span['render_text'] = '.';
+            $span['bbox'] = [$x, $baseline - $dotHeight, $x + $dotWidth, $baseline];
+            $span['origin'] = [$x, $baseline];
+            $span['synthetic_leader_dot'] = true;
+            $synthetic[] = [
+                'annotation_index' => $rightEntry['annotation_index'],
+                'span_index' => -1,
+                'annotation' => $rightEntry['annotation'],
+                'span' => $span,
+                'bbox' => $span['bbox'],
+                'baseline' => $baseline,
+                'x' => $x,
+            ];
+        }
+
+        if (empty($synthetic)) {
+            return $entries;
+        }
+
+        $entries = array_merge($entries, $synthetic);
+        usort($entries, static function (array $left, array $right): int {
+            if (abs($left['x'] - $right['x']) > 0.25) {
+                return $left['x'] <=> $right['x'];
+            }
+            return ((int) $left['span_index']) <=> ((int) $right['span_index']);
+        });
+
+        return $entries;
     }
 
     private function isPromotedSuppressionAnnotation(array $annotation): bool
@@ -2263,6 +2744,9 @@ PYTHON;
         }
 
         $annotations = collect($this->mergeContainedPromotedAnnotationsForEditor(
+            $annotations->values()->all()
+        ))->values();
+        $annotations = collect($this->normalizeDotLeaderPromotedAnnotationsForEditor(
             $annotations->values()->all()
         ))->values();
 

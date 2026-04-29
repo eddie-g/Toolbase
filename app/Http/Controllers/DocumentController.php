@@ -798,7 +798,19 @@ class DocumentController extends Controller
     private function durablePdfStateIdentityKeyFromAnnotation(array $annotation): string
     {
         if ($this->isDurablePromotedAnnotation($annotation)) {
-            return 'promoted:' . trim((string) $annotation['promotedSourceKey']);
+            $sourceKey = trim((string) $annotation['promotedSourceKey']);
+            // Multiple annotations can legitimately share the same promoted
+            // source block (a primary `promoted_X_Y` plus per-line
+            // `promoted_X_Y_row_*` siblings produced when the source block
+            // wraps onto several lines). Including the annotation id in the
+            // identity key prevents these siblings from colliding during
+            // upsertPdfStateSessionSnapshot, where the second/third sibling
+            // would otherwise overwrite the row that just received the user's
+            // edited text.
+            $annotationId = trim((string) ($annotation['id'] ?? ''));
+            return $annotationId !== ''
+                ? 'promoted:' . $sourceKey . ':' . $annotationId
+                : 'promoted:' . $sourceKey;
         }
 
         $annotationId = trim((string) ($annotation['id'] ?? ''));
@@ -842,6 +854,22 @@ class DocumentController extends Controller
 
         if ($this->isDurablePromotedAnnotation($annotation)) {
             $sourceKey = trim((string) ($annotation['promotedSourceKey'] ?? ''));
+            $annotationId = trim((string) ($annotation['id'] ?? ''));
+            // Prefer matching by both source key + annotation id so that
+            // multi-line promoted siblings each resolve to their own row.
+            // Fall back to source-key-only when an id is missing or when no
+            // id-qualified row exists yet (legacy rows persisted before the
+            // identity-key collision fix only carried the source key).
+            if ($annotationId !== '') {
+                $exact = (clone $query)
+                    ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.promotedSourceKey')) = ?", [$sourceKey])
+                    ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.id')) = ?", [$annotationId])
+                    ->orderByDesc('updated_at')
+                    ->first();
+                if ($exact) {
+                    return $exact;
+                }
+            }
             return $query
                 ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.promotedSourceKey')) = ?", [$sourceKey])
                 ->orderByDesc('updated_at')
@@ -2614,6 +2642,9 @@ class DocumentController extends Controller
             $page['blocks'] = $this->splitNestedAnnotationBaseBlocks(
                 is_array($page['blocks'] ?? null) ? $page['blocks'] : []
             );
+            $page['blocks'] = $this->normalizeAnnotationBaseDotLeaderRows(
+                is_array($page['blocks'] ?? null) ? $page['blocks'] : []
+            );
             usort($page['blocks'], static function (array $left, array $right): int {
                 $leftTop = (float) ($left['top'] ?? 0);
                 $rightTop = (float) ($right['top'] ?? 0);
@@ -2870,6 +2901,311 @@ class DocumentController extends Controller
         });
 
         return $result;
+    }
+
+    private function normalizeAnnotationBaseDotLeaderRows(array $blocks): array
+    {
+        if (count($blocks) < 2) {
+            return $blocks;
+        }
+
+        $originalBlocks = array_values($blocks);
+        $spanEntries = [];
+        $dotSpanCount = 0;
+        $formCodeSpanCount = 0;
+        $maxBlockNum = 0;
+
+        foreach ($originalBlocks as $blockIndex => $block) {
+            $maxBlockNum = max($maxBlockNum, (int) ($block['block_num'] ?? 0));
+            $spans = is_array($block['spans'] ?? null) ? array_values($block['spans']) : [];
+            if (empty($spans)) {
+                continue;
+            }
+
+            foreach ($spans as $spanIndex => $span) {
+                if (!is_array($span)) {
+                    continue;
+                }
+
+                $bbox = is_array($span['bbox'] ?? null) ? array_slice($span['bbox'], 0, 4) : null;
+                if (!is_array($bbox) || count($bbox) < 4) {
+                    continue;
+                }
+
+                $origin = is_array($span['origin'] ?? null) ? $span['origin'] : [];
+                $baseline = isset($origin[1]) && is_numeric($origin[1])
+                    ? (float) $origin[1]
+                    : (float) ($bbox[3] ?? 0);
+                if (!is_finite($baseline)) {
+                    continue;
+                }
+
+                $text = (string) ($span['render_text'] ?? $span['text'] ?? '');
+                if (preg_match('/^\s*\.\s*$/', $text) === 1) {
+                    $dotSpanCount++;
+                }
+                if (preg_match('/^\s*\.?\s*(?:W-[A-Z0-9-]+|[0-9]{4}\s+or\s+W-\d)/i', trim($text)) === 1) {
+                    $formCodeSpanCount++;
+                }
+
+                $spanEntries[] = [
+                    'block' => $block,
+                    'block_index' => $blockIndex,
+                    'span_index' => $spanIndex,
+                    'span' => $span,
+                    'bbox' => array_map('floatval', $bbox),
+                    'baseline' => $baseline,
+                    'x' => (float) ($bbox[0] ?? 0),
+                ];
+            }
+        }
+
+        if ($dotSpanCount < 8 || $formCodeSpanCount < 1 || count($spanEntries) < 3) {
+            return $blocks;
+        }
+
+        usort($spanEntries, static function (array $left, array $right): int {
+            if (abs($left['baseline'] - $right['baseline']) > 1.0) {
+                return $left['baseline'] <=> $right['baseline'];
+            }
+            if (abs($left['x'] - $right['x']) > 0.25) {
+                return $left['x'] <=> $right['x'];
+            }
+            return ((int) $left['span_index']) <=> ((int) $right['span_index']);
+        });
+
+        $rows = [];
+        foreach ($spanEntries as $entry) {
+            $lastIndex = count($rows) - 1;
+            if ($lastIndex < 0 || abs($entry['baseline'] - $rows[$lastIndex]['baseline']) > 1.25) {
+                $rows[] = [
+                    'baseline' => $entry['baseline'],
+                    'entries' => [$entry],
+                ];
+                continue;
+            }
+
+            $rows[$lastIndex]['entries'][] = $entry;
+            $rows[$lastIndex]['baseline'] = (
+                ($rows[$lastIndex]['baseline'] * (count($rows[$lastIndex]['entries']) - 1))
+                + $entry['baseline']
+            ) / count($rows[$lastIndex]['entries']);
+        }
+
+        $rebuiltBlocks = [];
+        $touchedBlockIndexes = [];
+        $syntheticBlockNum = $maxBlockNum + 1;
+        foreach ($rows as $row) {
+            $entries = $row['entries'];
+            usort($entries, static function (array $left, array $right): int {
+                if (abs($left['x'] - $right['x']) > 0.25) {
+                    return $left['x'] <=> $right['x'];
+                }
+                return ((int) $left['span_index']) <=> ((int) $right['span_index']);
+            });
+
+            $rowDotCount = 0;
+            $rowHasFormCode = false;
+            foreach ($entries as $entry) {
+                $text = trim((string) ($entry['span']['render_text'] ?? $entry['span']['text'] ?? ''));
+                if ($text === '.') {
+                    $rowDotCount++;
+                }
+                if (preg_match('/^\s*\.?\s*(?:W-[A-Z0-9-]+|[0-9]{4}\s+or\s+W-\d)/i', $text) === 1) {
+                    $rowHasFormCode = true;
+                }
+            }
+            if ($rowDotCount < 3 && !$rowHasFormCode) {
+                continue;
+            }
+
+            $entries = $this->synthesizeMissingAnnotationBaseLeaderDots($entries, (float) $row['baseline']);
+            $spans = array_values(array_map(static fn (array $entry): array => $entry['span'], $entries));
+            if (empty($spans)) {
+                continue;
+            }
+
+            $bboxes = array_values(array_filter(array_map(
+                static fn (array $entry): ?array => is_array($entry['bbox'] ?? null) && count($entry['bbox']) >= 4
+                    ? array_map('floatval', array_slice($entry['bbox'], 0, 4))
+                    : null,
+                $entries
+            )));
+            if (empty($bboxes)) {
+                continue;
+            }
+
+            $left = min(array_map(static fn (array $bbox): float => (float) $bbox[0], $bboxes));
+            $top = min(array_map(static fn (array $bbox): float => (float) $bbox[1], $bboxes));
+            $right = max(array_map(static fn (array $bbox): float => (float) $bbox[2], $bboxes));
+            $bottom = max(array_map(static fn (array $bbox): float => (float) $bbox[3], $bboxes));
+            if (($right - $left) <= 1 || ($bottom - $top) <= 0) {
+                continue;
+            }
+
+            $template = $entries[0]['block'];
+            foreach ($entries as $entry) {
+                $text = trim((string) ($entry['span']['render_text'] ?? $entry['span']['text'] ?? ''));
+                if ($text !== '.' && $text !== '') {
+                    $template = $entry['block'];
+                    break;
+                }
+            }
+
+            $lineText = $this->annotationBaseTextFromOrderedSpans($spans);
+            if ($lineText === '') {
+                continue;
+            }
+
+            $block = $template;
+            $block['block_num'] = (int) ($template['block_num'] ?? 0);
+            if (isset($rebuiltBlocks[$block['block_num']])) {
+                $block['block_num'] = $syntheticBlockNum++;
+            }
+            $block['text'] = $lineText;
+            $block['text_lines'] = [$lineText];
+            $block['line_bboxes'] = [[$left, $top, $right, $bottom]];
+            $block['left'] = $left;
+            $block['top'] = $top;
+            $block['width'] = max(0.0, $right - $left);
+            $block['height'] = max(0.0, $bottom - $top);
+            $block['bbox'] = [$left, $top, $right, $bottom];
+            $block['line_count'] = 1;
+            $block['spans'] = $spans;
+            $rebuiltBlocks[$block['block_num']] = $block;
+            foreach ($entries as $entry) {
+                if (isset($entry['block_index'])) {
+                    $touchedBlockIndexes[(int) $entry['block_index']] = true;
+                }
+            }
+        }
+
+        if (empty($rebuiltBlocks)) {
+            return $blocks;
+        }
+
+        $keptBlocks = [];
+        foreach ($originalBlocks as $blockIndex => $block) {
+            if (!isset($touchedBlockIndexes[$blockIndex])) {
+                $keptBlocks[] = $block;
+            }
+        }
+
+        return array_values(array_merge($keptBlocks, array_values($rebuiltBlocks)));
+    }
+
+    private function annotationBaseTextFromOrderedSpans(array $spans): string
+    {
+        $parts = [];
+        foreach ($spans as $span) {
+            if (!is_array($span)) {
+                continue;
+            }
+            $text = preg_replace('/[ \t]+/', ' ', (string) ($span['render_text'] ?? $span['text'] ?? ''));
+            if ($text === '') {
+                continue;
+            }
+            $parts[] = trim($text);
+        }
+
+        return trim(preg_replace('/[ \t]{2,}/', ' ', implode(' ', $parts)));
+    }
+
+    private function synthesizeMissingAnnotationBaseLeaderDots(array $entries, float $baseline): array
+    {
+        if (count($entries) < 2) {
+            return $entries;
+        }
+
+        $rightCodeIndex = null;
+        foreach ($entries as $index => $entry) {
+            $text = trim((string) ($entry['span']['render_text'] ?? $entry['span']['text'] ?? ''));
+            if (preg_match('/^\s*\.?\s*W-[A-Z0-9-]+/i', $text) === 1) {
+                $rightCodeIndex = $index;
+                break;
+            }
+        }
+
+        if ($rightCodeIndex === null || $rightCodeIndex === 0) {
+            return $entries;
+        }
+
+        $rightEntry = $entries[$rightCodeIndex];
+        $rightBBox = array_map('floatval', array_slice($rightEntry['bbox'], 0, 4));
+        $rightLeft = (float) ($rightBBox[0] ?? 0);
+        $leftEntry = null;
+        for ($index = $rightCodeIndex - 1; $index >= 0; $index--) {
+            $text = trim((string) ($entries[$index]['span']['render_text'] ?? $entries[$index]['span']['text'] ?? ''));
+            if ($text !== '.' && $text !== '') {
+                $leftEntry = $entries[$index];
+                break;
+            }
+        }
+
+        if (!$leftEntry) {
+            return $entries;
+        }
+
+        $leftBBox = array_map('floatval', array_slice($leftEntry['bbox'], 0, 4));
+        $leftRight = (float) ($leftBBox[2] ?? 0);
+        $gap = $rightLeft - $leftRight;
+        if ($gap < 54.0) {
+            return $entries;
+        }
+
+        $existingDots = 0;
+        foreach ($entries as $entry) {
+            $text = trim((string) ($entry['span']['render_text'] ?? $entry['span']['text'] ?? ''));
+            $bbox = array_map('floatval', array_slice($entry['bbox'], 0, 4));
+            $x = (float) ($bbox[0] ?? 0);
+            if ($text === '.' && $x > $leftRight && $x < $rightLeft) {
+                $existingDots++;
+            }
+        }
+
+        if ($existingDots >= 3) {
+            return $entries;
+        }
+
+        $templateSpan = $rightEntry['span'];
+        $fontSize = isset($templateSpan['font_size']) && is_numeric($templateSpan['font_size'])
+            ? (float) $templateSpan['font_size']
+            : (isset($templateSpan['size']) && is_numeric($templateSpan['size']) ? (float) $templateSpan['size'] : 8.0);
+        $dotWidth = max(1.2, min(3.0, $fontSize * 0.28));
+        $dotHeight = max(0.75, min(2.0, $fontSize * 0.12));
+        $step = 12.0;
+        $syntheticEntries = [];
+        for ($x = $leftRight + $step; $x < ($rightLeft - $step); $x += $step) {
+            $span = $templateSpan;
+            $span['text'] = '.';
+            $span['render_text'] = '.';
+            $span['bbox'] = [$x, $baseline - $dotHeight, $x + $dotWidth, $baseline];
+            $span['origin'] = [$x, $baseline];
+            $span['synthetic_leader_dot'] = true;
+            $syntheticEntries[] = [
+                'block' => $rightEntry['block'],
+                'block_index' => $rightEntry['block_index'],
+                'span_index' => -1,
+                'span' => $span,
+                'bbox' => $span['bbox'],
+                'baseline' => $baseline,
+                'x' => $x,
+            ];
+        }
+
+        if (empty($syntheticEntries)) {
+            return $entries;
+        }
+
+        $entries = array_merge($entries, $syntheticEntries);
+        usort($entries, static function (array $left, array $right): int {
+            if (abs($left['x'] - $right['x']) > 0.25) {
+                return $left['x'] <=> $right['x'];
+            }
+            return ((int) $left['span_index']) <=> ((int) $right['span_index']);
+        });
+
+        return $entries;
     }
 
     private function materializeFitzExtractionToPdfState(Document $document, $extractionRow): int

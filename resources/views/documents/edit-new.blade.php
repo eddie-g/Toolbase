@@ -350,6 +350,75 @@
             background: transparent !important;
             text-shadow: none !important;
         }
+        /*
+         * When canvas owns the visible glyph painting, the editor's text nodes
+         * exist only to host the caret + selection. The browser's default
+         * ::selection forces selected text to white (high-contrast over the
+         * blue selection background) which would reveal the editor's glyphs
+         * sitting at slightly different per-character X positions than the
+         * canvas-painted source glyphs (the editor uses CSS layout + uniform
+         * scaleX, the canvas uses per-span PDF origins). Keep the selected
+         * glyphs transparent so the user only ever sees the canvas glyphs;
+         * the faint blue selection rectangle still indicates the caret range.
+         */
+        .active-editor[data-canvas-owns="1"]::selection,
+        .active-editor[data-canvas-owns="1"] *::selection {
+            color: transparent !important;
+            -webkit-text-fill-color: transparent !important;
+            background: rgba(37, 99, 235, 0.30) !important;
+            text-shadow: none !important;
+        }
+        .active-editor[data-canvas-owns="1"]::-moz-selection,
+        .active-editor[data-canvas-owns="1"] *::-moz-selection {
+            color: transparent !important;
+            -webkit-text-fill-color: transparent !important;
+            background: rgba(37, 99, 235, 0.30) !important;
+            text-shadow: none !important;
+        }
+
+        /* Galley editor mode (Iceni-style): per-source-span absolute-positioned
+         * caret targets layered over the page overlay canvas. The canvas paints
+         * all original PDF spans at exact PDF positions; the contenteditable
+         * holds invisible source-span text nodes for caret/selection plus a
+         * trailing visible "tail" span per line where appended user input
+         * accumulates. New chars in tails are persisted into ann._galleyAppends
+         * so drawOriginalSource paints them after the source spans, keeping
+         * the appended text visible after blur (when ae is hidden). */
+        .active-editor[data-render-mode="galley"] {
+            white-space: normal !important;
+            overflow: visible !important;
+            word-break: normal !important;
+        }
+        .active-editor[data-render-mode="galley"] .ae-galley-line {
+            position: absolute;
+            margin: 0;
+            padding: 0;
+            white-space: pre;
+        }
+        .active-editor[data-render-mode="galley"] .ae-galley-source-span,
+        .active-editor[data-render-mode="galley"] .ae-galley-tail {
+            position: absolute;
+            top: 0;
+            margin: 0;
+            padding: 0;
+            white-space: pre;
+            box-sizing: border-box;
+        }
+        /* Tail spans that contain user-appended text must remain visible even
+         * when canvas-owns hides everything else. Source-span text stays
+         * invisible — the page overlay canvas paints it via drawOriginalSource.
+         */
+        .active-editor[data-canvas-owns="1"] [data-galley-new="1"],
+        .active-editor[data-canvas-owns="1"] [data-galley-new="1"] * {
+            color: inherit !important;
+            -webkit-text-fill-color: initial !important;
+        }
+        .active-editor[data-canvas-owns="1"] [data-galley-new="1"]::selection,
+        .active-editor[data-canvas-owns="1"] [data-galley-new="1"] *::selection {
+            color: inherit !important;
+            -webkit-text-fill-color: initial !important;
+            background: rgba(37, 99, 235, 0.30) !important;
+        }
 
         .annotation-tbc-menu {
             display: none;
@@ -408,11 +477,376 @@
             border-color: rgba(147, 197, 253, 0.6);
             color: #dbeafe;
         }
+        .annotation-tbc-menu .tbc-menu-btn.tbc-debug { color: #c4b5fd; }
+        .annotation-tbc-menu .tbc-menu-btn.tbc-debug:hover {
+            background: rgba(196, 181, 253, 0.15);
+            border-color: rgba(196, 181, 253, 0.35);
+        }
         .annotation-tbc-menu .tbc-menu-divider {
             width: 1px;
             height: 20px;
             background: rgba(255,255,255,0.12);
             margin: 0 2px;
+        }
+
+        /* ── Editor HTML debug modal ─────────────────────────────────── */
+        #dbg-editor-modal {
+            position: fixed;
+            inset: 0;
+            z-index: 100000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        }
+        #dbg-editor-modal .dbg-modal-backdrop {
+            position: absolute;
+            inset: 0;
+            background: rgba(15, 18, 25, 0.62);
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+        }
+        #dbg-editor-modal .dbg-modal-card {
+            position: relative;
+            width: min(960px, 92vw);
+            max-height: 88vh;
+            background: #11141b;
+            color: #e5e7eb;
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 14px;
+            box-shadow: 0 30px 80px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.04);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            animation: dbgModalIn 0.18s ease-out;
+        }
+        @keyframes dbgModalIn {
+            from { opacity: 0; transform: translateY(8px) scale(0.985); }
+            to   { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        #dbg-editor-modal .dbg-modal-header {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 14px 18px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+            background: linear-gradient(180deg, rgba(255,255,255,0.03), transparent);
+        }
+        #dbg-editor-modal .dbg-modal-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: 0.2px;
+        }
+        #dbg-editor-modal .dbg-modal-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #c4b5fd;
+            box-shadow: 0 0 10px rgba(196,181,253,0.7);
+        }
+        #dbg-editor-modal .dbg-modal-badge {
+            font-size: 11px;
+            font-weight: 600;
+            padding: 3px 8px;
+            border-radius: 999px;
+            background: rgba(196,181,253,0.16);
+            color: #ddd6fe;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+        }
+        #dbg-editor-modal .dbg-modal-meta {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-left: auto;
+            margin-right: 8px;
+            flex-wrap: wrap;
+        }
+        #dbg-editor-modal .dbg-modal-meta code {
+            font-size: 11px;
+            padding: 2px 7px;
+            border-radius: 5px;
+            background: rgba(255,255,255,0.05);
+            color: #94a3b8;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        }
+        #dbg-editor-modal .dbg-modal-close {
+            width: 30px;
+            height: 30px;
+            border-radius: 8px;
+            border: 0;
+            background: transparent;
+            color: #94a3b8;
+            font-size: 22px;
+            line-height: 1;
+            cursor: pointer;
+            transition: background 0.15s, color 0.15s;
+        }
+        #dbg-editor-modal .dbg-modal-close:hover {
+            background: rgba(255,255,255,0.08);
+            color: #f1f5f9;
+        }
+        #dbg-editor-modal .dbg-modal-body {
+            padding: 16px 18px 20px;
+            overflow-y: auto;
+            display: grid;
+            gap: 16px;
+        }
+        #dbg-editor-modal .dbg-modal-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            border: 1px solid transparent;
+        }
+        #dbg-editor-modal .dbg-modal-status.is-original {
+            background: rgba(34, 197, 94, 0.15);
+            border-color: rgba(34, 197, 94, 0.35);
+            color: #86efac;
+        }
+        #dbg-editor-modal .dbg-modal-status.is-edited {
+            background: rgba(251, 146, 60, 0.18);
+            border-color: rgba(251, 146, 60, 0.4);
+            color: #fdba74;
+        }
+        #dbg-editor-modal .dbg-tabs {
+            display: flex;
+            gap: 2px;
+            padding: 0 18px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+            margin-bottom: -16px;
+        }
+        #dbg-editor-modal .dbg-tab {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            padding: 8px 14px;
+            background: transparent;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: #64748b;
+            cursor: pointer;
+            transition: color 0.15s, border-color 0.15s;
+        }
+        #dbg-editor-modal .dbg-tab:hover { color: #cbd5e1; }
+        #dbg-editor-modal .dbg-tab.is-active {
+            color: #ede9fe;
+            border-bottom-color: #c4b5fd;
+        }
+        #dbg-editor-modal .dbg-section { display: none; }
+        #dbg-editor-modal .dbg-section.is-active { display: block; }
+        #dbg-editor-modal .dbg-section-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 6px;
+        }
+        #dbg-editor-modal .dbg-section-head h3 {
+            margin: 0;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: #94a3b8;
+        }
+        #dbg-editor-modal .dbg-section-hint {
+            font-size: 11px;
+            color: #64748b;
+        }
+        #dbg-editor-modal .dbg-copy-btn {
+            font-size: 11px;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 6px;
+            border: 1px solid rgba(255,255,255,0.08);
+            background: rgba(255,255,255,0.03);
+            color: #cbd5e1;
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s;
+        }
+        #dbg-editor-modal .dbg-copy-btn:hover {
+            background: rgba(196,181,253,0.12);
+            border-color: rgba(196,181,253,0.3);
+            color: #ede9fe;
+        }
+        #dbg-editor-modal .dbg-section-actions {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        #dbg-editor-modal .dbg-save-btn {
+            font-size: 13px;
+            font-weight: 700;
+            padding: 4px 12px;
+            border-radius: 6px;
+            border: 1px solid rgba(34,197,94,0.45);
+            background: rgba(34,197,94,0.18);
+            color: #bbf7d0;
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s;
+        }
+        #dbg-editor-modal .dbg-save-btn:hover {
+            background: rgba(34,197,94,0.32);
+            border-color: rgba(34,197,94,0.7);
+            color: #f0fdf4;
+        }
+        #dbg-editor-modal .dbg-save-btn:disabled {
+            opacity: 0.5;
+            cursor: default;
+        }
+        #dbg-editor-modal .dbg-save-status {
+            font-size: 11px;
+            color: #94a3b8;
+        }
+        #dbg-editor-modal .dbg-live-host[contenteditable="true"] {
+            outline: 2px dashed rgba(196,181,253,0.4);
+            outline-offset: 2px;
+            cursor: text;
+            min-height: 24px;
+        }
+        #dbg-editor-modal .dbg-live-host[contenteditable="true"]:focus {
+            outline-color: rgba(196,181,253,0.8);
+        }
+        #dbg-editor-modal .dbg-pre {
+            margin: 0;
+            padding: 12px 14px;
+            background: #0b0d12;
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 8px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 12px;
+            line-height: 1.55;
+            color: #e2e8f0;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 260px;
+            overflow: auto;
+        }
+        #dbg-editor-modal .dbg-pre-style { color: #fcd34d; }
+        #dbg-editor-modal .dbg-pre-html { color: #93c5fd; }
+        #dbg-editor-modal .dbg-live-frame {
+            background: #f8fafc;
+            border-radius: 8px;
+            padding: 16px;
+            min-height: 60px;
+            max-height: 320px;
+            overflow: auto;
+            color: #111;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+        #dbg-editor-modal .dbg-live-host {
+            display: inline-block;
+            min-width: 1px;
+        }
+        /* Universal preview-mode overrides — the live editor uses transforms
+         * (translateY for line baselines), absolute positioning, and negative
+         * coordinates relative to the page card. None of that makes sense
+         * inside a debug preview frame, so neutralize it across ALL render
+         * modes so content always shows in flow.
+         *
+         * Targets the host AND any descendant — covers plain mode's
+         * `<div style="transform:translateY(-X)">` wrapper and rich-html
+         * inner spans alike. */
+        #dbg-editor-modal .dbg-live-host,
+        #dbg-editor-modal .dbg-live-host * {
+            transform: none !important;
+        }
+        #dbg-editor-modal .dbg-live-host > * {
+            position: static !important;
+            top: auto !important;
+            left: auto !important;
+            right: auto !important;
+            bottom: auto !important;
+            min-height: 0 !important;
+            height: auto !important;
+        }
+        /* Source-spans render mode reconstructs each PDF source line as a
+         * `<p position:relative>` containing per-span text and an absolutely
+         * positioned marker glyph (•/o/etc) at its true PDF x-offset. The
+         * universal `> * { position: static !important }` rule above would
+         * collapse every marker onto the host's padding-edge (all at
+         * `left:31px;top:0`), stacking them on top of each other. Restore
+         * the per-line positioning context for this mode only. */
+        #dbg-editor-modal .dbg-live-host[data-render-mode="source-spans"] > p {
+            position: relative !important;
+        }
+        #dbg-editor-modal .dbg-live-host[data-render-mode="source-spans"] [data-source-marker] {
+            position: absolute !important;
+        }
+        #dbg-editor-modal .dbg-live-host[data-render-mode="source-spans"] [data-source-column] {
+            position: absolute !important;
+        }
+        /* Multi-column source rows hold absolutely-positioned column spans
+         * that don't contribute to flow height. The universal
+         * `> * { min-height: 0 !important }` rule above would collapse the
+         * row, causing consecutive rows to overlap. Re-apply the row's
+         * intrinsic line-height as min-height via a CSS variable carried
+         * on the row element. */
+        #dbg-editor-modal .dbg-live-host[data-render-mode="source-spans"] > p[data-source-row] {
+            min-height: var(--row-min-h, 0px) !important;
+            height: auto !important;
+        }
+        /* Inner content wrappers (e.g. the `<div>` produced by
+         * renderPlainEditorHTML carrying explicit line-height/min-height
+         * sized for canvas-overlay placement) also need their height
+         * constraints relaxed so wrapped text expands the block instead of
+         * spilling onto the next sibling. */
+        #dbg-editor-modal .dbg-live-host > * > div,
+        #dbg-editor-modal .dbg-live-host > * > p {
+            min-height: 0 !important;
+            height: auto !important;
+        }
+        /* For the debug preview we render galley/source content in normal
+         * document flow rather than mirroring the absolute coords used in
+         * the live editor. The live coords are page-card relative and would
+         * push lines out of view; flow layout shows the structure clearly. */
+        #dbg-editor-modal .dbg-live-host[data-render-mode="galley"],
+        #dbg-editor-modal .dbg-live-host[data-render-mode="source"],
+        #dbg-editor-modal .dbg-live-host[data-render-mode="source-flow"] {
+            position: relative !important;
+            white-space: normal !important;
+            overflow: visible !important;
+            word-break: normal !important;
+            display: block !important;
+        }
+        #dbg-editor-modal .dbg-live-host[data-render-mode="galley"] .ae-galley-line,
+        #dbg-editor-modal .dbg-live-host[data-render-mode="source"] .ae-galley-line,
+        #dbg-editor-modal .dbg-live-host[data-render-mode="source-flow"] .ae-galley-line {
+            position: static !important;
+            top: auto !important;
+            left: auto !important;
+            width: auto !important;
+            height: auto !important;
+            margin: 0 0 4px 0;
+            padding: 0;
+            white-space: pre-wrap;
+            display: block;
+        }
+        #dbg-editor-modal .dbg-live-host[data-render-mode="galley"] .ae-galley-source-span,
+        #dbg-editor-modal .dbg-live-host[data-render-mode="galley"] .ae-galley-tail,
+        #dbg-editor-modal .dbg-live-host[data-render-mode="source"] .ae-galley-source-span,
+        #dbg-editor-modal .dbg-live-host[data-render-mode="source"] .ae-galley-tail,
+        #dbg-editor-modal .dbg-live-host[data-render-mode="source-flow"] .ae-galley-source-span,
+        #dbg-editor-modal .dbg-live-host[data-render-mode="source-flow"] .ae-galley-tail {
+            position: static !important;
+            top: auto !important;
+            left: auto !important;
+            width: auto !important;
+            height: auto !important;
+            margin: 0;
+            padding: 0;
+            white-space: pre-wrap;
+            box-sizing: border-box;
+            display: inline;
         }
         .shape-action-bar {
             display: none;
@@ -3193,6 +3627,13 @@
 
     let measureCanvas = null;
     let overlayEmbeddedFonts = null;
+    // Embedded-font runtime safety net: any PDF_<cleanName> family whose
+    // canvas fillText paints zero ink pixels is recorded here. fallbackFontFamily
+    // skips these entries so the engine falls back to a system family that can
+    // actually render glyphs. Prevents the silent-text-vanishing failure mode
+    // (see /memories/repo/edit-new-broken-runtime-extracted-fonts.md).
+    const brokenEmbeddedFontKeys = new Set();
+    let embeddedFontHealthCheckToken = 0;
     let markupToolCtx = null;
     let signatureCtx = null;
     let signatureTypedRenderToken = 0;
@@ -4142,16 +4583,32 @@
         return (ext === 'otf' || ext === 'cff') ? 'opentype' : 'truetype';
     };
 
-    const shouldBypassEmbeddedFont = (name, family = '') => {
+    const PDF_SUBSET_FONT_RE = /^[A-Z]{6}\+/;
+    const isSubsetEmbeddedFontData = (fontData) => {
+        const pdfName = String(fontData?.pdf_font_name || '').trim();
+        return PDF_SUBSET_FONT_RE.test(pdfName);
+    };
+
+    const shouldBypassEmbeddedFont = (name, family = '', fontData = null) => {
         const rawName = normalizeFontName(name);
         const rawFamily = normalizeFontName(family);
-        return /^Free(?:Sans|Serif|Mono)/i.test(rawName)
+        // PDF subset fonts frequently have PDF-private glyph encodings. They
+        // render correctly inside the PDF because the content stream uses the
+        // subset's character codes, but rendering Unicode text through the same
+        // font in browser canvas/DOM can map letters to the wrong glyphs. Use
+        // browser/system families for the overlay unless the font is a real,
+        // non-subset face.
+        return isSubsetEmbeddedFontData(fontData)
+            || /^Free(?:Sans|Serif|Mono)/i.test(rawName)
             || /^Free(?:Sans|Serif|Mono)/i.test(rawFamily)
             || /^ArialMT$/i.test(rawName);
     };
 
     const loadEmbeddedFontFaces = (embeddedFonts) => {
         overlayEmbeddedFonts = embeddedFonts && typeof embeddedFonts === 'object' ? embeddedFonts : null;
+        // Reset broken-font set on every reload — must re-validate against the
+        // freshly registered @font-face URLs.
+        brokenEmbeddedFontKeys.clear();
 
         const existing = document.getElementById('edit-new-embedded-fonts');
         if (existing) existing.remove();
@@ -4162,7 +4619,7 @@
             const cleanName = String(fontData?.clean_name || fontKey || '').trim();
             const family = String(fontData?.family || fontKey || '').trim();
             if (!cleanName) continue;
-            if (shouldBypassEmbeddedFont(cleanName, family)) continue;
+            if (shouldBypassEmbeddedFont(cleanName, family, fontData)) continue;
 
             let filePath = String(fontData?.file_path || '').trim();
             if (!filePath) continue;
@@ -4193,6 +4650,125 @@
         style.id = 'edit-new-embedded-fonts';
         style.textContent = css;
         document.head.appendChild(style);
+
+        // Kick off async health check: paint a sample with each registered
+        // embedded family and flag any that produce zero ink pixels. Such a
+        // font is broken (loaded but with empty glyph outlines) and would
+        // otherwise silently render every span using it as blank space.
+        validateEmbeddedFontsHealth();
+    };
+
+    // Render-test every registered PDF_<cleanName> family. Any family that
+    // measures correctly but draws nothing gets added to brokenEmbeddedFontKeys
+    // so fallbackFontFamily can route around it. After the sweep, request a
+    // full re-render so any spans that were silently invisible repaint with
+    // a working system fallback.
+    const validateEmbeddedFontsHealth = () => {
+        if (!overlayEmbeddedFonts || typeof overlayEmbeddedFonts !== 'object') return;
+        const token = ++embeddedFontHealthCheckToken;
+
+        const probeText = 'AHSx0';
+        const probeSize = 24;
+        const families = [];
+        for (const [fontKey, fontData] of Object.entries(overlayEmbeddedFonts)) {
+            const cleanName = String(fontData?.clean_name || fontKey || '').trim();
+            if (!cleanName) continue;
+            if (shouldBypassEmbeddedFont(cleanName, String(fontData?.family || ''), fontData)) continue;
+            const cssWeight = String(fontData?.css_weight || '400');
+            const cssStyle = String(fontData?.css_style || 'normal');
+            families.push({ cleanName, cssWeight, cssStyle });
+        }
+        if (!families.length) return;
+
+        const fontReady = (typeof document !== 'undefined' && document.fonts && document.fonts.ready)
+            ? document.fonts.ready
+            : Promise.resolve();
+
+        fontReady.then(async () => {
+            if (token !== embeddedFontHealthCheckToken) return;
+
+            // Force every PDF_<cleanName> face to actually load. document.fonts.ready
+            // does NOT lazy-load @font-face rules added via <style> injection until
+            // they are first *used*, so without this step every probe below would
+            // paint with a system fallback while the real font hasn't started
+            // downloading — yielding a false-pass.
+            try {
+                const loaders = families.map(({ cleanName, cssWeight, cssStyle }) => {
+                    const face = `${cssStyle} ${cssWeight} ${probeSize}px 'PDF_${cleanName}'`;
+                    try { return document.fonts.load(face).catch(() => null); } catch (_) { return null; }
+                }).filter(Boolean);
+                if (loaders.length) await Promise.all(loaders);
+            } catch (_) {}
+            if (token !== embeddedFontHealthCheckToken) return;
+
+            const canvas = document.createElement('canvas');
+            canvas.width = 96;
+            canvas.height = 32;
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            if (!ctx) return;
+
+            // Establish a baseline ink count using a guaranteed-renderable font
+            // so we don't get false positives from canvas APIs that report 0.
+            ctx.fillStyle = '#000';
+            ctx.textBaseline = 'top';
+            ctx.font = `${probeSize}px Helvetica, Arial, sans-serif`;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillText(probeText, 2, 2);
+            let baselineInk = 0;
+            try {
+                const img = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+                for (let i = 3; i < img.length; i += 4) if (img[i] > 8) baselineInk++;
+            } catch (_) { return; /* tainted canvas — skip the check entirely */ }
+            if (baselineInk < 5) return; // canvas readback unreliable; bail
+
+            let foundBroken = false;
+            const newlyBroken = [];
+
+            const probeOne = ({ cleanName, cssWeight, cssStyle }) => {
+                const family = `PDF_${cleanName}`;
+                // Render at the face's *registered* weight/style. Using the
+                // generic font shorthand without these attributes would cause
+                // the browser to substitute a different (unregistered) variant.
+                // The trailing __pdf_no_such_family__ ensures that if the
+                // PDF_<name> face is not loaded we don't fall back to a system
+                // font that *can* render the glyphs — that would produce a
+                // false-pass. (If the face IS loaded but its outlines are
+                // empty, fillText paints nothing, which is what we want to
+                // detect.)
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.font = `${cssStyle} ${cssWeight} ${probeSize}px '${family}', __pdf_no_such_family__`;
+                try { ctx.fillText(probeText, 2, 2); } catch (_) { return; }
+
+                let ink = 0;
+                try {
+                    const img = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+                    for (let i = 3; i < img.length; i += 4) if (img[i] > 8) ink++;
+                } catch (_) { return; }
+
+                if (ink < 3) {
+                    brokenEmbeddedFontKeys.add(cleanName);
+                    newlyBroken.push(cleanName);
+                    foundBroken = true;
+                }
+            };
+
+            families.forEach(probeOne);
+
+            if (foundBroken) {
+                console.warn(
+                    '[edit-new] Embedded PDF font(s) registered but render empty; '
+                    + 'falling back to system fonts for: ' + newlyBroken.join(', ')
+                );
+                // Force a re-render so previously-invisible spans repaint with
+                // the system fallback now that fallbackFontFamily will skip the
+                // broken families.
+                try {
+                    if (typeof redrawAllOverlays === 'function') {
+                        redrawAllOverlays();
+                    }
+                } catch (_) {}
+            }
+        }).catch(() => {});
     };
 
     // Inject a "PDF Embedded Fonts" section at the top of the font-family picker.
@@ -4215,7 +4791,8 @@
             Object.entries(overlayEmbeddedFonts).forEach(([fontKey, fontData]) => {
                 const cleanName = String(fontData?.clean_name || fontKey || '').trim();
                 if (!cleanName) return;
-                if (shouldBypassEmbeddedFont(cleanName, String(fontData?.family || ''))) return;
+                if (shouldBypassEmbeddedFont(cleanName, String(fontData?.family || ''), fontData)) return;
+                if (brokenEmbeddedFontKeys.has(cleanName)) return;
                 const pdfName = String(fontData?.pdf_font_name || '').trim();
                 if (SUBSET_PREFIX_RE.test(pdfName)) return;
                 embeddedSet.add(cleanName);
@@ -4288,14 +4865,28 @@
         if (overlayEmbeddedFonts) {
             const entries = Object.entries(overlayEmbeddedFonts);
             if (rawExact) {
+                let exactMatchedButBroken = false;
                 for (const [fontKey, fontData] of entries) {
                     const cleanName = String(fontData?.clean_name || fontKey || '').trim();
                     const embeddedFamily = String(fontData?.family || fontKey || '').trim();
-                    if (!cleanName || shouldBypassEmbeddedFont(cleanName, embeddedFamily)) continue;
+                    if (!cleanName || shouldBypassEmbeddedFont(cleanName, embeddedFamily, fontData)) continue;
                     if (normalizeFontName(cleanName).toLowerCase() === rawExact.toLowerCase()) {
+                        if (brokenEmbeddedFontKeys.has(cleanName)) {
+                            // Exact-name match exists but its outlines are
+                            // broken. Don't fall through to a same-family
+                            // entry of the wrong weight (e.g. picking the
+                            // regular-weight PDF_Arial when the broken one
+                            // was Arial-BoldMT) — that would either render
+                            // wrong-weight glyphs or silently nothing.
+                            exactMatchedButBroken = true;
+                            break;
+                        }
                         const fallback = systemFallbackFontFamily('', embeddedFamily || cleanName);
                         return `'PDF_${cleanName}', ${fallback}`;
                     }
+                }
+                if (exactMatchedButBroken) {
+                    return systemFallbackFontFamily(name, family);
                 }
             }
 
@@ -4303,7 +4894,8 @@
                 for (const [fontKey, fontData] of entries) {
                     const cleanName = String(fontData?.clean_name || fontKey || '').trim();
                     const embeddedFamily = String(fontData?.family || fontKey || '').trim();
-                    if (!cleanName || !embeddedFamily || shouldBypassEmbeddedFont(cleanName, embeddedFamily)) continue;
+                    if (!cleanName || !embeddedFamily || shouldBypassEmbeddedFont(cleanName, embeddedFamily, fontData)) continue;
+                    if (brokenEmbeddedFontKeys.has(cleanName)) continue;
                     if (normalizeFontName(embeddedFamily).toLowerCase() === rawFamily.toLowerCase()) {
                         const fallback = systemFallbackFontFamily('', embeddedFamily);
                         return `'PDF_${cleanName}', ${fallback}`;
@@ -4637,6 +5229,42 @@
         return { dx: cur.x - orig.x, dy: (orig.y + orig.h) - (cur.y + cur.h) };
     }
 
+    // For a promoted-from-extraction annotation whose visible text still
+    // matches the source PDF, return the original source-block placement
+    // (top-left + width/height in source PDF y-down coords). Used by the
+    // canvas erase rect and the rich-html DOM layer to override a bloated
+    // pdfHeight that would otherwise push the rendered text up by one or
+    // more line-heights and overlap the annotation above. We never mutate
+    // the stored annotation; this is render-only correction.
+    function correctedSourceBlockBox(ann, box) {
+        if (!ann || !box) return null;
+        const isPromoted = ann.promotedFromExtraction === true
+            || (Array.isArray(ann.sourceSpans) && ann.sourceSpans.length > 0)
+            || (Array.isArray(ann.sourceLineBBoxes) && ann.sourceLineBBoxes.length > 0);
+        if (!isPromoted) return null;
+        const sBT = Number(ann.sourceBlockTop);
+        const sBL = Number(ann.sourceBlockLeft);
+        const sBW = Number(ann.sourceBlockWidth);
+        const sBH = Number(ann.sourceBlockHeight);
+        if (![sBT, sBL, sBW, sBH].every(Number.isFinite) || sBW <= 0 || sBH <= 0) return null;
+        // Only apply when the visible text matches the original extraction.
+        const txt = String(ann.text ?? '');
+        const orig = String(ann.originalText ?? '');
+        if (!orig || txt !== orig) return null;
+        // Only apply when the annotation hasn't been moved away from its
+        // recorded original position (allow ~5pt slop because some loaders
+        // re-snap x to the dominant span x).
+        const origBox = ann._originalBox;
+        if (origBox) {
+            if (Math.abs(box.y - origBox.y) > 0.5) return null;
+        }
+        // Only kick in when the stored pdfHeight is bloated past the natural
+        // source block height (the bug case). A box that exactly matches the
+        // source block needs no correction.
+        if (!(box.h > sBH + 1)) return null;
+        return { left: sBL, top: sBT, width: sBW, height: sBH };
+    }
+
     function annotationDimensionsChanged(ann) {
         const cur = resolveAnnBox(ann);
         if (!cur) return false;
@@ -4653,18 +5281,85 @@
         return Math.abs(cur.w - orig.w) > 0.25 || Math.abs(cur.h - orig.h) > 0.25;
     }
 
+    // Defense against `pdfHeight` bloat for promoted-from-extraction
+    // annotations. The bug: somewhere upstream (auto-grow on a stale
+    // lineHeight, a buggy resize math path, etc.) writes a `pdfHeight`
+    // larger than `sourceBlockHeight` even though the visible text is
+    // unchanged from the source. Because rendering anchors at the box
+    // TOP (`pdfY + pdfHeight`), the inflation pushes the visual top
+    // upward and overlaps the annotation above. We don't try to find
+    // the offending caller — instead we refuse to write a bloated
+    // height in the first place (and heal already-saved bloat at
+    // hydration time, see normalizePromotedAnnotationGeometry).
+    function shouldClampToSourceHeight(ann, requestedH) {
+        if (!ann || !Number.isFinite(requestedH)) return null;
+        const isPromoted = ann.promotedFromExtraction === true
+            || (Array.isArray(ann.sourceSpans) && ann.sourceSpans.length > 0)
+            || (Array.isArray(ann.sourceLineBBoxes) && ann.sourceLineBBoxes.length > 0);
+        if (!isPromoted) return null;
+        const sH = Number(ann.sourceBlockHeight);
+        if (!Number.isFinite(sH) || sH <= 0) return null;
+        const txt = String(ann.text ?? '');
+        const orig = String(ann.originalText ?? '');
+        if (!orig || txt !== orig) return null;
+        if (requestedH <= sH + 1) return null;
+        return sH;
+    }
+
+    // Heal an already-saved annotation whose `pdfHeight` is larger than
+    // its `sourceBlockHeight` even though the visible text still equals
+    // the original. Run during hydration so reload immediately corrects
+    // bad data persisted by older buggy code paths.
+    function normalizePromotedAnnotationGeometry(ann) {
+        if (!ann) return;
+        const clamped = shouldClampToSourceHeight(ann, Number(ann.pdfHeight));
+        if (clamped == null) return;
+        // Heal-only: do NOT bump pdfY here. The original bloat path inflated
+        // h while leaving pdfY anchored at the source-block bottom, so just
+        // resetting h restores the source-block top. (The setAnnotationBox
+        // y-bump only applies to live writes where the caller computed pdfY
+        // assuming the requested h.)
+        ann.pdfHeight = clamped;
+        if (ann.annotation_data && typeof ann.annotation_data === 'object') {
+            ann.annotation_data.pdfHeight = clamped;
+        }
+        // Also reset lineHeight back to the source per-line height so the
+        // DOM rich-html layer doesn't paint taller than the corrected box.
+        const sH = Number(ann.sourceBlockHeight);
+        const lineCount = Math.max(1, Array.isArray(ann.sourceTextLines) ? ann.sourceTextLines.length : 1);
+        if (Number.isFinite(sH) && sH > 0) {
+            const naturalLineHeight = sH / lineCount;
+            if (Number.isFinite(naturalLineHeight) && naturalLineHeight > 0) {
+                ann.lineHeight = naturalLineHeight;
+                if (ann.annotation_data && typeof ann.annotation_data === 'object') {
+                    ann.annotation_data.lineHeight = naturalLineHeight;
+                }
+            }
+        }
+    }
+
     function setAnnotationBox(ann, b) {
         const oldW = Number(ann.pdfWidth);
         const oldH = Number(ann.pdfHeight);
-        ann.pdfX = b.x; ann.pdfY = b.y; ann.pdfWidth = b.w; ann.pdfHeight = b.h;
+        // Refuse to bloat pdfHeight past sourceBlockHeight when the visible text
+        // still matches the source — see shouldClampToSourceHeight above.
+        // The caller computed `b.y` assuming the requested `b.h`. Rendering
+        // anchors at the visual TOP = `pdfY + pdfHeight` (PDF y-up). If we
+        // silently clamp h smaller without adjusting y, the visible top drops
+        // by (b.h - clampedH) pts — text "slides down". Bump y up by the same
+        // delta so the visual top stays where the caller intended.
+        const clampedH = shouldClampToSourceHeight(ann, Number(b.h));
+        const finalH = clampedH != null ? clampedH : b.h;
+        const finalY = clampedH != null ? (Number(b.y) + (Number(b.h) - clampedH)) : b.y;
+        ann.pdfX = b.x; ann.pdfY = finalY; ann.pdfWidth = b.w; ann.pdfHeight = finalH;
         if (ann.annotation_data && typeof ann.annotation_data === 'object') {
-            ann.annotation_data.pdfX = b.x; ann.annotation_data.pdfY = b.y;
-            ann.annotation_data.pdfWidth = b.w; ann.annotation_data.pdfHeight = b.h;
+            ann.annotation_data.pdfX = b.x; ann.annotation_data.pdfY = finalY;
+            ann.annotation_data.pdfWidth = b.w; ann.annotation_data.pdfHeight = finalH;
         }
         // One-way conversion to user-authored on resize (dimension change).
         // Pure moves (same w/h) don't trigger conversion — only an actual resize does.
         if (Number.isFinite(oldW) && Number.isFinite(oldH)
-            && (Math.abs(oldW - b.w) > 0.25 || Math.abs(oldH - b.h) > 0.25)) {
+            && (Math.abs(oldW - b.w) > 0.25 || Math.abs(oldH - finalH) > 0.25)) {
             markUserAuthored(ann);
         }
     }
@@ -5772,9 +6467,67 @@
     // ── Drawing (ported from pdfRecon2) ───────────────────────────────────────
     function drawOriginalSource(ann, ctx, scale) {
         const spans = Array.isArray(ann?.sourceSpans) ? ann.sourceSpans : [];
+        // DEBUG (remove): track when sourceSpans is empty for our test uids
+        try {
+            const k = ann?._uid;
+            if ((k === 'promoted_1_6_14' || k === 'promoted_1_0_0') && !spans.length) {
+                window.__galleyDbgEmpty = window.__galleyDbgEmpty || {};
+                window.__galleyDbgEmpty[k] = (window.__galleyDbgEmpty[k] || 0) + 1;
+            }
+        } catch (_e) {}
         if (!spans.length) return false;
         const offset = annotationSourceOffset(ann);
-        spans.forEach((span) => {
+        // DEBUG MARKER: paint a magenta rect for promoted_1_6_14 calls so we can
+        // verify the canvas paint is actually reaching the screen.
+        try {
+            if (ann?._uid === 'promoted_1_6_14' && ann._galleyEdited) {
+                ctx.save();
+                ctx.fillStyle = 'rgba(255, 0, 255, 0.5)';
+                ctx.fillRect(50, 50, 30, 30);
+                ctx.restore();
+            }
+        } catch (_e) {}
+        // DEBUG probe (remove before commit): track every drawOriginalSource call
+        // for select uids so we can see what styles were actually drawn to canvas.
+        try {
+            window.__galleyDbg3 = window.__galleyDbg3 || {};
+            const k = ann?._uid;
+            if (k === 'promoted_1_6_14' || k === 'promoted_1_0_0') {
+                window.__galleyDbg3Counts = window.__galleyDbg3Counts || {};
+                if (!window.__galleyDbg3Counts[k]) window.__galleyDbg3Counts[k] = { total: 0, post: 0, withAppends: 0 };
+                window.__galleyDbg3Counts[k].total++;
+                if (ann._galleyEdited) window.__galleyDbg3Counts[k].post++;
+                if (ann._galleyAppends && Object.keys(ann._galleyAppends).length) window.__galleyDbg3Counts[k].withAppends++;
+                window.__galleyDbg3LastState = window.__galleyDbg3LastState || {};
+                window.__galleyDbg3LastState[k] = {
+                    galleyEdited: !!ann._galleyEdited,
+                    galleyAppends: ann._galleyAppends ? JSON.parse(JSON.stringify(ann._galleyAppends)) : null,
+                    spanCount: spans.length,
+                };
+                window.__galleyDbg3[k] = window.__galleyDbg3[k] || [];
+                // Capture ALL post-edit calls (when ann has been touched)
+                const isPost = ann._galleyEdited || (ann._galleyAppends && Object.keys(ann._galleyAppends).length);
+                if (isPost && window.__galleyDbg3[k].filter(e => e.post).length < 50) {
+                    window.__galleyDbg3[k].push({
+                        post: true,
+                        callIdx: window.__galleyDbg3[k].length,
+                        scale,
+                        spanCount: spans.length,
+                        styleDirty: !!ann._styleDirty,
+                        galleyEdited: !!ann._galleyEdited,
+                        galleyAppends: ann._galleyAppends ? JSON.parse(JSON.stringify(ann._galleyAppends)) : null,
+                        annFontFamily: ann.fontFamily || null,
+                        annFontWeight: ann.fontWeight || null,
+                        annFontStyle: ann.fontStyle || null,
+                        richHtml: ann._richHtml ? '['+ann._richHtml.length+'chars]' : null,
+                        userAuthored: !!ann._userAuthored,
+                        text: String(ann.text || '').slice(0, 80),
+                        origText: String(ann.originalText || '').slice(0, 80),
+                    });
+                }
+            }
+        } catch (_e) {}
+        spans.forEach((span, spanIdx) => {
             const origin = Array.isArray(span?.origin) ? span.origin : null;
             if (!origin || origin.length < 2) return;
             const drawText = String(span?.render_text ?? span?.text ?? '');
@@ -5801,6 +6554,24 @@
             ctx.textBaseline = 'alphabetic';
             const drawX = (Number(origin[0]) + offset.dx) * scale;
             const drawY = (Number(origin[1]) + offset.dy) * scale;
+            try {
+                const k = ann?._uid;
+                if (k === 'promoted_1_6_14' || k === 'promoted_1_0_0') {
+                    window.__galleyDbgPaint = window.__galleyDbgPaint || {};
+                    window.__galleyDbgPaint[k] = window.__galleyDbgPaint[k] || [];
+                    if (window.__galleyDbgPaint[k].length < 30) {
+                        window.__galleyDbgPaint[k].push({
+                            spanIdx,
+                            drawText: drawText.slice(0, 30),
+                            drawX, drawY,
+                            font: ctx.font,
+                            fillStyle: ctx.fillStyle,
+                            galleyEdited: !!ann._galleyEdited,
+                            canvasW: ctx.canvas.width, canvasH: ctx.canvas.height,
+                        });
+                    }
+                }
+            } catch (_e) {}
             const spanRotation = Number(span?.rotation ?? 0);
             const isVertical = Math.abs(Math.abs(spanRotation) - 90) < 1;
             const targetWidthPx = (() => {
@@ -5835,6 +6606,38 @@
             }
             ctx.fillText(drawText, drawX, drawY);
         });
+        // Galley appends — user-typed characters in galley mode are persisted
+        // here so they remain visible after blur (when the active editor goes
+        // display:none). Paint each line's appended string at the right edge
+        // of the last source span on that line, in the line's composite style.
+        const galleyAppends = (ann && ann._galleyAppends && typeof ann._galleyAppends === 'object') ? ann._galleyAppends : null;
+        if (galleyAppends) {
+            const lines = renderableSourceLines(ann);
+            Object.keys(galleyAppends).forEach((key) => {
+                const lineIdx = Number(key);
+                const appended = String(galleyAppends[key] || '');
+                if (!appended) return;
+                const line = lines[lineIdx];
+                if (!line || !Array.isArray(line.spans) || line.spans.length === 0) return;
+                const lastSpan = line.spans[line.spans.length - 1];
+                const lastBBox = Array.isArray(lastSpan?.bbox) ? lastSpan.bbox : null;
+                const lastOrigin = Array.isArray(lastSpan?.origin) ? lastSpan.origin : null;
+                if (!lastBBox || !lastOrigin) return;
+                const style = compositeLineStyle(ann, lineIdx);
+                const fontSizePx = style.fontSizePt * fontDisplayScale(scale);
+                ctx.font = ctxFont({
+                    fontFamily: style.fontFamily,
+                    fontSizePx,
+                    fontWeight: style.fontWeight,
+                    fontStyle: style.fontStyle,
+                });
+                ctx.fillStyle = style.fillStyle;
+                ctx.textBaseline = 'alphabetic';
+                const drawX = (Number(lastBBox[2]) + offset.dx) * scale;
+                const drawY = (Number(lastOrigin[1]) + offset.dy) * scale;
+                ctx.fillText(appended, drawX, drawY);
+            });
+        }
         return true;
     }
 
@@ -5943,8 +6746,7 @@
         // This covers both: (a) mid-session edits and (b) saved edits loaded on reload.
         const editedInSession = editedTexts[ann._uid] !== undefined
             && editedTexts[ann._uid] !== String(ann.text ?? '');
-        const savedDiffersFromPdf = annTextIsEdited(ann);
-        const dimensionsChanged = annotationDimensionsChanged(ann);
+        const savedDiffersFromPdf = annTextIsEdited(ann);        const dimensionsChanged = annotationDimensionsChanged(ann);
         // styleChanged: user changed a visual property (color, background) via format bar.
         // Forces the "edited" drawing path so the canvas reflects the new style even when
         // the annotation text hasn't been changed.
@@ -5973,7 +6775,61 @@
         // visible content still matches the PDF source. Reflow only kicks in
         // when the text or geometry actually diverges from the extraction.
         const userAuthored = isUserAuthoredAnnotation(ann);
-        if (!editedInSession && !savedDiffersFromPdf && !dimensionsChanged && !styleChanged && !ann._richHtml) {
+        // DEBUG probe (remove before commit): record guard inputs for select uids.
+        try {
+            const k = ann?._uid;
+            if (k === 'promoted_1_6_14' || k === 'promoted_1_0_0') {
+                window.__galleyDbg4Counts = window.__galleyDbg4Counts || {};
+                if (!window.__galleyDbg4Counts[k]) window.__galleyDbg4Counts[k] = { total: 0, preserveTrue: 0, preserveFalse: 0, falseReasons: {} };
+                window.__galleyDbg4Counts[k].total++;
+                const _pp = ((!editedInSession || ann._galleyEdited) && !savedDiffersFromPdf && !dimensionsChanged && !styleChanged && !ann._richHtml);
+                if (_pp) window.__galleyDbg4Counts[k].preserveTrue++;
+                else {
+                    window.__galleyDbg4Counts[k].preserveFalse++;
+                    const r = (editedInSession && !ann._galleyEdited ? 'editedNoGalley,' : '')
+                        + (savedDiffersFromPdf ? 'savedDiffers,' : '')
+                        + (dimensionsChanged ? 'dimChanged,' : '')
+                        + (styleChanged ? 'styleChanged,' : '')
+                        + (ann._richHtml ? 'richHtml,' : '');
+                    window.__galleyDbg4Counts[k].falseReasons[r] = (window.__galleyDbg4Counts[k].falseReasons[r] || 0) + 1;
+                }
+                window.__galleyDbg4 = window.__galleyDbg4 || {};
+                window.__galleyDbg4[k] = window.__galleyDbg4[k] || [];
+                window.__galleyDbg4Last = window.__galleyDbg4Last || {};
+                window.__galleyDbg4Last[k] = {
+                        editedInSession,
+                        savedDiffersFromPdf,
+                        dimensionsChanged,
+                        styleChanged,
+                        hasRichHtml: !!ann._richHtml,
+                        galleyEdited: !!ann._galleyEdited,
+                        userAuthored,
+                        rotation: Number(ann.rotation) || 0,
+                        text: String(ann.text || '').slice(0, 60),
+                        editedTextValue: String(editedTexts[ann._uid] ?? '__undef__').slice(0, 60),
+                        origText: String(ann.originalText || '').slice(0, 60),
+                        preservePass: ((!editedInSession || ann._galleyEdited) && !savedDiffersFromPdf && !dimensionsChanged && !styleChanged && !ann._richHtml),
+                        callCount: (window.__galleyDbg4Last[k]?.callCount || 0) + 1,
+                };
+                if (window.__galleyDbg4[k].length < 50) {
+                    window.__galleyDbg4[k].push({
+                        editedInSession,
+                        savedDiffersFromPdf,
+                        dimensionsChanged,
+                        styleChanged,
+                        hasRichHtml: !!ann._richHtml,
+                        galleyEdited: !!ann._galleyEdited,
+                        userAuthored,
+                        rotation: Number(ann.rotation) || 0,
+                        text: String(ann.text || '').slice(0, 60),
+                        editedTextValue: String(editedTexts[ann._uid] ?? '__undef__').slice(0, 60),
+                        origText: String(ann.originalText || '').slice(0, 60),
+                        preservePass: ((!editedInSession || ann._galleyEdited) && !savedDiffersFromPdf && !dimensionsChanged && !styleChanged && !ann._richHtml),
+                    });
+                }
+            }
+        } catch (_e) {}
+        if ((!editedInSession || ann._galleyEdited) && !savedDiffersFromPdf && !dimensionsChanged && !styleChanged && !ann._richHtml) {
             // Skip preserve path when user has applied a free rotation — the rotation
             // must be applied around the box center via canvas transform below.
             if (Number(ann.rotation) || 0) {
@@ -5997,8 +6853,12 @@
         // (covers both original source area and current/moved position)
         const box = resolveAnnBox(ann);
         const canvasHeight = canvasLogicalHeight(ctx.canvas);
-        // Erase original source area (in case the annotation was also moved)
-        if (hasSourceContent && positionChanged) {
+        // Erase original source area whenever one is recorded. Previously
+        // gated on `positionChanged`, which meant a pure resize (no move)
+        // left the original PDF span text painted outside the now-smaller
+        // box — visible as a "ghost" of the source text on the right when
+        // the user shrinks the bounding box.
+        if (hasSourceContent) {
             const sL = Number(ann.sourceBlockLeft), sT = Number(ann.sourceBlockTop);
             const sW = Number(ann.sourceBlockWidth), sH = Number(ann.sourceBlockHeight);
             if (sW > 0 && sH > 0) {
@@ -6008,10 +6868,13 @@
                 ctx.restore();
             }
         }
-        const eraseLeft   = box.x * scale;
-        const eraseTop    = canvasHeight - (box.y + box.h) * scale;
-        const eraseW      = box.w * scale;
-        const eraseH      = box.h * scale;
+        const correctedSrc = correctedSourceBlockBox(ann, box);
+        const eraseLeft   = correctedSrc ? (correctedSrc.left * scale) : (box.x * scale);
+        const eraseTop    = correctedSrc
+            ? (correctedSrc.top * scale)
+            : (canvasHeight - (box.y + box.h) * scale);
+        const eraseW      = correctedSrc ? (correctedSrc.width * scale) : (box.w * scale);
+        const eraseH      = correctedSrc ? (correctedSrc.height * scale) : (box.h * scale);
         if (hasSourceContent) {
             ctx.save();
             ctx.fillStyle = '#ffffff';
@@ -6121,6 +6984,7 @@
         if (!(aeEl instanceof HTMLElement) || !ann) return false;
         const mode = aeEl.dataset ? aeEl.dataset.renderMode : '';
         if (mode === 'canvas') return true;
+        if (mode === 'galley') return true;
         const editingSourceMode = editorIsEditingAnnotation(aeEl, ann)
             && (mode === 'source' || mode === 'source-flow');
         if (!editingSourceMode) return false;
@@ -6129,6 +6993,91 @@
         // the annotation is resized, styled, rich-html-backed, or otherwise
         // DOM-owned, hiding the editor would leave no visible text.
         return !shouldRenderTextInRichHtmlLayer(ann);
+    }
+
+    // True when this annotation was promoted from the PDF extraction layer
+    // (so its saved text / _richHtml encodes one block per source line).
+    function annIsPromotedFromExtraction(ann) {
+        if (!ann) return false;
+        return ann.promotedFromExtraction === true
+            || (Array.isArray(ann.sourceSpans) && ann.sourceSpans.length > 0)
+            || (Array.isArray(ann.sourceLineBBoxes) && ann.sourceLineBBoxes.length > 0);
+    }
+
+    // Plain-text reflow helper: a promoted-extraction annotation's `text`
+    // / `editedTexts` value contains a literal `\n` at every PDF source-line
+    // boundary. With CSS `white-space: pre-wrap` those `\n` render as hard
+    // breaks, so when the user shrinks the bounding box the text never
+    // reflows to the new width.
+    //
+    // Collapse runs of single `\n` (soft, source-imposed breaks) to a single
+    // space so the browser can wrap freely. Preserve `\n\n+` (paragraph
+    // breaks the user typed via Enter).
+    function normalizeTextForDomReflow(text) {
+        const s = String(text ?? '');
+        if (!s || s.indexOf('\n') === -1) return s;
+        return s
+            .replace(/\r\n?/g, '\n')
+            .replace(/\n{2,}/g, '\x00')      // protect paragraph breaks
+            .replace(/\n+/g, ' ')             // soft breaks → space
+            .replace(/\x00/g, '\n\n')         // restore paragraph breaks
+            .replace(/[ \t]{2,}/g, ' ');
+    }
+
+    // Rich-HTML reflow helper. The editor saves `_richHtml` as one
+    // `<div data-line-index="N">` block per PDF source line. Each div is
+    // `display:block`, so the breaks between them are HARD — CSS word-wrap
+    // can never reflow text across them when the box is resized.
+    //
+    // Merge all top-level `data-line-index` blocks into the first block,
+    // joining their inner HTML with a literal space. Inline `<br>` /
+    // `<br><br>` runs inside the merged content are preserved verbatim:
+    // those represent explicit hard breaks the user typed via Enter
+    // (single `<br>` = soft, `<br><br>+` = paragraph). Stray `\n` inside
+    // text nodes is also collapsed (soft → space, double+ → preserved).
+    function normalizeRichHtmlForReflow(html) {
+        const src = String(html ?? '');
+        if (!src) return src;
+        const tmp = document.createElement('div');
+        tmp.innerHTML = src;
+
+        const collapseNewlines = (root) => {
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+            const textNodes = [];
+            let n;
+            while ((n = walker.nextNode())) textNodes.push(n);
+            textNodes.forEach((tn) => {
+                const v = tn.nodeValue;
+                if (!v || v.indexOf('\n') === -1) return;
+                tn.nodeValue = v
+                    .replace(/\r\n?/g, '\n')
+                    .replace(/\n{2,}/g, '\x00')
+                    .replace(/\n+/g, ' ')
+                    .replace(/\x00/g, '\n\n')
+                    .replace(/[ \t]{2,}/g, ' ');
+            });
+        };
+
+        const blocks = Array.from(tmp.children).filter(
+            (el) => el.tagName === 'DIV' && el.hasAttribute('data-line-index')
+        );
+
+        if (blocks.length >= 2) {
+            const first = blocks[0];
+            const parts = blocks
+                .map((b) => b.innerHTML.trim())
+                .filter((s) => s.length > 0);
+            first.innerHTML = parts.join(' ');
+            for (let i = 1; i < blocks.length; i++) {
+                if (blocks[i].parentNode) blocks[i].parentNode.removeChild(blocks[i]);
+            }
+            collapseNewlines(first);
+        } else if (blocks.length === 1) {
+            collapseNewlines(blocks[0]);
+        } else {
+            collapseNewlines(tmp);
+        }
+        return tmp.innerHTML;
     }
 
     // Builds the rich-html layer for a page: renders a positioned <div> mirroring the
@@ -6155,12 +7104,31 @@
             const box = resolveAnnBox(ann);
             if (!box) return;
             const rect = annRectPx(ann, scale, canvasHeight);
-            const left   = rect ? rect.left : (box.x * scale);
-            const top    = rect ? rect.top  : (canvasHeight - (box.y + box.h) * scale);
-            const width  = rect ? Math.max(2, rect.width)  : Math.max(2, box.w * scale);
-            const height = rect ? Math.max(2, rect.height) : Math.max(2, box.h * scale);
+            const correctedSrcDom = correctedSourceBlockBox(ann, box);
+            const left   = correctedSrcDom
+                ? (correctedSrcDom.left * scale)
+                : (rect ? rect.left : (box.x * scale));
+            const top    = correctedSrcDom
+                ? (correctedSrcDom.top * scale)
+                : (rect ? rect.top  : (canvasHeight - (box.y + box.h) * scale));
+            const width  = correctedSrcDom
+                ? Math.max(2, correctedSrcDom.width * scale)
+                : (rect ? Math.max(2, rect.width)  : Math.max(2, box.w * scale));
+            const height = correctedSrcDom
+                ? Math.max(2, correctedSrcDom.height * scale)
+                : (rect ? Math.max(2, rect.height) : Math.max(2, box.h * scale));
             const style0 = editableLineStyle(ann, 0);
-            const lineHeightPx = blockLineHeightPx(ann, 0, scale, style0);
+            const lineHeightPxRaw = blockLineHeightPx(ann, 0, scale, style0);
+            // When source-block correction is active, force the line-height to a
+            // value that lets the original line count fit the original block
+            // height. Otherwise the bloated ann.lineHeight (e.g. 9.44 vs the
+            // source's 8.17) makes the wrapped text taller than the corrected
+            // box and pushes the bottom line beyond the source area.
+            const lineHeightPx = (() => {
+                if (!correctedSrcDom) return lineHeightPxRaw;
+                const lineCount = Math.max(1, Array.isArray(ann?.sourceTextLines) ? ann.sourceTextLines.length : 1);
+                return Math.max(1, (correctedSrcDom.height * scale) / lineCount);
+            })();
             const bgCss = resolveDisplayBgColor(ann);
             const vAlign = (() => {
                 const v = String(ann.verticalAlign || 'top').toLowerCase();
@@ -6171,6 +7139,7 @@
             const useFlexLayout = vAlign !== 'flex-start';
             const item = document.createElement('div');
             item.className = 'rich-html-item';
+            if (ann._uid) item.dataset.uid = String(ann._uid);
             item.style.cssText = [
                 `display:${useFlexLayout ? 'flex' : 'block'}`,
                 ...(useFlexLayout ? ['flex-direction:column', `justify-content:${vAlign}`] : []),
@@ -6194,9 +7163,40 @@
                 item.style.transform = `rotate(${userRotItem}deg)`;
             }
             if (hasRichHtml) {
-                item.innerHTML = normalizeRichHtmlForDisplay(ann._richHtml, ann);
+                // For promoted extraction annotations whose box was resized, the
+                // saved _richHtml has hard <br> tags at original PDF line-break
+                // positions.  Collapse single <br> runs to a space so CSS
+                // word-wrap can reflow to the new box width; leave 2+
+                // consecutive <br>s alone (those represent explicit paragraph
+                // breaks).  Apply this whenever the annotation is
+                // promoted-from-extraction and the dimensions changed — the
+                // single-vs-double <br> rule itself preserves user-typed hard
+                // paragraph breaks, so we don't need to gate on whether other
+                // text was edited.
+                const _richIsPromoted = (Array.isArray(ann.sourceSpans) && ann.sourceSpans.length > 0)
+                    || (Array.isArray(ann.sourceLineBBoxes) && ann.sourceLineBBoxes.length > 0)
+                    || ann.promotedFromExtraction === true;
+                const _richNeedsReflow = _richIsPromoted
+                    && (annotationDimensionsChanged(ann)
+                        || (typeof annTextIsEdited === 'function' && annTextIsEdited(ann)));
+                const richSource = _richNeedsReflow
+                    ? normalizeRichHtmlForReflow(ann._richHtml)
+                    : ann._richHtml;
+                item.innerHTML = normalizeRichHtmlForDisplay(richSource, ann);
             } else {
-                const currentText = String(editedTexts[ann._uid] ?? ann.text ?? '');
+                const rawText = String(editedTexts[ann._uid] ?? ann.text ?? '');
+                // For promoted extraction annotations whose box was resized but whose
+                // text is still unedited, the raw ann.text contains \n characters at
+                // original PDF line-break positions.  renderPlainEditorHTML converts
+                // every \n to a <br>, which hard-codes the original line positions and
+                // prevents CSS word-wrap from reflowing the paragraph to the new width.
+                // Normalize single \n → space (preserving \n\n+ paragraph breaks) so
+                // the browser can reflow freely.
+                const _isPromotedExtraction = (Array.isArray(ann.sourceSpans) && ann.sourceSpans.length > 0)
+                    || (Array.isArray(ann.sourceLineBBoxes) && ann.sourceLineBBoxes.length > 0)
+                    || ann.promotedFromExtraction === true;
+                const _needsReflow = _isPromotedExtraction && annotationDimensionsChanged(ann);
+                const currentText = _needsReflow ? normalizeTextForDomReflow(rawText) : rawText;
                 item.innerHTML = renderPlainEditorHTML(ann, currentText, scale);
             }
             layer.appendChild(item);
@@ -6209,7 +7209,7 @@
             // bounding outline (most visible after zoom / window-resize because
             // browser line-height rounding diverges from the synthetic measure).
             const renderedPx = item.scrollHeight;
-            if (renderedPx > height + 1) {
+            if (!correctedSrcDom && renderedPx > height + 1) {
                 const boxChanged = growAnnotationBoxToRenderedHeight(ann, item, pi);
                 const grownBox = resolveAnnBox(ann);
                 if (grownBox) {
@@ -6300,7 +7300,14 @@
                 const aeEl = document.getElementById('ae-' + (pi + 1));
                 const editing = editorIsEditingAnnotation(aeEl, ann);
                 const canvasOwns = activeEditorCanvasOwnsPaint(ann, aeEl);
+                const editorHasVisibleText = aeEl instanceof HTMLElement
+                    && aeEl.style.display !== 'none'
+                    && String(aeEl.innerHTML || '').trim() !== ''
+                    && !canvasOwns;
                 if (editing && !canvasOwns) {
+                    return;
+                }
+                if (editorHasVisibleText) {
                     return;
                 }
             }
@@ -6682,14 +7689,20 @@
             || (Array.isArray(ann.sourceLineBBoxes) && ann.sourceLineBBoxes.length > 0);
         if (!hasSourceContent) return false;
         if (!annotationTextMatchesSource(ann, editedText !== undefined ? editedText : ann.text)) return false;
-        // Single extracted PDF rows match the canvas best when edited through
-        // the absolute source layout. The flow layout re-baselines the same
-        // glyphs as ordinary HTML and can introduce a small visible jump for
-        // pristine canvas-owned text. Resized / DOM-owned text cannot use the
-        // absolute source layout because native selection would be offset from
-        // the current annotation box, so source-flow is allowed there even for
-        // one-line leader-dot rows.
-        if (!allowCurrentBoxSourceFlow && renderableSourceLines(ann).length <= 1) return false;
+        // The absolute per-line `source` layout pins each rendered line to its
+        // exact PDF baseline (sourceLineRectWithinAnnotation + scaleX), so a
+        // native browser selection rectangle drawn over the editor overlays
+        // the canvas-painted glyphs pixel-for-pixel. The flow layout instead
+        // stacks lines via CSS line-height starting at top:0 of the editor,
+        // which drifts from the per-line PDF baselines and made the
+        // selection rect (and the ghost text revealed when the user begins
+        // typing) visibly offset from the canvas paint on multi-line
+        // canvas-owned blocks. Resized / DOM-owned annotations cannot use
+        // the absolute source layout because their box no longer matches the
+        // extraction rect — only those keep source-flow as the active editor
+        // shape. For canvas-owned (pristine) annotations always defer to the
+        // absolute layout regardless of line count.
+        if (!allowCurrentBoxSourceFlow) return false;
         if (editedText !== undefined && editedText !== String(ann.text ?? '')) return false;
         if (annTextIsEdited(ann)) return false;
         // Note: `promotedDirty` is intentionally NOT a disqualifier. It can
@@ -6702,6 +7715,267 @@
         if (ann.userCreated || ann._styleDirty) return false;
         if (!allowCurrentBoxSourceFlow && ann.userAuthored) return false;
         return true;
+    }
+
+    // ── Galley editor (Iceni-style) ──────────────────────────────────────────
+    // Builds an absolute-positioned per-source-span DOM inside the active editor
+    // for extracted-text annotations. The page overlay canvas continues to paint
+    // every original PDF span via drawOriginalSource (preserve path), so the
+    // visible glyphs come from canvas-painted source. The contenteditable layer
+    // exists only to host the caret + selection at PDF-accurate per-span
+    // positions, and to receive newly-typed characters in a per-line "tail"
+    // span. Tail content is mirrored into ann._galleyAppends so drawOriginalSource
+    // can paint the appended text after blur (when ae becomes display:none).
+    function renderGalleyEditorHTML(ann, scale) {
+        const lines = renderableSourceLines(ann);
+        if (!lines.length) return '';
+        const box = resolveAnnBox(ann);
+        if (!box) return '';
+        const offset = annotationSourceOffset(ann);
+        const annTopPdf = box.y + box.h; // PDF (bottom-up) Y of annotation top edge
+        const appends = (ann._galleyAppends && typeof ann._galleyAppends === 'object') ? ann._galleyAppends : {};
+
+        const html = lines.map((line, lineIndex) => {
+            const lineBBox = Array.isArray(line.bbox) ? line.bbox : null;
+            const lineSpans = Array.isArray(line.spans) ? line.spans : [];
+            if (!lineBBox || lineSpans.length === 0) return '';
+
+            const lineLeftPts = Number(lineBBox[0]);
+            const lineRightPts = Number(lineBBox[2]);
+            const lineTopPts = Number(lineBBox[3]); // top edge in PDF coords
+            const lineLeftPx = (lineLeftPts + offset.dx - box.x) * scale;
+            const lineTopPx = (annTopPdf - (lineTopPts + offset.dy)) * scale;
+            const lineWidthPx = Math.max(2, (lineRightPts - lineLeftPts) * scale);
+            const lineStyle = compositeLineStyle(ann, lineIndex);
+            const lineHeightPx = blockLineHeightPx(ann, lineIndex, scale, lineStyle);
+            const lineFontPx = lineStyle.fontSizePt * fontDisplayScale(scale);
+
+            const spanHtml = lineSpans.map((span, spanIdx) => {
+                const drawText = String(span?.render_text ?? span?.text ?? '');
+                if (!drawText) return '';
+                const bbox = Array.isArray(span?.bbox) ? span.bbox : null;
+                if (!bbox || bbox.length < 4) return '';
+                const spanLeftPx = (Number(bbox[0]) - lineLeftPts) * scale;
+                const spanWidthPx = Math.max(0.5, (Number(bbox[2]) - Number(bbox[0])) * scale);
+
+                const fontFamily = fallbackFontFamily(
+                    span?.embedded_font_name || span?.font || lineStyle.fontFamily,
+                    span?.embedded_font_family || span?.fontFamily || ''
+                );
+                const spanFontPx = (Number(span?.font_size ?? span?.fontSize) || lineStyle.fontSizePt) * fontDisplayScale(scale);
+                const spanFontWeight = String(span?.font_weight || span?.fontWeight || (span?.bold ? '700' : '400') || '400');
+                const spanFontStyle = span?.fontStyle || (span?.italic ? 'italic' : 'normal');
+
+                const styleCss = [
+                    `left:${spanLeftPx.toFixed(2)}px`,
+                    `width:${spanWidthPx.toFixed(2)}px`,
+                    `height:${lineHeightPx.toFixed(2)}px`,
+                    `line-height:${lineHeightPx.toFixed(2)}px`,
+                    `font-family:${fontFamily}`,
+                    `font-size:${spanFontPx.toFixed(2)}px`,
+                    `font-weight:${spanFontWeight}`,
+                    `font-style:${spanFontStyle}`,
+                    'overflow:hidden',
+                ].join(';');
+
+                return `<span class="ae-galley-source-span" data-source-span="1" data-line-index="${lineIndex}" data-span-index="${spanIdx}" data-original-text="${escapeHtml(drawText)}" style="${styleCss}">${escapeHtml(drawText)}</span>`;
+            }).join('');
+
+            // Tail span: sits at the right edge of the last source span, where
+            // appended chars accumulate. Pre-populated from ann._galleyAppends
+            // when re-entering edit mode after a previous append.
+            const lastSpan = lineSpans[lineSpans.length - 1];
+            const tailLeftPx = (lastSpan && Array.isArray(lastSpan.bbox))
+                ? (Number(lastSpan.bbox[2]) - lineLeftPts) * scale
+                : lineWidthPx;
+            const appendedText = String(appends[lineIndex] || '');
+            const tailColor = lineStyle.fillStyle;
+            const tailStyleCss = [
+                `left:${tailLeftPx.toFixed(2)}px`,
+                `height:${lineHeightPx.toFixed(2)}px`,
+                `line-height:${lineHeightPx.toFixed(2)}px`,
+                `font-family:${lineStyle.fontFamily}`,
+                `font-size:${lineFontPx.toFixed(2)}px`,
+                `font-weight:${lineStyle.fontWeight}`,
+                `font-style:${lineStyle.fontStyle}`,
+                `color:${tailColor}`,
+                'min-width:2px',
+            ].join(';');
+            const tailNewAttr = appendedText ? ' data-galley-new="1"' : '';
+
+            const lineStyleCss = [
+                `left:${lineLeftPx.toFixed(2)}px`,
+                `top:${lineTopPx.toFixed(2)}px`,
+                `width:${lineWidthPx.toFixed(2)}px`,
+                `height:${lineHeightPx.toFixed(2)}px`,
+                `font-family:${lineStyle.fontFamily}`,
+                `font-size:${lineFontPx.toFixed(2)}px`,
+                `font-weight:${lineStyle.fontWeight}`,
+                `font-style:${lineStyle.fontStyle}`,
+                `color:${tailColor}`,
+            ].join(';');
+
+            return `<p class="ae-galley-line" data-line-index="${lineIndex}" style="${lineStyleCss}">${spanHtml}<span class="ae-galley-tail" data-galley-tail="1" data-line-index="${lineIndex}"${tailNewAttr} style="${tailStyleCss}">${escapeHtml(appendedText)}</span></p>`;
+        }).join('');
+
+        return html;
+    }
+
+    // Walk a galley editor's DOM in document order and concatenate the text
+    // that should logically be in editedTexts: source-span text + tail text per
+    // line, joined with '\n'.
+    function getGalleyEditorText(ae) {
+        if (!(ae instanceof HTMLElement)) return '';
+        const lines = ae.querySelectorAll('.ae-galley-line');
+        if (!lines.length) return '';
+        const lineTexts = [];
+        lines.forEach((line) => {
+            let txt = '';
+            line.querySelectorAll('.ae-galley-source-span, .ae-galley-tail').forEach((node) => {
+                txt += node.textContent || '';
+            });
+            lineTexts.push(txt);
+        });
+        return lineTexts.join('\n');
+    }
+
+    // Expected (pre-mutation) galley text: uses data-original-text for source
+    // spans and ann._galleyAppends for tail content. This is the baseline we
+    // diff against when the user mutates the contenteditable, so we don't
+    // mistake "no-text positional gaps between source spans" (e.g. leader dots)
+    // for newly-typed characters.
+    function expectedGalleyText(ann, ae) {
+        if (!(ae instanceof HTMLElement)) return '';
+        const lines = ae.querySelectorAll('.ae-galley-line');
+        if (!lines.length) return '';
+        const appends = (ann && ann._galleyAppends && typeof ann._galleyAppends === 'object') ? ann._galleyAppends : {};
+        const lineTexts = [];
+        lines.forEach((line) => {
+            const lineIdx = Number(line.dataset.lineIndex || 0);
+            let txt = '';
+            line.querySelectorAll('.ae-galley-source-span').forEach((node) => {
+                txt += node.dataset.originalText || '';
+            });
+            txt += String(appends[lineIdx] || '');
+            lineTexts.push(txt);
+        });
+        return lineTexts.join('\n');
+    }
+
+    // Compare prev → next strings. If next adds characters (anywhere) and
+    // doesn't remove any, return the added substring. Otherwise return ''.
+    function diffGalleyAdded(prev, next) {
+        const p = String(prev || '');
+        const n = String(next || '');
+        if (n.length <= p.length) return '';
+        let i = 0;
+        while (i < p.length && p.charCodeAt(i) === n.charCodeAt(i)) i++;
+        let j = 0;
+        const maxJ = p.length - i;
+        while (j < maxJ && p.charCodeAt(p.length - 1 - j) === n.charCodeAt(n.length - 1 - j)) j++;
+        return n.slice(i, n.length - j);
+    }
+
+    // After any input event in galley mode: detect added chars, restore any
+    // mutated source-span text to the original extraction value, and append
+    // the added chars into the LAST line's tail span (so they remain visible
+    // via the canvas-owns visibility override). Persist to ann._galleyAppends.
+    function reconcileGalleyInput(ae, ann, pi) {
+        if (!(ae instanceof HTMLElement) || !ann) return;
+        const tails = ae.querySelectorAll('.ae-galley-tail');
+        if (!tails.length) return;
+        const sourceSpans = ae.querySelectorAll('.ae-galley-source-span');
+
+        // The "previous" baseline is what the galley DOM held BEFORE the
+        // browser mutated it (source originals + ann._galleyAppends per line).
+        // Diffing against ann.text would falsely flag positional gaps between
+        // source spans (e.g. leader dots) as newly-typed characters.
+        const prevText = expectedGalleyText(ann, ae);
+        const observed = getGalleyEditorText(ae);
+        const added = diffGalleyAdded(prevText, observed);
+
+        // DEBUG probe (removed before final commit): capture first reconcile
+        // for select uids so we can inspect prev vs observed vs added.
+        try {
+            window.__galleyDbg2 = window.__galleyDbg2 || {};
+            const k = ann._uid;
+            if (k && !(k in window.__galleyDbg2)) {
+                window.__galleyDbg2[k] = {
+                    prev: prevText,
+                    observed,
+                    added,
+                    appendsBefore: JSON.parse(JSON.stringify(ann._galleyAppends || {})),
+                    sourceSpanCount: sourceSpans.length,
+                    tailCount: tails.length,
+                    sourceSpansData: (Array.isArray(ann.sourceSpans) ? ann.sourceSpans : []).map(s => ({
+                        text: s.render_text || s.text,
+                        font: s.embedded_font_name || s.font,
+                        weight: s.font_weight || s.fontWeight || (s.bold ? '700' : ''),
+                        style: s.fontStyle || (s.italic ? 'italic' : ''),
+                        bold: !!s.bold,
+                        italic: !!s.italic,
+                    })),
+                };
+            }
+        } catch (_e) {}
+
+        // Restore any source span whose textContent diverged from its data-original-text
+        // (caret was inside a source span when the browser inserted text).
+        let restoredAny = false;
+        sourceSpans.forEach((sp) => {
+            const orig = sp.dataset.originalText || '';
+            if (sp.textContent !== orig) {
+                sp.textContent = orig;
+                restoredAny = true;
+            }
+        });
+
+        const lastTail = tails[tails.length - 1];
+        const lineIdx = Number(lastTail.dataset.lineIndex || 0);
+        if (added) {
+            lastTail.dataset.galleyNew = '1';
+            lastTail.textContent = (lastTail.textContent || '') + added;
+            ann._galleyAppends = ann._galleyAppends || {};
+            ann._galleyAppends[lineIdx] = (ann._galleyAppends[lineIdx] || '') + added;
+            ann._galleyEdited = true;
+
+            // Re-place caret at end of the tail (the source-span restore above
+            // would otherwise leave the caret in a stale node).
+            try {
+                const sel = window.getSelection();
+                if (sel) {
+                    sel.removeAllRanges();
+                    const range = document.createRange();
+                    if (lastTail.firstChild && lastTail.firstChild.nodeType === Node.TEXT_NODE) {
+                        range.setStart(lastTail.firstChild, lastTail.firstChild.length);
+                    } else {
+                        range.selectNodeContents(lastTail);
+                        range.collapse(false);
+                    }
+                    range.collapse(true);
+                    sel.addRange(range);
+                }
+            } catch (_e) { /* selection placement best-effort */ }
+        } else if (restoredAny) {
+            // Caret may have been inside a restored source span; place it at end of last tail.
+            try {
+                const sel = window.getSelection();
+                if (sel) {
+                    sel.removeAllRanges();
+                    const range = document.createRange();
+                    range.selectNodeContents(lastTail);
+                    range.collapse(false);
+                    sel.addRange(range);
+                }
+            } catch (_e) { /* ignore */ }
+        }
+
+        // Update editedTexts from the now-canonical galley DOM. Use
+        // expectedGalleyText so the value uses source originals (consistent
+        // even if a browser quirk left a source span temporarily mutated).
+        if (typeof editedTexts !== 'undefined') {
+            editedTexts[ann._uid] = expectedGalleyText(ann, ae);
+        }
     }
 
     // Build innerHTML that mirrors the extracted source lines as closely as possible:
@@ -6830,6 +8104,99 @@
         }
         const totalHeightPx = perLineHeightPx.reduce((a, b) => a + b, 0);
         return Math.max(1, totalHeightPx / Math.max(scale, 0.0001));
+    }
+
+    /**
+     * Collapse single \n (PDF-extraction source line-break positions) into spaces
+     * so CSS word-wrap can reflow the text to a resized box width.  Double \n\n+
+     * sequences (explicit paragraph breaks, e.g. from Enter key) are preserved.
+     * Only call this when the annotation was promoted from extraction, the text
+     * is unedited, and the bounding box dimensions have changed (resize).
+     */
+    function normalizeTextForDomReflow(text) {
+        return String(text ?? '')
+            .replace(/\r\n?/g, '\n')
+            // Protect double-newlines (explicit paragraph breaks)
+            .replace(/\n{2,}/g, '\x00')
+            // Collapse single \n (extraction line-break) → space
+            .replace(/\n/g, ' ')
+            // Restore double-newlines
+            .replace(/\x00/g, '\n\n')
+            // Collapse runs of spaces that straddled line-breaks
+            .replace(/[ \t]{2,}/g, ' ')
+            .trim();
+    }
+
+    /**
+     * HTML counterpart of normalizeTextForDomReflow for `_richHtml` content.
+     *
+     * The editor saves `_richHtml` as one `<div data-line-index="N">` block
+     * per PDF source line.  Each div is `display:block` so the line breaks
+     * between them are HARD — CSS word-wrap can never reflow text across
+     * them.  When the user resizes the bounding box, those source-line
+     * positions stay frozen.
+     *
+     * To enable reflow we merge all `<div data-line-index>` blocks at the
+     * top level into a single block, joining their content with a space (so
+     * adjacent words don't fuse).  Inline `<br>` / `<br><br>` runs inside
+     * the merged content are preserved verbatim — those represent explicit
+     * hard breaks the user typed via Enter (single `<br>` = soft, `<br><br>`+
+     * = paragraph), and the editor's wrap logic + Enter handling already
+     * produce these inside an existing block rather than spawning new
+     * data-line-index divs.
+     *
+     * Also collapses literal `\n` characters inside text nodes (since
+     * `white-space:pre-wrap` would render them as hard breaks).
+     */
+    function normalizeRichHtmlForReflow(html) {
+        const src = String(html ?? '');
+        if (!src) return src;
+        const tmp = document.createElement('div');
+        tmp.innerHTML = src;
+
+        // Collapse stray \n in every text node (single \n → space, \n\n+ → preserved).
+        const collapseNewlines = (root) => {
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+            const textNodes = [];
+            let n;
+            while ((n = walker.nextNode())) textNodes.push(n);
+            textNodes.forEach((tn) => {
+                const v = tn.nodeValue;
+                if (!v || v.indexOf('\n') === -1) return;
+                tn.nodeValue = v
+                    .replace(/\r\n?/g, '\n')
+                    .replace(/\n{2,}/g, '\x00')
+                    .replace(/\n/g, ' ')
+                    .replace(/\x00/g, '\n\n')
+                    .replace(/[ \t]{2,}/g, ' ');
+            });
+        };
+
+        // Find top-level data-line-index blocks (children of tmp).
+        const blocks = Array.from(tmp.children).filter(
+            (el) => el.tagName === 'DIV' && el.hasAttribute('data-line-index')
+        );
+
+        if (blocks.length >= 2) {
+            // Merge all into the first block, joining inner HTML with a literal space.
+            // Each block's inner HTML is added verbatim (preserving inline <br>s and
+            // styled spans like the bold "market") with " " between consecutive blocks.
+            const first = blocks[0];
+            const mergedParts = blocks.map((b) => b.innerHTML.trim()).filter((s) => s.length > 0);
+            const joined = mergedParts.join(' ');
+            first.innerHTML = joined;
+            // Remove the residual blocks.
+            for (let i = 1; i < blocks.length; i++) {
+                if (blocks[i].parentNode) blocks[i].parentNode.removeChild(blocks[i]);
+            }
+            collapseNewlines(first);
+        } else if (blocks.length === 1) {
+            collapseNewlines(blocks[0]);
+        } else {
+            collapseNewlines(tmp);
+        }
+
+        return tmp.innerHTML;
     }
 
     const autoWidthMeasureCanvas = document.createElement('canvas');
@@ -7384,16 +8751,61 @@
             if (!_isEditing && shouldRenderTextInRichHtmlLayer(ann)) {
                 ae.dataset.renderMode = 'dom-layer';
                 if (ae.innerHTML !== '') ae.innerHTML = '';
+                if (typeof window !== 'undefined' && _isEditing === false && ann?._uid) {
+                    window.__galleyDbg = window.__galleyDbg || {};
+                    if (!window.__galleyDbg[ann._uid]) window.__galleyDbg[ann._uid] = `dom-layer notEditing rich=${!!ann._richHtml} userAuth=${isUserAuthoredAnnotation(ann)}`;
+                }
             } else if (ann._richHtml) {
+                const _richIsPromoted = (Array.isArray(ann.sourceSpans) && ann.sourceSpans.length > 0)
+                    || (Array.isArray(ann.sourceLineBBoxes) && ann.sourceLineBBoxes.length > 0)
+                    || ann.promotedFromExtraction === true;
+                const _richNeedsReflow = _richIsPromoted
+                    && (annotationDimensionsChanged(ann)
+                        || (typeof annTextIsEdited === 'function' && annTextIsEdited(ann)));
+                const richHtml = normalizeRichHtmlForDisplay(
+                    _richNeedsReflow ? normalizeRichHtmlForReflow(ann._richHtml) : ann._richHtml,
+                    ann
+                );
                 ae.dataset.renderMode = 'plain';
-                if (ae.innerHTML !== ann._richHtml) ae.innerHTML = ann._richHtml;
+                if (ae.innerHTML !== richHtml) ae.innerHTML = richHtml;
+                if (typeof window !== 'undefined' && ann?._uid) {
+                    window.__galleyDbg = window.__galleyDbg || {};
+                    window.__galleyDbg[ann._uid] = `plain via _richHtml`;
+                }
             } else {
                 const editedText = editedTexts[ann._uid];
-                if (_isEditing && shouldUseSourceFlowEditorHTML(ann, editedText, {
+                // Galley editor (Iceni-style) — takes precedence over source-flow
+                // for actively-editing pristine extracted text. The contenteditable
+                // hosts per-source-span caret targets at exact PDF positions while
+                // the page overlay canvas continues to paint every original glyph.
+                // Stays engaged after the user appends chars (ann._galleyEdited)
+                // so the layout never collapses to plain reflow on first keystroke.
+                const _galleyExtracted = Array.isArray(ann?.sourceSpans) && ann.sourceSpans.length > 0
+                    && renderableSourceLines(ann).length > 0;
+                const _galleyTextOk = editedText === undefined
+                    || annotationTextMatchesSource(ann, editedText)
+                    || ann._galleyEdited === true;
+                const _galleyEnabled = (typeof window !== 'undefined') && (window.__editorGalleyMode !== false);
+                if (_galleyEnabled
+                    && _isEditing
+                    && _canUseSourceEditorLayout
+                    && _galleyExtracted
+                    && _galleyTextOk
+                    && !annotationDimensionsChanged(ann)
+                    && !ann._richHtml
+                    && !isUserAuthoredAnnotation(ann)) {
+                    ae.dataset.renderMode = 'galley';
+                    ae.innerHTML = renderGalleyEditorHTML(ann, scale);
+                    if (typeof window !== 'undefined') {
+                        window.__galleyDbg = window.__galleyDbg || {};
+                        if (!window.__galleyDbg[ann._uid]) window.__galleyDbg[ann._uid] = 'galley';
+                    }
+                } else if (_isEditing && shouldUseSourceFlowEditorHTML(ann, editedText, {
                     allowCurrentBoxSourceFlow: _canUseCurrentBoxSourceFlow,
                 })) {
                     ae.dataset.renderMode = 'source-flow';
                     ae.innerHTML = buildSourceFlowEditorHTML(ann, scale);
+                    if (typeof window !== 'undefined' && ann?._uid) { window.__galleyDbg = window.__galleyDbg || {}; if (!window.__galleyDbg[ann._uid]) window.__galleyDbg[ann._uid] = `source-flow gExt=${_galleyExtracted} gOk=${_galleyTextOk} dimChg=${annotationDimensionsChanged(ann)} userAuth=${isUserAuthoredAnnotation(ann)} canUseSrcLayout=${_canUseSourceEditorLayout}`; }
                 } else if (editedText !== undefined
                     && (annotationDimensionsChanged(ann)
                         || (editedText !== String(ann.text ?? '')
@@ -7407,6 +8819,7 @@
                     // pixel-identical to the deselected canvas baseline.
                     ae.dataset.renderMode = 'plain';
                     ae.innerHTML = renderPlainEditorHTML(ann, editedText, scale);
+                    if (typeof window !== 'undefined' && ann?._uid) { window.__galleyDbg = window.__galleyDbg || {}; if (!window.__galleyDbg[ann._uid]) window.__galleyDbg[ann._uid] = `plain editedDiverge gExt=${_galleyExtracted} gOk=${_galleyTextOk} dimChg=${annotationDimensionsChanged(ann)} userAuth=${isUserAuthoredAnnotation(ann)} canUseSrcLayout=${_canUseSourceEditorLayout} editedText=${JSON.stringify(String(editedText).slice(0,40))}`; }
                 } else {
                     // Detect persisted edits (same logic as annTextIsEdited in canvas draw):
                     // compare ann.text against ann.originalText (the value at extraction).
@@ -7426,13 +8839,23 @@
                             // highlight is offset from the current annotation box.
                             ae.dataset.renderMode = 'source';
                             ae.innerHTML = buildEditorHTML(ann, scale);
+                            if (typeof window !== 'undefined' && ann?._uid) { window.__galleyDbg = window.__galleyDbg || {}; if (!window.__galleyDbg[ann._uid]) window.__galleyDbg[ann._uid] = `source gExt=${_galleyExtracted} gOk=${_galleyTextOk} userAuth=${isUserAuthoredAnnotation(ann)}`; }
                         } else {
                             // The saved text has diverged from the old extraction
                             // source lines. Rendering source DOM here shows stale
                             // text, then the next keystroke snaps back to saved
                             // text. Use the canonical annotation text instead.
                             ae.dataset.renderMode = 'plain';
-                            ae.innerHTML = renderPlainEditorHTML(ann, savedText, scale);
+                            // For resized promoted annotations, normalize single
+                            // \n (source line-break positions) → space so the
+                            // contenteditable shows the text reflowed to the
+                            // current box width.  \n\n+ (paragraph breaks) are
+                            // preserved.
+                            const _aeIsPromoted = (Array.isArray(ann.sourceSpans) && ann.sourceSpans.length > 0)
+                                || (Array.isArray(ann.sourceLineBBoxes) && ann.sourceLineBBoxes.length > 0)
+                                || ann.promotedFromExtraction === true;
+                            const _aeNeedsReflow = _aeIsPromoted && annotationDimensionsChanged(ann);
+                            ae.innerHTML = renderPlainEditorHTML(ann, _aeNeedsReflow ? normalizeTextForDomReflow(savedText) : savedText, scale);
                         }
                     } else {
                         // Just selected (drag/resize), not editing: leave the editor
@@ -9387,6 +10810,12 @@
             if (align) el.style.textAlign = align;
             if (decoration) el.style.textDecoration = decoration;
         });
+        tmp.querySelectorAll('[data-source-span], [data-line-content]').forEach((el) => {
+            el.style.whiteSpace = 'normal';
+            el.style.overflowWrap = 'break-word';
+            el.style.wordBreak = 'break-word';
+            el.style.maxWidth = '100%';
+        });
         return tmp.innerHTML;
     }
 
@@ -10123,11 +11552,23 @@
         }
 
         if (!editModeEnabled && !addTextMode && !eraseMode) return;
-        if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+        // Only the Delete key removes a selected annotation. Backspace is
+        // reserved for text editing — too easy to nuke the whole annotation
+        // by hitting Backspace when focus drifted off the contenteditable.
+        if (e.key !== 'Delete') return;
         if (dragState.active || resizeState.active) return;
         if (!activeState.uid || activeState.pi === null) return;
-        const ae = document.getElementById('ae-' + (activeState.pi + 1));
-        if (ae && document.activeElement === ae) return;
+        // Never delete-on-Delete while the user is typing inside ANY
+        // contenteditable / input (the page AE, the debug modal preview
+        // host, format-bar inputs, etc.). Without this guard a Delete press
+        // inside the modal's reconstruction host would nuke the whole
+        // annotation instead of deleting one character.
+        const focused = document.activeElement;
+        if (focused) {
+            const tag = String(focused.tagName || '').toLowerCase();
+            if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+            if (focused.isContentEditable) return;
+        }
         e.preventDefault();
         const ann = pageData[activeState.pi]?.annotations.find(a => a._uid === activeState.uid);
         if (!ann) return;
@@ -11362,6 +12803,10 @@
                     `<button id="dh-${pg}" type="button" class="tbc-menu-btn tbc-delete" title="Delete" aria-label="Delete">` +
                         `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>` +
                     `</button>` +
+                    `<div class="tbc-menu-divider"></div>` +
+                    `<button id="dbgh-${pg}" type="button" class="tbc-menu-btn tbc-debug" title="Debug: preview editor HTML" aria-label="Debug editor HTML">` +
+                        `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2l1.5 3M16 2l-1.5 3"/><rect x="6" y="5" width="12" height="14" rx="6"/><path d="M9 11h6M9 14h6"/><path d="M3 12h3M18 12h3M5 19l2-2M19 19l-2-2M5 5l2 2M19 5l-2 2"/></svg>` +
+                    `</button>` +
                 `</div>` +
                 `<div id="sh-${pg}" class="shape-action-bar">` +
                     `<span id="sh-${pg}-tag" class="shape-action-bar__tag"></span>` +
@@ -11408,6 +12853,7 @@
         const lh     = document.getElementById('lh-' + pg);
         const ch     = document.getElementById('ch-' + pg);
         const dh     = document.getElementById('dh-' + pg);
+        const dbgh   = document.getElementById('dbgh-' + pg);
         const tmFront = document.getElementById('tm-' + pg + '-front');
         const tmBack = document.getElementById('tm-' + pg + '-back');
         const sh     = document.getElementById('sh-' + pg);
@@ -11421,7 +12867,7 @@
         const shDelete = document.getElementById('sh-' + pg + '-delete');
         const rhs    = ['nw', 'ne', 'sw', 'se'].map((dir) => document.getElementById(`rh-${pg}-${dir}`));
         const rhRot  = document.getElementById('rh-' + pg + '-rot');
-        if (!pageEl || !oc || !ac || !ae || !tm || !eh || !lkh || !uh || !lh || !ch || !dh || !tmFront || !tmBack || !sh || !shLock || !shFront || !shBack || !shEdit || !shBg || !shCut || !shCap || !shDelete || rhs.some((handle) => !handle) || !rhRot) return;
+        if (!pageEl || !oc || !ac || !ae || !tm || !eh || !lkh || !uh || !lh || !ch || !dh || !dbgh || !tmFront || !tmBack || !sh || !shLock || !shFront || !shBack || !shEdit || !shBg || !shCut || !shCap || !shDelete || rhs.some((handle) => !handle) || !rhRot) return;
 
         const fitScale  = getFitScaleForWidth(wPts);
         // Pure CSS zoom model: the canvas/page is always rasterized at
@@ -12104,6 +13550,18 @@
             const ann  = data?.annotations.find(a => a._uid === editingUid);
             if (!ann) return;
             if (isAnnotationLocked(ann)) return;
+            // Galley editor mode: appended chars accumulate in per-line tail spans
+            // (kept visible via the canvas-owns CSS override for [data-galley-new]).
+            // The page overlay canvas keeps painting original source spans verbatim
+            // and also paints ann._galleyAppends after each line. We must NOT call
+            // markUserAuthored or rebuild innerHTML — both would collapse the
+            // galley layout into plain CSS reflow on the very first keystroke.
+            if (e.currentTarget.dataset.renderMode === 'galley') {
+                reconcileGalleyInput(e.currentTarget, ann, pi);
+                markDirty();
+                redrawOverlay(pi);
+                return;
+            }
             const nextText = getEditorPlainText(e.currentTarget);
             if (nextText !== String(ann.text ?? '')) markUserAuthored(ann);
             editedTexts[ann._uid] = nextText;
@@ -12387,6 +13845,13 @@
             if (!ann) return;
             if (isAnnotationLocked(ann)) return;
             deleteAnnotation(ann, pi);
+        });
+
+        dbgh.addEventListener('click', (e) => {
+            e.preventDefault(); e.stopPropagation();
+            const ann = pageData[pi]?.annotations.find(a => a._uid === activeState.uid);
+            if (!ann) return;
+            openEditorHtmlDebugModal(ann, pi);
         });
 
         tmFront.addEventListener('click', (e) => {
@@ -13210,6 +14675,708 @@
         ae.dataset.editingUid = String(ann._uid || '');
     }
 
+    // ── Debug: preview what syncActiveEditor would put into ae when "Edit text"
+    // is hit on a given annotation. Pure capture — no permanent state mutation.
+    function captureEditorHtmlPreview(ann, pi) {
+        const ae = activeEditorForPage(pi);
+        if (!ae || !ann) return null;
+
+        // Preferred path: when this annotation is rendered by the rich-html
+        // DOM layer (the actual on-page text the user sees), capture THAT
+        // element's innerHTML/outerStyle directly. Capturing syncActiveEditor
+        // output instead would yield galley-mode absolute spans that, when
+        // flattened in the modal, wrap differently than the on-page render
+        // and make the preview useless for layout debugging.
+        try {
+            const layer = document.getElementById('rhl-' + (Number(pi) + 1));
+            const richItem = layer && ann._uid
+                ? layer.querySelector('.rich-html-item[data-uid="' + CSS.escape(String(ann._uid)) + '"]')
+                : null;
+            if (richItem) {
+                return {
+                    renderMode: 'rich-html-layer',
+                    innerHTML: richItem.innerHTML,
+                    outerStyle: richItem.style.cssText,
+                    editingUid: String(ann._uid || ''),
+                };
+            }
+        } catch (_e) { /* fall through to ae capture */ }
+
+        // Second preferred path: canvas-painted annotations
+        // (`drawOriginalSource`, typical for promoted-from-extraction text)
+        // aren't in the rich-html-layer. Reconstruct an editable HTML
+        // representation directly from `ann.sourceSpans` so the modal preview
+        // reproduces the exact PDF spacing (bullet hangs, inter-span gaps,
+        // per-span fonts/sizes/colors) AND remains editable. We use a flow
+        // model — `<p>` per source line + per-span `<span>` runs joined by
+        // `<span data-kerning-offset>` letter-spacing spacers — so the
+        // contenteditable host stays editable. Hanging-bullet lines use
+        // text-indent + padding-inline-start so wrapped continuation lines
+        // align with the post-bullet text.
+        try {
+            const data = pageData[pi];
+            const spans = Array.isArray(ann?.sourceSpans) ? ann.sourceSpans : [];
+            const box = (typeof resolveAnnBox === 'function') ? resolveAnnBox(ann) : null;
+            const scale = Number(data?.scale) || 0;
+            if (spans.length && box && scale > 0
+                && typeof renderableSourceLines === 'function'
+                && typeof escapeHtml === 'function'
+                && typeof resolveSpanFillStyle === 'function'
+                && typeof fallbackFontFamily === 'function'
+                && typeof blockLineHeightPx === 'function'
+                && typeof editableLineStyle === 'function'
+            ) {
+                const lines = renderableSourceLines(ann) || [];
+                if (lines.length) {
+                    const annFamily = (typeof editableLineStyle === 'function')
+                        ? editableLineStyle(ann, 0).fontFamily
+                        : 'Arial, Helvetica, sans-serif';
+                    const annSizePt = (typeof editableLineStyle === 'function')
+                        ? editableLineStyle(ann, 0).fontSizePt
+                        : 12;
+                    const boxWPx = Math.max(10, box.w * scale);
+                    // Render one source line into the per-line markup
+                    // (marker + spans). Returns HTML string or empty.
+                    const renderSourceLine = (line, lineIdx) => {
+                        const lineSpansArr = Array.isArray(line.spans) ? line.spans.slice() : [];
+                        if (!lineSpansArr.length) return { html: '', firstX: box.x, lineHeightPx: 0, postMarkerIndentPx: 0 };
+                        lineSpansArr.sort((a, b) => {
+                            const ax = Number(Array.isArray(a?.bbox) ? a.bbox[0] : (Array.isArray(a?.origin) ? a.origin[0] : 0));
+                            const bx = Number(Array.isArray(b?.bbox) ? b.bbox[0] : (Array.isArray(b?.origin) ? b.origin[0] : 0));
+                            return ax - bx;
+                        });
+                        const lineHeightPx = blockLineHeightPx(ann, lineIdx, scale, editableLineStyle(ann, lineIdx));
+                        const firstSpan = lineSpansArr[0];
+                        const firstX = Number(Array.isArray(firstSpan?.bbox) ? firstSpan.bbox[0] : (Array.isArray(firstSpan?.origin) ? firstSpan.origin[0] : box.x));
+                        const firstText = String(firstSpan?.render_text ?? firstSpan?.text ?? '');
+                        const looksLikeMarker = lineSpansArr.length > 1
+                            && (/^[\u2022\u00b7\u25cb\u25e6\u25aaohox\u00f0\-\u2013\u2014\*]\s*$/.test(firstText)
+                                || firstText.trim().length <= 2);
+                        let markerHtml = '';
+                        let postMarkerIndentPx = 0;
+                        let bulletLineSpans = lineSpansArr;
+                        if (looksLikeMarker) {
+                            const second = lineSpansArr[1];
+                            const secondX = Number(Array.isArray(second?.bbox) ? second.bbox[0] : (Array.isArray(second?.origin) ? second.origin[0] : firstX));
+                            // postMarkerIndent is RELATIVE to the line's own
+                            // first-x (the column origin), not the box left.
+                            postMarkerIndentPx = Math.max(0, (secondX - firstX) * scale);
+                            const markerLeftPx = 0; // marker sits at the column origin
+                            const fontName = firstSpan?.embedded_font_name || firstSpan?.font || annFamily;
+                            const family = fallbackFontFamily(fontName, firstSpan?.embedded_font_family || annFamily);
+                            const fontSizePt = Number(firstSpan?.font_size ?? firstSpan?.fontSize) || annSizePt;
+                            const fontSizePx = fontSizePt * scale;
+                            const fontWeight = String(firstSpan?.font_weight || firstSpan?.fontWeight || (firstSpan?.bold ? '700' : '400') || '400');
+                            const fontStyle = firstSpan?.fontStyle || (firstSpan?.italic ? 'italic' : 'normal');
+                            const color = resolveSpanFillStyle(ann, firstSpan);
+                            markerHtml = '<span data-source-marker="1" contenteditable="false" style="'
+                                + 'position:absolute;left:' + markerLeftPx.toFixed(2) + 'px;top:0;'
+                                + 'font-family:' + family + ';'
+                                + 'font-size:' + fontSizePx.toFixed(2) + 'px;'
+                                + 'font-weight:' + fontWeight + ';'
+                                + 'font-style:' + fontStyle + ';'
+                                + 'color:' + color + ';'
+                                + 'white-space:pre;user-select:none;">'
+                                + escapeHtml(firstText) + '</span>';
+                            bulletLineSpans = lineSpansArr.slice(1);
+                        }
+                        let prevRight = null;
+                        const spansHtml = bulletLineSpans.map((sp, sIdx) => {
+                            const spText = String(sp?.render_text ?? sp?.text ?? '');
+                            if (!spText) return '';
+                            const bbox = Array.isArray(sp?.bbox) ? sp.bbox : null;
+                            const origin = Array.isArray(sp?.origin) ? sp.origin : null;
+                            const spanLeft = Number(bbox ? bbox[0] : (origin ? origin[0] : 0));
+                            const spanRight = Number(bbox ? bbox[2] : spanLeft);
+                            let gapHtml = '';
+                            if (sIdx > 0 && prevRight !== null) {
+                                const gapPts = spanLeft - prevRight;
+                                if (gapPts > 0.25) {
+                                    const gapPx = gapPts * scale;
+                                    gapHtml = '<span data-kerning-offset="' + gapPts.toFixed(2)
+                                        + '" contenteditable="false"'
+                                        + ' style="display:inline-block;letter-spacing:0;width:' + gapPx.toFixed(2) + 'px;'
+                                        + 'min-width:' + gapPx.toFixed(2) + 'px;white-space:pre;user-select:none;">'
+                                        + ' </span>';
+                                }
+                            }
+                            prevRight = spanRight;
+                            const fontName = sp?.embedded_font_name || sp?.font || annFamily;
+                            const family = fallbackFontFamily(fontName, sp?.embedded_font_family || annFamily);
+                            const fontSizePt = Number(sp?.font_size ?? sp?.fontSize) || annSizePt;
+                            const fontSizePx = fontSizePt * scale;
+                            const fontWeight = String(sp?.font_weight || sp?.fontWeight || (sp?.bold ? '700' : '400') || '400');
+                            const fontStyle = sp?.fontStyle || (sp?.italic ? 'italic' : 'normal');
+                            const color = resolveSpanFillStyle(ann, sp);
+                            return gapHtml + '<span'
+                                + ' data-source-span="' + sIdx + '"'
+                                + ' style="font-family:' + family + ';'
+                                + 'font-size:' + fontSizePx.toFixed(2) + 'px;'
+                                + 'font-weight:' + fontWeight + ';'
+                                + 'font-style:' + fontStyle + ';'
+                                + 'color:' + color + ';'
+                                + 'white-space:pre;">'
+                                + escapeHtml(spText)
+                                + '</span>';
+                        }).join('');
+                        return { html: markerHtml + spansHtml, firstX, lineHeightPx, postMarkerIndentPx, lineIdx };
+                    };
+
+                    // Group source lines into VISUAL ROWS. Two lines belong
+                    // on the same row when their bbox y-intervals overlap
+                    // by more than ~half their height — i.e. they were
+                    // typeset on the same baseline in the PDF (multi-column
+                    // bullet lists are the common case).
+                    const rows = [];
+                    lines.forEach((line, lineIdx) => {
+                        const bb = Array.isArray(line?.bbox) ? line.bbox : null;
+                        if (!bb) { rows.push({ top: NaN, bottom: NaN, items: [{ line, lineIdx }] }); return; }
+                        const top = Number(bb[1]);
+                        const bottom = Number(bb[3]);
+                        const height = Math.max(0.001, bottom - top);
+                        const lastRow = rows[rows.length - 1];
+                        if (lastRow && Number.isFinite(lastRow.top) && Number.isFinite(lastRow.bottom)) {
+                            const overlap = Math.min(lastRow.bottom, bottom) - Math.max(lastRow.top, top);
+                            const minHeight = Math.min(lastRow.bottom - lastRow.top, height);
+                            if (overlap > minHeight * 0.5) {
+                                lastRow.items.push({ line, lineIdx });
+                                lastRow.top = Math.min(lastRow.top, top);
+                                lastRow.bottom = Math.max(lastRow.bottom, bottom);
+                                return;
+                            }
+                        }
+                        rows.push({ top, bottom, items: [{ line, lineIdx }] });
+                    });
+
+                    const linesHtml = rows.map((row, rowIdx) => {
+                        // Sort items left-to-right within the row.
+                        row.items.sort((a, b) => {
+                            const aFirst = a.line.spans?.[0];
+                            const bFirst = b.line.spans?.[0];
+                            const ax = Number(Array.isArray(aFirst?.bbox) ? aFirst.bbox[0] : 0);
+                            const bx = Number(Array.isArray(bFirst?.bbox) ? bFirst.bbox[0] : 0);
+                            return ax - bx;
+                        });
+                        const rendered = row.items.map(it => renderSourceLine(it.line, it.lineIdx)).filter(r => r.html);
+                        if (!rendered.length) return '';
+                        const rowHeightPx = Math.max(...rendered.map(r => r.lineHeightPx || 0), 1);
+                        // Margin-top from PDF y delta, minus a single
+                        // line-height (each row already takes that much
+                        // vertical space).
+                        let marginTopPx = 0;
+                        if (rowIdx > 0) {
+                            const prev = rows[rowIdx - 1];
+                            if (Number.isFinite(prev.top) && Number.isFinite(row.top)) {
+                                const deltaPx = (row.top - prev.top) * scale;
+                                const extraPx = deltaPx - rowHeightPx;
+                                if (extraPx > 1) marginTopPx = extraPx;
+                            }
+                        }
+                        if (rendered.length === 1) {
+                            // Single-column row: render as flow paragraph.
+                            // padding-inline-start = firstX - box.x +
+                            // (postMarkerIndent inside marker lines).
+                            const r = rendered[0];
+                            const flowIndentPx = Math.max(0, (r.firstX - box.x) * scale) + (r.postMarkerIndentPx || 0);
+                            const styleParts = [
+                                'position:relative',
+                                'margin:0',
+                                marginTopPx > 0 ? ('margin-top:' + marginTopPx.toFixed(2) + 'px') : '',
+                                'padding:0',
+                                flowIndentPx > 0 ? ('padding-inline-start:' + flowIndentPx.toFixed(2) + 'px') : '',
+                                'line-height:' + rowHeightPx.toFixed(2) + 'px',
+                                'min-height:' + rowHeightPx.toFixed(2) + 'px',
+                                'white-space:normal',
+                                'overflow-wrap:normal',
+                                'word-break:normal',
+                            ].filter(Boolean);
+                            return '<p data-line-index="' + r.lineIdx + '" style="' + styleParts.join(';') + '">'
+                                + r.html + '</p>';
+                        }
+                        // Multi-column row: render as a single <p> of
+                        // line-height = rowHeightPx, with each column
+                        // absolutely positioned at its true PDF x.
+                        const colsHtml = rendered.map((r) => {
+                            const leftPx = Math.max(0, (r.firstX - box.x) * scale);
+                            const colStyle = [
+                                'position:absolute',
+                                'left:' + leftPx.toFixed(2) + 'px',
+                                'top:0',
+                                'padding:0',
+                                'margin:0',
+                                r.postMarkerIndentPx > 0 ? ('padding-inline-start:' + r.postMarkerIndentPx.toFixed(2) + 'px') : '',
+                                'line-height:' + rowHeightPx.toFixed(2) + 'px',
+                                'white-space:pre',
+                            ].filter(Boolean).join(';');
+                            return '<span data-source-column="1" data-line-index="' + r.lineIdx + '" style="' + colStyle + '">' + r.html + '</span>';
+                        }).join('');
+                        const rowStyle = [
+                            'position:relative',
+                            'margin:0',
+                            marginTopPx > 0 ? ('margin-top:' + marginTopPx.toFixed(2) + 'px') : '',
+                            'padding:0',
+                            'line-height:' + rowHeightPx.toFixed(2) + 'px',
+                            'min-height:' + rowHeightPx.toFixed(2) + 'px',
+                            '--row-min-h:' + rowHeightPx.toFixed(2) + 'px',
+                            'white-space:nowrap',
+                            'overflow:visible',
+                        ].filter(Boolean).join(';');
+                        return '<p data-source-row="' + rowIdx + '" style="' + rowStyle + '">' + colsHtml + '</p>';
+                    }).filter(Boolean).join('');
+                    if (linesHtml) {
+                        const outerStyle = [
+                            'display:block',
+                            'position:relative',
+                            'left:0',
+                            'top:0',
+                            'width:' + boxWPx.toFixed(2) + 'px',
+                            'min-height:' + Math.max(10, box.h * scale).toFixed(2) + 'px',
+                            'font-family:' + annFamily,
+                            'font-size:' + (annSizePt * scale).toFixed(2) + 'px',
+                            'color:' + (ann?.textColor || '#000'),
+                            'background:transparent',
+                            'padding:0',
+                            'margin:0',
+                            'border:none',
+                            'outline:none',
+                            'overflow:visible',
+                            'text-align:left',
+                            'white-space:normal',
+                            'max-width:none',
+                        ].join(';');
+                        return {
+                            renderMode: 'source-spans',
+                            innerHTML: linesHtml,
+                            outerStyle,
+                            editingUid: String(ann._uid || ''),
+                        };
+                    }
+                }
+            }
+        } catch (_e) { /* fall through to ae capture */ }
+
+        const saved = {
+            editing: ae.dataset.editing,
+            editingUid: ae.dataset.editingUid,
+            renderMode: ae.dataset.renderMode,
+            innerHTML: ae.innerHTML,
+            cssText: ae.style.cssText,
+            activeUid: activeState.uid,
+            activePi: activeState.pi,
+        };
+        try {
+            activeState = { pi, uid: ann._uid };
+            ae.dataset.editing = '1';
+            ae.dataset.editingUid = String(ann._uid || '');
+            syncActiveEditor(true);
+            return {
+                renderMode: ae.dataset.renderMode || '(unset)',
+                innerHTML: ae.innerHTML,
+                outerStyle: ae.style.cssText,
+                editingUid: ae.dataset.editingUid || '',
+            };
+        } finally {
+            // Restore exactly
+            ae.style.cssText = saved.cssText || '';
+            ae.innerHTML = saved.innerHTML;
+            if (saved.editing === undefined) delete ae.dataset.editing;
+            else ae.dataset.editing = saved.editing;
+            if (saved.editingUid === undefined) delete ae.dataset.editingUid;
+            else ae.dataset.editingUid = saved.editingUid;
+            if (saved.renderMode === undefined) delete ae.dataset.renderMode;
+            else ae.dataset.renderMode = saved.renderMode;
+            activeState = { pi: saved.activePi, uid: saved.activeUid };
+        }
+    }
+
+    function _dbgEscape(s) {
+        return String(s ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    function _dbgPrettyHtml(html) {
+        // Light pretty-print: insert newline before each top-level/inner block tag.
+        // Not a full formatter — readable enough to scan.
+        const TAGS = ['div', 'p', 'br', 'span'];
+        let out = String(html ?? '');
+        TAGS.forEach((t) => {
+            out = out.replace(new RegExp('<' + t + '\\b', 'gi'), '\n<' + t);
+            out = out.replace(new RegExp('</' + t + '>', 'gi'), '</' + t + '>\n');
+        });
+        return out
+            .split('\n')
+            .map((l) => l.trim())
+            .filter((l) => l.length > 0)
+            .join('\n');
+    }
+
+    function _dbgFormatStyle(cssText) {
+        return String(cssText || '')
+            .split(';')
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0)
+            .join(';\n');
+    }
+
+    function openEditorHtmlDebugModal(ann, pi) {
+        // Close any existing instance.
+        document.getElementById('dbg-editor-modal')?.remove();
+
+        const preview = captureEditorHtmlPreview(ann, pi) || {
+            renderMode: '(error)', innerHTML: '', outerStyle: '', editingUid: '',
+        };
+
+        // ORIGINAL vs EDITED determination — any user modification flips to EDITED.
+        const _dimsChanged = (typeof annotationDimensionsChanged === 'function')
+            && annotationDimensionsChanged(ann);
+        const _textEdited = (typeof annTextIsEdited === 'function') && annTextIsEdited(ann);
+        const _hasOffset = (() => {
+            try {
+                const off = (typeof annotationOffset === 'function') ? annotationOffset(ann) : null;
+                return !!off && (Math.abs(off.dx) > 0.25 || Math.abs(off.dy) > 0.25);
+            } catch (_e) { return false; }
+        })();
+        const _hasRichHtml = !!ann._richHtml;
+        const _styleDirty = !!ann._styleDirty;
+        const _userAuthored = (typeof isUserAuthoredAnnotation === 'function')
+            && isUserAuthoredAnnotation(ann);
+        const _isEdited = _dimsChanged || _textEdited || _hasOffset || _hasRichHtml
+            || _styleDirty || _userAuthored;
+        const _statusLabel = _isEdited ? 'EDITED' : 'ORIGINAL';
+        const _statusClass = _isEdited ? 'is-edited' : 'is-original';
+
+        const overlay = document.createElement('div');
+        overlay.id = 'dbg-editor-modal';
+        overlay.innerHTML =
+            '<div class="dbg-modal-backdrop"></div>' +
+            '<div class="dbg-modal-card" role="dialog" aria-label="Editor HTML debug preview">' +
+                '<header class="dbg-modal-header">' +
+                    '<div class="dbg-modal-title">' +
+                        '<span class="dbg-modal-dot"></span>' +
+                        'Editor HTML preview' +
+                        '<span class="dbg-modal-status ' + _statusClass + '">' + _statusLabel + '</span>' +
+                        '<span class="dbg-modal-badge">' + _dbgEscape(preview.renderMode) + '</span>' +
+                    '</div>' +
+                    '<div class="dbg-modal-meta">' +
+                        '<code>uid=' + _dbgEscape(ann._uid) + '</code>' +
+                        '<code>pi=' + pi + '</code>' +
+                        '<code>has _richHtml=' + _hasRichHtml + '</code>' +
+                        '<code>dimsChanged=' + _dimsChanged + '</code>' +
+                        '<code>textEdited=' + _textEdited + '</code>' +
+                        '<code>moved=' + _hasOffset + '</code>' +
+                        '<code>userAuthored=' + _userAuthored + '</code>' +
+                    '</div>' +
+                    '<button type="button" class="dbg-modal-close" aria-label="Close">×</button>' +
+                '</header>' +
+                '<nav class="dbg-tabs" role="tablist">' +
+                    '<button type="button" class="dbg-tab is-active" data-tab="dbg-tab-live" role="tab" aria-selected="true">Live render</button>' +
+                    '<button type="button" class="dbg-tab" data-tab="dbg-tab-styles" role="tab" aria-selected="false">Outer styles</button>' +
+                    '<button type="button" class="dbg-tab" data-tab="dbg-tab-raw" role="tab" aria-selected="false">innerHTML (raw)</button>' +
+                    '<button type="button" class="dbg-tab" data-tab="dbg-tab-pretty" role="tab" aria-selected="false">innerHTML (pretty)</button>' +
+                '</nav>' +
+                '<div class="dbg-modal-body">' +
+                    '<section class="dbg-section is-active" id="dbg-tab-live" role="tabpanel">' +
+                        '<div class="dbg-section-head">' +
+                            '<h3>Live render <span class="dbg-section-hint">— editable; click ✓ to save & redraw</span></h3>' +
+                            '<div class="dbg-section-actions">' +
+                                '<span class="dbg-save-status" id="dbg-save-status"></span>' +
+                                '<button type="button" class="dbg-save-btn" id="dbg-save-btn" title="Save edit and redraw PDF section">✓ Save</button>' +
+                            '</div>' +
+                        '</div>' +
+                        '<div class="dbg-live-frame"><div id="dbg-live-host" class="dbg-live-host" contenteditable="true" spellcheck="false"></div></div>' +
+                    '</section>' +
+                    '<section class="dbg-section" id="dbg-tab-styles" role="tabpanel">' +
+                        '<div class="dbg-section-head">' +
+                            '<h3>Outer container styles</h3>' +
+                            '<button type="button" class="dbg-copy-btn" data-target="dbg-styles">Copy</button>' +
+                        '</div>' +
+                        '<pre id="dbg-styles" class="dbg-pre dbg-pre-style"></pre>' +
+                    '</section>' +
+                    '<section class="dbg-section" id="dbg-tab-raw" role="tabpanel">' +
+                        '<div class="dbg-section-head">' +
+                            '<h3>innerHTML (raw)</h3>' +
+                            '<button type="button" class="dbg-copy-btn" data-target="dbg-html-raw">Copy</button>' +
+                        '</div>' +
+                        '<pre id="dbg-html-raw" class="dbg-pre dbg-pre-html"></pre>' +
+                    '</section>' +
+                    '<section class="dbg-section" id="dbg-tab-pretty" role="tabpanel">' +
+                        '<div class="dbg-section-head">' +
+                            '<h3>innerHTML (pretty)</h3>' +
+                            '<button type="button" class="dbg-copy-btn" data-target="dbg-html-pretty">Copy</button>' +
+                        '</div>' +
+                        '<pre id="dbg-html-pretty" class="dbg-pre dbg-pre-html"></pre>' +
+                    '</section>' +
+                '</div>' +
+            '</div>';
+        document.body.appendChild(overlay);
+
+        // Populate text content via .textContent so escaping happens automatically.
+        overlay.querySelector('#dbg-styles').textContent = _dbgFormatStyle(preview.outerStyle);
+        overlay.querySelector('#dbg-html-raw').textContent = preview.innerHTML;
+        overlay.querySelector('#dbg-html-pretty').textContent = _dbgPrettyHtml(preview.innerHTML);
+
+        // Live render — apply outer styles + innerHTML to a sandbox div.
+        const host = overlay.querySelector('#dbg-live-host');
+        host.style.cssText = preview.outerStyle;
+        // Force visible positioning inside our flow regardless of original
+        // absolute coordinates from syncActiveEditor.
+        host.style.position = 'relative';
+        host.style.left = '0';
+        host.style.top = '0';
+        // Keep the original width from the captured outerStyle so text
+        // wraps the same way as in the actual annotation box. Clearing the
+        // width here lets the modal column shrink the host and create
+        // extra wrap points that don't exist in the real render.
+        // Height is cleared so the host grows to fit content.
+        host.style.height = '';
+        // Do NOT cap maxWidth to the modal column — that would re-introduce
+        // the very wrap mismatch the comment above warns about. The
+        // surrounding `.dbg-live-frame` has `overflow: auto`, so wider
+        // annotations scroll horizontally inside the frame instead of
+        // being squeezed into a narrower wrap.
+        host.style.maxWidth = 'none';
+        // Galley/source/canvas render modes use absolute-positioned per-line
+        // and per-span CSS scoped to .active-editor[data-render-mode="..."].
+        // Without those scopes the spans collapse to inline flow and the text
+        // visibly overlaps. Mirror the render-mode marker so the same rules
+        // apply inside the preview frame.
+        if (preview.renderMode) {
+            host.dataset.renderMode = preview.renderMode;
+        }
+        // Strip any inherited transparent color from the editor's outer
+        // cssText — canvas-owns hides editor glyphs because the canvas paints
+        // them, but in the preview there is no canvas, so transparent text
+        // would show as a blank frame.
+        host.style.color = '';
+
+        // Always use the captured preview.innerHTML as the editable surface.
+        // It preserves all inline formatting (bold spans, font-weight,
+        // colors, italics) regardless of render mode. Universal CSS
+        // overrides on `.dbg-live-host` strip the absolute positioning so
+        // galley/source per-line blocks reflow naturally in the modal.
+        host.innerHTML = preview.innerHTML;
+
+        // Graceful deletion of contenteditable=false markers / kerning
+        // spacers: when the user presses Backspace at the start of an
+        // editable text node and the previous DOM neighbor is a non-
+        // editable marker (•, kerning offset, etc), remove that neighbor
+        // instead of letting the browser silently no-op. Same for Delete
+        // at the end of a text node with a non-editable next neighbor.
+        host.addEventListener('keydown', (ev) => {
+            if (ev.key !== 'Backspace' && ev.key !== 'Delete') return;
+            const sel = window.getSelection();
+            if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) return;
+            const range = sel.getRangeAt(0);
+            let node = range.startContainer;
+            const offset = range.startOffset;
+            const isAtTextEdge = (n, off, dir) => {
+                if (!n) return false;
+                if (n.nodeType === Node.TEXT_NODE) {
+                    return dir === 'back' ? off === 0 : off === (n.textContent || '').length;
+                }
+                return true;
+            };
+            const findNeighbor = (n, dir) => {
+                // Walk up while at edge of containing element looking for
+                // the previous/next non-editable atomic neighbor.
+                let cur = n;
+                if (cur.nodeType !== Node.ELEMENT_NODE) cur = cur.parentNode;
+                let probe = (n.nodeType === Node.TEXT_NODE) ? n : (dir === 'back' ? n.childNodes[offset - 1] : n.childNodes[offset]);
+                while (cur && cur !== host) {
+                    const sib = dir === 'back'
+                        ? (probe ? probe.previousSibling : cur.previousSibling)
+                        : (probe ? probe.nextSibling : cur.nextSibling);
+                    if (sib) {
+                        if (sib.nodeType === Node.ELEMENT_NODE
+                            && (sib.getAttribute('contenteditable') === 'false'
+                                || sib.hasAttribute('data-source-marker')
+                                || sib.hasAttribute('data-kerning-offset'))) {
+                            return sib;
+                        }
+                        return null;
+                    }
+                    probe = cur;
+                    cur = cur.parentNode;
+                }
+                return null;
+            };
+            if (ev.key === 'Backspace' && isAtTextEdge(node, offset, 'back')) {
+                const victim = findNeighbor(node, 'back');
+                if (victim) {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    victim.remove();
+                    return;
+                }
+            }
+            if (ev.key === 'Delete' && isAtTextEdge(node, offset, 'fwd')) {
+                const victim = findNeighbor(node, 'fwd');
+                if (victim) {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    victim.remove();
+                    return;
+                }
+            }
+        });
+
+        // Track whether the source is a positioned render mode (galley /
+        // source / canvas). The save handler uses this to:
+        //  (a) extract text by grouping `<p data-line-index="N">` blocks by
+        //      source-line index (consecutive blocks with the same index =
+        //      one source paragraph, joined with a single space; different
+        //      indexes = `\n`). Without this every visual wrap line would
+        //      become its own `\n` and explode the saved text.
+        //  (b) drop _richHtml on save so the per-line absolute positioning
+        //      doesn't leak into persisted state — let renderPlainEditorHTML
+        //      rebuild from text using current annotation styles. Inline
+        //      bold/italic from font-weight on galley spans is lost in this
+        //      case (galley spans aren't <b>/<strong>); for flow modes
+        //      (plain/source-flow/dom-layer) the inline formatting is
+        //      preserved by keeping _richHtml.
+        const _positionedModes = new Set(['galley', 'source', 'canvas']);
+        const _isPositionedMode = preview.renderMode && _positionedModes.has(preview.renderMode);
+
+        // Tab switching
+        const tabs = overlay.querySelectorAll('.dbg-tab');
+        const panels = overlay.querySelectorAll('.dbg-section');
+        tabs.forEach((tab) => {
+            tab.addEventListener('click', () => {
+                const target = tab.dataset.tab;
+                tabs.forEach((t) => {
+                    const active = t === tab;
+                    t.classList.toggle('is-active', active);
+                    t.setAttribute('aria-selected', active ? 'true' : 'false');
+                });
+                panels.forEach((p) => p.classList.toggle('is-active', p.id === target));
+            });
+        });
+
+        const close = () => overlay.remove();
+        overlay.querySelector('.dbg-modal-backdrop').addEventListener('click', close);
+        overlay.querySelector('.dbg-modal-close').addEventListener('click', close);
+        document.addEventListener('keydown', function esc(ev) {
+            if (ev.key === 'Escape') {
+                close();
+                document.removeEventListener('keydown', esc);
+            }
+        });
+
+        // Save handler — apply edits from the live-render host back onto the
+        // annotation, mark dirty (triggers auto-save to backend) and redraw
+        // the PDF overlay so the section repaints with the new text.
+        const saveBtn = overlay.querySelector('#dbg-save-btn');
+        const saveStatus = overlay.querySelector('#dbg-save-status');
+        if (saveBtn) {
+            saveBtn.addEventListener('click', () => {
+                try {
+                    const data = pageData[pi];
+                    const targetAnn = data?.annotations.find(a => a._uid === ann._uid) || ann;
+                    if (!targetAnn) {
+                        if (saveStatus) saveStatus.textContent = 'Annotation not found';
+                        return;
+                    }
+                    if (typeof isAnnotationLocked === 'function' && isAnnotationLocked(targetAnn)) {
+                        if (saveStatus) saveStatus.textContent = 'Locked — cannot edit';
+                        return;
+                    }
+                    saveBtn.disabled = true;
+
+                    // Snapshot for undo before mutating.
+                    if (typeof pushUndo === 'function') {
+                        try { pushUndo(); } catch (_e) {}
+                    }
+
+                    // Capture edited plain text from the host. For positioned
+                    // render modes (galley/source/canvas) the host contains
+                    // many `<p data-line-index="N">` blocks — one per visual
+                    // wrap line. Group consecutive blocks with the same
+                    // source-line index into one paragraph (joined with a
+                    // single space) so the round-tripped text matches the
+                    // original `ann.text` line count instead of exploding
+                    // each visual wrap line into its own `\n`.
+                    let newText;
+                    if (_isPositionedMode) {
+                        const blocks = host.querySelectorAll('[data-line-index]');
+                        if (blocks.length) {
+                            const grouped = new Map();
+                            const order = [];
+                            blocks.forEach((b) => {
+                                // Skip nested data-line-index spans (e.g. galley
+                                // source-spans inside a <p data-line-index>);
+                                // only top-level paragraph blocks contribute.
+                                if (b.parentElement && b.parentElement.closest('[data-line-index]')) return;
+                                const idx = b.getAttribute('data-line-index') || '0';
+                                const txt = (b.textContent || '').replace(/\u00A0/g, ' ').trim();
+                                if (!grouped.has(idx)) { grouped.set(idx, []); order.push(idx); }
+                                if (txt) grouped.get(idx).push(txt);
+                            });
+                            newText = order.map((idx) => grouped.get(idx).join(' ')).join('\n');
+                        } else {
+                            newText = (typeof getEditorPlainText === 'function')
+                                ? getEditorPlainText(host)
+                                : (host.textContent || '');
+                        }
+                    } else {
+                        newText = (typeof getEditorPlainText === 'function')
+                            ? getEditorPlainText(host)
+                            : (host.textContent || '');
+                    }
+                    const prevText = String(targetAnn.text ?? '');
+                    const newHtml = host.innerHTML;
+
+                    // Update editedTexts and decide whether to persist
+                    // _richHtml. We keep _richHtml only when:
+                    //  - the source was a flow render mode (we used the
+                    //    original _richHtml as the editable surface), AND
+                    //  - the resulting HTML still carries inline selection
+                    //    formatting (bold/italic/underline/font/color spans).
+                    // Otherwise drop _richHtml so renderPlainEditorHTML
+                    // rebuilds with current annotation styles. This avoids
+                    // leaking modal-only structure (positioned per-line
+                    // blocks from galley) into the persistent ann state.
+                    editedTexts[targetAnn._uid] = newText;
+                    const _hasInlineFormatting = (typeof richHtmlHasInlineSelectionFormatting === 'function')
+                        && richHtmlHasInlineSelectionFormatting(newHtml);
+                    if (!_isPositionedMode && _hasInlineFormatting) {
+                        targetAnn._richHtml = newHtml;
+                    } else {
+                        delete targetAnn._richHtml;
+                    }
+                    if (newText !== prevText && typeof markUserAuthored === 'function') {
+                        markUserAuthored(targetAnn);
+                    }
+                    if (typeof resizeAnnotationForEditedText === 'function') {
+                        try { resizeAnnotationForEditedText(targetAnn, newText, pi); } catch (_e) {}
+                    }
+                    if (typeof markDirty === 'function') markDirty();
+                    try { syncActiveEditor(true); } catch (_e) {}
+                    try { redrawOverlay(pi); } catch (_e) {}
+
+                    if (saveStatus) saveStatus.textContent = 'Saved · redrawing…';
+                    setTimeout(close, 350);
+                } catch (err) {
+                    saveBtn.disabled = false;
+                    if (saveStatus) saveStatus.textContent = 'Error: ' + (err && err.message ? err.message : err);
+                }
+            });
+        }
+
+        overlay.querySelectorAll('.dbg-copy-btn').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const tgt = overlay.querySelector('#' + btn.dataset.target);
+                if (!tgt) return;
+                navigator.clipboard.writeText(tgt.textContent || '').then(() => {
+                    const orig = btn.textContent;
+                    btn.textContent = 'Copied';
+                    setTimeout(() => { btn.textContent = orig; }, 900);
+                }).catch(() => {});
+            });
+        });
+    }
+
     function clearEditorEditingState(ae) {
         if (!(ae instanceof HTMLElement)) return;
         delete ae.dataset.editing;
@@ -13869,6 +16036,11 @@
                             ? hydrated.annotation_data.richHtml
                             : null)));
             if (savedRichHtml && richHtmlHasInlineSelectionFormatting(savedRichHtml)) hydrated._richHtml = savedRichHtml;
+            // Heal bloated pdfHeight on promoted-extraction annotations whose
+            // text still matches the original source. This corrects already-
+            // persisted bad geometry left over from prior buggy auto-grow paths
+            // so the next save writes the corrected value back.
+            normalizePromotedAnnotationGeometry(hydrated);
             return hydrated;
         });
         allAnnotations.forEach(ann => { editedTexts[ann._uid] = String(ann.text || ''); });
