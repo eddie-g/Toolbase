@@ -191,6 +191,7 @@ import {
     hasMarkupToolDrawContent,
     syncMarkupToolLabels as _syncMarkupToolLabels,
     buildCurrentMarkupAsset as _buildCurrentMarkupAsset,
+    renderMarkupToolDrawPreview as _renderMarkupToolDrawPreview,
 } from './markup-tool/state.js';
 import {
     setSignatureStatus as _setSignatureStatus,
@@ -4023,16 +4024,8 @@ import {
     const getMarkupToolSmoothingAmount = () => _getMarkupToolSmoothingAmount(markupToolSmoothingInput);
 
     // paintMarkupToolStroke moved to ./draw/smooth-stroke.js (Phase 7aw).
-    const paintMarkupToolStroke = (stroke) => paintSmoothStroke(
-        markupToolCtx, stroke, getMarkupToolSmoothingAmount(), '#0f172a', 4
-    );
-
-    function renderMarkupToolDrawPreview() {
-        if (!markupToolCanvas || !markupToolCtx) return;
-        clearMarkupToolCanvas();
-        markupToolStrokes.forEach((stroke) => paintMarkupToolStroke(stroke));
-        if (markupToolActiveStroke) paintMarkupToolStroke(markupToolActiveStroke);
-    }
+    // renderMarkupToolDrawPreview moved to ./markup-tool/state.js (Phase 7bt).
+    const renderMarkupToolDrawPreview = () => _renderMarkupToolDrawPreview(markupToolCanvas, markupToolSmoothingInput);
 
     // syncMarkupToolLabels moved to ./markup-tool/state.js (Phase 7bj).
     const syncMarkupToolLabels = () => _syncMarkupToolLabels({

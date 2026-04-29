@@ -9,6 +9,7 @@
  */
 
 import { clamp01 } from '../util/math.js';
+import { paintSmoothStroke } from '../draw/smooth-stroke.js';
 import {
     markupToolCtx,
     markupToolMode,
@@ -81,4 +82,20 @@ export function buildCurrentMarkupAsset(markupToolCanvas) {
         mimeType: 'image/png',
         toolSource: 'draw-erase',
     };
+}
+
+/**
+ * Repaint the markup-tool composer canvas: clear it, then paint every
+ * persisted stroke followed by the in-progress one (if any). Each stroke
+ * carries its own color/width; defaults match the markup-tool tool's
+ * baseline (slate-900, 4px). Pure DOM-write helper depending on the
+ * markup-tool store + the smooth-stroke painter.
+ */
+export function renderMarkupToolDrawPreview(markupToolCanvas, smoothingInput) {
+    if (!markupToolCanvas || !markupToolCtx) return;
+    clearMarkupToolCanvas(markupToolCanvas);
+    const smoothing = getMarkupToolSmoothingAmount(smoothingInput);
+    const paint = (stroke) => paintSmoothStroke(markupToolCtx, stroke, smoothing, '#0f172a', 4);
+    markupToolStrokes.forEach(paint);
+    if (markupToolActiveStroke) paint(markupToolActiveStroke);
 }
