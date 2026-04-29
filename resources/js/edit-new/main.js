@@ -195,6 +195,10 @@ import {
     getSignatureSmoothingAmount as _getSignatureSmoothingAmount,
     hasSignatureDrawContent,
 } from './signature/canvas.js';
+import {
+    syncSignatureColorLabels as _syncSignatureColorLabels,
+    updateSignatureModalCopy as _updateSignatureModalCopy,
+} from './signature/labels.js';
 import { paintSmoothStroke } from './draw/smooth-stroke.js';
 import {
     positionShapeConstrainTip as _positionShapeConstrainTip,
@@ -4581,24 +4585,18 @@ import {
         if (signatureActiveStroke) paintSignatureStroke(signatureActiveStroke);
     }
 
-    function syncSignatureColorLabels() {
-        if (signatureColorValue && signatureColorInput) signatureColorValue.textContent = signatureColorInput.value.toUpperCase();
-        if (signatureTypeColorValue && signatureTypeColorInput) signatureTypeColorValue.textContent = signatureTypeColorInput.value.toUpperCase();
-        if (signatureWidthValue && signatureWidthInput) signatureWidthValue.textContent = `${signatureWidthInput.value}px`;
-        if (signatureSmoothingValue && signatureSmoothingInput) signatureSmoothingValue.textContent = `${signatureSmoothingInput.value}%`;
-    }
-
-    function updateSignatureModalCopy() {
-        const isEditingSignature = Boolean(signatureEditTarget);
-        if (signatureModalTitle) {
-            signatureModalTitle.textContent = isEditingSignature ? 'Edit your signature' : 'Add your signature';
-        }
-        if (signatureModalSubtitle) {
-            signatureModalSubtitle.textContent = isEditingSignature
-                ? 'Adjust the selected signature or replace it with a new one, then save it back into the document.'
-                : 'Create a clean signature mark for this PDF. Draw it freehand, type it in a script style, or upload an existing signature image.';
-        }
-    }
+    // syncSignatureColorLabels + updateSignatureModalCopy moved to ./signature/labels.js (Phase 7bh).
+    const syncSignatureColorLabels = () => _syncSignatureColorLabels({
+        signatureColorValue,
+        signatureColorInput,
+        signatureTypeColorValue,
+        signatureTypeColorInput,
+        signatureWidthValue,
+        signatureWidthInput,
+        signatureSmoothingValue,
+        signatureSmoothingInput,
+    });
+    const updateSignatureModalCopy = () => _updateSignatureModalCopy({ signatureModalTitle, signatureModalSubtitle });
 
     // signatureModeLabel moved to ./annotations/types.js (Phase 7ao).
 
