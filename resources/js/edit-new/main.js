@@ -252,6 +252,10 @@ import {
 } from './store/misc-state.js';
 import { pageData } from './store/page-data.js';
 import { editedTexts } from './store/edited-texts.js';
+import {
+    pendingDeletedAnnotationIds,
+    pendingDeletedPromotedSourceKeys,
+} from './store/pending-deletes.js';
 
 (function () {
 
@@ -558,8 +562,8 @@ import { editedTexts } from './store/edited-texts.js';
     // markupToolCtx moved to ./store/markup-tool-state.js (Phase 5k).
     // signatureCtx + signatureTypedRenderToken moved to
     // ./store/signature-state.js (Phase 5j).
-    const pendingDeletedAnnotationIds = new Set();
-    const pendingDeletedPromotedSourceKeys = new Set();
+    // pendingDeletedAnnotationIds + pendingDeletedPromotedSourceKeys moved to
+    // ./store/pending-deletes.js (Phase 7c).
     const annotationImageCache = new Map();
     const shapeHitTestCanvas = document.createElement('canvas');
     const shapeHitTestCtx = shapeHitTestCanvas.getContext('2d');
