@@ -31,6 +31,7 @@ import {
     writeSignatureLibrary,
 } from './persistence/signature-library.js';
 import { createAutoSave } from './persistence/autosave.js';
+import { cloneSerializableValue } from './util/clone.js';
 
 (function () {
 
@@ -552,13 +553,7 @@ import { createAutoSave } from './persistence/autosave.js';
         return String(ann?.dataUrl || ann?.src || '').trim();
     }
 
-    function cloneSerializableValue(value, fallback) {
-        try {
-            return JSON.parse(JSON.stringify(value));
-        } catch (_error) {
-            return fallback;
-        }
-    }
+    // cloneSerializableValue lives in ./util/clone.js — imported at the top of the file.
 
     function getCachedAnnotationImage(ann) {
         if (!isImageBackedAnnotation(ann)) return null;
