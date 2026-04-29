@@ -9,6 +9,7 @@ export default defineConfig({
                 'resources/css/app.css',
                 'resources/js/app.js',
                 'resources/css/edit-new/index.css',
+                'resources/js/edit-new/main.js',
             ],
             refresh: true,
         }),
