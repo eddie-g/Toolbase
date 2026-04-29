@@ -256,6 +256,13 @@ import {
     pendingDeletedAnnotationIds,
     pendingDeletedPromotedSourceKeys,
 } from './store/pending-deletes.js';
+import {
+    configureHistory,
+    pushUndo,
+    performUndo,
+    performRedo,
+    updateHistoryUi,
+} from './history/undo-redo.js';
 
 (function () {
 
@@ -1171,27 +1178,7 @@ import {
         }
     }
 
-    function performUndo() {
-        if (undoStack.length === 0) return;
-        redoStack.push(captureSnapshot());
-        const snap = undoStack.pop();
-        clearActiveAnnotation();
-        applySnapshot(snap);
-        for (const pi of Object.keys(pageData)) redrawOverlay(Number(pi));
-        markDirty();
-        updateHistoryUi();
-    }
-
-    function performRedo() {
-        if (redoStack.length === 0) return;
-        undoStack.push(captureSnapshot());
-        const snap = redoStack.pop();
-        clearActiveAnnotation();
-        applySnapshot(snap);
-        for (const pi of Object.keys(pageData)) redrawOverlay(Number(pi));
-        markDirty();
-        updateHistoryUi();
-    }
+    // performUndo / performRedo moved to ./history/undo-redo.js (Phase 7d).
 
     // ── Font helpers ───────────────────────────────────────────────────────────
     // NOTE: Use SINGLE quotes around multi-word family names. These values are interpolated
@@ -7198,6 +7185,13 @@ import {
         syncActiveEditor: (force) => syncActiveEditor(force),
         updateFormatBar: () => updateFormatBar(),
         measureEditedTextHeightPts: (ann, text, scale, w) => measureEditedTextHeightPts(ann, text, scale, w),
+    });
+    configureHistory({
+        undoButton,
+        redoButton,
+        clearActiveAnnotation: () => clearActiveAnnotation(),
+        redrawOverlay: (pi) => redrawOverlay(pi),
+        markDirty: () => markDirty(),
     });
 
     // Rotation helpers (getRotationCenterClient, pointerAngleDeg, beginRotate,
