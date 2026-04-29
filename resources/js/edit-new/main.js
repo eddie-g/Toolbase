@@ -89,6 +89,11 @@ import {
     beginDrag,
     endDrag,
 } from './interactions/drag.js';
+import {
+    configureResizeInteractions,
+    beginResize,
+    endResize,
+} from './interactions/resize.js';
 import { activeState, setActiveState, clearActiveState } from './store/active-state.js';
 import { hoverState, setHoverState, clearHoverState } from './store/hover-state.js';
 import {
@@ -7239,46 +7244,15 @@ import { pageData } from './store/page-data.js';
         syncActiveEditor: (restore) => syncActiveEditor(restore),
         markDirty: () => markDirty(),
     });
+    configureResizeInteractions({
+        pushUndo: () => pushUndo(),
+        hasActiveBoxSelection: () => hasActiveBoxSelection(),
+        markDirty: () => markDirty(),
+        editableLineStyle: (ann, lineIndex) => editableLineStyle(ann, lineIndex),
+    });
 
-    function beginResize(e, pi, handle) {
-        if (!editModeEnabled && !addTextMode && !shapeMode && !hasActiveBoxSelection()) return;
-        const data = pageData[pi];
-        const ann = data?.annotations.find(a => a._uid === activeState.uid);
-        const box = ann ? resolveAnnBox(ann) : null;
-        const pt = ann ? pdfPtFromClient(e.clientX, e.clientY, pi) : null;
-        if (!ann || !box || !pt) return;
-        if (isAnnotationLocked(ann)) return;
-        if (isTextAnnotation(ann)) {
-            ann._autoWidth = false;
-        }
-        pushUndo();
-        const startStyle = editableLineStyle(ann, 0);
-        setResizeState({
-            active: true,
-            pi,
-            uid: ann._uid,
-            handle,
-            startPt: pt,
-            startBox: { ...box },
-            startFontSize: startStyle.fontSizePt,
-            startLineGeometry: (isShapeAnnotation(ann) && isLineShape(ann))
-                ? {
-                    lineStartX: clamp01(ann.lineStartX, 0),
-                    lineStartY: clamp01(ann.lineStartY, 0),
-                    lineEndX: clamp01(ann.lineEndX, 1),
-                    lineEndY: clamp01(ann.lineEndY, 1),
-                }
-                : null,
-        });
-    }
-
+    // beginResize / endResize moved to ./interactions/resize.js (Phase 6b).
     // endDrag moved to ./interactions/drag.js (Phase 6a).
-
-    function endResize() {
-        if (!resizeState.active) return;
-        setResizeState({ active: false, pi: null, uid: null, handle: null, startPt: null, startBox: null, startFontSize: null, startLineGeometry: null });
-        markDirty();
-    }
 
     // Rotation helpers (normalizeRotationDegrees lives in ./util/geometry.js)
     function getRotationCenterClient(pi, ann) {
