@@ -13,9 +13,10 @@
  * unchanged.
  */
 
-import { savedSignatureLibrary } from '../store/signature-state.js';
+import { savedSignatureLibrary, setSavedSignatureLibrary } from '../store/signature-state.js';
 import { signatureModeLabel } from '../annotations/types.js';
 import { escapeHtml } from '../util/html.js';
+import { readSignatureLibrary, writeSignatureLibrary } from '../persistence/signature-library.js';
 
 export function updateSignatureLibraryLoadUi({ signatureLibrarySelect, signatureLibraryLoadBtn }) {
     if (!signatureLibrarySelect) return;
@@ -72,4 +73,22 @@ export function renderSavedSignatureLibrary({ signatureLibraryList, signatureLib
             `</div>`
         );
     }).join('');
+}
+
+/**
+ * Persist the current saved-signature library to local storage. Returns
+ * the writeSignatureLibrary success flag so callers can roll back the
+ * in-memory store on failure.
+ */
+export function persistSavedSignatureLibrary() {
+    return writeSignatureLibrary(savedSignatureLibrary);
+}
+
+/**
+ * Hydrate the saved-signature store from local storage and repaint the
+ * library UI. refs are forwarded to renderSavedSignatureLibrary.
+ */
+export function loadSavedSignatureLibrary(refs) {
+    setSavedSignatureLibrary(readSignatureLibrary());
+    renderSavedSignatureLibrary(refs);
 }

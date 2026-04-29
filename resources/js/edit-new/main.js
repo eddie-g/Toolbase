@@ -211,6 +211,8 @@ import {
 import {
     updateSignatureLibraryLoadUi as _updateSignatureLibraryLoadUi,
     renderSavedSignatureLibrary as _renderSavedSignatureLibrary,
+    persistSavedSignatureLibrary as _persistSavedSignatureLibrary,
+    loadSavedSignatureLibrary as _loadSavedSignatureLibrary,
 } from './signature/library-ui.js';
 import { paintSmoothStroke } from './draw/smooth-stroke.js';
 import {
@@ -4569,14 +4571,10 @@ import {
     const updateSignatureLibraryLoadUi = () => _updateSignatureLibraryLoadUi({ signatureLibrarySelect, signatureLibraryLoadBtn });
     const renderSavedSignatureLibrary = () => _renderSavedSignatureLibrary({ signatureLibraryList, signatureLibrarySelect, signatureLibraryLoadBtn });
 
-    function persistSavedSignatureLibrary() {
-        return writeSignatureLibrary(savedSignatureLibrary);
-    }
-
-    function loadSavedSignatureLibrary() {
-        setSavedSignatureLibrary(readSignatureLibrary());
-        renderSavedSignatureLibrary();
-    }
+    // persistSavedSignatureLibrary + loadSavedSignatureLibrary moved to
+    // ./signature/library-ui.js (Phase 7bs).
+    const persistSavedSignatureLibrary = _persistSavedSignatureLibrary;
+    const loadSavedSignatureLibrary = () => _loadSavedSignatureLibrary({ signatureLibraryList, signatureLibrarySelect, signatureLibraryLoadBtn });
 
     // makeSavedSignatureName moved to ./signature/labels.js (Phase 7bm).
     const makeSavedSignatureName = () => _makeSavedSignatureName(signatureSaveNameInput);
