@@ -188,6 +188,12 @@ import {
     updateSignatureLibrarySaveUi as _updateSignatureLibrarySaveUi,
 } from './signature/status.js';
 import {
+    clearSignatureCanvas as _clearSignatureCanvas,
+    clearSignatureDrawingState as _clearSignatureDrawingState,
+    getSignatureSmoothingAmount as _getSignatureSmoothingAmount,
+    hasSignatureDrawContent,
+} from './signature/canvas.js';
+import {
     dbgEscape as _dbgEscape,
     dbgPrettyHtml as _dbgPrettyHtml,
     dbgFormatStyle as _dbgFormatStyle,
@@ -4646,28 +4652,10 @@ import {
         redrawAllOverlays();
     }
 
-    function clearSignatureCanvas() {
-        if (!signatureCtx || !signatureCanvas) return;
-        signatureCtx.clearRect(0, 0, signatureCanvas.width, signatureCanvas.height);
-        signatureCtx.lineCap = 'round';
-        signatureCtx.lineJoin = 'round';
-    }
-
-    function clearSignatureDrawingState() {
-        setSignatureDrawing(false);
-        setSignatureStrokes([]);
-        setSignatureActiveStroke(null);
-        clearSignatureCanvas();
-    }
-
-    function getSignatureSmoothingAmount() {
-        return clamp01((Number(signatureSmoothingInput?.value) || 0) / 100, 0.58);
-    }
-
-    function hasSignatureDrawContent() {
-        return signatureStrokes.some((stroke) => Array.isArray(stroke?.points) && stroke.points.length > 0)
-            || (Array.isArray(signatureActiveStroke?.points) && signatureActiveStroke.points.length > 0);
-    }
+    // signature canvas helpers moved to ./signature/canvas.js (Phase 7av).
+    const clearSignatureCanvas = () => _clearSignatureCanvas(signatureCanvas);
+    const clearSignatureDrawingState = () => _clearSignatureDrawingState(signatureCanvas);
+    const getSignatureSmoothingAmount = () => _getSignatureSmoothingAmount(signatureSmoothingInput);
 
     function paintSignatureStroke(stroke) {
         const points = Array.isArray(stroke?.points) ? stroke.points : [];
