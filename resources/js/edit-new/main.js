@@ -148,6 +148,24 @@ import {
     setDrawBrushSize,
     setActiveDrawSession,
 } from './store/draw-tool-state.js';
+import {
+    currentShapeType,
+    currentShapeStrokeColor,
+    currentShapeStrokeOpacity,
+    currentShapeStrokeWidth,
+    currentShapeStrokeTransparent,
+    currentShapeFillColor,
+    currentShapeFillOpacity,
+    currentShapeFillTransparent,
+    setCurrentShapeType,
+    setCurrentShapeStrokeColor,
+    setCurrentShapeStrokeOpacity,
+    setCurrentShapeStrokeWidth,
+    setCurrentShapeStrokeTransparent,
+    setCurrentShapeFillColor,
+    setCurrentShapeFillOpacity,
+    setCurrentShapeFillTransparent,
+} from './store/shape-defaults.js';
 
 (function () {
 
@@ -440,14 +458,7 @@ import {
     // currentZoomPercent / suppressEditorAutofit / suppressEditorAutofitResetToken
     // moved to ./store/zoom-state.js (Phase 5e). Initial value seeded below.
     setCurrentZoomPercent(initialZoomPercent);
-    let currentShapeType = 'circle';
-    let currentShapeStrokeColor = '#0f172a';
-    let currentShapeStrokeOpacity = 1;
-    let currentShapeStrokeWidth = 3;
-    let currentShapeStrokeTransparent = false;
-    let currentShapeFillColor = '#22c55e';
-    let currentShapeFillOpacity = 0.22;
-    let currentShapeFillTransparent = false;
+    // currentShape* defaults moved to ./store/shape-defaults.js (Phase 5i).
 
     let measureCanvas = null;
     // Embedded-PDF-font registry. Owns the @font-face injection, the
@@ -5234,14 +5245,14 @@ import {
 
     function reflectShapeStateToInputs(shapeState) {
         if (!shapeState) return;
-        currentShapeType = normalizeShapeType(shapeState.shapeType);
-        currentShapeStrokeColor = normalizeHexColor(shapeState.strokeColor, currentShapeStrokeColor);
-        currentShapeStrokeOpacity = clamp01(shapeState.strokeOpacity, currentShapeStrokeOpacity);
-        currentShapeStrokeWidth = Math.max(1, Number(shapeState.strokeWidth) || currentShapeStrokeWidth);
-        currentShapeStrokeTransparent = Boolean(shapeState.strokeTransparent);
-        currentShapeFillColor = normalizeHexColor(shapeState.fillColor, currentShapeFillColor);
-        currentShapeFillOpacity = clamp01(shapeState.fillOpacity, currentShapeFillOpacity);
-        currentShapeFillTransparent = Boolean(shapeState.fillTransparent);
+        setCurrentShapeType(normalizeShapeType(shapeState.shapeType));
+        setCurrentShapeStrokeColor(normalizeHexColor(shapeState.strokeColor, currentShapeStrokeColor));
+        setCurrentShapeStrokeOpacity(clamp01(shapeState.strokeOpacity, currentShapeStrokeOpacity));
+        setCurrentShapeStrokeWidth(Math.max(1, Number(shapeState.strokeWidth) || currentShapeStrokeWidth));
+        setCurrentShapeStrokeTransparent(Boolean(shapeState.strokeTransparent));
+        setCurrentShapeFillColor(normalizeHexColor(shapeState.fillColor, currentShapeFillColor));
+        setCurrentShapeFillOpacity(clamp01(shapeState.fillOpacity, currentShapeFillOpacity));
+        setCurrentShapeFillTransparent(Boolean(shapeState.fillTransparent));
 
         if (shapeStrokeColorInput) shapeStrokeColorInput.value = currentShapeStrokeColor;
         if (shapeStrokeHexInput) shapeStrokeHexInput.value = currentShapeStrokeColor;
