@@ -30,6 +30,7 @@ import {
     readSignatureLibrary,
     writeSignatureLibrary,
 } from './persistence/signature-library.js';
+import { createAutoSave } from './persistence/autosave.js';
 
 (function () {
 
@@ -7647,50 +7648,28 @@ import {
         updateSaveUi();
     }
 
-    // Auto-save: debounce for 800ms of idle time after the last edit. If a save
-    // is already in flight, chain another one once it completes so edits that
-    // land mid-save are not lost.
-    let autoSaveTimer = null;
-    const AUTO_SAVE_DEBOUNCE_MS = 800;
-    function scheduleAutoSave() {
-        if (autoSaveTimer) clearTimeout(autoSaveTimer);
-        autoSaveTimer = setTimeout(() => {
-            autoSaveTimer = null;
-            triggerAutoSave();
-        }, AUTO_SAVE_DEBOUNCE_MS);
-    }
-    function triggerAutoSave() {
-        if (!isDirty && pendingDeletedAnnotationIds.size === 0 && pendingDeletedPromotedSourceKeys.size === 0) {
-            return;
-        }
-        if (isSaving) {
-            // A save is currently running — reschedule once it finishes so we
-            // don't drop edits made during the save.
-            scheduleAutoSave();
-            return;
-        }
-        // saveAllChanges is a no-op when nothing is dirty and handles its own
-        // error reporting via showToast.
-        saveAllChanges({ silent: true }).catch(() => { /* handled inside saveAllChanges */ });
-    }
-
-    // Flush any pending auto-save immediately when the user navigates away or
-    // hides the tab. Without this, a debounce interval straddling the unload
-    // would drop the most recent edit.
-    function flushAutoSaveIfPending() {
-        if (autoSaveTimer) {
-            clearTimeout(autoSaveTimer);
-            autoSaveTimer = null;
-            triggerAutoSave();
-        }
-    }
+    // Auto-save: debounce for 800ms of idle time after the last edit. The
+    // factory in ./persistence/autosave.js owns the timer; this file just
+    // tells it when there are pending changes and how to actually save.
+    const autoSave = createAutoSave({
+        debounceMs: 800,
+        shouldSave: () =>
+            isDirty
+            || pendingDeletedAnnotationIds.size > 0
+            || pendingDeletedPromotedSourceKeys.size > 0,
+        isBusy: () => isSaving,
+        runSave: () => saveAllChanges({ silent: true }),
+    });
+    const scheduleAutoSave = autoSave.schedule;
+    const triggerAutoSave = autoSave.trigger;
+    const flushAutoSaveIfPending = autoSave.flushIfPending;
 
     // Test-only: force a save POST to /save-annotation-state regardless of the
     // current dirty/timer state. Used by automated tests that need to observe
     // the network round-trip after the auto-save debounce may have already
     // fired and reset isDirty.
     async function forceSaveForTests() {
-        if (autoSaveTimer) { clearTimeout(autoSaveTimer); autoSaveTimer = null; }
+        autoSave.cancel();
         const wasDirty = isDirty;
         isDirty = true;
         try { await saveAllChanges({ silent: true }); }
@@ -8426,7 +8405,7 @@ import {
         // is queued, then await it (saveAllChanges is a no-op when nothing is
         // dirty). This also ensures the saved DB state matches the downloaded
         // PDF for the same click.
-        if (autoSaveTimer) { clearTimeout(autoSaveTimer); autoSaveTimer = null; }
+        autoSave.cancel();
         if (isDirty || pendingDeletedAnnotationIds.size > 0 || pendingDeletedPromotedSourceKeys.size > 0) {
             try { await saveAllChanges({ silent: true }); }
             catch (_error) { /* saveAllChanges surfaces its own toast */ }
