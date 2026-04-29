@@ -217,6 +217,10 @@ import {
     diffGalleyAdded,
 } from './editor/galley/text.js';
 import {
+    showErrorBanner as _showErrorBanner,
+    showSaveToast as _showSaveToast,
+} from './ui/banner.js';
+import {
     dbgEscape as _dbgEscape,
     dbgPrettyHtml as _dbgPrettyHtml,
     dbgFormatStyle as _dbgFormatStyle,
@@ -5448,13 +5452,9 @@ import {
     });
 
     // ── Save ──────────────────────────────────────────────────────────────────
-    function showError(msg) { errorBanner.textContent = msg; errorBanner.style.display = 'block'; }
-
-    function showToast(msg) {
-        saveToast.textContent = msg; saveToast.classList.add('show');
-        clearTimeout(saveToast._t);
-        saveToast._t = setTimeout(() => saveToast.classList.remove('show'), 2000);
-    }
+    // showError + showToast moved to ./ui/banner.js (Phase 7bd).
+    const showError = (msg) => _showErrorBanner(errorBanner, msg);
+    const showToast = (msg) => _showSaveToast(saveToast, msg);
 
     function buildPersistedAnnotationPayload(ann) {
         const currentText = editedTexts[ann._uid] ?? String(ann.text ?? '');
