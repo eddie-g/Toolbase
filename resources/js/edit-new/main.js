@@ -85,6 +85,8 @@ import {
     annotationPositionChanged,
     normalizeAnnotationTextForDirtyComparison,
     persistRichEditorHtml,
+    shouldPersistPromotedDirty,
+    shouldPersistPromotedSourceBoxForBackground,
 } from './annotations/state.js';
 import {
     normalizeShapeAnnotation,
@@ -5427,45 +5429,8 @@ import {
         return payload;
     }
 
-    function shouldPersistPromotedSourceBoxForBackground(ann, currentText) {
-        if (String(ann?.type || '').toLowerCase() !== 'text') return false;
-        if (!ann?.promotedFromExtraction) return false;
-
-        const background = String(ann?.backgroundColor || '').trim().toLowerCase();
-        if (!background || background === 'transparent') return false;
-        if (typeof ann?._richHtml === 'string' && ann._richHtml.trim()) return false;
-
-        const currentBox = resolveAnnBox(ann);
-        const sourceBox = resolveSourceAnnBox(ann);
-        if (!currentBox || !sourceBox) return false;
-
-        const currentNormalized = normalizeAnnotationTextForDirtyComparison(currentText);
-        const originalNormalized = normalizeAnnotationTextForDirtyComparison(ann.originalText ?? ann.text ?? '');
-        if (currentNormalized !== originalNormalized) return false;
-
-        const geometryTolerance = 0.75;
-        const topLeftMatchesSource = Math.abs(currentBox.x - sourceBox.x) <= geometryTolerance
-            && Math.abs(currentBox.y - sourceBox.y) <= geometryTolerance;
-        if (!topLeftMatchesSource) return false;
-
-        if (Math.abs(currentBox.h - sourceBox.h) > 2.0) return false;
-
-        return (sourceBox.w - currentBox.w) > 2.0;
-    }
-
-    // normalizeAnnotationTextForDirtyComparison + annotationPositionChanged
-    // moved to ./annotations/state.js (Phase 7bb).
-
-    function shouldPersistPromotedDirty(ann, currentText) {
-        if (!ann?.promotedFromExtraction) return false;
-        const originalText = normalizeAnnotationTextForDirtyComparison(ann.originalText ?? ann.text ?? '');
-        const nextText = normalizeAnnotationTextForDirtyComparison(currentText);
-        if (nextText !== originalText) return true;
-        if (annotationPositionChanged(ann)) return true;
-        if (annotationDimensionsChanged(ann)) return true;
-        if (ann._styleDirty) return true;
-        return false;
-    }
+    // shouldPersistPromotedSourceBoxForBackground + shouldPersistPromotedDirty
+    // moved to ./annotations/state.js (Phase 7br).
 
     function flushActiveEditorState() {
         if (activeState.pi === null || !activeState.uid) return;

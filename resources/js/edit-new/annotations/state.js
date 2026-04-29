@@ -3,7 +3,7 @@
 // its visible text has been edited, and whether its bounding box has been
 // resized away from the originally captured PDF box. No DOM, no editor state.
 
-import { resolveAnnBox, resolveOriginalAnnBox } from './box.js';
+import { resolveAnnBox, resolveOriginalAnnBox, resolveSourceAnnBox } from './box.js';
 import { markDirty } from '../store/lifecycle-flags.js';
 
 /**
@@ -93,4 +93,53 @@ export function persistRichEditorHtml(active, ae) {
     active.ann._styleDirty = true;
     markUserAuthored(active.ann);
     markDirty();
+}
+
+/**
+ * True if a promoted-from-extraction annotation has diverged from its
+ * captured baseline (text edited, moved, resized, or had a style change),
+ * so the saved payload should carry promotedDirty=true.
+ */
+export function shouldPersistPromotedDirty(ann, currentText) {
+    if (!ann?.promotedFromExtraction) return false;
+    const originalText = normalizeAnnotationTextForDirtyComparison(ann.originalText ?? ann.text ?? '');
+    const nextText = normalizeAnnotationTextForDirtyComparison(currentText);
+    if (nextText !== originalText) return true;
+    if (annotationPositionChanged(ann)) return true;
+    if (annotationDimensionsChanged(ann)) return true;
+    if (ann._styleDirty) return true;
+    return false;
+}
+
+/**
+ * True if a promoted text annotation with a non-transparent background
+ * has been horizontally trimmed below its source extraction box and
+ * still matches the original text/top-left/height — in that case the
+ * saved payload should preserve the original source box so background
+ * rendering covers the full extracted region.
+ */
+export function shouldPersistPromotedSourceBoxForBackground(ann, currentText) {
+    if (String(ann?.type || '').toLowerCase() !== 'text') return false;
+    if (!ann?.promotedFromExtraction) return false;
+
+    const background = String(ann?.backgroundColor || '').trim().toLowerCase();
+    if (!background || background === 'transparent') return false;
+    if (typeof ann?._richHtml === 'string' && ann._richHtml.trim()) return false;
+
+    const currentBox = resolveAnnBox(ann);
+    const sourceBox = resolveSourceAnnBox(ann);
+    if (!currentBox || !sourceBox) return false;
+
+    const currentNormalized = normalizeAnnotationTextForDirtyComparison(currentText);
+    const originalNormalized = normalizeAnnotationTextForDirtyComparison(ann.originalText ?? ann.text ?? '');
+    if (currentNormalized !== originalNormalized) return false;
+
+    const geometryTolerance = 0.75;
+    const topLeftMatchesSource = Math.abs(currentBox.x - sourceBox.x) <= geometryTolerance
+        && Math.abs(currentBox.y - sourceBox.y) <= geometryTolerance;
+    if (!topLeftMatchesSource) return false;
+
+    if (Math.abs(currentBox.h - sourceBox.h) > 2.0) return false;
+
+    return (sourceBox.w - currentBox.w) > 2.0;
 }
