@@ -70,3 +70,15 @@ export function syncMarkupToolLabels({
     if (markupToolWidthValue && markupToolWidthInput) markupToolWidthValue.textContent = `${markupToolWidthInput.value}px`;
     if (markupToolSmoothingValue && markupToolSmoothingInput) markupToolSmoothingValue.textContent = `${markupToolSmoothingInput.value}%`;
 }
+
+export function buildCurrentMarkupAsset(markupToolCanvas) {
+    if (!markupToolDirty || !markupToolCanvas) return null;
+    return {
+        dataUrl: markupToolCanvas.toDataURL('image/png'),
+        width: markupToolCanvas.width,
+        height: markupToolCanvas.height,
+        fileName: 'drawing.png',
+        mimeType: 'image/png',
+        toolSource: 'draw-erase',
+    };
+}

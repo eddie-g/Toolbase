@@ -184,6 +184,7 @@ import {
     getMarkupToolSmoothingAmount as _getMarkupToolSmoothingAmount,
     hasMarkupToolDrawContent,
     syncMarkupToolLabels as _syncMarkupToolLabels,
+    buildCurrentMarkupAsset as _buildCurrentMarkupAsset,
 } from './markup-tool/state.js';
 import {
     setSignatureStatus as _setSignatureStatus,
@@ -4133,15 +4134,7 @@ import {
     }
 
     function buildCurrentMarkupAsset() {
-        if (!markupToolDirty || !markupToolCanvas) return null;
-        return {
-            dataUrl: markupToolCanvas.toDataURL('image/png'),
-            width: markupToolCanvas.width,
-            height: markupToolCanvas.height,
-            fileName: 'drawing.png',
-            mimeType: 'image/png',
-            toolSource: 'draw-erase',
-        };
+        return _buildCurrentMarkupAsset(markupToolCanvas);
     }
 
     function getMarkupToolCanvasPoint(event) {
