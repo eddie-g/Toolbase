@@ -120,6 +120,20 @@ import {
     setAcroWidgetsByPage,
     setAcroWidgetsForPage,
 } from './store/acro-state.js';
+import {
+    dragState,
+    resizeState,
+    rotateState,
+    textCreationState,
+    shapeCreationState,
+    shapeCutState,
+    setDragState,
+    setResizeState,
+    setRotateState,
+    setTextCreationState,
+    setShapeCreationState,
+    setShapeCutState,
+} from './store/interaction-state.js';
 
 (function () {
 
@@ -384,12 +398,9 @@ import {
     // hoverState moved to ./store/hover-state.js (Phase 5b). Reads use
     // the imported live binding; writes go through setHoverState/
     // clearHoverState.
-    let dragState   = { active: false, pi: null, uid: null, offsetXPts: 0, offsetYPts: 0, startPt: null, startBox: null };
-    let resizeState = { active: false, pi: null, uid: null, handle: null, startPt: null, startBox: null, startFontSize: null, startLineGeometry: null };
-    let rotateState = { active: false, pi: null, uid: null, pointerId: null, grabAngleOffset: 0 };
-    let textCreationState = { active: false, pi: null, pointerId: null, startX: 0, startY: 0, rect: null, previewEl: null, moved: false };
-    let shapeCreationState = { active: false, pi: null, pointerId: null, startPt: null, currentPt: null, previewAnn: null, constrain: false };
-    let shapeCutState = { armed: false, pi: null, uid: null, pointerId: null, startPt: null, currentPt: null };
+    // dragState / resizeState / rotateState / textCreationState /
+    // shapeCreationState / shapeCutState moved to
+    // ./store/interaction-state.js (Phase 5g).
     // isDirty / isSaving / isDownloadingPdf moved to ./store/lifecycle-flags.js (Phase 5c).
     // editModeEnabled / addTextMode / shapeMode / eraseMode moved to
     // ./store/editor-modes.js (Phase 5d).
@@ -7169,7 +7180,7 @@ import {
         if (!ann || !box || !pt) return;
         if (isAnnotationLocked(ann)) return;
         pushUndo();
-        dragState = {
+        setDragState({
             active: true,
             pi,
             uid: ann._uid,
@@ -7177,7 +7188,7 @@ import {
             offsetYPts: pt.y - box.y,
             startPt: { ...pt },
             startBox: { ...box },
-        };
+        });
         // Hide the shape action bar / text hover menu while dragging so they don't
         // follow the cursor and re-trigger hover/scale transitions on every mousemove.
         if (isBoxAnnotation(ann)) {
@@ -7204,7 +7215,7 @@ import {
         }
         pushUndo();
         const startStyle = editableLineStyle(ann, 0);
-        resizeState = {
+        setResizeState({
             active: true,
             pi,
             uid: ann._uid,
@@ -7220,13 +7231,13 @@ import {
                     lineEndY: clamp01(ann.lineEndY, 1),
                 }
                 : null,
-        };
+        });
     }
 
     function endDrag() {
         if (!dragState.active) return;
         const pi = dragState.pi;
-        dragState = { active: false, pi: null, uid: null, offsetXPts: 0, offsetYPts: 0, startPt: null, startBox: null };
+        setDragState({ active: false, pi: null, uid: null, offsetXPts: 0, offsetYPts: 0, startPt: null, startBox: null });
         document.body.style.cursor = '';
         // Restore the shape action bar (hidden during drag).
         if (pi !== null) syncActiveEditor(true);
@@ -7235,7 +7246,7 @@ import {
 
     function endResize() {
         if (!resizeState.active) return;
-        resizeState = { active: false, pi: null, uid: null, handle: null, startPt: null, startBox: null, startFontSize: null, startLineGeometry: null };
+        setResizeState({ active: false, pi: null, uid: null, handle: null, startPt: null, startBox: null, startFontSize: null, startLineGeometry: null });
         markDirty();
     }
 
@@ -7275,13 +7286,13 @@ import {
         let offset = pAngle - handleAngle;
         // normalize signed
         offset = ((offset + 540) % 360) - 180;
-        rotateState = {
+        setRotateState({
             active: true,
             pi,
             uid: ann._uid,
             pointerId: e.pointerId,
             grabAngleOffset: offset,
-        };
+        });
         if (e.target && typeof e.target.setPointerCapture === 'function') {
             try { e.target.setPointerCapture(e.pointerId); } catch (_) {}
             e.target.classList.add('is-active');
@@ -7293,7 +7304,7 @@ import {
         if (!rotateState.active) return;
         const rot = document.getElementById('rh-' + (rotateState.pi + 1) + '-rot');
         if (rot) rot.classList.remove('is-active');
-        rotateState = { active: false, pi: null, uid: null, pointerId: null, grabAngleOffset: 0 };
+        setRotateState({ active: false, pi: null, uid: null, pointerId: null, grabAngleOffset: 0 });
         markDirty();
     }
 
@@ -8022,7 +8033,7 @@ import {
     }
 
     function resetShapeCutState() {
-        shapeCutState = { armed: false, pi: null, uid: null, pointerId: null, startPt: null, currentPt: null };
+        setShapeCutState({ armed: false, pi: null, uid: null, pointerId: null, startPt: null, currentPt: null });
     }
 
     function cancelShapeCutMode({ redraw = true } = {}) {
@@ -8035,14 +8046,14 @@ import {
 
     function armShapeCutMode(ann, pi) {
         if (!canCutShapeAnnotation(ann)) return;
-        shapeCutState = {
+        setShapeCutState({
             armed: true,
             pi,
             uid: ann._uid,
             pointerId: null,
             startPt: null,
             currentPt: null,
-        };
+        });
         syncCanvasCursors();
         syncShapePanelUi();
         redrawOverlay(pi);
@@ -8232,11 +8243,11 @@ import {
         if (textCreationState.previewEl) {
             textCreationState.previewEl.remove();
         }
-        textCreationState = { active: false, pi: null, pointerId: null, startX: 0, startY: 0, rect: null, previewEl: null, moved: false };
+        setTextCreationState({ active: false, pi: null, pointerId: null, startX: 0, startY: 0, rect: null, previewEl: null, moved: false });
     }
 
     function cancelShapeCreationPreview() {
-        shapeCreationState = { active: false, pi: null, pointerId: null, startPt: null, currentPt: null, previewAnn: null, constrain: false };
+        setShapeCreationState({ active: false, pi: null, pointerId: null, startPt: null, currentPt: null, previewAnn: null, constrain: false });
         detachShapeConstrainShiftListener();
         hideShapeConstrainTip();
         redrawAllOverlays();
@@ -8981,7 +8992,7 @@ import {
             previewEl.style.width = '0px';
             previewEl.style.height = '0px';
             pageEl.appendChild(previewEl);
-            textCreationState = {
+            setTextCreationState({
                 active: true,
                 pi,
                 pointerId: event.pointerId,
@@ -8994,7 +9005,7 @@ import {
                 logicalHeight: canvasLogicalHeight(oc),
                 previewEl,
                 moved: false,
-            };
+            });
             if (typeof oc.setPointerCapture === 'function') {
                 oc.setPointerCapture(event.pointerId);
             }
@@ -9066,7 +9077,7 @@ import {
             event.preventDefault();
             if (activeState.uid) clearActiveAnnotation();
             const initialConstrain = Boolean(event.shiftKey);
-            shapeCreationState = {
+            setShapeCreationState({
                 active: true,
                 pi,
                 pointerId: event.pointerId,
@@ -9074,7 +9085,7 @@ import {
                 currentPt: startPt,
                 previewAnn: createShapeAnnotationFromPoints(startPt, startPt, pi, { constrain: initialConstrain }),
                 constrain: initialConstrain,
-            };
+            });
             attachShapeConstrainShiftListener();
             if (initialConstrain) {
                 shapeConstrainUserDismissedTip = true;
@@ -9122,7 +9133,7 @@ import {
                 oc.releasePointerCapture(event.pointerId);
             }
             const ann = state.previewAnn ? normalizeShapeAnnotation(state.previewAnn) : null;
-            shapeCreationState = { active: false, pi: null, pointerId: null, startPt: null, currentPt: null, previewAnn: null, constrain: false };
+            setShapeCreationState({ active: false, pi: null, pointerId: null, startPt: null, currentPt: null, previewAnn: null, constrain: false });
             detachShapeConstrainShiftListener();
             hideShapeConstrainTip();
             redrawOverlay(pi);
@@ -9152,12 +9163,12 @@ import {
                 return false;
             }
             event.preventDefault();
-            shapeCutState = {
+            setShapeCutState({
                 ...shapeCutState,
                 pointerId: event.pointerId,
                 startPt,
                 currentPt: startPt,
-            };
+            });
             oc.setPointerCapture?.(event.pointerId);
             redrawOverlay(pi);
             return true;
@@ -9167,10 +9178,10 @@ import {
             if (!shapeCutState.armed || shapeCutState.pi !== pi || shapeCutState.pointerId !== event.pointerId) return false;
             const currentPt = pdfPtFromClient(event.clientX, event.clientY, pi);
             if (!currentPt) return false;
-            shapeCutState = {
+            setShapeCutState({
                 ...shapeCutState,
                 currentPt,
-            };
+            });
             redrawOverlay(pi);
             return true;
         };
@@ -9189,12 +9200,12 @@ import {
             }
             const result = cutShapeAnnotation(ann, pi, startPt, endPt);
             if (!result.ok) {
-                shapeCutState = {
+                setShapeCutState({
                     ...shapeCutState,
                     pointerId: null,
                     startPt: null,
                     currentPt: null,
-                };
+                });
                 redrawOverlay(pi);
                 showToast(result.message || 'Unable to cut shape.');
                 syncCanvasCursors();
@@ -9307,12 +9318,12 @@ import {
                 cancelShapeCreationPreview();
             }
             if (shapeCutState.armed && shapeCutState.pi === pi && shapeCutState.pointerId === e.pointerId) {
-                shapeCutState = {
+                setShapeCutState({
                     ...shapeCutState,
                     pointerId: null,
                     startPt: null,
                     currentPt: null,
-                };
+                });
                 redrawOverlay(pi);
             }
         });
