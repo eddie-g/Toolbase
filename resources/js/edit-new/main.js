@@ -40,6 +40,7 @@ import {
     canRemoveBackgroundFromImageAnnotation,
     normalizeSignatureSourceMode,
     getSignatureAnnotationLabel,
+    signatureModeLabel,
     getAnnotationDisplayLabel,
     isBoxAnnotation,
     isTextAnnotation,
@@ -158,6 +159,13 @@ import {
     stripEditorSentinels,
     richHtmlHasInlineSelectionFormatting,
 } from './editor/plain-text.js';
+import {
+    createDrawLayer,
+    paintDrawDot,
+    paintDrawSegment,
+    localPointFromDrawSession,
+} from './draw/primitives.js';
+import { getImageAnnotationSource } from './annotations/image-source.js';
 import { annIsPromotedFromExtraction } from './annotations/promoted.js';
 import { shouldRenderTextInRichHtmlLayer, activeEditorCanvasOwnsPaint } from './render/text-routing.js';
 import { sourceLineRectWithinAnnotation } from './annotations/source-line-rect.js';
@@ -691,9 +699,7 @@ import {
     // resolveReflowedTextLineHeightPts, normalizeTextAnnotation moved
     // to ./annotations/normalize-text.js (Phase 7n).
 
-    function getImageAnnotationSource(ann) {
-        return String(ann?.dataUrl || ann?.src || '').trim();
-    }
+    // getImageAnnotationSource moved to ./annotations/image-source.js (Phase 7ao).
 
     // cloneSerializableValue lives in ./util/clone.js — imported at the top of the file.
 
@@ -4261,53 +4267,8 @@ import {
         );
     }
 
-    function createDrawLayer(pi, className, width, height, left = 0, top = 0, cssWidth = width, cssHeight = height) {
-        const pageContent = document.getElementById('pc-' + (pi + 1));
-        if (!pageContent) return null;
-        const layer = document.createElement('canvas');
-        layer.className = className;
-        layer.width = Math.max(1, Math.round(width));
-        layer.height = Math.max(1, Math.round(height));
-        layer.style.left = `${left}px`;
-        layer.style.top = `${top}px`;
-        layer.style.width = `${Math.max(1, cssWidth)}px`;
-        layer.style.height = `${Math.max(1, cssHeight)}px`;
-        pageContent.appendChild(layer);
-        return layer;
-    }
-
-    function paintDrawDot(ctx, x, y, width, color, composite = 'source-over') {
-        ctx.save();
-        ctx.globalCompositeOperation = composite;
-        ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.arc(x, y, Math.max(1, width / 2), 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-    }
-
-    function paintDrawSegment(ctx, fromMid, controlPoint, toPoint, width, color, composite = 'source-over') {
-        ctx.save();
-        ctx.globalCompositeOperation = composite;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        ctx.strokeStyle = color;
-        ctx.lineWidth = width;
-        ctx.beginPath();
-        ctx.moveTo(fromMid.x, fromMid.y);
-        ctx.quadraticCurveTo(controlPoint.x, controlPoint.y, toPoint.x, toPoint.y);
-        ctx.stroke();
-        ctx.restore();
-    }
-
-    function localPointFromDrawSession(session, canvasPoint) {
-        const relX = (canvasPoint.x - session.left) / Math.max(1, session.displayWidth);
-        const relY = (canvasPoint.y - session.top) / Math.max(1, session.displayHeight);
-        return {
-            x: Math.max(0, Math.min(session.layer.width, relX * session.layer.width)),
-            y: Math.max(0, Math.min(session.layer.height, relY * session.layer.height)),
-        };
-    }
+    // createDrawLayer, paintDrawDot, paintDrawSegment, localPointFromDrawSession
+    // moved to ./draw/primitives.js (Phase 7ao).
 
     function beginDirectPenStroke(event, oc, pi) {
         const point = canvasPointFromEvent(event, oc);
@@ -4797,12 +4758,7 @@ import {
         }
     }
 
-    function signatureModeLabel(mode) {
-        const normalized = normalizeSignatureSourceMode(mode);
-        if (normalized === 'type') return 'typed';
-        if (normalized === 'upload') return 'uploaded';
-        return 'drawn';
-    }
+    // signatureModeLabel moved to ./annotations/types.js (Phase 7ao).
 
     function updateSignatureLibrarySaveUi() {
         if (signatureSaveBtn) signatureSaveBtn.disabled = !signatureDirty;

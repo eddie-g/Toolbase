@@ -31,6 +31,15 @@ export function getSignatureAnnotationLabel(mode) {
     return 'Drawn signature';
 }
 
+// Short adjective form used by the saved-signature library list. Mirrors
+// getSignatureAnnotationLabel but returns just the past-tense word.
+export function signatureModeLabel(mode) {
+    const normalized = normalizeSignatureSourceMode(mode);
+    if (normalized === 'type') return 'typed';
+    if (normalized === 'upload') return 'uploaded';
+    return 'drawn';
+}
+
 export function getAnnotationDisplayLabel(ann) {
     const type = String(ann?.type || '').toLowerCase();
     if (type === 'signature') return getSignatureAnnotationLabel(ann?.signatureSourceMode);
