@@ -81,7 +81,8 @@ import {
     getShapePolygonPointsPdf,
     getShapePolygonPointsCanvas,
 } from './annotations/polygon-points.js';
-import { fontDisplayScale, canvasLogicalHeight } from './util/dom-metrics.js';
+import { fontDisplayScale, canvasLogicalHeight, canvasLogicalWidth } from './util/dom-metrics.js';
+import { pdfPtFromClient } from './render/coords.js';
 import { populateFontDropdown as populateFontDropdownImpl } from './render/font-dropdown.js';
 import { activeState, setActiveState, clearActiveState } from './store/active-state.js';
 import { hoverState, setHoverState, clearHoverState } from './store/hover-state.js';
@@ -1021,10 +1022,7 @@ import { pageData } from './store/page-data.js';
         canvas.__backingScale = backing;
     }
 
-    function canvasLogicalWidth(canvas) {
-        if (!canvas) return 0;
-        return canvas.__cssWidth ?? canvas.width;
-    }
+    // canvasLogicalWidth moved to ./util/dom-metrics.js (Phase 5.5b).
 
     // canvasLogicalHeight moved to ./util/dom-metrics.js.
 
@@ -7227,21 +7225,7 @@ import { pageData } from './store/page-data.js';
     });
 
     // ── Drag-to-reposition ────────────────────────────────────────────────────
-    function pdfPtFromClient(clientX, clientY, pi) {
-        const data = pageData[pi];
-        if (!data) return null;
-        const canvas = document.getElementById('oc-' + (pi + 1));
-        if (!canvas) return null;
-        const r = canvas.getBoundingClientRect();
-        if (!r.width || !r.height) return null;
-        // Use the canvas's LOGICAL (CSS-pixel) size — `canvas.width` is now
-        // the DPR-scaled backing-store size after the HiDPI overlay change.
-        const logicalW = canvasLogicalWidth(canvas);
-        const logicalH = canvasLogicalHeight(canvas);
-        const cx = (clientX - r.left) * (logicalW / r.width);
-        const cy = (clientY - r.top)  * (logicalH / r.height);
-        return { x: cx / data.scale, y: (data.canvasHeight - cy) / data.scale };
-    }
+    // pdfPtFromClient moved to ./render/coords.js (Phase 5.5b).
 
     function beginDrag(e, pi) {
         if (!editModeEnabled && !addTextMode && !shapeMode && !hasActiveBoxSelection()) return;

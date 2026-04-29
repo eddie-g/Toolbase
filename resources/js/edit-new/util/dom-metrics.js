@@ -20,3 +20,13 @@ export function canvasLogicalHeight(canvas) {
     if (!canvas) return 0;
     return canvas.__cssHeight ?? canvas.height;
 }
+
+/**
+ * The logical (CSS-pixel) width of an overlay/page canvas. The HiDPI
+ * setup stamps `__cssWidth` onto the canvas during sizing; fall back to
+ * canvas.width (the backing-store width) when that hint is missing.
+ */
+export function canvasLogicalWidth(canvas) {
+    if (!canvas) return 0;
+    return canvas.__cssWidth ?? canvas.width;
+}
