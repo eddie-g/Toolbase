@@ -179,6 +179,7 @@ import { pickViewportTargetPage } from './viewport/picker.js';
 import { getCurrentVisiblePageIndex as _getCurrentVisiblePageIndex } from './viewport/current-page.js';
 import { updatePageControls as _updatePageControls } from './viewport/page-controls.js';
 import { scrollToPage as _scrollToPage } from './viewport/scroll-to-page.js';
+import { syncCurrentPageFromScroll as _syncCurrentPageFromScroll } from './viewport/sync-page-from-scroll.js';
 import {
     setMarkupToolStatus as _setMarkupToolStatus,
     setMarkupToolDirtyState as _setMarkupToolDirtyState,
@@ -1074,29 +1075,8 @@ import {
     // scrollToPage moved to ./viewport/scroll-to-page.js (Phase 7bp).
     const scrollToPage = (pageNumber) => _scrollToPage(pageJumpInput, pageNumber);
 
-    function syncCurrentPageFromScroll() {
-        if (!pageJumpInput) return;
-        const pages = Array.from(document.querySelectorAll('.page-card[data-page-number]'));
-        if (!pages.length) return;
-        const viewportBottom = window.innerHeight || document.documentElement.clientHeight || 0;
-        let bestPage = null;
-        let bestOverlap = -Infinity;
-        pages.forEach((page) => {
-            const rect = page.getBoundingClientRect();
-            const overlapTop = Math.max(rect.top, 0);
-            const overlapBottom = Math.min(rect.bottom, viewportBottom);
-            const overlap = overlapBottom - overlapTop;
-            if (overlap > bestOverlap) {
-                bestOverlap = overlap;
-                bestPage = page;
-            }
-        });
-        if (!bestPage) return;
-        const nextPage = parseInt(bestPage.dataset.pageNumber || '1', 10);
-        if (Number.isFinite(nextPage) && String(nextPage) !== pageJumpInput.value) {
-            pageJumpInput.value = String(nextPage);
-        }
-    }
+    // syncCurrentPageFromScroll moved to ./viewport/sync-page-from-scroll.js (Phase 7bq).
+    const syncCurrentPageFromScroll = () => _syncCurrentPageFromScroll(pageJumpInput);
 
     // performUndo / performRedo moved to ./history/undo-redo.js (Phase 7d).
 
