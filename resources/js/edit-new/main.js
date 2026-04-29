@@ -172,6 +172,8 @@ import {
     getFitScaleForWidth as _getFitScaleForWidth,
     getAppliedScale,
 } from './viewport/scale.js';
+import { pickViewportTargetPage } from './viewport/picker.js';
+import { getCurrentVisiblePageIndex as _getCurrentVisiblePageIndex } from './viewport/current-page.js';
 import {
     dbgEscape as _dbgEscape,
     dbgPrettyHtml as _dbgPrettyHtml,
@@ -6398,14 +6400,8 @@ import {
         return ann;
     }
 
-    function getCurrentVisiblePageIndex() {
-        const fromActive = Number(activeState.pi);
-        if (Number.isInteger(fromActive) && fromActive >= 0 && pageData[fromActive]) return fromActive;
-        const fromJump = Math.max(0, (Number(pageJumpInput?.value) || 1) - 1);
-        if (pageData[fromJump]) return fromJump;
-        const firstKey = Object.keys(pageData)[0];
-        return Number.isFinite(Number(firstKey)) ? Number(firstKey) : 0;
-    }
+    // getCurrentVisiblePageIndex moved to ./viewport/current-page.js (Phase 7as).
+    const getCurrentVisiblePageIndex = () => _getCurrentVisiblePageIndex(pageJumpInput);
 
     function createImageAnnotation({
         type = 'image',
@@ -8174,42 +8170,7 @@ import {
             closeImageImportModal();
         });
     }
-    // pickViewportTargetPage: returns { pi, centerPt: {x, y} (pdf bottom-origin
-    // points) } for the page card most visible in the viewport, with the
-    // center point computed from the viewport center clamped to the page.
-    function pickViewportTargetPage() {
-        const cards = Array.from(document.querySelectorAll('.page-card[data-page-number]'));
-        if (!cards.length) return null;
-        const viewportH = window.innerHeight || document.documentElement.clientHeight || 0;
-        const viewportW = window.innerWidth || document.documentElement.clientWidth || 0;
-        const viewportCenterY = viewportH / 2;
-        const viewportCenterX = viewportW / 2;
-        let best = null;
-        let bestOverlap = -Infinity;
-        cards.forEach((card) => {
-            const rect = card.getBoundingClientRect();
-            const overlap = Math.max(0, Math.min(rect.bottom, viewportH) - Math.max(rect.top, 0));
-            if (overlap > bestOverlap) {
-                bestOverlap = overlap;
-                best = { card, rect };
-            }
-        });
-        if (!best) return null;
-        const pageNum = parseInt(best.card.dataset.pageNumber || '1', 10);
-        const pi = Number.isFinite(pageNum) ? pageNum - 1 : 0;
-        const data = pageData[pi];
-        if (!data || !data.wPts || !data.hPts) return { pi, centerPt: null };
-        const rect = best.rect;
-        const pageW = rect.width || 1;
-        const pageH = rect.height || 1;
-        // Local coords inside the page card (clamped to its bounds).
-        const localX = Math.max(0, Math.min(pageW, viewportCenterX - rect.left));
-        const localY = Math.max(0, Math.min(pageH, viewportCenterY - rect.top));
-        const pdfXPts = (localX / pageW) * data.wPts;
-        // pdfY is bottom-origin (see drawImageBackedAnnotation), so flip Y.
-        const pdfYPts = data.hPts - (localY / pageH) * data.hPts;
-        return { pi, centerPt: { x: pdfXPts, y: pdfYPts } };
-    }
+    // pickViewportTargetPage moved to ./viewport/picker.js (Phase 7as).
     // Close on Escape (only when this modal is the topmost open one).
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && imageImportModal?.classList.contains('is-open')) {
