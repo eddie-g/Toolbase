@@ -222,6 +222,10 @@ import {
 } from './ui/banner.js';
 import { currentCanvasCursor } from './cursor/canvas-cursor.js';
 import {
+    setDrawToolStatus as _setDrawToolStatus,
+    clearActiveDrawSession,
+} from './draw/session.js';
+import {
     dbgEscape as _dbgEscape,
     dbgPrettyHtml as _dbgPrettyHtml,
     dbgFormatStyle as _dbgFormatStyle,
@@ -3889,16 +3893,8 @@ import {
         if (shapeDeleteBtn) shapeDeleteBtn.disabled = !activeShape || activeShapeLocked;
     }
 
-    function setDrawToolStatus(message) {
-        if (drawToolStatus) drawToolStatus.textContent = String(message || '');
-    }
-
-    function clearActiveDrawSession() {
-        if (activeDrawSession?.layer?.parentNode) {
-            activeDrawSession.layer.parentNode.removeChild(activeDrawSession.layer);
-        }
-        setActiveDrawSession(null);
-    }
+    // setDrawToolStatus + clearActiveDrawSession moved to ./draw/session.js (Phase 7bf).
+    const setDrawToolStatus = (message) => _setDrawToolStatus(drawToolStatus, message);
 
     function syncDrawToolPanelUi() {
         if (drawToolPanel) {
