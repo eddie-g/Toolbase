@@ -178,6 +178,7 @@ import {
 import { pickViewportTargetPage } from './viewport/picker.js';
 import { getCurrentVisiblePageIndex as _getCurrentVisiblePageIndex } from './viewport/current-page.js';
 import { updatePageControls as _updatePageControls } from './viewport/page-controls.js';
+import { scrollToPage as _scrollToPage } from './viewport/scroll-to-page.js';
 import {
     setMarkupToolStatus as _setMarkupToolStatus,
     setMarkupToolDirtyState as _setMarkupToolDirtyState,
@@ -1070,13 +1071,8 @@ import {
     // updatePageControls moved to ./viewport/page-controls.js (Phase 7bo).
     const updatePageControls = (totalPages = 1) => _updatePageControls({ pageTotalLabel, pageJumpInput }, totalPages);
 
-    function scrollToPage(pageNumber) {
-        const totalPages = _pdfDoc?.numPages || Object.keys(pageData).length || 1;
-        const clamped = Math.max(1, Math.min(totalPages, pageNumber));
-        if (pageJumpInput) pageJumpInput.value = String(clamped);
-        const target = document.getElementById(`card-${clamped}`) || document.getElementById(`pc-${clamped}`);
-        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
+    // scrollToPage moved to ./viewport/scroll-to-page.js (Phase 7bp).
+    const scrollToPage = (pageNumber) => _scrollToPage(pageJumpInput, pageNumber);
 
     function syncCurrentPageFromScroll() {
         if (!pageJumpInput) return;
