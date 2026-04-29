@@ -208,6 +208,7 @@ import {
 } from './shape/cut-mode.js';
 import { getActiveEditorSelection } from './editor/active-selection.js';
 import { cancelTextCreationPreview } from './interactions/text-creation.js';
+import { rawCanvasPointFromEvent } from './util/raw-canvas-point.js';
 import {
     dbgEscape as _dbgEscape,
     dbgPrettyHtml as _dbgPrettyHtml,
@@ -4182,13 +4183,7 @@ import {
     }
 
     function getMarkupToolCanvasPoint(event) {
-        if (!markupToolCanvas) return null;
-        const rect = markupToolCanvas.getBoundingClientRect();
-        if (!rect.width || !rect.height) return null;
-        return {
-            x: (event.clientX - rect.left) * (markupToolCanvas.width / rect.width),
-            y: (event.clientY - rect.top) * (markupToolCanvas.height / rect.height),
-        };
+        return rawCanvasPointFromEvent(markupToolCanvas, event);
     }
 
     function beginMarkupToolStroke(event) {
@@ -5245,13 +5240,7 @@ import {
     }
 
     function getSignatureCanvasPoint(event) {
-        if (!signatureCanvas) return null;
-        const rect = signatureCanvas.getBoundingClientRect();
-        if (!rect.width || !rect.height) return null;
-        return {
-            x: (event.clientX - rect.left) * (signatureCanvas.width / rect.width),
-            y: (event.clientY - rect.top) * (signatureCanvas.height / rect.height),
-        };
+        return rawCanvasPointFromEvent(signatureCanvas, event);
     }
 
     function beginSignatureStroke(event) {
