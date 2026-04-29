@@ -220,6 +220,7 @@ import {
     showErrorBanner as _showErrorBanner,
     showSaveToast as _showSaveToast,
 } from './ui/banner.js';
+import { currentCanvasCursor } from './cursor/canvas-cursor.js';
 import {
     dbgEscape as _dbgEscape,
     dbgPrettyHtml as _dbgPrettyHtml,
@@ -4514,13 +4515,7 @@ import {
         clearActiveDrawSession();
     }
 
-    function currentCanvasCursor() {
-        if (signaturePlacementState.active) return 'copy';
-        if (drawModeActive || eraseMode) return 'crosshair';
-        if (shapeCutState.armed) return 'crosshair';
-        if (addTextMode || shapeMode) return 'crosshair';
-        return 'default';
-    }
+    // currentCanvasCursor moved to ./cursor/canvas-cursor.js (Phase 7be).
 
     function syncCanvasCursors() {
         Object.keys(pageData).forEach((piStr) => {
