@@ -212,6 +212,11 @@ import { getActiveEditorSelection } from './editor/active-selection.js';
 import { cancelTextCreationPreview } from './interactions/text-creation.js';
 import { rawCanvasPointFromEvent } from './util/raw-canvas-point.js';
 import {
+    getGalleyEditorText,
+    expectedGalleyText,
+    diffGalleyAdded,
+} from './editor/galley/text.js';
+import {
     dbgEscape as _dbgEscape,
     dbgPrettyHtml as _dbgPrettyHtml,
     dbgFormatStyle as _dbgFormatStyle,
@@ -2712,57 +2717,8 @@ import {
     // Walk a galley editor's DOM in document order and concatenate the text
     // that should logically be in editedTexts: source-span text + tail text per
     // line, joined with '\n'.
-    function getGalleyEditorText(ae) {
-        if (!(ae instanceof HTMLElement)) return '';
-        const lines = ae.querySelectorAll('.ae-galley-line');
-        if (!lines.length) return '';
-        const lineTexts = [];
-        lines.forEach((line) => {
-            let txt = '';
-            line.querySelectorAll('.ae-galley-source-span, .ae-galley-tail').forEach((node) => {
-                txt += node.textContent || '';
-            });
-            lineTexts.push(txt);
-        });
-        return lineTexts.join('\n');
-    }
-
-    // Expected (pre-mutation) galley text: uses data-original-text for source
-    // spans and ann._galleyAppends for tail content. This is the baseline we
-    // diff against when the user mutates the contenteditable, so we don't
-    // mistake "no-text positional gaps between source spans" (e.g. leader dots)
-    // for newly-typed characters.
-    function expectedGalleyText(ann, ae) {
-        if (!(ae instanceof HTMLElement)) return '';
-        const lines = ae.querySelectorAll('.ae-galley-line');
-        if (!lines.length) return '';
-        const appends = (ann && ann._galleyAppends && typeof ann._galleyAppends === 'object') ? ann._galleyAppends : {};
-        const lineTexts = [];
-        lines.forEach((line) => {
-            const lineIdx = Number(line.dataset.lineIndex || 0);
-            let txt = '';
-            line.querySelectorAll('.ae-galley-source-span').forEach((node) => {
-                txt += node.dataset.originalText || '';
-            });
-            txt += String(appends[lineIdx] || '');
-            lineTexts.push(txt);
-        });
-        return lineTexts.join('\n');
-    }
-
-    // Compare prev → next strings. If next adds characters (anywhere) and
-    // doesn't remove any, return the added substring. Otherwise return ''.
-    function diffGalleyAdded(prev, next) {
-        const p = String(prev || '');
-        const n = String(next || '');
-        if (n.length <= p.length) return '';
-        let i = 0;
-        while (i < p.length && p.charCodeAt(i) === n.charCodeAt(i)) i++;
-        let j = 0;
-        const maxJ = p.length - i;
-        while (j < maxJ && p.charCodeAt(p.length - 1 - j) === n.charCodeAt(n.length - 1 - j)) j++;
-        return n.slice(i, n.length - j);
-    }
+    // getGalleyEditorText / expectedGalleyText / diffGalleyAdded moved to
+    // ./editor/galley/text.js (Phase 7bc).
 
     // After any input event in galley mode: detect added chars, restore any
     // mutated source-span text to the original extraction value, and append
