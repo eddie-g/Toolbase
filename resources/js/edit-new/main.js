@@ -85,6 +85,14 @@ import { fontDisplayScale, canvasLogicalHeight } from './util/dom-metrics.js';
 import { populateFontDropdown as populateFontDropdownImpl } from './render/font-dropdown.js';
 import { activeState, setActiveState, clearActiveState } from './store/active-state.js';
 import { hoverState, setHoverState, clearHoverState } from './store/hover-state.js';
+import {
+    isDirty,
+    isSaving,
+    isDownloadingPdf,
+    setDirty,
+    setSaving,
+    setDownloadingPdf,
+} from './store/lifecycle-flags.js';
 
 (function () {
 
@@ -356,9 +364,7 @@ import { hoverState, setHoverState, clearHoverState } from './store/hover-state.
     let textCreationState = { active: false, pi: null, pointerId: null, startX: 0, startY: 0, rect: null, previewEl: null, moved: false };
     let shapeCreationState = { active: false, pi: null, pointerId: null, startPt: null, currentPt: null, previewAnn: null, constrain: false };
     let shapeCutState = { armed: false, pi: null, uid: null, pointerId: null, startPt: null, currentPt: null };
-    let isDirty     = false;
-    let isSaving    = false;
-    let isDownloadingPdf = false;
+    // isDirty / isSaving / isDownloadingPdf moved to ./store/lifecycle-flags.js (Phase 5c).
     let editModeEnabled = false;
     let addTextMode = false;
     let shapeMode = false;
@@ -7073,13 +7079,13 @@ import { hoverState, setHoverState, clearHoverState } from './store/hover-state.
     }
 
     function markDirty() {
-        isDirty = true;
+        setDirty(true);
         updateSaveUi();
         scheduleAutoSave();
     }
 
     function markClean() {
-        isDirty = false;
+        setDirty(false);
         updateSaveUi();
     }
 
@@ -7106,7 +7112,7 @@ import { hoverState, setHoverState, clearHoverState } from './store/hover-state.
     async function forceSaveForTests() {
         autoSave.cancel();
         const wasDirty = isDirty;
-        isDirty = true;
+        setDirty(true);
         try { await saveAllChanges({ silent: true }); }
         finally { if (!wasDirty && isDirty) markClean(); }
     }
@@ -7839,7 +7845,7 @@ import { hoverState, setHoverState, clearHoverState } from './store/hover-state.
             catch (_error) { /* saveAllChanges surfaces its own toast */ }
         }
 
-        isDownloadingPdf = true;
+        setDownloadingPdf(true);
         updateSaveUi();
 
         const sessionAnnotations = collectSessionAnnotations();
@@ -7875,7 +7881,7 @@ import { hoverState, setHoverState, clearHoverState } from './store/hover-state.
             if (popup && !popup.closed) popup.close();
             showToast(error?.message || 'Failed to generate PDF');
         } finally {
-            isDownloadingPdf = false;
+            setDownloadingPdf(false);
             updateSaveUi();
         }
     }
@@ -7889,7 +7895,7 @@ import { hoverState, setHoverState, clearHoverState } from './store/hover-state.
             return;
         }
 
-        isSaving = true;
+        setSaving(true);
         updateSaveUi();
 
         const sessionAnnotations = collectSessionAnnotations();
@@ -7920,7 +7926,7 @@ import { hoverState, setHoverState, clearHoverState } from './store/hover-state.
             // user is aware that edits did not persist.
             showToast(error?.message || 'Save failed');
         } finally {
-            isSaving = false;
+            setSaving(false);
             updateSaveUi();
         }
     }
