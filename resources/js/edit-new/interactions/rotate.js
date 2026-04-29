@@ -7,7 +7,7 @@
  * live in main.js and call back into `getRotationCenterClient` /
  * `pointerAngleDeg` (re-exported here).
  *
- * Still-monolithic main.js helpers (pushUndo, hasActiveBoxSelection,
+ * Still-monolithic main.js helpers (hasActiveBoxSelection,
  * markDirty) flow in via `configureRotateInteractions(deps)`.
  */
 
@@ -19,6 +19,7 @@ import { isAnnotationLocked, isShapeAnnotation, isLineShape } from '../annotatio
 import { resolveAnnBox } from '../annotations/box.js';
 import { normalizeRotationDegrees } from '../util/geometry.js';
 import { markUserAuthored } from '../annotations/state.js';
+import { pushUndo } from '../history/undo-redo.js';
 
 let _deps = null;
 
@@ -57,7 +58,7 @@ export function beginRotate(e, pi) {
     if (isShapeAnnotation(ann) && isLineShape(ann)) return; // lines rotate via endpoints
     const center = getRotationCenterClient(pi, ann);
     if (!center) return;
-    _deps.pushUndo();
+    pushUndo();
     const currentRot = normalizeRotationDegrees(ann.rotation || 0);
     const handleAngle = normalizeRotationDegrees(currentRot + 90); // base = bottom
     const pAngle = pointerAngleDeg(e.clientX, e.clientY, center);

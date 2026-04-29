@@ -5,7 +5,7 @@
  * that mutates the box while a resize is in flight still lives in
  * main.js for now; it will move into a shared dispatcher in 6d.
  *
- * `pushUndo`, `hasActiveBoxSelection`, `markDirty`, and `editableLineStyle`
+ * `hasActiveBoxSelection`, `markDirty`, and `editableLineStyle`
  * are still defined inside main.js, so the module receives them via
  * `configureResizeInteractions(deps)` once at boot.
  */
@@ -18,6 +18,7 @@ import { isAnnotationLocked, isTextAnnotation, isShapeAnnotation, isLineShape } 
 import { resolveAnnBox } from '../annotations/box.js';
 import { pdfPtFromClient } from '../render/coords.js';
 import { clamp01 } from '../util/math.js';
+import { pushUndo } from '../history/undo-redo.js';
 
 let _deps = null;
 
@@ -37,7 +38,7 @@ export function beginResize(e, pi, handle) {
     if (isTextAnnotation(ann)) {
         ann._autoWidth = false;
     }
-    _deps.pushUndo();
+    pushUndo();
     const startStyle = _deps.editableLineStyle(ann, 0);
     setResizeState({
         active: true,

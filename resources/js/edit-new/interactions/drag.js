@@ -7,7 +7,7 @@
  * it will be extracted in a follow-up commit once `resize` and `rotate`
  * are also factored out.
  *
- * Several main.js helpers (pushUndo, syncActiveEditor, markDirty,
+ * Several main.js helpers (syncActiveEditor, markDirty,
  * hasActiveBoxSelection) are not yet importable from a module, so they
  * are passed in via `configureDragInteractions(deps)` at boot.
  */
@@ -19,6 +19,7 @@ import { editModeEnabled, addTextMode, shapeMode } from '../store/editor-modes.j
 import { isAnnotationLocked, isBoxAnnotation } from '../annotations/types.js';
 import { resolveAnnBox } from '../annotations/box.js';
 import { pdfPtFromClient } from '../render/coords.js';
+import { pushUndo } from '../history/undo-redo.js';
 
 let _deps = null;
 
@@ -27,7 +28,6 @@ let _deps = null;
  * Call once during editor bootstrap.
  *
  * @param {Object} deps
- * @param {() => void}    deps.pushUndo
  * @param {() => boolean} deps.hasActiveBoxSelection
  * @param {(restore?: boolean) => void} deps.syncActiveEditor
  * @param {() => void}    deps.markDirty
@@ -45,7 +45,7 @@ export function beginDrag(e, pi) {
     const pt   = ann ? pdfPtFromClient(e.clientX, e.clientY, pi) : null;
     if (!ann || !box || !pt) return;
     if (isAnnotationLocked(ann)) return;
-    _deps.pushUndo();
+    pushUndo();
     setDragState({
         active: true,
         pi,

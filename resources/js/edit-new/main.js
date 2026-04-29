@@ -7135,19 +7135,16 @@ import {
     // beginDrag / endDrag moved to ./interactions/drag.js (Phase 6a) and are
     // wired to main.js helpers via configureDragInteractions() below.
     configureDragInteractions({
-        pushUndo: () => pushUndo(),
         hasActiveBoxSelection: () => hasActiveBoxSelection(),
         syncActiveEditor: (restore) => syncActiveEditor(restore),
         markDirty: () => markDirty(),
     });
     configureResizeInteractions({
-        pushUndo: () => pushUndo(),
         hasActiveBoxSelection: () => hasActiveBoxSelection(),
         markDirty: () => markDirty(),
         editableLineStyle: (ann, lineIndex) => editableLineStyle(ann, lineIndex),
     });
     configureRotateInteractions({
-        pushUndo: () => pushUndo(),
         hasActiveBoxSelection: () => hasActiveBoxSelection(),
         markDirty: () => markDirty(),
     });
