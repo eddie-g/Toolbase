@@ -83,6 +83,7 @@ import {
 } from './annotations/polygon-points.js';
 import { fontDisplayScale, canvasLogicalHeight } from './util/dom-metrics.js';
 import { populateFontDropdown as populateFontDropdownImpl } from './render/font-dropdown.js';
+import { activeState, setActiveState, clearActiveState } from './store/active-state.js';
 
 (function () {
 
@@ -342,7 +343,9 @@ import { populateFontDropdown as populateFontDropdownImpl } from './render/font-
     let acroFieldLookup = {};
     let acroWidgetsByPage = {};
 
-    let activeState = { pi: null, uid: null };
+    // activeState moved to ./store/active-state.js (Phase 5a). Reads use
+    // the imported live binding directly; reassignments go through
+    // setActiveState/clearActiveState.
     let hoverState  = { pi: null, uid: null };
     let dragState   = { active: false, pi: null, uid: null, offsetXPts: 0, offsetYPts: 0, startPt: null, startBox: null };
     let resizeState = { active: false, pi: null, uid: null, handle: null, startPt: null, startBox: null, startFontSize: null, startLineGeometry: null };
@@ -5076,7 +5079,7 @@ import { populateFontDropdown as populateFontDropdownImpl } from './render/font-
         if (shapeCutState.armed) cancelShapeCutMode({ redraw: false });
         const prevPi = activeState.pi;
         clearEditorEditingState(activeEditorForPage(prevPi));
-        activeState = { pi: null, uid: null };
+        clearActiveState();
         syncActiveEditor();
         updateFormatBar();
         if (prevPi !== null) redrawOverlay(prevPi);
@@ -5093,7 +5096,7 @@ import { populateFontDropdown as populateFontDropdownImpl } from './render/font-
         if (prevUid && selectionChanged) {
             clearEditorEditingState(activeEditorForPage(prevPi));
         }
-        activeState = { pi, uid: ann._uid };
+        setActiveState({ pi, uid: ann._uid });
         syncActiveEditor(selectionChanged);
         updateFormatBar();
         if (prevPi !== null && prevPi !== pi) redrawOverlay(prevPi);
@@ -9608,7 +9611,7 @@ import { populateFontDropdown as populateFontDropdownImpl } from './render/font-
                 // so Ctrl+Z doesn't restore an invisible blank annotation.
                 if (undoStack.length > 0) undoStack.pop();
                 updateHistoryUi();
-                activeState = { pi: null, uid: null };
+                clearActiveState();
                 syncActiveEditor();
                 redrawOverlay(pi);
                 return;
@@ -10955,7 +10958,7 @@ import { populateFontDropdown as populateFontDropdownImpl } from './render/font-
             activePi: activeState.pi,
         };
         try {
-            activeState = { pi, uid: ann._uid };
+            setActiveState({ pi, uid: ann._uid });
             ae.dataset.editing = '1';
             ae.dataset.editingUid = String(ann._uid || '');
             syncActiveEditor(true);
@@ -10975,7 +10978,7 @@ import { populateFontDropdown as populateFontDropdownImpl } from './render/font-
             else ae.dataset.editingUid = saved.editingUid;
             if (saved.renderMode === undefined) delete ae.dataset.renderMode;
             else ae.dataset.renderMode = saved.renderMode;
-            activeState = { pi: saved.activePi, uid: saved.activeUid };
+            setActiveState({ pi: saved.activePi, uid: saved.activeUid });
         }
     }
 
