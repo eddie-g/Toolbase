@@ -201,6 +201,12 @@ import {
 } from './shape/constrain-tip.js';
 import { setImageImportStatus as _setImageImportStatus } from './image-import/status.js';
 import {
+    canCutShapeAnnotation,
+    isShapeCutModeArmedFor,
+    resetShapeCutState,
+    armShapeCutState,
+} from './shape/cut-mode.js';
+import {
     dbgEscape as _dbgEscape,
     dbgPrettyHtml as _dbgPrettyHtml,
     dbgFormatStyle as _dbgFormatStyle,
@@ -5867,26 +5873,8 @@ import {
         markDirty();
     }
 
-    function canCutShapeAnnotation(ann) {
-        if (!ann || !isShapeAnnotation(ann)) return false;
-        if (isAnnotationLocked(ann) || isLineShape(ann)) return false;
-        const type = normalizeShapeType(ann.shapeType);
-        return ['square', 'circle', 'triangle', 'star', 'polygon'].includes(type);
-    }
-
-    function isShapeCutModeArmedFor(ann, pi) {
-        return Boolean(
-            shapeCutState.armed
-            && shapeCutState.pi === pi
-            && shapeCutState.uid
-            && ann
-            && shapeCutState.uid === ann._uid
-        );
-    }
-
-    function resetShapeCutState() {
-        setShapeCutState({ armed: false, pi: null, uid: null, pointerId: null, startPt: null, currentPt: null });
-    }
+    // canCutShapeAnnotation / isShapeCutModeArmedFor / resetShapeCutState
+    // moved to ./shape/cut-mode.js (Phase 7ay).
 
     function cancelShapeCutMode({ redraw = true } = {}) {
         const prevPi = shapeCutState.pi;
@@ -5897,15 +5885,7 @@ import {
     }
 
     function armShapeCutMode(ann, pi) {
-        if (!canCutShapeAnnotation(ann)) return;
-        setShapeCutState({
-            armed: true,
-            pi,
-            uid: ann._uid,
-            pointerId: null,
-            startPt: null,
-            currentPt: null,
-        });
+        if (!armShapeCutState(ann, pi)) return;
         syncCanvasCursors();
         syncShapePanelUi();
         redrawOverlay(pi);
