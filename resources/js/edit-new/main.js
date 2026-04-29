@@ -99,6 +99,7 @@ import {
     sizeOverlayCanvas,
 } from './render/overlay-sizing.js';
 import { currentShapeDefaults } from './shapes/defaults.js';
+import { getStickyUiBottomEdge, updatePageCardWidth } from './util/chrome-layout.js';
 import { measureTextWidth, ctxFont } from './text/measure-width.js';
 import { wrapParagraph } from './text/wrap.js';
 import {
@@ -764,23 +765,7 @@ import {
         return true;
     }
 
-    function getStickyUiBottomEdge() {
-        let safeTop = 0;
-        [
-            document.querySelector('.top-bar'),
-            document.getElementById('floating-tool-bar'),
-            document.getElementById('ann-format-bar'),
-            document.getElementById('shape-tool-panel'),
-        ].forEach((element) => {
-            if (!(element instanceof HTMLElement)) return;
-            const isHidden = window.getComputedStyle(element).display === 'none';
-            if (isHidden) return;
-            const rect = element.getBoundingClientRect();
-            if (rect.height <= 0 || rect.bottom <= 0) return;
-            safeTop = Math.max(safeTop, rect.bottom);
-        });
-        return Math.max(0, safeTop);
-    }
+    // getStickyUiBottomEdge moved to ./util/chrome-layout.js (Phase 7r).
 
     // ── Undo / Redo history ────────────────────────────────────────────────────
     const HISTORY_LIMIT = 100;
@@ -846,11 +831,7 @@ import {
 
     // fontDisplayScale moved to ./util/dom-metrics.js.
 
-    function updatePageCardWidth(pi, canvasWidth) {
-        const card = document.getElementById(`card-${pi + 1}`);
-        if (!card) return;
-        card.style.width = `${Math.ceil(Math.max(0, canvasWidth) + 32)}px`;
-    }
+    // updatePageCardWidth moved to ./util/chrome-layout.js (Phase 7r).
 
     // ── HiDPI overlay support ────────────────────────────────────────────────
     // The overlay canvas renders vector shapes (ellipses, strokes, polygons).
