@@ -47,6 +47,31 @@ export function normalizeShapeAnnotation(ann) {
     return ann;
 }
 
+/**
+ * Apply a partial shape inspector state (stroke/fill colors, opacities,
+ * widths, transparent flags) onto a shape annotation, then re-normalize
+ * so dependent fields (line endpoints, polygon points) remain coherent.
+ * No-op for non-shape annotations.
+ */
+export function applyShapeStateToAnnotation(ann, shapeState) {
+    if (!ann || !isShapeAnnotation(ann)) return;
+    const normalized = normalizeShapeAnnotation({ ...ann, ...shapeState });
+    ann.shapeType = normalized.shapeType;
+    ann.strokeColor = normalized.strokeColor;
+    ann.strokeOpacity = normalized.strokeOpacity;
+    ann.strokeWidth = normalized.strokeWidth;
+    ann.strokeTransparent = normalized.strokeTransparent;
+    ann.fillColor = normalized.fillColor;
+    ann.fillOpacity = normalized.fillOpacity;
+    ann.fillTransparent = normalized.fillTransparent;
+    if (isLineShape(normalized)) {
+        ann.lineStartX = normalized.lineStartX;
+        ann.lineStartY = normalized.lineStartY;
+        ann.lineEndX = normalized.lineEndX;
+        ann.lineEndY = normalized.lineEndY;
+    }
+}
+
 export function normalizeImageAnnotation(ann) {
     if (!isImageBackedAnnotation(ann)) return ann;
     if (String(ann.type || '').toLowerCase() === 'signature') {

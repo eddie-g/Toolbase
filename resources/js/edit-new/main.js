@@ -92,6 +92,7 @@ import {
     normalizeShapeAnnotation,
     normalizeImageAnnotation,
     correctedSourceBlockBox,
+    applyShapeStateToAnnotation,
 } from './annotations/normalize.js';
 import {
     getShapePolygonPointsPdf,
@@ -6216,24 +6217,7 @@ import {
         placeImageBackedAnnotationOnPage(pi, asset, type, null);
     }
 
-    function applyShapeStateToAnnotation(ann, shapeState) {
-        if (!ann || !isShapeAnnotation(ann)) return;
-        const normalized = normalizeShapeAnnotation({ ...ann, ...shapeState });
-        ann.shapeType = normalized.shapeType;
-        ann.strokeColor = normalized.strokeColor;
-        ann.strokeOpacity = normalized.strokeOpacity;
-        ann.strokeWidth = normalized.strokeWidth;
-        ann.strokeTransparent = normalized.strokeTransparent;
-        ann.fillColor = normalized.fillColor;
-        ann.fillOpacity = normalized.fillOpacity;
-        ann.fillTransparent = normalized.fillTransparent;
-        if (isLineShape(normalized)) {
-            ann.lineStartX = normalized.lineStartX;
-            ann.lineStartY = normalized.lineStartY;
-            ann.lineEndX = normalized.lineEndX;
-            ann.lineEndY = normalized.lineEndY;
-        }
-    }
+    // applyShapeStateToAnnotation moved to ./annotations/normalize.js (Phase 7bx).
 
     function readShapeInspectorState() {
         const state = {
