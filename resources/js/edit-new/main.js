@@ -175,6 +175,14 @@ import {
 import { pickViewportTargetPage } from './viewport/picker.js';
 import { getCurrentVisiblePageIndex as _getCurrentVisiblePageIndex } from './viewport/current-page.js';
 import {
+    setMarkupToolStatus as _setMarkupToolStatus,
+    setMarkupToolDirtyState as _setMarkupToolDirtyState,
+    clearMarkupToolCanvas as _clearMarkupToolCanvas,
+    clearMarkupToolDrawingState as _clearMarkupToolDrawingState,
+    getMarkupToolSmoothingAmount as _getMarkupToolSmoothingAmount,
+    hasMarkupToolDrawContent,
+} from './markup-tool/state.js';
+import {
     dbgEscape as _dbgEscape,
     dbgPrettyHtml as _dbgPrettyHtml,
     dbgFormatStyle as _dbgFormatStyle,
@@ -4066,42 +4074,12 @@ import {
         updateSignatureLibrarySaveUi();
     }
 
-    function setMarkupToolStatus(message, tone = 'default') {
-        if (!markupToolStatus) return;
-        markupToolStatus.textContent = String(message || '');
-        markupToolStatus.classList.toggle('is-error', tone === 'error');
-        markupToolStatus.classList.toggle('is-ready', tone === 'ready');
-    }
-
-    function setMarkupToolDirtyState(dirty) {
-        setMarkupToolDirty(!!dirty);
-        if (markupToolApplyBtn) {
-            markupToolApplyBtn.disabled = markupToolMode === 'draw' ? !markupToolDirty : false;
-        }
-    }
-
-    function clearMarkupToolCanvas() {
-        if (!markupToolCtx || !markupToolCanvas) return;
-        markupToolCtx.clearRect(0, 0, markupToolCanvas.width, markupToolCanvas.height);
-        markupToolCtx.lineCap = 'round';
-        markupToolCtx.lineJoin = 'round';
-    }
-
-    function clearMarkupToolDrawingState() {
-        setMarkupToolDrawing(false);
-        setMarkupToolStrokes([]);
-        setMarkupToolActiveStroke(null);
-        clearMarkupToolCanvas();
-    }
-
-    function getMarkupToolSmoothingAmount() {
-        return clamp01((Number(markupToolSmoothingInput?.value) || 0) / 100, 0.58);
-    }
-
-    function hasMarkupToolDrawContent() {
-        return markupToolStrokes.some((stroke) => Array.isArray(stroke?.points) && stroke.points.length > 0)
-            || (Array.isArray(markupToolActiveStroke?.points) && markupToolActiveStroke.points.length > 0);
-    }
+    // markup-tool helpers moved to ./markup-tool/state.js (Phase 7at).
+    const setMarkupToolStatus = (m, t) => _setMarkupToolStatus(markupToolStatus, m, t);
+    const setMarkupToolDirtyState = (d) => _setMarkupToolDirtyState(markupToolApplyBtn, d);
+    const clearMarkupToolCanvas = () => _clearMarkupToolCanvas(markupToolCanvas);
+    const clearMarkupToolDrawingState = () => _clearMarkupToolDrawingState(markupToolCanvas);
+    const getMarkupToolSmoothingAmount = () => _getMarkupToolSmoothingAmount(markupToolSmoothingInput);
 
     function paintMarkupToolStroke(stroke) {
         const points = Array.isArray(stroke?.points) ? stroke.points : [];
