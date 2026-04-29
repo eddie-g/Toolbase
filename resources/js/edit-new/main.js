@@ -98,6 +98,7 @@ import {
     overlayBackingScale,
     sizeOverlayCanvas,
 } from './render/overlay-sizing.js';
+import { currentShapeDefaults } from './shapes/defaults.js';
 import { measureTextWidth, ctxFont } from './text/measure-width.js';
 import { wrapParagraph } from './text/wrap.js';
 import {
@@ -711,18 +712,7 @@ import {
     }
 
 
-    function currentShapeDefaults() {
-        return {
-            shapeType: currentShapeType,
-            strokeColor: currentShapeStrokeColor,
-            strokeOpacity: clamp01(currentShapeStrokeOpacity, 1),
-            strokeWidth: Math.max(1, Number(currentShapeStrokeWidth) || 3),
-            strokeTransparent: Boolean(currentShapeStrokeTransparent),
-            fillColor: currentShapeFillColor,
-            fillOpacity: clamp01(currentShapeFillOpacity, 0.22),
-            fillTransparent: Boolean(currentShapeFillTransparent),
-        };
-    }
+    // currentShapeDefaults moved to ./shapes/defaults.js (Phase 7q).
 
     // hasActiveBoxSelection / hasActiveShapeSelection moved to ./selection/active.js (Phase 7h).
 
