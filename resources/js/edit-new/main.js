@@ -126,6 +126,7 @@ import {
     normalizeTextForSourceComparison,
     annotationTextMatchesSource,
 } from './annotations/source-text-match.js';
+import { resolveDisplayBgColor, WHITE_TEXT_RE } from './annotations/display-bg-color.js';
 import {
     loadImageSource,
     toTransparentPngFileName,
@@ -1111,24 +1112,7 @@ import {
         return systemFallbackFontFamily(name, family);
     };
 
-    // When an annotation has white/near-white text on a missing/transparent background,
-    // it becomes invisible against the page. This happens with PDFs that render white
-    // text over a colored background bar — extraction captures the text color but not
-    // the bar. Substitute a dark placeholder background so the text is readable in the
-    // editor. This does NOT mutate ann.backgroundColor (which remains transparent for
-    // export); it only affects the visual rendering.
-    const _WHITE_TEXT_RE = /^#?f(?:ff|[e-f]{2})(?:f(?:ff|[e-f]{2})){0,2}$/i;
-    const resolveDisplayBgColor = (ann) => {
-        const bgRaw = String(ann?.backgroundColor || '').trim();
-        const bg = (bgRaw && bgRaw.toLowerCase() !== '#ffffff' && bgRaw.toLowerCase() !== 'transparent')
-            ? bgRaw : 'transparent';
-        if (bg !== 'transparent') return bg;
-        const textColor = String(ann?.textColor || '').trim();
-        if (textColor && _WHITE_TEXT_RE.test(textColor.replace(/\s/g, ''))) {
-            return '#2c3e50'; // dark slate placeholder for white-on-missing-bg text
-        }
-        return 'transparent';
-    };
+    // resolveDisplayBgColor moved to ./annotations/display-bg-color.js (Phase 7u).
 
     // ensureMeasureCtx / ctxFont / measureTextWidth moved to ./text/measure-width.js (Phase 7j).
 
@@ -6638,7 +6622,7 @@ import {
             && !payload.backgroundColorExplicit
             && (!payload.backgroundColor || String(payload.backgroundColor).toLowerCase() === 'transparent')
             && payload.textColor
-            && _WHITE_TEXT_RE.test(String(payload.textColor).replace(/\s/g, ''))
+            && WHITE_TEXT_RE.test(String(payload.textColor).replace(/\s/g, ''))
             && String(currentText || '').length > 0) {
             payload.backgroundColor = '#2c3e50';
             payload.backgroundColorExplicit = true;
