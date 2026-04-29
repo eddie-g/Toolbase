@@ -122,6 +122,11 @@ import {
     normalizeTextAnnotation,
 } from './annotations/normalize-text.js';
 import {
+    sourceTextFallbackFromAnnotation,
+    normalizeTextForSourceComparison,
+    annotationTextMatchesSource,
+} from './annotations/source-text-match.js';
+import {
     loadImageSource,
     toTransparentPngFileName,
     buildWhiteMatteCandidateMask,
@@ -1721,67 +1726,8 @@ import {
     // spanMatchesLineBBox / buildRenderableLinesFromSpans / renderableSourceLines
     // moved to ./annotations/source-lines.js (Phase 7k).
 
-    function sourceTextFallbackFromAnnotation(ann) {
-        const lines = renderableSourceLines(ann);
-        if (lines.length) {
-            const text = lines
-                .map((line) => String(line?.text ?? '').replace(/\s+$/g, ''))
-                .filter((lineText) => lineText.length > 0)
-                .join('\n')
-                .replace(/[ \t]{2,}/g, ' ')
-                .replace(/\s+([,.;!?])/g, '$1')
-                .trim();
-            if (text) return text;
-        }
-
-        const spans = Array.isArray(ann?.sourceSpans) ? ann.sourceSpans : [];
-        if (!spans.length) return '';
-        return spans
-            .slice()
-            .sort((a, b) => {
-                const ay = Number(Array.isArray(a?.bbox) ? a.bbox[1] : 0);
-                const by = Number(Array.isArray(b?.bbox) ? b.bbox[1] : 0);
-                if (Math.abs(ay - by) > 1.5) return ay - by;
-                return Number(Array.isArray(a?.bbox) ? a.bbox[0] : 0)
-                    - Number(Array.isArray(b?.bbox) ? b.bbox[0] : 0);
-            })
-            .map((span) => String(span?.render_text ?? span?.text ?? ''))
-            .join('')
-            .replace(/[ \t]{2,}/g, ' ')
-            .replace(/\s+([,.;!?])/g, '$1')
-            .trim();
-    }
-
-    function normalizeTextForSourceComparison(value) {
-        return String(value ?? '')
-            .replace(/\r\n?/g, '\n')
-            .replace(/\u00a0/g, ' ')
-            .replace(/\s+/g, ' ')
-            // Mirror sourceTextFallbackFromAnnotation, which strips whitespace
-            // before punctuation. Without this, leader-dot rows (". . . . . .")
-            // normalize differently on the two sides of the comparison —
-            // editedText keeps the spaces, source text collapses them — and
-            // pristine extracted multi-line annotations are misclassified as
-            // "edited", forcing the active editor onto the renderPlainEditorHTML
-            // reflow path that visibly collapses leader-dot spacing.
-            .replace(/\s+([,.;!?])/g, '$1')
-            .trim();
-    }
-
-    function annotationTextMatchesSource(ann, text = null) {
-        const hasSourceContent = (Array.isArray(ann?.sourceSpans) && ann.sourceSpans.length > 0)
-            || (Array.isArray(ann?.sourceLineBBoxes) && ann.sourceLineBBoxes.length > 0)
-            || (Array.isArray(ann?.sourceTextLines) && ann.sourceTextLines.length > 0);
-        if (!hasSourceContent) return true;
-
-        const sourceText = sourceTextFallbackFromAnnotation(ann);
-        if (!sourceText) return true;
-
-        const currentText = text === null || text === undefined
-            ? String(ann?.text ?? '')
-            : String(text);
-        return normalizeTextForSourceComparison(currentText) === normalizeTextForSourceComparison(sourceText);
-    }
+    // sourceTextFallbackFromAnnotation / normalizeTextForSourceComparison /
+    // annotationTextMatchesSource moved to ./annotations/source-text-match.js (Phase 7t).
 
     // normalizeQuarterTurnDegrees / sourceLineRotationDegrees /
     // annotationSourceRotationDegrees / lineSpans / resolveSpanFillStyle
