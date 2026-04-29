@@ -94,6 +94,13 @@ import {
     beginResize,
     endResize,
 } from './interactions/resize.js';
+import {
+    configureRotateInteractions,
+    beginRotate,
+    endRotate,
+    getRotationCenterClient,
+    pointerAngleDeg,
+} from './interactions/rotate.js';
 import { activeState, setActiveState, clearActiveState } from './store/active-state.js';
 import { hoverState, setHoverState, clearHoverState } from './store/hover-state.js';
 import {
@@ -7250,67 +7257,17 @@ import { pageData } from './store/page-data.js';
         markDirty: () => markDirty(),
         editableLineStyle: (ann, lineIndex) => editableLineStyle(ann, lineIndex),
     });
+    configureRotateInteractions({
+        pushUndo: () => pushUndo(),
+        hasActiveBoxSelection: () => hasActiveBoxSelection(),
+        markDirty: () => markDirty(),
+    });
 
     // beginResize / endResize moved to ./interactions/resize.js (Phase 6b).
     // endDrag moved to ./interactions/drag.js (Phase 6a).
 
-    // Rotation helpers (normalizeRotationDegrees lives in ./util/geometry.js)
-    function getRotationCenterClient(pi, ann) {
-        const data = pageData[pi];
-        if (!data) return null;
-        const oc = document.getElementById('oc-' + (pi + 1));
-        const box = ann ? resolveAnnBox(ann) : null;
-        if (!oc || !box) return null;
-        const rect = oc.getBoundingClientRect();
-        const left = box.x * data.scale;
-        const top  = data.canvasHeight - (box.y + box.h) * data.scale;
-        const w    = Math.max(1, box.w * data.scale);
-        const h    = Math.max(1, box.h * data.scale);
-        return {
-            cx: rect.left + left + w / 2,
-            cy: rect.top + top + h / 2,
-        };
-    }
-    function pointerAngleDeg(clientX, clientY, center) {
-        return Math.atan2(clientY - center.cy, clientX - center.cx) * (180 / Math.PI);
-    }
-    function beginRotate(e, pi) {
-        if (!editModeEnabled && !addTextMode && !shapeMode && !hasActiveBoxSelection()) return;
-        const data = pageData[pi];
-        const ann = data?.annotations.find(a => a._uid === activeState.uid);
-        if (!ann) return;
-        if (isAnnotationLocked(ann)) return;
-        if (isShapeAnnotation(ann) && isLineShape(ann)) return; // lines rotate via endpoints
-        const center = getRotationCenterClient(pi, ann);
-        if (!center) return;
-        pushUndo();
-        const currentRot = normalizeRotationDegrees(ann.rotation || 0);
-        const handleAngle = normalizeRotationDegrees(currentRot + 90); // base = bottom
-        const pAngle = pointerAngleDeg(e.clientX, e.clientY, center);
-        let offset = pAngle - handleAngle;
-        // normalize signed
-        offset = ((offset + 540) % 360) - 180;
-        setRotateState({
-            active: true,
-            pi,
-            uid: ann._uid,
-            pointerId: e.pointerId,
-            grabAngleOffset: offset,
-        });
-        if (e.target && typeof e.target.setPointerCapture === 'function') {
-            try { e.target.setPointerCapture(e.pointerId); } catch (_) {}
-            e.target.classList.add('is-active');
-        }
-        if (!ann.rotation) ann.rotation = 0;
-        markUserAuthored(ann);
-    }
-    function endRotate() {
-        if (!rotateState.active) return;
-        const rot = document.getElementById('rh-' + (rotateState.pi + 1) + '-rot');
-        if (rot) rot.classList.remove('is-active');
-        setRotateState({ active: false, pi: null, uid: null, pointerId: null, grabAngleOffset: 0 });
-        markDirty();
-    }
+    // Rotation helpers (getRotationCenterClient, pointerAngleDeg, beginRotate,
+    // endRotate) moved to ./interactions/rotate.js (Phase 6c).
 
     function shouldScaleFontOnResize(ann) {
         return false;
