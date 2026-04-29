@@ -147,6 +147,9 @@ import { sliderValueToFontPt, fontPtToSliderValue, FONT_SLIDER_MIN_PT, FONT_SLID
 import { generateAnnotationId } from './annotations/id.js';
 import { canvasPointFromEvent } from './util/canvas-point.js';
 import { normalizeTextForDomReflow, normalizeRichHtmlForReflow } from './text/dom-reflow.js';
+import { editorIsEditingAnnotation } from './editor/is-editing.js';
+import { annIsPromotedFromExtraction } from './annotations/promoted.js';
+import { shouldRenderTextInRichHtmlLayer, activeEditorCanvasOwnsPaint } from './render/text-routing.js';
 import {
     buildAcroFieldLookup,
     normalizeAcroRect,
@@ -2040,54 +2043,9 @@ import {
         ctx.restore();
     }
 
-    function shouldRenderTextInRichHtmlLayer(ann) {
-        const hasRichHtml = !!ann?._richHtml;
-        const userAuthoredText = (ann?.type || 'text') === 'text'
-            && (ann?.userCreated || isUserAuthoredAnnotation(ann));
-        if (hasRichHtml) return true;
-        if (!userAuthoredText) return false;
-        // Pristine extracted text whose visible content still matches the PDF
-        // source must keep canvas drawOriginalSource (per-span exact positions),
-        // even if the user-authored flag was flipped by a non-text edit
-        // (geometry grow, color/bg change, etc.). The DOM layer renders text
-        // via CSS measureText spacing, which collapses tab-leader dots and
-        // joins styled runs — visibly different from the canvas baseline.
-        const hasSourceContent = (Array.isArray(ann?.sourceSpans) && ann.sourceSpans.length > 0)
-            || (Array.isArray(ann?.sourceLineBBoxes) && ann.sourceLineBBoxes.length > 0)
-            || ann?.promotedFromExtraction === true;
-        if (!hasSourceContent) return true;
-        const editedInSession = typeof editedTexts !== 'undefined'
-            && editedTexts[ann?._uid] !== undefined
-            && editedTexts[ann?._uid] !== String(ann?.text ?? '');
-        if (editedInSession) return true;
-        if (typeof annTextIsEdited === 'function' && annTextIsEdited(ann)) return true;
-        if (typeof annotationDimensionsChanged === 'function' && annotationDimensionsChanged(ann)) return true;
-        return false;
-    }
-
-    function activeEditorCanvasOwnsPaint(ann, aeEl) {
-        if (!(aeEl instanceof HTMLElement) || !ann) return false;
-        const mode = aeEl.dataset ? aeEl.dataset.renderMode : '';
-        if (mode === 'canvas') return true;
-        if (mode === 'galley') return true;
-        const editingSourceMode = editorIsEditingAnnotation(aeEl, ann)
-            && (mode === 'source' || mode === 'source-flow');
-        if (!editingSourceMode) return false;
-        // Source/source-flow editing is allowed to hide the contenteditable's
-        // glyphs only while the canvas still paints the annotation text. Once
-        // the annotation is resized, styled, rich-html-backed, or otherwise
-        // DOM-owned, hiding the editor would leave no visible text.
-        return !shouldRenderTextInRichHtmlLayer(ann);
-    }
-
-    // True when this annotation was promoted from the PDF extraction layer
-    // (so its saved text / _richHtml encodes one block per source line).
-    function annIsPromotedFromExtraction(ann) {
-        if (!ann) return false;
-        return ann.promotedFromExtraction === true
-            || (Array.isArray(ann.sourceSpans) && ann.sourceSpans.length > 0)
-            || (Array.isArray(ann.sourceLineBBoxes) && ann.sourceLineBBoxes.length > 0);
-    }
+    // shouldRenderTextInRichHtmlLayer / activeEditorCanvasOwnsPaint moved to
+    // ./render/text-routing.js (Phase 7aj).
+    // annIsPromotedFromExtraction moved to ./annotations/promoted.js (Phase 7ai).
 
     // normalizeTextForDomReflow / normalizeRichHtmlForReflow moved to
     // ./text/dom-reflow.js (Phase 7ag). Both helpers had duplicate inline
@@ -9732,12 +9690,7 @@ import {
         delete ae.dataset.editingUid;
     }
 
-    function editorIsEditingAnnotation(ae, ann) {
-        return ae instanceof HTMLElement
-            && ann
-            && ae.dataset.editing === '1'
-            && ae.dataset.editingUid === String(ann._uid || '');
-    }
+    // editorIsEditingAnnotation moved to ./editor/is-editing.js (Phase 7ah).
 
     // Return the active editor element and the current selection range if
     // (a) the selection lies fully inside the editor AND (b) the selection
