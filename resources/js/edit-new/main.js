@@ -82,6 +82,8 @@ import {
     markUserAuthored,
     annTextIsEdited,
     annotationDimensionsChanged,
+    annotationPositionChanged,
+    normalizeAnnotationTextForDirtyComparison,
 } from './annotations/state.js';
 import {
     normalizeShapeAnnotation,
@@ -5611,15 +5613,8 @@ import {
         return (sourceBox.w - currentBox.w) > 2.0;
     }
 
-    function normalizeAnnotationTextForDirtyComparison(value) {
-        return String(value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-    }
-
-    function annotationPositionChanged(ann) {
-        const cur = resolveAnnBox(ann), orig = resolveOriginalAnnBox(ann);
-        if (!cur || !orig) return false;
-        return Math.abs(cur.x - orig.x) > 0.25 || Math.abs(cur.y - orig.y) > 0.25;
-    }
+    // normalizeAnnotationTextForDirtyComparison + annotationPositionChanged
+    // moved to ./annotations/state.js (Phase 7bb).
 
     function shouldPersistPromotedDirty(ann, currentText) {
         if (!ann?.promotedFromExtraction) return false;

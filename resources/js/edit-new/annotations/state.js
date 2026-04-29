@@ -59,3 +59,24 @@ export function annotationDimensionsChanged(ann) {
     if (!orig) return false;
     return Math.abs(cur.w - orig.w) > 0.25 || Math.abs(cur.h - orig.h) > 0.25;
 }
+
+/**
+ * True if the annotation's current box has moved away from its original
+ * extraction-time position by more than 0.25pt on either axis. Companion
+ * to annotationDimensionsChanged.
+ */
+export function annotationPositionChanged(ann) {
+    const cur = resolveAnnBox(ann);
+    const orig = resolveOriginalAnnBox(ann);
+    if (!cur || !orig) return false;
+    return Math.abs(cur.x - orig.x) > 0.25 || Math.abs(cur.y - orig.y) > 0.25;
+}
+
+/**
+ * Normalize a string so that text-equality comparisons used to decide
+ * whether to persist a promoted-from-extraction annotation as "dirty"
+ * ignore line-ending style differences (CRLF / CR vs LF).
+ */
+export function normalizeAnnotationTextForDirtyComparison(value) {
+    return String(value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
