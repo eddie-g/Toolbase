@@ -57,3 +57,16 @@ export function hasMarkupToolDrawContent() {
     return markupToolStrokes.some((stroke) => Array.isArray(stroke?.points) && stroke.points.length > 0)
         || (Array.isArray(markupToolActiveStroke?.points) && markupToolActiveStroke.points.length > 0);
 }
+
+export function syncMarkupToolLabels({
+    markupToolColorValue,
+    markupToolColorInput,
+    markupToolWidthValue,
+    markupToolWidthInput,
+    markupToolSmoothingValue,
+    markupToolSmoothingInput,
+}) {
+    if (markupToolColorValue && markupToolColorInput) markupToolColorValue.textContent = markupToolColorInput.value.toUpperCase();
+    if (markupToolWidthValue && markupToolWidthInput) markupToolWidthValue.textContent = `${markupToolWidthInput.value}px`;
+    if (markupToolSmoothingValue && markupToolSmoothingInput) markupToolSmoothingValue.textContent = `${markupToolSmoothingInput.value}%`;
+}

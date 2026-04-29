@@ -183,6 +183,7 @@ import {
     clearMarkupToolDrawingState as _clearMarkupToolDrawingState,
     getMarkupToolSmoothingAmount as _getMarkupToolSmoothingAmount,
     hasMarkupToolDrawContent,
+    syncMarkupToolLabels as _syncMarkupToolLabels,
 } from './markup-tool/state.js';
 import {
     setSignatureStatus as _setSignatureStatus,
@@ -4069,11 +4070,15 @@ import {
         if (markupToolActiveStroke) paintMarkupToolStroke(markupToolActiveStroke);
     }
 
-    function syncMarkupToolLabels() {
-        if (markupToolColorValue && markupToolColorInput) markupToolColorValue.textContent = markupToolColorInput.value.toUpperCase();
-        if (markupToolWidthValue && markupToolWidthInput) markupToolWidthValue.textContent = `${markupToolWidthInput.value}px`;
-        if (markupToolSmoothingValue && markupToolSmoothingInput) markupToolSmoothingValue.textContent = `${markupToolSmoothingInput.value}%`;
-    }
+    // syncMarkupToolLabels moved to ./markup-tool/state.js (Phase 7bj).
+    const syncMarkupToolLabels = () => _syncMarkupToolLabels({
+        markupToolColorValue,
+        markupToolColorInput,
+        markupToolWidthValue,
+        markupToolWidthInput,
+        markupToolSmoothingValue,
+        markupToolSmoothingInput,
+    });
 
     function updateMarkupToolUi() {
         markupToolTabs.forEach((tab) => {
