@@ -226,6 +226,11 @@ import {
 } from './shape/constrain-tip.js';
 import { setImageImportStatus as _setImageImportStatus } from './image-import/status.js';
 import {
+    clearImageImportSelection as _clearImageImportSelection,
+    openImageImportModal as _openImageImportModal,
+    closeImageImportModal as _closeImageImportModal,
+} from './image-import/modal.js';
+import {
     canCutShapeAnnotation,
     isShapeCutModeArmedFor,
     resetShapeCutState,
@@ -7585,29 +7590,22 @@ import {
 
     // setImageImportStatus moved to ./image-import/status.js (Phase 7ax).
     const setImageImportStatus = (text, isError = false) => _setImageImportStatus(imageImportStatus, text, isError);
-    function clearImageImportSelection() {
-        setImageImportPendingAsset(null);
-        if (imageImportFileInput) imageImportFileInput.value = '';
-        if (imageImportPreview) imageImportPreview.hidden = true;
-        if (imageImportPreviewImg) imageImportPreviewImg.removeAttribute('src');
-        if (imageImportPreviewName) imageImportPreviewName.textContent = '';
-        if (imageImportPreviewDims) imageImportPreviewDims.textContent = '';
-        if (imageImportDropzoneInner) imageImportDropzoneInner.style.display = '';
-        if (imageImportApply) imageImportApply.disabled = true;
-        setImageImportStatus('Drop or choose an image to insert.');
-    }
-    function openImageImportModal() {
-        if (!imageImportModal || editModeEnabled) return;
-        clearImageImportSelection();
-        imageImportModal.classList.add('is-open');
-        imageImportModal.setAttribute('aria-hidden', 'false');
-    }
-    function closeImageImportModal() {
-        if (!imageImportModal) return;
-        imageImportModal.classList.remove('is-open');
-        imageImportModal.setAttribute('aria-hidden', 'true');
-        clearImageImportSelection();
-    }
+    // clearImageImportSelection / openImageImportModal / closeImageImportModal
+    // moved to ./image-import/modal.js (Phase 7cb).
+    const _imageImportRefs = () => ({
+        imageImportModal,
+        imageImportFileInput,
+        imageImportPreview,
+        imageImportPreviewImg,
+        imageImportPreviewName,
+        imageImportPreviewDims,
+        imageImportDropzoneInner,
+        imageImportApply,
+        imageImportStatus,
+    });
+    const clearImageImportSelection = () => _clearImageImportSelection(_imageImportRefs());
+    const openImageImportModal = () => _openImageImportModal(_imageImportRefs());
+    const closeImageImportModal = () => _closeImageImportModal(_imageImportRefs());
     function imageImportLoadFile(file) {
         if (!file) return;
         const mime = String(file.type || '').toLowerCase();
