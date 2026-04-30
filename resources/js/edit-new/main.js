@@ -224,6 +224,7 @@ import {
 } from './signature/library-ui.js';
 import { ensureSignatureFontLoaded } from './signature/font-loader.js';
 import { readFileAsDataUrl, loadImageElement } from './util/image-load.js';
+import { normalizeImportedImageAsset } from './images/normalize-imported.js';
 import { paintSmoothStroke } from './draw/smooth-stroke.js';
 import {
     positionShapeConstrainTip as _positionShapeConstrainTip,
@@ -4560,32 +4561,7 @@ import {
 
     // readFileAsDataUrl + loadImageElement moved to ./util/image-load.js (Phase 7ci).
 
-    async function normalizeImportedImageAsset(file) {
-        if (!file || !String(file.type || '').startsWith('image/')) {
-            throw new Error('Choose an image file to import.');
-        }
-        const sourceDataUrl = await readFileAsDataUrl(file);
-        const img = await loadImageElement(sourceDataUrl);
-        const naturalWidth = Math.max(1, img.naturalWidth || img.width || 1);
-        const naturalHeight = Math.max(1, img.naturalHeight || img.height || 1);
-        const maxDimension = 2048;
-        const scale = Math.min(1, maxDimension / Math.max(naturalWidth, naturalHeight));
-        const targetWidth = Math.max(1, Math.round(naturalWidth * scale));
-        const targetHeight = Math.max(1, Math.round(naturalHeight * scale));
-        const normalizeCanvas = document.createElement('canvas');
-        normalizeCanvas.width = targetWidth;
-        normalizeCanvas.height = targetHeight;
-        const normalizeCtx = normalizeCanvas.getContext('2d');
-        normalizeCtx.clearRect(0, 0, targetWidth, targetHeight);
-        normalizeCtx.drawImage(img, 0, 0, targetWidth, targetHeight);
-        return {
-            dataUrl: normalizeCanvas.toDataURL('image/png'),
-            width: targetWidth,
-            height: targetHeight,
-            fileName: file.name || 'signature.png',
-            mimeType: 'image/png',
-        };
-    }
+    // normalizeImportedImageAsset moved to ./images/normalize-imported.js (Phase 7cj).
 
     // ensureSignatureFontLoaded moved to ./signature/font-loader.js (Phase 7ch).
 
