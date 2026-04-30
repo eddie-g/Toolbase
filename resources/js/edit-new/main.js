@@ -217,6 +217,7 @@ import {
     makeSavedSignatureName as _makeSavedSignatureName,
 } from './signature/labels.js';
 import { closeSignatureModal as _closeSignatureModal } from './signature/modal.js';
+import { cancelSignaturePlacement as _cancelSignaturePlacement } from './signature/placement.js';
 import {
     updateSignatureLibraryLoadUi as _updateSignatureLibraryLoadUi,
     renderSavedSignatureLibrary as _renderSavedSignatureLibrary,
@@ -4836,10 +4837,7 @@ import {
     }
 
     function cancelSignaturePlacement() {
-        if (!signaturePlacementState.active) return;
-        setSignaturePlacementState({ active: false, asset: null, type: 'signature', toolSource: null });
-        syncCanvasCursors();
-        updateEditModeUi();
+        _cancelSignaturePlacement({ syncCursors: syncCanvasCursors, updateUi: updateEditModeUi });
     }
 
     function beginSignaturePlacement(asset, type = 'signature') {
