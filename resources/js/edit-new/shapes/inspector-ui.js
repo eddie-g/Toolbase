@@ -26,6 +26,7 @@ import {
     setCurrentShapeFillTransparent,
 } from '../store/shape-defaults.js';
 import { normalizeShapeType } from '../annotations/shape-geometry.js';
+import { currentShapeDefaults } from './defaults.js';
 
 export function reflectShapeStateToInputs(shapeState, refs) {
     if (!shapeState || !refs) return;
@@ -71,4 +72,31 @@ export function reflectShapeStateToInputs(shapeState, refs) {
             button.classList.toggle('is-active', button.dataset.shapeTool === currentShapeType);
         });
     }
+}
+
+export function readShapeInspectorState(refs) {
+    if (!refs) return currentShapeDefaults();
+    const {
+        shapeStrokeColorInput,
+        shapeStrokeHexInput,
+        shapeStrokeOpacityInput,
+        shapeStrokeWidthInput,
+        shapeStrokeTransparentInput,
+        shapeFillColorInput,
+        shapeFillHexInput,
+        shapeFillOpacityInput,
+        shapeFillTransparentInput,
+    } = refs;
+    const state = {
+        shapeType: currentShapeType,
+        strokeColor: normalizeHexColor(shapeStrokeColorInput?.value || shapeStrokeHexInput?.value, currentShapeStrokeColor),
+        strokeOpacity: clamp01((Number(shapeStrokeOpacityInput?.value) || 0) / 100, currentShapeStrokeOpacity),
+        strokeWidth: Math.max(1, Number(shapeStrokeWidthInput?.value) || currentShapeStrokeWidth),
+        strokeTransparent: Boolean(shapeStrokeTransparentInput?.checked),
+        fillColor: normalizeHexColor(shapeFillColorInput?.value || shapeFillHexInput?.value, currentShapeFillColor),
+        fillOpacity: clamp01((Number(shapeFillOpacityInput?.value) || 0) / 100, currentShapeFillOpacity),
+        fillTransparent: Boolean(shapeFillTransparentInput?.checked),
+    };
+    reflectShapeStateToInputs(state, refs);
+    return currentShapeDefaults();
 }

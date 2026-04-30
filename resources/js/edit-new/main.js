@@ -106,7 +106,7 @@ import {
     sizeOverlayCanvas,
 } from './render/overlay-sizing.js';
 import { currentShapeDefaults } from './shapes/defaults.js';
-import { reflectShapeStateToInputs as _reflectShapeStateToInputs } from './shapes/inspector-ui.js';
+import { reflectShapeStateToInputs as _reflectShapeStateToInputs, readShapeInspectorState as _readShapeInspectorState } from './shapes/inspector-ui.js';
 import { drawShapePath } from './shapes/path.js';
 import { getStickyUiBottomEdge, updatePageCardWidth } from './util/chrome-layout.js';
 import { measureTextWidth, ctxFont } from './text/measure-width.js';
@@ -6208,21 +6208,22 @@ import {
     }
 
     // applyShapeStateToAnnotation moved to ./annotations/normalize.js (Phase 7bx).
-
-    function readShapeInspectorState() {
-        const state = {
-            shapeType: currentShapeType,
-            strokeColor: normalizeHexColor(shapeStrokeColorInput?.value || shapeStrokeHexInput?.value, currentShapeStrokeColor),
-            strokeOpacity: clamp01((Number(shapeStrokeOpacityInput?.value) || 0) / 100, currentShapeStrokeOpacity),
-            strokeWidth: Math.max(1, Number(shapeStrokeWidthInput?.value) || currentShapeStrokeWidth),
-            strokeTransparent: Boolean(shapeStrokeTransparentInput?.checked),
-            fillColor: normalizeHexColor(shapeFillColorInput?.value || shapeFillHexInput?.value, currentShapeFillColor),
-            fillOpacity: clamp01((Number(shapeFillOpacityInput?.value) || 0) / 100, currentShapeFillOpacity),
-            fillTransparent: Boolean(shapeFillTransparentInput?.checked),
-        };
-        reflectShapeStateToInputs(state);
-        return currentShapeDefaults();
-    }
+    // readShapeInspectorState moved to ./shapes/inspector-ui.js (Phase 7bz).
+    const readShapeInspectorState = () => _readShapeInspectorState({
+        shapeStrokeColorInput,
+        shapeStrokeHexInput,
+        shapeStrokeTransparentInput,
+        shapeStrokeWidthInput,
+        shapeStrokeWidthValue,
+        shapeStrokeOpacityInput,
+        shapeStrokeOpacityValue,
+        shapeFillColorInput,
+        shapeFillHexInput,
+        shapeFillTransparentInput,
+        shapeFillOpacityInput,
+        shapeFillOpacityValue,
+        shapeTypeButtons,
+    });
 
     function commitShapeInspectorToActive({ pushHistory = false } = {}) {
         const state = readShapeInspectorState();
