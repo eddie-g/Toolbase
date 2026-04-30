@@ -199,7 +199,10 @@ import {
     renderMarkupToolDrawPreview as _renderMarkupToolDrawPreview,
     updateMarkupToolUi as _updateMarkupToolUi,
 } from './markup-tool/state.js';
-import { closeMarkupToolModal as _closeMarkupToolModal } from './markup-tool/modal.js';
+import {
+    closeMarkupToolModal as _closeMarkupToolModal,
+    setMarkupToolMode as _setMarkupToolMode,
+} from './markup-tool/modal.js';
 import {
     setSignatureStatus as _setSignatureStatus,
     setSignatureDirtyState as _setSignatureDirtyState,
@@ -3986,8 +3989,7 @@ import {
     }
 
     function setMarkupToolMode(nextMode) {
-        setMarkupToolModeValue(String(nextMode || '') === 'erase' ? 'erase' : 'draw');
-        updateMarkupToolUi();
+        _setMarkupToolMode(nextMode, updateMarkupToolUi);
     }
 
     function resetMarkupToolComposer() {

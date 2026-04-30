@@ -12,6 +12,7 @@
 import {
     setMarkupToolDrawing,
     setMarkupToolActiveStroke,
+    setMarkupToolMode as setMarkupToolModeValue,
 } from '../store/markup-tool-state.js';
 
 export function closeMarkupToolModal(markupToolModal, updateUi) {
@@ -23,5 +24,17 @@ export function closeMarkupToolModal(markupToolModal, updateUi) {
     }
     setMarkupToolDrawing(false);
     setMarkupToolActiveStroke(null);
+    if (typeof updateUi === 'function') updateUi();
+}
+
+/**
+ * Switch the markup-tool composer between the 'draw' and 'erase'
+ * sub-modes (Phase 7cr). Coerces any non-string / unknown value to
+ * 'draw' so the store always holds one of the two enumerated modes.
+ * Runs updateUi after the store mutation so the panel buttons can
+ * re-sync.
+ */
+export function setMarkupToolMode(nextMode, updateUi) {
+    setMarkupToolModeValue(String(nextMode || '') === 'erase' ? 'erase' : 'draw');
     if (typeof updateUi === 'function') updateUi();
 }
