@@ -106,6 +106,7 @@ import {
     sizeOverlayCanvas,
 } from './render/overlay-sizing.js';
 import { currentShapeDefaults } from './shapes/defaults.js';
+import { reflectShapeStateToInputs as _reflectShapeStateToInputs } from './shapes/inspector-ui.js';
 import { drawShapePath } from './shapes/path.js';
 import { getStickyUiBottomEdge, updatePageCardWidth } from './util/chrome-layout.js';
 import { measureTextWidth, ctxFont } from './text/measure-width.js';
@@ -3796,33 +3797,22 @@ import {
         Object.keys(pageData).forEach((pi) => redrawOverlay(Number(pi)));
     }
 
-    function reflectShapeStateToInputs(shapeState) {
-        if (!shapeState) return;
-        setCurrentShapeType(normalizeShapeType(shapeState.shapeType));
-        setCurrentShapeStrokeColor(normalizeHexColor(shapeState.strokeColor, currentShapeStrokeColor));
-        setCurrentShapeStrokeOpacity(clamp01(shapeState.strokeOpacity, currentShapeStrokeOpacity));
-        setCurrentShapeStrokeWidth(Math.max(1, Number(shapeState.strokeWidth) || currentShapeStrokeWidth));
-        setCurrentShapeStrokeTransparent(Boolean(shapeState.strokeTransparent));
-        setCurrentShapeFillColor(normalizeHexColor(shapeState.fillColor, currentShapeFillColor));
-        setCurrentShapeFillOpacity(clamp01(shapeState.fillOpacity, currentShapeFillOpacity));
-        setCurrentShapeFillTransparent(Boolean(shapeState.fillTransparent));
-
-        if (shapeStrokeColorInput) shapeStrokeColorInput.value = currentShapeStrokeColor;
-        if (shapeStrokeHexInput) shapeStrokeHexInput.value = currentShapeStrokeColor;
-        if (shapeStrokeTransparentInput) shapeStrokeTransparentInput.checked = currentShapeStrokeTransparent;
-        if (shapeStrokeWidthInput) shapeStrokeWidthInput.value = String(currentShapeStrokeWidth);
-        if (shapeStrokeWidthValue) shapeStrokeWidthValue.textContent = `${Math.round(currentShapeStrokeWidth)} px`;
-        if (shapeStrokeOpacityInput) shapeStrokeOpacityInput.value = String(Math.round(currentShapeStrokeOpacity * 100));
-        if (shapeStrokeOpacityValue) shapeStrokeOpacityValue.textContent = `${Math.round(currentShapeStrokeOpacity * 100)}%`;
-        if (shapeFillColorInput) shapeFillColorInput.value = currentShapeFillColor;
-        if (shapeFillHexInput) shapeFillHexInput.value = currentShapeFillColor;
-        if (shapeFillTransparentInput) shapeFillTransparentInput.checked = currentShapeFillTransparent;
-        if (shapeFillOpacityInput) shapeFillOpacityInput.value = String(Math.round(currentShapeFillOpacity * 100));
-        if (shapeFillOpacityValue) shapeFillOpacityValue.textContent = `${Math.round(currentShapeFillOpacity * 100)}%`;
-        shapeTypeButtons.forEach((button) => {
-            button.classList.toggle('is-active', button.dataset.shapeTool === currentShapeType);
-        });
-    }
+    // reflectShapeStateToInputs moved to ./shapes/inspector-ui.js (Phase 7by).
+    const reflectShapeStateToInputs = (shapeState) => _reflectShapeStateToInputs(shapeState, {
+        shapeStrokeColorInput,
+        shapeStrokeHexInput,
+        shapeStrokeTransparentInput,
+        shapeStrokeWidthInput,
+        shapeStrokeWidthValue,
+        shapeStrokeOpacityInput,
+        shapeStrokeOpacityValue,
+        shapeFillColorInput,
+        shapeFillHexInput,
+        shapeFillTransparentInput,
+        shapeFillOpacityInput,
+        shapeFillOpacityValue,
+        shapeTypeButtons,
+    });
 
     function syncShapePanelUi() {
         const active = getActiveAnnAndPage();
