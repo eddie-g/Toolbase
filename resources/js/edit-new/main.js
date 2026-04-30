@@ -223,6 +223,7 @@ import {
     deleteSavedSignatureFromLibrary as _deleteSavedSignatureFromLibrary,
 } from './signature/library-ui.js';
 import { ensureSignatureFontLoaded } from './signature/font-loader.js';
+import { readFileAsDataUrl, loadImageElement } from './util/image-load.js';
 import { paintSmoothStroke } from './draw/smooth-stroke.js';
 import {
     positionShapeConstrainTip as _positionShapeConstrainTip,
@@ -415,7 +416,7 @@ import {
     signaturePlacementState,
     signatureCtx,
     signatureTypedRenderToken,
-    setSignatureMode,
+    setSignatureMode as setSignatureModeValue,
     setSignatureDirty,
     setSignatureDrawing,
     setSignatureStrokes,
@@ -434,7 +435,7 @@ import {
     markupToolStrokes,
     markupToolActiveStroke,
     markupToolCtx,
-    setMarkupToolMode,
+    setMarkupToolMode as setMarkupToolModeValue,
     setMarkupToolDirty,
     setMarkupToolDrawing,
     setMarkupToolStrokes,
@@ -3971,7 +3972,7 @@ import {
     }
 
     function setMarkupToolMode(nextMode) {
-        setMarkupToolMode(String(nextMode || '') === 'erase' ? 'erase' : 'draw');
+        setMarkupToolModeValue(String(nextMode || '') === 'erase' ? 'erase' : 'draw');
         updateMarkupToolUi();
     }
 
@@ -4557,19 +4558,7 @@ import {
         void ensureSignatureFontLoaded(signatureFontInput?.value || 'Great Vibes');
     }
 
-    const readFileAsDataUrl = (file) => new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ''));
-        reader.onerror = () => reject(new Error('Failed to read image file.'));
-        reader.readAsDataURL(file);
-    });
-
-    const loadImageElement = (src) => new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error('Failed to load image.'));
-        img.src = src;
-    });
+    // readFileAsDataUrl + loadImageElement moved to ./util/image-load.js (Phase 7ci).
 
     async function normalizeImportedImageAsset(file) {
         if (!file || !String(file.type || '').startsWith('image/')) {
@@ -4699,7 +4688,7 @@ import {
     }
 
     function setSignatureMode(nextMode) {
-        setSignatureMode(['draw', 'type', 'upload'].includes(String(nextMode)) ? String(nextMode) : 'draw');
+        setSignatureModeValue(['draw', 'type', 'upload'].includes(String(nextMode)) ? String(nextMode) : 'draw');
         updateSignatureModeUi();
     }
 
