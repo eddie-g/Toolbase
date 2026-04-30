@@ -17,6 +17,7 @@ import { savedSignatureLibrary, setSavedSignatureLibrary } from '../store/signat
 import { signatureModeLabel } from '../annotations/types.js';
 import { escapeHtml } from '../util/html.js';
 import { readSignatureLibrary, writeSignatureLibrary } from '../persistence/signature-library.js';
+import { setSignatureStatus } from './status.js';
 
 export function updateSignatureLibraryLoadUi({ signatureLibrarySelect, signatureLibraryLoadBtn }) {
     if (!signatureLibrarySelect) return;
@@ -91,4 +92,26 @@ export function persistSavedSignatureLibrary() {
 export function loadSavedSignatureLibrary(refs) {
     setSavedSignatureLibrary(readSignatureLibrary());
     renderSavedSignatureLibrary(refs);
+}
+
+/**
+ * Remove a saved signature by id from the in-memory store, persist the
+ * shrunken library, and repaint. Returns nothing; callers receive
+ * status text via setSignatureStatus on the supplied signatureStatus
+ * ref. (Phase 7cd.)
+ */
+export function deleteSavedSignatureFromLibrary(entryId, refs) {
+    if (!refs) return;
+    const { signatureStatus } = refs;
+    const nextLibrary = savedSignatureLibrary.filter((item) => String(item.id || '') !== String(entryId || ''));
+    if (nextLibrary.length === savedSignatureLibrary.length) return;
+    const previousLibrary = savedSignatureLibrary.slice();
+    setSavedSignatureLibrary(nextLibrary);
+    if (!persistSavedSignatureLibrary()) {
+        setSavedSignatureLibrary(previousLibrary);
+        setSignatureStatus(signatureStatus, 'Unable to update saved signatures in this browser.', 'error');
+        return;
+    }
+    renderSavedSignatureLibrary(refs);
+    setSignatureStatus(signatureStatus, 'Saved signature removed from your library.');
 }

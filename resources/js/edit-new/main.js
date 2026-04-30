@@ -218,6 +218,7 @@ import {
     renderSavedSignatureLibrary as _renderSavedSignatureLibrary,
     persistSavedSignatureLibrary as _persistSavedSignatureLibrary,
     loadSavedSignatureLibrary as _loadSavedSignatureLibrary,
+    deleteSavedSignatureFromLibrary as _deleteSavedSignatureFromLibrary,
 } from './signature/library-ui.js';
 import { paintSmoothStroke } from './draw/smooth-stroke.js';
 import {
@@ -4596,17 +4597,12 @@ import {
     }
 
     function deleteSavedSignatureFromLibrary(entryId) {
-        const nextLibrary = savedSignatureLibrary.filter((item) => String(item.id || '') !== String(entryId || ''));
-        if (nextLibrary.length === savedSignatureLibrary.length) return;
-        const previousLibrary = savedSignatureLibrary.slice();
-        setSavedSignatureLibrary(nextLibrary);
-        if (!persistSavedSignatureLibrary()) {
-            setSavedSignatureLibrary(previousLibrary);
-            setSignatureStatus('Unable to update saved signatures in this browser.', 'error');
-            return;
-        }
-        renderSavedSignatureLibrary();
-        setSignatureStatus('Saved signature removed from your library.');
+        _deleteSavedSignatureFromLibrary(entryId, {
+            signatureLibraryList,
+            signatureLibrarySelect,
+            signatureLibraryLoadBtn,
+            signatureStatus,
+        });
     }
 
     function resetSignatureComposer() {
