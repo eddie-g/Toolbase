@@ -231,6 +231,10 @@ import {
     showShapeConstrainTip as _showShapeConstrainTip,
     hideShapeConstrainTip as _hideShapeConstrainTip,
 } from './shape/constrain-tip.js';
+import {
+    attachShapeConstrainShiftListener as _attachShapeConstrainShiftListener,
+    detachShapeConstrainShiftListener as _detachShapeConstrainShiftListener,
+} from './shape/constrain-listener.js';
 import { setImageImportStatus as _setImageImportStatus } from './image-import/status.js';
 import {
     clearImageImportSelection as _clearImageImportSelection,
@@ -5610,19 +5614,10 @@ import {
         redrawOverlay(shapeCreationState.pi);
     }
 
-    function attachShapeConstrainShiftListener() {
-        if (shapeConstrainShiftAttached) return;
-        setShapeConstrainShiftAttached(true);
-        window.addEventListener('keydown', handleShapeConstrainShiftEvent, true);
-        window.addEventListener('keyup', handleShapeConstrainShiftEvent, true);
-    }
-
-    function detachShapeConstrainShiftListener() {
-        if (!shapeConstrainShiftAttached) return;
-        setShapeConstrainShiftAttached(false);
-        window.removeEventListener('keydown', handleShapeConstrainShiftEvent, true);
-        window.removeEventListener('keyup', handleShapeConstrainShiftEvent, true);
-    }
+    // attachShapeConstrainShiftListener / detachShapeConstrainShiftListener
+    // moved to ./shape/constrain-listener.js (Phase 7ck).
+    const attachShapeConstrainShiftListener = () => _attachShapeConstrainShiftListener(handleShapeConstrainShiftEvent);
+    const detachShapeConstrainShiftListener = () => _detachShapeConstrainShiftListener(handleShapeConstrainShiftEvent);
 
     // shape constrain-tip helpers moved to ./shape/constrain-tip.js (Phase 7ax).
     const positionShapeConstrainTip = (cx, cy) => _positionShapeConstrainTip(shapeConstrainTipEl, cx, cy);
