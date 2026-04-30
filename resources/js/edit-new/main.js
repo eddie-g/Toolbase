@@ -183,6 +183,7 @@ import {
 import { pickViewportTargetPage } from './viewport/picker.js';
 import { getCurrentVisiblePageIndex as _getCurrentVisiblePageIndex } from './viewport/current-page.js';
 import { updatePageControls as _updatePageControls } from './viewport/page-controls.js';
+import { beginViewportScaleUpdate } from './viewport/scale-update.js';
 import { scrollToPage as _scrollToPage } from './viewport/scroll-to-page.js';
 import { syncCurrentPageFromScroll as _syncCurrentPageFromScroll } from './viewport/sync-page-from-scroll.js';
 import {
@@ -1068,17 +1069,7 @@ import {
         Object.keys(pageData).forEach((key) => applyPageScale(Number(key)));
     }
 
-    function beginViewportScaleUpdate() {
-        setSuppressEditorAutofit(true);
-        const token = bumpSuppressEditorAutofitResetToken();
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-                if (suppressEditorAutofitResetToken === token) {
-                    setSuppressEditorAutofit(false);
-                }
-            });
-        });
-    }
+    // beginViewportScaleUpdate moved to ./viewport/scale-update.js (Phase 7cg).
 
     function updateZoom(value) {
         const zoomValue = Math.max(ZOOM_MIN_PERCENT, Math.min(ZOOM_MAX_PERCENT, parseInt(value, 10)));
