@@ -222,6 +222,7 @@ import {
     loadSavedSignatureLibrary as _loadSavedSignatureLibrary,
     deleteSavedSignatureFromLibrary as _deleteSavedSignatureFromLibrary,
 } from './signature/library-ui.js';
+import { ensureSignatureFontLoaded } from './signature/font-loader.js';
 import { paintSmoothStroke } from './draw/smooth-stroke.js';
 import {
     positionShapeConstrainTip as _positionShapeConstrainTip,
@@ -790,7 +791,7 @@ import {
     const annotationImageCache = new Map();
     // shapeHitTestCanvas / shapeHitTestCtx moved into
     // ./annotations/hit-test.js as module-private singletons (Phase 7am).
-    const signatureFontLoadPromises = new Map();
+    // signatureFontLoadPromises moved into ./signature/font-loader.js (Phase 7ch).
 
     // Annotation type predicates + label helpers live in ./annotations/types.js.
     // Shape geometry helpers (normalizeShapeType, defaultPolygonUnitPoints,
@@ -4597,55 +4598,7 @@ import {
         };
     }
 
-    function ensureSignatureFontLoaded(fontName) {
-        const normalizedFontName = String(fontName || '').trim();
-        if (!normalizedFontName) return Promise.resolve();
-        if (signatureFontLoadPromises.has(normalizedFontName)) {
-            return signatureFontLoadPromises.get(normalizedFontName);
-        }
-        const id = `signature-font-${normalizedFontName.replace(/\s+/g, '-')}`;
-        const fontPromise = new Promise((resolve) => {
-            let settled = false;
-            const finish = () => {
-                if (settled) return;
-                settled = true;
-                if (!document.fonts?.load) {
-                    resolve();
-                    return;
-                }
-                Promise.allSettled([
-                    document.fonts.load(`400 96px "${normalizedFontName}"`),
-                    document.fonts.load(`700 96px "${normalizedFontName}"`),
-                ]).finally(resolve);
-            };
-
-            let link = document.getElementById(id);
-            if (!(link instanceof HTMLLinkElement)) {
-                link = document.createElement('link');
-                link.id = id;
-                link.rel = 'stylesheet';
-                link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(normalizedFontName)}:wght@400;700&display=swap`;
-                document.head.appendChild(link);
-            }
-
-            if (link.dataset.loaded === '1') {
-                finish();
-                return;
-            }
-
-            const markLoaded = () => {
-                link.dataset.loaded = '1';
-                finish();
-            };
-
-            link.addEventListener('load', markLoaded, { once: true });
-            link.addEventListener('error', markLoaded, { once: true });
-            window.setTimeout(markLoaded, 1800);
-        });
-
-        signatureFontLoadPromises.set(normalizedFontName, fontPromise);
-        return fontPromise;
-    }
+    // ensureSignatureFontLoaded moved to ./signature/font-loader.js (Phase 7ch).
 
     async function renderTypedSignaturePreview() {
         const renderToken = bumpSignatureTypedRenderToken();
