@@ -216,6 +216,7 @@ import {
     updateSignatureModalCopy as _updateSignatureModalCopy,
     makeSavedSignatureName as _makeSavedSignatureName,
 } from './signature/labels.js';
+import { closeSignatureModal as _closeSignatureModal } from './signature/modal.js';
 import {
     updateSignatureLibraryLoadUi as _updateSignatureLibraryLoadUi,
     renderSavedSignatureLibrary as _renderSavedSignatureLibrary,
@@ -4828,15 +4829,10 @@ import {
     }
 
     function closeSignatureModal() {
-        if (!signatureModal) return;
-        signatureModal.classList.remove('is-open');
-        signatureModal.setAttribute('aria-hidden', 'true');
-        document.body.classList.remove('signature-modal-open');
-        setSignatureDrawing(false);
-        setSignatureActiveStroke(null);
-        setSignatureEditTarget(null);
-        updateSignatureModalCopy();
-        updateEditModeUi();
+        _closeSignatureModal(signatureModal, {
+            updateModalCopy: updateSignatureModalCopy,
+            updateUi: updateEditModeUi,
+        });
     }
 
     function cancelSignaturePlacement() {
