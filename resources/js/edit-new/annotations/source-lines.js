@@ -17,6 +17,8 @@
  * pure cluster.
  */
 
+import { sourceSpanText } from './source-span-text.js';
+
 export function spanMatchesLineBBox(span, lineBBox) {
     const bbox = Array.isArray(span?.bbox) ? span.bbox : null;
     if (!bbox || bbox.length < 4 || !Array.isArray(lineBBox) || lineBBox.length < 4) return false;
@@ -143,7 +145,7 @@ export function buildRenderableLinesFromSpans(spans) {
             spans: entries.map((entry) => entry.span),
             width: bbox ? Math.max(0, Number(bbox[2]) - Number(bbox[0])) : 0,
             height: bbox ? Math.max(0, Number(bbox[3]) - Number(bbox[1])) : 0,
-            text: entries.map((entry) => String(entry.span?.render_text ?? entry.span?.text ?? '')).join(''),
+            text: entries.map((entry) => sourceSpanText(entry.span)).join(''),
         };
     }).filter((line) => Array.isArray(line.bbox) && line.width > 0 && line.height > 0);
 }
@@ -193,7 +195,7 @@ export function renderableSourceLines(ann) {
         lines.forEach((line) => {
             if (String(line.text || '').trim()) return;
             if (Array.isArray(line.spans) && line.spans.length) {
-                line.text = line.spans.map((span) => String(span?.render_text ?? span?.text ?? '')).join('');
+                line.text = line.spans.map((span) => sourceSpanText(span)).join('');
             }
         });
     }

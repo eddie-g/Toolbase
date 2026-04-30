@@ -47,6 +47,7 @@ import {
     isAnnotationLocked,
     isLineShape,
 } from './annotations/types.js';
+import { sourceSpanText } from './annotations/source-span-text.js';
 import {
     normalizeShapeType,
     defaultPolygonUnitPoints,
@@ -238,6 +239,7 @@ import {
     attachShapeConstrainShiftListener as _attachShapeConstrainShiftListener,
     detachShapeConstrainShiftListener as _detachShapeConstrainShiftListener,
 } from './shape/constrain-listener.js';
+import { cancelShapeCreationPreview as _cancelShapeCreationPreview } from './shape/creation-preview.js';
 import { cancelEraseMode as _cancelEraseMode } from './erase-mode/cancel.js';
 import { setImageImportStatus as _setImageImportStatus } from './image-import/status.js';
 import {
@@ -1364,7 +1366,7 @@ import {
                 fillStyle: resolveSpanFillStyle(ann, span),
             };
             const key = JSON.stringify(style);
-            const spanText = String(span?.render_text ?? span?.text ?? '');
+            const spanText = sourceSpanText(span);
             const weight = Math.max(1, spanText.replace(/\s+/g, '').length || spanText.length || 1);
             buckets.set(key, (buckets.get(key) || 0) + weight);
         });
@@ -1458,7 +1460,7 @@ import {
             let totalPx = 0;
             let cursorPts = null;
             resolvedSpans.forEach((span) => {
-                const drawText = String(span?.render_text ?? span?.text ?? '');
+                const drawText = sourceSpanText(span);
                 if (!drawText) return;
 
                 const style = editorSpanStyle(ann, span, scale);
@@ -1604,7 +1606,7 @@ import {
         spans.forEach((span, spanIdx) => {
             const origin = Array.isArray(span?.origin) ? span.origin : null;
             if (!origin || origin.length < 2) return;
-            const drawText = String(span?.render_text ?? span?.text ?? '');
+            const drawText = sourceSpanText(span);
             if (!drawText) return;
             // Only honor ann-level font overrides (fontFamily/Weight/Style) when the
             // user explicitly changed them via the format bar (_styleDirty). Otherwise
@@ -2341,7 +2343,7 @@ import {
         let html = '';
 
         spans.forEach((span) => {
-            const drawText = String(span?.render_text ?? span?.text ?? '');
+            const drawText = sourceSpanText(span);
             if (!drawText) return;
 
             const style = editorSpanStyle(ann, span, scale);
@@ -2584,7 +2586,7 @@ import {
             const lineFontPx = lineStyle.fontSizePt * fontDisplayScale(scale);
 
             const spanHtml = lineSpans.map((span, spanIdx) => {
-                const drawText = String(span?.render_text ?? span?.text ?? '');
+                const drawText = sourceSpanText(span);
                 if (!drawText) return '';
                 const bbox = Array.isArray(span?.bbox) ? span.bbox : null;
                 if (!bbox || bbox.length < 4) return '';
@@ -2692,7 +2694,7 @@ import {
                     sourceSpanCount: sourceSpans.length,
                     tailCount: tails.length,
                     sourceSpansData: (Array.isArray(ann.sourceSpans) ? ann.sourceSpans : []).map(s => ({
-                        text: s.render_text || s.text,
+                        text: sourceSpanText(s),
                         font: s.embedded_font_name || s.font,
                         weight: s.font_weight || s.fontWeight || (s.bold ? '700' : ''),
                         style: s.fontStyle || (s.italic ? 'italic' : ''),
@@ -2779,7 +2781,7 @@ import {
 
         spans.forEach((span) => {
             const origin = Array.isArray(span?.origin) ? span.origin : null;
-            const drawText = String(span?.render_text ?? span?.text ?? '');
+            const drawText = sourceSpanText(span);
             if (!drawText) return;
             const spanY = origin ? Number(origin[1]) : prevY;
             if (prevY !== null && spanY !== null && Math.abs(spanY - prevY) > 1 && currentLine.length) {
@@ -5557,11 +5559,12 @@ import {
     // cancelTextCreationPreview moved to ./interactions/text-creation.js (Phase 7az).
 
     function cancelShapeCreationPreview() {
-        setShapeCreationState({ active: false, pi: null, pointerId: null, startPt: null, currentPt: null, previewAnn: null, constrain: false });
-        detachShapeConstrainShiftListener();
-        hideShapeConstrainTip();
-        redrawAllOverlays();
-        syncShapePanelUi();
+        _cancelShapeCreationPreview({
+            detachShiftListener: detachShapeConstrainShiftListener,
+            hideConstrainTip: hideShapeConstrainTip,
+            redrawAllOverlays,
+            syncShapePanelUi,
+        });
     }
 
     // ── Shift-to-constrain shape drawing ──────────────────────────────────────
@@ -7937,7 +7940,7 @@ import {
                         const lineHeightPx = blockLineHeightPx(ann, lineIdx, scale, editableLineStyle(ann, lineIdx));
                         const firstSpan = lineSpansArr[0];
                         const firstX = Number(Array.isArray(firstSpan?.bbox) ? firstSpan.bbox[0] : (Array.isArray(firstSpan?.origin) ? firstSpan.origin[0] : box.x));
-                        const firstText = String(firstSpan?.render_text ?? firstSpan?.text ?? '');
+                        const firstText = sourceSpanText(firstSpan);
                         const looksLikeMarker = lineSpansArr.length > 1
                             && (/^[\u2022\u00b7\u25cb\u25e6\u25aaohox\u00f0\-\u2013\u2014\*]\s*$/.test(firstText)
                                 || firstText.trim().length <= 2);
@@ -7971,7 +7974,7 @@ import {
                         }
                         let prevRight = null;
                         const spansHtml = bulletLineSpans.map((sp, sIdx) => {
-                            const spText = String(sp?.render_text ?? sp?.text ?? '');
+                            const spText = sourceSpanText(sp);
                             if (!spText) return '';
                             const bbox = Array.isArray(sp?.bbox) ? sp.bbox : null;
                             const origin = Array.isArray(sp?.origin) ? sp.origin : null;

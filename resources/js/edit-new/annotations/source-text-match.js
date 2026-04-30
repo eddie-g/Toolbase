@@ -8,6 +8,7 @@
  */
 
 import { renderableSourceLines } from './source-lines.js';
+import { sourceSpanText } from './source-span-text.js';
 
 export function sourceTextFallbackFromAnnotation(ann) {
     const lines = renderableSourceLines(ann);
@@ -33,7 +34,7 @@ export function sourceTextFallbackFromAnnotation(ann) {
             return Number(Array.isArray(a?.bbox) ? a.bbox[0] : 0)
                 - Number(Array.isArray(b?.bbox) ? b.bbox[0] : 0);
         })
-        .map((span) => String(span?.render_text ?? span?.text ?? ''))
+        .map((span) => sourceSpanText(span))
         .join('')
         .replace(/[ \t]{2,}/g, ' ')
         .replace(/\s+([,.;!?])/g, '$1')

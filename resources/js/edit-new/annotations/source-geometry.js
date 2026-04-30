@@ -8,6 +8,7 @@
  */
 
 import { renderableSourceLines } from './source-lines.js';
+import { sourceSpanText } from './source-span-text.js';
 
 export function normalizeQuarterTurnDegrees(value) {
     const raw = Number(value);
@@ -34,7 +35,7 @@ export function sourceLineRotationDegrees(ann, lineIndex = 0) {
             1,
             spanWidth,
             spanHeight,
-            String(span?.render_text ?? span?.text ?? '').replace(/\s+/g, '').length
+            sourceSpanText(span).replace(/\s+/g, '').length
         );
         if (rotation > 0) positiveWeight += weight;
         else negativeWeight += weight;
