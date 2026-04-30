@@ -198,6 +198,7 @@ import {
     renderMarkupToolDrawPreview as _renderMarkupToolDrawPreview,
     updateMarkupToolUi as _updateMarkupToolUi,
 } from './markup-tool/state.js';
+import { closeMarkupToolModal as _closeMarkupToolModal } from './markup-tool/modal.js';
 import {
     setSignatureStatus as _setSignatureStatus,
     setSignatureDirtyState as _setSignatureDirtyState,
@@ -4382,13 +4383,7 @@ import {
     }
 
     function closeMarkupToolModal() {
-        if (!markupToolModal) return;
-        markupToolModal.classList.remove('is-open');
-        markupToolModal.setAttribute('aria-hidden', 'true');
-        document.body.classList.remove('markup-tool-modal-open');
-        setMarkupToolDrawing(false);
-        setMarkupToolActiveStroke(null);
-        updateEditModeUi();
+        _closeMarkupToolModal(markupToolModal, updateEditModeUi);
     }
 
     function cancelEraseMode() {
