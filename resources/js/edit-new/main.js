@@ -238,6 +238,7 @@ import {
     attachShapeConstrainShiftListener as _attachShapeConstrainShiftListener,
     detachShapeConstrainShiftListener as _detachShapeConstrainShiftListener,
 } from './shape/constrain-listener.js';
+import { cancelEraseMode as _cancelEraseMode } from './erase-mode/cancel.js';
 import { setImageImportStatus as _setImageImportStatus } from './image-import/status.js';
 import {
     clearImageImportSelection as _clearImageImportSelection,
@@ -4389,12 +4390,11 @@ import {
     }
 
     function cancelEraseMode() {
-        if (!eraseMode) return;
-        setEraseModeFlag(false);
-        clearHoverState();
-        syncCanvasCursors();
-        updateEditModeUi();
-        redrawAllOverlays();
+        _cancelEraseMode({
+            syncCursors: syncCanvasCursors,
+            updateUi: updateEditModeUi,
+            redrawAllOverlays,
+        });
     }
 
     function setEraseMode(active) {
