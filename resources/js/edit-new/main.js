@@ -250,6 +250,7 @@ import {
     clearActiveDrawSession,
     cancelDirectDrawPointer,
 } from './draw/session.js';
+import { syncDrawToolPanelUi as _syncDrawToolPanelUi } from './draw/panel-ui.js';
 import {
     renderEditorSpanHtml,
     renderEditorGapHtml,
@@ -3854,27 +3855,17 @@ import {
     const setDrawToolStatus = (message) => _setDrawToolStatus(drawToolStatus, message);
 
     function syncDrawToolPanelUi() {
-        if (drawToolPanel) {
-            drawToolPanel.classList.toggle('is-visible', !editModeEnabled && drawModeActive);
-            drawToolPanel.setAttribute('aria-hidden', !editModeEnabled && drawModeActive ? 'false' : 'true');
-        }
-        drawToolButtons.forEach((button) => {
-            button.classList.toggle('is-active', button.dataset.drawDirectTool === drawToolType);
+        _syncDrawToolPanelUi({
+            drawToolPanel,
+            drawToolButtons,
+            drawColorSwatches,
+            drawToolColorInput,
+            drawToolSizeInput,
+            drawToolSizeValue,
+            drawToolOpacityInput,
+            drawToolOpacityValue,
+            drawToolStatus,
         });
-        drawColorSwatches.forEach((button) => {
-            button.classList.toggle('is-active', normalizeHexColor(button.dataset.drawColor, '') === normalizeHexColor(drawStrokeColor, '#111827'));
-        });
-        if (drawToolColorInput) drawToolColorInput.value = normalizeHexColor(drawStrokeColor, '#111827');
-        if (drawToolSizeInput) drawToolSizeInput.value = String(drawBrushSize);
-        if (drawToolSizeValue) drawToolSizeValue.textContent = `${Math.round(drawBrushSize)}px`;
-        if (drawToolOpacityInput) drawToolOpacityInput.value = String(Math.round(drawOpacity * 100));
-        if (drawToolOpacityValue) drawToolOpacityValue.textContent = `${Math.round(drawOpacity * 100)}%`;
-        if (drawToolOpacityInput) drawToolOpacityInput.disabled = drawToolType === 'eraser';
-        setDrawToolStatus(
-            drawToolType === 'eraser'
-                ? 'Eraser is active. Drag over a drawing to remove parts of it.'
-                : 'Pen mode is active. Drag directly on the page to draw.'
-        );
     }
 
     function setDrawMode(active, nextTool = drawToolType) {
