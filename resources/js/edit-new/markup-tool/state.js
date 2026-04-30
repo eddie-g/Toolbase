@@ -99,3 +99,63 @@ export function renderMarkupToolDrawPreview(markupToolCanvas, smoothingInput) {
     markupToolStrokes.forEach(paint);
     if (markupToolActiveStroke) paint(markupToolActiveStroke);
 }
+
+/*
+ * updateMarkupToolUi — pure DOM writer for the markup-tool modal
+ * (Phase 7cc). Reads markupToolMode from the store and refreshes
+ * tabs / panels / hint / clear+apply buttons / canvas cursor;
+ * delegates the canvas repaint + status text to the existing
+ * renderMarkupToolDrawPreview / setMarkupToolStatus helpers in
+ * this module.
+ */
+export function updateMarkupToolUi(refs) {
+    if (!refs) return;
+    const {
+        markupToolTabs,
+        markupToolPanels,
+        markupToolHint,
+        markupToolClearBtn,
+        markupToolApplyBtn,
+        markupToolCanvas,
+        markupToolSmoothingInput,
+        markupToolStatus,
+    } = refs;
+    if (markupToolTabs) {
+        markupToolTabs.forEach((tab) => {
+            tab.classList.toggle('is-active', tab.dataset.markupToolMode === markupToolMode);
+        });
+    }
+    if (markupToolPanels) {
+        markupToolPanels.forEach((panel) => {
+            panel.classList.toggle('is-active', panel.dataset.markupToolPanel === markupToolMode);
+        });
+    }
+    if (markupToolHint) {
+        markupToolHint.textContent = markupToolMode === 'draw'
+            ? 'Draw mode: click and drag to create a mark.'
+            : 'Erase mode: close the modal, then click any annotation to remove it.';
+    }
+    if (markupToolClearBtn) {
+        markupToolClearBtn.disabled = markupToolMode !== 'draw' || !hasMarkupToolDrawContent();
+        markupToolClearBtn.hidden = markupToolMode !== 'draw';
+    }
+    if (markupToolApplyBtn) {
+        markupToolApplyBtn.textContent = markupToolMode === 'draw' ? 'Place drawing' : 'Start erasing';
+    }
+    if (markupToolCanvas) markupToolCanvas.style.cursor = markupToolMode === 'draw' ? 'crosshair' : 'default';
+
+    if (markupToolMode === 'draw') {
+        renderMarkupToolDrawPreview(markupToolCanvas, markupToolSmoothingInput);
+        const hasContent = hasMarkupToolDrawContent();
+        setMarkupToolDirtyState(markupToolApplyBtn, hasContent);
+        setMarkupToolStatus(
+            markupToolStatus,
+            hasContent ? 'Drawing ready to place.' : 'Draw a mark, then place it on the page.',
+            hasContent ? 'ready' : 'default',
+        );
+        return;
+    }
+
+    setMarkupToolDirtyState(markupToolApplyBtn, true);
+    setMarkupToolStatus(markupToolStatus, 'Erase mode is ready. Close this modal and click annotations on the page to remove them.', 'ready');
+}
