@@ -51,3 +51,42 @@ export function armShapeCutState(ann, pi) {
     });
     return true;
 }
+
+/**
+ * Tear down armed cut mode (Phase 7cl).
+ *
+ * Resets the cut-mode store, optionally redraws the page that was
+ * armed, and runs the cursor / shape-panel sync callbacks so the
+ * UI stops advertising the cut affordance.
+ */
+export function cancelShapeCutMode({ redraw = true } = {}, callbacks = {}) {
+    const prevPi = shapeCutState.pi;
+    resetShapeCutState();
+    if (redraw && prevPi !== null && typeof callbacks.redrawOverlay === 'function') {
+        callbacks.redrawOverlay(prevPi);
+    }
+    if (typeof callbacks.syncCanvasCursors === 'function') callbacks.syncCanvasCursors();
+    if (typeof callbacks.syncShapePanelUi === 'function') callbacks.syncShapePanelUi();
+}
+
+/**
+ * Arm cut mode for a specific annotation on a page (Phase 7cl).
+ * No-op when the annotation is not cuttable.
+ */
+export function armShapeCutMode(ann, pi, callbacks = {}) {
+    if (!armShapeCutState(ann, pi)) return;
+    if (typeof callbacks.syncCanvasCursors === 'function') callbacks.syncCanvasCursors();
+    if (typeof callbacks.syncShapePanelUi === 'function') callbacks.syncShapePanelUi();
+    if (typeof callbacks.redrawOverlay === 'function') callbacks.redrawOverlay(pi);
+}
+
+/**
+ * Toggle armed-state for the supplied annotation (Phase 7cl).
+ */
+export function toggleShapeCutMode(ann, pi, callbacks = {}) {
+    if (isShapeCutModeArmedFor(ann, pi)) {
+        cancelShapeCutMode({ redraw: true }, callbacks);
+        return;
+    }
+    armShapeCutMode(ann, pi, callbacks);
+}

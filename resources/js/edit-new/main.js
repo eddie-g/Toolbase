@@ -247,6 +247,9 @@ import {
     isShapeCutModeArmedFor,
     resetShapeCutState,
     armShapeCutState,
+    cancelShapeCutMode as _cancelShapeCutMode,
+    armShapeCutMode as _armShapeCutMode,
+    toggleShapeCutMode as _toggleShapeCutMode,
 } from './shape/cut-mode.js';
 import { getActiveEditorSelection } from './editor/active-selection.js';
 import { cancelTextCreationPreview } from './interactions/text-creation.js';
@@ -5451,28 +5454,17 @@ import {
     // canCutShapeAnnotation / isShapeCutModeArmedFor / resetShapeCutState
     // moved to ./shape/cut-mode.js (Phase 7ay).
 
-    function cancelShapeCutMode({ redraw = true } = {}) {
-        const prevPi = shapeCutState.pi;
-        resetShapeCutState();
-        if (redraw && prevPi !== null) redrawOverlay(prevPi);
-        syncCanvasCursors();
-        syncShapePanelUi();
-    }
-
-    function armShapeCutMode(ann, pi) {
-        if (!armShapeCutState(ann, pi)) return;
-        syncCanvasCursors();
-        syncShapePanelUi();
-        redrawOverlay(pi);
-    }
-
-    function toggleShapeCutMode(ann, pi) {
-        if (isShapeCutModeArmedFor(ann, pi)) {
-            cancelShapeCutMode();
-            return;
-        }
-        armShapeCutMode(ann, pi);
-    }
+    // cancelShapeCutMode / armShapeCutMode / toggleShapeCutMode moved to
+    // ./shape/cut-mode.js (Phase 7cl). Wrappers thread the editor's
+    // cursor / panel / overlay-redraw callbacks into the module.
+    const _shapeCutCallbacks = () => ({
+        redrawOverlay,
+        syncCanvasCursors,
+        syncShapePanelUi,
+    });
+    const cancelShapeCutMode = (opts = { redraw: true }) => _cancelShapeCutMode(opts, _shapeCutCallbacks());
+    const armShapeCutMode = (ann, pi) => _armShapeCutMode(ann, pi, _shapeCutCallbacks());
+    const toggleShapeCutMode = (ann, pi) => _toggleShapeCutMode(ann, pi, _shapeCutCallbacks());
 
     // crossProduct2d / dedupePolygonVertices / computePolygonArea /
     // clipPolygonAgainstInfiniteLine moved to ./util/polygon-clip.js (Phase 7ac).
