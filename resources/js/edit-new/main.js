@@ -231,6 +231,7 @@ import {
     clearImageImportSelection as _clearImageImportSelection,
     openImageImportModal as _openImageImportModal,
     closeImageImportModal as _closeImageImportModal,
+    imageImportLoadFile as _imageImportLoadFile,
 } from './image-import/modal.js';
 import {
     canCutShapeAnnotation,
@@ -7556,10 +7557,7 @@ import {
     // Lightweight standalone modal: pick / drop / paste an image, preview it,
     // then place it as an annotation on the current visible page using the
     // same plumbing signatures use (placeImageBackedAnnotationOnCurrentPage).
-    const IMAGE_IMPORT_ACCEPTED_TYPES = new Set([
-        'image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp', 'image/svg+xml',
-    ]);
-    const IMAGE_IMPORT_MAX_BYTES = 25 * 1024 * 1024; // 25 MB
+    // IMAGE_IMPORT_ACCEPTED_TYPES + IMAGE_IMPORT_MAX_BYTES moved to ./image-import/modal.js (Phase 7ce).
     // imageImportPendingAsset moved to ./store/misc-state.js (Phase 5m).
 
     // setImageImportStatus moved to ./image-import/status.js (Phase 7ax).
@@ -7580,49 +7578,8 @@ import {
     const clearImageImportSelection = () => _clearImageImportSelection(_imageImportRefs());
     const openImageImportModal = () => _openImageImportModal(_imageImportRefs());
     const closeImageImportModal = () => _closeImageImportModal(_imageImportRefs());
-    function imageImportLoadFile(file) {
-        if (!file) return;
-        const mime = String(file.type || '').toLowerCase();
-        if (!IMAGE_IMPORT_ACCEPTED_TYPES.has(mime)) {
-            setImageImportStatus('Unsupported file type. Use PNG, JPG, GIF, WebP, or SVG.', true);
-            return;
-        }
-        if (file.size > IMAGE_IMPORT_MAX_BYTES) {
-            setImageImportStatus('File is too large (max 25 MB).', true);
-            return;
-        }
-        const reader = new FileReader();
-        reader.onerror = () => setImageImportStatus('Could not read that file.', true);
-        reader.onload = (ev) => {
-            const dataUrl = String(ev.target?.result || '');
-            if (!dataUrl) {
-                setImageImportStatus('Could not read that file.', true);
-                return;
-            }
-            const probe = new Image();
-            probe.onerror = () => setImageImportStatus('That image could not be decoded.', true);
-            probe.onload = () => {
-                const w = probe.naturalWidth || probe.width || 1;
-                const h = probe.naturalHeight || probe.height || 1;
-                setImageImportPendingAsset({
-                    dataUrl,
-                    fileName: file.name || 'image',
-                    mimeType: mime,
-                    width: w,
-                    height: h,
-                });
-                if (imageImportPreviewImg) imageImportPreviewImg.src = dataUrl;
-                if (imageImportPreviewName) imageImportPreviewName.textContent = file.name || 'image';
-                if (imageImportPreviewDims) imageImportPreviewDims.textContent = `${w} × ${h} px`;
-                if (imageImportPreview) imageImportPreview.hidden = false;
-                if (imageImportDropzoneInner) imageImportDropzoneInner.style.display = 'none';
-                if (imageImportApply) imageImportApply.disabled = false;
-                setImageImportStatus('Ready to insert on the current page.');
-            };
-            probe.src = dataUrl;
-        };
-        reader.readAsDataURL(file);
-    }
+    // imageImportLoadFile moved to ./image-import/modal.js (Phase 7ce).
+    const imageImportLoadFile = (file) => _imageImportLoadFile(file, _imageImportRefs());
     if (ftbAddImage) {
         ftbAddImage.addEventListener('click', () => {
             if (editModeEnabled) return;
