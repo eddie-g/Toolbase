@@ -9,6 +9,20 @@
 
 const compactText = (value) => String(value ?? '').replace(/\s+/g, '');
 
+function inferredFontWeightFromName(span) {
+    const name = [
+        span?.embedded_font_name,
+        span?.font,
+        span?.fontFamily,
+    ].map((value) => String(value || '')).join(' ');
+
+    if (/\b(?:Blk|Black|Heavy|Ultra)\b|(?:-|_)(?:Blk|Black|Heavy|Ultra)/i.test(name)) return '900';
+    if (/\b(?:Bold|Bd)\b|(?:-|_)(?:Bold|Bd)/i.test(name)) return '700';
+    if (/\b(?:Demi|Dem|SemiBold|Semibold)\b|(?:-|_)(?:Demi|Dem|SemiBold|Semibold)/i.test(name)) return '600';
+    if (/\bMedium\b|(?:-|_)Medium/i.test(name)) return '500';
+    return '';
+}
+
 export function sourceSpanText(span) {
     const rendered = String(span?.render_text ?? span?.text ?? '');
     if (!rendered) return '';
@@ -28,4 +42,15 @@ export function sourceSpanText(span) {
     }
 
     return rendered;
+}
+
+export function sourceSpanFontWeight(span, fallback = '400') {
+    const declared = String(span?.font_weight || span?.fontWeight || (span?.bold ? '700' : '') || fallback || '400');
+    const inferred = inferredFontWeightFromName(span);
+    const declaredWeight = Number.parseInt(declared, 10);
+    const inferredWeight = Number.parseInt(inferred, 10);
+    if (Number.isFinite(inferredWeight) && inferredWeight > 400 && (!Number.isFinite(declaredWeight) || declaredWeight <= 400)) {
+        return inferred;
+    }
+    return declared;
 }

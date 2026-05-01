@@ -1025,6 +1025,366 @@ PYTHON;
         ]));
     }
 
+    public function compareEditNewSnapshot(Request $request, Document $document)
+    {
+        $validated = $request->validate([
+            'dpi' => 'nullable|integer|min:72|max:240',
+            'threshold' => 'nullable|integer|min:0|max:255',
+            'max_pages' => 'nullable|integer|min:1|max:50',
+            'tolerance_pct' => 'nullable|numeric|min:0|max:100',
+        ]);
+
+        $documentPath = Storage::path($document->path);
+        if (!is_file($documentPath)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Document PDF file not found.',
+            ], 422);
+        }
+
+        $originalPath = $documentPath;
+        if ($document->original_backup_path && Storage::exists($document->original_backup_path)) {
+            $candidate = Storage::path($document->original_backup_path);
+            if (is_file($candidate)) {
+                $originalPath = $candidate;
+            }
+        }
+
+        $cleanPath = $this->ensureEditNewCleanPdfForComparison($document, $originalPath);
+        $loadedBasePath = $cleanPath ?: $documentPath;
+        $loadedBaseKind = $cleanPath ? 'clean_pdf' : 'file_pdf';
+
+        $annotations = $this->buildEditNewComparisonAnnotations($request, $document, $originalPath);
+
+        $tempDir = storage_path('app/temp');
+        if (!is_dir($tempDir)) {
+            @mkdir($tempDir, 0775, true);
+        }
+        $artifactDir = $this->resolveWritablePdfComparisonArtifactDir();
+        if ($artifactDir === null) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No writable PDF comparison artifact directory is available.',
+            ], 500);
+        }
+
+        foreach ($annotations as &$annotation) {
+            $annotation['__sourcePdfPath'] = $originalPath;
+            $annotation['__documentId'] = $document->id;
+        }
+        unset($annotation);
+
+        $annotationsFile = $tempDir . '/edit_new_compare_' . $document->id . '_' . Str::uuid() . '.json';
+        $annotationsJson = json_encode($annotations, JSON_INVALID_UTF8_SUBSTITUTE);
+        if ($annotationsJson === false || @file_put_contents($annotationsFile, $annotationsJson) === false) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to prepare annotations for comparison.',
+            ], 500);
+        }
+
+        $script = base_path('python/test_helpers/compare_edit_new_snapshot.py');
+        $prefix = 'edit_new_compare_doc_' . $document->id . '_' . Str::lower(Str::random(10));
+        $dpi = (int) ($validated['dpi'] ?? 144);
+        $threshold = (int) ($validated['threshold'] ?? 10);
+        $maxPages = isset($validated['max_pages']) ? (int) $validated['max_pages'] : 0;
+        $tolerancePct = (float) ($validated['tolerance_pct'] ?? 0.25);
+
+        $command = sprintf(
+            '%s %s --original-pdf %s --loaded-base-pdf %s --annotations-json %s --output-dir %s --artifact-prefix %s --dpi %d --threshold %d%s 2>&1',
+            escapeshellarg($this->resolvePythonBinary()),
+            escapeshellarg($script),
+            escapeshellarg($originalPath),
+            escapeshellarg($loadedBasePath),
+            escapeshellarg($annotationsFile),
+            escapeshellarg($artifactDir),
+            escapeshellarg($prefix),
+            $dpi,
+            $threshold,
+            $maxPages > 0 ? ' --max-pages ' . $maxPages : ''
+        );
+
+        $rawOutput = shell_exec($command);
+        @unlink($annotationsFile);
+
+        if (!$rawOutput) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Comparison script produced no output.',
+            ], 500);
+        }
+
+        $result = json_decode($rawOutput, true);
+        if (!is_array($result)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Comparison script output was not valid JSON.',
+                'raw' => substr($rawOutput, 0, 2000),
+            ], 500);
+        }
+
+        if (empty($result['success'])) {
+            return response()->json([
+                'success' => false,
+                'message' => $result['error'] ?? 'PDF comparison failed.',
+                'traceback' => $result['traceback'] ?? null,
+            ], 500);
+        }
+
+        $pages = collect($result['pages'] ?? [])
+            ->map(function (array $page) use ($tolerancePct) {
+                $page['needs_attention'] = (float) ($page['pixel_diff_pct'] ?? 0) > $tolerancePct;
+                foreach (['original_artifact', 'snapshot_artifact', 'diff_artifact'] as $key) {
+                    if (!empty($page[$key])) {
+                        $page[$key . '_url'] = route('pdfTests.artifact', ['filename' => basename((string) $page[$key])]);
+                    }
+                }
+
+                return $page;
+            })
+            ->values()
+            ->all();
+
+        $attentionPages = collect($pages)
+            ->filter(fn (array $page) => !empty($page['needs_attention']))
+            ->pluck('page')
+            ->values()
+            ->all();
+        $pageCountMismatch = (bool) ($result['page_count_mismatch'] ?? false);
+
+        return response()->json(array_merge($result, [
+            'success' => true,
+            'document_id' => $document->id,
+            'document_name' => $document->original_name,
+            'loaded_base' => $loadedBaseKind,
+            'tolerance_pct' => $tolerancePct,
+            'status' => (!$pageCountMismatch && empty($attentionPages)) ? 'pass' : 'fail',
+            'attention_pages' => $attentionPages,
+            'pages' => $pages,
+        ]));
+    }
+
+    private function ensureEditNewCleanPdfForComparison(Document $document, string $sourcePdfPath): ?string
+    {
+        $cleanPath = Storage::path('temp/clean_' . $document->id . '.pdf');
+        if (is_file($cleanPath)) {
+            return $cleanPath;
+        }
+
+        $latestExtraction = PdfExtractionFitz::where('document_id', $document->id)
+            ->orderByDesc('id')
+            ->first();
+        if (!$latestExtraction || !isset($latestExtraction->extraction_data) || !is_file($sourcePdfPath)) {
+            return null;
+        }
+
+        $tempDir = storage_path('app/temp');
+        if (!is_dir($tempDir)) {
+            @mkdir($tempDir, 0775, true);
+        }
+
+        $extractionFile = $tempDir . '/edit_new_compare_extraction_' . $document->id . '_' . Str::uuid() . '.json';
+        $generatedPath = $tempDir . '/edit_new_compare_clean_' . $document->id . '_' . Str::uuid() . '.pdf';
+
+        try {
+            $extractionJson = is_string($latestExtraction->extraction_data)
+                ? $latestExtraction->extraction_data
+                : json_encode($latestExtraction->extraction_data, JSON_INVALID_UTF8_SUBSTITUTE);
+            if (!is_string($extractionJson) || @file_put_contents($extractionFile, $extractionJson) === false) {
+                return null;
+            }
+
+            $command = sprintf(
+                '%s %s %s %s %s 2>&1',
+                escapeshellarg($this->resolvePythonBinary()),
+                escapeshellarg(base_path('python/pdf-editor/create_clean_pdf.py')),
+                escapeshellarg($sourcePdfPath),
+                escapeshellarg($extractionFile),
+                escapeshellarg($generatedPath)
+            );
+
+            $output = [];
+            $exitCode = 0;
+            exec($command, $output, $exitCode);
+            if ($exitCode !== 0 || !is_file($generatedPath)) {
+                Log::warning('Failed to create clean PDF for edit-new comparison', [
+                    'document_id' => $document->id,
+                    'exit_code' => $exitCode,
+                    'output' => implode("\n", $output),
+                ]);
+                return null;
+            }
+
+            $cleanDir = dirname($cleanPath);
+            if (!is_dir($cleanDir)) {
+                @mkdir($cleanDir, 0775, true);
+            }
+            if (@copy($generatedPath, $cleanPath) && is_file($cleanPath)) {
+                return $cleanPath;
+            }
+
+            return $generatedPath;
+        } finally {
+            if (is_file($extractionFile)) {
+                @unlink($extractionFile);
+            }
+            if (is_file($generatedPath) && is_file($cleanPath)) {
+                @unlink($generatedPath);
+            }
+        }
+    }
+
+    private function resolveWritablePdfComparisonArtifactDir(): ?string
+    {
+        $candidates = array_values(array_filter(array_unique([
+            storage_path('app/overlay_regression_artifacts'),
+            env('PDF_TEST_OUTPUT_DIR')
+                ? rtrim((string) env('PDF_TEST_OUTPUT_DIR'), DIRECTORY_SEPARATOR)
+                : null,
+            env('PDF_TEST_FALLBACK_OUTPUT_DIR')
+                ? rtrim((string) env('PDF_TEST_FALLBACK_OUTPUT_DIR'), DIRECTORY_SEPARATOR)
+                : null,
+            '/tmp/overlay_regression_artifacts',
+        ])));
+
+        foreach ($candidates as $dir) {
+            if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
+                continue;
+            }
+            if (!is_writable($dir)) {
+                continue;
+            }
+
+            $probe = rtrim($dir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . '.write-test-' . Str::random(8);
+            if (@file_put_contents($probe, 'ok') === false) {
+                continue;
+            }
+            @unlink($probe);
+
+            return $dir;
+        }
+
+        return null;
+    }
+
+    /**
+     * Build the same annotation set that /edit-new receives from documentInfo.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function buildEditNewComparisonAnnotations(Request $request, Document $document, string $sourcePdfPath): array
+    {
+        $ownership = $this->resolveDocumentOwnership($document);
+        $sessionId = trim((string) $request->input('session_id', $request->query('session_id', '')));
+        if ($sessionId === '') {
+            $sessionId = $request->session()->getId();
+        }
+
+        $extractedSessionId = 'document_' . $document->id . '_extracted';
+        $statesQuery = PdfState::where('document_id', $document->id)
+            ->where(function ($outer) use ($ownership, $sessionId, $extractedSessionId) {
+                $outer->where(function ($inner) use ($ownership, $sessionId) {
+                    $this->applyOwnershipScope(
+                        $inner,
+                        $ownership['user_id'] ?? null,
+                        $ownership['admin_id'] ?? null,
+                        $sessionId
+                    );
+                })->orWhere('session_id', $extractedSessionId);
+            });
+
+        $states = $statesQuery->orderBy('id')->get();
+        $deletedPromotedSourceKeys = [];
+        foreach ($states as $state) {
+            if ((string) $state->state !== 'deleted') {
+                continue;
+            }
+            $annotationData = is_array($state->annotation_data) ? $state->annotation_data : [];
+            $sourceKey = trim((string) ($annotationData['promotedSourceKey'] ?? ''));
+            if ($sourceKey !== '' && $this->isPromotedSuppressionAnnotation($annotationData)) {
+                $deletedPromotedSourceKeys[$sourceKey] = true;
+            }
+        }
+
+        $fallbackFitzId = PdfExtractionFitz::where('document_id', $document->id)
+            ->orderByDesc('id')
+            ->value('id');
+
+        $annotationAssets = app(PdfAnnotationAssetService::class);
+        $seen = [];
+        $annotations = $states->map(function (PdfState $state) use (&$seen, $fallbackFitzId, $annotationAssets) {
+            $data = is_array($state->annotation_data) ? $state->annotation_data : [];
+            $fitzId = $state->pdf_extraction_fitz_id ?: $fallbackFitzId;
+            if (!empty($data) && $fitzId) {
+                $data = $this->enrichAnnotationFromDb($data, $fitzId);
+            }
+            if (!empty($data)) {
+                $data = $annotationAssets->enrichForClient($data);
+            }
+            if (!empty($data) && $this->shouldDiscardLegacySyntheticMergedPromotedAnnotation($data)) {
+                return null;
+            }
+
+            $annId = $data['id'] ?? null;
+            $dbFields = [
+                'db_id' => $state->id,
+                'db_page_number' => $state->page_number,
+                'db_state' => $state->state,
+                'db_updated_at' => optional($state->updated_at)->toIso8601String(),
+                'db_flagged' => (bool) $state->flagged,
+                'db_flag_reason' => $state->flag_reason,
+                'db_flag_images' => $state->flag_images ?? [],
+            ];
+            if ($annId !== null) {
+                $seen[$annId] = array_merge($data, $dbFields);
+                return null;
+            }
+
+            return array_merge($data, $dbFields);
+        })->filter(fn ($item) => $item !== null)->values();
+
+        $parentsToSuppress = array_fill_keys(PdfAnnotationSuppression::suppressedIds(array_keys($seen)), true);
+        foreach (array_keys($parentsToSuppress) as $parentId) {
+            unset($seen[$parentId]);
+        }
+
+        $annotations = $annotations->merge(array_values($seen))->values();
+        if (!empty($deletedPromotedSourceKeys)) {
+            $annotations = $annotations
+                ->reject(function ($annotation) use ($deletedPromotedSourceKeys) {
+                    if (!is_array($annotation)) {
+                        return false;
+                    }
+                    $sourceKey = trim((string) ($annotation['promotedSourceKey'] ?? ''));
+                    return $sourceKey !== '' && isset($deletedPromotedSourceKeys[$sourceKey]);
+                })
+                ->values();
+        }
+
+        $symbolAnnotations = $this->synthesizeSymbolCharAnnotations($fallbackFitzId);
+        if (!empty($symbolAnnotations)) {
+            $existingIds = $annotations->pluck('id')->filter()->flip()->toArray();
+            $newSymbol = array_filter($symbolAnnotations, fn ($annotation) => !isset($existingIds[$annotation['id']]));
+            if (!empty($newSymbol)) {
+                $annotations = $annotations->merge(array_values($newSymbol))->values();
+            }
+        }
+
+        $annotations = collect($this->mergeContainedPromotedAnnotationsForEditor($annotations->values()->all()))->values();
+        $annotations = collect($this->normalizeDotLeaderPromotedAnnotationsForEditor($annotations->values()->all()))->values();
+
+        return $annotations
+            ->filter(fn ($annotation) => is_array($annotation) && !empty($annotation))
+            ->map(function (array $annotation) use ($sourcePdfPath, $document) {
+                $annotation['__sourcePdfPath'] = $sourcePdfPath;
+                $annotation['__documentId'] = $document->id;
+
+                return $annotation;
+            })
+            ->values()
+            ->all();
+    }
+
     /**
      * Enrich a single annotation array with the latest data from the fitz extraction tables.
      * Refreshes sourceSpans from pdf_extraction_spans and adds page geometry from

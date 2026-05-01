@@ -47,7 +47,7 @@ import {
     isAnnotationLocked,
     isLineShape,
 } from './annotations/types.js';
-import { sourceSpanText } from './annotations/source-span-text.js';
+import { sourceSpanFontWeight, sourceSpanText } from './annotations/source-span-text.js';
 import {
     normalizeShapeType,
     defaultPolygonUnitPoints,
@@ -955,53 +955,11 @@ import {
     // getStickyUiBottomEdge moved to ./util/chrome-layout.js (Phase 7r).
 
     // ── Undo / Redo history ────────────────────────────────────────────────────
-    const HISTORY_LIMIT = 100;
-    const undoStack = [];  // snapshots before each action
-    const redoStack = [];  // snapshots that were undone
-
-    // Capture a deep-enough snapshot of all mutable editor state.
-    function captureSnapshot() {
-        const annsByPage = {};
-        for (const [pi, data] of Object.entries(pageData)) {
-            annsByPage[pi] = data.annotations.map((ann) => cloneSerializableValue(ann, { ...ann }));
-        }
-        return {
-            annsByPage,
-            editedTexts: { ...editedTexts },
-            deletedIds: new Set(pendingDeletedAnnotationIds),
-            deletedKeys: new Set(pendingDeletedPromotedSourceKeys),
-        };
-    }
-
-    // Restore state from a snapshot.
-    function applySnapshot(snap) {
-        // Restore annotations
-        for (const [pi, anns] of Object.entries(snap.annsByPage)) {
-            const data = pageData[pi];
-            if (data) data.annotations = anns.map((ann) => cloneSerializableValue(ann, { ...ann }));
-        }
-        // Restore edited texts
-        for (const key of Object.keys(editedTexts)) delete editedTexts[key];
-        Object.assign(editedTexts, snap.editedTexts);
-        // Restore pending deletes
-        pendingDeletedAnnotationIds.clear();
-        for (const id of snap.deletedIds) pendingDeletedAnnotationIds.add(id);
-        pendingDeletedPromotedSourceKeys.clear();
-        for (const key of snap.deletedKeys) pendingDeletedPromotedSourceKeys.add(key);
-    }
-
-    // Push to undo stack before a user action. Call this BEFORE the mutation.
-    function pushUndo() {
-        undoStack.push(captureSnapshot());
-        if (undoStack.length > HISTORY_LIMIT) undoStack.shift();
-        redoStack.length = 0;  // any new action clears redo
-        updateHistoryUi();
-    }
-
-    function updateHistoryUi() {
-        if (undoButton) undoButton.disabled = undoStack.length === 0;
-        if (redoButton) redoButton.disabled = redoStack.length === 0;
-    }
+    // pushUndo / performUndo / performRedo / updateHistoryUi / captureSnapshot /
+    // applySnapshot / undoStack / redoStack / HISTORY_LIMIT all live in
+    // ./history/undo-redo.js (Phase 7d). Wired via configureHistory() above.
+    // Leftover local copies (which shadowed the imports inside this IIFE and
+    // silently broke debug-modal / format-bar / etc. undo) were removed.
 
     // getAvailablePageWidth, getFitScaleForWidth, getAppliedScale moved to
     // ./viewport/scale.js (Phase 7aq). The two width-dependent helpers are
@@ -1348,7 +1306,7 @@ import {
         return {
             fontFamily: fallbackFontFamily(fontName, span?.embedded_font_family || ann?.fontFamily || ''),
             fontSizePt,
-            fontWeight: String(span?.font_weight || span?.fontWeight || ann?.fontWeight || (span?.bold ? '700' : '400') || '400'),
+            fontWeight: sourceSpanFontWeight(span, ann?.fontWeight || '400'),
             fontStyle:  span?.fontStyle || (span?.italic ? 'italic' : 'normal') || ann?.fontStyle || 'normal',
             fillStyle:  resolveSpanFillStyle(ann, span),
         };
@@ -1364,7 +1322,7 @@ import {
             const style = {
                 fontFamily: fallbackFontFamily(fontName, span?.embedded_font_family || ann?.fontFamily || ''),
                 fontSizePt: Number(span?.font_size ?? span?.fontSize ?? ann?.fontSize) || 12,
-                fontWeight: String(span?.font_weight || span?.fontWeight || ann?.fontWeight || (span?.bold ? '700' : '400') || '400'),
+                fontWeight: sourceSpanFontWeight(span, ann?.fontWeight || '400'),
                 fontStyle: span?.fontStyle || (span?.italic ? 'italic' : 'normal') || ann?.fontStyle || 'normal',
                 fillStyle: resolveSpanFillStyle(ann, span),
             };
@@ -1625,7 +1583,7 @@ import {
                 : fallbackFontFamily(span?.embedded_font_name || span?.font, span?.embedded_font_family || span?.fontFamily || '');
             const fontSizePx = (Number(span?.font_size ?? span?.fontSize) || Number(ann?.fontSize) || 12) * fontDisplayScale(scale);
             const spanFontStyle  = span?.fontStyle || (span?.italic ? 'italic' : 'normal');
-            const spanFontWeight = String(span?.font_weight || span?.fontWeight || (span?.bold ? '700' : '400') || '400');
+            const spanFontWeight = sourceSpanFontWeight(span);
             const fontStyle  = styleOverride ? (ann?.fontStyle  || spanFontStyle)  : spanFontStyle;
             const fontWeight = styleOverride ? (ann?.fontWeight || spanFontWeight) : spanFontWeight;
             ctx.font         = ctxFont({ fontFamily, fontSizePx, fontWeight, fontStyle });
@@ -1660,6 +1618,28 @@ import {
                 if (isVertical) return Math.max(0, (Number(bbox[3]) - Number(bbox[1])) * scale);
                 return Math.max(0, (Number(bbox[2]) - Number(bbox[0])) * scale);
             })();
+            const bbox = Array.isArray(span?.bbox) ? span.bbox : null;
+            if (!isVertical && drawText.trim() === '.' && bbox && bbox.length >= 4) {
+                const dotW = Math.max(0, (Number(bbox[2]) - Number(bbox[0])) * scale);
+                const dotH = Math.max(0, (Number(bbox[3]) - Number(bbox[1])) * scale);
+                if (dotW > 0 && dotH > 0 && dotH <= fontSizePx * 0.35) {
+                    ctx.save();
+                    ctx.fillStyle = resolveSpanFillStyle(ann, span);
+                    ctx.beginPath();
+                    ctx.ellipse(
+                        (Number(bbox[0]) + offset.dx) * scale + (dotW / 2),
+                        (Number(bbox[1]) + offset.dy) * scale + (dotH / 2),
+                        Math.max(0.45, dotW / 2),
+                        Math.max(0.35, dotH / 2),
+                        0,
+                        0,
+                        Math.PI * 2
+                    );
+                    ctx.fill();
+                    ctx.restore();
+                    return;
+                }
+            }
             const measuredWidthPx = ctx.measureText(drawText).width || 0;
             const rawRatio = (targetWidthPx > 0 && measuredWidthPx > 0) ? (targetWidthPx / measuredWidthPx) : 1;
             const scaleX = (!Number.isFinite(rawRatio) || rawRatio <= 0) ? 1 : Math.max(0.5, Math.min(1.3, rawRatio));
@@ -1965,8 +1945,8 @@ import {
         }
         lines.forEach((line) => {
             // Apply ann-level font overrides on top of span-derived style (format-bar B/I)
-            const renderWeight = ann.fontWeight || line.style.fontWeight;
-            const renderFontStyle = ann.fontStyle || line.style.fontStyle;
+            const renderWeight = ann._styleDirty ? (ann.fontWeight || line.style.fontWeight) : line.style.fontWeight;
+            const renderFontStyle = ann._styleDirty ? (ann.fontStyle || line.style.fontStyle) : line.style.fontStyle;
             ctx.font         = ctxFont({ ...line.style, fontWeight: renderWeight, fontStyle: renderFontStyle });
             ctx.fillStyle    = line.style.fillStyle;
             ctx.textBaseline = 'alphabetic';
@@ -2082,7 +2062,7 @@ import {
                 `width:${width.toFixed(2)}px`, `height:${height.toFixed(2)}px`,
                 `font-family:${style0.fontFamily}`,
                 `font-size:${(style0.fontSizePt * fontDisplayScale(scale)).toFixed(2)}px`,
-                `font-weight:${ann.fontWeight || style0.fontWeight || '400'}`,
+                `font-weight:${ann._styleDirty ? (ann.fontWeight || style0.fontWeight || '400') : (style0.fontWeight || '400')}`,
                 `font-style:${ann.fontStyle || style0.fontStyle || 'normal'}`,
                 `text-decoration:${ann.underline ? 'underline' : 'none'}`,
                 `color:${style0.fillStyle}`,
@@ -2318,7 +2298,7 @@ import {
         // would override per-span truth here while drawOriginalSource still uses span data,
         // producing different glyph widths in the active editor vs. the loaded canvas
         // render — which makes the source-line scaleX fit reflow the text on click.
-        const spanFontWeight = String(span?.font_weight || span?.fontWeight || (span?.bold ? '700' : '400') || '400');
+        const spanFontWeight = sourceSpanFontWeight(span);
         const spanFontStyle  = span?.fontStyle || (span?.italic ? 'italic' : 'normal');
         const styleOverride = Boolean(ann?._styleDirty);
         const annFontFamilyOverride = styleOverride ? String(ann?.fontFamily || '').trim() : '';
@@ -2601,7 +2581,7 @@ import {
                     span?.embedded_font_family || span?.fontFamily || ''
                 );
                 const spanFontPx = (Number(span?.font_size ?? span?.fontSize) || lineStyle.fontSizePt) * fontDisplayScale(scale);
-                const spanFontWeight = String(span?.font_weight || span?.fontWeight || (span?.bold ? '700' : '400') || '400');
+                const spanFontWeight = sourceSpanFontWeight(span);
                 const spanFontStyle = span?.fontStyle || (span?.italic ? 'italic' : 'normal');
 
                 const styleCss = [
@@ -3355,7 +3335,7 @@ import {
             `width:${width.toFixed(2)}px`, `height:${Math.max(18, height).toFixed(2)}px`,
             `font-family:${style0.fontFamily}`,
             `font-size:${(style0.fontSizePt * fontDisplayScale(scale)).toFixed(2)}px`,
-            `font-weight:${ann.fontWeight || style0.fontWeight || '400'}`,
+            `font-weight:${ann._styleDirty ? (ann.fontWeight || style0.fontWeight || '400') : (style0.fontWeight || '400')}`,
             `font-style:${ann.fontStyle || style0.fontStyle || 'normal'}`,
             `text-decoration:${ann.underline ? 'underline' : 'none'}`,
             `color:${aeTextColor}`,
@@ -7960,7 +7940,7 @@ import {
                             const family = fallbackFontFamily(fontName, firstSpan?.embedded_font_family || annFamily);
                             const fontSizePt = Number(firstSpan?.font_size ?? firstSpan?.fontSize) || annSizePt;
                             const fontSizePx = fontSizePt * scale;
-                            const fontWeight = String(firstSpan?.font_weight || firstSpan?.fontWeight || (firstSpan?.bold ? '700' : '400') || '400');
+                            const fontWeight = sourceSpanFontWeight(firstSpan);
                             const fontStyle = firstSpan?.fontStyle || (firstSpan?.italic ? 'italic' : 'normal');
                             const color = resolveSpanFillStyle(ann, firstSpan);
                             markerHtml = '<span data-source-marker="1" contenteditable="false" style="'
@@ -7999,7 +7979,7 @@ import {
                             const family = fallbackFontFamily(fontName, sp?.embedded_font_family || annFamily);
                             const fontSizePt = Number(sp?.font_size ?? sp?.fontSize) || annSizePt;
                             const fontSizePx = fontSizePt * scale;
-                            const fontWeight = String(sp?.font_weight || sp?.fontWeight || (sp?.bold ? '700' : '400') || '400');
+                            const fontWeight = sourceSpanFontWeight(sp);
                             const fontStyle = sp?.fontStyle || (sp?.italic ? 'italic' : 'normal');
                             const color = resolveSpanFillStyle(ann, sp);
                             return gapHtml + '<span'
@@ -9065,6 +9045,63 @@ import {
     }
 
     // ── Main ──────────────────────────────────────────────────────────────────
+    function annotationSourceRect(ann) {
+        const left = Number(ann?.sourceBlockLeft ?? ann?.pdfX);
+        const top = Number(ann?.sourceBlockTop);
+        const width = Number(ann?.sourceBlockWidth ?? ann?.pdfWidth);
+        const height = Number(ann?.sourceBlockHeight ?? ann?.pdfHeight);
+        if (![left, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return null;
+        const resolvedTop = Number.isFinite(top)
+            ? top
+            : (Number(ann?.sourcePageHeight) - (Number(ann?.pdfY) + height));
+        if (!Number.isFinite(resolvedTop)) return null;
+        return {
+            left,
+            top: resolvedTop,
+            right: left + width,
+            bottom: resolvedTop + height,
+            width,
+            height,
+            centerX: left + (width / 2),
+        };
+    }
+
+    function isDecorativeCalloutSymbolAnnotation(ann) {
+        const text = String(ann?.text || '').replace(/\s+/g, '');
+        const rect = annotationSourceRect(ann);
+        return text === '!' && rect && rect.width <= 42 && rect.height <= 60;
+    }
+
+    function isDecorativeCalloutCaptionAnnotation(ann) {
+        const text = String(ann?.text || '').trim();
+        const rect = annotationSourceRect(ann);
+        return /^[A-Z][A-Z0-9/& -]{2,14}$/.test(text) && rect && rect.width <= 80 && rect.height <= 20;
+    }
+
+    function isPreservedDecorativeCalloutTextAnnotation(ann, pageAnnotations) {
+        const isSymbol = isDecorativeCalloutSymbolAnnotation(ann);
+        const isCaption = isDecorativeCalloutCaptionAnnotation(ann);
+        if (!isSymbol && !isCaption) return false;
+
+        const rect = annotationSourceRect(ann);
+        if (!rect) return false;
+
+        return (pageAnnotations || []).some((other) => {
+            if (!other || other === ann) return false;
+            const otherIsSymbol = isDecorativeCalloutSymbolAnnotation(other);
+            const otherIsCaption = isDecorativeCalloutCaptionAnnotation(other);
+            if (isSymbol === otherIsSymbol || isCaption === otherIsCaption) return false;
+            const otherRect = annotationSourceRect(other);
+            if (!otherRect) return false;
+
+            const horizontalOverlap = Math.max(0, Math.min(rect.right, otherRect.right) - Math.max(rect.left, otherRect.left));
+            const overlapRatio = horizontalOverlap / Math.max(1, Math.min(rect.width, otherRect.width));
+            const sameColumn = overlapRatio >= 0.55 || Math.abs(rect.centerX - otherRect.centerX) <= 12;
+            const verticalGap = Math.max(0, Math.max(otherRect.top - rect.bottom, rect.top - otherRect.bottom));
+            return sameColumn && verticalGap <= 12;
+        });
+    }
+
     async function run() {
         let data;
         updateEditModeUi();
@@ -9102,7 +9139,7 @@ import {
         };
 
         const rawAnns = (data.annotations || []).filter(a => a && a.db_state !== 'deleted');
-        const allAnnotations = rawAnns.map((ann, i) => {
+        let allAnnotations = rawAnns.map((ann, i) => {
             const hydrated = { ...ann, _uid: String(ann.id || ann.db_id || '') + '_' + i };
             hydrated.locked = Boolean(
                 hydrated.locked
@@ -9181,6 +9218,13 @@ import {
             normalizePromotedAnnotationGeometry(hydrated);
             return hydrated;
         });
+        const annotationsForCalloutFilter = allAnnotations.slice();
+        allAnnotations = allAnnotations.filter((ann) => (
+            !isPreservedDecorativeCalloutTextAnnotation(
+                ann,
+                annotationsForCalloutFilter.filter((other) => Number(other?.pageIndex) === Number(ann?.pageIndex))
+            )
+        ));
         allAnnotations.forEach(ann => { editedTexts[ann._uid] = String(ann.text || ''); });
 
         const byPage = {};

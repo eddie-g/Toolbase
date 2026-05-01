@@ -14,7 +14,7 @@ class DebugPdf extends Page
 
     protected static ?string $title = 'Debug PDF Annotations';
 
-    protected static ?int $navigationSort = 2;
+    protected static ?int $navigationSort = 3;
 
     protected static string $view = 'filament.pages.debug-pdf';
 }

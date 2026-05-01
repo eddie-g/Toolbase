@@ -135,6 +135,7 @@ Route::post('/pdf-tests/document/{document}/flag-annotation', [PdfTestController
 Route::post('/pdf-tests/document/{document}/render-annotations', [PdfTestController::class, 'renderAnnotations'])->name('pdfTests.renderAnnotations');
 Route::post('/pdf-tests/document/{document}/compare-first-annotation', [PdfTestController::class, 'compareFirstAnnotation'])->name('pdfTests.compareFirstAnnotation');
 Route::post('/pdf-tests/document/{document}/compare-written-vs-original', [PdfTestController::class, 'compareWrittenVsOriginal'])->name('pdfTests.compareWrittenVsOriginal');
+Route::post('/pdf-tests/document/{document}/compare-edit-new-snapshot', [PdfTestController::class, 'compareEditNewSnapshot'])->name('pdfTests.compareEditNewSnapshot');
 
 Route::delete('/documents/{document}', [DocumentController::class, 'destroy'])->name('documents.destroy');
 Route::post('/documents/bulk-destroy', [DocumentController::class, 'bulkDestroy'])->name('documents.bulkDestroy');

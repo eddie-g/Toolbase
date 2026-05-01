@@ -792,6 +792,35 @@ def resolve_annotation_font_style(ann: Dict[str, Any]) -> str:
     return font_style
 
 
+def resolve_source_span_font_style(span: Dict[str, Any], fallback: str = "normal") -> str:
+    explicit = str(span.get("fontStyle") or span.get("font_style") or "").strip()
+    if explicit:
+        return explicit
+
+    if "italic" in span:
+        return "italic" if bool(span.get("italic")) else "normal"
+
+    try:
+        flags = int(span.get("flags") or 0)
+        if flags & 2:
+            return "italic"
+    except Exception:
+        pass
+
+    font_name = str(
+        span.get("font")
+        or span.get("embedded_font_name")
+        or span.get("font_source_name")
+        or ""
+    ).lower()
+    if "oblique" in font_name:
+        return "oblique"
+    if "italic" in font_name:
+        return "italic"
+
+    return str(fallback or "normal").strip() or "normal"
+
+
 def resolve_annotation_font_weight(ann: Dict[str, Any]) -> str:
     font_weight = str(ann.get("fontWeight") or "").strip() or "normal"
     if is_bold_weight(font_weight):
@@ -1253,7 +1282,7 @@ def normalize_exact_source_line_layout(
                 "font": str(span.get("font") or "").strip(),
                 "font_size": float(span.get("fontSize") or span.get("font_size") or font_size or 0),
                 "font_weight": str(span.get("fontWeight") or span.get("font_weight") or ann.get("fontWeight") or "400"),
-                "font_style": str(span.get("fontStyle") or span.get("font_style") or ann.get("fontStyle") or "normal"),
+                "font_style": resolve_source_span_font_style(span, ann.get("fontStyle") or "normal"),
                 "color": str(span.get("color") or ann.get("textColor") or "#000000"),
                 "underline": bool(span.get("underline")),
             })
@@ -1722,7 +1751,7 @@ def normalize_exact_source_span_layout(
             ),
             "font_size": float(span.get("fontSize") or span.get("font_size") or font_size or 0),
             "font_weight": str(span.get("fontWeight") or span.get("font_weight") or ann.get("fontWeight") or "400"),
-            "font_style": str(span.get("fontStyle") or span.get("font_style") or ann.get("fontStyle") or "normal"),
+            "font_style": resolve_source_span_font_style(span, ann.get("fontStyle") or "normal"),
             "color": _normalize_color(span.get("hex_color") if span.get("hex_color") is not None else span.get("color"), str(ann.get("textColor") or "#000000")),
             "underline": bool(span.get("underline")),
             "span_rotation": float(span.get("rotation") or 0.0),
@@ -2173,7 +2202,7 @@ def build_dirty_promoted_style_mapped_span_layout(
             ),
             "font_size": float(span.get("fontSize") or span.get("font_size") or ann.get("fontSize") or 12),
             "font_weight": str(span.get("fontWeight") or span.get("font_weight") or ann.get("fontWeight") or "400"),
-            "font_style": str(span.get("fontStyle") or span.get("font_style") or ann.get("fontStyle") or "normal"),
+            "font_style": resolve_source_span_font_style(span, ann.get("fontStyle") or "normal"),
             "color": str(span.get("hex_color") or span.get("color") or ann.get("textColor") or "#000000"),
             "underline": bool(span.get("underline")),
         })

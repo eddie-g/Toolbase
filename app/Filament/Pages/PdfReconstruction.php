@@ -15,7 +15,7 @@ class PdfReconstruction extends Page
 
     protected static ?string $title = 'PDF Reconstruction';
 
-    protected static ?int $navigationSort = 3;
+    protected static ?int $navigationSort = 4;
 
     protected static string $view = 'filament.pages.pdf-reconstruction';
 

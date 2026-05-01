@@ -180,6 +180,26 @@
             z-index: 3;
         }
 
+        .page-card input[type="number"],
+        .edit-new-acro input[type="number"],
+        .active-editor input[type="number"],
+        .rich-html-layer input[type="number"] {
+            -moz-appearance: textfield;
+            appearance: textfield;
+        }
+
+        .page-card input[type="number"]::-webkit-outer-spin-button,
+        .page-card input[type="number"]::-webkit-inner-spin-button,
+        .edit-new-acro input[type="number"]::-webkit-outer-spin-button,
+        .edit-new-acro input[type="number"]::-webkit-inner-spin-button,
+        .active-editor input[type="number"]::-webkit-outer-spin-button,
+        .active-editor input[type="number"]::-webkit-inner-spin-button,
+        .rich-html-layer input[type="number"]::-webkit-outer-spin-button,
+        .rich-html-layer input[type="number"]::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
         /* Rich-HTML display layer — non-active annotations with per-selection formatting
          * (ann._richHtml) are rendered as positioned DIVs so the canvas and editor use the
          * same DOM layout. The layer is pointer-events:none so clicks still hit the canvas
