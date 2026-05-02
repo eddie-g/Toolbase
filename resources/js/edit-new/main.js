@@ -2962,8 +2962,15 @@ import {
     function renderPlainEditorHTML(ann, text, scale) {
         const maxSourceIndex = Math.max(0, renderableSourceLines(ann).length - 1);
         const style = editableLineStyle(ann, 0);
-        const lineHeightPx = blockLineHeightPx(ann, 0, scale, style);
-        const topShiftPx = editorLineTopShiftPx(ann, 0, scale, style);
+        // Use a tight font-based line height instead of blockLineHeightPx,
+        // because that function returns the source bbox height of line 0
+        // (which includes PDF-extraction leading) and applies it uniformly
+        // to every wrapped line in the editor — making the editor visibly
+        // taller than the deselected canvas paint, which reflows tighter.
+        // 1.18× matches the canvas glyph leading used in galley mode.
+        const fontSizePx = style.fontSizePt * fontDisplayScale(scale);
+        const lineHeightPx = fontSizePx * 1.18;
+        const topShiftPx = 0;
         const lineAlign = ann.textAlign || 'left';
         // PDF text extraction inserts a `\n` at every visual line wrap, not
         // just at intentional paragraph breaks. The deselected canvas / galley
