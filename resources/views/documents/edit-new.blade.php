@@ -5,15 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{{ $document->original_name }} — Edit New</title>
-    @vite(['resources/css/app.css', 'resources/js/app.js'])
-    <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js"></script>
-    <script>
-        if (typeof pdfjsLib !== 'undefined') {
-            pdfjsLib.GlobalWorkerOptions.workerSrc =
-                'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
-        }
+    <script type="module">
+        // PDF.js v4 ships ESM-only — no UMD global. Load the legacy ESM build
+        // (broader browser support) and expose `pdfjsLib` as a window global so
+        // existing edit-new code (and other blade pages still on v3) keep
+        // working without an importmap. Module scripts execute in source order,
+        // so this runs before the @vite app bundle that consumes window.pdfjsLib.
+        import * as pdfjsLib from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/legacy/build/pdf.min.mjs';
+        pdfjsLib.GlobalWorkerOptions.workerSrc =
+            'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/legacy/build/pdf.worker.min.mjs';
+        window.pdfjsLib = pdfjsLib;
+        window.dispatchEvent(new Event('pdfjsLibReady'));
     </script>
+    @vite(['resources/css/app.css', 'resources/js/app.js'])
     <!-- Popular Google Fonts available in the /edit-new font picker. Loaded
          once at page load so the canvas + contenteditable can render any of
          them immediately when the user picks one in the format bar. The

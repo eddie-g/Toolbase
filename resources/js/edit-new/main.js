@@ -6118,6 +6118,7 @@ import {
             `<div class="page-label"><span>Page ${pg} of ${total}</span></div>` +
             `<div class="page-canvas-wrap"><div class="page-content" id="pc-${pg}">` +
                 `<canvas id="en-canvas-${pg}" class="page-canvas" aria-label="Page ${pg}"></canvas>` +
+                `<div id="tl-${pg}" class="textLayer"></div>` +
                 `<div id="ac-${pg}" class="acro-layer"></div>` +
                 `<canvas id="oc-${pg}" class="overlay-canvas"></canvas>` +
                 `<div id="rhl-${pg}" class="rich-html-layer"></div>` +
@@ -9370,6 +9371,31 @@ import {
                         ? pdfjsLib.AnnotationMode.DISABLE
                         : 0,
                 }).promise.catch(() => {});
+            }
+
+            // Mount PDF.js TextLayer over the canvas so the user can natively
+            // select PDF text (like Acrobat / Firefox PDF viewer). The layer
+            // sits above overlay-canvas; container has pointer-events:none so
+            // empty space falls through to annotation hit-testing, while text
+            // <span>s have pointer-events:auto so the user can drag-select.
+            const tlDiv = document.getElementById('tl-' + pg);
+            if (tlDiv && typeof pdfjsLib?.TextLayer === 'function') {
+                try {
+                    tlDiv.replaceChildren();
+                    const fitScaleForTl = getFitScaleForWidth(wPts);
+                    const tlViewport = pdfPage.getViewport({ scale: fitScaleForTl });
+                    const textLayer = new pdfjsLib.TextLayer({
+                        textContentSource: pdfPage.streamTextContent({
+                            includeMarkedContent: true,
+                            disableNormalization: true,
+                        }),
+                        container: tlDiv,
+                        viewport: tlViewport,
+                    });
+                    await textLayer.render();
+                } catch (e) {
+                    console.warn('[textLayer] render failed for page ' + pg, e);
+                }
             }
 
             const acroWidgets = await ensureAcroWidgetsForPage(pg, data.document).catch(() => []);
