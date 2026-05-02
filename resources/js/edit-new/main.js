@@ -1053,6 +1053,90 @@ import {
         Object.keys(pageData).forEach((key) => applyPageScale(Number(key)));
     }
 
+    // ── Zoom-aware page-canvas rerender ────────────────────────────────────
+    // The page canvas is initially rasterized at renderScale=2. As the user
+    // zooms in, the CSS transform scales that bitmap up — past a point, the
+    // text gets soft. This re-rasterizes the canvas at a higher renderScale
+    // so the page stays crisp at any zoom level.
+    //
+    // Strategy: target renderScale = ceil(fitScale * zoomMult * dpr), with a
+    // floor of 2 (the default initial scale) and a ceiling to bound memory.
+    // Re-render only when the target scale exceeds the current scale (i.e.
+    // we never *down*-rasterize on zoom-out — the user might zoom back in).
+    const _pageRerenderTokens = new Map();          // pi -> incrementing token (cancels stale)
+    const _pageRerenderInflight = new Map();        // pi -> promise
+    const PAGE_RENDER_SCALE_FLOOR = 2;
+    const PAGE_RENDER_SCALE_CEIL = 6;               // ~9MP per US-letter page
+    function targetPageRenderScale(pi) {
+        const data = pageData[pi];
+        if (!data) return PAGE_RENDER_SCALE_FLOOR;
+        const fitScale = data.fitScale || 1;
+        const zoomMult = (Number(currentZoomPercent) || 100) / 100;
+        const dpr = Math.max(1, Number(window.devicePixelRatio) || 1);
+        const raw = fitScale * zoomMult * dpr;
+        return Math.max(PAGE_RENDER_SCALE_FLOOR, Math.min(PAGE_RENDER_SCALE_CEIL, Math.ceil(raw)));
+    }
+    async function rerenderPageCanvasAtZoom(pi) {
+        const data = pageData[pi];
+        const pdfPage = data?.pdfPage;
+        const pageCanvas = document.getElementById('en-canvas-' + (pi + 1));
+        if (!pdfPage || !pageCanvas) return;
+        const target = targetPageRenderScale(pi);
+        const current = pageCanvas.__renderScale || PAGE_RENDER_SCALE_FLOOR;
+        if (target <= current) return;              // already crisp enough
+        // Cancel any older inflight rerender for this page.
+        const token = (_pageRerenderTokens.get(pi) || 0) + 1;
+        _pageRerenderTokens.set(pi, token);
+        try {
+            const wPts = data.wPts;
+            const hPts = data.hPts;
+            const newW = Math.round(wPts * target);
+            const newH = Math.round(hPts * target);
+            // Render into an off-screen canvas first so the visible canvas
+            // stays painted (no flash to white) until the new bitmap is ready.
+            const off = document.createElement('canvas');
+            off.width = newW;
+            off.height = newH;
+            const renderTask = pdfPage.render({
+                canvasContext: off.getContext('2d'),
+                viewport: pdfPage.getViewport({ scale: target }),
+                annotationMode: typeof pdfjsLib?.AnnotationMode?.DISABLE === 'number'
+                    ? pdfjsLib.AnnotationMode.DISABLE
+                    : 0,
+            });
+            await renderTask.promise;
+            // Bail if a newer rerender request started while we were waiting.
+            if (_pageRerenderTokens.get(pi) !== token) return;
+            pageCanvas.width = newW;
+            pageCanvas.height = newH;
+            pageCanvas.__renderScale = target;
+            pageCanvas.getContext('2d').drawImage(off, 0, 0);
+        } catch (e) {
+            // Render can throw if the page is destroyed mid-flight; harmless.
+            if (e && e.name !== 'RenderingCancelledException') {
+                console.warn('[zoom-rerender] page ' + (pi + 1) + ' failed', e);
+            }
+        }
+    }
+    let _zoomRerenderTimer = null;
+    function scheduleZoomRerender() {
+        if (_zoomRerenderTimer) clearTimeout(_zoomRerenderTimer);
+        // Debounce so rapid zoom-button clicks coalesce into one render pass
+        // per page. 180ms is short enough to feel responsive but long enough
+        // to drop redundant intermediate scales.
+        _zoomRerenderTimer = setTimeout(() => {
+            _zoomRerenderTimer = null;
+            for (const key of Object.keys(pageData)) {
+                const pi = Number(key);
+                if (_pageRerenderInflight.get(pi)) continue;
+                const p = rerenderPageCanvasAtZoom(pi).finally(() => {
+                    _pageRerenderInflight.delete(pi);
+                });
+                _pageRerenderInflight.set(pi, p);
+            }
+        }, 180);
+    }
+
     // beginViewportScaleUpdate moved to ./viewport/scale-update.js (Phase 7cg).
 
     function updateZoom(value) {
@@ -1061,6 +1145,7 @@ import {
         if (zoomLabel) zoomLabel.textContent = `${zoomValue}%`;
         beginViewportScaleUpdate();
         applyAllPageScales();
+        scheduleZoomRerender();
     }
 
     // updatePageControls moved to ./viewport/page-controls.js (Phase 7bo).
@@ -9399,11 +9484,15 @@ import {
             const hPts    = vp1.height;
 
             // Render PDF page directly into the visible page canvas at 2×
-            // backing for sharpness. CSS sizes it to .page-content's box.
+            // backing for sharpness at default zoom. CSS sizes it to
+            // .page-content's box. When the user zooms in past the point
+            // where this 2× backing becomes blurry, rerenderPageCanvas()
+            // re-rasterizes at a higher scale.
             const renderScale = 2;
             if (pageCanvas) {
                 pageCanvas.width  = Math.round(wPts * renderScale);
                 pageCanvas.height = Math.round(hPts * renderScale);
+                pageCanvas.__renderScale = renderScale;
                 await pdfPage.render({
                     canvasContext: pageCanvas.getContext('2d'),
                     viewport: pdfPage.getViewport({ scale: renderScale }),
@@ -9412,6 +9501,11 @@ import {
                         : 0,
                 }).promise.catch(() => {});
             }
+
+            // Stash the PDFPageProxy + intrinsic size so the zoom-rerender
+            // path can re-rasterize this page at higher resolution without
+            // re-fetching it. setupPage() reassigns pageData[pi] further
+            // down, so we attach pdfPage after that call below.
 
             // Mount PDF.js TextLayer over the canvas so the user can natively
             // select PDF text (like Acrobat / Firefox PDF viewer). The layer
@@ -9453,6 +9547,9 @@ import {
 
             const acroWidgets = await ensureAcroWidgetsForPage(pg, data.document).catch(() => []);
             setupPage(pg, wPts, hPts, byPage[pi] || [], acroWidgets);
+            // Stash PDFPageProxy for the zoom-rerender path. Must run AFTER
+            // setupPage because it reassigns pageData[pi].
+            if (pageData[pi]) pageData[pi].pdfPage = pdfPage;
             redrawOverlay(pi);
             drawAcroOverlay(pi);
         }
