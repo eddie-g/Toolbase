@@ -6117,7 +6117,7 @@ import {
         card.innerHTML =
             `<div class="page-label"><span>Page ${pg} of ${total}</span></div>` +
             `<div class="page-canvas-wrap"><div class="page-content" id="pc-${pg}">` +
-                `<img id="en-img-${pg}" alt="Page ${pg}">` +
+                `<canvas id="en-canvas-${pg}" class="page-canvas" aria-label="Page ${pg}"></canvas>` +
                 `<div id="ac-${pg}" class="acro-layer"></div>` +
                 `<canvas id="oc-${pg}" class="overlay-canvas"></canvas>` +
                 `<div id="rhl-${pg}" class="rich-html-layer"></div>` +
@@ -9348,29 +9348,29 @@ import {
         for (let pg = 1; pg <= pageCount; pg++) createPageCard(pg, pageCount);
         updatePageControls(pageCount);
 
-        const offscreen = document.createElement('canvas');
-
         for (let pg = 1; pg <= pageCount; pg++) {
             const pi  = pg - 1;
-            const img = document.getElementById('en-img-' + pg);
+            const pageCanvas = document.getElementById('en-canvas-' + pg);
 
             const pdfPage = await _pdfDoc.getPage(pg);
             const vp1     = pdfPage.getViewport({ scale: 1 });
             const wPts    = vp1.width;
             const hPts    = vp1.height;
 
-            // Render background image at 2× for sharpness
+            // Render PDF page directly into the visible page canvas at 2×
+            // backing for sharpness. CSS sizes it to .page-content's box.
             const renderScale = 2;
-            offscreen.width  = Math.round(wPts * renderScale);
-            offscreen.height = Math.round(hPts * renderScale);
-            await pdfPage.render({
-                canvasContext: offscreen.getContext('2d'),
-                viewport: pdfPage.getViewport({ scale: renderScale }),
-                annotationMode: typeof pdfjsLib?.AnnotationMode?.DISABLE === 'number'
-                    ? pdfjsLib.AnnotationMode.DISABLE
-                    : 0,
-            }).promise.catch(() => {});
-            await new Promise(res => { img.onload = res; img.onerror = res; img.src = offscreen.toDataURL('image/png'); });
+            if (pageCanvas) {
+                pageCanvas.width  = Math.round(wPts * renderScale);
+                pageCanvas.height = Math.round(hPts * renderScale);
+                await pdfPage.render({
+                    canvasContext: pageCanvas.getContext('2d'),
+                    viewport: pdfPage.getViewport({ scale: renderScale }),
+                    annotationMode: typeof pdfjsLib?.AnnotationMode?.DISABLE === 'number'
+                        ? pdfjsLib.AnnotationMode.DISABLE
+                        : 0,
+                }).promise.catch(() => {});
+            }
 
             const acroWidgets = await ensureAcroWidgetsForPage(pg, data.document).catch(() => []);
             setupPage(pg, wPts, hPts, byPage[pi] || [], acroWidgets);
