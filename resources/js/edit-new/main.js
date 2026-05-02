@@ -163,20 +163,6 @@ import {
     setEditorEditingAnnotation,
     clearEditorEditingState,
 } from './editor/active-editor-element.js';
-import { mountPmEditor } from './editor/pm-spike.js';
-import {
-    mountPmAllLayer,
-    unmountPmAllLayer,
-    pmAllLayerActive,
-    pmAllLayerHasAnnotation,
-    pmAllLayerRefresh,
-    pmAllLayerUnmountAll,
-} from './editor/pm-all-layer.js';
-
-// Enable ProseMirror spike by default (set window.__pmSpike = false to disable)
-if (typeof window !== 'undefined' && window.__pmSpike === undefined) {
-    window.__pmSpike = true;
-}
 
 import {
     getEditorPlainText,
@@ -2072,11 +2058,6 @@ import {
         }
         annotations.forEach((ann) => {
             const hasRichHtml = !!ann._richHtml;
-            // Skip annotations whose PM layer is rendering the text.
-            if (pmAllLayerHasAnnotation(pi, ann._uid)) return;
-            // Same when the single-annotation pm-spike owns it.
-            const aeSpikeR = document.getElementById('ae-' + (pi + 1));
-            if (aeSpikeR?.dataset?.pmSpike === '1' && aeSpikeR.__pmSpikeAnnUid === ann._uid) return;
             if (!shouldRenderTextInRichHtmlLayer(ann)) return;
             const geometry = domGeometryForAnnotation(ann);
             if (!geometry) return;
@@ -2242,47 +2223,6 @@ import {
         const { scale, canvasHeight, annotations, wPts, hPts } = data;
 
         annotations.forEach((ann) => {
-            // When the per-annotation PM layer owns this annotation, the PM
-            // contenteditable paints the visible text — canvas must skip it
-            // entirely (and rich-html-layer skips it too, see below).
-            if (isTextAnnotation(ann) && pmAllLayerHasAnnotation(pi, ann._uid)) return;
-            // Same when the single-annotation pm-spike has been mounted on
-            // the active editor for this annotation (pencil → "Edit text").
-            // We must still ERASE the original source-block area on the
-            // canvas so the underlying extracted PDF text doesn't bleed
-            // through underneath PM's edited text. We just don't paint any
-            // new glyphs — PM is the visible renderer.
-            if (isTextAnnotation(ann)) {
-                const aeSpike = document.getElementById('ae-' + (pi + 1));
-                if (aeSpike?.dataset?.pmSpike === '1' && aeSpike.__pmSpikeAnnUid === ann._uid) {
-                    try {
-                        const sL = Number(ann.sourceBlockLeft);
-                        const sT = Number(ann.sourceBlockTop);
-                        const sW = Number(ann.sourceBlockWidth);
-                        const sH = Number(ann.sourceBlockHeight);
-                        if (sW > 0 && sH > 0) {
-                            ctx.save();
-                            ctx.fillStyle = '#ffffff';
-                            ctx.fillRect(sL * scale, sT * scale, sW * scale, sH * scale);
-                            ctx.restore();
-                        }
-                        const box = resolveAnnBox(ann);
-                        if (box) {
-                            const ch = canvasLogicalHeight(ctx.canvas);
-                            ctx.save();
-                            ctx.fillStyle = '#ffffff';
-                            ctx.fillRect(
-                                box.x * scale,
-                                ch - (box.y + box.h) * scale,
-                                box.w * scale,
-                                box.h * scale,
-                            );
-                            ctx.restore();
-                        }
-                    } catch (_e) {}
-                    return;
-                }
-            }
             if (ann._uid === activeState.uid && isTextAnnotation(ann)) {
                 // Suppress canvas drawing only when the active editor element
                 // owns the painting outright. When syncActiveEditor decided
@@ -3029,35 +2969,7 @@ import {
     // _annClipboard moved to ./store/misc-state.js (Phase 5m).
 
     function syncActiveEditor(forceRebuild = false) {
-        // ProseMirror spike preserves its own contentEditable surface — stash
-        // the mounted host before sync rebuilds the wrapper innerHTML, then
-        // reattach afterwards. We still let sync set position/display/font/etc.
-        const { pi: __pmPi } = activeState;
-        let __pmStashedHost = null;
-        let __pmStashedAe = null;
-        if (__pmPi !== null) {
-            const aeOwned = document.getElementById('ae-' + (__pmPi + 1));
-            if (aeOwned && aeOwned.dataset.pmSpike === '1') {
-                const host = aeOwned.querySelector('.pm-spike-host');
-                if (host) {
-                    __pmStashedHost = host;
-                    __pmStashedAe = aeOwned;
-                    host.remove();
-                }
-            }
-        }
-        try {
-            return _syncActiveEditorImpl(forceRebuild);
-        } finally {
-            if (__pmStashedHost && __pmStashedAe) {
-                __pmStashedAe.innerHTML = '';
-                __pmStashedAe.appendChild(__pmStashedHost);
-                __pmStashedAe.setAttribute('contenteditable', 'false');
-                if (__pmStashedAe.style.display === 'none') {
-                    __pmStashedAe.style.display = 'block';
-                }
-            }
-        }
+        return _syncActiveEditorImpl(forceRebuild);
     }
 
     function _syncActiveEditorImpl(forceRebuild = false) {
@@ -3880,7 +3792,6 @@ import {
         Object.keys(pageData).forEach((pi) => {
             const piNum = Number(pi);
             redrawOverlay(piNum);
-            try { if (pmAllLayerActive(piNum)) pmAllLayerRefresh(piNum); } catch (_e) {}
         });
     }
 
@@ -4073,8 +3984,6 @@ import {
         if (!editModeEnabled) {
             clearHoverState();
             clearActiveAnnotation();
-            // Tear down any per-annotation PM editors when leaving edit mode.
-            try { pmAllLayerUnmountAll(); } catch (_e) {}
         }
         updateEditModeUi();
         redrawAllOverlays();
@@ -5346,223 +5255,6 @@ import {
     // shouldPersistPromotedSourceBoxForBackground + shouldPersistPromotedDirty
     // moved to ./annotations/state.js (Phase 7br).
 
-    // ── ProseMirror spike (opt-in via window.__pmSpike) ───────────────────
-    // Mounts a minimal PM editor inside the active-editor wrapper for one
-    // annotation. On commit the result is written back through the existing
-    // editedTexts / _richHtml channel so save/load is unaffected.
-    //
-    // Returns true if the spike took control; false if it declined and the
-    // caller should run the native editing path instead.
-    function mountPmSpikeFor(ae, ann, pi) {
-        if (!ae || !ann) return false;
-        if (ae.__pmSpikeHandle) return true; // already mounted
-        // Per user request: when the pencil ("Edit text") button is pressed
-        // on any text annotation \u2014 extracted, promoted, rich-html, or
-        // user-authored \u2014 convert it into a ProseMirror editor. We no
-        // longer fall back to the native canvas-owns / source-flow editors.
-        let handle;
-        try {
-            handle = mountPmEditor(ae, ann, {
-                onChange: (text, richHtml) => {
-                    // Mirror the native typing path: keep editedTexts live and
-                    // redraw the canvas so the user sees their characters
-                    // appear immediately. Once the annotation is edited,
-                    // shouldRenderTextInRichHtmlLayer flips true → canvas
-                    // suppresses paint → PM must become the visible renderer.
-                    // Drop the canvas-owns flag so the transparent-glyph CSS
-                    // rule no longer hides PM's text.
-                    const savedText = String(ann.text ?? '');
-                    const isEdit = text !== savedText;
-                    if (isEdit && ae.dataset.canvasOwns === '1') {
-                        ae.__pmRestoreCanvasOwns = true;
-                        delete ae.dataset.canvasOwns;
-                        // syncActiveEditor set ae.style.color = 'transparent'
-                        // when canvas was painting. Now PM is the renderer —
-                        // restore a visible color so glyphs show through.
-                        try {
-                            const lineStyle = editableLineStyle(ann, 0);
-                            ae.style.color = lineStyle?.fillStyle || ann.color || '#000';
-                        } catch (_e) {
-                            ae.style.color = ann.color || '#000';
-                        }
-                    } else if (!isEdit && ae.__pmRestoreCanvasOwns) {
-                        // Reverted to original text → restore canvas painting.
-                        ae.dataset.canvasOwns = '1';
-                        ae.style.color = 'transparent';
-                        delete ae.__pmRestoreCanvasOwns;
-                    }
-                    if (text === savedText) {
-                        if (editedTexts[ann._uid] !== undefined) {
-                            delete editedTexts[ann._uid];
-                            markDirty();
-                        }
-                    } else if (editedTexts[ann._uid] !== text) {
-                        editedTexts[ann._uid] = text;
-                        markDirty();
-                    }
-                    if (/<(strong|em|b|i)\b/i.test(richHtml || '')) {
-                        if (ann._richHtml !== richHtml) {
-                            ann._richHtml = richHtml;
-                            ann._userAuthored = true;
-                        }
-                    }
-                    try { resizeAnnotationForEditedText(ann, text, pi); } catch (_e) {}
-                    try { redrawOverlay(pi); } catch (_e) {}
-                },
-            });
-        } catch (e) {
-            console.warn('[pm-spike] mount failed, falling back to native editing', e);
-            return false;
-        }
-        ae.__pmSpikeHandle = handle;
-        // Suppress the wrapper's native blur handler while PM owns focus —
-        // focus moves to PM's contentDOM and would otherwise immediately tear
-        // edit mode down.
-        ae.dataset.pmSpike = '1';
-        // syncActiveEditor early-returns when pmSpike owns the editor, so
-        // make sure the wrapper itself is actually visible. The native sync
-        // path normally toggles display:block when an annotation enters edit
-        // mode; we have to do it ourselves.
-        ae.style.display = 'block';
-        // Make PM the visible renderer immediately on mount — don't wait for
-        // the first keystroke. Without this the canvas keeps painting on top
-        // and PM looks invisible until the user types, which is confusing.
-        if (ae.dataset.canvasOwns === '1') {
-            ae.__pmRestoreCanvasOwns = true;
-            delete ae.dataset.canvasOwns;
-        }
-        try {
-            const lineStyle = editableLineStyle(ann, 0);
-            ae.style.color = lineStyle?.fillStyle || ann.color || '#000';
-        } catch (_e) {
-            ae.style.color = ann.color || '#000';
-        }
-        // Suppress the canvas paint of this annotation while PM owns it —
-        // otherwise the canvas-painted glyphs sit underneath PM's editable
-        // text and any selection/caret feedback gets confusing.
-        ae.__pmSpikeAnnUid = ann._uid;
-        ae.__pmSpikePi = pi;
-        try { redrawOverlay(pi); } catch (_e) {}
-        // Visible affordance: a blue ring around the wrapper while PM is
-        // active so the user can see "this annotation is now an editor".
-        ae.__pmPrevOutline = ae.style.outline;
-        ae.__pmPrevBoxShadow = ae.style.boxShadow;
-        ae.style.outline = '1px solid #2563eb';
-        ae.style.boxShadow = '0 0 0 3px rgba(37, 99, 235, 0.18)';
-        // Defensive: any later code path (e.g. a deferred sync, the canvas
-        // hover repaint, or a redraw triggered by selectAnnotation that
-        // re-runs after our mount) may flip ae back to display:none. Watch
-        // for that and immediately re-assert visibility while pmSpike owns it.
-        const visObserver = new MutationObserver(() => {
-            if (ae.dataset.pmSpike !== '1') return;
-            if (ae.style.display === 'none' || ae.style.display === '') {
-                ae.style.display = 'block';
-            }
-        });
-        visObserver.observe(ae, { attributes: true, attributeFilter: ['style'] });
-        ae.__pmSpikeVisObserver = visObserver;
-
-        const commitAndCleanup = () => {
-            if (!ae.__pmSpikeHandle) return;
-            const h = ae.__pmSpikeHandle;
-            ae.__pmSpikeHandle = null;
-            delete ae.dataset.pmSpike;
-            if (ae.__pmRestoreCanvasOwns) {
-                // Leave canvas-owns OFF: the annotation is genuinely edited
-                // now, and ongoing render decisions (rich-html-layer, etc.)
-                // will repaint correctly without it. Just clear our marker.
-                delete ae.__pmRestoreCanvasOwns;
-            }
-            try { ae.__pmSpikeVisObserver?.disconnect(); } catch (_e) {}
-            ae.__pmSpikeVisObserver = null;
-            // Restore the wrapper's outline / shadow that we set as the
-            // "PM is active" affordance.
-            try {
-                ae.style.outline = ae.__pmPrevOutline || '';
-                ae.style.boxShadow = ae.__pmPrevBoxShadow || '';
-            } catch (_e) {}
-            delete ae.__pmPrevOutline;
-            delete ae.__pmPrevBoxShadow;
-            delete ae.__pmSpikeAnnUid;
-            delete ae.__pmSpikePi;
-            let result = null;
-            try { result = h.getResult(); } catch (_e) {}
-            try { h.destroy(); } catch (_e) {}
-
-            // Mirror what the native ae.blur handler does so editing state
-            // is properly torn down and the canvas re-takes the annotation.
-            const blurredEditingUid = ann._uid;
-            try { clearEditorEditingState(ae); } catch (_e) {}
-
-            if (result) {
-                const { text, richHtml } = result;
-                const savedText = String(ann.text ?? '');
-                if (text !== savedText) {
-                    if (editedTexts[ann._uid] !== text) markDirty();
-                    editedTexts[ann._uid] = text;
-                } else {
-                    delete editedTexts[ann._uid];
-                }
-                if (/<(strong|em|b|i)\b/i.test(richHtml || '')) {
-                    if (ann._richHtml !== richHtml) {
-                        ann._richHtml = richHtml;
-                        ann._userAuthored = true;
-                        markDirty();
-                    }
-                }
-            }
-
-            try { syncActiveEditor(true); } catch (_e) {}
-            try { redrawOverlay(pi); } catch (_e) {}
-
-            // Empty-new-annotation cleanup, mirroring blur handler.
-            const data = pageData[pi];
-            const liveAnn = data?.annotations.find(a => a._uid === blurredEditingUid);
-            if (liveAnn) {
-                const isNewAnn = typeof liveAnn._uid === 'string' && liveAnn._uid.startsWith('new_');
-                const annText = String(editedTexts[liveAnn._uid] ?? liveAnn.text ?? '').trim();
-                if (isNewAnn && !annText) {
-                    data.annotations = data.annotations.filter(a => a._uid !== liveAnn._uid);
-                    delete editedTexts[liveAnn._uid];
-                    if (undoStack.length > 0) undoStack.pop();
-                    updateHistoryUi();
-                    clearActiveState();
-                    syncActiveEditor();
-                    redrawOverlay(pi);
-                }
-            }
-        };
-
-        // PM's contentDOM is a child of `ae`. focusout bubbles. We commit when
-        // focus leaves the wrapper subtree entirely.
-        //
-        // BUT: syncActiveEditor's stash/restore detaches and re-attaches the
-        // pm-spike-host element to let the wrapper rebuild around it. Detaching
-        // a focused element fires focusout with relatedTarget=null even though
-        // the user never "left" the editor. We must distinguish that case from
-        // a real focus departure — defer the commit decision to a microtask
-        // and verify the host has not been re-attached and refocused.
-        const onFocusOut = (ev) => {
-            if (ev.relatedTarget && ae.contains(ev.relatedTarget)) return;
-            // Defer one microtask + frame so syncActiveEditor's `finally` can
-            // re-append the host before we decide.
-            requestAnimationFrame(() => {
-                if (!ae.__pmSpikeHandle) return; // already cleaned up
-                const stillMounted = !!ae.querySelector('.pm-spike-host');
-                if (stillMounted) {
-                    // Sync re-attached us; restore focus and stay alive.
-                    try { ae.__pmSpikeHandle.focus(); } catch (_e) {}
-                    return;
-                }
-                ae.removeEventListener('focusout', onFocusOut);
-                commitAndCleanup();
-            });
-        };
-        ae.addEventListener('focusout', onFocusOut);
-        requestAnimationFrame(() => { try { handle.focus(); } catch (_e) {} });
-        return true;
-    }
-
     function flushActiveEditorState() {
         if (activeState.pi === null || !activeState.uid) return;
         const ae = document.getElementById('ae-' + (activeState.pi + 1));
@@ -6429,7 +6121,6 @@ import {
                 `<div id="ac-${pg}" class="acro-layer"></div>` +
                 `<canvas id="oc-${pg}" class="overlay-canvas"></canvas>` +
                 `<div id="rhl-${pg}" class="rich-html-layer"></div>` +
-                `<div id="pml-${pg}" class="pm-all-layer"></div>` +
                 `<div id="ae-${pg}" class="active-editor" contenteditable="true" spellcheck="false"></div>` +
                 `<div id="tm-${pg}" class="annotation-tbc-menu">` +
                     `<button id="lkh-${pg}" type="button" class="tbc-menu-btn tbc-lock" title="Lock annotation" aria-label="Lock annotation">` +
@@ -7139,15 +6830,6 @@ import {
             // suppresses drawing the active annotation.
             try { syncActiveEditor(true); } catch (_e) {}
             try { redrawOverlay(pi); } catch (_e) {}
-            // ProseMirror spike opt-in — replace the contenteditable surface
-            // with PM. Mount must happen AFTER syncActiveEditor so the
-            // wrapper has its current geometry/font set.
-            if (typeof window !== 'undefined' && window.__pmSpike) {
-                if (mountPmSpikeFor(ae, ann, pi)) {
-                    updateFormatBar();
-                    return;
-                }
-            }
             // Stepping in to edit text — make sure the format bar is shown
             // for the active annotation. Some entry paths (eh hover-menu
             // button click, tab focus, programmatic focus) bypass
@@ -7184,9 +6866,6 @@ import {
             // showed the PDF-accurate render underneath).
             try { syncActiveEditor(true); } catch (_e) {}
             try { redrawOverlay(pi); } catch (_e) {}
-            if (typeof window !== 'undefined' && window.__pmSpike) {
-                if (mountPmSpikeFor(ae, ann, pi)) return;
-            }
             requestAnimationFrame(() => ae.focus({ preventScroll: true }));
         });
 
@@ -7203,10 +6882,6 @@ import {
 
         ae.addEventListener('input', (e) => {
             if (!editModeEnabled && !addTextMode) return;
-            // ProseMirror spike owns its own contentDOM — input events bubble
-            // up from PM. Don't run the native rebuild path; PM commits its
-            // own state on focusout via commitAndCleanup.
-            if (ae.dataset.pmSpike === '1' || ae.__pmSpikeHandle) return;
             // Push undo snapshot once — before the first character change in this focus session.
             if (_textUndoPending) { _textUndoPending = false; pushUndo(); }
             const data = pageData[pi];
@@ -7258,12 +6933,6 @@ import {
         });
 
         ae.addEventListener('blur', (e) => {
-            // If the ProseMirror spike is mounted, focus has just moved into
-            // PM's contentDOM (a child of `ae`), which causes `ae` itself to
-            // blur. Don't tear edit mode down — the spike's own focusout
-            // handler will commit and clean up when focus actually leaves
-            // the wrapper subtree.
-            if (ae.dataset.pmSpike === '1' || ae.__pmSpikeHandle) return;
             const blurredEditingUid = ae.dataset.editingUid || activeState.uid;
             // Always clear editing mode on blur so the next selection starts in
             // "select / drag" mode (cursor: move) rather than "text input" mode.
@@ -7320,10 +6989,6 @@ import {
 
         ae.addEventListener('keydown', (e) => {
             if (!editModeEnabled && !addTextMode) return;
-            // ProseMirror spike: PM handles its own keymap (Enter, Backspace,
-            // Mod-Z, Mod-B, Mod-I). The native handler below would rewrite
-            // ae.innerHTML and tear down the PM mount.
-            if (ae.dataset.pmSpike === '1' || ae.__pmSpikeHandle) return;
             // Blur (don't clearActiveAnnotation directly) so the blur handler saves first
             if (e.key === 'Escape') { e.preventDefault(); ae.blur(); return; }
             // Let the global Ctrl+Z/Y handler take care of undo/redo instead of browser default.
@@ -7472,9 +7137,6 @@ import {
             ae.style.cursor = 'text';
             ae.style.userSelect = 'text';
             ae.style.caretColor = '#2563eb';
-            if (typeof window !== 'undefined' && window.__pmSpike) {
-                if (mountPmSpikeFor(ae, ann, pi)) return;
-            }
             requestAnimationFrame(() => ae.focus({ preventScroll: true }));
         });
 

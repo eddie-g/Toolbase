@@ -436,31 +436,6 @@
         body.pm-all-mode .annotation-tbc-menu { display: none !important; }
         body.pm-all-mode #ann-format-bar { display: none !important; }
 
-        /* Per-annotation PM mount layer. Each .pml-item is positioned over
-         * its annotation. The layer itself is a child of .page-content. */
-        .pm-all-layer {
-            position: absolute;
-            inset: 0;
-            pointer-events: none;
-            z-index: 5;
-        }
-        .pm-all-layer .pml-item {
-            pointer-events: auto;
-            outline: 1px solid transparent;
-            outline-offset: -1px;
-            border-radius: 2px;
-            background: transparent;
-            transition: background 0.15s, outline-color 0.15s;
-        }
-        .pm-all-layer .pml-item:hover {
-            outline-color: rgba(37, 99, 235, 0.55);
-            background: rgba(37, 99, 235, 0.06);
-        }
-        .pm-all-layer .pml-item:focus-within {
-            outline: 2px solid rgba(37, 99, 235, 0.85);
-            background: rgba(255, 255, 255, 0.92);
-        }
-        .pm-all-layer .pml-item .pm-spike-host { caret-color: #2563eb; }
         .annotation-tbc-menu.is-below {
             transform: translate(-50%, 8px);
         }
