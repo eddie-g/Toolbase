@@ -485,6 +485,12 @@ import {
 import { pageData } from './store/page-data.js';
 import { editedTexts } from './store/edited-texts.js';
 import {
+    isPhase2Enabled,
+    setupPhase2Page,
+    installPhase2Hotkeys,
+    setPhase2PdfDocument,
+} from './editor/phase2-aelayer.js';
+import {
     pendingDeletedAnnotationIds,
     pendingDeletedPromotedSourceKeys,
 } from './store/pending-deletes.js';
@@ -6147,6 +6153,7 @@ import {
                 `<div id="ac-${pg}" class="acro-layer"></div>` +
                 `<canvas id="oc-${pg}" class="overlay-canvas"></canvas>` +
                 `<div id="rhl-${pg}" class="rich-html-layer"></div>` +
+                `<div id="ael-${pg}" class="annotation-editor-layer"></div>` +
                 `<div id="ae-${pg}" class="active-editor" contenteditable="true" spellcheck="false"></div>` +
                 `<div id="tm-${pg}" class="annotation-tbc-menu">` +
                     `<button id="lkh-${pg}" type="button" class="tbc-menu-btn tbc-lock" title="Lock annotation" aria-label="Lock annotation">` +
@@ -9370,6 +9377,14 @@ import {
             if (!_pdfDoc) throw lastErr || new Error('No PDF source URL succeeded.');
         } catch (e) { showError(String(e)); return; }
 
+        // Phase 2 scaffolding (no-op unless ?phase2=1 is in the URL).
+        try {
+            setPhase2PdfDocument(_pdfDoc);
+            installPhase2Hotkeys();
+        } catch (e) {
+            console.warn('[phase2] init failed', e);
+        }
+
         const pageCount = _pdfDoc.numPages;
         for (let pg = 1; pg <= pageCount; pg++) createPageCard(pg, pageCount);
         updatePageControls(pageCount);
@@ -9420,6 +9435,19 @@ import {
                     await textLayer.render();
                 } catch (e) {
                     console.warn('[textLayer] render failed for page ' + pg, e);
+                }
+            }
+
+            // Phase 2 of the PDF.js v4 migration: mount the real
+            // AnnotationEditorLayer alongside the TextLayer when the
+            // ?phase2=1 flag is set. Inert no-op otherwise.
+            if (isPhase2Enabled()) {
+                try {
+                    const fitScaleForAel = getFitScaleForWidth(wPts);
+                    const aelViewport = pdfPage.getViewport({ scale: fitScaleForAel });
+                    await setupPhase2Page(pi, pdfPage, aelViewport);
+                } catch (e) {
+                    console.warn('[phase2] setupPhase2Page failed for page ' + pg, e);
                 }
             }
 
