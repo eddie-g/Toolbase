@@ -3462,6 +3462,31 @@ import {
                     window.__galleyDbg = window.__galleyDbg || {};
                     window.__galleyDbg[ann._uid] = `plain via _richHtml`;
                 }
+            } else if (_isEditing) {
+                // Clean editor mode: while actively editing a text annotation,
+                // render the contenteditable as a plain text box styled with the
+                // annotation's font / size / color / alignment — no per-span
+                // scaleX, no gap-as-spaces, no canvas-baseline mimicry. The
+                // editor will look slightly different from the deselected
+                // canvas baseline (typing intentionally diverges from per-glyph
+                // PDF positions), but typing, caret movement, selection, and
+                // formatting all behave like a normal text input.
+                //
+                // Triggers _canvasOwnsPaint=false (renderMode='plain' is not
+                // in the canvas-owns set), and the canvas already early-returns
+                // for active+editing+!canvasOwns (~line 2241), so nothing
+                // double-paints underneath.
+                const editedText = editedTexts[ann._uid];
+                const cleanText = editedText !== undefined
+                    ? String(editedText)
+                    : String(ann.text ?? '');
+                ae.dataset.renderMode = 'plain';
+                const cleanHtml = renderPlainEditorHTML(ann, cleanText, scale);
+                if (ae.innerHTML !== cleanHtml) ae.innerHTML = cleanHtml;
+                if (typeof window !== 'undefined' && ann?._uid) {
+                    window.__galleyDbg = window.__galleyDbg || {};
+                    window.__galleyDbg[ann._uid] = 'plain via clean-editor';
+                }
             } else {
                 const editedText = editedTexts[ann._uid];
                 // Galley editor (Iceni-style) — takes precedence over source-flow
