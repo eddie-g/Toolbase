@@ -2965,11 +2965,21 @@ import {
         const lineHeightPx = blockLineHeightPx(ann, 0, scale, style);
         const topShiftPx = editorLineTopShiftPx(ann, 0, scale, style);
         const lineAlign = ann.textAlign || 'left';
-        // Preserve explicit blank lines. Enter at an existing source line break
-        // intentionally creates \n\n, and collapsing that run makes the key look
-        // like a no-op.
+        // PDF text extraction inserts a `\n` at every visual line wrap, not
+        // just at intentional paragraph breaks. The deselected canvas / galley
+        // paths reflow those soft wraps to fit the box width. The plain
+        // editor must do the same — otherwise the contenteditable shows the
+        // raw extracted breaks (long lines split into short ones, wrapped
+        // again by the box, looking visibly wrong vs. the deselected view).
+        //
+        // Heuristic: a run of 2+ `\n` is a paragraph break (preserved as
+        // `<br>`), a single `\n` is a soft wrap (collapsed to a space).
         const normalized = String(text ?? '')
-            .replace(/\r\n?/g, '\n');
+            .replace(/\r\n?/g, '\n')
+            // Mark paragraph breaks first so the next replace doesn't eat them.
+            .replace(/\n{2,}/g, '\u0000')
+            .replace(/\n+/g, ' ')
+            .replace(/\u0000/g, '\n');
         const paragraphs = normalized.split('\n');
         const innerHtml = paragraphs
             .map((p) => escapeHtml(p))
