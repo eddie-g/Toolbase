@@ -10,7 +10,7 @@
         // (broader browser support) and expose `pdfjsLib` as a window global so
         // existing edit-new code (and other blade pages still on v3) keep
         // working without an importmap. Module scripts execute in source order,
-        // so this runs before the @vite app bundle that consumes window.pdfjsLib.
+        // so this runs before the Vite app bundle that consumes window.pdfjsLib.
         import * as pdfjsLib from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/legacy/build/pdf.min.mjs';
         pdfjsLib.GlobalWorkerOptions.workerSrc =
             'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/legacy/build/pdf.worker.min.mjs';
