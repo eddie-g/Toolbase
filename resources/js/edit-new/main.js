@@ -2970,7 +2970,14 @@ import {
         // 1.18× matches the canvas glyph leading used in galley mode.
         const fontSizePx = style.fontSizePt * fontDisplayScale(scale);
         const lineHeightPx = fontSizePx * 1.18;
-        const topShiftPx = 0;
+        // The browser puts (line-height - font-size) / 2 of leading above
+        // the first text line within its line box. The canvas paints the
+        // first glyph baseline directly at the PDF y, so canvas-rendered
+        // text sits closer to the box top. Pull the inner block up by the
+        // half-leading so the first visible line aligns with where canvas
+        // would have drawn it — eliminates the small downward jump on
+        // entering edit mode.
+        const topShiftPx = (lineHeightPx - fontSizePx) / 2;
         const lineAlign = ann.textAlign || 'left';
         // PDF text extraction inserts a `\n` at every visual line wrap, not
         // just at intentional paragraph breaks. The deselected canvas / galley
