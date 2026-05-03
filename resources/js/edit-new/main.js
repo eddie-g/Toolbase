@@ -8701,6 +8701,55 @@ import {
             }
         });
 
+        // Enter handler: the host's children in positioned render modes
+        // (source-exact / source / galley / canvas) are top-level
+        // [data-line-index] blocks with absolutely positioned content
+        // inside [data-line-content="1"]. The browser default for Enter in
+        // a positioned span produces no visible feedback, so users see
+        // "nothing happens". Intercept Enter and split the current line
+        // block into two top-level siblings, both carrying the same
+        // data-line-index so extractSourceExactLineTexts emits both halves.
+        host.addEventListener('keydown', (ev) => {
+            if (ev.key !== 'Enter' || ev.shiftKey || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+            const sel = window.getSelection();
+            if (!sel || sel.rangeCount === 0) return;
+            const range = sel.getRangeAt(0);
+            if (!host.contains(range.startContainer)) return;
+            // Find the enclosing top-level [data-line-index] block.
+            let block = range.startContainer;
+            if (block.nodeType !== Node.ELEMENT_NODE) block = block.parentNode;
+            while (block && block !== host && !(block.parentNode === host && block.hasAttribute && block.hasAttribute('data-line-index'))) {
+                block = block.parentNode;
+            }
+            if (!block || block === host) return;
+            const contentEl = block.querySelector('[data-line-content="1"]');
+            if (!contentEl || !contentEl.contains(range.startContainer)) return;
+            ev.preventDefault();
+            ev.stopPropagation();
+            if (!range.collapsed) range.deleteContents();
+            // Split contentEl at the caret. Range.extractContents on a range
+            // covering caret-to-end of contentEl yields a fragment we can
+            // place in a clone of the line block.
+            const tail = range.cloneRange();
+            tail.setEnd(contentEl, contentEl.childNodes.length);
+            const tailFrag = tail.extractContents();
+            const blockClone = block.cloneNode(false);
+            const contentClone = contentEl.cloneNode(false);
+            blockClone.appendChild(contentClone);
+            contentClone.appendChild(tailFrag);
+            // Ensure both halves are non-empty so they keep height.
+            if (!contentEl.textContent) contentEl.appendChild(document.createElement('br'));
+            if (!contentClone.textContent) contentClone.appendChild(document.createElement('br'));
+            block.parentNode.insertBefore(blockClone, block.nextSibling);
+            // Place caret at the start of the new block's content.
+            const after = document.createRange();
+            const target = contentClone.firstChild || contentClone;
+            after.setStart(target, 0);
+            after.collapse(true);
+            sel.removeAllRanges();
+            sel.addRange(after);
+        });
+
         // Track whether the source is a positioned render mode (galley /
         // source / canvas). The save handler uses this to:
         //  (a) extract text by grouping `<p data-line-index="N">` blocks by
