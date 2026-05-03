@@ -2459,15 +2459,14 @@ import {
             node.style.width = `${rect.width}px`;
             node.style.height = `${rect.height}px`;
             const txt = String(editedTexts[ann._uid] ?? ann.text ?? '');
-            const preview = txt.length > 60 ? txt.slice(0, 57) + '…' : txt;
             const label = document.createElement('span');
             label.className = 'debug-dom-label';
             label.textContent = `[${idx}] ${ann.type || 'text'} · ${ann._uid || '(no uid)'}`;
             const body = document.createElement('span');
             body.className = 'debug-dom-text';
-            body.textContent = preview;
+            body.textContent = txt;
             node.appendChild(label);
-            if (preview) node.appendChild(body);
+            if (txt) node.appendChild(body);
             frag.appendChild(node);
         });
         layer.replaceChildren(frag);
