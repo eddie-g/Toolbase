@@ -2553,16 +2553,25 @@ import {
     function applySourceExactTextEdit(ann, lineTexts) {
         if (!ann || !Array.isArray(lineTexts) || !lineTexts.length) return '';
         const normalizedLines = lineTexts.map((line) => String(line ?? '').replace(/\r\n?/g, '\n'));
-        const lines = renderableSourceLines(ann);
+        // IMPORTANT: do NOT use renderableSourceLines() here. Its cache
+        // (`ann._renderableSourceLines`) can survive a hydration cycle that
+        // replaces `ann.sourceSpans` with a new array, leaving the cached
+        // line.spans entries pointing at orphan span objects that are no
+        // longer in `ann.sourceSpans`. Mutating those orphans does not
+        // affect the visible canvas (which paints from `ann.sourceSpans`).
+        // Resolve line→spans afresh from the live arrays.
+        const liveSpans = Array.isArray(ann.sourceSpans) ? ann.sourceSpans : [];
+        const liveBBoxes = Array.isArray(ann.sourceLineBBoxes) ? ann.sourceLineBBoxes : [];
         normalizedLines.forEach((lineText, lineIndex) => {
-            const line = lines[lineIndex] || null;
-            const spans = Array.isArray(line?.spans) ? line.spans.filter(Boolean) : [];
-            const firstSpan = spans[0] || null;
+            const lineBBox = liveBBoxes[lineIndex] || null;
+            const matchedSpans = lineBBox
+                ? liveSpans.filter((span) => spanMatchesLineBBox(span, lineBBox))
+                : (liveSpans[lineIndex] ? [liveSpans[lineIndex]] : []);
+            const firstSpan = matchedSpans[0] || null;
             if (!firstSpan) return;
 
             setSourceSpanText(firstSpan, lineText);
 
-            const lineBBox = Array.isArray(line?.bbox) ? line.bbox : null;
             if (lineBBox && lineBBox.length >= 4) {
                 firstSpan.bbox = lineBBox.slice(0, 4);
                 if (Array.isArray(firstSpan.origin) && firstSpan.origin.length >= 2) {
@@ -2570,8 +2579,8 @@ import {
                 }
             }
 
-            for (let i = 1; i < spans.length; i++) {
-                setSourceSpanText(spans[i], '');
+            for (let i = 1; i < matchedSpans.length; i++) {
+                setSourceSpanText(matchedSpans[i], '');
             }
         });
 
