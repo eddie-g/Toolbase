@@ -45,6 +45,7 @@ export function shouldRenderTextInRichHtmlLayer(ann) {
         || (Array.isArray(ann?.sourceLineBBoxes) && ann.sourceLineBBoxes.length > 0)
         || ann?.promotedFromExtraction === true;
     if (!hasSourceContent) return true;
+    if (ann?._sourceExactTextEdited || ann?.sourceExactTextEdited || ann?.preserveSourceLayout) return false;
     const editedInSession = typeof editedTexts !== 'undefined'
         && editedTexts[ann?._uid] !== undefined
         && editedTexts[ann?._uid] !== String(ann?.text ?? '');

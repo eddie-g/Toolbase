@@ -1,3 +1,17 @@
+        @font-face {
+            font-family: 'HelveticaNeueLTStd-Roman';
+            src: url('/fonts/runtime-extracted/2147/HelveticaNeueLTStd-Roman.otf') format('opentype');
+            font-weight: 400;
+            font-style: normal;
+            font-display: block;
+        }
+        @font-face {
+            font-family: 'HelveticaNeueLTStd';
+            src: url('/fonts/runtime-extracted/2147/HelveticaNeueLTStd-Roman.otf') format('opentype');
+            font-weight: 400;
+            font-style: normal;
+            font-display: block;
+        }
         *, *::before, *::after { box-sizing: border-box; }
         body { margin: 0; background: #f3f4f6; font-family: system-ui, sans-serif; }
 
@@ -874,17 +888,18 @@
         /* Universal preview-mode overrides — the live editor uses transforms
          * (translateY for line baselines), absolute positioning, and negative
          * coordinates relative to the page card. None of that makes sense
-         * inside a debug preview frame, so neutralize it across ALL render
-         * modes so content always shows in flow.
+         * inside most debug preview modes, so neutralize it for flow previews.
+         * Exact source previews opt out because those transforms are what make
+         * the modal match the canvas/PDF geometry.
          *
          * Targets the host AND any descendant — covers plain mode's
          * `<div style="transform:translateY(-X)">` wrapper and rich-html
          * inner spans alike. */
-        #dbg-editor-modal .dbg-live-host,
-        #dbg-editor-modal .dbg-live-host * {
+        #dbg-editor-modal .dbg-live-host:not([data-render-mode="source-exact"]),
+        #dbg-editor-modal .dbg-live-host:not([data-render-mode="source-exact"]) * {
             transform: none !important;
         }
-        #dbg-editor-modal .dbg-live-host > * {
+        #dbg-editor-modal .dbg-live-host:not([data-render-mode="source-exact"]) > * {
             position: static !important;
             top: auto !important;
             left: auto !important;
@@ -924,8 +939,8 @@
          * sized for canvas-overlay placement) also need their height
          * constraints relaxed so wrapped text expands the block instead of
          * spilling onto the next sibling. */
-        #dbg-editor-modal .dbg-live-host > * > div,
-        #dbg-editor-modal .dbg-live-host > * > p {
+        #dbg-editor-modal .dbg-live-host:not([data-render-mode="source-exact"]) > * > div,
+        #dbg-editor-modal .dbg-live-host:not([data-render-mode="source-exact"]) > * > p {
             min-height: 0 !important;
             height: auto !important;
         }

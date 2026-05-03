@@ -3779,7 +3779,15 @@ import {
                 || (
                     _canUseSourceEditorLayout
                     && annotationTextMatchesSource(ann, _sourceComparableText)
-                    && !annTextIsEdited(ann)
+                    // Source-exact edits keep ann.sourceSpans synced with the
+                    // updated text, so annTextIsEdited (which compares
+                    // ann.text vs ann.originalText) being true here is not
+                    // a layout divergence — the canvas/source render still
+                    // has the right glyphs at the right positions. Without
+                    // this allowance, double-clicking a saved source-exact
+                    // annotation kicks the editor into plain-reflow and
+                    // collapses the per-line PDF layout.
+                    && (!annTextIsEdited(ann) || ann._sourceExactTextEdited || ann.preserveSourceLayout)
                     && !ann.userCreated
                     && !ann._styleDirty
                 )
@@ -4038,14 +4046,23 @@ import {
         const _autofitEditedText = editedTexts[ann._uid];
         const _autofitTextChanged = _autofitEditedText !== undefined
             && _autofitEditedText !== String(ann.text ?? '');
-        const _autofitPristine = !ann.userCreated
+        // Source-exact-edited annotations carry their own per-span layout
+        // (sourceSpans + sourceLineBBoxes) that drives the canvas/source DOM.
+        // CSS scrollHeight on the absolutely-positioned source DOM has no
+        // bearing on the actual rendered geometry, and growing pdfH here
+        // re-mutates the box on every dblclick, eventually pushing render
+        // routing into the plain-reflow path (visible blank box).
+        const _autofitSourceExact = !!(ann?._sourceExactTextEdited
+            || ann?.sourceExactTextEdited
+            || ann?.preserveSourceLayout);
+        const _autofitPristine = (!ann.userCreated
             && !isUserAuthoredAnnotation(ann)
             && !_autofitTextChanged
             && (
                 (Array.isArray(ann.sourceSpans) && ann.sourceSpans.length > 0)
                 || (Array.isArray(ann.sourceLineBBoxes) && ann.sourceLineBBoxes.length > 0)
                 || ann.promotedFromExtraction === true
-            );
+            )) || _autofitSourceExact;
         if (!_autofitPristine && !suppressEditorAutofit && !syncActiveEditor._autofitGuard) {
             const contentH = ae.scrollHeight;
             const clientH = ae.clientHeight;
