@@ -7430,6 +7430,13 @@ import {
             ae.style.cursor = 'text';
             ae.style.userSelect = 'text';
             ae.style.caretColor = '#2563eb';
+            // Rebuild the editor for the editing render mode (source / galley
+            // / plain) BEFORE focusing — otherwise the contenteditable is
+            // still in its just-selected empty state and ae.focus() drops the
+            // caret at the top of the empty <div> (which is positioned at the
+            // page-content origin), so the user sees a blinking cursor up at
+            // the top of the page instead of inside the annotation box.
+            syncActiveEditor(true);
             requestAnimationFrame(() => ae.focus({ preventScroll: true }));
         });
 
