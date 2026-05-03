@@ -1560,6 +1560,12 @@ import {
     }
 
     function editorLineScaleX(ann, lineIndex, scale, spans = null) {
+        // Once the user has edited the text, the original PDF source-line
+        // bbox width is no longer the authoritative target — squeezing the
+        // new (longer/shorter) text into the old bbox produces a different
+        // scaleX per line and visually warps characters horizontally. Let
+        // the new text flow at its natural width.
+        if (ann && (ann._sourceExactTextEdited || ann.sourceExactTextEdited)) return 1;
         const targetWidthPx = lineTargetWidthPx(ann, lineIndex, scale);
         const measuredWidthPx = measuredLineContentWidthPx(ann, lineIndex, scale, spans);
         if (!Number.isFinite(targetWidthPx) || !Number.isFinite(measuredWidthPx) || targetWidthPx <= 0 || measuredWidthPx <= 0) {
@@ -1573,6 +1579,21 @@ import {
 
     function fitActiveEditorSourceLines(editor, ann, scale) {
         if (!(editor instanceof HTMLElement) || !ann) return;
+        // Same rationale as editorLineScaleX: once the text was edited,
+        // refitting per-line to the obsolete source bbox warps characters.
+        if (ann._sourceExactTextEdited || ann.sourceExactTextEdited) {
+            const lineEls = Array.from(editor.children || []);
+            lineEls.forEach((lineEl) => {
+                const contentEl = (lineEl instanceof HTMLElement)
+                    ? (lineEl.querySelector('[data-line-content="1"]') || lineEl)
+                    : null;
+                if (contentEl instanceof HTMLElement) {
+                    contentEl.style.transformOrigin = 'top left';
+                    contentEl.style.transform = 'scaleX(1)';
+                }
+            });
+            return;
+        }
         const lineEls = Array.from(editor.children || []);
         lineEls.forEach((lineEl, index) => {
             if (!(lineEl instanceof HTMLElement)) return;
@@ -1738,7 +1759,12 @@ import {
                 }
             }
             const measuredWidthPx = ctx.measureText(drawText).width || 0;
-            const rawRatio = (targetWidthPx > 0 && measuredWidthPx > 0) ? (targetWidthPx / measuredWidthPx) : 1;
+            // For source-exact-edited annotations the per-span bbox no
+            // longer matches the user's new text length. Skip the per-span
+            // horizontal fit so characters render at natural metrics rather
+            // than being squeezed/stretched to the obsolete bbox width.
+            const _spanEdited = !!(ann && (ann._sourceExactTextEdited || ann.sourceExactTextEdited));
+            const rawRatio = (!_spanEdited && targetWidthPx > 0 && measuredWidthPx > 0) ? (targetWidthPx / measuredWidthPx) : 1;
             const scaleX = (!Number.isFinite(rawRatio) || rawRatio <= 0) ? 1 : Math.max(0.5, Math.min(1.3, rawRatio));
             if (isVertical) {
                 // spanRotation -90: direction [0,-1] (upward) → canvas rotate(-π/2) draws text upward
