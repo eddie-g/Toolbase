@@ -300,6 +300,48 @@
             word-break: break-word;
         }
 
+        /* Debug DOM overlay — opt-in via ?dbgdom=1. Mirrors every annotation
+         * into a labelled <div> so devtools "Inspect element" reveals what
+         * each piece of text is. Click-through; no visual change unless
+         * body.debug-dom-on is set. */
+        .debug-dom-layer {
+            position: absolute; top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 6;
+            display: none;
+        }
+        body.debug-dom-on .debug-dom-layer { display: block; }
+        .debug-dom-item {
+            position: absolute;
+            box-sizing: border-box;
+            border: 1px dashed rgba(217, 70, 239, 0.7);
+            background: rgba(217, 70, 239, 0.06);
+            font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+            color: #6b21a8;
+            overflow: hidden;
+            padding: 0;
+        }
+        .debug-dom-item[data-user-authored="true"] { border-color: rgba(16, 185, 129, 0.8); color: #047857; background: rgba(16, 185, 129, 0.06); }
+        .debug-dom-item[data-locked="true"] { border-style: solid; }
+        .debug-dom-label {
+            display: block;
+            background: rgba(217, 70, 239, 0.85);
+            color: #fff;
+            padding: 1px 4px;
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .debug-dom-item[data-user-authored="true"] .debug-dom-label { background: rgba(16, 185, 129, 0.85); }
+        .debug-dom-text {
+            display: block;
+            padding: 2px 4px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
         .edit-new-acro {
             position: absolute;
             box-sizing: border-box;

@@ -11,14 +11,45 @@
  * arithmetic.
  */
 
-export function getGalleyEditorText(ae) {
+function galleyWhitespaceBeforeSpans(ann, lineIdx, spanTexts) {
+    const lineText = Array.isArray(ann?.sourceTextLines)
+        ? String(ann.sourceTextLines[lineIdx] ?? '')
+        : '';
+    if (!lineText || !Array.isArray(spanTexts) || !spanTexts.length) {
+        return [];
+    }
+    const whitespace = [];
+    let cursor = 0;
+    spanTexts.forEach((text, index) => {
+        const sourceText = String(text || '');
+        const found = sourceText ? lineText.indexOf(sourceText, cursor) : -1;
+        if (found < 0) {
+            whitespace[index] = '';
+            return;
+        }
+        const between = lineText.slice(cursor, found);
+        whitespace[index] = /^[ \t\u00a0]+$/.test(between) ? between : '';
+        cursor = found + sourceText.length;
+    });
+    return whitespace;
+}
+
+export function getGalleyEditorText(ae, ann = null) {
     if (!(ae instanceof HTMLElement)) return '';
     const lines = ae.querySelectorAll('.ae-galley-line');
     if (!lines.length) return '';
     const lineTexts = [];
     lines.forEach((line) => {
+        const lineIdx = Number(line.dataset.lineIndex || 0);
+        const nodes = Array.from(line.querySelectorAll('.ae-galley-source-span'));
+        const originals = nodes.map((node) => node.dataset.originalText || '');
+        const whitespace = galleyWhitespaceBeforeSpans(ann, lineIdx, originals);
         let txt = '';
-        line.querySelectorAll('.ae-galley-source-span, .ae-galley-tail').forEach((node) => {
+        nodes.forEach((node, index) => {
+            txt += whitespace[index] || '';
+            txt += node.textContent || '';
+        });
+        line.querySelectorAll('.ae-galley-tail').forEach((node) => {
             txt += node.textContent || '';
         });
         lineTexts.push(txt);
@@ -34,8 +65,12 @@ export function expectedGalleyText(ann, ae) {
     const lineTexts = [];
     lines.forEach((line) => {
         const lineIdx = Number(line.dataset.lineIndex || 0);
+        const nodes = Array.from(line.querySelectorAll('.ae-galley-source-span'));
+        const originals = nodes.map((node) => node.dataset.originalText || '');
+        const whitespace = galleyWhitespaceBeforeSpans(ann, lineIdx, originals);
         let txt = '';
-        line.querySelectorAll('.ae-galley-source-span').forEach((node) => {
+        nodes.forEach((node, index) => {
+            txt += whitespace[index] || '';
             txt += node.dataset.originalText || '';
         });
         txt += String(appends[lineIdx] || '');

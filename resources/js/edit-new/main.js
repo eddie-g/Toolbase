@@ -2424,6 +2424,53 @@ import {
         }
 
         renderRichHtmlLayer(pi);
+        renderDebugDomLayer(pi);
+    }
+
+    // Debug DOM overlay — when ?dbgdom=1 is in the URL, mirror every
+    // annotation's text into a positioned <div> with data-uid / data-type /
+    // data-ann-index so devtools "Inspect element" reveals exactly which
+    // annotation each piece of text belongs to. Click-through (pointer-
+    // events:none) so it doesn't break editing. The label is rendered as a
+    // small badge in the top-left corner of each annotation box.
+    function renderDebugDomLayer(pi) {
+        const layer = document.getElementById('dbgdom-' + (pi + 1));
+        if (!layer) return;
+        if (!document.body.classList.contains('debug-dom-on')) {
+            if (layer.childNodes.length) layer.replaceChildren();
+            return;
+        }
+        const data = pageData[pi];
+        if (!data) return;
+        const { scale, canvasHeight, annotations } = data;
+        const frag = document.createDocumentFragment();
+        annotations.forEach((ann, idx) => {
+            const rect = annRectPx(ann, scale, canvasHeight);
+            if (!rect) return;
+            const node = document.createElement('div');
+            node.className = 'debug-dom-item';
+            node.dataset.uid = String(ann._uid || '');
+            node.dataset.type = String(ann.type || 'text');
+            node.dataset.annIndex = String(idx);
+            node.dataset.userAuthored = String(!!(ann._userAuthored || ann.userAuthored));
+            node.dataset.locked = String(!!ann.locked);
+            node.style.left = `${rect.left}px`;
+            node.style.top = `${rect.top}px`;
+            node.style.width = `${rect.width}px`;
+            node.style.height = `${rect.height}px`;
+            const txt = String(editedTexts[ann._uid] ?? ann.text ?? '');
+            const preview = txt.length > 60 ? txt.slice(0, 57) + '…' : txt;
+            const label = document.createElement('span');
+            label.className = 'debug-dom-label';
+            label.textContent = `[${idx}] ${ann.type || 'text'} · ${ann._uid || '(no uid)'}`;
+            const body = document.createElement('span');
+            body.className = 'debug-dom-text';
+            body.textContent = preview;
+            node.appendChild(label);
+            if (preview) node.appendChild(body);
+            frag.appendChild(node);
+        });
+        layer.replaceChildren(frag);
     }
 
     // ── Hit testing ───────────────────────────────────────────────────────────
@@ -2806,7 +2853,7 @@ import {
         // Diffing against ann.text would falsely flag positional gaps between
         // source spans (e.g. leader dots) as newly-typed characters.
         const prevText = expectedGalleyText(ann, ae);
-        const observed = getGalleyEditorText(ae);
+        const observed = getGalleyEditorText(ae, ann);
         const added = diffGalleyAdded(prevText, observed);
 
         // DEBUG probe (removed before final commit): capture first reconcile
@@ -2849,9 +2896,9 @@ import {
         const lineIdx = Number(lastTail.dataset.lineIndex || 0);
         if (added) {
             lastTail.dataset.galleyNew = '1';
-            lastTail.textContent = (lastTail.textContent || '') + added;
             ann._galleyAppends = ann._galleyAppends || {};
             ann._galleyAppends[lineIdx] = (ann._galleyAppends[lineIdx] || '') + added;
+            lastTail.textContent = ann._galleyAppends[lineIdx];
             ann._galleyEdited = true;
 
             // Re-place caret at end of the tail (the source-span restore above
@@ -3621,6 +3668,22 @@ import {
             const _isEditing = editorIsEditingAnnotation(ae, ann);
             const _canUseSourceEditorLayout = _isEditing && !shouldRenderTextInRichHtmlLayer(ann);
             const _canUseCurrentBoxSourceFlow = _isEditing && !_canUseSourceEditorLayout;
+            const _editedTextForRouting = editedTexts[ann._uid];
+            const _sourceComparableText = _editedTextForRouting !== undefined
+                ? _editedTextForRouting
+                : String(ann.text ?? '');
+            const _canPreserveSourceEditing = _isEditing && !ann._richHtml && (
+                shouldUseSourceFlowEditorHTML(ann, _editedTextForRouting, {
+                    allowCurrentBoxSourceFlow: _canUseCurrentBoxSourceFlow,
+                })
+                || (
+                    _canUseSourceEditorLayout
+                    && annotationTextMatchesSource(ann, _sourceComparableText)
+                    && !annTextIsEdited(ann)
+                    && !ann.userCreated
+                    && !ann._styleDirty
+                )
+            );
             if (!_isEditing && shouldRenderTextInRichHtmlLayer(ann)) {
                 ae.dataset.renderMode = 'dom-layer';
                 if (ae.innerHTML !== '') ae.innerHTML = '';
@@ -3645,7 +3708,7 @@ import {
                     window.__galleyDbg = window.__galleyDbg || {};
                     window.__galleyDbg[ann._uid] = `plain via _richHtml`;
                 }
-            } else if (_isEditing) {
+            } else if (_isEditing && !_canPreserveSourceEditing) {
                 // Clean editor mode: while actively editing a text annotation,
                 // render the contenteditable as a plain text box styled with the
                 // annotation's font / size / color / alignment — no per-span
@@ -5479,8 +5542,21 @@ import {
         // payload to ship text:"" and persistently wipe the user's typed text
         // on reload — the "text vanishes after changing color/alignment" bug.
         if (!editorIsEditingAnnotation(ae, ann)) return;
-        const nextText = getEditorPlainText(ae);
+        const renderMode = ae.dataset.renderMode || '';
+        if (renderMode === 'galley') {
+            reconcileGalleyInput(ae, ann, activeState.pi);
+        }
+        const nextText = renderMode === 'galley'
+            ? expectedGalleyText(ann, ae)
+            : getEditorPlainText(ae);
         const savedText = String(ann.text ?? '');
+        if (nextText !== savedText) {
+            markUserAuthored(ann);
+        }
+        const sourceAwareRenderMode = renderMode === 'source' || renderMode === 'source-flow';
+        if ((sourceAwareRenderMode && nextText !== savedText) || (renderMode !== 'galley' && !sourceAwareRenderMode && richHtmlHasInlineSelectionFormatting(ae.innerHTML))) {
+            ann._richHtml = ae.innerHTML;
+        }
         if (nextText === savedText) {
             delete editedTexts[ann._uid];
         } else {
@@ -6331,6 +6407,7 @@ import {
                 `<canvas id="oc-${pg}" class="overlay-canvas"></canvas>` +
                 `<div id="rhl-${pg}" class="rich-html-layer"></div>` +
                 `<div id="ael-${pg}" class="annotation-editor-layer"></div>` +
+                `<div id="dbgdom-${pg}" class="debug-dom-layer" aria-hidden="true"></div>` +
                 `<div id="ae-${pg}" class="active-editor" contenteditable="true" spellcheck="false"></div>` +
                 `<div id="tm-${pg}" class="annotation-tbc-menu">` +
                     `<button id="lkh-${pg}" type="button" class="tbc-menu-btn tbc-lock" title="Lock annotation" aria-label="Lock annotation">` +
@@ -7116,7 +7193,9 @@ import {
             editedTexts[ann._uid] = nextText;
             resizeAnnotationForEditedText(ann, nextText, pi);
             const hasFormattedRichHtml = richHtmlHasInlineSelectionFormatting(ann._richHtml);
-            if (e.currentTarget.dataset.renderMode === 'source-flow' || hasFormattedRichHtml) {
+            const sourceAwareRenderMode = e.currentTarget.dataset.renderMode === 'source-flow'
+                || e.currentTarget.dataset.renderMode === 'source';
+            if (sourceAwareRenderMode || hasFormattedRichHtml) {
                 // Preserve per-selection formatting: don't flatten innerHTML on typing.
                 // Just capture the updated HTML and keep the caret where the browser left it.
                 ann._richHtml = e.currentTarget.innerHTML;
@@ -7144,6 +7223,7 @@ import {
 
         ae.addEventListener('blur', (e) => {
             const blurredEditingUid = ae.dataset.editingUid || activeState.uid;
+            flushActiveEditorState();
             // Always clear editing mode on blur so the next selection starts in
             // "select / drag" mode (cursor: move) rather than "text input" mode.
             clearEditorEditingState(ae);
@@ -7223,7 +7303,9 @@ import {
                 // below) would flatten the styled spans and re-render the whole
                 // annotation in the annotation-level style.
                 const hasFormattedRichHtml = richHtmlHasInlineSelectionFormatting(ann._richHtml);
-                if (ae.dataset.renderMode === 'source-flow' || hasFormattedRichHtml) {
+                const sourceAwareRenderMode = ae.dataset.renderMode === 'source-flow'
+                    || ae.dataset.renderMode === 'source';
+                if (sourceAwareRenderMode || hasFormattedRichHtml) {
                     // Insert a real <br> at the caret. execCommand('insertLineBreak')
                     // is unreliable across browsers (sometimes inserts a \n text
                     // node that doesn't render as a visible break); doing the DOM
@@ -7284,7 +7366,9 @@ import {
                 // the updated innerHTML into ann._richHtml. Calling
                 // renderPlainEditorHTML here would flatten all styled spans.
                 const hasFormattedRichHtml = richHtmlHasInlineSelectionFormatting(ann._richHtml);
-                if (ae.dataset.renderMode === 'source-flow' || hasFormattedRichHtml) {
+                const sourceAwareRenderMode = ae.dataset.renderMode === 'source-flow'
+                    || ae.dataset.renderMode === 'source';
+                if (sourceAwareRenderMode || hasFormattedRichHtml) {
                     if (_textUndoPending) { _textUndoPending = false; pushUndo(); }
                     return;
                 }
@@ -9561,6 +9645,16 @@ import {
         } catch (e) {
             console.warn('[phase2] init failed', e);
         }
+
+        // Debug DOM overlay opt-in (?dbgdom=1) — see renderDebugDomLayer.
+        // Toggle in console: document.body.classList.toggle('debug-dom-on')
+        try {
+            const params = new URLSearchParams(window.location.search);
+            if (params.has('dbgdom')) {
+                document.body.classList.add('debug-dom-on');
+                console.info('[dbgdom] Debug DOM overlay ENABLED. Toggle: document.body.classList.toggle("debug-dom-on")');
+            }
+        } catch (_e) {}
 
         const pageCount = _pdfDoc.numPages;
         for (let pg = 1; pg <= pageCount; pg++) createPageCard(pg, pageCount);
