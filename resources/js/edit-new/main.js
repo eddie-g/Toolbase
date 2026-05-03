@@ -3022,18 +3022,6 @@ import {
     function renderRichEditorInnerHtml(ann, text) {
         const lines = renderableSourceLines(ann);
         if (!lines.length) return '';
-        // Concatenate all source span text and compare with `text`. If they
-        // differ (user has typed), we can't reliably map spans to characters
-        // any more — fall back to plain.
-        let sourceConcat = '';
-        for (const line of lines) {
-            const spans = Array.isArray(line.spans) ? line.spans : [];
-            for (const sp of spans) sourceConcat += sourceSpanText(sp) || '';
-            sourceConcat += '\n';
-        }
-        sourceConcat = sourceConcat.replace(/\n+$/, '');
-        const norm = (s) => String(s ?? '').replace(/\r\n?/g, '\n').replace(/\s+/g, ' ').trim();
-        if (norm(sourceConcat) !== norm(text)) return '';
         // Detect whether spans actually vary in weight/style — if every
         // span has the same weight & style, plain text would already look
         // identical, so no point in the rich path.
@@ -3050,9 +3038,24 @@ import {
             if (hasVariation) break;
         }
         if (!hasVariation) return '';
+        // If the user has already typed and the edited text differs in
+        // length from the source concatenation, the per-span mapping is
+        // unreliable — fall back to plain reflowed text. Length-only
+        // comparison (rather than full string compare) tolerates small
+        // whitespace normalization differences between ann.text and the
+        // concatenated source spans.
+        let sourceLen = 0;
+        for (const line of lines) {
+            for (const sp of (line.spans || [])) sourceLen += (sourceSpanText(sp) || '').length;
+        }
+        const editedLen = String(text ?? '').replace(/\s+/g, ' ').trim().length;
+        // ann.text after extraction normalization may differ in whitespace —
+        // allow a 5% tolerance so we don't miss fresh-edit-mode renders.
+        const tolerance = Math.max(20, Math.ceil(sourceLen * 0.1));
+        if (Math.abs(editedLen - String(ann?.text ?? '').replace(/\s+/g, ' ').trim().length) > tolerance) return '';
         // Emit per-line groups separated by <br>. Within each line, emit
         // one inline <span> per source span carrying weight/style. Skip
-        // empty spans; collapse pure-whitespace at line boundaries.
+        // empty spans.
         const lineHtmls = lines.map((line) => {
             const spans = Array.isArray(line.spans) ? line.spans : [];
             return spans.map((sp) => {
@@ -3067,7 +3070,12 @@ import {
                 return `<span${styleAttr}>${escapeHtml(t)}</span>`;
             }).join('');
         });
-        return lineHtmls.filter((s) => s.length > 0).join('<br>') || '<br>';
+        const out = lineHtmls.filter((s) => s.length > 0).join('<br>') || '<br>';
+        if (typeof window !== 'undefined' && ann?._uid) {
+            window.__richDbg = window.__richDbg || {};
+            window.__richDbg[ann._uid] = { variation: true, lines: lines.length, sourceLen, editedLen };
+        }
+        return out;
     }
 
     // measureEditedTextHeightPts moved to ./text/measure.js (Phase 7e).
