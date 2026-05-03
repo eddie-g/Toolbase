@@ -2979,25 +2979,15 @@ import {
         // entering edit mode.
         const topShiftPx = (lineHeightPx - fontSizePx) / 2;
         const lineAlign = ann.textAlign || 'left';
-        // PDF text extraction inserts a `\n` at every visual line wrap, not
-        // just at intentional paragraph breaks. The deselected canvas / galley
-        // paths reflow those soft wraps to fit the box width. The plain
-        // editor must do the same — otherwise the contenteditable shows the
-        // raw extracted breaks (long lines split into short ones, wrapped
-        // again by the box, looking visibly wrong vs. the deselected view).
-        //
-        // Heuristic: a run of 2+ `\n` is a paragraph break (preserved as
-        // `<br>`), a single `\n` is a soft wrap (collapsed to a space).
-        const normalized = String(text ?? '')
-            .replace(/\r\n?/g, '\n')
-            // Mark paragraph breaks first so the next replace doesn't eat them.
-            .replace(/\n{2,}/g, '\u0000')
-            .replace(/\n+/g, ' ')
-            .replace(/\u0000/g, '\n');
-        const paragraphs = normalized.split('\n');
-        const innerHtml = paragraphs
-            .map((p) => escapeHtml(p))
-            .join('<br>') || '<br>';
+
+        // Build the inner HTML. When the annotation has per-span style
+        // variations (bold runs, italic runs from PDF extraction) AND the
+        // user hasn't diverged from the source text yet, render each span
+        // with its own weight/style so bold paragraph headers etc. survive
+        // the click-into-edit. Otherwise fall back to plain reflowed text.
+        const innerHtml = renderRichEditorInnerHtml(ann, text)
+            || renderPlainEditorInnerHtml(text);
+
         // Suppress maxSourceIndex lint noise — retained for future per-line overrides.
         void maxSourceIndex;
         // Critical: do NOT hardcode font-family, font-size, color, font-weight, or
@@ -3008,6 +2998,76 @@ import {
         // changes (font family / size / color) wouldn't take effect once this
         // HTML has been persisted into ann._richHtml.
         return `<div data-line-index="0" style="display:block;width:100%;box-sizing:border-box;font-family:inherit;font-size:inherit;font-weight:inherit;font-style:inherit;letter-spacing:inherit;color:inherit;text-decoration:${ann.underline ? 'underline' : 'none'};line-height:${lineHeightPx.toFixed(2)}px;min-height:${lineHeightPx.toFixed(2)}px;text-align:${lineAlign};transform:translateY(-${topShiftPx.toFixed(2)}px);transform-origin:top left;padding:0;margin:0;white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word;">${innerHtml}</div>`;
+    }
+
+    // Render reflowed plain text — single \n is a soft wrap (PDF extraction
+    // artifact, collapse to space), \n{2,} is a real paragraph break.
+    function renderPlainEditorInnerHtml(text) {
+        const normalized = String(text ?? '')
+            .replace(/\r\n?/g, '\n')
+            .replace(/\n{2,}/g, '\u0000')
+            .replace(/\n+/g, ' ')
+            .replace(/\u0000/g, '\n');
+        const paragraphs = normalized.split('\n');
+        return paragraphs.map((p) => escapeHtml(p)).join('<br>') || '<br>';
+    }
+
+    // When the annotation's pristine extracted text contains per-span style
+    // variation (bold, italic from PDF extraction), rebuild the inner HTML
+    // with one <span> per source span carrying the original font-weight /
+    // font-style. This preserves bold paragraph headers etc. when the user
+    // first clicks into edit. Returns '' when the annotation has no spans
+    // or when the user-edited text no longer matches the source — in that
+    // case caller falls back to plain reflowed text.
+    function renderRichEditorInnerHtml(ann, text) {
+        const lines = renderableSourceLines(ann);
+        if (!lines.length) return '';
+        // Concatenate all source span text and compare with `text`. If they
+        // differ (user has typed), we can't reliably map spans to characters
+        // any more — fall back to plain.
+        let sourceConcat = '';
+        for (const line of lines) {
+            const spans = Array.isArray(line.spans) ? line.spans : [];
+            for (const sp of spans) sourceConcat += sourceSpanText(sp) || '';
+            sourceConcat += '\n';
+        }
+        sourceConcat = sourceConcat.replace(/\n+$/, '');
+        const norm = (s) => String(s ?? '').replace(/\r\n?/g, '\n').replace(/\s+/g, ' ').trim();
+        if (norm(sourceConcat) !== norm(text)) return '';
+        // Detect whether spans actually vary in weight/style — if every
+        // span has the same weight & style, plain text would already look
+        // identical, so no point in the rich path.
+        let hasVariation = false;
+        let baseWeight = null;
+        let baseStyle = null;
+        for (const line of lines) {
+            for (const sp of (line.spans || [])) {
+                const w = String(sourceSpanFontWeight(sp) || '400');
+                const st = String(sp?.fontStyle || (sp?.italic ? 'italic' : 'normal'));
+                if (baseWeight === null) { baseWeight = w; baseStyle = st; continue; }
+                if (w !== baseWeight || st !== baseStyle) { hasVariation = true; break; }
+            }
+            if (hasVariation) break;
+        }
+        if (!hasVariation) return '';
+        // Emit per-line groups separated by <br>. Within each line, emit
+        // one inline <span> per source span carrying weight/style. Skip
+        // empty spans; collapse pure-whitespace at line boundaries.
+        const lineHtmls = lines.map((line) => {
+            const spans = Array.isArray(line.spans) ? line.spans : [];
+            return spans.map((sp) => {
+                const t = sourceSpanText(sp);
+                if (!t) return '';
+                const w = String(sourceSpanFontWeight(sp) || '400');
+                const st = String(sp?.fontStyle || (sp?.italic ? 'italic' : 'normal'));
+                const styleParts = [];
+                if (w && w !== '400' && w !== 'normal') styleParts.push(`font-weight:${w}`);
+                if (st && st !== 'normal') styleParts.push(`font-style:${st}`);
+                const styleAttr = styleParts.length ? ` style="${styleParts.join(';')}"` : '';
+                return `<span${styleAttr}>${escapeHtml(t)}</span>`;
+            }).join('');
+        });
+        return lineHtmls.filter((s) => s.length > 0).join('<br>') || '<br>';
     }
 
     // measureEditedTextHeightPts moved to ./text/measure.js (Phase 7e).
