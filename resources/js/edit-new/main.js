@@ -3029,37 +3029,51 @@ import {
         // plain renderer (which honors `text` literally) or the user's
         // edits would be silently overwritten by the source on every input.
         if (String(text ?? '') !== String(ann?.text ?? '')) return '';
-        // Detect whether spans actually vary in weight/style — if every
-        // span has the same weight & style, plain text would already look
-        // identical, so no point in the rich path.
-        let hasVariation = false;
-        let baseWeight = null;
-        let baseStyle = null;
+        let hasAnySpan = false;
         for (const line of lines) {
-            for (const sp of (line.spans || [])) {
-                const w = String(sourceSpanFontWeight(sp) || '400');
-                const st = String(sp?.fontStyle || (sp?.italic ? 'italic' : 'normal'));
-                if (baseWeight === null) { baseWeight = w; baseStyle = st; continue; }
-                if (w !== baseWeight || st !== baseStyle) { hasVariation = true; break; }
-            }
-            if (hasVariation) break;
+            if (Array.isArray(line.spans) && line.spans.length) { hasAnySpan = true; break; }
         }
-        if (!hasVariation) return '';
-        // Emit per-line groups separated by <br>. Within each line, emit
-        // one inline <span> per source span carrying weight/style.
+        if (!hasAnySpan) return '';
+        // Distribute each `line.text` (the canonical text-extraction-layer
+        // string that includes inter-span whitespace) across `line.spans`
+        // by walking spans in order and finding each span's own text inside
+        // line.text. This preserves both:
+        //   - per-span weight/style (bold runs etc.) for visual fidelity, and
+        //   - the inter-word spaces that live in line.text but NOT in any
+        //     individual span (PDF extraction emits glyph runs touching at
+        //     the bbox; the visual space between "Drylab" and "News" lives
+        //     only in line.text). Plain reflow gets "DrylabNews"; this gets
+        //     "Drylab News" with each word still styled correctly.
         const lineHtmls = lines.map((line) => {
+            const lineText = String(line.text ?? '');
             const spans = Array.isArray(line.spans) ? line.spans : [];
-            return spans.map((sp) => {
-                const t = sourceSpanText(sp);
-                if (!t) return '';
+            if (!spans.length) return escapeHtml(lineText);
+            let cursor = 0;
+            const parts = [];
+            for (const sp of spans) {
+                const spText = sourceSpanText(sp);
+                if (!spText) continue;
+                let chunk = spText;
+                if (lineText) {
+                    const idx = lineText.indexOf(spText, cursor);
+                    if (idx >= 0) {
+                        chunk = lineText.slice(cursor, idx + spText.length);
+                        cursor = idx + spText.length;
+                    }
+                }
                 const w = String(sourceSpanFontWeight(sp) || '400');
                 const st = String(sp?.fontStyle || (sp?.italic ? 'italic' : 'normal'));
                 const styleParts = [];
                 if (w && w !== '400' && w !== 'normal') styleParts.push(`font-weight:${w}`);
                 if (st && st !== 'normal') styleParts.push(`font-style:${st}`);
                 const styleAttr = styleParts.length ? ` style="${styleParts.join(';')}"` : '';
-                return `<span${styleAttr}>${escapeHtml(t)}</span>`;
-            }).join('');
+                parts.push(`<span${styleAttr}>${escapeHtml(chunk)}</span>`);
+            }
+            // Tail of line.text past the last matched span — append plain.
+            if (lineText && cursor < lineText.length && parts.length) {
+                parts.push(escapeHtml(lineText.slice(cursor)));
+            }
+            return parts.join('');
         });
         return lineHtmls.filter((s) => s.length > 0).join('<br>') || '<br>';
     }
