@@ -2742,7 +2742,6 @@ import {
         const box = resolveAnnBox(ann);
         if (!box) return '';
         const offset = annotationSourceOffset(ann);
-        const annTopPdf = box.y + box.h; // PDF (bottom-up) Y of annotation top edge
         const appends = (ann._galleyAppends && typeof ann._galleyAppends === 'object') ? ann._galleyAppends : {};
 
         const html = lines.map((line, lineIndex) => {
@@ -2752,9 +2751,16 @@ import {
 
             const lineLeftPts = Number(lineBBox[0]);
             const lineRightPts = Number(lineBBox[2]);
-            const lineTopPts = Number(lineBBox[3]); // top edge in PDF coords
+            // PyMuPDF source-line bboxes are stored TOP-DOWN as
+            // [x0, y0_top, x1, y1_bottom] with y measured from page top.
+            // Place the line at its top-down offset from the source block's
+            // top edge. ae is already positioned at the current annotation
+            // box, so spans only need the within-block offset; offset.dy
+            // (added when the user resized the annotation) shifts the entire
+            // source layout in lock-step with the new top edge.
+            const lineTopRelTopDown = Number(lineBBox[1]) - Number(ann.sourceBlockTop ?? lineBBox[1]);
             const lineLeftPx = (lineLeftPts + offset.dx - box.x) * scale;
-            const lineTopPx = (annTopPdf - (lineTopPts + offset.dy)) * scale;
+            const lineTopPx = (lineTopRelTopDown + offset.dy) * scale;
             const lineWidthPx = Math.max(2, (lineRightPts - lineLeftPts) * scale);
             const lineStyle = compositeLineStyle(ann, lineIndex);
             const lineHeightPx = blockLineHeightPx(ann, lineIndex, scale, lineStyle);
