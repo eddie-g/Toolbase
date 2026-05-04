@@ -3245,16 +3245,19 @@ import {
         return `<div data-line-index="0" style="display:block;width:100%;box-sizing:border-box;font-family:inherit;font-size:inherit;font-weight:inherit;font-style:inherit;letter-spacing:inherit;color:inherit;text-decoration:${ann.underline ? 'underline' : 'none'};line-height:${lineHeightPx.toFixed(2)}px;min-height:${lineHeightPx.toFixed(2)}px;text-align:${lineAlign};transform:translateY(-${topShiftPx.toFixed(2)}px);transform-origin:top left;padding:0;margin:0;white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word;">${innerHtml}</div>`;
     }
 
-    // Render reflowed plain text — single \n is a soft wrap (PDF extraction
-    // artifact, collapse to space), \n{2,} is a real paragraph break.
+    // Render reflowed plain text — the caller is responsible for any
+    // soft-wrap collapsing (via normalizeTextForDomReflow) before calling
+    // us. Here we honor every \n as a literal line break so user-typed
+    // newlines (e.g. bullet items) survive into the DOM. Previously this
+    // helper collapsed every single \n to a space "as a PDF-extraction
+    // soft-wrap artifact", which deleted the user's intentional line
+    // breaks the moment a promoted-extraction annotation was edited (the
+    // doc 4001 promoted_2_8_141 bug: each bullet item ended up on the
+    // same line, link breaks gone).
     function renderPlainEditorInnerHtml(text) {
-        const normalized = String(text ?? '')
-            .replace(/\r\n?/g, '\n')
-            .replace(/\n{2,}/g, '\u0000')
-            .replace(/\n+/g, ' ')
-            .replace(/\u0000/g, '\n');
-        const paragraphs = normalized.split('\n');
-        return paragraphs.map((p) => escapeHtml(p)).join('<br>') || '<br>';
+        const normalized = String(text ?? '').replace(/\r\n?/g, '\n');
+        const lines = normalized.split('\n');
+        return lines.map((line) => escapeHtml(line)).join('<br>') || '<br>';
     }
 
     // When the annotation's pristine extracted text contains per-span style
