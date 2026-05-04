@@ -36,6 +36,7 @@ const schema = new Schema({
                 width: { default: '' },
                 height: { default: '' },
                 lineHeight: { default: '' },
+                marginTop: { default: '' },
                 fontFamily: { default: '' },
                 fontSize: { default: '' },
                 fontWeight: { default: '400' },
@@ -57,6 +58,7 @@ const schema = new Schema({
                 // padding-left so centered/indented lines keep their
                 // visual alignment when we drop absolute positioning.
                 const parts = ['display:block', 'margin:0', 'padding:0', 'white-space:pre-wrap', 'overflow-wrap:break-word', 'word-break:break-word'];
+                if (a.marginTop) parts.push('margin-top:' + a.marginTop);
                 if (a.left) parts.push('padding-left:' + a.left);
                 if (a.fontFamily) parts.push('font-family:' + a.fontFamily);
                 if (a.fontSize) parts.push('font-size:' + a.fontSize);
@@ -135,10 +137,24 @@ function buildDocFromSourceHTML(sourceHTML) {
     if (!lineEls.length) {
         return schema.nodes.doc.create(null, [schema.nodes.line.create()]);
     }
-    const lineNodes = lineEls.map((lineEl) => {
+    const lineNodes = lineEls.map((lineEl, idx) => {
         const contentEl = lineEl.querySelector('[data-line-content="1"]') || lineEl;
         const wrapperStyle = lineEl.style;
         const contentStyle = contentEl.style;
+        // Compute inter-line vertical gap from absolute `top` values so
+        // we can preserve paragraph spacing after stripping absolute
+        // positioning. The first line keeps no top margin; subsequent
+        // lines get the delta between this line's top and the previous
+        // line's top minus its line-height.
+        let marginTop = '';
+        if (idx > 0) {
+            const prev = lineEls[idx - 1];
+            const prevTop = parseFloat(prev.style.top || '0') || 0;
+            const prevLh = parseFloat(prev.style.lineHeight || prev.style.minHeight || prev.style.height || '0') || 0;
+            const curTop = parseFloat(lineEl.style.top || '0') || 0;
+            const gap = curTop - (prevTop + prevLh);
+            if (gap > 0.5) marginTop = gap + 'px';
+        }
         const attrs = {
             lineIndex: lineEl.getAttribute('data-line-index') || '',
             left: wrapperStyle.left || '',
@@ -146,6 +162,7 @@ function buildDocFromSourceHTML(sourceHTML) {
             width: wrapperStyle.width || '',
             height: wrapperStyle.minHeight || wrapperStyle.height || '',
             lineHeight: wrapperStyle.lineHeight || '',
+            marginTop,
             fontFamily: wrapperStyle.fontFamily || '',
             fontSize: wrapperStyle.fontSize || '',
             fontWeight: wrapperStyle.fontWeight || '400',
