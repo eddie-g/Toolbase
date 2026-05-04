@@ -227,6 +227,13 @@ export function mountProseMirrorSourceEditor(host, sourceHTML, opts = {}) {
     if (!(host instanceof HTMLElement)) throw new Error('mountProseMirrorSourceEditor: host must be an HTMLElement');
     host.innerHTML = '';
     host.style.position = 'relative';
+    // The debug-modal host element ships with contenteditable="true" so
+    // the raw fallback works. With PM mounted, only PM's inner div must
+    // be editable -- otherwise clicks register against the outer
+    // contenteditable layer, PM never sees the selection update, and
+    // Enter splits at doc start instead of the caret.
+    host.removeAttribute('contenteditable');
+    host.setAttribute('contenteditable', 'false');
     const doc = buildDocFromSourceHTML(sourceHTML);
     const state = EditorState.create({
         doc,
