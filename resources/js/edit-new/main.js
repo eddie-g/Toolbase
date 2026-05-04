@@ -2629,17 +2629,23 @@ import {
                 segs.forEach((seg, i) => {
                     setSourceSpanText(matchedSpans[i], String(seg.text ?? ''));
                 });
+                // Do NOT touch per-span bbox/origin in the
+                // per-segment path -- each span keeps its own slot,
+                // so stretching span 0 to the full line bbox would
+                // make its rendered text overlap the others.
             } else {
                 setSourceSpanText(firstSpan, lineText);
                 for (let i = 1; i < matchedSpans.length; i++) {
                     setSourceSpanText(matchedSpans[i], '');
                 }
-            }
-
-            if (lineBBox && lineBBox.length >= 4) {
-                firstSpan.bbox = lineBBox.slice(0, 4);
-                if (Array.isArray(firstSpan.origin) && firstSpan.origin.length >= 2) {
-                    firstSpan.origin = [Number(lineBBox[0]), Number(firstSpan.origin[1])];
+                // Legacy fallback collapses everything into span 0;
+                // expand its bbox/origin to cover the whole line so
+                // the canvas paints the merged text across the row.
+                if (lineBBox && lineBBox.length >= 4) {
+                    firstSpan.bbox = lineBBox.slice(0, 4);
+                    if (Array.isArray(firstSpan.origin) && firstSpan.origin.length >= 2) {
+                        firstSpan.origin = [Number(lineBBox[0]), Number(firstSpan.origin[1])];
+                    }
                 }
             }
         });
