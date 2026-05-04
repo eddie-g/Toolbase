@@ -234,7 +234,7 @@ export function mountProseMirrorSourceEditor(host, sourceHTML, opts = {}) {
             class: 'pm-source-exact-editor',
             // Neutral host -- per-line and per-mark spans below provide
             // the actual font/size/weight/color from the source.
-            style: 'background:#fff;padding:8px;min-height:120px;outline:none;color:#000;',
+            style: 'background:#fff;padding:0;min-height:120px;outline:none;color:#000;',
         },
     });
     return {
