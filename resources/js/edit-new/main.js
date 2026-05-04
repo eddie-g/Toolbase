@@ -3254,10 +3254,37 @@ import {
     // breaks the moment a promoted-extraction annotation was edited (the
     // doc 4001 promoted_2_8_141 bug: each bullet item ended up on the
     // same line, link breaks gone).
+    //
+    // Hanging-indent: when a line begins with a bullet marker (U+2022,
+    // U+25CF, '*', '-', etc.) followed by whitespace, subsequent lines
+    // (until the next bullet or a blank line) are continuation lines of
+    // that bullet -- in the original PDF extraction they were positioned
+    // at the same x-offset as the text after the bullet. Pre-pad those
+    // continuation lines with spaces equal to the bullet+gap width so
+    // when rendered with `white-space: pre-wrap` they visually hang under
+    // the bullet's text instead of returning to column 0 (the doc 4001
+    // promoted_2_8_141 'spacing and indents not accurate' bug).
     function renderPlainEditorInnerHtml(text) {
         const normalized = String(text ?? '').replace(/\r\n?/g, '\n');
         const lines = normalized.split('\n');
-        return lines.map((line) => escapeHtml(line)).join('<br>') || '<br>';
+        const bulletRe = /^(\s*)([\u2022\u25CF\u25E6\u2023\u2043\u2219*\-])(\s+)/;
+        let indentPrefix = '';
+        const out = [];
+        for (const line of lines) {
+            const m = bulletRe.exec(line);
+            if (m) {
+                indentPrefix = ' '.repeat(m[1].length + m[2].length + m[3].length);
+                out.push(escapeHtml(line));
+            } else if (line.trim() === '') {
+                indentPrefix = '';
+                out.push(escapeHtml(line));
+            } else if (indentPrefix) {
+                out.push(escapeHtml(indentPrefix + line));
+            } else {
+                out.push(escapeHtml(line));
+            }
+        }
+        return out.join('<br>') || '<br>';
     }
 
     // When the annotation's pristine extracted text contains per-span style
