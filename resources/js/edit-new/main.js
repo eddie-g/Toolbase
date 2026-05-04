@@ -5752,6 +5752,20 @@ import {
     // shouldPersistPromotedSourceBoxForBackground + shouldPersistPromotedDirty
     // moved to ./annotations/state.js (Phase 7br).
 
+    function clearSourceExactFlagsForPlainTextEdit(ann) {
+        if (!ann || typeof ann !== 'object') return;
+        if (ann.preserveSourceLayout || ann.sourceExactTextEdited || ann._sourceExactTextEdited) {
+            ann.preserveSourceLayout = false;
+            ann.sourceExactTextEdited = false;
+            ann._sourceExactTextEdited = false;
+            if (ann.annotation_data && typeof ann.annotation_data === 'object') {
+                ann.annotation_data.preserveSourceLayout = false;
+                ann.annotation_data.sourceExactTextEdited = false;
+            }
+        }
+        delete ann._renderableSourceLines;
+    }
+
     function flushActiveEditorState() {
         if (activeState.pi === null || !activeState.uid) return;
         const ae = document.getElementById('ae-' + (activeState.pi + 1));
@@ -5778,10 +5792,13 @@ import {
         const savedText = String(ann.text ?? '');
         if (nextText !== savedText) {
             markUserAuthored(ann);
+            clearSourceExactFlagsForPlainTextEdit(ann);
         }
         const sourceAwareRenderMode = renderMode === 'source' || renderMode === 'source-flow';
-        if ((sourceAwareRenderMode && nextText !== savedText) || (renderMode !== 'galley' && !sourceAwareRenderMode && richHtmlHasInlineSelectionFormatting(ae.innerHTML))) {
+        if (renderMode !== 'galley' && !sourceAwareRenderMode && richHtmlHasInlineSelectionFormatting(ae.innerHTML)) {
             ann._richHtml = ae.innerHTML;
+        } else if (sourceAwareRenderMode && nextText !== savedText) {
+            delete ann._richHtml;
         }
         if (nextText === savedText) {
             delete editedTexts[ann._uid];
@@ -7421,7 +7438,7 @@ import {
             const hasFormattedRichHtml = richHtmlHasInlineSelectionFormatting(ann._richHtml);
             const sourceAwareRenderMode = e.currentTarget.dataset.renderMode === 'source-flow'
                 || e.currentTarget.dataset.renderMode === 'source';
-            if (sourceAwareRenderMode || hasFormattedRichHtml) {
+            if (!sourceAwareRenderMode && hasFormattedRichHtml) {
                 // Preserve per-selection formatting: don't flatten innerHTML on typing.
                 // Just capture the updated HTML and keep the caret where the browser left it.
                 ann._richHtml = e.currentTarget.innerHTML;
@@ -7430,6 +7447,10 @@ import {
                 // per-span font sizes / explicit <br>s in rich html.
                 growAnnotationBoxToRenderedHeight(ann, e.currentTarget, pi);
             } else {
+                if (sourceAwareRenderMode) {
+                    clearSourceExactFlagsForPlainTextEdit(ann);
+                    delete ann._richHtml;
+                }
                 const selection = getEditorSelectionOffsets(e.currentTarget);
                 e.currentTarget.innerHTML = renderPlainEditorHTML(ann, nextText, data.scale);
                 if (selection) {
@@ -7531,7 +7552,7 @@ import {
                 const hasFormattedRichHtml = richHtmlHasInlineSelectionFormatting(ann._richHtml);
                 const sourceAwareRenderMode = ae.dataset.renderMode === 'source-flow'
                     || ae.dataset.renderMode === 'source';
-                if (sourceAwareRenderMode || hasFormattedRichHtml) {
+                if (!sourceAwareRenderMode && hasFormattedRichHtml) {
                     // Insert a real <br> at the caret. execCommand('insertLineBreak')
                     // is unreliable across browsers (sometimes inserts a \n text
                     // node that doesn't render as a visible break); doing the DOM
@@ -7573,6 +7594,11 @@ import {
                 const afterText = currentText.slice(selection.end);
                 const nextText = beforeText + '\n' + afterText;
                 const nextCaret = beforeText.length + 1;
+                if (sourceAwareRenderMode) {
+                    markUserAuthored(ann);
+                    clearSourceExactFlagsForPlainTextEdit(ann);
+                    delete ann._richHtml;
+                }
                 editedTexts[ann._uid] = nextText;
                 resizeAnnotationForEditedText(ann, nextText, pi);
                 ae.innerHTML = renderPlainEditorHTML(ann, nextText, data.scale);
@@ -7594,7 +7620,7 @@ import {
                 const hasFormattedRichHtml = richHtmlHasInlineSelectionFormatting(ann._richHtml);
                 const sourceAwareRenderMode = ae.dataset.renderMode === 'source-flow'
                     || ae.dataset.renderMode === 'source';
-                if (sourceAwareRenderMode || hasFormattedRichHtml) {
+                if (!sourceAwareRenderMode && hasFormattedRichHtml) {
                     if (_textUndoPending) { _textUndoPending = false; pushUndo(); }
                     return;
                 }
@@ -7617,6 +7643,11 @@ import {
                 }
 
                 const nextText = currentText.slice(0, start) + currentText.slice(end);
+                if (sourceAwareRenderMode) {
+                    markUserAuthored(ann);
+                    clearSourceExactFlagsForPlainTextEdit(ann);
+                    delete ann._richHtml;
+                }
                 editedTexts[ann._uid] = nextText;
                 resizeAnnotationForEditedText(ann, nextText, pi);
                 ae.innerHTML = renderPlainEditorHTML(ann, nextText, data.scale);
