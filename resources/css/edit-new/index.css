@@ -888,7 +888,6 @@
         #dbg-editor-modal .dbg-live-host {
             display: block;
             min-width: 1px;
-            width: 100%;
         }
         /* Universal preview-mode overrides — the live editor uses transforms
          * (translateY for line baselines), absolute positioning, and negative
