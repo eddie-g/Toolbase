@@ -9716,6 +9716,67 @@ import {
                 annotationsForCalloutFilter.filter((other) => Number(other?.pageIndex) === Number(ann?.pageIndex))
             )
         ));
+
+        // Runtime safety net for duplicate promoted annotations that the
+        // server-side dedup pass missed. Drop a promoted annotation when
+        // every one of its source line bboxes is highly overlapped (>= 70%
+        // by smaller area) by a distinct source line bbox of another
+        // (larger / multi-line) promoted annotation on the same page.
+        // Keeps the larger one — its text already contains the smaller's
+        // content as part of a multi-line block, so the smaller would
+        // double-paint on top.
+        (() => {
+            const byPg = {};
+            allAnnotations.forEach((a, idx) => {
+                if (!a?.promotedFromExtraction || a?.promotedDirty || a?.promotedReflowEnabled) return;
+                const lb = Array.isArray(a.sourceLineBBoxes) ? a.sourceLineBBoxes : null;
+                if (!lb || !lb.length) return;
+                const pi = Number(a.pageIndex) || 0;
+                (byPg[pi] = byPg[pi] || []).push({ idx, lineBBoxes: lb });
+            });
+            const drop = new Set();
+            const overlapsDistinct = (childBoxes, parentBoxes) => {
+                if (!childBoxes.length || !parentBoxes.length) return false;
+                const used = new Set();
+                for (const cb of childBoxes) {
+                    if (!Array.isArray(cb) || cb.length < 4) return false;
+                    const ca = Math.max(1, (cb[2] - cb[0]) * (cb[3] - cb[1]));
+                    let matched = -1;
+                    for (let i = 0; i < parentBoxes.length; i++) {
+                        if (used.has(i)) continue;
+                        const pb = parentBoxes[i];
+                        if (!Array.isArray(pb) || pb.length < 4) continue;
+                        const w = Math.max(0, Math.min(cb[2], pb[2]) - Math.max(cb[0], pb[0]));
+                        const h = Math.max(0, Math.min(cb[3], pb[3]) - Math.max(cb[1], pb[1]));
+                        if (w <= 0 || h <= 0) continue;
+                        const pa = Math.max(1, (pb[2] - pb[0]) * (pb[3] - pb[1]));
+                        if ((w * h) / Math.min(ca, pa) >= 0.70) { matched = i; break; }
+                    }
+                    if (matched < 0) return false;
+                    used.add(matched);
+                }
+                return true;
+            };
+            Object.values(byPg).forEach((entries) => {
+                for (let i = 0; i < entries.length; i++) {
+                    if (drop.has(entries[i].idx)) continue;
+                    for (let j = 0; j < entries.length; j++) {
+                        if (i === j || drop.has(entries[j].idx)) continue;
+                        // Drop entries[i] if its lines are fully covered by
+                        // entries[j]'s lines AND j has strictly more lines.
+                        if (entries[j].lineBBoxes.length <= entries[i].lineBBoxes.length) continue;
+                        if (overlapsDistinct(entries[i].lineBBoxes, entries[j].lineBBoxes)) {
+                            drop.add(entries[i].idx);
+                            break;
+                        }
+                    }
+                }
+            });
+            if (drop.size) {
+                allAnnotations = allAnnotations.filter((_, idx) => !drop.has(idx));
+            }
+        })();
+
         allAnnotations.forEach(ann => { editedTexts[ann._uid] = String(ann.text || ''); });
 
         const byPage = {};

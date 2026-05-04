@@ -1849,6 +1849,61 @@ PYTHON;
         return $overlapWidth / min($leftWidth, $rightWidth);
     }
 
+    /**
+     * Returns true when every child source-line bbox highly overlaps a
+     * distinct parent source-line bbox (>= 70% of the smaller area). Used to
+     * detect duplicate promoted annotations describing the same physical
+     * lines, where the gap-fit check would reject a merge for being too
+     * overlapping. Each parent line can match at most one child line.
+     */
+    private function childLineBoxesOverlapDistinctParentLines(array $childBoxes, array $parentBoxes): bool
+    {
+        if (empty($childBoxes) || empty($parentBoxes)) {
+            return false;
+        }
+
+        $usedParents = [];
+        foreach ($childBoxes as $childBox) {
+            if (!is_array($childBox) || count($childBox) < 4) {
+                return false;
+            }
+            $childArea = max(
+                1.0,
+                ((float) $childBox[2] - (float) $childBox[0]) * ((float) $childBox[3] - (float) $childBox[1])
+            );
+
+            $matched = null;
+            foreach ($parentBoxes as $parentIndex => $parentBox) {
+                if (isset($usedParents[$parentIndex]) || !is_array($parentBox) || count($parentBox) < 4) {
+                    continue;
+                }
+                $parentArea = max(
+                    1.0,
+                    ((float) $parentBox[2] - (float) $parentBox[0]) * ((float) $parentBox[3] - (float) $parentBox[1])
+                );
+
+                $width = max(0.0, min((float) $childBox[2], (float) $parentBox[2]) - max((float) $childBox[0], (float) $parentBox[0]));
+                $height = max(0.0, min((float) $childBox[3], (float) $parentBox[3]) - max((float) $childBox[1], (float) $parentBox[1]));
+                if ($width <= 0.0 || $height <= 0.0) {
+                    continue;
+                }
+
+                $overlap = $width * $height;
+                if ($overlap / min($childArea, $parentArea) >= 0.70) {
+                    $matched = $parentIndex;
+                    break;
+                }
+            }
+
+            if ($matched === null) {
+                return false;
+            }
+            $usedParents[$matched] = true;
+        }
+
+        return true;
+    }
+
     private function promotedAnnotationGapFitScore(array $parentBoxes, array $childBoxes): ?float
     {
         if (empty($parentBoxes) || empty($childBoxes) || count($parentBoxes) < 2) {
@@ -2049,6 +2104,30 @@ PYTHON;
 
                 if (!$this->promotedAnnotationTextContainsLines($parentAnnotation, $childLines)) {
                     continue;
+                }
+
+                // Geometric duplicate: every child source-line bbox highly
+                // overlaps a parent source-line bbox AND the parent's text
+                // already contains the child's lines. This is a stale
+                // promoted-extraction artifact -- the child annotation
+                // describes the same physical line as one of the parent's
+                // existing source lines, just with a slightly different
+                // text representation (e.g. parent line "Original or
+                // certified copy of birth certificate" vs child line
+                // "3. Original or certified copy of birth certificate"
+                // where the "3." was already merged into parent.text).
+                // Suppress the child unconditionally; rendering the parent
+                // alone produces the correct visible result. Without this
+                // check, the gap-fit pass below rejects the merge because
+                // the bboxes overlap > 12%, leaving both annotations to
+                // paint on top of each other.
+                $parentBoxesForOverlap = $this->sanitizeSourceLineBBoxes($parentAnnotation['sourceLineBBoxes'] ?? []);
+                if (
+                    !empty($parentBoxesForOverlap)
+                    && $this->childLineBoxesOverlapDistinctParentLines($childBoxes, $parentBoxesForOverlap)
+                ) {
+                    $suppressed[$childIndex] = true;
+                    break;
                 }
 
                 // A stale saved promoted row can have child text already appended
