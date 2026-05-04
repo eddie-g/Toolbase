@@ -646,8 +646,9 @@
         }
         #dbg-editor-modal .dbg-modal-card {
             position: relative;
-            width: min(960px, 92vw);
-            max-height: 88vh;
+            width: min(1600px, 96vw);
+            height: 92vh;
+            max-height: 96vh;
             background: #11141b;
             color: #e5e7eb;
             border: 1px solid rgba(255,255,255,0.08);
