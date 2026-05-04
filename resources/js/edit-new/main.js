@@ -2606,6 +2606,38 @@ import {
         const liveSpans = Array.isArray(ann.sourceSpans) ? ann.sourceSpans : [];
         const liveBBoxes = Array.isArray(ann.sourceLineBBoxes) ? ann.sourceLineBBoxes : [];
         const segmentsArr = Array.isArray(lineSegments) ? lineSegments : null;
+
+        // Line-count divergence (user inserted or removed a hard line break):
+        // The 1:1 lineIndex→sourceLineBBox mapping below assumes PM's line
+        // count matches the original source line count. When it doesn't,
+        // mapping by index scrambles content -- e.g. inserting a break in
+        // line 1 puts "head of line 1" at original line 1's bbox and "tail
+        // of line 1" at original line 2's bbox (overwriting unrelated
+        // content), then the real line 2 lands at line 3's slot, etc.
+        // Drop the source-exact rendering flags so the canvas/editor
+        // reflows the edited text inside the annotation's bounding box
+        // using its base font (the regular plain-text path) -- a clean
+        // reflow is far better than a scrambled per-span paint, and the
+        // backend renderer treats it as a plain promoted text edit.
+        if (liveBBoxes.length > 0 && normalizedLines.length !== liveBBoxes.length) {
+            ann.sourceTextLines = normalizedLines;
+            ann.text = normalizedLines.join('\n');
+            ann.promotedDirty = true;
+            ann.sourceExactTextEdited = false;
+            ann._sourceExactTextEdited = false;
+            ann.preserveSourceLayout = false;
+            delete ann._richHtml;
+            delete ann._renderableSourceLines;
+            if (ann.annotation_data && typeof ann.annotation_data === 'object') {
+                ann.annotation_data.text = ann.text;
+                ann.annotation_data.sourceTextLines = normalizedLines.slice();
+                ann.annotation_data.promotedDirty = true;
+                ann.annotation_data.sourceExactTextEdited = false;
+                ann.annotation_data.preserveSourceLayout = false;
+            }
+            return ann.text;
+        }
+
         normalizedLines.forEach((lineText, lineIndex) => {
             const lineBBox = liveBBoxes[lineIndex] || null;
             const matchedSpans = lineBBox
