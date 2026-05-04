@@ -2762,6 +2762,65 @@ def _split_block_on_horizontal_barriers(block, horizontal_lines=None):
     return _build_split_blocks_from_line_segments(block, text_lines, line_bboxes, segments)
 
 
+def _split_block_on_large_vertical_gaps(block):
+    """Split a block when consecutive line bboxes have a vertical gap that is
+    much larger than the block's typical line height. PyMuPDF occasionally
+    groups text from spatially distant content-stream operations into a single
+    block (e.g. the trailing line of one paragraph plus list-item text far
+    below it, while a heading and body paragraph between them are emitted as
+    other blocks). The result is one annotation whose bounding box spans
+    several visually separate paragraphs. We split such a block at every gap
+    that exceeds a conservative threshold so each visual paragraph becomes
+    its own block."""
+    if not isinstance(block, dict):
+        return [block] if block else []
+
+    text_lines = [
+        sanitize_extracted_text(line)
+        for line in (block.get('text_lines') or [])
+    ]
+    line_bboxes = [
+        tuple(float(value) for value in bbox[:4])
+        for bbox in (block.get('line_bboxes') or [])
+        if isinstance(bbox, (list, tuple)) and len(bbox) >= 4
+    ]
+    if len(text_lines) < 2 or len(text_lines) != len(line_bboxes):
+        return [block]
+
+    line_heights = [max(0.0, bbox[3] - bbox[1]) for bbox in line_bboxes]
+    typical_line_height = statistics.median(line_heights) if line_heights else 0.0
+    if typical_line_height <= 0:
+        return [block]
+    # Two consecutive lines in the same paragraph are typically <= ~1.6x line
+    # height apart (top-to-top). A gap (bottom-of-prev to top-of-next) larger
+    # than ~2.5x typical line height is essentially never wrapped paragraph
+    # leading and signals the block has absorbed unrelated text.
+    gap_threshold = max(typical_line_height * 2.5, 24.0)
+
+    segments = []
+    current_segment = [0]
+    split_detected = False
+
+    for index in range(1, len(line_bboxes)):
+        prev_bottom = line_bboxes[index - 1][3]
+        next_top = line_bboxes[index][1]
+        vertical_gap = next_top - prev_bottom
+        if vertical_gap > gap_threshold:
+            segments.append(current_segment)
+            current_segment = [index]
+            split_detected = True
+        else:
+            current_segment.append(index)
+
+    if current_segment:
+        segments.append(current_segment)
+
+    if not split_detected or len(segments) <= 1:
+        return [block]
+
+    return _build_split_blocks_from_line_segments(block, text_lines, line_bboxes, segments)
+
+
 def _split_block_for_standalone_list_markers_and_callouts(block, horizontal_lines=None):
     if not isinstance(block, dict):
         return [block] if block else []
@@ -2836,12 +2895,13 @@ def _split_blocks_on_list_marker_callouts(page_blocks, page_words, page_lines, h
         horizontally_split_blocks = _split_block_on_horizontal_barriers(block, horizontal_lines=horizontal_lines)
         split_blocks = []
         for candidate_block in horizontally_split_blocks:
-            split_blocks.extend(
-                _split_block_for_standalone_list_markers_and_callouts(
-                    candidate_block,
-                    horizontal_lines=horizontal_lines,
+            for vgap_block in _split_block_on_large_vertical_gaps(candidate_block):
+                split_blocks.extend(
+                    _split_block_for_standalone_list_markers_and_callouts(
+                        vgap_block,
+                        horizontal_lines=horizontal_lines,
+                    )
                 )
-            )
         if len(split_blocks) <= 1:
             new_block = dict(block)
             new_block['block_num'] = len(new_blocks)
