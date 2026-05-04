@@ -52,7 +52,12 @@ const schema = new Schema({
                 // editable text -- but keep the original line's font
                 // family/size/weight/style/color and text-align so the
                 // editor visually matches the source.
+                //
+                // Preserve the source line's horizontal `left` offset as
+                // padding-left so centered/indented lines keep their
+                // visual alignment when we drop absolute positioning.
                 const parts = ['display:block', 'margin:0', 'padding:0', 'white-space:pre-wrap'];
+                if (a.left) parts.push('padding-left:' + a.left);
                 if (a.fontFamily) parts.push('font-family:' + a.fontFamily);
                 if (a.fontSize) parts.push('font-size:' + a.fontSize);
                 parts.push('font-weight:' + (a.fontWeight || '400'));
