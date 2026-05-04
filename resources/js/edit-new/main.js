@@ -3268,12 +3268,19 @@ import {
         const lines = renderableSourceLines(ann);
         if (!lines.length) return '';
         // The rich path renders directly from sourceSpans and IGNORES the
-        // `text` parameter. So it can only be used when `text` is still
-        // pristine — i.e. equals the annotation's stored text. The moment
-        // the user types, `text` diverges and we MUST fall back to the
-        // plain renderer (which honors `text` literally) or the user's
-        // edits would be silently overwritten by the source on every input.
-        if (String(text ?? '') !== String(ann?.text ?? '')) return '';
+        // `text` parameter. So it can only be used when the annotation's
+        // text is still pristine — i.e. matches the original extraction.
+        // Once the user edits, ann.text diverges from originalText and we
+        // MUST fall back to the plain renderer (which honors `text`
+        // literally) or the user's edits would be silently overwritten by
+        // the source on every input. NB: comparing against ann.text is
+        // wrong here because ann.text ITSELF is the edited value -- it
+        // would always tautologically match the editedTexts[uid] copy
+        // passed in via `text`, leaving the rich-from-spans path
+        // mistakenly active long after the text was edited away (the
+        // "deleted text comes back as duplicated original" bug on
+        // promoted annotations).
+        if (typeof annTextIsEdited === 'function' && annTextIsEdited(ann)) return '';
         let hasAnySpan = false;
         for (const line of lines) {
             if (Array.isArray(line.spans) && line.spans.length) { hasAnySpan = true; break; }
@@ -9779,6 +9786,22 @@ import {
                     hydrated.annotation_data.userAuthored = true;
                     hydrated.annotation_data.promotedDirty = true;
                 }
+                // Also drop any persisted rich-html: the rich-html-layer
+                // uses _richHtml verbatim (renderRichHtmlLayer line ~2261)
+                // when set, ignoring ann.text. If the saved richTextHtml
+                // still mirrors the original extracted text (because it
+                // was captured before flushActiveEditorState learned to
+                // sync), the DOM layer paints the OLD text on top of the
+                // PDF and the user's actual edit (ann.text) never appears.
+                // Strip rich-html on this divergence so the layer falls
+                // through to the `editedTexts[uid] ?? ann.text` branch.
+                hydrated._richHtml = null;
+                if (hydrated.annotation_data && typeof hydrated.annotation_data === 'object') {
+                    hydrated.annotation_data.richTextHtml = null;
+                    hydrated.annotation_data.richHtml = null;
+                }
+                hydrated.richTextHtml = null;
+                hydrated.richHtml = null;
             })();
             // Heal bloated pdfHeight on promoted-extraction annotations whose
             // text still matches the original source. This corrects already-
