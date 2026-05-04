@@ -9,6 +9,7 @@
  */
 
 import { CSRF, INFO_URL, SAVE_URL, DOWNLOAD_URL, DOC_ID } from './config.js';
+import { mountProseMirrorSourceEditor } from './editor/prosemirror-source-editor.js';
 import {
     fetchDocumentInfo,
     saveAnnotations,
@@ -8653,6 +8654,27 @@ import {
         // galley/source per-line blocks reflow naturally in the modal.
         host.innerHTML = preview.innerHTML;
 
+        // For source-exact previews, swap the raw contenteditable host for
+        // a ProseMirror editor that preserves per-character font/size/
+        // weight/style/color and per-line absolute coordinates from the
+        // captured HTML, while giving native caret + Enter/Backspace
+        // behaviour. The PM instance owns its own DOM under `host`; we
+        // expose `host._pmEditor` so the save handler can pull line texts
+        // through getLineTexts() instead of re-parsing the DOM.
+        let pmEditor = null;
+        if (sourceExactPreview) {
+            try {
+                pmEditor = mountProseMirrorSourceEditor(host, preview.innerHTML);
+                host._pmEditor = pmEditor;
+            } catch (err) {
+                // Fall back to the raw contenteditable surface if PM fails
+                // to construct (e.g. malformed source HTML).
+                host.innerHTML = preview.innerHTML;
+                pmEditor = null;
+                if (typeof console !== 'undefined') console.warn('[dbg-modal] PM mount failed, falling back to contenteditable', err);
+            }
+        }
+
         // Graceful deletion of contenteditable=false markers / kerning
         // spacers: when the user presses Backspace at the start of an
         // editable text node and the previous DOM neighbor is a non-
@@ -8723,7 +8745,10 @@ import {
         // Enter inside that structure produces no visible feedback. Insert
         // a real <br> at the caret so the user sees the break immediately;
         // extractSourceExactLineTexts splits the line on <br> at save time.
+        // Skip when the host is owned by ProseMirror (its own keymap
+        // handles Enter as splitBlock with proper selection updates).
         host.addEventListener('keydown', (ev) => {
+            if (host._pmEditor) return;
             if (ev.key !== 'Enter' || ev.shiftKey || ev.ctrlKey || ev.metaKey || ev.altKey) return;
             const sel = window.getSelection();
             if (!sel || sel.rangeCount === 0) return;
@@ -8783,7 +8808,13 @@ import {
             });
         });
 
-        const close = () => overlay.remove();
+        const close = () => {
+            if (host && host._pmEditor && typeof host._pmEditor.destroy === 'function') {
+                try { host._pmEditor.destroy(); } catch (_e) {}
+                host._pmEditor = null;
+            }
+            overlay.remove();
+        };
         overlay.querySelector('.dbg-modal-backdrop').addEventListener('click', close);
         overlay.querySelector('.dbg-modal-close').addEventListener('click', close);
         document.addEventListener('keydown', function esc(ev) {
@@ -8830,7 +8861,9 @@ import {
                     let newText;
                     let sourceExactSaved = false;
                     if (_isSourceExactMode) {
-                        const lineTexts = extractSourceExactLineTexts(host);
+                        const lineTexts = (host._pmEditor && typeof host._pmEditor.getLineTexts === 'function')
+                            ? host._pmEditor.getLineTexts()
+                            : extractSourceExactLineTexts(host);
                         newText = lineTexts.join('\n');
                         if (lineTexts.length) {
                             newText = applySourceExactTextEdit(targetAnn, lineTexts);
