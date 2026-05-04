@@ -876,15 +876,19 @@
             background: #f8fafc;
             border-radius: 8px;
             padding: 16px;
-            min-height: 60px;
-            max-height: 320px;
+            min-height: 320px;
+            max-height: 70vh;
             overflow: auto;
             color: #111;
             border: 1px solid rgba(255,255,255,0.05);
+            display: block;
+            width: 100%;
+            box-sizing: border-box;
         }
         #dbg-editor-modal .dbg-live-host {
-            display: inline-block;
+            display: block;
             min-width: 1px;
+            width: 100%;
         }
         /* Universal preview-mode overrides — the live editor uses transforms
          * (translateY for line baselines), absolute positioning, and negative
