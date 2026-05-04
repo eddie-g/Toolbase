@@ -284,5 +284,60 @@ export function mountProseMirrorSourceEditor(host, sourceHTML, opts = {}) {
             });
             return out;
         },
+        // Per-line list of segments, each carrying the text plus the
+        // pdfRun mark attrs (fontFamily/fontSize/fontWeight/fontStyle/
+        // color). Save path uses this to update the matching original
+        // sourceSpan in place when the segment shape is unchanged,
+        // preserving per-span formatting (bold, link colors, etc.).
+        // Splits emit a new line entry on hard_break, mirroring
+        // getLineTexts.
+        getLineSegments() {
+            const out = [];
+            const flush = (segs) => {
+                out.push(segs.map((s) => ({
+                    text: String(s.text).replace(/\u00a0/g, ' '),
+                    fontFamily: s.attrs.fontFamily || '',
+                    fontSize: s.attrs.fontSize || '',
+                    fontWeight: s.attrs.fontWeight || '400',
+                    fontStyle: s.attrs.fontStyle || 'normal',
+                    color: s.attrs.color || '#000',
+                })));
+            };
+            view.state.doc.forEach((lineNode) => {
+                if (lineNode.type !== schema.nodes.line) return;
+                let segs = [];
+                lineNode.content.forEach((child) => {
+                    if (child.type === schema.nodes.hard_break) {
+                        flush(segs);
+                        segs = [];
+                    } else if (child.isText) {
+                        const mark = (child.marks || []).find((m) => m.type === schema.marks.pdfRun);
+                        const attrs = mark ? mark.attrs : {};
+                        const last = segs[segs.length - 1];
+                        if (last
+                            && last.attrs.fontFamily === (attrs.fontFamily || '')
+                            && last.attrs.fontSize === (attrs.fontSize || '')
+                            && last.attrs.fontWeight === (attrs.fontWeight || '400')
+                            && last.attrs.fontStyle === (attrs.fontStyle || 'normal')
+                            && last.attrs.color === (attrs.color || '#000')) {
+                            last.text += child.text;
+                        } else {
+                            segs.push({
+                                text: child.text,
+                                attrs: {
+                                    fontFamily: attrs.fontFamily || '',
+                                    fontSize: attrs.fontSize || '',
+                                    fontWeight: attrs.fontWeight || '400',
+                                    fontStyle: attrs.fontStyle || 'normal',
+                                    color: attrs.color || '#000',
+                                },
+                            });
+                        }
+                    }
+                });
+                flush(segs);
+            });
+            return out;
+        },
     };
 }

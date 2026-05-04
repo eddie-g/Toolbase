@@ -2593,7 +2593,7 @@ import {
         return out;
     }
 
-    function applySourceExactTextEdit(ann, lineTexts) {
+    function applySourceExactTextEdit(ann, lineTexts, lineSegments) {
         if (!ann || !Array.isArray(lineTexts) || !lineTexts.length) return '';
         const normalizedLines = lineTexts.map((line) => String(line ?? '').replace(/\r\n?/g, '\n'));
         // IMPORTANT: do NOT use renderableSourceLines() here. Its cache
@@ -2605,6 +2605,7 @@ import {
         // Resolve line→spans afresh from the live arrays.
         const liveSpans = Array.isArray(ann.sourceSpans) ? ann.sourceSpans : [];
         const liveBBoxes = Array.isArray(ann.sourceLineBBoxes) ? ann.sourceLineBBoxes : [];
+        const segmentsArr = Array.isArray(lineSegments) ? lineSegments : null;
         normalizedLines.forEach((lineText, lineIndex) => {
             const lineBBox = liveBBoxes[lineIndex] || null;
             const matchedSpans = lineBBox
@@ -2613,17 +2614,33 @@ import {
             const firstSpan = matchedSpans[0] || null;
             if (!firstSpan) return;
 
-            setSourceSpanText(firstSpan, lineText);
+            // Per-segment update path: when PM provides one segment per
+            // original span (the common case for inline edits that don't
+            // restructure formatting boundaries), write each segment's
+            // text into its corresponding span so per-span attributes
+            // (bold, italic, link colors, embedded fonts) survive the
+            // edit. Fall back to the legacy "dump everything into the
+            // first span and empty the rest" behaviour when the segment
+            // and span counts diverge (e.g. user typed across a format
+            // boundary), since we can't safely realign without changing
+            // the span schema.
+            const segs = segmentsArr ? segmentsArr[lineIndex] : null;
+            if (segs && segs.length === matchedSpans.length && matchedSpans.length > 0) {
+                segs.forEach((seg, i) => {
+                    setSourceSpanText(matchedSpans[i], String(seg.text ?? ''));
+                });
+            } else {
+                setSourceSpanText(firstSpan, lineText);
+                for (let i = 1; i < matchedSpans.length; i++) {
+                    setSourceSpanText(matchedSpans[i], '');
+                }
+            }
 
             if (lineBBox && lineBBox.length >= 4) {
                 firstSpan.bbox = lineBBox.slice(0, 4);
                 if (Array.isArray(firstSpan.origin) && firstSpan.origin.length >= 2) {
                     firstSpan.origin = [Number(lineBBox[0]), Number(firstSpan.origin[1])];
                 }
-            }
-
-            for (let i = 1; i < matchedSpans.length; i++) {
-                setSourceSpanText(matchedSpans[i], '');
             }
         });
 
@@ -8864,9 +8881,12 @@ import {
                         const lineTexts = (host._pmEditor && typeof host._pmEditor.getLineTexts === 'function')
                             ? host._pmEditor.getLineTexts()
                             : extractSourceExactLineTexts(host);
+                        const lineSegments = (host._pmEditor && typeof host._pmEditor.getLineSegments === 'function')
+                            ? host._pmEditor.getLineSegments()
+                            : null;
                         newText = lineTexts.join('\n');
                         if (lineTexts.length) {
-                            newText = applySourceExactTextEdit(targetAnn, lineTexts);
+                            newText = applySourceExactTextEdit(targetAnn, lineTexts, lineSegments);
                             sourceExactSaved = true;
                         }
                     } else if (_isPositionedMode) {
