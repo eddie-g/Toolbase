@@ -5967,7 +5967,9 @@ import {
         if (!ann) return;
 
         const annotationId = String(ann.id || '').trim();
-        const promotedSourceKey = ann.promotedFromExtraction ? String(ann.promotedSourceKey || '').trim() : '';
+        const promotedSourceKey = annIsPromotedFromExtraction(ann)
+            ? String(ann.promotedSourceKey || ann.annotation_data?.promotedSourceKey || '').trim()
+            : '';
         const data = pageData[pi];
         if (!data) return;
 
@@ -6098,7 +6100,9 @@ import {
         if (index < 0) return { ok: false, message: 'Selected shape no longer exists.' };
 
         const annotationId = String(ann.id || '').trim();
-        const promotedSourceKey = ann.promotedFromExtraction ? String(ann.promotedSourceKey || '').trim() : '';
+        const promotedSourceKey = annIsPromotedFromExtraction(ann)
+            ? String(ann.promotedSourceKey || ann.annotation_data?.promotedSourceKey || '').trim()
+            : '';
         pushUndo();
         if (annotationId) pendingDeletedAnnotationIds.add(annotationId);
         if (promotedSourceKey) pendingDeletedPromotedSourceKeys.add(promotedSourceKey);
@@ -7450,6 +7454,7 @@ import {
                 if (sourceAwareRenderMode) {
                     clearSourceExactFlagsForPlainTextEdit(ann);
                     delete ann._richHtml;
+                    e.currentTarget.dataset.renderMode = 'plain';
                 }
                 const selection = getEditorSelectionOffsets(e.currentTarget);
                 e.currentTarget.innerHTML = renderPlainEditorHTML(ann, nextText, data.scale);
@@ -7598,6 +7603,7 @@ import {
                     markUserAuthored(ann);
                     clearSourceExactFlagsForPlainTextEdit(ann);
                     delete ann._richHtml;
+                    ae.dataset.renderMode = 'plain';
                 }
                 editedTexts[ann._uid] = nextText;
                 resizeAnnotationForEditedText(ann, nextText, pi);
@@ -7647,6 +7653,7 @@ import {
                     markUserAuthored(ann);
                     clearSourceExactFlagsForPlainTextEdit(ann);
                     delete ann._richHtml;
+                    ae.dataset.renderMode = 'plain';
                 }
                 editedTexts[ann._uid] = nextText;
                 resizeAnnotationForEditedText(ann, nextText, pi);
@@ -9733,6 +9740,46 @@ import {
                             ? hydrated.annotation_data.richHtml
                             : null)));
             if (savedRichHtml && richHtmlHasInlineSelectionFormatting(savedRichHtml)) hydrated._richHtml = savedRichHtml;
+            // Heal stale source-exact layout flags on hydration: if the
+            // persisted `text` no longer matches what the per-span source
+            // layout would render (i.e. concatenating sourceSpans' text),
+            // the flags lie. Painting from those spans (drawOriginalSource)
+            // would render the ORIGINAL extracted text on top of the user's
+            // edited replacement -- the "deleted text comes back" bug from
+            // doc 4001 promoted_1_22_59 / promoted_1_9_38. This corrects
+            // payloads saved before flushActiveEditorState learned to
+            // clear the flags itself.
+            (() => {
+                const flagsSet = !!(
+                    hydrated.preserveSourceLayout
+                    || hydrated.sourceExactTextEdited
+                    || hydrated._sourceExactTextEdited
+                );
+                if (!flagsSet) return;
+                const spans = Array.isArray(hydrated.sourceSpans) ? hydrated.sourceSpans : [];
+                if (!spans.length) return;
+                const norm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+                const spanText = norm(spans.map((sp) => String(sp?.text ?? sp?.render_text ?? '')).join(' '));
+                const persistedText = norm(hydrated.text);
+                if (!spanText || !persistedText) return;
+                if (spanText === persistedText) return;
+                // Texts diverge -- the per-span layout no longer represents
+                // the saved annotation. Drop the flags so the renderer falls
+                // through to the edited-text reflow path.
+                hydrated.preserveSourceLayout = false;
+                hydrated.sourceExactTextEdited = false;
+                hydrated._sourceExactTextEdited = false;
+                if (hydrated.annotation_data && typeof hydrated.annotation_data === 'object') {
+                    hydrated.annotation_data.preserveSourceLayout = false;
+                    hydrated.annotation_data.sourceExactTextEdited = false;
+                }
+                hydrated._userAuthored = true;
+                hydrated.promotedDirty = true;
+                if (hydrated.annotation_data && typeof hydrated.annotation_data === 'object') {
+                    hydrated.annotation_data.userAuthored = true;
+                    hydrated.annotation_data.promotedDirty = true;
+                }
+            })();
             // Heal bloated pdfHeight on promoted-extraction annotations whose
             // text still matches the original source. This corrects already-
             // persisted bad geometry left over from prior buggy auto-grow paths
