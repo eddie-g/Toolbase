@@ -2566,14 +2566,30 @@ import {
     function extractSourceExactLineTexts(host) {
         if (!(host instanceof HTMLElement)) return [];
         const lines = Array.from(host.querySelectorAll(':scope > [data-line-index]'));
-        return lines.map((lineEl) => {
+        const out = [];
+        lines.forEach((lineEl) => {
             const contentEl = lineEl.querySelector('[data-line-content="1"]') || lineEl;
             const clone = contentEl.cloneNode(true);
             if (clone instanceof HTMLElement) {
                 clone.querySelectorAll('[data-source-gap]').forEach((gap) => gap.remove());
             }
-            return String(clone.textContent || '').replace(/\u00a0/g, ' ').trim();
+            // Translate explicit user-inserted line breaks (<br>) into
+            // separate lines so Enter inside the debug modal serialises to
+            // a real \n on save. Without this, textContent collapses <br>
+            // to nothing and the new line is silently dropped.
+            const html = (clone instanceof HTMLElement ? clone.innerHTML : '')
+                .replace(/<br\s*\/?\s*>/gi, '\n');
+            const tmp = document.createElement('div');
+            tmp.innerHTML = html;
+            const text = String(tmp.textContent || '').replace(/\u00a0/g, ' ').replace(/\u200b/g, '');
+            const segments = text.split('\n');
+            if (segments.length === 1) {
+                out.push(segments[0].trim());
+            } else {
+                segments.forEach((seg) => out.push(seg.trim()));
+            }
         });
+        return out;
     }
 
     function applySourceExactTextEdit(ann, lineTexts) {
@@ -8701,50 +8717,35 @@ import {
             }
         });
 
-        // Enter handler: the host's children in positioned render modes
-        // (source-exact / source / galley / canvas) are top-level
-        // [data-line-index] blocks with absolutely positioned content
-        // inside [data-line-content="1"]. The browser default for Enter in
-        // a positioned span produces no visible feedback, so users see
-        // "nothing happens". Intercept Enter and split the current line
-        // block into two top-level siblings, both carrying the same
-        // data-line-index so extractSourceExactLineTexts emits both halves.
+        // Enter handler: in positioned render modes the host's children are
+        // top-level [data-line-index] blocks containing an absolutely
+        // positioned [data-line-content="1"] span. The browser default for
+        // Enter inside that structure produces no visible feedback. Insert
+        // a real <br> at the caret so the user sees the break immediately;
+        // extractSourceExactLineTexts splits the line on <br> at save time.
         host.addEventListener('keydown', (ev) => {
             if (ev.key !== 'Enter' || ev.shiftKey || ev.ctrlKey || ev.metaKey || ev.altKey) return;
             const sel = window.getSelection();
             if (!sel || sel.rangeCount === 0) return;
             const range = sel.getRangeAt(0);
             if (!host.contains(range.startContainer)) return;
-            // Find the enclosing top-level [data-line-index] block.
-            let block = range.startContainer;
-            if (block.nodeType !== Node.ELEMENT_NODE) block = block.parentNode;
-            while (block && block !== host && !(block.parentNode === host && block.hasAttribute && block.hasAttribute('data-line-index'))) {
-                block = block.parentNode;
-            }
-            if (!block || block === host) return;
-            const contentEl = block.querySelector('[data-line-content="1"]');
-            if (!contentEl || !contentEl.contains(range.startContainer)) return;
+            // Only intercept inside a [data-line-content="1"] span; let the
+            // browser handle Enter normally elsewhere.
+            let ctx = range.startContainer;
+            if (ctx.nodeType !== Node.ELEMENT_NODE) ctx = ctx.parentNode;
+            const contentEl = ctx && ctx.closest && ctx.closest('[data-line-content="1"]');
+            if (!contentEl) return;
             ev.preventDefault();
             ev.stopPropagation();
             if (!range.collapsed) range.deleteContents();
-            // Split contentEl at the caret. Range.extractContents on a range
-            // covering caret-to-end of contentEl yields a fragment we can
-            // place in a clone of the line block.
-            const tail = range.cloneRange();
-            tail.setEnd(contentEl, contentEl.childNodes.length);
-            const tailFrag = tail.extractContents();
-            const blockClone = block.cloneNode(false);
-            const contentClone = contentEl.cloneNode(false);
-            blockClone.appendChild(contentClone);
-            contentClone.appendChild(tailFrag);
-            // Ensure both halves are non-empty so they keep height.
-            if (!contentEl.textContent) contentEl.appendChild(document.createElement('br'));
-            if (!contentClone.textContent) contentClone.appendChild(document.createElement('br'));
-            block.parentNode.insertBefore(blockClone, block.nextSibling);
-            // Place caret at the start of the new block's content.
+            const br = document.createElement('br');
+            range.insertNode(br);
+            // Trailing zero-width text node so the caret can sit AFTER the
+            // <br> (browsers refuse to place a caret after a trailing <br>).
+            const trailing = document.createTextNode('\u200b');
+            if (br.parentNode) br.parentNode.insertBefore(trailing, br.nextSibling);
             const after = document.createRange();
-            const target = contentClone.firstChild || contentClone;
-            after.setStart(target, 0);
+            after.setStart(trailing, 1);
             after.collapse(true);
             sel.removeAllRanges();
             sel.addRange(after);
