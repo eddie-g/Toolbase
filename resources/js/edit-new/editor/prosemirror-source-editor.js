@@ -47,31 +47,21 @@ const schema = new Schema({
             },
             toDOM(node) {
                 const a = node.attrs;
-                const wrapperParts = ['display:block', 'position:absolute'];
-                if (a.left) wrapperParts.push('left:' + a.left);
-                if (a.top) wrapperParts.push('top:' + a.top);
-                if (a.width) wrapperParts.push('width:' + a.width);
-                if (a.height) wrapperParts.push('min-height:' + a.height);
-                if (a.lineHeight) wrapperParts.push('line-height:' + a.lineHeight);
-                if (a.fontFamily) wrapperParts.push('font-family:' + a.fontFamily);
-                if (a.fontSize) wrapperParts.push('font-size:' + a.fontSize);
-                wrapperParts.push('font-weight:' + (a.fontWeight || '400'));
-                wrapperParts.push('font-style:' + (a.fontStyle || 'normal'));
-                wrapperParts.push('color:' + (a.color || '#000'));
-                wrapperParts.push('text-align:' + (a.textAlign || 'left'));
-                if (a.transform) wrapperParts.push('transform:' + a.transform);
-                wrapperParts.push('transform-origin:top left');
-                wrapperParts.push('padding:0', 'margin:0', 'overflow:visible');
-                wrapperParts.push('white-space:normal');
-                const contentParts = ['display:inline-block', 'width:max-content', 'min-width:max-content'];
-                if (a.contentTransform) contentParts.push('transform:' + a.contentTransform);
-                contentParts.push('transform-origin:top left');
-                contentParts.push('white-space:pre');
-                contentParts.push('padding:0', 'margin:0');
+                // Render lines as plain blocks. We deliberately do NOT
+                // emit position:absolute / transforms / per-line wrappers
+                // here -- the model still carries those attrs for save
+                // time, but the editor surface is just text so the user
+                // sees and edits actual text, not a stack of overlapping
+                // boxes. Inherit font from the host so each line still
+                // looks reasonable while editing.
                 return [
                     'div',
-                    { 'data-line-index': String(a.lineIndex || ''), style: wrapperParts.join(';') },
-                    ['span', { 'data-line-content': '1', style: contentParts.join(';') }, 0],
+                    {
+                        'data-line-index': String(a.lineIndex || ''),
+                        class: 'pm-line',
+                        style: 'display:block;margin:0;padding:0;white-space:pre-wrap;',
+                    },
+                    0,
                 ];
             },
         },
@@ -94,14 +84,11 @@ const schema = new Schema({
                 color: { default: '#000' },
             },
             toDOM(mark) {
-                const a = mark.attrs;
-                const parts = ['white-space:pre'];
-                if (a.fontFamily) parts.push('font-family:' + a.fontFamily);
-                if (a.fontSize) parts.push('font-size:' + a.fontSize);
-                parts.push('font-weight:' + (a.fontWeight || '400'));
-                parts.push('font-style:' + (a.fontStyle || 'normal'));
-                parts.push('color:' + (a.color || '#000'));
-                return ['span', { style: parts.join(';') }, 0];
+                // Marks carry per-character font/size/weight/style/color
+                // for round-trip into applySourceExactTextEdit, but the
+                // editor surface itself is plain text -- no per-span
+                // styling so the user sees readable, uniform text.
+                return ['span', {}, 0];
             },
         },
     },
@@ -225,7 +212,10 @@ export function mountProseMirrorSourceEditor(host, sourceHTML, opts = {}) {
     });
     const view = new EditorView(host, {
         state,
-        attributes: { class: 'pm-source-exact-editor' },
+        attributes: {
+            class: 'pm-source-exact-editor',
+            style: 'font-family:system-ui,Arial,sans-serif;font-size:14px;color:#000;background:#fff;padding:8px;min-height:120px;outline:none;white-space:pre-wrap;line-height:1.4;',
+        },
     });
     return {
         view,
