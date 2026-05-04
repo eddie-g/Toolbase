@@ -21,7 +21,7 @@ import { EditorState } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { Schema } from 'prosemirror-model';
 import { keymap } from 'prosemirror-keymap';
-import { baseKeymap, splitBlock } from 'prosemirror-commands';
+import { baseKeymap } from 'prosemirror-commands';
 import { history, undo, redo } from 'prosemirror-history';
 
 const schema = new Schema({
@@ -47,19 +47,25 @@ const schema = new Schema({
             },
             toDOM(node) {
                 const a = node.attrs;
-                // Render lines as plain blocks. We deliberately do NOT
-                // emit position:absolute / transforms / per-line wrappers
-                // here -- the model still carries those attrs for save
-                // time, but the editor surface is just text so the user
-                // sees and edits actual text, not a stack of overlapping
-                // boxes. Inherit font from the host so each line still
-                // looks reasonable while editing.
+                // Render lines as plain block divs (NO position:absolute
+                // and NO per-line transforms) so the user sees stacked,
+                // editable text -- but keep the original line's font
+                // family/size/weight/style/color and text-align so the
+                // editor visually matches the source.
+                const parts = ['display:block', 'margin:0', 'padding:0', 'white-space:pre-wrap'];
+                if (a.fontFamily) parts.push('font-family:' + a.fontFamily);
+                if (a.fontSize) parts.push('font-size:' + a.fontSize);
+                parts.push('font-weight:' + (a.fontWeight || '400'));
+                parts.push('font-style:' + (a.fontStyle || 'normal'));
+                parts.push('color:' + (a.color || '#000'));
+                parts.push('text-align:' + (a.textAlign || 'left'));
+                if (a.lineHeight) parts.push('line-height:' + a.lineHeight);
                 return [
                     'div',
                     {
                         'data-line-index': String(a.lineIndex || ''),
                         class: 'pm-line',
-                        style: 'display:block;margin:0;padding:0;white-space:pre-wrap;',
+                        style: parts.join(';'),
                     },
                     0,
                 ];
@@ -84,11 +90,14 @@ const schema = new Schema({
                 color: { default: '#000' },
             },
             toDOM(mark) {
-                // Marks carry per-character font/size/weight/style/color
-                // for round-trip into applySourceExactTextEdit, but the
-                // editor surface itself is plain text -- no per-span
-                // styling so the user sees readable, uniform text.
-                return ['span', {}, 0];
+                const a = mark.attrs;
+                const parts = [];
+                if (a.fontFamily) parts.push('font-family:' + a.fontFamily);
+                if (a.fontSize) parts.push('font-size:' + a.fontSize);
+                if (a.fontWeight) parts.push('font-weight:' + a.fontWeight);
+                if (a.fontStyle) parts.push('font-style:' + a.fontStyle);
+                if (a.color) parts.push('color:' + a.color);
+                return ['span', { style: parts.join(';') }, 0];
             },
         },
     },
@@ -205,8 +214,12 @@ export function mountProseMirrorSourceEditor(host, sourceHTML, opts = {}) {
                 'Mod-z': undo,
                 'Mod-y': redo,
                 'Mod-Shift-z': redo,
-                'Enter': splitBlock,
             }),
+            // baseKeymap's Enter is a chain that handles caret/selection
+            // correctly: newlineInCode -> createParagraphNear ->
+            // liftEmptyBlock -> splitBlock. Using just splitBlock leaves
+            // the caret in the wrong place when splitting at the very
+            // start/end of a block.
             keymap(baseKeymap),
         ],
     });
@@ -214,7 +227,9 @@ export function mountProseMirrorSourceEditor(host, sourceHTML, opts = {}) {
         state,
         attributes: {
             class: 'pm-source-exact-editor',
-            style: 'font-family:system-ui,Arial,sans-serif;font-size:14px;color:#000;background:#fff;padding:8px;min-height:120px;outline:none;white-space:pre-wrap;line-height:1.4;',
+            // Neutral host -- per-line and per-mark spans below provide
+            // the actual font/size/weight/color from the source.
+            style: 'background:#fff;padding:8px;min-height:120px;outline:none;color:#000;',
         },
     });
     return {
