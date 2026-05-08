@@ -32,19 +32,29 @@ export function normalizeAcroWidget(annotation, pageNumber) {
     if (fieldType === 'BTN' && !checkBox && !radioButton) return null;
     if (fieldType === 'SIG') return null;
 
+    const value = dbEntry?.value ?? annotation?.fieldValue ?? '';
+    const readOnly = Boolean(annotation?.readOnly);
+
+    // Skip read-only widgets that have no value — these render as empty,
+    // non-editable blue rectangles that "do nothing" (they're typically
+    // internal control fields in form templates, e.g. SS-5's
+    // P1_First_FLD / P1_second_FLD which are 10×13pt readOnly empty
+    // text fields the form designer used as XFA / scripting anchors).
+    if (readOnly && fieldType !== 'BTN' && String(value).trim() === '') return null;
+
     return {
         key: fieldKey || `acro-${pageNumber}-${Math.random().toString(36).slice(2)}`,
         pageIndex: pageNumber - 1,
         fieldName: String(dbEntry?.fieldName || annotation?.fieldName || fieldKey || '').trim(),
         fieldType,
-        value: dbEntry?.value ?? annotation?.fieldValue ?? '',
+        value: value,
         exportValue: String(dbEntry?.exportValue || annotation?.exportValue || '').trim(),
         checkBox,
         radioButton,
         combo: Boolean(dbEntry?.combo ?? annotation?.combo),
         multiLine: Boolean(dbEntry?.multiLine ?? annotation?.multiLine),
         multiSelect: Boolean(dbEntry?.multiSelect ?? annotation?.multiSelect),
-        readOnly: Boolean(annotation?.readOnly),
+        readOnly: readOnly,
         textColor: normalizeAcroTextColor(
             dbEntry?.textColor
             ?? annotation?.textColor

@@ -55,6 +55,10 @@ export function isTextAnnotation(ann) {
     return !isBoxAnnotation(ann);
 }
 
+export function isHiddenPdfjsAnnotation(ann) {
+    return Boolean(ann?.pdfjsDeleted) && !String(ann?.text ?? '').trim();
+}
+
 export function isAnnotationLocked(ann) {
     return Boolean(ann?.locked);
 }

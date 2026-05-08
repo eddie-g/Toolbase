@@ -1,0 +1,85 @@
+/* edit-pdfjs spike — minimal styles. */
+:root {
+    --bg: #f5f5f7;
+    --panel: #fff;
+    --border: #d0d0d4;
+    --accent: #2563eb;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg); font-family: system-ui, sans-serif; }
+header.epj-topbar {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+}
+header.epj-topbar h1 { margin: 0; font-size: 14px; font-weight: 600; }
+header.epj-topbar .epj-spacer { flex: 1; }
+header.epj-topbar button {
+    padding: 6px 12px; border: 1px solid var(--border); background: #fff;
+    border-radius: 6px; cursor: pointer; font-size: 13px;
+}
+header.epj-topbar button.epj-primary {
+    background: var(--accent); color: #fff; border-color: var(--accent);
+}
+header.epj-topbar button:disabled { opacity: 0.5; cursor: not-allowed; }
+#epj-status { font-size: 12px; color: #666; min-width: 200px; }
+
+#epj-pages { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 16px; }
+.epj-page {
+    position: relative;
+    background: #fff;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+}
+.epj-page canvas { display: block; }
+
+/* Selectable text-run overlay layer (over the canvas). */
+.epj-textlayer {
+    position: absolute; inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+}
+.epj-textlayer .epj-run {
+    position: absolute;
+    cursor: text;
+    pointer-events: auto;
+    color: transparent;
+    user-select: text;
+    transform-origin: 0 0;
+    white-space: pre;
+    font-family: sans-serif; /* placeholder; we set inline per-run if needed */
+}
+.epj-textlayer .epj-run:hover {
+    background: rgba(37, 99, 235, 0.12);
+    outline: 1px dashed rgba(37,99,235,0.6);
+}
+.epj-textlayer .epj-run.epj-editing {
+    background: #fff;
+    color: #000;
+    outline: 2px solid var(--accent);
+    z-index: 5;
+}
+
+#epj-edit-bar {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    background: #fff; border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    display: none; gap: 8px; align-items: center;
+    z-index: 100; min-width: 420px;
+}
+#epj-edit-bar.epj-visible { display: flex; }
+#epj-edit-bar input {
+    flex: 1; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+    font-size: 14px;
+}
+#epj-edit-bar .epj-orig {
+    font-size: 11px; color: #666; max-width: 220px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.epj-error {
+    position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+    background: #fee; border: 1px solid #f99; color: #900;
+    padding: 12px 16px; border-radius: 8px; z-index: 200;
+    max-width: 80vw; font-size: 13px;
+}

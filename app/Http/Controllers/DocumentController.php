@@ -13,6 +13,7 @@ use App\Support\PdfAnnotationSuppression;
 use App\Models\User;
 use App\Models\UserActivity;
 use App\Models\UserPdfMonthlyUsage;
+use App\Http\Controllers\PdfTestController;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -413,9 +414,14 @@ class DocumentController extends Controller
     private function resolvePythonBinaryForPdfEditor(?string $requiredModule = null): string
     {
         $candidates = array_values(array_unique([
+            base_path('.venv/bin/python'),
+            base_path('venv/bin/python'),
+            base_path('.venv/Scripts/python.exe'),
+            base_path('venv/Scripts/python.exe'),
+            base_path('python/venv/bin/python'),
+            base_path('python/venv/Scripts/python.exe'),
             '/usr/bin/python3',
             'python3',
-            base_path('python/venv/bin/python'),
         ]));
 
         foreach ($candidates as $candidate) {
@@ -795,6 +801,36 @@ class DocumentController extends Controller
             && trim((string) ($annotation['promotedSourceKey'] ?? '')) !== '';
     }
 
+    private function annotationFlagIsTruthy(array $annotation, string $key): bool
+    {
+        return filter_var($annotation[$key] ?? false, FILTER_VALIDATE_BOOLEAN);
+    }
+
+    private function isPdfjsVisibleExportAnnotation(array $annotation): bool
+    {
+        $type = strtolower(trim((string) ($annotation['type'] ?? '')));
+        if (!in_array($type, ['text', 'image', 'signature'], true)) {
+            return false;
+        }
+        $state = strtolower(trim((string) ($annotation['db_state'] ?? $annotation['state'] ?? '')));
+        if ($state === 'deleted' && !$this->annotationFlagIsTruthy($annotation, 'pdfjsDeleted')) {
+            return false;
+        }
+        if (str_starts_with(trim((string) ($annotation['id'] ?? '')), 'promoted_')) {
+            return false;
+        }
+
+        return !$this->annotationFlagIsTruthy($annotation, 'promotedFromExtraction');
+    }
+
+    private function filterAnnotationsForPdfjsVisibleExport(array $annotations): array
+    {
+        return array_values(array_filter(
+            $annotations,
+            fn ($annotation) => is_array($annotation) && $this->isPdfjsVisibleExportAnnotation($annotation)
+        ));
+    }
+
     private function durablePdfStateIdentityKeyFromAnnotation(array $annotation): string
     {
         if ($this->isDurablePromotedAnnotation($annotation)) {
@@ -831,13 +867,16 @@ class DocumentController extends Controller
     private function isPromotedSuppressionRecord(PdfState $record): bool
     {
         $annotationData = is_array($record->annotation_data) ? $record->annotation_data : [];
-        return filter_var(
-            $annotationData['_promotedSuppression'] ?? false,
-            FILTER_VALIDATE_BOOLEAN
-        ) && filter_var(
-            $annotationData['_explicitPromotedDelete'] ?? false,
-            FILTER_VALIDATE_BOOLEAN
-        );
+        return (
+            filter_var(
+                $annotationData['_promotedSuppression'] ?? false,
+                FILTER_VALIDATE_BOOLEAN
+            ) && filter_var(
+                $annotationData['_explicitPromotedDelete'] ?? false,
+                FILTER_VALIDATE_BOOLEAN
+            )
+        ) || str_starts_with(trim((string) ($annotationData['id'] ?? '')), '__deleted_promoted__')
+            || str_starts_with(trim((string) ($annotationData['id'] ?? '')), 'deleted_promoted:');
     }
 
     private function findExistingPdfStateRecordForAnnotation(
@@ -3714,10 +3753,14 @@ class DocumentController extends Controller
             $this->applyPdfStateOwnershipScope($deletedQuery, $ownership['user_id'], $ownership['admin_id'], $sessionId);
             $deletedQuery->get(['annotation_data'])
                 ->each(function (PdfState $record) use (&$mergedKeys) {
-                    if (!$this->isPromotedSuppressionRecord($record)) {
+                    $annotationData = is_array($record->annotation_data) ? $record->annotation_data : [];
+                    if (
+                        !$this->isPromotedSuppressionRecord($record)
+                        && empty($annotationData['promotedFromExtraction'])
+                    ) {
                         return;
                     }
-                    $sourceKey = trim((string) data_get($record->annotation_data, 'promotedSourceKey', ''));
+                    $sourceKey = trim((string) data_get($annotationData, 'promotedSourceKey', ''));
                     if ($sourceKey !== '') {
                         $mergedKeys[$sourceKey] = true;
                     }
@@ -5443,8 +5486,16 @@ class DocumentController extends Controller
         ]);
     }
 
-    public function edit(Document $document)
+    public function edit(Request $request, Document $document)
     {
+        $mimeType = strtolower((string) ($document->mime_type ?? 'application/pdf'));
+        if (!$request->boolean('legacy') && !str_starts_with($mimeType, 'image/')) {
+            return redirect()->route('documents.editNew', [
+                'document' => $document,
+                'pdfjs' => 1,
+            ]);
+        }
+
         return view('documents.edit', [
             'document' => $document,
             'activeTab' => 'pdf-editor',
@@ -5453,10 +5504,358 @@ class DocumentController extends Controller
         ]);
     }
 
-    public function editNew(Document $document)
+    public function editNew(\Illuminate\Http\Request $request, Document $document)
     {
+        // Staged migration: ?pdfjs=1 mounts the official pdf.js PDFViewer +
+        // editor stack (canvasWrapper / textLayer / annotationLayer /
+        // annotationEditorLayer) against the redacted clean PDF. Default
+        // continues to render the existing custom overlay editor.
+        if ($request->query('pdfjs') === '1') {
+            return view('documents.edit-new-pdfjs', [
+                'document' => $document,
+            ]);
+        }
         return view('documents.edit-new', [
             'document' => $document,
+        ]);
+    }
+
+    public function editPdfjs(Document $document)
+    {
+        return redirect()->route('documents.editNew', [
+            'document' => $document,
+            'pdfjs' => 1,
+        ]);
+    }
+
+    public function editPdfjsRewriteTj(Request $request, Document $document)
+    {
+        $isMultipart = $request->isJson() === false && $request->hasFile('pdf');
+        if ($isMultipart) {
+            $editsRaw = $request->input('edits');
+            if (is_string($editsRaw)) {
+                $editsRaw = json_decode($editsRaw, true);
+            }
+            if (!is_array($editsRaw) || count($editsRaw) === 0) {
+                return response()->json(['error' => 'edits[] missing or invalid'], 422);
+            }
+            $request->merge(['edits' => $editsRaw]);
+        }
+
+        $validated = $request->validate([
+            'edits' => ['required', 'array', 'min:1'],
+            'edits.*.page' => ['required', 'integer', 'min:0'],
+            'edits.*.match_xref' => ['nullable', 'integer'],
+            'edits.*.original_text' => ['required', 'string'],
+            'edits.*.new_text' => ['required', 'string'],
+            'edits.*.occurrence' => ['nullable', 'integer', 'min:0'],
+        ]);
+
+        $tmpIn = tempnam(sys_get_temp_dir(), 'editpdfjs_in_') . '.pdf';
+        if ($isMultipart) {
+            $upload = $request->file('pdf');
+            if (!$upload->isValid()) {
+                @unlink($tmpIn);
+                return response()->json(['error' => 'Invalid uploaded PDF'], 422);
+            }
+            move_uploaded_file($upload->getRealPath(), $tmpIn);
+        } else {
+            if (!$document->original_backup_path || !Storage::exists($document->original_backup_path)) {
+                @unlink($tmpIn);
+                return response()->json(['error' => 'Original PDF missing'], 404);
+            }
+            copy(Storage::path($document->original_backup_path), $tmpIn);
+        }
+        $tmpOut = tempnam(sys_get_temp_dir(), 'editpdfjs_out_') . '.pdf';
+        $editsJsonPath = tempnam(sys_get_temp_dir(), 'editpdfjs_edits_') . '.json';
+        file_put_contents($editsJsonPath, json_encode($validated['edits']));
+
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('pikepdf');
+        $script = base_path('python/pdf-editor/rewrite_tj_inplace.py');
+
+        $cmd = sprintf(
+            '%s %s --in %s --out %s --edits %s 2>&1',
+            escapeshellcmd($pythonBinary),
+            escapeshellarg($script),
+            escapeshellarg($tmpIn),
+            escapeshellarg($tmpOut),
+            escapeshellarg($editsJsonPath)
+        );
+        exec($cmd, $output, $exitCode);
+        @unlink($tmpIn);
+        @unlink($editsJsonPath);
+
+        if ($exitCode !== 0 || !file_exists($tmpOut)) {
+            @unlink($tmpOut);
+            return response()->json([
+                'error' => 'Rewrite failed',
+                'stdout' => implode("\n", $output),
+                'exit' => $exitCode,
+            ], 500);
+        }
+
+        $bytes = file_get_contents($tmpOut);
+        @unlink($tmpOut);
+        return response($bytes, 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="edited.pdf"',
+        ]);
+    }
+
+    public function editPdfjsRedactSourceText(Request $request, Document $document)
+    {
+        $isMultipart = $request->isJson() === false && $request->hasFile('pdf');
+        if ($isMultipart) {
+            $editsRaw = $request->input('edits');
+            if (is_string($editsRaw)) {
+                $editsRaw = json_decode($editsRaw, true);
+            }
+            if (!is_array($editsRaw) || count($editsRaw) === 0) {
+                return response()->json(['error' => 'edits[] missing or invalid'], 422);
+            }
+            $request->merge(['edits' => $editsRaw]);
+        }
+
+        $validated = $request->validate([
+            'edits' => ['required', 'array', 'min:1'],
+            'edits.*.page' => ['required', 'integer', 'min:0'],
+            'edits.*.original_text' => ['nullable', 'string'],
+            'edits.*.occurrence' => ['nullable', 'integer', 'min:0'],
+            'edits.*.source_bbox' => ['nullable', 'array'],
+            'edits.*.source_bbox.x' => ['required_with:edits.*.source_bbox', 'numeric'],
+            'edits.*.source_bbox.y' => ['required_with:edits.*.source_bbox', 'numeric'],
+            'edits.*.source_bbox.w' => ['required_with:edits.*.source_bbox', 'numeric'],
+            'edits.*.source_bbox.h' => ['required_with:edits.*.source_bbox', 'numeric'],
+        ]);
+
+        $tmpIn = tempnam(sys_get_temp_dir(), 'editpdfjs_redactin_') . '.pdf';
+        if ($isMultipart) {
+            $upload = $request->file('pdf');
+            if (!$upload->isValid()) {
+                @unlink($tmpIn);
+                return response()->json(['error' => 'Invalid uploaded PDF'], 422);
+            }
+            move_uploaded_file($upload->getRealPath(), $tmpIn);
+        } else {
+            if (!$document->original_backup_path || !Storage::exists($document->original_backup_path)) {
+                @unlink($tmpIn);
+                return response()->json(['error' => 'Original PDF missing'], 404);
+            }
+            copy(Storage::path($document->original_backup_path), $tmpIn);
+        }
+
+        $tmpOut = tempnam(sys_get_temp_dir(), 'editpdfjs_redactout_') . '.pdf';
+        $editsJsonPath = tempnam(sys_get_temp_dir(), 'editpdfjs_redact_edits_') . '.json';
+        file_put_contents($editsJsonPath, json_encode($validated['edits']));
+
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+        $script = base_path('python/pdf-editor/redact_pdfjs_source_text.py');
+
+        $cmd = sprintf(
+            '%s %s --in %s --out %s --edits %s 2>&1',
+            escapeshellcmd($pythonBinary),
+            escapeshellarg($script),
+            escapeshellarg($tmpIn),
+            escapeshellarg($tmpOut),
+            escapeshellarg($editsJsonPath)
+        );
+        exec($cmd, $output, $exitCode);
+        @unlink($tmpIn);
+        @unlink($editsJsonPath);
+
+        if ($exitCode !== 0 || !file_exists($tmpOut)) {
+            @unlink($tmpOut);
+            return response()->json([
+                'error' => 'Source text redaction failed',
+                'stdout' => implode("\n", $output),
+                'exit' => $exitCode,
+            ], 500);
+        }
+
+        $bytes = file_get_contents($tmpOut);
+        @unlink($tmpOut);
+        return response($bytes, 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="source-redacted.pdf"',
+        ]);
+    }
+
+    public function editPdfjsMoveTj(Request $request, Document $document)
+    {
+        $isMultipart = $request->isJson() === false && $request->hasFile('pdf');
+        if ($isMultipart) {
+            $movesRaw = $request->input('moves');
+            if (is_string($movesRaw)) {
+                $movesRaw = json_decode($movesRaw, true);
+            }
+            if (!is_array($movesRaw) || count($movesRaw) === 0) {
+                return response()->json(['error' => 'moves[] missing or invalid'], 422);
+            }
+            $request->merge(['moves' => $movesRaw]);
+        }
+
+        $validated = $request->validate([
+            'moves' => ['required', 'array', 'min:1'],
+            'moves.*.page' => ['required', 'integer', 'min:0'],
+            'moves.*.original_text' => ['nullable', 'string'],
+            'moves.*.occurrence' => ['nullable', 'integer', 'min:0'],
+            'moves.*.source_bbox' => ['nullable', 'array'],
+            'moves.*.source_bbox.x' => ['required_with:moves.*.source_bbox', 'numeric'],
+            'moves.*.source_bbox.y' => ['required_with:moves.*.source_bbox', 'numeric'],
+            'moves.*.source_bbox.w' => ['required_with:moves.*.source_bbox', 'numeric'],
+            'moves.*.source_bbox.h' => ['required_with:moves.*.source_bbox', 'numeric'],
+            'moves.*.lock_rects' => ['nullable', 'array'],
+            'moves.*.lock_rects.*' => ['array'],
+            'moves.*.lock_rects.*.x' => ['required', 'numeric'],
+            'moves.*.lock_rects.*.y' => ['required', 'numeric'],
+            'moves.*.lock_rects.*.w' => ['required', 'numeric'],
+            'moves.*.lock_rects.*.h' => ['required', 'numeric'],
+            'moves.*.dx_pts' => ['required', 'numeric'],
+            'moves.*.dy_pts' => ['required', 'numeric'],
+        ]);
+
+        $tmpIn = tempnam(sys_get_temp_dir(), 'editpdfjs_movein_') . '.pdf';
+        if ($isMultipart) {
+            // Client uploaded the *current* PDF state; subsequent moves
+            // must operate on the just-rewritten bytes, not the pristine
+            // original_backup_path, otherwise the source_bbox derived
+            // from the moved render won't match anything.
+            $upload = $request->file('pdf');
+            if (!$upload->isValid()) {
+                @unlink($tmpIn);
+                return response()->json(['error' => 'Invalid uploaded PDF'], 422);
+            }
+            move_uploaded_file($upload->getRealPath(), $tmpIn);
+        } else {
+            if (!$document->original_backup_path || !Storage::exists($document->original_backup_path)) {
+                @unlink($tmpIn);
+                return response()->json(['error' => 'Original PDF missing'], 404);
+            }
+            copy(Storage::path($document->original_backup_path), $tmpIn);
+        }
+
+        $tmpOut = tempnam(sys_get_temp_dir(), 'editpdfjs_moveout_') . '.pdf';
+        $movesJsonPath = tempnam(sys_get_temp_dir(), 'editpdfjs_moves_') . '.json';
+        file_put_contents($movesJsonPath, json_encode($validated['moves']));
+
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('pikepdf');
+        $script = base_path('python/pdf-editor/move_text_inplace.py');
+
+        $cmd = sprintf(
+            '%s %s --in %s --out %s --moves %s 2>&1',
+            escapeshellcmd($pythonBinary),
+            escapeshellarg($script),
+            escapeshellarg($tmpIn),
+            escapeshellarg($tmpOut),
+            escapeshellarg($movesJsonPath)
+        );
+        exec($cmd, $output, $exitCode);
+        @unlink($tmpIn);
+        @unlink($movesJsonPath);
+
+        if ($exitCode !== 0 || !file_exists($tmpOut)) {
+            @unlink($tmpOut);
+            return response()->json([
+                'error' => 'Move failed',
+                'stdout' => implode("\n", $output),
+                'exit' => $exitCode,
+            ], 500);
+        }
+
+        $bytes = file_get_contents($tmpOut);
+        @unlink($tmpOut);
+        return response($bytes, 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="moved.pdf"',
+        ]);
+    }
+
+    public function editPdfjsReflowText(Request $request, Document $document)
+    {
+        $isMultipart = $request->isJson() === false && $request->hasFile('pdf');
+        if ($isMultipart) {
+            $raw = $request->input('reflows');
+            if (is_string($raw)) $raw = json_decode($raw, true);
+            if (!is_array($raw) || count($raw) === 0) {
+                return response()->json(['error' => 'reflows[] missing or invalid'], 422);
+            }
+            $request->merge(['reflows' => $raw]);
+        }
+
+        $validated = $request->validate([
+            'reflows' => ['required', 'array', 'min:1'],
+            'reflows.*.page' => ['required', 'integer', 'min:0'],
+            'reflows.*.original_text' => ['nullable', 'string'],
+            'reflows.*.source_bbox' => ['required', 'array'],
+            'reflows.*.source_bbox.x' => ['required', 'numeric'],
+            'reflows.*.source_bbox.y' => ['required', 'numeric'],
+            'reflows.*.source_bbox.w' => ['required', 'numeric'],
+            'reflows.*.source_bbox.h' => ['required', 'numeric'],
+            'reflows.*.new_bbox' => ['required', 'array'],
+            'reflows.*.new_bbox.x' => ['required', 'numeric'],
+            'reflows.*.new_bbox.y' => ['required', 'numeric'],
+            'reflows.*.new_bbox.w' => ['required', 'numeric'],
+            'reflows.*.new_bbox.h' => ['required', 'numeric'],
+            'reflows.*.lock_rects' => ['nullable', 'array'],
+            'reflows.*.lock_rects.*' => ['array'],
+            'reflows.*.lock_rects.*.x' => ['required', 'numeric'],
+            'reflows.*.lock_rects.*.y' => ['required', 'numeric'],
+            'reflows.*.lock_rects.*.w' => ['required', 'numeric'],
+            'reflows.*.lock_rects.*.h' => ['required', 'numeric'],
+            'reflows.*.lines' => ['nullable', 'array'],
+            'reflows.*.lines.*' => ['string'],
+            'reflows.*.font_size_pts' => ['nullable', 'numeric'],
+        ]);
+
+        $tmpIn = tempnam(sys_get_temp_dir(), 'editpdfjs_reflowin_') . '.pdf';
+        if ($isMultipart) {
+            $upload = $request->file('pdf');
+            if (!$upload->isValid()) {
+                @unlink($tmpIn);
+                return response()->json(['error' => 'Invalid uploaded PDF'], 422);
+            }
+            move_uploaded_file($upload->getRealPath(), $tmpIn);
+        } else {
+            if (!$document->original_backup_path || !Storage::exists($document->original_backup_path)) {
+                @unlink($tmpIn);
+                return response()->json(['error' => 'Original PDF missing'], 404);
+            }
+            copy(Storage::path($document->original_backup_path), $tmpIn);
+        }
+
+        $tmpOut = tempnam(sys_get_temp_dir(), 'editpdfjs_reflowout_') . '.pdf';
+        $jsonPath = tempnam(sys_get_temp_dir(), 'editpdfjs_reflows_') . '.json';
+        file_put_contents($jsonPath, json_encode($validated['reflows']));
+
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('pikepdf');
+        $script = base_path('python/pdf-editor/move_text_inplace.py');
+
+        $cmd = sprintf(
+            '%s %s --in %s --out %s --reflows %s 2>&1',
+            escapeshellcmd($pythonBinary),
+            escapeshellarg($script),
+            escapeshellarg($tmpIn),
+            escapeshellarg($tmpOut),
+            escapeshellarg($jsonPath)
+        );
+        exec($cmd, $output, $exitCode);
+        @unlink($tmpIn);
+        @unlink($jsonPath);
+
+        if ($exitCode !== 0 || !file_exists($tmpOut)) {
+            @unlink($tmpOut);
+            return response()->json([
+                'error' => 'Reflow failed',
+                'stdout' => implode("\n", $output),
+                'exit' => $exitCode,
+            ], 500);
+        }
+
+        $bytes = file_get_contents($tmpOut);
+        @unlink($tmpOut);
+        return response($bytes, 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="reflowed.pdf"',
         ]);
     }
 
@@ -7190,6 +7589,114 @@ class DocumentController extends Controller
         return response()->file($cleanPath, [
             'Content-Type' => 'application/pdf',
             'Content-Disposition' => 'inline; filename="clean.pdf"',
+            'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+            'Pragma' => 'no-cache',
+            'Expires' => '0',
+        ]);
+    }
+
+    /**
+     * Bake all unedited promoted annotations into the clean base PDF using the
+     * exact writer + normalization pipeline that /admin/pdf-comparison's
+     * "Edit-new snapshot" panel uses. /edit-new loads this as the base so the
+     * canvas does not need to redraw promoted source spans (eliminating the
+     * overprint/duplicate-text class of bugs and guaranteeing pixel-equivalence
+     * with the comparison snapshot).
+     */
+    public function bakedPdf(\Illuminate\Http\Request $request, Document $document)
+    {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
+        $cleanPath = $this->ensureCleanPdfPath(
+            $document,
+            $pythonBinary,
+            $this->resolveEditorEmail(),
+            session()->getId()
+        );
+        if (!$cleanPath || !file_exists($cleanPath)) {
+            return response()->json(['error' => 'Clean PDF not found'], 404);
+        }
+
+        $sourcePdfPath = Storage::path($document->path);
+        if ($document->original_backup_path && Storage::exists($document->original_backup_path)) {
+            $candidate = Storage::path($document->original_backup_path);
+            if (is_file($candidate)) {
+                $sourcePdfPath = $candidate;
+            }
+        }
+        if (!is_file($sourcePdfPath)) {
+            return response()->json(['error' => 'Source PDF not found'], 404);
+        }
+
+        $bakedPath = Storage::path('temp/baked_' . $document->id . '.pdf');
+        $bakedDir = dirname($bakedPath);
+        if (!is_dir($bakedDir)) {
+            @mkdir($bakedDir, 0775, true);
+        }
+
+        // Cache: rebuild whenever clean PDF or extraction is newer than baked.
+        $cleanMtime = (int) @filemtime($cleanPath);
+        $latestExtractionAt = (int) optional(
+            \App\Models\PdfExtractionFitz::where('document_id', $document->id)
+                ->orderByDesc('updated_at')
+                ->value('updated_at')
+        )?->timestamp;
+        $latestStateAt = (int) optional(
+            \App\Models\PdfState::where('document_id', $document->id)
+                ->orderByDesc('updated_at')
+                ->value('updated_at')
+        )?->timestamp;
+        $needsRebuild = !is_file($bakedPath)
+            || @filemtime($bakedPath) < max($cleanMtime, $latestExtractionAt, $latestStateAt);
+
+        if ($needsRebuild) {
+            $annotations = app(PdfTestController::class)
+                ->buildEditNewComparisonAnnotations($request, $document, $sourcePdfPath);
+
+            $tempDir = storage_path('app/temp');
+            if (!is_dir($tempDir)) {
+                @mkdir($tempDir, 0775, true);
+            }
+            $annotationsFile = $tempDir . '/baked_anns_' . $document->id . '_' . Str::uuid() . '.json';
+            $annotationsJson = json_encode($annotations, JSON_INVALID_UTF8_SUBSTITUTE);
+            if ($annotationsJson === false || @file_put_contents($annotationsFile, $annotationsJson) === false) {
+                return response()->json(['error' => 'Failed to prepare annotations'], 500);
+            }
+
+            $script = base_path('python/pdf-editor/bake_edit_new_base.py');
+            $generatedPath = $tempDir . '/baked_pdf_' . $document->id . '_' . Str::uuid() . '.pdf';
+            $command = sprintf(
+                '%s %s %s %s %s %s 2>&1',
+                escapeshellarg($pythonBinary),
+                escapeshellarg($script),
+                escapeshellarg($cleanPath),
+                escapeshellarg($sourcePdfPath),
+                escapeshellarg($annotationsFile),
+                escapeshellarg($generatedPath)
+            );
+            $output = [];
+            $exitCode = 0;
+            exec($command, $output, $exitCode);
+            @unlink($annotationsFile);
+
+            if ($exitCode !== 0 || !is_file($generatedPath)) {
+                \Log::warning('Failed to bake edit-new base PDF', [
+                    'document_id' => $document->id,
+                    'exit_code' => $exitCode,
+                    'output' => implode("\n", $output),
+                ]);
+                return response()->json(['error' => 'Failed to bake PDF'], 500);
+            }
+
+            if (!@rename($generatedPath, $bakedPath)) {
+                @copy($generatedPath, $bakedPath);
+                @unlink($generatedPath);
+            }
+        }
+
+        return response()->file($bakedPath, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="baked.pdf"',
             'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
             'Pragma' => 'no-cache',
             'Expires' => '0',
@@ -9470,6 +9977,7 @@ class DocumentController extends Controller
             'use_clean_pdf' => 'nullable|boolean',
             'use_original_pdf' => 'nullable|boolean',
             'use_exact_download_path' => 'nullable|boolean',
+            'use_pdfjs_visible_export' => 'nullable|boolean',
             'session_id' => 'nullable|string',
         ]);
 
@@ -9536,6 +10044,7 @@ class DocumentController extends Controller
         $useCleanPdf = $request->boolean('use_clean_pdf');
         $useOriginalPdf = $request->boolean('use_original_pdf');
         $useExactDownloadPath = $request->boolean('use_exact_download_path');
+        $usePdfjsVisibleExport = $request->boolean('use_pdfjs_visible_export');
         $editorEmail = $this->resolveEditorEmail();
         $originalSourcePdfPath = $pdfPath;
         if ($document->original_backup_path && Storage::exists($document->original_backup_path)) {
@@ -9550,7 +10059,7 @@ class DocumentController extends Controller
         // be used to preserve untouched pages because their text layer is stripped.
         $sourcePdfPath = $pdfPath;
         $preservePdfPath = $pdfPath;
-        $useExactCleanRebuild = $useExactDownloadPath && !empty($sessionAnnotationsPayload);
+        $useExactCleanRebuild = $useExactDownloadPath && !$usePdfjsVisibleExport && !empty($sessionAnnotationsPayload);
         if ($useExactCleanRebuild) {
             $cleanPath = $this->ensureCleanPdfPath(
                 $document,
@@ -9562,6 +10071,9 @@ class DocumentController extends Controller
                 return response()->json(['success' => false, 'message' => 'Clean PDF source not found.'], 404);
             }
             $sourcePdfPath = $cleanPath;
+            $preservePdfPath = $originalSourcePdfPath;
+        } elseif ($usePdfjsVisibleExport) {
+            $sourcePdfPath = $originalSourcePdfPath;
             $preservePdfPath = $originalSourcePdfPath;
         } elseif ($useOriginalPdf && $document->original_backup_path && Storage::exists($document->original_backup_path)) {
             $originalPath = Storage::path($document->original_backup_path);
@@ -9590,6 +10102,14 @@ class DocumentController extends Controller
             // Temporary exact-download path: rebuild from the clean/redacted base
             // using the full session annotation set plus replay from the original
             // source PDF for unchanged promoted extraction blocks.
+            $redrawPageIndices = [];
+            $renderAnnotationsPayload = [];
+        } elseif ($usePdfjsVisibleExport) {
+            // The PDF.js viewer renders the original PDF and only paints custom
+            // source masks / overlay annotations on top. Export must follow that
+            // same visible model, not the clean rebuild that re-stamps every
+            // promoted extraction block.
+            $annotationsPayload = $this->filterAnnotationsForPdfjsVisibleExport($annotationsPayload);
             $redrawPageIndices = [];
             $renderAnnotationsPayload = [];
         }
@@ -9638,7 +10158,7 @@ class DocumentController extends Controller
         }
 
         $script = base_path(
-            $useExactDownloadPath
+            ($useExactDownloadPath || $usePdfjsVisibleExport)
                 ? 'python/pdf-editor/apply_annotations_direct_new.py'
                 : 'python/pdf-editor/apply_annotations_direct.py'
         );

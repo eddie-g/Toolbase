@@ -1,0 +1,699 @@
+/*
+ * /edit-new?pdfjs=1 viewer styles.
+ *
+ * Mirrors the chrome of /edit-new (we include the same edit-new/index.css
+ * for topbar / floating-toolbar / panels / modals) and overlays the
+ * official pdf.js PDFViewer in place of the legacy custom canvas.
+ *
+ * Imports pdf.js's prebuilt viewer CSS so the produced DOM matches the
+ * canonical Mozilla / pdfe.net markup:
+ *   .pdfViewer
+ *     .page > .canvasWrapper > canvas
+ *           > .textLayer       (positioned spans, calc(--total-scale-factor))
+ *           > .annotationLayer
+ *           > .annotationEditorLayer
+ */
+
+@import 'pdfjs-dist/web/pdf_viewer.css';
+
+:root {
+    --total-scale-factor: 1;
+    --scale-round-x: 1px;
+    --scale-round-y: 1px;
+    --enpv-bg: #404040;
+    --enpv-page-top-gutter: 144px;
+    --enpv-page-bottom-gap: 16px;
+}
+
+/* ----------------------------------------------------------------------
+ * Disable the legacy /edit-new interactive controls.
+ *
+ * We render the same chrome (topbar, floating toolbar, panels, modals)
+ * but their JS owner (resources/js/edit-new/main.js) is intentionally
+ * not loaded on this page. To prevent half-wired buttons from looking
+ * "broken-clickable", we soft-disable them across the board with a
+ * single body-class gate. Step 4 will re-enable them one feature at
+ * a time.
+ * ---------------------------------------------------------------------- */
+body.enpv-body .top-bar button,
+body.enpv-body .top-bar input,
+body.enpv-body .floating-tool-bar button,
+body.enpv-body #format-bar button,
+body.enpv-body #format-bar select,
+body.enpv-body #format-bar input,
+body.enpv-body #zoom-bar button,
+body.enpv-body #shape-panel button,
+body.enpv-body #draw-panel button,
+body.enpv-body .markup-modal button,
+body.enpv-body .signature-modal button,
+body.enpv-body .image-modal button {
+    pointer-events: none;
+    opacity: 0.45;
+    cursor: not-allowed !important;
+}
+
+/* The floating zoom bar IS wired to the new viewer — re-enable it. */
+body.enpv-body .floating-zoom-bar {
+    z-index: 2147483500;
+}
+body.enpv-body .floating-zoom-bar button,
+body.enpv-body .floating-zoom-bar input {
+    pointer-events: auto;
+    opacity: 1;
+    cursor: pointer !important;
+}
+body.enpv-body .floating-zoom-bar button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed !important;
+}
+
+/* The Edit PDF toggles (top bar + floating toolbar) ARE wired here too. */
+body.enpv-body #edit-mode-toggle,
+body.enpv-body #ftb-edit-mode {
+    pointer-events: auto;
+    opacity: 1;
+    cursor: pointer !important;
+}
+
+/* PDF.js uses the shared top-bar, but this page needs an explicit manual
+ * save affordance because there is no legacy auto-save runtime loaded. */
+body.enpv-body #save-btn {
+    display: inline-flex !important;
+    pointer-events: auto;
+    opacity: 1;
+    cursor: pointer !important;
+}
+body.enpv-body #download-pdf-btn {
+    pointer-events: auto;
+    opacity: 1;
+    cursor: pointer !important;
+}
+
+/* The shared /edit-new format bar is mounted on this route, but only the
+ * font-family selector is wired in the pdf.js implementation for now. */
+body.enpv-body #ann-format-bar {
+    z-index: 2147483501;
+}
+body.enpv-body #ann-format-bar button,
+body.enpv-body #ann-format-bar input,
+body.enpv-body #ann-format-bar select {
+    pointer-events: none;
+    opacity: 0.45;
+    cursor: not-allowed !important;
+}
+body.enpv-body #ann-format-bar #afb-font {
+    pointer-events: auto;
+    opacity: 1;
+    cursor: pointer !important;
+}
+body.enpv-body #download-pdf-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed !important;
+}
+body.enpv-body #undo-btn,
+body.enpv-body #redo-btn {
+    pointer-events: auto;
+    opacity: 1;
+    cursor: pointer !important;
+}
+body.enpv-body #undo-btn:disabled,
+body.enpv-body #redo-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed !important;
+}
+body.enpv-body .top-bar [title]::after,
+body.enpv-body .floating-tool-bar [title]::after {
+    /* keep tooltips informative */
+    content: '';
+}
+
+body.enpv-body .top-bar {
+    z-index: 2147482000;
+}
+
+/* The legacy #pages-wrap is a flex column that auto-centers page boxes.
+   We repurpose it as the absolutely-positioned host for #viewerContainer.
+   Strip its padding/flex so the viewer fills the available area. */
+body.enpv-body #pages-wrap {
+    padding: 0;
+    margin: 0;
+    max-width: none;
+    display: block;
+    position: absolute;
+    left: 0; right: 0;
+    /* leave room for the legacy top-bar (~60px). Adjusted at runtime if
+       the toolbar reports a different height. */
+    top: 60px;
+    bottom: 0;
+    background: var(--enpv-bg);
+}
+
+/* The new viewer mounts here. PDFViewer requires its container to be
+   absolutely positioned. */
+#enpv-root { display: contents; }
+#viewerContainer {
+    position: absolute;
+    inset: 0;
+    overflow: auto;
+    background: var(--enpv-bg);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 180ms ease;
+}
+body.enpv-body.enpv-viewer-ready #viewerContainer {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+}
+body.enpv-body.enpv-viewer-ready .pdfViewer .page.enpv-overlays-pending > .canvasWrapper,
+body.enpv-body.enpv-viewer-ready .pdfViewer .page.enpv-overlays-pending > .textLayer,
+body.enpv-body.enpv-viewer-ready .pdfViewer .page.enpv-overlays-pending > .annotationLayer {
+    visibility: hidden;
+}
+.enpv-loading-screen {
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    display: grid;
+    place-items: center;
+    background: #323638;
+    color: #f2f4f5;
+    opacity: 1;
+    visibility: visible;
+    transition: opacity 180ms ease, visibility 180ms ease;
+}
+body.enpv-body.enpv-viewer-ready .enpv-loading-screen {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+}
+.enpv-loading-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 224px;
+    padding: 14px 16px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 8px;
+    background: rgba(18, 20, 21, 0.62);
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.28);
+}
+.enpv-loading-spinner {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.24);
+    border-top-color: #ffffff;
+    animation: enpv-spin 800ms linear infinite;
+}
+.enpv-loading-title {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0;
+    white-space: nowrap;
+}
+@keyframes enpv-spin {
+    to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+    #viewerContainer,
+    .enpv-loading-screen {
+        transition: none;
+    }
+    .enpv-loading-spinner {
+        animation: none;
+    }
+}
+.pdfViewer .page {
+    margin: var(--enpv-page-top-gutter) auto var(--enpv-page-bottom-gap);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+    background: #fff;
+    overflow: visible !important;
+}
+
+/* ----------------------------------------------------------------------
+ * Undo Tailwind preflight inside the pdf.js viewer.
+ *
+ * pdf.js's pdf_viewer.css assumes the browser default
+ *   box-sizing: content-box
+ * and unconstrained <canvas> sizing. Tailwind v4's preflight applies
+ *   *, ::before, ::after { box-sizing: border-box }
+ *   canvas, img, video { display:block; max-width:100%; height:auto }
+ * which causes a subtle but visible coordinate mismatch:
+ *   - .page width includes the 9px transparent border (border-box) so the
+ *     content area is 18px narrower than what pdf.js sized the page to,
+ *   - the canvas is then capped at the parent's content area (1042px),
+ *   - but the textLayer keeps its full 1060px width and positions its
+ *     spans against that wider coordinate system,
+ *   - end result: every text span is offset by ~1.7% horizontally and
+ *     vertically from the rendered glyphs.
+ * Restoring content-box sizing and removing the canvas max-width clamp
+ * inside the viewer puts the canvas, textLayer and span coordinates back
+ * into the same coordinate space, so the click-to-edit bounding boxes
+ * land exactly over the glyphs they describe.
+ * ---------------------------------------------------------------------- */
+.pdfViewer,
+.pdfViewer *,
+.pdfViewer *::before,
+.pdfViewer *::after {
+    box-sizing: content-box;
+}
+.pdfViewer canvas {
+    max-width: none !important;
+    height: auto !important;
+    display: block;
+}
+
+/* Click-to-edit affordance on text spans, gated behind the legacy
+ * "Edit PDF" toggle (resources/views/documents/edit-new/_topbar.blade.php
+ * → #edit-mode-toggle). When edit mode is OFF the textLayer behaves
+ * like the stock pdf.js viewer (selectable text, no editor hooks).
+ * When ON, every span gets a persistent dashed bounding box (matching
+ * the classic /edit-new "Edit Mode" affordance) and becomes a
+ * click-to-edit hit target. The bounding-box highlight clears on hover
+ * so the user can read the underlying glyphs while pointing at one.
+ *
+ * pdf.js's text spans are absolutely positioned with a CSS transform
+ * that scales the glyph metrics. We use box-shadow inset (instead of
+ * border/outline) so the indicator stays inside the transformed box
+ * and does not visibly shift the apparent glyph position. */
+body.enpv-edit-on .pdfViewer .textLayer { pointer-events: auto; cursor: text; }
+body.enpv-edit-on .pdfViewer .textLayer span,
+body.enpv-edit-on .pdfViewer .textLayer br { pointer-events: auto; }
+/* Text-layer spans remain the click targets, but visible edit-mode boxes
+ * come from .enpv-annotation-box-layer so their geometry matches /edit-new
+ * annotation rectangles instead of pdf.js's text-selection spans. */
+body.enpv-edit-on .pdfViewer .textLayer span[data-enpv-page]:not(.markedContent) {
+    cursor: pointer !important;
+}
+body.enpv-edit-on .pdfViewer .textLayer span[data-enpv-page]:not(.markedContent):hover {
+    outline: 1px dashed rgba(59, 130, 246, 0.8) !important;
+    background-color: rgba(147, 197, 253, 0.18) !important;
+}
+.enpv-annotation-box-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 100000;
+    /* Layer itself is transparent; individual boxes are interactive when
+     * edit mode is on so they can be selected and dragged. */
+    pointer-events: none;
+    overflow: visible;
+}
+.enpv-annotation-box {
+    position: absolute;
+    box-sizing: border-box;
+    border: 1px dashed rgba(96, 165, 250, 0.55);
+    /* Default transparent so the form's many overlapping text-run boxes
+     * don't compound into a wash of blue. The hover/selected/editing
+     * rules below add fill on demand. */
+    background: transparent;
+    /* Re-enable pointer-events on the box itself so the user can click /
+     * drag, while the host layer stays click-through everywhere else
+     * (so text selection still works between boxes). */
+    pointer-events: auto;
+    cursor: grab;
+    z-index: 2;
+    transition: background-color .12s ease, border-color .12s ease;
+    will-change: transform;
+}
+/* Inner contenteditable textbox: stays hidden by default — only shown
+ * once the user clicks the pencil ("Edit text") button on the selected
+ * box, at which point .is-editing exposes a transparent contenteditable
+ * element styled like pdf.js's freetext editor. */
+.enpv-annotation-box .enpv-text-content {
+    display: none;
+    box-sizing: border-box;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    margin: 0;
+    color: var(--enpv-text-color, #000);
+    background: transparent;
+    overflow-wrap: break-word;
+    word-break: normal;
+    white-space: normal;
+    line-height: var(--enpv-line-height, 1.0);
+    font-family: var(--enpv-font-family, sans-serif);
+    font-size: var(--enpv-font-size, 12px);
+    font-weight: var(--enpv-font-weight, normal);
+    font-style: var(--enpv-font-style, normal);
+    outline: none;
+    cursor: text;
+    user-select: text;
+}
+.enpv-annotation-box.is-editing {
+    background: transparent;
+    cursor: default;
+}
+.enpv-annotation-box.is-editing .enpv-text-content {
+    display: block;
+}
+.enpv-annotation-box.is-editing.is-source-fidelity .enpv-text-content {
+    display: block;
+    align-items: initial;
+    white-space: pre;
+    overflow-wrap: normal;
+    word-break: normal;
+    line-height: var(--enpv-line-height, var(--enpv-font-size, 12px));
+    transform-origin: 0 0;
+    overflow: visible;
+}
+.enpv-annotation-box:hover {
+    background: rgba(147, 197, 253, 0.18);
+    border-color: rgba(59, 130, 246, 0.95);
+}
+.enpv-annotation-box.is-editing:hover {
+    background: transparent;
+}
+.enpv-annotation-box.is-selected {
+    border-style: solid;
+    border-color: rgba(59, 130, 246, 0.95);
+    background: rgba(147, 197, 253, 0.22);
+    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.5);
+}
+body.enpv-edit-on .enpv-annotation-box:not(.is-persisted-overlay):not(.is-editing):hover,
+body.enpv-edit-on .enpv-annotation-box:not(.is-persisted-overlay):not(.is-editing).is-selected {
+    background: transparent;
+}
+.enpv-annotation-box.is-selected.is-editing {
+    background: transparent;
+}
+.enpv-annotation-box.is-persisted-overlay {
+    background: transparent;
+}
+.enpv-annotation-box.is-persisted-overlay:not(.is-editing) .enpv-text-content {
+    display: flex;
+    align-items: flex-end;
+    line-height: 1;
+}
+.enpv-annotation-box.is-source-fidelity:not(.is-editing) .enpv-text-content {
+    display: block;
+    align-items: initial;
+    white-space: pre;
+    overflow-wrap: normal;
+    word-break: normal;
+    line-height: var(--enpv-line-height, var(--enpv-font-size, 12px));
+    transform-origin: 0 0;
+}
+body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    pointer-events: none;
+}
+body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay .enpv-text-content {
+    display: flex;
+    align-items: flex-end;
+    line-height: 1;
+}
+.enpv-annotation-box.is-persisted-overlay.is-rich-editor:not(.is-editing) .enpv-text-content,
+body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay.is-rich-editor .enpv-text-content {
+    display: block;
+    align-items: initial;
+    line-height: var(--enpv-line-height, 1);
+}
+body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay:hover {
+    background: transparent;
+    border: none;
+}
+.enpv-orig-mask {
+    position: absolute;
+    background: transparent;
+    pointer-events: none;
+    z-index: 0;
+}
+.enpv-source-mask {
+    z-index: 0;
+}
+.enpv-annotation-box.is-dragging {
+    cursor: grabbing;
+    opacity: 0.85;
+    will-change: transform;
+}
+/* Resize handles: 4 dots placed on the midpoints of the box edges.
+ * Only visible when the box is selected. Each handle gets a distinct
+ * cursor matching the resize direction. */
+.enpv-resize-handle {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    margin: -5px 0 0 -5px;
+    background: rgb(59, 130, 246);
+    border: 1px solid #fff;
+    border-radius: 50%;
+    box-sizing: border-box;
+    pointer-events: auto;
+    display: none;
+    z-index: 2;
+}
+.enpv-annotation-box.is-selected.is-editing .enpv-resize-handle { display: block; }
+.enpv-resize-handle.t { top: 0;    left: 50%; cursor: ns-resize; }
+.enpv-resize-handle.b { top: 100%; left: 50%; cursor: ns-resize; }
+.enpv-resize-handle.l { top: 50%;  left: 0;   cursor: ew-resize; }
+.enpv-resize-handle.r { top: 50%;  left: 100%;cursor: ew-resize; }
+body.enpv-resizing,
+body.enpv-resizing * { user-select: none !important; }
+body.enpv-dragging,
+body.enpv-dragging * { cursor: grabbing !important; user-select: none !important; }
+
+/* Floating hover menu for the currently-selected annotation box.
+ * Mirrors the legacy /edit-new `tm-${pi+1}` text-menu affordance: sits
+ * above the selected box, slips below when there's not enough room above,
+ * and is hidden during an active drag (matches the legacy "menu hidden
+ * while moving" UX so it doesn't follow the cursor and re-trigger hover
+ * transitions every mousemove). */
+.enpv-ann-menu {
+    position: absolute;
+    z-index: 2147483000;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 4px;
+    background: rgba(17, 24, 39, 0.95);
+    color: #9ca3af;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    transform: translateX(-50%);
+    pointer-events: auto;
+    user-select: none;
+    white-space: nowrap;
+    backdrop-filter: blur(8px);
+}
+.enpv-ann-menu[hidden] { display: none; }
+.enpv-ann-menu .enpv-ann-menu-btn {
+    appearance: none;
+    background: transparent;
+    border: 1px solid transparent;
+    color: inherit;
+    font-size: 13px;
+    line-height: 1;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.enpv-ann-menu .enpv-ann-menu-btn:hover {
+    background: rgba(255,255,255,0.1);
+    color: #e5e7eb;
+    border-color: rgba(255,255,255,0.12);
+}
+.enpv-ann-menu .enpv-ann-menu-grip { cursor: grab; }
+.enpv-ann-menu .enpv-ann-menu-grip:active { cursor: grabbing; }
+.enpv-ann-menu .enpv-ann-menu-ok { color: #6ee7b7; }
+.enpv-ann-menu .enpv-ann-menu-ok:hover {
+    background: rgba(110, 231, 183, 0.15);
+    border-color: rgba(110, 231, 183, 0.3);
+}
+.enpv-ann-menu .enpv-ann-menu-delete { color: #f87171; }
+.enpv-ann-menu .enpv-ann-menu-delete:hover {
+    background: rgba(248, 113, 113, 0.15);
+    border-color: rgba(248, 113, 113, 0.3);
+}
+.enpv-ann-menu .enpv-ann-menu-lock { color: #93c5fd; }
+.enpv-ann-menu .enpv-ann-menu-divider {
+    width: 1px;
+    height: 18px;
+    background: rgba(255,255,255,0.12);
+    margin: 0 2px;
+}
+.enpv-annotation-box.is-locked {
+    border-style: solid;
+    border-color: rgba(147, 197, 253, 0.85);
+}
+.enpv-annotation-box.is-locked .enpv-resize-handle { display: none; }
+.pdfViewer .textLayer span.enpv-editing {
+    background-color: rgba(255, 149, 0, 0.32) !important;
+    outline: 1px solid #ff9500 !important;
+}
+
+/* Floating inline editor (anchored under clicked textLayer span). */
+.enpv-edit-bar {
+    position: absolute;
+    z-index: 50;
+    background: #1f1f22;
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 8px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+    color: #f5f5f5;
+    font-size: 13px;
+    min-width: 320px;
+}
+.enpv-edit-bar[hidden] { display: none; }
+.enpv-edit-row { display: flex; gap: 6px; align-items: center; }
+.enpv-edit-bar input[type="text"] {
+    flex: 1;
+    min-width: 200px;
+    padding: 4px 6px;
+    border: 1px solid #555;
+    border-radius: 4px;
+    background: #2a2a2e;
+    color: #fff;
+    font-size: 13px;
+}
+.enpv-orig {
+    font-size: 11px;
+    color: #aaa;
+    margin-top: 6px;
+    font-style: italic;
+    word-break: break-all;
+}
+.enpv-btn {
+    padding: 4px 10px;
+    background: #3a3a3f;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+}
+.enpv-btn:hover:not(:disabled) { background: #50505a; }
+.enpv-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.enpv-btn.enpv-primary { background: #2563eb; border-color: #1d4ed8; }
+.enpv-btn.enpv-primary:hover:not(:disabled) { background: #1d4ed8; }
+
+/* Status pill + download FAB anchored to the viewer area corners. */
+.enpv-status-pill {
+    position: fixed;
+    left: 12px;
+    bottom: 12px;
+    z-index: 60;
+    background: #1f1f22cc;
+    color: #ddd;
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 12px;
+    backdrop-filter: blur(4px);
+    pointer-events: none;
+}
+.enpv-download-fab {
+    position: fixed;
+    right: 16px;
+    bottom: 12px;
+    z-index: 60;
+}
+
+.enpv-error {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 1000;
+    background: #b91c1c;
+    color: #fff;
+    padding: 10px 14px;
+    border-radius: 6px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+    max-width: 480px;
+    font-size: 13px;
+}
+
+/* ---------------------------------------------------------------------
+ * Signature feature (port of /edit-new sign affordance).
+ *
+ * Re-enable the floating-toolbar Sign button + the signature-modal
+ * controls (the blanket disable above blocks them). Style image-backed
+ * signature annotation boxes so they show the rendered <img> stamp.
+ * --------------------------------------------------------------------- */
+body.enpv-body #ftb-sign {
+    pointer-events: auto;
+    opacity: 1;
+    cursor: pointer !important;
+}
+body.enpv-body .signature-modal {
+    z-index: 2147483600;
+}
+body.enpv-body .signature-modal,
+body.enpv-body .signature-modal * {
+    pointer-events: auto;
+}
+body.enpv-body .signature-modal button,
+body.enpv-body .signature-modal input,
+body.enpv-body .signature-modal select,
+body.enpv-body .signature-modal textarea {
+    pointer-events: auto;
+    opacity: 1;
+    cursor: pointer !important;
+}
+body.enpv-body .signature-modal input[type='text'],
+body.enpv-body .signature-modal input[type='color'],
+body.enpv-body .signature-modal input[type='range'],
+body.enpv-body .signature-modal input[type='file'],
+body.enpv-body .signature-modal textarea {
+    cursor: text !important;
+}
+body.enpv-body .signature-modal button:disabled,
+body.enpv-body .signature-modal input:disabled,
+body.enpv-body .signature-modal select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed !important;
+}
+
+/* Cursor while in click-to-place mode after applying a signature. */
+body.enpv-signature-placing #viewerContainer,
+body.enpv-signature-placing .pdfViewer .page,
+body.enpv-signature-placing .pdfViewer .page * {
+    cursor: copy !important;
+}
+
+/* Signature annotation boxes — image-backed stamps that can be dragged
+ * via the existing onAnnBoxPointerDown / floating menu. */
+.enpv-annotation-box.enpv-signature-box {
+    background: transparent;
+    border: 1px dashed transparent;
+    overflow: visible;
+    padding: 0;
+    pointer-events: auto;
+}
+body.enpv-body .enpv-annotation-box.enpv-signature-box.is-persisted-overlay {
+    background: transparent;
+    pointer-events: auto;
+}
+body.enpv-edit-on .enpv-annotation-box.enpv-signature-box,
+body.enpv-body .enpv-annotation-box.enpv-signature-box.is-selected {
+    border-color: rgba(96, 165, 250, 0.55);
+}
+body.enpv-edit-on .enpv-annotation-box.enpv-signature-box.is-selected,
+body.enpv-body .enpv-annotation-box.enpv-signature-box.is-selected {
+    border-color: rgba(59, 130, 246, 0.9);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+}
+body.enpv-edit-on .enpv-annotation-box.enpv-signature-box.is-locked,
+body.enpv-body .enpv-annotation-box.enpv-signature-box.is-locked {
+    border-color: rgba(248, 113, 113, 0.7);
+}
+.enpv-annotation-box.enpv-signature-box > .enpv-signature-img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    pointer-events: none;
+    user-select: none;
+    -webkit-user-drag: none;
+    display: block;
+}

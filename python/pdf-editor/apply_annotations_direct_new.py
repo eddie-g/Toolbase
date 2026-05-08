@@ -260,6 +260,119 @@ GOOGLE_FONT_FILE_VARIANTS = {
 FONT_FILE_VARIANTS.update(GOOGLE_FONT_FILE_VARIANTS)
 
 
+# ── Variable-font static instance materialization ──────────────────────────
+# MuPDF's HTML engine ignores @font-face `font-weight` when picking a
+# variation from a variable font — it just renders the file's *default*
+# instance. Many of the Google fonts we ship are variable fonts whose
+# default variation is NOT Regular (e.g. Merriweather defaults to Light
+# wght=300), which means:
+#   - Regular (400) text renders too thin / wrong weight.
+#   - Bold spans don't render bold at all because the file registered for
+#     weight=700 is the same variable file → still picks Light default.
+# Fix: at module import, for each known weight×style face in
+# FONT_FILE_VARIANTS, if the file is a variable font we materialize a
+# static instance at the requested wght (400/700) and italic axis, cache
+# it under storage/app/temp/font-instances/, and rewrite FONT_FILE_VARIANTS
+# to point at the static file so MuPDF gets one face per actual weight.
+_STATIC_INSTANCE_CACHE_DIR = os.path.join(TEMP_DIR, "font-instances")
+
+
+def _is_variable_font_file(path: str) -> bool:
+    if not path or not os.path.exists(path):
+        return False
+    try:
+        from fontTools.ttLib import TTFont
+        ttf = TTFont(path, lazy=True)
+        return "fvar" in ttf
+    except Exception:
+        return False
+
+
+def _materialize_variable_font_instance(src_path: str, wght: int, italic: bool) -> str:
+    """Return a path to a static TTF instance of `src_path` at the given
+    weight (and italic slant if available). Returns `src_path` unchanged
+    when the source is not a variable font, on any error, or when the
+    cached instance already exists.
+    """
+    if not src_path or not os.path.exists(src_path):
+        return src_path
+    if not _is_variable_font_file(src_path):
+        return src_path
+    try:
+        os.makedirs(_STATIC_INSTANCE_CACHE_DIR, exist_ok=True)
+        base = os.path.basename(src_path).replace("[", "_").replace("]", "_").replace(",", "_")
+        suffix = f"_w{wght}{'_it' if italic else ''}"
+        out_path = os.path.join(_STATIC_INSTANCE_CACHE_DIR, base.replace(".ttf", f"{suffix}.ttf"))
+        if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+            return out_path
+        from fontTools.ttLib import TTFont
+        from fontTools.varLib import instancer
+        ttf = TTFont(src_path)
+        axes = {a.axisTag: a for a in ttf["fvar"].axes}
+        loc: dict = {}
+        if "wght" in axes:
+            a = axes["wght"]
+            loc["wght"] = max(a.minValue, min(a.maxValue, wght))
+        if "wdth" in axes:
+            loc["wdth"] = axes["wdth"].defaultValue
+        if "opsz" in axes:
+            # Use a body-text optical size (~12-18pt) by default.
+            opsz_axis = axes["opsz"]
+            loc["opsz"] = max(opsz_axis.minValue, min(opsz_axis.maxValue, 18))
+        if "ital" in axes and italic:
+            loc["ital"] = axes["ital"].maxValue
+        if "slnt" in axes and italic:
+            loc["slnt"] = axes["slnt"].minValue  # negative slant for italic
+        if not loc:
+            return src_path
+        inst = instancer.instantiateVariableFont(ttf, loc)
+        inst.save(out_path)
+        return out_path
+    except Exception:
+        return src_path
+
+
+def _materialize_static_instances_for_variable_fonts() -> None:
+    """Walk FONT_FILE_VARIANTS once at import time and replace any variable
+    font file references with paths to weight/italic-locked static
+    instances. Idempotent thanks to the on-disk cache.
+    """
+    for family, variants in FONT_FILE_VARIANTS.items():
+        if not isinstance(variants, dict):
+            continue
+        try:
+            normal = variants.get("normal")
+            bold = variants.get("bold")
+            italic = variants.get("italic")
+            bold_italic = variants.get("boldItalic")
+            if normal:
+                variants["normal"] = _materialize_variable_font_instance(normal, 400, italic=False)
+            # Only materialize bold from the SAME source file when bold ==
+            # normal (i.e. one variable file covers both weights). When the
+            # designer shipped a separate static bold TTF, leave it alone.
+            if bold and bold == normal:
+                variants["bold"] = _materialize_variable_font_instance(bold, 700, italic=False)
+            elif bold:
+                variants["bold"] = _materialize_variable_font_instance(bold, 700, italic=False)
+            if italic:
+                variants["italic"] = _materialize_variable_font_instance(italic, 400, italic=True)
+            if bold_italic and bold_italic == italic:
+                variants["boldItalic"] = _materialize_variable_font_instance(bold_italic, 700, italic=True)
+            elif bold_italic:
+                variants["boldItalic"] = _materialize_variable_font_instance(bold_italic, 700, italic=True)
+        except Exception:
+            # Any per-family failure leaves the original variable file in
+            # place (status quo before this fix); never crash the export.
+            pass
+
+
+# NOTE: materialization is intentionally NOT invoked at module import — each
+# variable-font instancing pass takes ~20s and we ship ~60 VF files. Instead
+# `build_html_font_face_css(families=...)` materializes lazily on first export
+# of an annotation that actually uses each family, and the on-disk cache makes
+# subsequent runs instant.
+
+
 HTML_FONT_FAMILY_ALIASES = {
     "Arimo": [
         "Arimo",
@@ -669,6 +782,670 @@ def to_rect(page: fitz.Page, ann: Dict[str, Any]) -> Optional[fitz.Rect]:
     return fitz.Rect(x, ph - (y + h), x + w, ph - y)
 
 
+PDFJS_SOURCE_MASK_PADDING_X_PTS = 2.0
+PDFJS_SOURCE_MASK_PADDING_Y_PTS = 1.0
+PDFJS_SOURCE_MASK_PADDING_PTS = PDFJS_SOURCE_MASK_PADDING_X_PTS
+PDFJS_SOURCE_MASK_NEIGHBOR_GAP_PTS = 0.1
+
+
+def _boolish(value: Any) -> bool:
+    if value is True or value == 1:
+        return True
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def is_pdfjs_visible_overlay_text(ann: Dict[str, Any]) -> bool:
+    if not isinstance(ann, dict):
+        return False
+    if str(ann.get("type") or "").strip().lower() not in {"", "text"}:
+        return False
+    if _boolish(ann.get("promotedFromExtraction")):
+        return False
+    return (
+        _boolish(ann.get("savedTextOverlay"))
+        or _boolish(ann.get("pdfjsDeleted"))
+        or ann.get("pdfjsSourceX") is not None
+        or ann.get("pdfjsSourceY") is not None
+    )
+
+
+def normalize_pdfjs_compare_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", sanitize_pdf_text(value or "")).strip()
+
+
+def pdfjs_annotation_box(ann: Dict[str, Any], prefix: str) -> Optional[tuple[float, float, float, float]]:
+    try:
+        if prefix == "source":
+            x = float(ann.get("pdfjsSourceX"))
+            y = float(ann.get("pdfjsSourceY"))
+            w = float(ann.get("pdfjsSourceW"))
+            h = float(ann.get("pdfjsSourceH"))
+        else:
+            x = float(ann.get("pdfX"))
+            y = float(ann.get("pdfY"))
+            w = float(ann.get("pdfWidth"))
+            h = float(ann.get("pdfHeight"))
+    except Exception:
+        return None
+    if w <= 0 or h <= 0:
+        return None
+    return (x, y, w, h)
+
+
+def pdfjs_boxes_nearly_equal(
+    left: tuple[float, float, float, float] | None,
+    right: tuple[float, float, float, float] | None,
+    tolerance: float = 3.0,
+) -> bool:
+    if left is None or right is None:
+        return False
+    return all(abs(float(a) - float(b)) <= tolerance for a, b in zip(left, right))
+
+
+def _pdfjs_box_overlap_ratio(
+    left: tuple[float, float, float, float] | None,
+    right: tuple[float, float, float, float] | None,
+) -> float:
+    if left is None or right is None:
+        return 0.0
+    ax, ay, aw, ah = left
+    bx, by, bw, bh = right
+    if aw <= 0 or ah <= 0 or bw <= 0 or bh <= 0:
+        return 0.0
+    overlap_w = max(0.0, min(ax + aw, bx + bw) - max(ax, bx))
+    overlap_h = max(0.0, min(ay + ah, by + bh) - max(ay, by))
+    if overlap_w <= 0 or overlap_h <= 0:
+        return 0.0
+    min_area = max(0.0001, min(aw * ah, bw * bh))
+    return (overlap_w * overlap_h) / min_area
+
+
+def pdfjs_source_boxes_match(left: Dict[str, Any], right: Dict[str, Any]) -> bool:
+    left_box = pdfjs_annotation_box(left, "source")
+    right_box = pdfjs_annotation_box(right, "source")
+    if pdfjs_boxes_nearly_equal(left_box, right_box, tolerance=1.5):
+        return True
+    return _pdfjs_box_overlap_ratio(left_box, right_box) >= 0.72
+
+
+def _pdfjs_page_index(ann: Dict[str, Any]) -> Optional[int]:
+    try:
+        return int(ann.get("pageIndex"))
+    except Exception:
+        return None
+
+
+def is_redundant_pdfjs_source_overlay(ann: Dict[str, Any]) -> bool:
+    if not is_pdfjs_visible_overlay_text(ann):
+        return False
+    if _boolish(ann.get("pdfjsDeleted")):
+        return False
+    if _boolish(ann.get("movedTextOverlay")):
+        return False
+    if (
+        _boolish(ann.get("userForcedRichText"))
+        or str(ann.get("pdfjsEditorMode") or "").strip().lower() == "rich"
+        or str(ann.get("richTextPromotionReason") or "").strip().lower() == "manual-resize"
+    ):
+        return False
+    if ann.get("pdfjsSourceX") is None and ann.get("pdfjsAnchorUid") is None:
+        return False
+    source_text = normalize_pdfjs_compare_text(ann.get("pdfjsSourceText") or ann.get("originalText") or "")
+    current_text = normalize_pdfjs_compare_text(ann.get("text") or "")
+    if not source_text or source_text != current_text:
+        return False
+    return pdfjs_boxes_nearly_equal(
+        pdfjs_annotation_box(ann, "current"),
+        pdfjs_annotation_box(ann, "source"),
+    )
+
+
+def suppress_pdfjs_deleted_masks_owned_by_replacements(annotations: list) -> None:
+    if not isinstance(annotations, list):
+        return
+    replacements = [
+        ann
+        for ann in annotations
+        if isinstance(ann, dict)
+        and is_pdfjs_visible_overlay_text(ann)
+        and not _boolish(ann.get("pdfjsDeleted"))
+        and bool(sanitize_pdf_text(ann.get("text") or "").strip())
+        and not is_redundant_pdfjs_source_overlay(ann)
+        and pdfjs_annotation_box(ann, "source") is not None
+    ]
+    if not replacements:
+        return
+
+    for ann in annotations:
+        if not isinstance(ann, dict):
+            continue
+        if not (is_pdfjs_visible_overlay_text(ann) and _boolish(ann.get("pdfjsDeleted"))):
+            continue
+        ann_page_index = _pdfjs_page_index(ann)
+        source_text = normalize_pdfjs_compare_text(ann.get("pdfjsSourceText") or ann.get("originalText") or "")
+        for replacement in replacements:
+            if ann_page_index is not None and _pdfjs_page_index(replacement) != ann_page_index:
+                continue
+            replacement_source_text = normalize_pdfjs_compare_text(
+                replacement.get("pdfjsSourceText") or replacement.get("originalText") or ""
+            )
+            if source_text and replacement_source_text and source_text != replacement_source_text:
+                continue
+            if pdfjs_source_boxes_match(ann, replacement):
+                ann["skipPdfjsSourceMask"] = True
+                break
+
+
+def pdfjs_visible_overlay_scale_x(ann: Dict[str, Any]) -> float:
+    # Rich/manual PDF.js overlays are rendered in the browser as normal editor
+    # boxes. Source span transforms are metadata for the original PDF.js text
+    # layer and should not shrink the export layout width for these boxes.
+    if (
+        _boolish(ann.get("userForcedRichText"))
+        or str(ann.get("pdfjsEditorMode") or "").strip().lower() == "rich"
+        or str(ann.get("richTextPromotionReason") or "").strip().lower() == "manual-resize"
+    ):
+        return 1.0
+    raw_scale = ann.get("pdfjsSourceTransformScaleX")
+    if raw_scale in (None, ""):
+        raw_transform = str(ann.get("pdfjsSourceTransform") or "").strip()
+        match = re.match(r"matrix\(([^,]+),", raw_transform)
+        raw_scale = match.group(1) if match else None
+    try:
+        scale_x = float(raw_scale or 1.0)
+    except Exception:
+        return 1.0
+    if not math.isfinite(scale_x) or scale_x <= 0:
+        return 1.0
+    scale_x = max(0.2, min(4.0, scale_x))
+    return 1.0 if abs(scale_x - 1.0) <= 0.001 else scale_x
+
+
+def _pdfjs_source_base_rect(page: fitz.Page, ann: Dict[str, Any]) -> Optional[fitz.Rect]:
+    try:
+        x = float(ann.get("pdfjsSourceX"))
+        y = float(ann.get("pdfjsSourceY"))
+        w = float(ann.get("pdfjsSourceW"))
+        h = float(ann.get("pdfjsSourceH"))
+    except Exception:
+        return None
+    if w <= 0 or h <= 0:
+        return None
+    ph = page.rect.height
+    return fitz.Rect(x, ph - (y + h), x + w, ph - y) & page.rect
+
+
+def _source_mask_target_contains_rect(target_rect: fitz.Rect, rect: fitz.Rect) -> bool:
+    if target_rect.is_empty or rect.is_empty:
+        return False
+    overlap = target_rect & rect
+    if overlap.is_empty:
+        return False
+    rect_area = max(0.0001, float(rect.width) * float(rect.height))
+    overlap_ratio = (float(overlap.width) * float(overlap.height)) / rect_area
+    if overlap_ratio >= 0.45:
+        return True
+    center = fitz.Point((rect.x0 + rect.x1) / 2.0, (rect.y0 + rect.y1) / 2.0)
+    return target_rect.contains(center)
+
+
+def _iter_page_text_char_rects(page: fitz.Page) -> list[fitz.Rect]:
+    rects: list[fitz.Rect] = []
+    try:
+        blocks = page.get_text("rawdict").get("blocks", [])
+    except Exception:
+        blocks = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        for line in block.get("lines", []) or []:
+            if not isinstance(line, dict):
+                continue
+            for span in line.get("spans", []) or []:
+                if not isinstance(span, dict):
+                    continue
+                chars = span.get("chars")
+                if isinstance(chars, list) and chars:
+                    for char in chars:
+                        if not isinstance(char, dict):
+                            continue
+                        c = sanitize_pdf_text(char.get("c") or "")
+                        if not c.strip():
+                            continue
+                        rect = _fitz_rect_from_bbox(char.get("bbox"))
+                        if rect is not None:
+                            rects.append(rect)
+                    continue
+                rect = _fitz_rect_from_bbox(span.get("bbox"))
+                if rect is not None and sanitize_pdf_text(span.get("text") or "").strip():
+                    rects.append(rect)
+    return rects
+
+
+def _neighbor_text_rects_for_source_mask(page: fitz.Page, target_rect: fitz.Rect, inflated_rect: fitz.Rect) -> list[fitz.Rect]:
+    if target_rect.is_empty or inflated_rect.is_empty:
+        return []
+    search_rect = fitz.Rect(
+        inflated_rect.x0 - 3.0,
+        inflated_rect.y0 - 3.0,
+        inflated_rect.x1 + 3.0,
+        inflated_rect.y1 + 3.0,
+    ) & page.rect
+    neighbors: list[fitz.Rect] = []
+    for rect in _iter_page_text_char_rects(page):
+        if rect.is_empty:
+            continue
+        if (rect & search_rect).is_empty:
+            continue
+        if _source_mask_target_contains_rect(target_rect, rect):
+            continue
+        neighbors.append(rect)
+    return neighbors
+
+
+def _clamp_inflated_source_mask_to_neighbors(
+    target_rect: fitz.Rect,
+    inflated_rect: fitz.Rect,
+    neighbor_rects: list[fitz.Rect],
+) -> fitz.Rect:
+    safe = fitz.Rect(inflated_rect)
+    gap = PDFJS_SOURCE_MASK_NEIGHBOR_GAP_PTS
+    for neighbor in neighbor_rects:
+        if neighbor.is_empty or (safe & neighbor).is_empty:
+            continue
+
+        vertical_overlap = min(target_rect.y1, neighbor.y1) - max(target_rect.y0, neighbor.y0)
+        horizontal_overlap = min(target_rect.x1, neighbor.x1) - max(target_rect.x0, neighbor.x0)
+
+        if neighbor.y1 <= target_rect.y0 and horizontal_overlap > 0:
+            safe.y0 = max(safe.y0, neighbor.y1 + gap)
+        elif neighbor.y0 >= target_rect.y1 and horizontal_overlap > 0:
+            safe.y1 = min(safe.y1, neighbor.y0 - gap)
+        elif neighbor.x1 <= target_rect.x0 and vertical_overlap > 0:
+            safe.x0 = max(safe.x0, neighbor.x1 + gap)
+        elif neighbor.x0 >= target_rect.x1 and vertical_overlap > 0:
+            safe.x1 = min(safe.x1, neighbor.x0 - gap)
+
+    if safe.is_empty or safe.width <= 0.05 or safe.height <= 0.05:
+        return fitz.Rect(target_rect)
+    return safe
+
+
+def calculate_safe_pdfjs_source_mask(page: fitz.Page, target_rect: fitz.Rect) -> fitz.Rect:
+    inflated = fitz.Rect(
+        target_rect.x0 - PDFJS_SOURCE_MASK_PADDING_X_PTS,
+        target_rect.y0 - PDFJS_SOURCE_MASK_PADDING_Y_PTS,
+        target_rect.x1 + PDFJS_SOURCE_MASK_PADDING_X_PTS,
+        target_rect.y1 + PDFJS_SOURCE_MASK_PADDING_Y_PTS,
+    ) & page.rect
+    neighbors = _neighbor_text_rects_for_source_mask(page, target_rect, inflated)
+    return _clamp_inflated_source_mask_to_neighbors(target_rect, inflated, neighbors) & page.rect
+
+
+def pdfjs_source_mask_rect(page: fitz.Page, ann: Dict[str, Any]) -> Optional[fitz.Rect]:
+    base_rect = _pdfjs_source_base_rect(page, ann)
+    if base_rect is None or base_rect.is_empty:
+        return None
+    rect = calculate_safe_pdfjs_source_mask(page, base_rect)
+    source_text = sanitize_pdf_text(ann.get("pdfjsSourceText") or ann.get("originalText") or ann.get("text") or "")
+    if source_text and not re.search(r"[gjpqy,;]", source_text, re.IGNORECASE):
+        bottom_trim = min(1.0, max(0.35, float(base_rect.height) * 0.1))
+        if rect.height > bottom_trim + 0.5:
+            rect.y1 = max(rect.y0 + 0.05, rect.y1 - bottom_trim)
+    return rect & page.rect
+
+
+def _rect_intersection_ratio(rect: fitz.Rect, target: fitz.Rect) -> float:
+    if rect.is_empty or target.is_empty:
+        return 0.0
+    overlap = rect & target
+    if overlap.is_empty:
+        return 0.0
+    rect_area = max(0.0001, rect.width * rect.height)
+    return (overlap.width * overlap.height) / rect_area
+
+
+def pdfjs_source_text_redaction_rects(page: fitz.Page, ann: Dict[str, Any], source_rect: fitz.Rect) -> list[fitz.Rect]:
+    source_text = sanitize_pdf_text(ann.get("pdfjsSourceText") or ann.get("originalText") or "").strip()
+    if not source_text:
+        return [source_rect]
+
+    candidates: list[fitz.Rect] = []
+    try:
+        matches = page.search_for(source_text)
+    except Exception:
+        matches = []
+    for match in matches:
+        match_rect = fitz.Rect(match) & page.rect
+        if not match_rect.is_empty and _rect_intersection_ratio(match_rect, source_rect) >= 0.55:
+            candidates.append(match_rect)
+
+    if candidates:
+        return candidates
+    return [source_rect]
+
+
+def sample_pdfjs_mask_fill(page: fitz.Page, rect: fitz.Rect) -> tuple[float, float, float]:
+    if rect is None or rect.is_empty:
+        return (1.0, 1.0, 1.0)
+    try:
+        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), clip=rect, alpha=False)
+    except Exception:
+        return (1.0, 1.0, 1.0)
+    if pix.width <= 0 or pix.height <= 0:
+        return (1.0, 1.0, 1.0)
+
+    samples = pix.samples
+    channels = max(1, int(getattr(pix, "n", 3) or 3))
+    buckets: Dict[tuple[int, int, int], int] = {}
+    total_pixels = max(1, pix.width * pix.height)
+    step = max(1, int(math.sqrt(total_pixels / 5000.0)))
+
+    for y in range(0, pix.height, step):
+        row_offset = y * pix.width * channels
+        for x in range(0, pix.width, step):
+            offset = row_offset + (x * channels)
+            if offset + 2 >= len(samples):
+                continue
+            r = int(samples[offset])
+            g = int(samples[offset + 1])
+            b = int(samples[offset + 2])
+            luminance = (0.299 * r) + (0.587 * g) + (0.114 * b)
+            if luminance < 155:
+                continue
+            key = (
+                min(255, round(r / 8) * 8),
+                min(255, round(g / 8) * 8),
+                min(255, round(b / 8) * 8),
+            )
+            buckets[key] = buckets.get(key, 0) + 1
+
+    if not buckets:
+        return (1.0, 1.0, 1.0)
+    r, g, b = max(buckets.items(), key=lambda item: item[1])[0]
+    return (r / 255.0, g / 255.0, b / 255.0)
+
+
+def _is_thin_page_rule(rule_rect: fitz.Rect, mask_rect: fitz.Rect) -> tuple[str, fitz.Rect] | None:
+    if rule_rect.is_empty or mask_rect.is_empty:
+        return None
+    overlap = rule_rect & mask_rect
+    if overlap.is_empty:
+        return None
+
+    max_rule_thickness = 1.5
+    horizontal = (
+        rule_rect.height <= max_rule_thickness
+        and rule_rect.width >= 8.0
+        and overlap.width >= min(rule_rect.width, mask_rect.width, 1.0)
+    )
+    if horizontal:
+        return ("horizontal", rule_rect)
+
+    vertical = (
+        rule_rect.width <= max_rule_thickness
+        and rule_rect.height >= 8.0
+        and overlap.height >= min(rule_rect.height, mask_rect.height, 1.0)
+    )
+    if vertical:
+        return ("vertical", rule_rect)
+
+    return None
+
+
+def _subtract_rule_band_from_rects(rects: list[fitz.Rect], orientation: str, rule_rect: fitz.Rect) -> list[fitz.Rect]:
+    next_rects: list[fitz.Rect] = []
+    guard = 0.03
+    for rect in rects:
+        overlap = rect & rule_rect
+        if overlap.is_empty:
+            next_rects.append(rect)
+            continue
+
+        if orientation == "horizontal":
+            candidates = [
+                fitz.Rect(rect.x0, rect.y0, rect.x1, max(rect.y0, rule_rect.y0 - guard)),
+                fitz.Rect(rect.x0, min(rect.y1, rule_rect.y1 + guard), rect.x1, rect.y1),
+            ]
+        else:
+            candidates = [
+                fitz.Rect(rect.x0, rect.y0, max(rect.x0, rule_rect.x0 - guard), rect.y1),
+                fitz.Rect(min(rect.x1, rule_rect.x1 + guard), rect.y0, rect.x1, rect.y1),
+            ]
+
+        next_rects.extend(candidate for candidate in candidates if not candidate.is_empty and candidate.width > 0.05 and candidate.height > 0.05)
+    return next_rects
+
+
+def detect_raster_horizontal_rule_bands(page: fitz.Page, rect: fitz.Rect) -> list[fitz.Rect]:
+    if rect is None or rect.is_empty or rect.width < 6.0 or rect.height <= 0:
+        return []
+    scale = 4.0
+    try:
+        pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=rect, alpha=False)
+    except Exception:
+        return []
+    if pix.width <= 0 or pix.height <= 0:
+        return []
+
+    channels = max(1, int(getattr(pix, "n", 3) or 3))
+    samples = pix.samples
+    dark_rows: list[int] = []
+    for y in range(pix.height):
+        row_offset = y * pix.width * channels
+        dark = 0
+        first_dark = False
+        last_dark = False
+        for x in range(pix.width):
+            offset = row_offset + (x * channels)
+            if offset + 2 >= len(samples):
+                continue
+            r = int(samples[offset])
+            g = int(samples[offset + 1])
+            b = int(samples[offset + 2])
+            luminance = (0.299 * r) + (0.587 * g) + (0.114 * b)
+            is_dark = luminance < 170
+            if is_dark:
+                dark += 1
+                if x <= max(1, int(pix.width * 0.08)):
+                    first_dark = True
+                if x >= min(pix.width - 2, int(pix.width * 0.92)):
+                    last_dark = True
+        if pix.width > 0 and (dark / pix.width) >= 0.72 and first_dark and last_dark:
+            dark_rows.append(y)
+
+    if not dark_rows:
+        return []
+
+    groups: list[tuple[int, int]] = []
+    start = prev = dark_rows[0]
+    for row in dark_rows[1:]:
+        if row <= prev + 1:
+            prev = row
+            continue
+        groups.append((start, prev))
+        start = prev = row
+    groups.append((start, prev))
+
+    bands: list[fitz.Rect] = []
+    for start, end in groups:
+        top = rect.y0 + (start / scale) - 0.12
+        bottom = rect.y0 + ((end + 1) / scale) + 0.12
+        band = fitz.Rect(rect.x0, max(rect.y0, top), rect.x1, min(rect.y1, bottom))
+        if not band.is_empty and 0.05 < band.height <= 4.0:
+            bands.append(band)
+    return bands
+
+
+def split_pdfjs_source_mask_around_page_rules(page: fitz.Page, rect: fitz.Rect) -> list[fitz.Rect]:
+    if rect is None or rect.is_empty:
+        return []
+
+    pieces = [fitz.Rect(rect)]
+    try:
+        drawings = page.get_drawings()
+    except Exception:
+        return pieces
+
+    for drawing in drawings:
+        rule_rect = drawing.get("rect") if isinstance(drawing, dict) else None
+        if not isinstance(rule_rect, fitz.Rect):
+            continue
+        rule = _is_thin_page_rule(rule_rect, rect)
+        if rule is None:
+            continue
+        pieces = _subtract_rule_band_from_rects(pieces, rule[0], rule[1])
+        if not pieces:
+            break
+
+    if pieces:
+        for rule_rect in detect_raster_horizontal_rule_bands(page, rect):
+            pieces = _subtract_rule_band_from_rects(pieces, "horizontal", rule_rect)
+            if not pieces:
+                break
+
+    return pieces or [fitz.Rect(rect)]
+
+
+def draw_pdfjs_source_mask(page: fitz.Page, ann: Dict[str, Any]) -> None:
+    rect = pdfjs_source_mask_rect(page, ann)
+    if rect is None or rect.is_empty:
+        return
+    # Match the browser's .enpv-source-mask behavior for the pdf.js visible
+    # export path.  A real PDF redaction can remove every glyph in a shared
+    # content-stream text object, so masking the title line on PDFs like I-983
+    # also deletes the middle of the subtitle below it.
+    fill = sample_pdfjs_mask_fill(page, rect)
+    for mask_piece in split_pdfjs_source_mask_around_page_rules(page, rect):
+        page.draw_rect(mask_piece, color=None, fill=fill, width=0, overlay=True)
+
+
+def _source_color_to_hex(value: Any) -> str:
+    try:
+        color_value = int(value)
+    except Exception:
+        return "#000000"
+    color_value = max(0, min(0xFFFFFF, color_value))
+    return f"#{color_value:06x}"
+
+
+def _fitz_rect_from_bbox(value: Any) -> Optional[fitz.Rect]:
+    if not isinstance(value, (list, tuple)) or len(value) < 4:
+        return None
+    try:
+        rect = fitz.Rect(float(value[0]), float(value[1]), float(value[2]), float(value[3]))
+    except Exception:
+        return None
+    return rect if not rect.is_empty else None
+
+
+def resolve_pdfjs_visible_overlay_typography(page: fitz.Page, ann: Dict[str, Any]) -> Dict[str, Any]:
+    """Match PDF.js source-backed overlays to the original PDF text style.
+
+    Browser pdf.js text spans often expose generic CSS families such as
+    sans-serif plus a transform scale. The visible export path should instead
+    stamp replacement text with the source PDF's real font metrics at the
+    source baseline, otherwise replacements drift and resize versus the viewer.
+    """
+    # A manual resize promotes the editor box to rich wrapping mode. In that
+    # mode the saved pdfWidth/pdfHeight are the authority, not the source
+    # span's single-line baseline. Forcing source typography here makes export
+    # draw one unwrapped insert_text run that can escape the saved box/page.
+    if (
+        _boolish(ann.get("userForcedRichText"))
+        or str(ann.get("pdfjsEditorMode") or "").strip().lower() == "rich"
+        or str(ann.get("richTextPromotionReason") or "").strip().lower() == "manual-resize"
+    ):
+        return ann
+
+    source_rect = pdfjs_source_mask_rect(page, ann)
+    if source_rect is None or source_rect.is_empty:
+        return ann
+
+    source_text = sanitize_pdf_text(ann.get("pdfjsSourceText") or ann.get("originalText") or "").strip()
+    normalized_source = sanitize_pdf_text(source_text).replace(" ", "").lower()
+    best_span: Optional[Dict[str, Any]] = None
+    best_rect: Optional[fitz.Rect] = None
+    best_score = -1.0
+
+    try:
+        blocks = page.get_text("dict").get("blocks", [])
+    except Exception:
+        blocks = []
+
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        for line in block.get("lines", []) or []:
+            if not isinstance(line, dict):
+                continue
+            for span in line.get("spans", []) or []:
+                if not isinstance(span, dict):
+                    continue
+                span_rect = _fitz_rect_from_bbox(span.get("bbox"))
+                if span_rect is None:
+                    continue
+                overlap = span_rect & source_rect
+                if overlap.is_empty:
+                    continue
+                overlap_area = overlap.width * overlap.height
+                span_area = max(0.0001, span_rect.width * span_rect.height)
+                rect_score = overlap_area / span_area
+                span_text = sanitize_pdf_text(span.get("text") or "")
+                compact_span = span_text.replace(" ", "").lower()
+                text_bonus = 0.0
+                if normalized_source and compact_span:
+                    if compact_span == normalized_source:
+                        text_bonus = 2.0
+                    elif normalized_source in compact_span or compact_span in normalized_source:
+                        text_bonus = 1.0
+                score = rect_score + text_bonus
+                if score > best_score:
+                    best_score = score
+                    best_span = span
+                    best_rect = span_rect
+
+    if not best_span or best_rect is None:
+        return ann
+
+    resolved = dict(ann)
+    source_font = str(best_span.get("font") or "").strip()
+    source_family = normalize_font_family(source_font)
+    if source_family:
+        resolved["fontFamily"] = source_family
+    if source_font:
+        resolved["fontSourceName"] = source_font
+    try:
+        source_size = float(best_span.get("size") or 0.0)
+    except Exception:
+        source_size = 0.0
+    if source_size > 0:
+        resolved["fontSize"] = source_size
+        resolved["lineHeight"] = max(float(resolved.get("lineHeight") or 0.0), source_size)
+    if best_span.get("color") is not None:
+        resolved["textColor"] = _source_color_to_hex(best_span.get("color"))
+        resolved["color"] = resolved["textColor"]
+    font_lower = source_font.lower()
+    if "bold" in font_lower:
+        resolved["fontWeight"] = "700"
+    elif not str(resolved.get("fontWeight") or "").strip():
+        resolved["fontWeight"] = "400"
+    if "italic" in font_lower or "oblique" in font_lower:
+        resolved["fontStyle"] = "italic"
+    elif not str(resolved.get("fontStyle") or "").strip():
+        resolved["fontStyle"] = "normal"
+
+    origin = best_span.get("origin")
+    if isinstance(origin, (list, tuple)) and len(origin) >= 2:
+        try:
+            resolved["pdfjsSourceBaselineOffsetX"] = float(origin[0]) - float(best_rect.x0)
+            resolved["pdfjsSourceBaselineOffsetY"] = float(origin[1]) - float(best_rect.y0)
+        except Exception:
+            pass
+    resolved["pdfjsUseSourceTypography"] = True
+    return resolved
+
+
 def normalize_font_family(value: Any) -> str:
     exact_family = normalize_exact_font_family(value)
     if exact_family in FONT_FILE_VARIANTS:
@@ -829,14 +1606,39 @@ def css_font_family(value: Any) -> str:
     return "Helvetica, Arimo, Arial, sans-serif"
 
 
-def build_html_font_face_css() -> str:
+_HTML_FONT_FACE_CSS_CACHE: dict[tuple, str] = {}
+
+
+def build_html_font_face_css(families: tuple | None = None) -> str:
+    """Emit @font-face declarations for the given normalized families (or all
+    families if `families` is None). Variable-font weight/italic faces are
+    materialized to static TTF instances on demand because MuPDF's HTML
+    engine ignores @font-face `font-weight` when the source is a VF — it
+    would otherwise render every face using the file's default fvar instance
+    (e.g. Merriweather's default = Light wght=300 → bold spans render Light).
+    Results are cached per family-set on the assumption that exports re-use
+    the same handful of families repeatedly per process.
+    """
+    cache_key = tuple(sorted(families)) if families else ("__ALL__",)
+    cached = _HTML_FONT_FACE_CSS_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    families_filter = set(families) if families else None
     css_rules: list[str] = []
     for normalized_family, aliases in HTML_FONT_FAMILY_ALIASES.items():
+        if families_filter is not None and normalized_family not in families_filter:
+            continue
         variants = FONT_FILE_VARIANTS.get(normalized_family, {})
         regular_file = variants.get("normal")
         bold_file = variants.get("bold") or regular_file
         italic_file = variants.get("italic") or regular_file
         bold_italic_file = variants.get("boldItalic") or bold_file or italic_file or regular_file
+        # Materialize static instances now (lazy, on-demand). Non-VF files
+        # short-circuit immediately inside _materialize_variable_font_instance.
+        regular_file = _materialize_variable_font_instance(regular_file, 400, italic=False) if regular_file else regular_file
+        bold_file = _materialize_variable_font_instance(bold_file, 700, italic=False) if bold_file else bold_file
+        italic_file = _materialize_variable_font_instance(italic_file, 400, italic=True) if italic_file else italic_file
+        bold_italic_file = _materialize_variable_font_instance(bold_italic_file, 700, italic=True) if bold_italic_file else bold_italic_file
         faces = [
             (400, "normal", regular_file),
             (700, "normal", bold_file),
@@ -856,10 +1658,32 @@ def build_html_font_face_css() -> str:
                     f"font-style: {style}; "
                     "}"
                 )
-    return "\n".join(css_rules)
+    result = "\n".join(css_rules)
+    _HTML_FONT_FACE_CSS_CACHE[cache_key] = result
+    return result
 
 
-HTML_FONT_FACE_CSS = build_html_font_face_css()
+# Lazy module-level placeholder retained for backwards compatibility with any
+# callers reading the constant. Resolves to the *full* (all-families) CSS only
+# when read for the first time. Per-family callers should use the function
+# directly to avoid materializing VFs they don't need.
+class _LazyHtmlFontFaceCss(str):
+    """A str subclass that behaves like the full all-families CSS string but
+    builds it on first use rather than at import time.
+    """
+    def __new__(cls):
+        return super().__new__(cls, "")
+    def _build(self) -> str:
+        return build_html_font_face_css()
+    def __str__(self) -> str:
+        return self._build()
+    def __format__(self, spec) -> str:
+        return format(self._build(), spec)
+    def __repr__(self) -> str:
+        return repr(self._build())
+
+
+HTML_FONT_FACE_CSS = _LazyHtmlFontFaceCss()
 
 
 def _promoted_annotation_was_resized(ann: Dict[str, Any]) -> bool:
@@ -1110,8 +1934,14 @@ def build_annotation_htmlbox_css(ann: Dict[str, Any], font_size: float, opacity:
     overflow_wrap = "normal" if preserve_extracted_lines else "break-word"
     word_break = "normal" if preserve_extracted_lines else "break-word"
     inline_italic_face_css = _build_inline_italic_font_face_css(ann)
+    # Only emit @font-face for the family this annotation actually uses.
+    # build_html_font_face_css() lazily materializes static instances of any
+    # variable fonts in that family — restricting the scope keeps first-export
+    # cost bounded (each VF instancing pass is ~20s).
+    annotation_family_key = normalize_font_family(ann.get("fontFamily"))
+    font_face_css = build_html_font_face_css(families=(annotation_family_key,))
     return (
-        f"{HTML_FONT_FACE_CSS}\n"
+        f"{font_face_css}\n"
         f"{inline_italic_face_css}\n"
         "body { margin: 0; padding: 0; }\n"
         ".annotation-box {\n"
@@ -1900,6 +2730,9 @@ def is_italic_style(value: Any) -> bool:
 
 
 def resolve_embedded_font_entry(ann: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if is_pdfjs_visible_overlay_text(ann):
+        return None
+
     if (
         bool(ann.get("promotedFromExtraction"))
         and (
@@ -3898,7 +4731,20 @@ def resolve_text_fontfile(ann: Dict[str, Any]) -> Optional[str]:
         return None
     if family == "Helvetica" and is_italic:
         return None
-    return candidate if os.path.exists(candidate) else None
+    if not candidate or not os.path.exists(candidate):
+        return None
+    # If the resolved font file is a variable font (Raleway[wght].ttf,
+    # Nunito[wght].ttf, Merriweather...wght.ttf, …) MuPDF's `insert_text`
+    # path renders it using the file's *default* fvar instance regardless
+    # of the requested weight, so Bold annotations silently render at the
+    # default (often Light, e.g. Raleway defaults to wght=100). Materialize
+    # a static instance locked to the requested wght/italic axis and use
+    # that instead. The materialization is cached on disk under
+    # storage/app/temp/font-instances/, so the cost is only paid once per
+    # (family, weight, italic) triple.
+    target_weight = 700 if is_bold else 400
+    materialized = _materialize_variable_font_instance(candidate, target_weight, italic=is_italic)
+    return materialized if materialized and os.path.exists(materialized) else candidate
 
 
 def resolve_text_font_resource_name(ann: Dict[str, Any]) -> str:
@@ -4786,7 +5632,13 @@ def draw_eraser(page: fitz.Page, ann: Dict[str, Any]) -> None:
         page.draw_rect(rect, color=None, fill=(1, 1, 1), width=0, overlay=True)
 
 
-def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
+def draw_text(
+    page: fitz.Page,
+    ann: Dict[str, Any],
+    *,
+    mask_only: bool = False,
+    source_masks_already_drawn: bool = False,
+) -> None:
     # Skip decorative dot-leader separator annotations — these are visual spacers
     # extracted from the original PDF form structure that must not be redrawn as
     # visible text in the reconstruction.
@@ -4794,6 +5646,20 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
     if "leader-for-" in _ann_id:
         return
     render_ann = resolve_promoted_source_typography_annotation(ann)
+    pdfjs_visible_overlay = is_pdfjs_visible_overlay_text(render_ann)
+    if pdfjs_visible_overlay and is_redundant_pdfjs_source_overlay(render_ann):
+        return
+    if pdfjs_visible_overlay:
+        render_ann = resolve_pdfjs_visible_overlay_typography(page, render_ann)
+    if pdfjs_visible_overlay:
+        if not source_masks_already_drawn and not _boolish(render_ann.get("skipPdfjsSourceMask")):
+            draw_pdfjs_source_mask(page, render_ann)
+        if mask_only:
+            return
+        if _boolish(render_ann.get("pdfjsDeleted")):
+            return
+    elif mask_only and _boolish(render_ann.get("pdfjsDeleted")):
+        return
     text = sanitize_pdf_text(render_ann.get("text") or "")
     if not text:
         return
@@ -4838,10 +5704,10 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
     if rect is not None and not rect.is_empty:
         pivot = fitz.Point((rect.x0 + rect.x1) / 2.0, (rect.y0 + rect.y1) / 2.0)
         morph = build_rotation_morph(rotation, pivot)
-        if should_replay_promoted_source_block(ann, rect, rotation):
+        if not mask_only and should_replay_promoted_source_block(ann, rect, rotation):
             if replay_promoted_source_block(page, ann, rect):
                 return
-        if background_color is not None:
+        if not mask_only and background_color is not None:
             draw_rotated_rect(
                 page,
                 rect,
@@ -4852,6 +5718,39 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
                 morph=morph,
             )
         draw_font = custom_font or fitz.Font(fontname)
+        if pdfjs_visible_overlay and _boolish(render_ann.get("pdfjsUseSourceTypography")):
+            try:
+                baseline_y = rect.y0 + float(render_ann.get("pdfjsSourceBaselineOffsetY") or 0.0)
+            except Exception:
+                baseline_y = rect.y0 + (size * float(getattr(draw_font, "ascender", 0.8) or 0.8))
+            try:
+                draw_x = rect.x0 + float(render_ann.get("pdfjsSourceBaselineOffsetX") or 0.0)
+            except Exception:
+                draw_x = rect.x0
+            page.insert_text(
+                fitz.Point(draw_x, baseline_y),
+                text,
+                fontsize=size,
+                fontname=fontname,
+                color=color,
+                overlay=True,
+                fill_opacity=opacity,
+                stroke_opacity=opacity,
+                morph=morph,
+            )
+            if resolve_annotation_underline(ann):
+                text_width = draw_font.text_length(text, fontsize=size)
+                underline_y = baseline_y + max(0.5, size * 0.08)
+                draw_rotated_line(
+                    page,
+                    fitz.Point(draw_x, underline_y),
+                    fitz.Point(draw_x + text_width, underline_y),
+                    color=color,
+                    width=max(0.5, size * 0.06),
+                    opacity=opacity,
+                    morph=morph,
+                )
+            return
         exact_source_line_layout = normalize_exact_source_line_layout(
             ann,
             text,
@@ -4870,8 +5769,10 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
             size,
             current_rect=rect,
         ) if (preserve_extracted_lines and not bool(ann.get("promotedDirty"))) else []
-        if exact_source_line_layout:
+        if exact_source_line_layout and not source_masks_already_drawn:
             erase_promoted_source_text_region(page, ann, rect, exact_source_line_layout, morph)
+        if mask_only:
+            return
         if (
             dirty_promoted_span_layout
             and draw_text_using_exact_source_spans(
@@ -4907,13 +5808,27 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
             morph,
         ):
             return
+        pdfjs_scale_x = (
+            1.0
+            if _boolish(render_ann.get("pdfjsUseSourceTypography"))
+            else (pdfjs_visible_overlay_scale_x(render_ann) if pdfjs_visible_overlay else 1.0)
+        )
         if (
             abs(rotation) < 1e-6
+            and pdfjs_scale_x == 1.0
+            and not _boolish(render_ann.get("pdfjsUseSourceTypography"))
             and should_use_htmlbox_for_text(render_ann, embedded_font_entry)
             and not prefer_pdf_font_text_rendering
         ):
             try:
-                html_archive = fitz.Archive(FONT_DIR)
+                # Archive must include BOTH the bundled font dir AND the
+                # static-instance cache dir, because variable fonts are
+                # pre-instanced into the latter (see
+                # _materialize_static_instances_for_variable_fonts).
+                html_archive = fitz.Archive()
+                html_archive.add(FONT_DIR)
+                if os.path.isdir(_STATIC_INSTANCE_CACHE_DIR):
+                    html_archive.add(_STATIC_INSTANCE_CACHE_DIR)
             except Exception:
                 html_archive = None
         preview_font = custom_font or fitz.Font(fontname)
@@ -4929,14 +5844,16 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
             use_flush_dirty_promoted_padding,
         )
         use_flush_preview_padding = (
-            preserve_extracted_lines
+            pdfjs_visible_overlay
+            or preserve_extracted_lines
             or use_flush_dirty_promoted_padding
             or use_flush_user_authored_padding
             or use_flush_single_line_padding
         )
         preview_padding_x = 0.0 if use_flush_preview_padding else min(6.0, max(1.0, rect.width * 0.03))
         preview_padding_top = 0.0 if use_flush_preview_padding else min(2.0, max(0.5, rect.height * 0.01))
-        preview_available_width = max(1.0, rect.width - (preview_padding_x * 2.0))
+        preview_available_width = max(1.0, (rect.width - (preview_padding_x * 2.0)) / pdfjs_scale_x)
+        use_pdfjs_source_typography = pdfjs_visible_overlay and _boolish(render_ann.get("pdfjsUseSourceTypography"))
         rich_layout_ops = parse_rich_text_layout_ops(ann)
         rich_layout_text_matches = (
             bool(rich_layout_ops)
@@ -4951,7 +5868,7 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
         explicit_text_lines = split_text_preserving_manual_line_breaks(text)
         preview_lines = (
             explicit_text_lines
-            if preserve_extracted_lines
+            if preserve_extracted_lines or use_pdfjs_source_typography
             else (
                 ["" for _ in rich_wrapped_lines]
                 if rich_wrapped_lines
@@ -5078,7 +5995,20 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
         padding_top = preview_padding_top
         available_width = preview_available_width
         lines = preview_lines
+        if not preserve_extracted_lines and not use_pdfjs_source_typography and available_width > 1:
+            safe_lines: list[str] = []
+            for line in lines:
+                if not line or draw_font.text_length(line, fontsize=size) <= (available_width + 0.01):
+                    safe_lines.append(line)
+                else:
+                    safe_lines.extend(wrap_text_to_width(draw_font, line, size, available_width))
+            lines = safe_lines or [""]
         baseline_y = text_rect.y0 + padding_top + (size * ascender)
+        if pdfjs_visible_overlay and _boolish(render_ann.get("pdfjsUseSourceTypography")):
+            try:
+                baseline_y = text_rect.y0 + float(render_ann.get("pdfjsSourceBaselineOffsetY") or 0.0)
+            except Exception:
+                baseline_y = text_rect.y0 + (size * ascender)
         # Vertical alignment offset: shift the first-line baseline down so the
         # block of `lines` lands centered or bottom-aligned inside text_rect,
         # matching the editor's flex column-justify-content placement.
@@ -5109,10 +6039,22 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
 
             text_width = draw_font.text_length(line, fontsize=size) if line else 0.0
             draw_x = text_rect.x0 + padding_x
+            if pdfjs_visible_overlay and _boolish(render_ann.get("pdfjsUseSourceTypography")):
+                try:
+                    draw_x = text_rect.x0 + float(render_ann.get("pdfjsSourceBaselineOffsetX") or 0.0)
+                except Exception:
+                    draw_x = text_rect.x0
             if align == 1:
                 draw_x = text_rect.x0 + padding_x + max(0.0, (available_width - text_width) / 2.0)
             elif align == 2:
                 draw_x = text_rect.x1 - padding_x - text_width
+
+            line_morph = morph
+            if pdfjs_scale_x != 1.0:
+                line_morph = combine_morphs(
+                    (fitz.Point(draw_x, line_baseline_y), fitz.Matrix(pdfjs_scale_x, 0.0, 0.0, 1.0, 0.0, 0.0)),
+                    morph,
+                )
 
             page.insert_text(
                 fitz.Point(draw_x, line_baseline_y),
@@ -5123,7 +6065,7 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
                 overlay=True,
                 fill_opacity=opacity,
                 stroke_opacity=opacity,
-                morph=morph,
+                morph=line_morph,
             )
 
             if resolve_annotation_underline(ann) and line:
@@ -5135,8 +6077,11 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
                     color=color,
                     width=max(0.5, size * 0.06),
                     opacity=opacity,
-                    morph=morph,
+                    morph=line_morph,
                 )
+        return
+
+    if mask_only:
         return
 
     # Fallback for text annotations that do not include pdfWidth/pdfHeight
@@ -5518,30 +6463,54 @@ def _suppress_promoted_source_erase_over_user_shapes(annotations: list) -> None:
 def apply_annotations(pdf_path: str, annotations: list) -> None:
     annotations = normalize_annotations_for_pdf_export(annotations)
     annotations = sorted(annotations, key=annotation_layer_order)
-    _suppress_promoted_source_erase_over_user_shapes(annotations)
+    suppress_pdfjs_deleted_masks_owned_by_replacements(annotations)
     doc = fitz.open(pdf_path)
     temp_path = pdf_path + ".ann.tmp"
     try:
+        page_annotations: list[list[Dict[str, Any]]] = [[] for _ in range(doc.page_count)]
         for ann in annotations:
             if not isinstance(ann, dict):
                 continue
             page_index = clamp_page_index(ann.get("pageIndex"), doc.page_count)
             if page_index is None:
                 continue
+            page_annotations[page_index].append(ann)
+
+        for page_index, anns in enumerate(page_annotations):
             page = doc[page_index]
-            kind = (ann.get("type") or "").lower()
-            if kind == "shape":
-                draw_shape(page, ann)
-            elif kind == "table":
-                draw_table(page, ann)
-            elif kind == "eraser":
-                draw_eraser(page, ann)
-            elif kind == "text":
-                draw_text(page, ann)
-            elif kind == "signature":
-                draw_signature(page, ann)
-            elif kind == "image":
-                draw_signature(page, ann)
+
+            # Page-level source-mask prepass: every text-source whiteout is
+            # finished before any replacement ink is stamped. This prevents a
+            # later annotation mask from trimming text drawn by an earlier text
+            # annotation on the same page.
+            for ann in anns:
+                kind = (ann.get("type") or "").lower()
+                needs_source_mask = (
+                    is_pdfjs_visible_overlay_text(ann)
+                    or (
+                        kind == "text"
+                        and bool(ann.get("promotedFromExtraction"))
+                        and bool(ann.get("promotedDirty"))
+                        and not bool(ann.get("skipPromotedSourceErase"))
+                    )
+                )
+                if needs_source_mask:
+                    draw_text(page, ann, mask_only=True)
+
+            for ann in anns:
+                kind = (ann.get("type") or "").lower()
+                if kind == "shape":
+                    draw_shape(page, ann)
+                elif kind == "table":
+                    draw_table(page, ann)
+                elif kind == "eraser":
+                    draw_eraser(page, ann)
+                elif kind == "text":
+                    draw_text(page, ann, source_masks_already_drawn=True)
+                elif kind == "signature":
+                    draw_signature(page, ann)
+                elif kind == "image":
+                    draw_signature(page, ann)
 
         try:
             doc.save(

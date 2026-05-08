@@ -22,6 +22,10 @@ export function createEmbeddedFontRegistry({ shouldBypassEmbeddedFont, fontFileF
     let overlayEmbeddedFonts = null;
     const brokenKeys = new Set();
     let healthCheckToken = 0;
+    // Stage1 font diagnostics: per-family load/probe outcome captured by
+    // validateHealth so it can be inspected from the console / probes via
+    // `window.__editorTestState.getFontDiagnostics()`.
+    let lastDiagnostics = null;
 
     function loadFaces(embeddedFonts) {
         overlayEmbeddedFonts = embeddedFonts && typeof embeddedFonts === 'object' ? embeddedFonts : null;
@@ -136,9 +140,16 @@ export function createEmbeddedFontRegistry({ shouldBypassEmbeddedFont, fontFileF
 
             let foundBroken = false;
             const newlyBroken = [];
+            const perFamily = [];
 
             const probeOne = ({ cleanName, cssWeight, cssStyle }) => {
                 const family = `PDF_${cleanName}`;
+                const faceLoaded = (() => {
+                    try {
+                        return [...document.fonts].some((f) => f.family.replace(/['"]/g, '') === family
+                            && (f.status === 'loaded' || f.status === 'loading'));
+                    } catch (_) { return false; }
+                })();
                 // Render at the face's *registered* weight/style. The trailing
                 // NO_FALLBACK_SENTINEL ensures that if the PDF_<name> face is
                 // not loaded we don't fall back to a system font that *can*
@@ -153,14 +164,26 @@ export function createEmbeddedFontRegistry({ shouldBypassEmbeddedFont, fontFileF
                     for (let i = 3; i < img.length; i += 4) if (img[i] > 8) ink++;
                 } catch (_) { return; }
 
-                if (ink < 3) {
+                const broken = ink < 3;
+                if (broken) {
                     brokenKeys.add(cleanName);
                     newlyBroken.push(cleanName);
                     foundBroken = true;
                 }
+                perFamily.push({ cleanName, cssWeight, cssStyle, faceLoaded, ink, broken });
             };
 
             families.forEach(probeOne);
+
+            // Stage1 diagnostics snapshot — exposed via getDiagnostics().
+            lastDiagnostics = {
+                timestamp: Date.now(),
+                totalRegistered: families.length,
+                brokenCount: newlyBroken.length,
+                healthyCount: families.length - newlyBroken.length,
+                broken: newlyBroken.slice(),
+                perFamily,
+            };
 
             if (foundBroken) {
                 console.warn(
@@ -171,6 +194,15 @@ export function createEmbeddedFontRegistry({ shouldBypassEmbeddedFont, fontFileF
                     try { onValidationChange(newlyBroken); } catch (_) {}
                 }
             }
+            // Stage1: always log a summary so we can confirm during smoke
+            // tests which embedded PDF faces actually loaded vs. fell back.
+            try {
+                console.info(
+                    `[edit-new][fonts] embedded PDF faces: ${lastDiagnostics.healthyCount} healthy, `
+                    + `${lastDiagnostics.brokenCount} broken (of ${lastDiagnostics.totalRegistered} registered). `
+                    + (newlyBroken.length ? `Broken: ${newlyBroken.join(', ')}.` : '')
+                );
+            } catch (_) {}
         }).catch(() => {});
     }
 
@@ -178,5 +210,6 @@ export function createEmbeddedFontRegistry({ shouldBypassEmbeddedFont, fontFileF
         loadFaces,
         getEmbeddedFonts: () => overlayEmbeddedFonts,
         isBroken: (cleanName) => brokenKeys.has(cleanName),
+        getDiagnostics: () => lastDiagnostics,
     };
 }

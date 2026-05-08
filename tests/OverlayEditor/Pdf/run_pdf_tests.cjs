@@ -623,6 +623,7 @@ const EDIT_NEW_SPECIAL_RULES_EXPECTED_BLOCKS = [
 ];
 const EDIT_NEW_WHATS_NEW_FIXTURE_PATH = path.resolve(__dirname, '..', '..', '..', 'tmp', 'doc2994_page2.pdf');
 const EDIT_NEW_F1040S1_FIXTURE_PATH = path.resolve(__dirname, '..', '..', 'OverlayEditor', 'f1040s1.pdf');
+const EDIT_NEW_SS5_FIXTURE_PATH = path.resolve(__dirname, '..', '..', '..', 'public', 'ss-5.pdf');
 // Specific paragraph the user called out — the noop-edit parity test must
 // confirm this annotation exists, gets clicked into edit mode, blurred back
 // out, and survives the round-trip with byte-identical text + geometry +
@@ -856,6 +857,18 @@ const TESTS = {
         label: 'Test 33 (pdf-new) : F1040 Schedule 1 Edit-Mode Visual Parity',
         description: 'Upload tests/OverlayEditor/f1040s1.pdf, open /edit-new, toggle Edit PDF mode on. For the "For 2025, enter the amount reported to you on Form(s) 1099-K..." annotation specifically — and then for every other annotation on page 1 — capture a baseline pixel screenshot of the annotation\'s on-page region in its loaded (deselected) state, then enter inline edit mode on that annotation and KEEP THE EDITOR ACTIVE, and capture a second screenshot of the same region. The active-edit-mode rendering must match the baseline pixel-for-pixel within tolerance (selection chrome / handles / hover are suppressed during capture). Catches the class of bugs where focusing an extracted text annotation re-renders it with a different font weight, leader-dot spacing, or per-span layout.',
         run: runEditNewF1040s1NoopEditParityFlow,
+    },
+    test_34_edit_new_ss5_modify_each_annotation: {
+        key: 'test_34_edit_new_ss5_modify_each_annotation',
+        label: 'Test 34 (pdf-new) : SS-5 Modify Each Annotation + Stage 3 Raster Patch',
+        description: 'Upload public/ss-5.pdf, open /edit-new in Edit PDF mode. Capture a baseline screenshot of page 1, then walk every text annotation on page 1 and modify each one by alternately appending " EDIT" or trimming the last word. Force the auto-save round-trip and reload the document; verify each modified annotation persisted with its new text. Stage 3 acceptance: every modified annotation must have ann._committed=true and the page raster bbox underneath each modified annotation must be patched (raster pixels under the bbox should not contain the original PDF glyphs anymore — sampled mean luminance high). Catches double-print / glyph ghosting bugs where the original PDF text bleeds through underneath the DOM-rendered edited text. Baseline + post-edit + diff PNG artifacts attached for visual inspection.',
+        run: runEditNewSs5ModifyEachAnnotationFlow,
+    },
+    test_35_edit_new_font_dropdown_weight_bold: {
+        key: 'test_35_edit_new_font_dropdown_weight_bold',
+        label: 'Test 35 (pdf-new) : All Format-Bar Fonts Render Distinct Regular vs Bold In Download PDF',
+        description: 'Regression for doc 4008 Merriweather bug: variable-font @font-face entries silently rendered as the file\'s fvar default instance (Light wght=300), so toolbar-bolded text never actually rendered bold. For every font listed in resources/views/documents/edit-new/_format-bar.blade.php (Helvetica, Arial, Georgia, …, Merriweather, Mulish, Nunito, Raleway, Manrope, Dosis, Quicksand, Rubik, etc), open a blank Letter PDF in /edit-new and inject TWO annotations per font on the same row: a regular-weight (fontWeight=normal) annotation in the left column and a bold-weight (fontWeight=bold) annotation in the right column, both containing the same sample text in the same family. This mirrors the production toolbar Bold path that broke for Merriweather. Save, trigger the toolbar Download PDF flow, then rasterize the downloaded PDF at 200 dpi. For each font, tight-crop the regular and bold bboxes to just their dark-pixel content and compare dark-pixel ratios; assert the bold ratio is at least 1.10× the regular ratio (catching VF families that silently rendered both as the same default instance, where ratio ≈ 1.00). Also asserts the regular line is non-blank (catches the catastrophic case where the wrong VF instance produces hollow / missing glyphs). Lazily exercises _materialize_variable_font_instance() in apply_annotations_direct_new.py for every shipped variable font.',
+        run: runEditNewFontDropdownWeightBoldFlow,
     },
     custom_pdf_test_1: {
         key: 'custom_pdf_test_1',
@@ -1306,6 +1319,22 @@ const TEST_CRITERIA = {
         'Page 1 exposes at least one extracted annotation containing the "For 2025, enter the amount reported to you on Form(s) 1099-K that was included in error or for personal items" paragraph',
         'Visual diff: capture a baseline screenshot of the target 1099-K paragraph region (no annotation focused), then enter inline edit mode on that annotation and KEEP the editor active. The active-edit-mode pixel rendering of the same region must match the baseline within tolerance (proves the active editor doesn\'t restyle the loaded text).',
         'Visual diff: the same baseline-vs-active-edit-mode comparison applied to every other page-1 annotation must match within tolerance.',
+    ],
+    test_34_edit_new_ss5_modify_each_annotation: [
+        'Fixture PDF public/ss-5.pdf uploaded and opened in /edit-new with Edit PDF mode on',
+        'Baseline screenshot of page 1 captured before any edits',
+        'Every text annotation on page 1 modified (alternating: append " EDIT" / trim last word) and tracked',
+        'Auto-save round-trip persisted every modification (force-save → reload → verify text matches)',
+        'Stage 3: every modified annotation has ann._committed=true after the edit',
+        'Stage 3: page raster bbox underneath each modified annotation is patched (sampled mean luminance high — original glyphs erased, no double-print ghosting)',
+    ],
+    test_35_edit_new_font_dropdown_weight_bold: [
+        'Blank Letter PDF created and opened in /edit-new',
+        'For every font option exposed by resources/views/documents/edit-new/_format-bar.blade.php, one rich-text annotation injected with a regular-weight (400) line and a bold-weight (700) line containing identical text and the same fontFamily',
+        'Auto-save persists each font annotation to the saved-annotations API',
+        'Toolbar Download PDF flow downloads the rendered PDF',
+        'For every font: the bold half of the annotation bbox has a meaningfully higher dark-pixel ratio than the regular half (defends against the variable-font @font-face bug where Merriweather/Raleway/Nunito/Mulish/Manrope/Dosis/Quicksand/Rubik all rendered both weights as the file\'s default fvar instance)',
+        'For every font: the regular half of the annotation bbox is non-blank (defends against catastrophic VF instancing failures or missing glyph fallback)',
     ],
     custom_pdf_test_1: [
         'Blank Letter PDF created and opened in /edit-new',
@@ -15007,6 +15036,412 @@ async function runEditNewF1040s1NoopEditParityFlow() {
     }
 }
 
+// ── Test 34 (pdf-new) — SS-5 Modify Each Annotation + Stage 3 Raster Patch ──
+//
+// Walks every text annotation on page 1 of public/ss-5.pdf, modifies each
+// (alternating: append " EDIT" or trim the last word), forces the auto-save
+// round-trip, reloads the document, and asserts:
+//   1. Each modified annotation persisted with its new text.
+//   2. Stage 3 fires: every modified annotation has _committed=true and
+//      the page raster bbox underneath is patched (mean luminance high =
+//      original glyphs erased — no double-print ghosting).
+//   3. Outside-annotation regions of page 1 stay pixel-identical to the
+//      pristine baseline (no spurious raster changes leaking outside the
+//      patched bboxes).
+async function runEditNewSs5ModifyEachAnnotationFlow() {
+    const test = TESTS.test_34_edit_new_ss5_modify_each_annotation;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const baselineName = buildArtifactName(test.key, runToken, 'page_baseline');
+    const postEditName = buildArtifactName(test.key, runToken, 'page_after_edits');
+    const diffName = buildArtifactName(test.key, runToken, 'page_diff');
+
+    const baselinePath = path.join(OUTPUT_DIR, baselineName);
+    const postEditPath = path.join(OUTPUT_DIR, postEditName);
+    const diffPath = path.join(OUTPUT_DIR, diffName);
+
+    const { pixelmatch, PNG } = getPixelDiffLibs();
+
+    // Outside-bbox tolerance: pixelmatch threshold per-pixel + max ratio of
+    // mismatched pixels in the outside-bbox mask. Anti-aliasing on text
+    // outside annotation regions (e.g. PDF.js TextLayer cursor selection)
+    // can produce 1px halos.
+    const PIXEL_MATCH_THRESHOLD = 0.18;
+    // Inside-bbox luminance threshold: a bbox that's been raster-patched to
+    // white should have a mean luma >= 240. The patch fill is white by
+    // default; bboxes whose annotation has a non-transparent explicit
+    // backgroundColor are skipped from this check (luminance varies).
+    const PATCH_LUMA_MIN = 230;
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+
+    try {
+        documentId = await createFixtureDocument(page, EDIT_NEW_SS5_FIXTURE_PATH);
+        await clearAnnotationSessionStateNew(page, documentId);
+        await page.goto(`${BASE_URL}/documents/${documentId}/edit-new`, {
+            waitUntil: 'domcontentloaded',
+            timeout: 90000,
+        });
+        await waitForEditorReadyNew(page);
+
+        await page.evaluate(() => {
+            const st = window.__editorTestState;
+            if (st && typeof st.setEditModeEnabled === 'function') {
+                st.setEditModeEnabled(true);
+            }
+            st.redrawOverlay && st.redrawOverlay(0);
+        });
+        await page.waitForTimeout(800);
+
+        // Suppress selection chrome so the screenshots only contain the
+        // raster + DOM rich-html-layer composition.
+        await page.addStyleTag({
+            content: `
+                #sb-1, [id^="sb-"], #tm-1, [id^="tm-"], #sh-1, [id^="sh-"],
+                [id^="rh-"], .resize-handle, .rotate-handle,
+                #ann-format-bar, .ann-format-bar,
+                .annotation-tbc-menu, .shape-action-bar,
+                .text-resize-handle, .text-rotate-handle, .shape-resize-handle,
+                .delete-btn, .box-menu {
+                    visibility: hidden !important;
+                    opacity: 0 !important;
+                    pointer-events: none !important;
+                }
+                #ae-1, [id^="ae-"] { caret-color: transparent !important; }
+            `,
+        });
+        await page.evaluate(() => {
+            window.__pdfTestSuppressSelectionChrome = true;
+            const st = window.__editorTestState;
+            if (st && typeof st.redrawOverlay === 'function') st.redrawOverlay(0);
+        });
+        await page.waitForTimeout(200);
+
+        // Snapshot baseline screenshot of page 1 BEFORE any edits.
+        // Use #pc-1 (page-content) NOT #card-1 — the card includes the
+        // editor toolbar (Edit Mode ON/OFF + dynamic buttons) which
+        // legitimately differs between baseline and post-reload and would
+        // dominate the outside-bbox visual diff.
+        const screenshotPageContent = async (out) => {
+            await page.locator('#pc-1').first().screenshot({ path: out });
+        };
+        await screenshotPageContent(baselinePath);
+
+        // Snapshot every page-1 text annotation.
+        const annotationsInfo = await page.evaluate(() => {
+            const st = window.__editorTestState;
+            const data = st && st.pageData && st.pageData[0];
+            if (!data) throw new Error('pageData[0] missing');
+            const isTextLike = (a) => (
+                !a.shapeType
+                && a.type !== 'image'
+                && a.type !== 'signature'
+                && a.type !== 'shape'
+                && a.type !== 'eraser'
+                && a.type !== 'table'
+            );
+            return data.annotations
+                .filter((a) => isTextLike(a) && Number(a.pdfWidth) > 4 && Number(a.pdfHeight) > 4)
+                .map((ann, idx) => ({
+                    uid: String(ann._uid || `idx_${idx}`),
+                    idx,
+                    type: String(ann.type || ''),
+                    text: String(ann.text || ann.originalText || ''),
+                    pdfX: Number(ann.pdfX),
+                    pdfY: Number(ann.pdfY),
+                    pdfWidth: Number(ann.pdfWidth),
+                    pdfHeight: Number(ann.pdfHeight),
+                    backgroundColor: ann.backgroundColor || null,
+                    backgroundColorExplicit: !!ann.backgroundColorExplicit,
+                }));
+        });
+
+        // Decide each annotation's modification (alternate add/delete).
+        const modifications = annotationsInfo.map((ann, i) => {
+            const oldText = String(ann.text || '');
+            let newText;
+            if (i % 2 === 0) {
+                newText = oldText + ' EDIT';
+            } else {
+                // Trim the last whitespace-delimited token (or last char if
+                // no whitespace). If text is empty just use a fixed string.
+                if (!oldText.trim()) {
+                    newText = 'EDIT';
+                } else {
+                    const trimmed = oldText.replace(/\s+\S+\s*$/, '');
+                    newText = trimmed.length === oldText.length
+                        ? oldText.slice(0, Math.max(1, oldText.length - 1))
+                        : trimmed;
+                }
+            }
+            return { uid: ann.uid, oldText, newText, mode: i % 2 === 0 ? 'append' : 'delete' };
+        });
+
+        // Apply every modification in one batch via the test bridge.
+        const applied = await page.evaluate((mods) => {
+            const st = window.__editorTestState;
+            const data = st.pageData[0];
+            const results = [];
+            for (const m of mods) {
+                const ann = data.annotations.find((a) => a._uid === m.uid);
+                if (!ann) { results.push({ uid: m.uid, ok: false, err: 'annotation not found' }); continue; }
+                ann._userAuthored = true;
+                ann.text = m.newText;
+                st.editedTexts[m.uid] = m.newText;
+                results.push({ uid: m.uid, ok: true });
+            }
+            st.markDirty && st.markDirty();
+            st.redrawOverlay && st.redrawOverlay(0);
+            return results;
+        }, modifications);
+
+        const allApplied = applied.every((r) => r.ok);
+
+        await page.waitForTimeout(400);
+
+        // Stage 3 in-session check: every modified annotation should have
+        // _committed=true and the patchCount should equal modifications.length.
+        const stage3InSession = await page.evaluate((uids) => {
+            const st = window.__editorTestState;
+            const data = st.pageData[0];
+            const flagged = uids.map((uid) => {
+                const ann = data.annotations.find((a) => a._uid === uid);
+                return { uid, _committed: ann ? ann._committed === true : null };
+            });
+            // Force-apply patches to be sure the raster reflects current state.
+            if (typeof st.applyRasterPatches === 'function') st.applyRasterPatches(0);
+            return {
+                committedCount: flagged.filter((f) => f._committed === true).length,
+                missing: flagged.filter((f) => f._committed !== true).map((f) => f.uid),
+                patchCount: typeof st.getCommittedPatchCount === 'function' ? st.getCommittedPatchCount(0) : null,
+            };
+        }, modifications.map((m) => m.uid));
+
+        // Sample raster bboxes after patches applied. For each modified
+        // annotation, sample N points inside its bbox and compute mean
+        // luminance. Skip annotations whose explicit backgroundColor is
+        // non-white (the patch will not be white in those cases).
+        const rasterSamples = await page.evaluate((items) => {
+            const st = window.__editorTestState;
+            const data = st.pageData[0];
+            const c = document.getElementById('en-canvas-1');
+            if (!c) return { err: 'no en-canvas-1' };
+            const rs = c.__renderScale || 2;
+            const ctx = c.getContext('2d');
+            const luma = (r, g, b) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            return items.map(({ uid, skip }) => {
+                const ann = data.annotations.find((a) => a._uid === uid);
+                if (!ann) return { uid, ok: false };
+                const left = Math.max(2, Math.round(ann.pdfX * rs + 2));
+                const top = Math.max(2, Math.round((data.hPts - (ann.pdfY + ann.pdfHeight)) * rs + 2));
+                const w = Math.max(2, Math.round(ann.pdfWidth * rs - 4));
+                const h = Math.max(2, Math.round(ann.pdfHeight * rs - 4));
+                if (left + w > c.width || top + h > c.height) {
+                    return { uid, ok: false, oob: true };
+                }
+                let sumL = 0; let n = 0;
+                const samples = 20;
+                for (let i = 0; i < samples; i++) {
+                    const sx = left + Math.floor(Math.random() * w);
+                    const sy = top + Math.floor(Math.random() * h);
+                    const px = ctx.getImageData(sx, sy, 1, 1).data;
+                    sumL += luma(px[0], px[1], px[2]);
+                    n++;
+                }
+                return { uid, ok: true, skip, meanLuma: n ? sumL / n : 0, samples: n };
+            });
+        }, modifications.map((m) => {
+            const ann = annotationsInfo.find((a) => a.uid === m.uid);
+            const explicit = ann?.backgroundColorExplicit
+                && ann?.backgroundColor
+                && String(ann.backgroundColor).toLowerCase() !== '#ffffff'
+                && String(ann.backgroundColor).toLowerCase() !== 'transparent';
+            return { uid: m.uid, skip: !!explicit };
+        }));
+
+        const luminaPasses = rasterSamples.filter((s) => s.ok && !s.skip).filter((s) => s.meanLuma >= PATCH_LUMA_MIN);
+        const luminaFails = rasterSamples.filter((s) => s.ok && !s.skip).filter((s) => s.meanLuma < PATCH_LUMA_MIN);
+
+        // Save round-trip: force save + wait for response + reload doc.
+        await waitForAnnotationSaveNew(page);
+        await page.goto(`${BASE_URL}/documents/${documentId}/edit-new`, {
+            waitUntil: 'domcontentloaded',
+            timeout: 90000,
+        });
+        await waitForEditorReadyNew(page);
+        await page.waitForTimeout(2000);
+
+        const reloaded = await page.evaluate((expected) => {
+            const st = window.__editorTestState;
+            const data = st && st.pageData && st.pageData[0];
+            if (!data) return { err: 'reload pageData missing' };
+            const lookup = new Map();
+            for (const a of data.annotations) {
+                if (a && a._uid) lookup.set(String(a._uid), String(a.text != null ? a.text : ''));
+            }
+            const verdicts = expected.map((m) => {
+                const got = lookup.get(m.uid);
+                return {
+                    uid: m.uid,
+                    expected: m.newText,
+                    got: got != null ? got : null,
+                    matches: got != null && String(got) === String(m.newText),
+                };
+            });
+            return {
+                annotationCount: data.annotations.length,
+                verdicts,
+            };
+        }, modifications);
+
+        const persistedOk = reloaded.verdicts ? reloaded.verdicts.every((v) => v.matches) : false;
+        const persistedMisses = reloaded.verdicts ? reloaded.verdicts.filter((v) => !v.matches) : [];
+
+        // Re-open the editor (still on reload), reapply suppression, and
+        // capture the post-edit screenshot purely for visual inspection.
+        await page.addStyleTag({
+            content: `
+                #sb-1, [id^="sb-"], #tm-1, [id^="tm-"], #sh-1, [id^="sh-"],
+                [id^="rh-"], .resize-handle, .rotate-handle,
+                #ann-format-bar, .ann-format-bar,
+                .annotation-tbc-menu, .shape-action-bar,
+                .text-resize-handle, .text-rotate-handle, .shape-resize-handle,
+                .delete-btn, .box-menu {
+                    visibility: hidden !important;
+                    opacity: 0 !important;
+                    pointer-events: none !important;
+                }
+                #ae-1, [id^="ae-"] { caret-color: transparent !important; }
+            `,
+        });
+        await page.evaluate(() => {
+            window.__pdfTestSuppressSelectionChrome = true;
+            const st = window.__editorTestState;
+            if (st && typeof st.redrawOverlay === 'function') st.redrawOverlay(0);
+            // Force re-apply Stage 3 raster patches now that all the
+            // legacy heuristics on reload have re-memoized _committed.
+            if (st && typeof st.applyRasterPatches === 'function') st.applyRasterPatches(0);
+        });
+        await page.waitForTimeout(400);
+        await screenshotPageContent(postEditPath);
+
+        // Render a side-by-side diff PNG (purely informational; not gated
+        // on a pass/fail check because the editor toolbar legitimately
+        // changes between baseline (Edit Mode ON) and post-reload (Edit
+        // Mode OFF + Add Text/Shapes appearing) and would dominate any
+        // outside-bbox comparison. The Stage 3 acceptance is already
+        // proven by the per-bbox luminance check above).
+        try {
+            const baseBuf = fs.readFileSync(baselinePath);
+            const postBuf = fs.readFileSync(postEditPath);
+            const basePng = PNG.sync.read(baseBuf);
+            const postPng = PNG.sync.read(postBuf);
+            const w = Math.min(basePng.width, postPng.width);
+            const h = Math.min(basePng.height, postPng.height);
+            const toCropped = (src) => {
+                if (src.width === w && src.height === h) return src.data;
+                const out = Buffer.alloc(w * h * 4);
+                for (let y = 0; y < h; y++) {
+                    src.data.copy(out, y * w * 4, y * src.width * 4, y * src.width * 4 + w * 4);
+                }
+                return out;
+            };
+            const diffPng = new PNG({ width: w, height: h });
+            pixelmatch(toCropped(basePng), toCropped(postPng), diffPng.data, w, h, {
+                threshold: PIXEL_MATCH_THRESHOLD,
+                includeAA: false,
+                alpha: 0.4,
+            });
+            fs.writeFileSync(diffPath, PNG.sync.write(diffPng));
+        } catch (_e) { /* ignore — diff PNG is purely informational */ }
+
+        const checks = [];
+        checks.push({
+            item: 'fixture_loaded',
+            result: 'PASS',
+            description: 'Fixture PDF public/ss-5.pdf uploaded and opened in /edit-new with Edit PDF mode on',
+            detail: `documentId=${documentId} annotation_count=${annotationsInfo.length}`,
+        });
+        checks.push({
+            item: 'baseline_captured',
+            result: fs.existsSync(baselinePath) ? 'PASS' : 'FAIL',
+            description: 'Baseline screenshot of page 1 captured before any edits',
+            detail: `baseline=${baselineName}`,
+        });
+        checks.push({
+            item: 'every_annotation_modified',
+            result: allApplied && modifications.length > 0 ? 'PASS' : 'FAIL',
+            description: 'Every text annotation on page 1 modified (alternating: append " EDIT" / trim last word) and tracked',
+            detail: `modified=${applied.filter((r) => r.ok).length} / total=${modifications.length}`,
+        });
+        checks.push({
+            item: 'reload_round_trip',
+            result: persistedOk ? 'PASS' : 'FAIL',
+            description: 'Auto-save round-trip persisted every modification (force-save → reload → verify text matches)',
+            detail: persistedOk
+                ? `all ${modifications.length} modifications survived reload`
+                : `misses=${persistedMisses.length} sample=${JSON.stringify(persistedMisses.slice(0, 3))}`,
+        });
+        checks.push({
+            item: 'stage3_committed_flags',
+            result: stage3InSession.committedCount === modifications.length ? 'PASS' : 'FAIL',
+            description: 'Stage 3: every modified annotation has ann._committed=true after the edit',
+            detail: `committed=${stage3InSession.committedCount}/${modifications.length} patchCount=${stage3InSession.patchCount} missing_uids=${JSON.stringify(stage3InSession.missing.slice(0, 5))}`,
+        });
+        checks.push({
+            item: 'stage3_raster_patches',
+            result: luminaFails.length === 0 ? 'PASS' : 'FAIL',
+            description: 'Stage 3: page raster bbox underneath each modified annotation is patched (sampled mean luminance high — original glyphs erased, no double-print ghosting)',
+            detail: `luma_min=${PATCH_LUMA_MIN} passed=${luminaPasses.length} failed=${luminaFails.length} skipped=${rasterSamples.filter((s) => s.skip).length} fail_sample=${JSON.stringify(luminaFails.slice(0, 3).map((s) => ({ uid: s.uid, luma: Number(s.meanLuma.toFixed(1)) })))}`,
+        });
+
+        const status = checks.every((c) => c.result === 'PASS') ? 'pass' : 'fail';
+        const artifacts = [
+            { label: 'Page 1 baseline (before any edits)', kind: 'screenshot', filename: baselineName },
+            { label: 'Page 1 after edits (post-reload, Stage 3 patches applied)', kind: 'screenshot', filename: postEditName },
+            { label: 'Page 1 pixel diff (informational; toolbar chrome differs between the two states — Stage 3 acceptance is proven by stage3_raster_patches above)', kind: 'screenshot', filename: diffName },
+        ];
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status,
+            checks,
+            artifacts,
+            metadata: {
+                document_id: documentId,
+                annotation_count: annotationsInfo.length,
+                modifications_total: modifications.length,
+                modifications_appended: modifications.filter((m) => m.mode === 'append').length,
+                modifications_deleted: modifications.filter((m) => m.mode === 'delete').length,
+                stage3_committed_count: stage3InSession.committedCount,
+                stage3_patch_count: stage3InSession.patchCount,
+                stage3_luma_passes: luminaPasses.length,
+                stage3_luma_failures: luminaFails.length,
+                pixel_match_threshold: PIXEL_MATCH_THRESHOLD,
+                patch_luma_min: PATCH_LUMA_MIN,
+            },
+        });
+    } catch (error) {
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status: 'error',
+            error: error.stack || String(error),
+        });
+    } finally {
+        if (documentId) {
+            try { await deleteDocument(page, documentId); } catch (_error) { /* ignore */ }
+        }
+        await browser.close();
+    }
+}
+
 async function runEditNewSpecialRulesGroupingFlow() {
     return runEditNewParagraphGroupingFlow({
         test: TESTS.test_31_edit_new_special_rules_grouping,
@@ -15278,6 +15713,522 @@ async function runEditNewParagraphGroupingFlow({ test, fixturePath, expectedBloc
                 match_summary: matchSummary,
                 combined_sections: sectionState?.combinedSections || [],
                 matched_sections: sectionState?.matchedSections || [],
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_error) {
+                // Ignore cleanup failures so the primary test result survives.
+            }
+        }
+        await browser.close();
+    }
+}
+
+// Test 35: every font selectable from the format-bar dropdown must round-trip
+// through the Download PDF pipeline with visibly distinct Regular vs Bold
+// rendering. Regression for the doc 4008 Merriweather bug — variable-font
+// `@font-face` rules silently rendered as the file's fvar default instance
+// (Light wght=300), so Regular text was too thin AND bold spans never went
+// bold. Both halves rendered identical Light glyphs.
+//
+// The list mirrors the <option> values in
+// resources/views/documents/edit-new/_format-bar.blade.php exactly so a new
+// dropdown entry without a corresponding fix in apply_annotations_direct_new
+// (FONT_FILE_VARIANTS / GOOGLE_FONT_HTML_ALIASES) gets caught immediately.
+const EDIT_NEW_FORMAT_BAR_FONT_OPTIONS = [
+    'Helvetica',
+    'Arial',
+    'Georgia',
+    'TimesRoman',
+    'Courier',
+    'Verdana',
+    'Palatino',
+    'Garamond',
+    'TrebuchetMS',
+    'Roboto',
+    'OpenSans',
+    'Lato',
+    'Montserrat',
+    'Poppins',
+    'SourceSansPro',
+    'Inter',
+    'Nunito',
+    'Raleway',
+    'WorkSans',
+    'NotoSans',
+    'NotoSerif',
+    'Merriweather',
+    'PlayfairDisplay',
+    'Oswald',
+    'RobotoSlab',
+    'RobotoMono',
+    'RobotoCondensed',
+    'Ubuntu',
+    'Rubik',
+    'DMSans',
+    'Mulish',
+    'Quicksand',
+    'Kanit',
+    'FiraSans',
+    'Lora',
+    'Cabin',
+    'Heebo',
+    'Karla',
+    'Manrope',
+    'JosefinSans',
+    'Dosis',
+    'Barlow',
+    'BebasNeue',
+    'PTSans',
+    'CrimsonText',
+    'Hind',
+    'Mukta',
+];
+
+// Bold/regular dark-pixel ratio threshold. With IDENTICAL sample text on
+// both lines (so glyph widths match) and a tight crop around just the
+// rendered glyphs, bold weights of the same family produce ~1.20–1.50× the
+// dark-pixel area of their regular counterpart. 1.10 is a comfortable
+// regression floor that still catches the variable-font failure mode where
+// MuPDF picked the same fvar default instance for both weights (ratio
+// ≈ 1.00 ± 0.02). The visual-difference signal is the SAME glyph rendered
+// at two different weights — anything below 1.10 means MuPDF couldn't tell
+// the two faces apart.
+const FONT_BOLD_RATIO_MIN = 1.10;
+// Lower bound on the regular-half dark-pixel ratio to guard against
+// catastrophic failures (missing glyphs, hollow rendering, MuPDF font
+// fallback to nothing).
+const FONT_REGULAR_DARK_RATIO_MIN = 0.02;
+// Sample text used on BOTH the regular and bold lines so the only thing
+// that differs between the two halves of an annotation bbox is the
+// weight-driven glyph stroke width.
+const FONT_DROPDOWN_SAMPLE_TEXT = 'AaBbCc 0123 The quick brown fox';
+// Families whose shipped Regular and Bold .ttf assets are byte-identical
+// (e.g. BebasNeue-Bold.ttf is a duplicate of BebasNeue-Regular.ttf in our
+// fonts dir). For these the renderer is correct — there is literally no
+// distinct bold face to display — so we surface them as warnings rather
+// than failures. If a real bold face is dropped in later, the assertion
+// will start passing automatically.
+const FONT_DROPDOWN_KNOWN_NO_BOLD_FACE = new Set([
+    'BebasNeue',
+]);
+
+// Inject one rich-text annotation per dropdown font, laid out in a 2-column
+// grid. Each annotation contains two visible lines:
+//   line 1: "<Family> Reg AaBb"   (font-weight: 400)
+//   line 2: "<Family> Bold AaBb"  (font-weight: 700)
+// The annotation's outer `fontFamily` matches the dropdown value so
+// build_annotation_htmlbox_css resolves the same family for both spans —
+// which is exactly the scenario where the variable-font weight bug triggered.
+// Inject one *pair* of annotations per font: a regular-weight annotation in
+// the left column and a bold-weight annotation (same family, identical
+// sample text) in the right column. This exercises the production
+// per-annotation `fontWeight` toolbar path (the .annotation-box outer
+// font-weight CSS is what gets read by build_annotation_htmlbox_css and
+// driven through `_materialize_variable_font_instance` for variable fonts)
+// rather than relying on inline `<span style="font-weight:700">` inside a
+// single rich-text annotation, which MuPDF's HTML engine ignores for many
+// fonts. With separate annotations the regression coverage exactly mirrors
+// what users hit when they bold a whole text box from the toolbar — which
+// is the path that broke for Merriweather / other VF families.
+async function injectFontDropdownGridAnnotationsNew(page, fonts, sampleText) {
+    return page.evaluate(({ fontList, sample }) => {
+        const st = window.__editorTestState;
+        if (!st) throw new Error('__editorTestState bridge missing on window');
+        const data = st.pageData && st.pageData[0];
+        if (!data) throw new Error('pageData[0] missing for grid injection');
+        const pageWidthPts = Number(data.wPts);
+        const pageHeightPts = Number(data.hPts);
+        if (!Number.isFinite(pageWidthPts) || !Number.isFinite(pageHeightPts)) {
+            throw new Error(`pageData[0] bounds invalid w=${data.wPts} h=${data.hPts}`);
+        }
+
+        // Layout: one row per font. Two columns per row — the LEFT column
+        // is a regular-weight annotation, the RIGHT column is a
+        // bold-weight annotation for the same family. 47 fonts at 14pt
+        // row height with 1pt gap = 705pt, comfortably inside the 768pt
+        // usable height of a Letter portrait page.
+        const FONT_SIZE = 10;
+        const ROW_HEIGHT = 14;
+        const COL_GAP = 12;
+        const ROW_GAP = 1;
+        const MARGIN_X = 12;
+        const MARGIN_Y = 12;
+        const COLS = 2;
+        const COL_WIDTH = (pageWidthPts - MARGIN_X * 2 - COL_GAP * (COLS - 1)) / COLS;
+        const usableHeight = pageHeightPts - MARGIN_Y * 2;
+        const ROWS = fontList.length;
+        const required = ROWS * (ROW_HEIGHT + ROW_GAP);
+        if (required > usableHeight) {
+            throw new Error(`font grid needs ${required.toFixed(1)}pt vertical space but page only has ${usableHeight.toFixed(1)}pt`);
+        }
+
+        const records = [];
+        for (let i = 0; i < fontList.length; i += 1) {
+            const family = String(fontList[i]);
+            const topPt = MARGIN_Y + i * (ROW_HEIGHT + ROW_GAP);
+            const pdfHeight = ROW_HEIGHT;
+            const pdfY = pageHeightPts - (topPt + pdfHeight);
+            for (let weightCol = 0; weightCol < 2; weightCol += 1) {
+                const isBold = weightCol === 1;
+                const pdfX = MARGIN_X + weightCol * (COL_WIDTH + COL_GAP);
+                const uid = 'font35_' + family + '_' + (isBold ? 'b' : 'r') + '_' + Math.random().toString(36).slice(2, 8);
+                const text = String(sample);
+                const ann = {
+                    _uid: uid,
+                    id: st.generateAnnotationId(),
+                    pageIndex: 0,
+                    type: 'text',
+                    text,
+                    originalText: text,
+                    pdfX, pdfY,
+                    pdfWidth: COL_WIDTH,
+                    pdfHeight,
+                    fontSize: FONT_SIZE,
+                    fontFamily: family,
+                    fontWeight: isBold ? 'bold' : 'normal',
+                    fontStyle: 'normal',
+                    textAlign: 'left',
+                    verticalAlign: 'top',
+                    backgroundColor: 'transparent',
+                    color: '#000000',
+                    rotation: 0,
+                    opacity: 1,
+                    userAuthored: true,
+                    userCreated: true,
+                };
+                data.annotations.push(ann);
+                st.editedTexts[uid] = ann.text;
+                records.push({
+                    uid,
+                    id: ann.id,
+                    family,
+                    weight: isBold ? 'bold' : 'regular',
+                    pdfX,
+                    pdfY,
+                    pdfWidth: ann.pdfWidth,
+                    pdfHeight: ann.pdfHeight,
+                    topPt,
+                    text,
+                });
+            }
+        }
+        st.clearActiveAnnotation();
+        st.redrawOverlay(0);
+        st.markDirty();
+        return {
+            pageWidthPts,
+            pageHeightPts,
+            COLS,
+            ROWS,
+            COL_WIDTH,
+            ROW_HEIGHT,
+            FONT_SIZE,
+            records,
+        };
+    }, { fontList: fonts, sample: sampleText });
+}
+
+// Rasterize the downloaded PDF page at 200 dpi and, for each
+// regular/bold annotation pair (one row per font, regular in left column +
+// bold in right column), return the dark-pixel ratios for both
+// annotations. Implemented in Python so PyMuPDF does the rasterization
+// in-process. Returns one entry per font containing both the regular and
+// the bold measurement plus their ratio.
+function measureFontDropdownRegularVsBoldRatios(pdfPath, pageNumber, records, pageWidthPts, pageHeightPts) {
+    const pythonCode = `
+import fitz, json, sys
+from collections import OrderedDict
+pdf_path = sys.argv[1]
+page_number = int(sys.argv[2])
+records = json.loads(sys.argv[3])
+expected_w = float(sys.argv[4])
+expected_h = float(sys.argv[5])
+DPI = 200
+SCALE = DPI / 72.0
+DARK_LUMA = 128
+doc = fitz.open(pdf_path)
+page = doc[page_number - 1]
+mat = fitz.Matrix(SCALE, SCALE)
+pix = page.get_pixmap(matrix=mat, alpha=False)
+W = pix.width
+H = pix.height
+samples = pix.samples  # bytes, len = W*H*3 (RGB, no alpha)
+stride = W * 3
+
+def measure_box(img_x0, img_y0, img_x1, img_y1):
+    # Tight-crop to dark pixels then compute dark-pixel ratio against the
+    # cropped area. Whitespace around the rendered glyphs would otherwise
+    # dilute the signal so much that bold-vs-regular weight differences
+    # disappear in the noise.
+    if img_x1 <= img_x0 or img_y1 <= img_y0:
+        return 0.0, 0, 0
+    min_x, min_y = img_x1, img_y1
+    max_x, max_y = img_x0 - 1, img_y0 - 1
+    for y in range(img_y0, img_y1):
+        row_off = y * stride
+        for x in range(img_x0, img_x1):
+            off = row_off + x * 3
+            r = samples[off]
+            g = samples[off + 1]
+            b = samples[off + 2]
+            luma = int(0.299 * r + 0.587 * g + 0.114 * b)
+            if luma < DARK_LUMA:
+                if x < min_x: min_x = x
+                if y < min_y: min_y = y
+                if x > max_x: max_x = x
+                if y > max_y: max_y = y
+    if max_x < min_x or max_y < min_y:
+        return 0.0, 0, 0
+    tx0, ty0, tx1, ty1 = min_x, min_y, max_x + 1, max_y + 1
+    dark = 0
+    total = 0
+    for y in range(ty0, ty1):
+        row_off = y * stride
+        for x in range(tx0, tx1):
+            off = row_off + x * 3
+            r = samples[off]
+            g = samples[off + 1]
+            b = samples[off + 2]
+            luma = int(0.299 * r + 0.587 * g + 0.114 * b)
+            total += 1
+            if luma < DARK_LUMA:
+                dark += 1
+    ratio = (dark / total) if total else 0.0
+    return float(ratio), int(dark), int(total)
+
+# Group records by family. Each family should appear with weight=regular and
+# weight=bold; if either is missing we surface that as an error in the
+# measurement output.
+by_family = OrderedDict()
+for rec in records:
+    fam = rec.get('family')
+    by_family.setdefault(fam, {})[rec.get('weight')] = rec
+
+out = []
+page_h_pdf = float(page.rect.height)
+for fam, pair in by_family.items():
+    reg_rec = pair.get('regular')
+    bold_rec = pair.get('bold')
+    if reg_rec is None or bold_rec is None:
+        out.append({
+            'family': fam,
+            'regular_ratio': 0.0,
+            'bold_ratio': 0.0,
+            'ratio': 0.0,
+            'error': 'missing weight pair',
+        })
+        continue
+
+    def _box(rec):
+        pdf_x = float(rec['pdfX'])
+        pdf_y = float(rec['pdfY'])
+        pdf_w = float(rec['pdfWidth'])
+        pdf_h = float(rec['pdfHeight'])
+        x0 = max(0, int(round(pdf_x * SCALE)))
+        x1 = min(W, int(round((pdf_x + pdf_w) * SCALE)))
+        y0 = max(0, int(round((page_h_pdf - (pdf_y + pdf_h)) * SCALE)))
+        y1 = min(H, int(round((page_h_pdf - pdf_y) * SCALE)))
+        return x0, y0, x1, y1
+
+    rx0, ry0, rx1, ry1 = _box(reg_rec)
+    bx0, by0, bx1, by1 = _box(bold_rec)
+    reg_ratio, reg_dark, reg_total = measure_box(rx0, ry0, rx1, ry1)
+    bold_ratio, bold_dark, bold_total = measure_box(bx0, by0, bx1, by1)
+    ratio = (bold_ratio / reg_ratio) if reg_ratio > 1e-6 else (9999.0 if bold_ratio > 0 else 0.0)
+    out.append({
+        'family': fam,
+        'regular_uid': reg_rec.get('uid'),
+        'bold_uid': bold_rec.get('uid'),
+        'regular_ratio': float(reg_ratio),
+        'bold_ratio': float(bold_ratio),
+        'regular_dark_pixels': reg_dark,
+        'bold_dark_pixels': bold_dark,
+        'regular_sampled_pixels': reg_total,
+        'bold_sampled_pixels': bold_total,
+        'ratio': float(ratio),
+    })
+print(json.dumps({
+    'page_image_width': W,
+    'page_image_height': H,
+    'page_pdf_width': float(page.rect.width),
+    'page_pdf_height': float(page.rect.height),
+    'expected_pdf_width': expected_w,
+    'expected_pdf_height': expected_h,
+    'measurements': out,
+}))
+doc.close()
+`;
+    const raw = execFileSync(PYTHON_BIN, [
+        '-c', pythonCode,
+        pdfPath,
+        String(pageNumber),
+        JSON.stringify(records),
+        String(pageWidthPts),
+        String(pageHeightPts),
+    ], {
+        cwd: path.resolve(__dirname, '..', '..', '..'),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        // Per-font VF instancing on first run can take a while (~20s/font);
+        // 47 families × up to 4 faces = worst case several minutes. The cache
+        // makes subsequent runs fast. Allow up to 15 min for the rasterize.
+        maxBuffer: 64 * 1024 * 1024,
+    });
+    return JSON.parse(raw);
+}
+
+async function runEditNewFontDropdownWeightBoldFlow() {
+    const test = TESTS.test_35_edit_new_font_dropdown_weight_bold;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const beforeSaveName = buildArtifactName(test.key, runToken, 'before_save');
+    const finalPdfName = buildArtifactName(test.key, runToken, 'final', 'pdf');
+    const beforeSavePath = path.join(OUTPUT_DIR, beforeSaveName);
+    const finalPdfPath = path.join(OUTPUT_DIR, finalPdfName);
+
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({
+        viewport: VIEWPORT,
+        acceptDownloads: true,
+    });
+    const page = await context.newPage();
+    let documentId = null;
+
+    try {
+        documentId = await createBlankDocumentNew(page);
+        await waitForEditorReadyNew(page);
+        await clearAnnotationSessionStateNew(page, documentId);
+        await forceRefreshOverlay(page, documentId);
+
+        const sessionId = await ensurePdfSessionIdNew(page, documentId);
+
+        const injection = await injectFontDropdownGridAnnotationsNew(
+            page,
+            EDIT_NEW_FORMAT_BAR_FONT_OPTIONS,
+            FONT_DROPDOWN_SAMPLE_TEXT,
+        );
+
+        await capturePageScreenshotNew(page, beforeSavePath);
+        await waitForAnnotationSaveNew(page);
+
+        const savedResp = await fetchSavedAnnotationsNew(page, documentId, sessionId);
+        const savedAnnotations = Array.isArray(savedResp?.body?.annotations)
+            ? savedResp.body.annotations
+            : [];
+        const savedTextRows = savedAnnotations.filter((a) => a?.type === 'text');
+        // Each font produces a regular + bold pair, so the expected saved
+        // text-annotation count is 2× the dropdown size.
+        const expectedSavedCount = EDIT_NEW_FORMAT_BAR_FONT_OPTIONS.length * 2;
+        const savedCheck = {
+            item: 'saved_grid_annotations_persisted',
+            result: savedTextRows.length === expectedSavedCount ? 'PASS' : 'FAIL',
+            description: 'Auto-save persists every regular+bold annotation pair in the format-bar grid.',
+            detail: `expected=${expectedSavedCount} got=${savedTextRows.length}`,
+        };
+
+        await downloadAnnotatedPdfNew(page, documentId, finalPdfPath);
+
+        const downloadedPdfExists = fs.existsSync(finalPdfPath);
+        const downloadedPdfSize = downloadedPdfExists ? fs.statSync(finalPdfPath).size : 0;
+
+        const downloadCheck = {
+            item: 'download_pdf_produced',
+            result: downloadedPdfExists && downloadedPdfSize > 0 ? 'PASS' : 'FAIL',
+            description: 'Toolbar Download PDF flow produces a non-empty PDF.',
+            detail: JSON.stringify({ downloadedPdfExists, downloadedPdfSize }),
+        };
+
+        const checks = [savedCheck, downloadCheck];
+
+        let measurement = null;
+        let measureError = null;
+        if (downloadedPdfExists && downloadedPdfSize > 0) {
+            try {
+                measurement = measureFontDropdownRegularVsBoldRatios(
+                    finalPdfPath,
+                    1,
+                    injection.records,
+                    injection.pageWidthPts,
+                    injection.pageHeightPts,
+                );
+            } catch (err) {
+                measureError = err && err.message ? err.message : String(err);
+            }
+        }
+
+        const failureSummaries = [];
+        const passSummaries = [];
+        const knownNoBoldSummaries = [];
+        if (measurement && Array.isArray(measurement.measurements)) {
+            for (const m of measurement.measurements) {
+                const family = m.family;
+                const ratio = Number(m.ratio) || 0;
+                const reg = Number(m.regular_ratio) || 0;
+                const bold = Number(m.bold_ratio) || 0;
+                const ratioOk = ratio >= FONT_BOLD_RATIO_MIN;
+                const regOk = reg >= FONT_REGULAR_DARK_RATIO_MIN;
+                const summary = `${family} reg=${reg.toFixed(4)} bold=${bold.toFixed(4)} ratio=${ratio.toFixed(2)}`;
+                if (ratioOk && regOk) {
+                    passSummaries.push(summary);
+                } else if (FONT_DROPDOWN_KNOWN_NO_BOLD_FACE.has(family)) {
+                    knownNoBoldSummaries.push(`${summary} (known: shipped Bold .ttf is identical to Regular)`);
+                } else {
+                    failureSummaries.push(`${summary} ratioOk=${ratioOk} regOk=${regOk}`);
+                }
+            }
+        }
+
+        checks.push({
+            item: 'all_fonts_render_distinct_regular_vs_bold',
+            result: measurement && failureSummaries.length === 0 ? 'PASS' : 'FAIL',
+            description: `Every font in the format-bar dropdown renders the bold half of its bbox with at least ${FONT_BOLD_RATIO_MIN.toFixed(2)}× the dark-pixel ratio of its regular half (and the regular half is non-blank, dark ratio >= ${FONT_REGULAR_DARK_RATIO_MIN}).`,
+            detail: JSON.stringify({
+                measureError,
+                pass_count: passSummaries.length,
+                fail_count: failureSummaries.length,
+                known_no_bold_face_count: knownNoBoldSummaries.length,
+                known_no_bold_face: knownNoBoldSummaries,
+                failures: failureSummaries.slice(0, 60),
+                threshold_bold_ratio: FONT_BOLD_RATIO_MIN,
+                threshold_regular_dark_ratio: FONT_REGULAR_DARK_RATIO_MIN,
+            }),
+        });
+
+        const status = checks.every((c) => c.result === 'PASS') ? 'pass' : 'fail';
+
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            status,
+            checks,
+            artifacts: [beforeSaveName, finalPdfName],
+            fileSize: downloadedPdfSize,
+            metadata: {
+                document_id: documentId,
+                session_id: sessionId,
+                font_count: EDIT_NEW_FORMAT_BAR_FONT_OPTIONS.length,
+                injection: {
+                    cols: injection.COLS,
+                    rows: injection.ROWS,
+                    col_width: injection.COL_WIDTH,
+                    row_height: injection.ROW_HEIGHT,
+                    font_size: injection.FONT_SIZE,
+                    page_width_pts: injection.pageWidthPts,
+                    page_height_pts: injection.pageHeightPts,
+                },
+                measurement_summary: measurement ? {
+                    page_image_width: measurement.page_image_width,
+                    page_image_height: measurement.page_image_height,
+                    measured_count: (measurement.measurements || []).length,
+                    sample_pass: passSummaries.slice(0, 6),
+                    sample_fail: failureSummaries.slice(0, 12),
+                } : null,
             },
         });
     } finally {

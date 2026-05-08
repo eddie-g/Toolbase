@@ -1272,7 +1272,7 @@ PYTHON;
      *
      * @return array<int, array<string, mixed>>
      */
-    private function buildEditNewComparisonAnnotations(Request $request, Document $document, string $sourcePdfPath): array
+    public function buildEditNewComparisonAnnotations(Request $request, Document $document, string $sourcePdfPath): array
     {
         $ownership = $this->resolveDocumentOwnership($document);
         $sessionId = trim((string) $request->input('session_id', $request->query('session_id', '')));
@@ -1301,7 +1301,13 @@ PYTHON;
             }
             $annotationData = is_array($state->annotation_data) ? $state->annotation_data : [];
             $sourceKey = trim((string) ($annotationData['promotedSourceKey'] ?? ''));
-            if ($sourceKey !== '' && $this->isPromotedSuppressionAnnotation($annotationData)) {
+            if (
+                $sourceKey !== ''
+                && (
+                    $this->isPromotedSuppressionAnnotation($annotationData)
+                    || !empty($annotationData['promotedFromExtraction'])
+                )
+            ) {
                 $deletedPromotedSourceKeys[$sourceKey] = true;
             }
         }
@@ -1349,6 +1355,18 @@ PYTHON;
         }
 
         $annotations = $annotations->merge(array_values($seen))->values();
+        $annotations = $annotations
+            ->reject(function ($annotation) {
+                if (!is_array($annotation)) {
+                    return false;
+                }
+                if ((string) ($annotation['db_state'] ?? '') !== 'deleted') {
+                    return false;
+                }
+
+                return !filter_var($annotation['pdfjsDeleted'] ?? false, FILTER_VALIDATE_BOOLEAN);
+            })
+            ->values();
         if (!empty($deletedPromotedSourceKeys)) {
             $annotations = $annotations
                 ->reject(function ($annotation) use ($deletedPromotedSourceKeys) {
@@ -1849,6 +1867,19 @@ PYTHON;
         return $overlapWidth / min($leftWidth, $rightWidth);
     }
 
+    private function promotedAnnotationChildSpansFarOutsideParent(array $parentRect, array $childRect): bool
+    {
+        $parentWidth = max(1.0, (float) $parentRect[2] - (float) $parentRect[0]);
+        $childWidth = max(1.0, (float) $childRect[2] - (float) $childRect[0]);
+
+        if ($childWidth <= $parentWidth * 1.75) {
+            return false;
+        }
+
+        return (float) $childRect[0] < ((float) $parentRect[0] - 2.0)
+            && (float) $childRect[2] > ((float) $parentRect[2] + 2.0);
+    }
+
     /**
      * Returns true when every child source-line bbox highly overlaps a
      * distinct parent source-line bbox (>= 70% of the smaller area). Used to
@@ -2160,6 +2191,10 @@ PYTHON;
                     continue;
                 }
 
+                if ($this->promotedAnnotationChildSpansFarOutsideParent($parentRect, $childRect)) {
+                    continue;
+                }
+
                 if ($this->promotedAnnotationGapFitScore($parentBoxes, $childBoxes) === null) {
                     continue;
                 }
@@ -2244,6 +2279,10 @@ PYTHON;
                 $verticalWithinBand = (float) $childRect[1] >= ((float) $parentRect[1] - 2.0)
                     && (float) $childRect[3] <= ((float) $parentRect[3] + 2.0);
                 if (!$verticalWithinBand && !$this->promotedAnnotationRectContains($parentRect, $childRect, 0.5)) {
+                    continue;
+                }
+
+                if ($this->promotedAnnotationChildSpansFarOutsideParent($parentRect, $childRect)) {
                     continue;
                 }
 
@@ -2781,7 +2820,8 @@ PYTHON;
 
         return !empty($annotation['_promotedSuppression'])
             || !empty($annotation['_explicitPromotedDelete'])
-            || str_starts_with(trim((string) ($annotation['id'] ?? '')), '__deleted_promoted__');
+            || str_starts_with(trim((string) ($annotation['id'] ?? '')), '__deleted_promoted__')
+            || str_starts_with(trim((string) ($annotation['id'] ?? '')), 'deleted_promoted:');
     }
 
     private function enrichAnnotationFromDb(array $annotation, int $fitzId): array
@@ -2792,6 +2832,16 @@ PYTHON;
         $sourceKey = trim((string) ($annotation['promotedSourceKey'] ?? ''));
         $blockNum = (int) ($annotation['promotedSourceBlockNum'] ?? 0);
         $hasDerivedSourceKey = $this->isDerivedPromotedSourceKey($sourceKey);
+        $hasUserEditedPromotedText = !empty($annotation['promotedDirty'])
+            || !empty($annotation['userAuthored'])
+            || !empty($annotation['promotedReflowEnabled'])
+            || (
+                array_key_exists('originalText', $annotation)
+                && (string) ($annotation['text'] ?? '') !== (string) ($annotation['originalText'] ?? '')
+            );
+        $userEditedSourceTextLines = $hasUserEditedPromotedText
+            ? explode("\n", str_replace(["\r\n", "\r"], "\n", (string) ($annotation['text'] ?? '')))
+            : null;
         $canonicalBlock = null;
 
         if ($sourceKey !== '') {
@@ -2900,7 +2950,7 @@ PYTHON;
                 static fn ($line) => trim((string) $line),
                 is_array($canonicalBlock->text_lines) ? $canonicalBlock->text_lines : []
             ), static fn (string $line): bool => $line !== ''));
-            if (!$hasDerivedSourceKey && !empty($canonicalTextLines)) {
+            if (!$hasDerivedSourceKey && !$hasUserEditedPromotedText && !empty($canonicalTextLines)) {
                 $annotation['sourceTextLines'] = $canonicalTextLines;
             }
 
@@ -2979,9 +3029,18 @@ PYTHON;
             ));
         }
 
-        return $this->syncAnnotationGeometryFromSourceLineBBoxes(
+        $annotation = $this->syncAnnotationGeometryFromSourceLineBBoxes(
             $this->normalizeAnnotationLineMetadata($annotation)
         );
+
+        if ($hasUserEditedPromotedText && is_array($userEditedSourceTextLines)) {
+            $annotation['sourceTextLines'] = array_values($userEditedSourceTextLines);
+            if (isset($annotation['annotation_data']) && is_array($annotation['annotation_data'])) {
+                $annotation['annotation_data']['sourceTextLines'] = $annotation['sourceTextLines'];
+            }
+        }
+
+        return $annotation;
     }
 
     public function compareFirstAnnotation(Request $request, Document $document)
@@ -3070,6 +3129,34 @@ PYTHON;
             $sessionId = $request->session()->getId();
         }
 
+        // Optional per-page filter to enable lazy/incremental loading from the
+        // editor. `page` (1-based) restricts the response to a single page.
+        // `pages_exclude` (comma-separated, 1-based) excludes pages already
+        // loaded so the backfill request only ships what's missing.
+        // `skip_meta=1` suppresses heavy per-document metadata (embedded
+        // fonts, acro form entries) during backfill since the first request
+        // already supplied them.
+        $pageFilter = null;
+        $pageRaw = $request->query('page', null);
+        if ($pageRaw !== null && $pageRaw !== '' && is_numeric($pageRaw)) {
+            $pageInt = (int) $pageRaw;
+            if ($pageInt >= 1) {
+                $pageFilter = $pageInt;
+            }
+        }
+        $pagesExclude = [];
+        $excludeRaw = trim((string) $request->query('pages_exclude', ''));
+        if ($excludeRaw !== '') {
+            foreach (explode(',', $excludeRaw) as $token) {
+                $token = trim($token);
+                if ($token === '' || !is_numeric($token)) continue;
+                $n = (int) $token;
+                if ($n >= 1) $pagesExclude[$n] = true;
+            }
+            $pagesExclude = array_keys($pagesExclude);
+        }
+        $skipMeta = (string) $request->query('skip_meta', '') === '1';
+
         // Build the scope query: rows owned by the current viewer (by user/admin/session)
         // OR rows materialized from the canonical extraction (which carry the
         // synthetic `document_<id>_extracted` session id and may be unowned when the
@@ -3088,6 +3175,14 @@ PYTHON;
                     );
                 })->orWhere('session_id', $extractedSessionId);
             });
+        if ($pageFilter !== null) {
+            // `page_number` column and the annotation `pageIndex` field are
+            // 0-based in this codebase; the public API takes a 1-based page
+            // number (page=1 = first page) so convert here.
+            $statesQuery->where('page_number', $pageFilter - 1);
+        } elseif (!empty($pagesExclude)) {
+            $statesQuery->whereNotIn('page_number', array_map(fn($n) => $n - 1, $pagesExclude));
+        }
         $states = $statesQuery->orderBy('id')->get();
         $deletedPromotedSourceKeys = [];
         foreach ($states as $state) {
@@ -3096,7 +3191,13 @@ PYTHON;
             }
             $annotationData = is_array($state->annotation_data) ? $state->annotation_data : [];
             $sourceKey = trim((string) ($annotationData['promotedSourceKey'] ?? ''));
-            if ($sourceKey === '' || !$this->isPromotedSuppressionAnnotation($annotationData)) {
+            if ($sourceKey === '') {
+                continue;
+            }
+            if (
+                !$this->isPromotedSuppressionAnnotation($annotationData)
+                && empty($annotationData['promotedFromExtraction'])
+            ) {
                 continue;
             }
             $deletedPromotedSourceKeys[$sourceKey] = true;
@@ -3159,6 +3260,22 @@ PYTHON;
 
         // Merge deduplicated keyed annotations
         $annotations = $annotations->merge(array_values($seen))->values();
+        // Deleted non-promoted rows are tombstones, not renderable annotations.
+        // Keep explicit pdf.js delete-mask annotations (pdfjsDeleted=true), but
+        // do not let stale deleted text rows re-enter the client payload and
+        // resurrect duplicated text after reload/export.
+        $annotations = $annotations
+            ->reject(function ($annotation) {
+                if (!is_array($annotation)) {
+                    return false;
+                }
+                if ((string) ($annotation['db_state'] ?? '') !== 'deleted') {
+                    return false;
+                }
+
+                return !filter_var($annotation['pdfjsDeleted'] ?? false, FILTER_VALIDATE_BOOLEAN);
+            })
+            ->values();
         if (!empty($deletedPromotedSourceKeys)) {
             $annotations = $annotations
                 ->reject(function ($annotation) use ($deletedPromotedSourceKeys) {
@@ -3174,6 +3291,15 @@ PYTHON;
         // Synthesize annotations for symbol-font characters (Wingdings checkmarks etc.)
         // that could not be captured during normal text extraction due to PUA stripping.
         $symbolAnnotations = $this->synthesizeSymbolCharAnnotations($fallbackFitzId);
+        if (!empty($symbolAnnotations) && ($pageFilter !== null || !empty($pagesExclude))) {
+            $excludeSet = [];
+            foreach ($pagesExclude as $n) { $excludeSet[(int) $n - 1] = true; }
+            $symbolAnnotations = array_values(array_filter($symbolAnnotations, function ($a) use ($pageFilter, $excludeSet) {
+                $pi = (int) ($a['pageIndex'] ?? -1);
+                if ($pageFilter !== null) return $pi === ($pageFilter - 1);
+                return !isset($excludeSet[$pi]);
+            }));
+        }
         if (!empty($symbolAnnotations)) {
             $existingIds = $annotations->pluck('id')->filter()->flip()->toArray();
             $newSymbol = array_filter($symbolAnnotations, fn($a) => !isset($existingIds[$a['id']]));
@@ -3192,35 +3318,39 @@ PYTHON;
         // Load embedded font metadata per source. Reconstruction can render either the
         // current file PDF or the clean/original-backed PDF, and each source may carry
         // different font programs even when the extracted annotations are the same.
-        $embeddedFontsBySource = [
+        // Skip during backfill (skip_meta) — the first request already shipped them.
+        $embeddedFontsBySource = $skipMeta ? ['file' => [], 'clean' => []] : [
             'file' => $this->extractEmbeddedFontsForSource($document, 'file'),
             'clean' => $this->extractEmbeddedFontsForSource($document, 'clean'),
         ];
         $embeddedFonts = $embeddedFontsBySource['file'] ?: $embeddedFontsBySource['clean'];
 
-        $acroFormQuery = PdfAcroForm::query()
-            ->where('document_id', $document->id);
-        $this->applyOwnershipScope(
-            $acroFormQuery,
-            $ownership['user_id'] ?? null,
-            $ownership['admin_id'] ?? null,
-            $sessionId,
-            'sess_id'
-        );
+        if ($skipMeta) {
+            $acroFormEntries = collect();
+        } else {
+            $acroFormQuery = PdfAcroForm::query()
+                ->where('document_id', $document->id);
+            $this->applyOwnershipScope(
+                $acroFormQuery,
+                $ownership['user_id'] ?? null,
+                $ownership['admin_id'] ?? null,
+                $sessionId,
+                'sess_id'
+            );
 
-        $acroFormEntries = $acroFormQuery
-            ->orderByDesc('updated_at')
-            ->get()
-            ->unique(function (PdfAcroForm $record) {
-                $key = trim((string) data_get($record->data, 'key', ''));
-                if ($key !== '') {
-                    return 'key:' . $key;
-                }
+            $acroFormEntries = $acroFormQuery
+                ->orderByDesc('updated_at')
+                ->get()
+                ->unique(function (PdfAcroForm $record) {
+                    $key = trim((string) data_get($record->data, 'key', ''));
+                    if ($key !== '') {
+                        return 'key:' . $key;
+                    }
 
-                $fieldName = trim((string) data_get($record->data, 'fieldName', ''));
-                if ($fieldName !== '') {
-                    return 'field:' . $fieldName;
-                }
+                    $fieldName = trim((string) data_get($record->data, 'fieldName', ''));
+                    if ($fieldName !== '') {
+                        return 'field:' . $fieldName;
+                    }
 
                 return 'db:' . $record->id;
             })
@@ -3232,6 +3362,7 @@ PYTHON;
                 return $entry;
             })
             ->values();
+        }
 
         return response()->json([
             'success'        => true,
@@ -3241,12 +3372,15 @@ PYTHON;
                 'file_url'        => route('documents.file', $document),
                 'original_url'    => route('documents.originalFile', $document),
                 'clean_url'       => route('documents.cleanPdf', $document),
+                'baked_url'       => route('documents.bakedPdf', $document),
             ],
             'annotations'    => $annotations,
             'count'          => $annotations->count(),
             'acro_form_entries' => $acroFormEntries,
             'embedded_fonts' => $embeddedFonts,
             'embedded_fonts_by_source' => $embeddedFontsBySource,
+            'page_filter'    => $pageFilter,
+            'pages_excluded' => $pagesExclude,
         ]);
     }
 

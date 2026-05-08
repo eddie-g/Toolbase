@@ -1231,4 +1231,123 @@ class PdfTestDocumentInfoEnrichmentTest extends TestCase
             $annotations->firstWhere('id', 'promoted_1_15')['text'] ?? null
         );
     }
+
+    public function test_document_info_does_not_merge_full_width_paragraph_into_narrow_discontiguous_block(): void
+    {
+        $user = User::factory()->create([
+            'email' => 'doc4003-owner@example.com',
+        ]);
+
+        $document = Document::query()->create([
+            'user_id' => $user->id,
+            'original_name' => 'ss-5.pdf',
+            'path' => 'documents/ss-5.pdf',
+            'mime_type' => 'application/pdf',
+            'size_bytes' => 100,
+        ]);
+
+        PdfExtractionFitz::query()->create([
+            'document_id' => $document->id,
+            'session_id' => 'fitz-session',
+            'pdf_filename' => 'ss-5.pdf',
+            'total_pages' => 2,
+            'total_words' => 100,
+            'full_text' => 'sample',
+            'extraction_data' => [],
+        ]);
+
+        $common = [
+            'type' => 'text',
+            'pageIndex' => 1,
+            'fontSize' => 11,
+            'fontFamily' => 'ArialMT',
+            'fontSourceName' => 'ArialMT',
+            'fontWeight' => '400',
+            'fontStyle' => 'normal',
+            'textColor' => '#000000',
+            'lineHeight' => 11,
+            'promotedFromExtraction' => true,
+            'promotedDirty' => false,
+            'sourcePageHeight' => 792,
+        ];
+
+        PdfState::query()->create([
+            'document_id' => $document->id,
+            'pdf_extraction_fitz_id' => null,
+            'user_id' => $user->id,
+            'session_id' => 'state-session',
+            'page_number' => 1,
+            'state' => 'saved',
+            'annotation_data' => array_merge($common, [
+                'id' => 'promoted_2_16',
+                'text' => "birth certificate)\nU.S. driver's license; or\nU.S. State-issued non-driver identity card; or",
+                'originalText' => "birth certificate)\nU.S. driver's license; or\nU.S. State-issued non-driver identity card; or",
+                'pdfX' => 41.904998779296875,
+                'pdfY' => 360.4824523925781,
+                'pdfWidth' => 216.4139404296875,
+                'pdfHeight' => 171.06298828125,
+                'promotedSourceKey' => 'block-2-16',
+                'promotedSourceBlockNum' => 16,
+                'sourceBlockLeft' => 41.904998779296875,
+                'sourceBlockTop' => 260.4545593261719,
+                'sourceBlockWidth' => 216.4139404296875,
+                'sourceBlockHeight' => 171.06298828125,
+                'sourceTextLines' => [
+                    'birth certificate)',
+                    "U.S. driver's license; or",
+                    'U.S. State-issued non-driver identity card; or',
+                ],
+                'sourceLineBBoxes' => [
+                    [41.904998779296875, 260.4545593261719, 117.08999633789062, 271.4545593261719],
+                    [41.904998779296875, 404.4625549316406, 154.64398193359375, 415.4625549316406],
+                    [41.904998779296875, 420.5175476074219, 258.3189392089844, 431.5175476074219],
+                ],
+            ]),
+        ]);
+
+        PdfState::query()->create([
+            'document_id' => $document->id,
+            'pdf_extraction_fitz_id' => null,
+            'user_id' => $user->id,
+            'session_id' => 'state-session',
+            'page_number' => 1,
+            'state' => 'saved',
+            'annotation_data' => array_merge($common, [
+                'id' => 'promoted_2_6',
+                'text' => 'You must provide current, unexpired evidence of identity in your legal name.',
+                'originalText' => 'You must provide current, unexpired evidence of identity in your legal name.',
+                'pdfX' => 18,
+                'pdfY' => 394.37945556640625,
+                'pdfWidth' => 576.5650024414062,
+                'pdfHeight' => 104.45498657226562,
+                'promotedSourceKey' => 'block-2-6',
+                'promotedSourceBlockNum' => 6,
+                'sourceBlockLeft' => 18,
+                'sourceBlockTop' => 293.1655578613281,
+                'sourceBlockWidth' => 576.5650024414062,
+                'sourceBlockHeight' => 104.45498657226562,
+                'sourceTextLines' => [
+                    'You must provide current, unexpired evidence of identity in your legal name.',
+                    'Social Security card. Generally, we prefer to see documents issued in the U.S.',
+                ],
+                'sourceLineBBoxes' => [
+                    [18, 293.1655578613281, 576.8110961914062, 304.1655578613281],
+                    [18, 306.3655700683594, 576.173095703125, 317.3655700683594],
+                ],
+            ]),
+        ]);
+
+        $response = $this->actingAs($user)->getJson(route('pdfTests.documentInfo', $document, [
+            'session_id' => 'state-session',
+        ]));
+        $response->assertOk()->assertJson(['success' => true]);
+
+        $annotations = collect($response->json('annotations'));
+        $this->assertNotNull($annotations->firstWhere('id', 'promoted_2_6'));
+        $this->assertSame([
+            'birth certificate)',
+            "U.S. driver's license; or",
+            'U.S. State-issued non-driver identity card; or',
+        ], $annotations->firstWhere('id', 'promoted_2_16')['sourceTextLines'] ?? null);
+    }
 }

@@ -22,8 +22,10 @@ import { pdfPtFromClient } from '../render/coords.js';
 import { isShapeAnnotation, isLineShape, isTextAnnotation } from '../annotations/types.js';
 import { snapLineEndpoint, computeLineBoxGeometry, normalizeRotationDegrees } from '../util/geometry.js';
 import { setAnnotationBox } from '../annotations/geometry-writes.js';
+import { annTextIsEdited } from '../annotations/state.js';
 import { editedTexts } from '../store/edited-texts.js';
 import { measureEditedTextHeightPts } from '../text/measure.js';
+import { normalizeTextForDomReflow } from '../text/dom-reflow.js';
 import { endDrag } from './drag.js';
 import { endResize } from './resize.js';
 import { endRotate, getRotationCenterClient, pointerAngleDeg } from './rotate.js';
@@ -41,6 +43,22 @@ export function scaledResizeFontSize(startFontSize, startBox, nextWidth, nextHei
         * Math.max(0.01, Number.isFinite(heightScale) ? heightScale : 1)
     );
     return Math.max(6, Math.min(144, baselineFontSize * scaleFactor));
+}
+
+function isPromotedExtractionText(ann) {
+    return ann?.promotedFromExtraction === true
+        || (Array.isArray(ann?.sourceSpans) && ann.sourceSpans.length > 0)
+        || (Array.isArray(ann?.sourceLineBBoxes) && ann.sourceLineBBoxes.length > 0);
+}
+
+function textForResizeMeasurement(ann, currentText, startBox, nextWidth, nextHeight) {
+    if (!isPromotedExtractionText(ann)) return currentText;
+    if (annTextIsEdited(ann)) return currentText;
+    const sessionText = editedTexts[ann?._uid];
+    if (sessionText !== undefined && String(sessionText) !== String(ann?.text ?? '')) return currentText;
+    const dimensionsChanging = (Number.isFinite(Number(startBox?.w)) && Math.abs(Number(startBox.w) - nextWidth) > 0.25)
+        || (Number.isFinite(Number(startBox?.h)) && Math.abs(Number(startBox.h) - nextHeight) > 0.25);
+    return dimensionsChanging ? normalizeTextForDomReflow(currentText) : currentText;
 }
 
 /**
@@ -182,7 +200,8 @@ export function installPointerDispatcher(deps) {
         } else if (shouldScaleFontOnResize(ann) && startFontSize) {
             const previousFontSize = ann.fontSize;
             ann.fontSize = scaledResizeFontSize(startFontSize, startBox, nextWidth, nextHeight);
-            const scaledMinHeightPts = Math.max(8, measureEditedTextHeightPts(ann, currentText, data.scale, nextWidth));
+            const measureText = textForResizeMeasurement(ann, currentText, startBox, nextWidth, nextHeight);
+            const scaledMinHeightPts = Math.max(8, measureEditedTextHeightPts(ann, measureText, data.scale, nextWidth));
             ann.fontSize = previousFontSize;
 
             if (handle.includes('s')) {
@@ -195,7 +214,8 @@ export function installPointerDispatcher(deps) {
             nextTop = Math.min(data.hPts, nextTop);
             nextHeight = Math.max(scaledMinHeightPts, nextTop - nextBottom);
         } else {
-            const minHeightPts = Math.max(8, measureEditedTextHeightPts(ann, currentText, data.scale, nextWidth));
+            const measureText = textForResizeMeasurement(ann, currentText, startBox, nextWidth, nextHeight);
+            const minHeightPts = Math.max(8, measureEditedTextHeightPts(ann, measureText, data.scale, nextWidth));
             if (handle.includes('s')) {
                 nextBottom = Math.min(nextBottom, nextTop - minHeightPts);
             }

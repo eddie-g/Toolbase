@@ -292,7 +292,8 @@ import {
     dbgFormatStyle as _dbgFormatStyle,
 } from './editor/debug-modal-format.js';
 import { annIsPromotedFromExtraction } from './annotations/promoted.js';
-import { shouldRenderTextInRichHtmlLayer, activeEditorCanvasOwnsPaint } from './render/text-routing.js';
+import { shouldRenderTextInRichHtmlLayer, activeEditorCanvasOwnsPaint, markCommitted } from './render/text-routing.js';
+import { capturePristineRasterSnapshot, applyCommittedRasterPatches, getCommittedPatchCount } from './render/raster-patches.js';
 import { sourceLineRectWithinAnnotation } from './annotations/source-line-rect.js';
 import { shapeContainsCanvasPoint, findAnnotationAt } from './annotations/hit-test.js';
 import {
@@ -1112,6 +1113,11 @@ import {
             pageCanvas.height = newH;
             pageCanvas.__renderScale = target;
             pageCanvas.getContext('2d').drawImage(off, 0, 0);
+            // Stage 3: refresh pristine snapshot at the new resolution and
+            // re-apply any committed patches so committed annotations stay
+            // raster-erased after a zoom-induced re-rasterisation.
+            capturePristineRasterSnapshot(pageCanvas);
+            applyCommittedRasterPatches(pageCanvas, pageData[pi]);
         } catch (e) {
             // Render can throw if the page is destroyed mid-flight; harmless.
             if (e && e.name !== 'RenderingCancelledException') {
@@ -1167,22 +1173,54 @@ import {
     // contenteditable falls back to body defaults — which breaks edit-mode parity with the
     // canvas rendering and with the format-bar font-size slider.
     const FONT_MAP = {
-        Arial:         'Arial, Helvetica, sans-serif',
-        'Arial,Bold':  'Arial, Helvetica, sans-serif',
-        ArialMT:       'Arial, Helvetica, sans-serif',
-        'Arial-BoldMT':'Arial, Helvetica, sans-serif',
-        Helvetica:     'Arial, Helvetica, sans-serif',
+        // Stage1 font-metrics fix: prepend metrics-compatible Linux/cross-platform
+        // families (Liberation Sans/Serif/Mono, Arimo/Tinos/Cousine) before the
+        // platform Arial/Times/Courier names. These are designed to share the
+        // exact glyph advance widths of Arial / Times New Roman / Courier New so
+        // when the embedded PDF face is missing or broken the DOM rich-html-layer
+        // wraps at the same word boundaries as the underlying PDF raster
+        // background. Without these, Linux falls back to DejaVu (visibly wider
+        // metrics) and edited blocks reflow differently from the surrounding
+        // pristine text.
+        Arial:         "'Liberation Sans', Arimo, Arial, Helvetica, sans-serif",
+        'Arial,Bold':  "'Liberation Sans', Arimo, Arial, Helvetica, sans-serif",
+        ArialMT:       "'Liberation Sans', Arimo, Arial, Helvetica, sans-serif",
+        'Arial-BoldMT':"'Liberation Sans', Arimo, Arial, Helvetica, sans-serif",
+        'Arial-ItalicMT':"'Liberation Sans', Arimo, Arial, Helvetica, sans-serif",
+        'Arial-BoldItalicMT':"'Liberation Sans', Arimo, Arial, Helvetica, sans-serif",
+        'Helvetica-Bold':"'Liberation Sans', Arimo, Arial, Helvetica, sans-serif",
+        'Helvetica-Oblique':"'Liberation Sans', Arimo, Arial, Helvetica, sans-serif",
+        'Helvetica-BoldOblique':"'Liberation Sans', Arimo, Arial, Helvetica, sans-serif",
+        Helvetica:     "'Liberation Sans', Arimo, Arial, Helvetica, sans-serif",
         FreeSans:      "'Liberation Sans', Arial, Helvetica, sans-serif",
-        FreeSerif:     "'Liberation Serif', 'Times New Roman', Times, serif",
-        FreeMono:      "'Liberation Mono', 'Courier New', Courier, monospace",
-        Times:         "'Times New Roman', Times, serif",
-        TimesRoman:    "'Times New Roman', Times, serif",
-        'Times New Roman': "'Times New Roman', Times, serif",
+        FreeSerif:     "'Liberation Serif', Tinos, 'Times New Roman', Times, serif",
+        FreeMono:      "'Liberation Mono', Cousine, 'Courier New', Courier, monospace",
+        Times:         "'Liberation Serif', Tinos, 'Times New Roman', Times, serif",
+        TimesRoman:    "'Liberation Serif', Tinos, 'Times New Roman', Times, serif",
+        'Times-Roman': "'Liberation Serif', Tinos, 'Times New Roman', Times, serif",
+        'Times-Bold':  "'Liberation Serif', Tinos, 'Times New Roman', Times, serif",
+        'Times-Italic':"'Liberation Serif', Tinos, 'Times New Roman', Times, serif",
+        'Times-BoldItalic':"'Liberation Serif', Tinos, 'Times New Roman', Times, serif",
+        'Times New Roman': "'Liberation Serif', Tinos, 'Times New Roman', Times, serif",
+        TimesNewRoman: "'Liberation Serif', Tinos, 'Times New Roman', Times, serif",
+        TimesNewRomanPS: "'Liberation Serif', Tinos, 'Times New Roman', Times, serif",
+        TimesNewRomanPSMT: "'Liberation Serif', Tinos, 'Times New Roman', Times, serif",
+        'TimesNewRomanPS-BoldMT': "'Liberation Serif', Tinos, 'Times New Roman', Times, serif",
+        'TimesNewRomanPS-ItalicMT': "'Liberation Serif', Tinos, 'Times New Roman', Times, serif",
+        'TimesNewRomanPS-BoldItalicMT': "'Liberation Serif', Tinos, 'Times New Roman', Times, serif",
+        Courier:       "'Liberation Mono', Cousine, 'Courier New', Courier, monospace",
+        'Courier-Bold':"'Liberation Mono', Cousine, 'Courier New', Courier, monospace",
+        'Courier-Oblique':"'Liberation Mono', Cousine, 'Courier New', Courier, monospace",
+        'Courier-BoldOblique':"'Liberation Mono', Cousine, 'Courier New', Courier, monospace",
+        CourierNew:    "'Liberation Mono', Cousine, 'Courier New', Courier, monospace",
+        CourierNewPSMT: "'Liberation Mono', Cousine, 'Courier New', Courier, monospace",
+        'CourierNewPS-BoldMT': "'Liberation Mono', Cousine, 'Courier New', Courier, monospace",
+        'CourierNewPS-ItalicMT': "'Liberation Mono', Cousine, 'Courier New', Courier, monospace",
+        'CourierNewPS-BoldItalicMT': "'Liberation Mono', Cousine, 'Courier New', Courier, monospace",
         Verdana:       'Verdana, Geneva, sans-serif',
         Tahoma:        'Tahoma, Geneva, sans-serif',
         DejaVuSans:    "'DejaVu Sans', Arial, Helvetica, sans-serif",
         DejaVuSerif:   "'DejaVu Serif', 'Times New Roman', serif",
-        Courier:       "'Courier New', Courier, monospace",
         // ── Popular Google Fonts (loaded via the @import in <head>) ────────
         Roboto:           "'Roboto', Arial, Helvetica, sans-serif",
         OpenSans:         "'Open Sans', Arial, Helvetica, sans-serif",
@@ -1485,6 +1523,22 @@ import {
         return Math.max(minHeightPx, sourceH || 0, fontH);
     }
 
+    // Stage1 line-height unification: single source of truth for the
+    // line-height the editor (renderPlainEditorHTML) AND the deselected
+    // rich-html-layer (.rich-html-item) use when painting edited /
+    // promoted text. Previously the two diverged — the editor used a
+    // tight `fontSize * 1.18` while the rich-html-layer used
+    // `blockLineHeightPx` (which inflates to the PDF source line bbox
+    // including extraction leading) — so the same annotation jumped
+    // baseline between selected (editing) and deselected (DOM) states.
+    // Always returns the tight font-based height; callers that need the
+    // source-bbox-floored variant should still use blockLineHeightPx.
+    function domAndCanvasLineHeightPx(ann, lineIndex = 0, scale, styleOverride = null) {
+        const style = styleOverride || editableLineStyle(ann, lineIndex);
+        const fontSizePx = style.fontSizePt * fontDisplayScale(scale);
+        return Math.max(1, fontSizePx * 1.18);
+    }
+
     function editorLineTopShiftPx(ann, lineIndex = 0, scale, styleOverride = null) {
         if (isUserAuthoredAnnotation(ann)) return 0;
         const style = styleOverride || compositeLineStyle(ann, lineIndex);
@@ -1622,7 +1676,33 @@ import {
 
     // ── Drawing (ported from pdfRecon2) ───────────────────────────────────────
     function drawOriginalSource(ann, ctx, scale) {
-        const spans = Array.isArray(ann?.sourceSpans) ? ann.sourceSpans : [];
+        const rawSpans = Array.isArray(ann?.sourceSpans) ? ann.sourceSpans : [];
+        // Dedupe overlapping duplicate-text spans on the same baseline. Some PDFs
+        // (e.g. CA Form 593) include overprint instructions where the same text run
+        // is drawn twice with different bbox widths. The exporter (writer.py) only
+        // renders once per sourceLineBBoxes line, but per-span iteration here would
+        // paint the text twice — visibly garbled. Match writer semantics by keeping
+        // only the first span per (baseline-y, normalized-text) pair.
+        const dedupSeen = new Map();
+        const droppedKeys = new Set();
+        const spans = [];
+        for (const span of rawSpans) {
+            const origin = Array.isArray(span?.origin) ? span.origin : null;
+            const txt = sourceSpanText(span);
+            const norm = String(txt || '').replace(/\s+/g, ' ').trim();
+            if (!origin || !norm) {
+                spans.push(span);
+                continue;
+            }
+            const baselineY = Math.round(Number(origin[1]) * 4) / 4; // 0.25pt buckets
+            const key = `${baselineY}|${norm}`;
+            if (dedupSeen.has(key)) {
+                droppedKeys.add(key);
+                continue;
+            }
+            dedupSeen.set(key, { span, key });
+            spans.push(span);
+        }
         // DEBUG (remove): track when sourceSpans is empty for our test uids
         try {
             const k = ann?._uid;
@@ -1765,8 +1845,33 @@ import {
             // horizontal fit so characters render at natural metrics rather
             // than being squeezed/stretched to the obsolete bbox width.
             const _spanEdited = !!(ann && (ann._sourceExactTextEdited || ann.sourceExactTextEdited));
-            const rawRatio = (!_spanEdited && targetWidthPx > 0 && measuredWidthPx > 0) ? (targetWidthPx / measuredWidthPx) : 1;
-            const scaleX = (!Number.isFinite(rawRatio) || rawRatio <= 0) ? 1 : Math.max(0.5, Math.min(1.3, rawRatio));
+            // When this span is the surviving twin of a deduped overprint pair, the
+            // remaining bbox no longer represents the visual text run length (the
+            // dropped duplicate covered the rest of the run). Skip the bbox-fit so
+            // text draws at natural width — matches writer.py output for these blocks.
+            const _spanIsDedupSurvivor = (() => {
+                const o = Array.isArray(span?.origin) ? span.origin : null;
+                if (!o) return false;
+                const norm = String(drawText || '').replace(/\s+/g, ' ').trim();
+                const bY = Math.round(Number(o[1]) * 4) / 4;
+                return droppedKeys.has(`${bY}|${norm}`);
+            })();
+            const _skipBboxFit = _spanEdited || _spanIsDedupSurvivor;
+            const rawRatio = (!_skipBboxFit && targetWidthPx > 0 && measuredWidthPx > 0) ? (targetWidthPx / measuredWidthPx) : 1;
+            // When the per-span bbox is dramatically narrower than the natural text
+            // width (typical for overprint/OCR-shadow spans where one span carries
+            // a wide string crammed into a tiny bbox), mirror writer.py: shrink the
+            // FONT SIZE to fit the bbox rather than horizontally crushing the glyphs.
+            // This makes such spans render as the visually-tiny strings they are in
+            // the exported PDF, instead of obscuring legitimate text behind them.
+            let scaleX;
+            if (Number.isFinite(rawRatio) && rawRatio > 0 && rawRatio < 0.5 && !_skipBboxFit) {
+                const shrunkenSize = fontSizePx * rawRatio;
+                ctx.font = ctxFont({ fontFamily, fontSizePx: shrunkenSize, fontWeight, fontStyle });
+                scaleX = 1;
+            } else {
+                scaleX = (!Number.isFinite(rawRatio) || rawRatio <= 0) ? 1 : Math.max(0.5, Math.min(1.3, rawRatio));
+            }
             if (isVertical) {
                 // spanRotation -90: direction [0,-1] (upward) → canvas rotate(-π/2) draws text upward
                 // spanRotation +90: direction [0,+1] (downward) → canvas rotate(+π/2) draws text downward
@@ -1921,6 +2026,28 @@ import {
         );
         const { dx: posDx, dy: posDy } = annotationOffset(ann);
         const positionChanged = Math.abs(posDx) > 0.25 || Math.abs(posDy) > 0.25;
+        // Baked-base short-circuit: when the editor is sitting on top of the
+        // server-baked PDF, the bake script (bake_edit_new_base.py) only paints
+        // annotations that pass the *clean unedited promoted* filter — same
+        // filter mirrored here. Skip canvas drawing for those annotations
+        // because the baked PDF already has them painted by writer.py at the
+        // exact source-bbox coords.  Anything edited / moved / userAuthored
+        // is NOT in the baked PDF, so the canvas must draw it as before.
+        const useBakedBase = window.__edn_useBakedBase === true;
+        const isBakedClean = useBakedBase
+            && !!ann?.promotedFromExtraction
+            && !ann?.promotedDirty
+            && !ann?.userAuthored
+            && !ann?.promotedReflowEnabled
+            && !editedInSession
+            && !savedDiffersFromPdf
+            && !dimensionsChanged
+            && !styleChanged
+            && !positionChanged
+            && !ann?._richHtml;
+        if (isBakedClean) {
+            return;
+        }
         // Exact-preserve path: use drawOriginalSource when the annotation's text,
         // dimensions, and style are unchanged from extraction. The user-authored
         // flag does NOT by itself block the preserve path — flipping that flag
@@ -2213,7 +2340,14 @@ import {
             }
             const { box, correctedSrcDom, left, top, width, height } = geometry;
             const style0 = editableLineStyle(ann, 0);
-            const lineHeightPxRaw = blockLineHeightPx(ann, 0, scale, style0);
+            // Stage1 line-height unification: prefer the shared
+            // domAndCanvasLineHeightPx (font-tight, identical to the
+            // active editor) over blockLineHeightPx (source-bbox
+            // floored, includes PDF leading) so a deselected
+            // rich-html-item lays out at the same y-positions as the
+            // contenteditable. blockLineHeightPx kept as a floor only
+            // when its sourceH happens to be smaller (rare).
+            const lineHeightPxRaw = domAndCanvasLineHeightPx(ann, 0, scale, style0);
             // When source-block correction is active, force the line-height to a
             // value that lets the original line count fit the original block
             // height. Otherwise the bloated ann.lineHeight (e.g. 9.44 vs the
@@ -2263,17 +2397,16 @@ import {
                 // positions.  Collapse single <br> runs to a space so CSS
                 // word-wrap can reflow to the new box width; leave 2+
                 // consecutive <br>s alone (those represent explicit paragraph
-                // breaks).  Apply this whenever the annotation is
-                // promoted-from-extraction and the dimensions changed — the
-                // single-vs-double <br> rule itself preserves user-typed hard
-                // paragraph breaks, so we don't need to gate on whether other
-                // text was edited.
+                // breaks).  Apply this only when the dimensions actually
+                // changed — Stage1 fix: previously this also triggered on
+                // any text edit (annTextIsEdited), which collapsed the
+                // original PDF line breaks on a trivial word swap whose
+                // box was unchanged, making CSS re-wrap to different
+                // positions than the underlying raster background.
                 const _richIsPromoted = (Array.isArray(ann.sourceSpans) && ann.sourceSpans.length > 0)
                     || (Array.isArray(ann.sourceLineBBoxes) && ann.sourceLineBBoxes.length > 0)
                     || ann.promotedFromExtraction === true;
-                const _richNeedsReflow = _richIsPromoted
-                    && (annotationDimensionsChanged(ann)
-                        || (typeof annTextIsEdited === 'function' && annTextIsEdited(ann)));
+                const _richNeedsReflow = _richIsPromoted && annotationDimensionsChanged(ann);
                 const richSource = _richNeedsReflow
                     ? normalizeRichHtmlForReflow(ann._richHtml)
                     : ann._richHtml;
@@ -2339,6 +2472,14 @@ import {
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
+
+        // Stage 3: keep the page background raster in sync with the
+        // committed-annotation set. Cheap no-op when the set hasn't
+        // changed since the last redraw, so safe to call every frame.
+        // Done before the overlay redraws so the user sees a consistent
+        // raster + overlay composition in a single paint cycle.
+        const bgCanvas = document.getElementById('en-canvas-' + (pi + 1));
+        if (bgCanvas) applyCommittedRasterPatches(bgCanvas, data);
 
         // Normalise the transform so the rest of this function (and
         // everything it calls) can keep working in FIT-scale CSS pixel
@@ -2900,12 +3041,12 @@ import {
         // which drifts from the per-line PDF baselines and made the
         // selection rect (and the ghost text revealed when the user begins
         // typing) visibly offset from the canvas paint on multi-line
-        // canvas-owned blocks. Resized / DOM-owned annotations cannot use
-        // the absolute source layout because their box no longer matches the
-        // extraction rect — only those keep source-flow as the active editor
-        // shape. For canvas-owned (pristine) annotations always defer to the
-        // absolute layout regardless of line count.
+        // canvas-owned blocks. Resized annotations must leave source-flow
+        // too: its one-block-per-PDF-line structure preserves the old line
+        // breaks, while plain editor HTML collapses extraction soft breaks
+        // and lets CSS wrap to the current box width.
         if (!allowCurrentBoxSourceFlow) return false;
+        if (annotationDimensionsChanged(ann)) return false;
         if (editedText !== undefined && editedText !== String(ann.text ?? '')) return false;
         if (annTextIsEdited(ann)) return false;
         // Note: `promotedDirty` is intentionally NOT a disqualifier. It can
@@ -3207,14 +3348,13 @@ import {
     function renderPlainEditorHTML(ann, text, scale) {
         const maxSourceIndex = Math.max(0, renderableSourceLines(ann).length - 1);
         const style = editableLineStyle(ann, 0);
-        // Use a tight font-based line height instead of blockLineHeightPx,
-        // because that function returns the source bbox height of line 0
-        // (which includes PDF-extraction leading) and applies it uniformly
-        // to every wrapped line in the editor — making the editor visibly
-        // taller than the deselected canvas paint, which reflows tighter.
-        // 1.18× matches the canvas glyph leading used in galley mode.
+        // Stage1 line-height unification: use the shared helper so the
+        // active-editor (this) and the deselected rich-html-layer paint
+        // at identical line-heights — eliminates baseline jump on
+        // enter/exit edit. 1.18× matches the canvas glyph leading used
+        // in galley mode.
         const fontSizePx = style.fontSizePt * fontDisplayScale(scale);
-        const lineHeightPx = fontSizePx * 1.18;
+        const lineHeightPx = domAndCanvasLineHeightPx(ann, 0, scale, style);
         // The browser puts (line-height - font-size) / 2 of leading above
         // the first text line within its line box. The canvas paints the
         // first glyph baseline directly at the PDF y, so canvas-rendered
@@ -3230,7 +3370,8 @@ import {
         // user hasn't diverged from the source text yet, render each span
         // with its own weight/style so bold paragraph headers etc. survive
         // the click-into-edit. Otherwise fall back to plain reflowed text.
-        const innerHtml = renderRichEditorInnerHtml(ann, text)
+        const canUseSourceRichInner = !annotationDimensionsChanged(ann);
+        const innerHtml = (canUseSourceRichInner ? renderRichEditorInnerHtml(ann, text) : '')
             || renderPlainEditorInnerHtml(text);
 
         // Suppress maxSourceIndex lint noise — retained for future per-line overrides.
@@ -3331,16 +3472,33 @@ import {
             const spans = Array.isArray(line.spans) ? line.spans : [];
             if (!spans.length) return escapeHtml(lineText);
             let cursor = 0;
+            let matchedAny = false;
+            let sawUnmatched = false;
             const parts = [];
             for (const sp of spans) {
                 const spText = sourceSpanText(sp);
                 if (!spText) continue;
                 let chunk = spText;
                 if (lineText) {
-                    const idx = lineText.indexOf(spText, cursor);
+                    let idx = lineText.indexOf(spText, cursor);
+                    let matchLength = spText.length;
+                    if (idx < 0) {
+                        const trimmedSpanText = spText.trim();
+                        if (trimmedSpanText) {
+                            const trimmedIdx = lineText.indexOf(trimmedSpanText, cursor);
+                            if (trimmedIdx >= 0) {
+                                idx = trimmedIdx;
+                                matchLength = trimmedSpanText.length;
+                            }
+                        }
+                    }
                     if (idx >= 0) {
-                        chunk = lineText.slice(cursor, idx + spText.length);
-                        cursor = idx + spText.length;
+                        const start = sawUnmatched ? idx : cursor;
+                        chunk = lineText.slice(start, idx + matchLength);
+                        cursor = idx + matchLength;
+                        matchedAny = true;
+                    } else {
+                        sawUnmatched = true;
                     }
                 }
                 const w = String(sourceSpanFontWeight(sp) || '400');
@@ -3352,7 +3510,7 @@ import {
                 parts.push(`<span${styleAttr}>${escapeHtml(chunk)}</span>`);
             }
             // Tail of line.text past the last matched span — append plain.
-            if (lineText && cursor < lineText.length && parts.length) {
+            if (lineText && matchedAny && !sawUnmatched && cursor < lineText.length && parts.length) {
                 parts.push(escapeHtml(lineText.slice(cursor)));
             }
             return parts.join('');
@@ -3363,6 +3521,21 @@ import {
     // measureEditedTextHeightPts moved to ./text/measure.js (Phase 7e).
     // normalizeTextForDomReflow / normalizeRichHtmlForReflow (second copy)
     // also moved to ./text/dom-reflow.js (Phase 7ag).
+
+    function promotedTextNeedsDomReflow(ann) {
+        return Boolean(ann?.promotedFromExtraction === true
+            || (Array.isArray(ann?.sourceSpans) && ann.sourceSpans.length > 0)
+            || (Array.isArray(ann?.sourceLineBBoxes) && ann.sourceLineBBoxes.length > 0))
+            && annotationDimensionsChanged(ann);
+    }
+
+    function textForPlainEditorCurrentBox(ann, text) {
+        if (!promotedTextNeedsDomReflow(ann)) return text;
+        const original = String(ann?.originalText ?? ann?.text ?? '');
+        const normalized = (value) => String(value ?? '').replace(/[\s\n]+/g, ' ').trim();
+        if (original && normalized(text) !== normalized(original)) return text;
+        return normalizeTextForDomReflow(text);
+    }
 
     const autoWidthMeasureCanvas = document.createElement('canvas');
     const autoWidthMeasureCtx = autoWidthMeasureCanvas.getContext('2d');
@@ -3970,7 +4143,7 @@ import {
                     ? String(editedText)
                     : String(ann.text ?? '');
                 ae.dataset.renderMode = 'plain';
-                const cleanHtml = renderPlainEditorHTML(ann, cleanText, scale);
+                const cleanHtml = renderPlainEditorHTML(ann, textForPlainEditorCurrentBox(ann, cleanText), scale);
                 if (ae.innerHTML !== cleanHtml) ae.innerHTML = cleanHtml;
                 if (typeof window !== 'undefined' && ann?._uid) {
                     window.__galleyDbg = window.__galleyDbg || {};
@@ -4022,7 +4195,7 @@ import {
                     // path so leader-dot spacing and per-span layout remain
                     // pixel-identical to the deselected canvas baseline.
                     ae.dataset.renderMode = 'plain';
-                    ae.innerHTML = renderPlainEditorHTML(ann, editedText, scale);
+                    ae.innerHTML = renderPlainEditorHTML(ann, textForPlainEditorCurrentBox(ann, editedText), scale);
                     if (typeof window !== 'undefined' && ann?._uid) { window.__galleyDbg = window.__galleyDbg || {}; if (!window.__galleyDbg[ann._uid]) window.__galleyDbg[ann._uid] = `plain editedDiverge gExt=${_galleyExtracted} gOk=${_galleyTextOk} dimChg=${annotationDimensionsChanged(ann)} userAuth=${isUserAuthoredAnnotation(ann)} canUseSrcLayout=${_canUseSourceEditorLayout} editedText=${JSON.stringify(String(editedText).slice(0,40))}`; }
                 } else {
                     // Detect persisted edits (same logic as annTextIsEdited in canvas draw):
@@ -4033,7 +4206,7 @@ import {
                     const textWasEdited = originalText !== '' && normWS(savedText) !== normWS(originalText);
                     if (textWasEdited && !ann._sourceExactTextEdited && !ann.preserveSourceLayout) {
                         ae.dataset.renderMode = 'plain';
-                        ae.innerHTML = renderPlainEditorHTML(ann, savedText, scale);
+                        ae.innerHTML = renderPlainEditorHTML(ann, textForPlainEditorCurrentBox(ann, savedText), scale);
                     } else if (_isEditing) {
                         if (_canUseSourceEditorLayout && annotationTextMatchesSource(ann, savedText)) {
                             // Actively editing an unmodified promoted block — render the
@@ -5783,6 +5956,10 @@ import {
         delete payload._userAuthored;
         delete payload._sourceExactTextEdited;
         delete payload._renderableSourceLines;
+        // Stage2: _committed is transient routing state, re-derived on
+        // hydrate via legacyShouldDomRender memoization in
+        // shouldRenderTextInRichHtmlLayer. Never persist.
+        delete payload._committed;
         return payload;
     }
 
@@ -5830,10 +6007,17 @@ import {
         if (nextText !== savedText) {
             markUserAuthored(ann);
             clearSourceExactFlagsForPlainTextEdit(ann);
+            // Stage2: explicit commit at the canonical "user finalized
+            // a text edit" moment. This routes all subsequent paints
+            // through the DOM rich-html-layer immediately, instead of
+            // waiting for the next shouldRenderTextInRichHtmlLayer call
+            // to observe the divergence and memoize.
+            markCommitted(ann, 'flushActiveEditorState:textChanged');
         }
         const sourceAwareRenderMode = renderMode === 'source' || renderMode === 'source-flow';
         if (renderMode !== 'galley' && !sourceAwareRenderMode && richHtmlHasInlineSelectionFormatting(ae.innerHTML)) {
             ann._richHtml = ae.innerHTML;
+            markCommitted(ann, 'flushActiveEditorState:richHtmlAssigned');
         } else if (sourceAwareRenderMode && nextText !== savedText) {
             delete ann._richHtml;
         }
@@ -5890,6 +6074,22 @@ import {
             updateFormatBar,
             normalizeShapeAnnotation,
             createShapeAnnotationFromPoints,
+            // Stage1 font diagnostics: returns the per-family load/probe
+            // outcome captured by embedded-fonts.js validateHealth().
+            getFontDiagnostics: () => (typeof embeddedFontRegistry?.getDiagnostics === 'function'
+                ? embeddedFontRegistry.getDiagnostics()
+                : null),
+            // Stage3 raster-patch diagnostics: returns the count of
+            // committed text annotations currently being raster-erased
+            // on a given page (defaults to page 0).
+            getCommittedPatchCount: (pi = 0) => getCommittedPatchCount(pageData[pi]),
+            // Stage3: force re-application of raster patches for a given
+            // page (defaults to page 0). Returns true when a repaint
+            // happened, false on no-op.
+            applyRasterPatches: (pi = 0) => {
+                const bg = document.getElementById('en-canvas-' + (pi + 1));
+                return bg ? applyCommittedRasterPatches(bg, pageData[pi]) : false;
+            },
         };
     } catch (_e) {}
 
@@ -6011,6 +6211,31 @@ import {
         if (!data) return;
 
         pushUndo();
+        // Record the deleted annotation's footprint so the raster-patch
+        // pass can keep covering the underlying PDF text after the ann is
+        // gone. We patch the union of the current box and the original-
+        // extraction box (where the PDF glyphs actually sit).
+        try {
+            if (isTextAnnotation(ann) || annIsPromotedFromExtraction(ann)) {
+                const cur = { x: Number(ann.pdfX), y: Number(ann.pdfY), w: Number(ann.pdfWidth), h: Number(ann.pdfHeight) };
+                const orig = ann._originalPdfBox && [ann._originalPdfBox.x, ann._originalPdfBox.y, ann._originalPdfBox.w, ann._originalPdfBox.h].every(Number.isFinite)
+                    ? ann._originalPdfBox
+                    : null;
+                const rects = [];
+                if ([cur.x, cur.y, cur.w, cur.h].every(Number.isFinite) && cur.w > 0 && cur.h > 0) rects.push(cur);
+                if (orig && orig.w > 0 && orig.h > 0) rects.push(orig);
+                if (rects.length) {
+                    if (!Array.isArray(data.deletedRectPatches)) data.deletedRectPatches = [];
+                    for (const r of rects) {
+                        data.deletedRectPatches.push({
+                            uid: ann._uid,
+                            x: r.x, y: r.y, w: r.w, h: r.h,
+                            color: '#ffffff',
+                        });
+                    }
+                }
+            }
+        } catch (_e) {}
         data.annotations = data.annotations.filter((item) => item._uid !== ann._uid);
         if (annotationId) pendingDeletedAnnotationIds.add(annotationId);
         if (promotedSourceKey) pendingDeletedPromotedSourceKeys.add(promotedSourceKey);
@@ -9666,7 +9891,10 @@ import {
         loadSavedSignatureLibrary();
         updateZoom(currentZoomPercent);
         try {
-            data = await fetchDocumentInfo(getSessionId());
+            // Lazy load: fetch only page 1 annotations on the initial request
+            // so the editor paints the first page quickly. Remaining pages are
+            // backfilled via a second request after the initial render below.
+            data = await fetchDocumentInfo(getSessionId(), { page: 1 });
         } catch (e) { showError(String(e)); return; }
 
         const embeddedFontsBySource = data.embedded_fonts_by_source && typeof data.embedded_fonts_by_source === 'object'
@@ -9697,8 +9925,9 @@ import {
         };
 
         const rawAnns = (data.annotations || []).filter(a => a && a.db_state !== 'deleted');
-        let allAnnotations = rawAnns.map((ann, i) => {
-            const hydrated = { ...ann, _uid: String(ann.id || ann.db_id || '') + '_' + i };
+        const hydrateRawAnnotations = (raws, uidSalt = '') => {
+        let allAnnotations = raws.map((ann, i) => {
+            const hydrated = { ...ann, _uid: String(ann.id || ann.db_id || '') + '_' + uidSalt + i };
             hydrated.locked = Boolean(
                 hydrated.locked
                 || (hydrated.annotation_data && hydrated.annotation_data.locked)
@@ -9909,6 +10138,9 @@ import {
         })();
 
         allAnnotations.forEach(ann => { editedTexts[ann._uid] = String(ann.text || ''); });
+        return allAnnotations;
+        };
+        let allAnnotations = hydrateRawAnnotations(rawAnns, '');
 
         const byPage = {};
         allAnnotations.forEach(ann => {
@@ -9945,16 +10177,21 @@ import {
 
         try {
             if (typeof pdfjsLib === 'undefined') throw new Error('PDF.js not loaded.');
-            // Prefer the clean (extracted-text-removed) PDF, but fall back to
-            // the original file when the clean variant doesn't exist yet
-            // (e.g. blank documents created via /pdf-tests/create-blank).
-            const candidateUrls = [data.document.clean_url, data.document.file_url, data.document.original_url]
+            // Render the unmodified ORIGINAL PDF as the base (matches the
+            // /edit-pdfjs spike approach). Edits flow through the surgical
+            // /Tj rewriter (rewrite_tj_inplace.py) — no baking step, so the
+            // canvas IS the source of truth and overlays draw on top.
+            // Falls back to baked → clean → file only if original_url is
+            // missing (legacy documents predating the original-backup field).
+            const candidateUrls = [data.document.original_url, data.document.baked_url, data.document.clean_url, data.document.file_url]
                 .filter((u) => typeof u === 'string' && u.length > 0);
             let lastErr = null;
+            let loadedUrl = null;
             for (const url of candidateUrls) {
                 try {
                     setPdfDoc(await pdfjsLib.getDocument(url).promise);
                     lastErr = null;
+                    loadedUrl = url;
                     break;
                 } catch (err) {
                     lastErr = err;
@@ -9962,6 +10199,14 @@ import {
                 }
             }
             if (!_pdfDoc) throw lastErr || new Error('No PDF source URL succeeded.');
+            // Suppress canvas redraw of promoted source spans whenever the
+            // loaded PDF already contains them (original or baked). The
+            // file_url / clean_url variants do NOT contain them, so the
+            // overlay must repaint as before.
+            window.__edn_useBakedBase = (
+                loadedUrl === data.document.original_url
+                || loadedUrl === data.document.baked_url
+            );
         } catch (e) { showError(String(e)); return; }
 
         // Phase 2 scaffolding (no-op unless ?phase2=1 is in the URL).
@@ -10012,6 +10257,13 @@ import {
                         ? pdfjsLib.AnnotationMode.DISABLE
                         : 0,
                 }).promise.catch(() => {});
+                // Stage 3: capture the pristine raster immediately after the
+                // first render so applyCommittedRasterPatches can later
+                // restore-and-patch when annotations transition to
+                // _committed. pageData[pi] isn't populated yet at this
+                // point — setupPage assigns it below — so the first patch
+                // pass happens lazily from redrawOverlay.
+                capturePristineRasterSnapshot(pageCanvas);
             }
 
             // Stash the PDFPageProxy + intrinsic size so the zoom-rerender
@@ -10094,6 +10346,63 @@ import {
 
         markClean();
         syncCurrentPageFromScroll();
+
+        // Backfill annotations for the remaining pages in the background.
+        // The initial fetch above intentionally restricted the response to
+        // page 1 so the editor paints quickly. Now that the user can see
+        // page 1, fetch the rest, hydrate them through the same pipeline,
+        // and merge them into the per-page state. Any failure here just
+        // leaves the lazy-loaded behaviour as-is for those pages — the user
+        // can refresh to retry.
+        const scheduleIdle = (cb) => {
+            if (typeof window.requestIdleCallback === 'function') {
+                window.requestIdleCallback(cb, { timeout: 500 });
+            } else {
+                setTimeout(cb, 0);
+            }
+        };
+        scheduleIdle(async () => {
+            try {
+                const restData = await fetchDocumentInfo(getSessionId(), {
+                    pagesExclude: [1],
+                    skipMeta: true,
+                });
+                const restRaw = (restData.annotations || [])
+                    .filter(a => a && a.db_state !== 'deleted');
+                if (!restRaw.length) return;
+                const backfilled = hydrateRawAnnotations(restRaw, 'b1_');
+                if (!backfilled.length) return;
+
+                const touchedPages = new Set();
+                backfilled.forEach((ann) => {
+                    const pi = Number(ann.pageIndex) || 0;
+                    if (!pageData[pi]) return; // page not mounted (PDF doc didn't expose it)
+                    if (!Array.isArray(pageData[pi].annotations)) pageData[pi].annotations = [];
+                    pageData[pi].annotations.push(ann);
+                    touchedPages.add(pi);
+                });
+
+                // Re-sort each touched page using the same layer-order rule
+                // that run() applied to the initial batch. Stable sort keeps
+                // intra-layer ordering predictable.
+                const layerKey = (ann) => {
+                    if (isShapeAnnotation(ann)) return 0;
+                    if (isImageBackedAnnotation(ann)) {
+                        return String(ann?.imageToolSource || '') === 'direct-draw' ? 1 : 3;
+                    }
+                    return 2;
+                };
+                touchedPages.forEach((pi) => {
+                    const arr = pageData[pi].annotations;
+                    const decorated = arr.map((ann, idx) => ({ ann, idx, key: layerKey(ann) }));
+                    decorated.sort((a, b) => (a.key - b.key) || (a.idx - b.idx));
+                    pageData[pi].annotations = decorated.map((entry) => entry.ann);
+                    redrawOverlay(pi);
+                });
+            } catch (e) {
+                console.warn('[edit-new] backfill annotations failed', e);
+            }
+        });
     }
 
     run();

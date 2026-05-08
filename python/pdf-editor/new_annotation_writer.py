@@ -2452,6 +2452,22 @@ def draw_text_using_exact_source_spans(
     if not lines:
         return False
 
+    # For clean unedited promoted-from-extraction annotations the source span
+    # origin/size is authoritative — the original PDF rendered those exact glyphs
+    # at that exact origin and size, and any auto-shrink / word-justify /
+    # leading-whitespace-shift compensation we apply here causes pixel-level
+    # drift versus the original (the metric-compensation logic exists to make
+    # SUBSTITUTE fonts look acceptable, but we now have the embedded font and
+    # any further "fitting" introduces error).  Mirror what the canvas-overlay
+    # `drawOriginalSource` path does in pdfRecon2 / edit-new: paint each span
+    # at its origin with its size, no fitting.
+    _skip_metric_compensation = (
+        bool(ann.get("promotedFromExtraction"))
+        and not bool(ann.get("promotedDirty"))
+        and not bool(ann.get("userAuthored"))
+        and not bool(ann.get("promotedReflowEnabled"))
+    )
+
     for line_entry in lines:
         if not isinstance(line_entry, dict):
             continue
@@ -2528,7 +2544,7 @@ def draw_text_using_exact_source_spans(
             # the stored text.  Shift draw_x right by that difference so the first
             # visible glyph lands where it did in the original PDF, restoring the
             # visual gap between the field number and its description text.
-            if _prev_span_rect is not None and _prev_span_text is not None:
+            if not _skip_metric_compensation and _prev_span_rect is not None and _prev_span_text is not None:
                 _adj_gap = abs(_prev_span_rect.x1 - span_rect.x0)
                 if _adj_gap < 0.5:
                     _bbox_w = span_rect.x1 - span_rect.x0
@@ -2558,7 +2574,7 @@ def draw_text_using_exact_source_spans(
             _span_avail_w = span_rect.x1 - draw_x
             _use_word_justify = False
             _word_extra_spacing = 0.0
-            if _span_avail_w > 1.0:
+            if not _skip_metric_compensation and _span_avail_w > 1.0:
                 _measured_w = span_font.text_length(span_text, fontsize=span_font_size)
                 if _measured_w > _span_avail_w:
                     # Reserve one space-width at the right edge of the scale target so

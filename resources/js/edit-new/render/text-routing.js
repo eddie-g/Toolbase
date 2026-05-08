@@ -2,15 +2,27 @@
  * Render-routing predicates: should the canvas paint vs. the DOM
  * rich-html layer paint a given text annotation? (Phase 7aj)
  *
- * `shouldRenderTextInRichHtmlLayer`:
- *   Decide whether a text annotation's glyphs come from the DOM
- *   rich-html layer (CSS measureText spacing, contenteditable-style
- *   reflow) or the canvas drawOriginalSource (per-span exact PDF
- *   positions). Pristine extracted text whose visible content still
- *   matches the PDF source must keep canvas drawing — even if the
- *   user-authored flag was flipped by a non-text edit (geometry grow,
- *   color/bg change, etc.) — because the DOM layer collapses tab
- *   leaders and joins styled runs.
+ * Stage2 introduced an explicit `ann._committed` flag — the single
+ * source of truth for "this annotation is owned by the editor's text
+ * engine and must render through the DOM rich-html-layer instead of
+ * canvas drawOriginalSource". Semantics:
+ *
+ *   - Sticky: once true for a session it stays true. Undoing back to
+ *     pristine text does not un-commit; with the Stage1 metrics-
+ *     compatible font fallbacks the visual delta between DOM and
+ *     canvas is small enough that re-routing on revert is unnecessary
+ *     churn (and historically a source of routing surprises).
+ *   - Transient: not persisted to the DB. On hydrate we re-derive it
+ *     from `legacyShouldDomRender` (the original heuristic stack) so
+ *     a previously-edited annotation loaded from disk routes the same
+ *     way it did when it was saved.
+ *   - Memoized: `shouldRenderTextInRichHtmlLayer` writes _committed=true
+ *     the first time the legacy heuristics resolve to "yes", so all
+ *     subsequent calls short-circuit to the cached flag.
+ *   - Explicit entry point: `markCommitted(ann, reason)` lets call
+ *     sites (text edits, dimension changes, _richHtml assignment)
+ *     transition an annotation directly without waiting for the next
+ *     redraw to observe the change.
  *
  * `activeEditorCanvasOwnsPaint`:
  *   While a text annotation is in the active editor, decide whether
@@ -29,7 +41,14 @@ import {
 } from '../annotations/state.js';
 import { editorIsEditingAnnotation } from '../editor/is-editing.js';
 
-export function shouldRenderTextInRichHtmlLayer(ann) {
+/**
+ * The original (pre-Stage2) routing heuristic stack. Computes whether
+ * an annotation should render via the DOM rich-html-layer based on
+ * observable annotation/edit state, without consulting `_committed`.
+ * Used both by `shouldRenderTextInRichHtmlLayer` (to backfill
+ * _committed on hydrate) and as an internal invariant check.
+ */
+function legacyShouldDomRender(ann) {
     const hasRichHtml = !!ann?._richHtml;
     const userAuthoredText = (ann?.type || 'text') === 'text'
         && (ann?.userCreated || isUserAuthoredAnnotation(ann));
@@ -52,6 +71,38 @@ export function shouldRenderTextInRichHtmlLayer(ann) {
     if (editedInSession) return true;
     if (annTextIsEdited(ann)) return true;
     if (annotationDimensionsChanged(ann)) return true;
+    return false;
+}
+
+/**
+ * Explicitly transition an annotation into "DOM-owned" state. Idempotent.
+ * Returns true if the annotation was newly committed (caller can use
+ * this to schedule a redraw).
+ *
+ * `reason` is a short string for debug logging — not persisted.
+ */
+export function markCommitted(ann, reason = '') {
+    if (!ann || ann._committed === true) return false;
+    ann._committed = true;
+    if (reason && typeof window !== 'undefined' && window.__commitDebug) {
+        try {
+            window.__commitLog = window.__commitLog || [];
+            window.__commitLog.push({ uid: ann._uid, reason, ts: Date.now() });
+        } catch (_e) {}
+    }
+    return true;
+}
+
+export function shouldRenderTextInRichHtmlLayer(ann) {
+    if (!ann) return false;
+    if (ann._committed === true) return true;
+    if (legacyShouldDomRender(ann)) {
+        // Memoize: the heuristic stack flipped to true; promote to the
+        // explicit flag so future calls (and the rest of the code base)
+        // see a single source of truth.
+        ann._committed = true;
+        return true;
+    }
     return false;
 }
 

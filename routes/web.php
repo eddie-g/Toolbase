@@ -46,6 +46,11 @@ Route::post('/documents/create-simple-invoice', [DocumentController::class, 'cre
 Route::post('/documents/create-guided-template', [DocumentController::class, 'createFromGuidedTemplate'])->name('documents.createFromGuidedTemplate');
 Route::get('/documents/{document}/edit', [DocumentController::class, 'edit'])->name('documents.edit');
 Route::get('/documents/{document}/edit-new', [DocumentController::class, 'editNew'])->name('documents.editNew');
+Route::get('/documents/{document}/edit-pdfjs', [DocumentController::class, 'editPdfjs'])->name('documents.editPdfjs');
+Route::post('/documents/{document}/edit-pdfjs/rewrite-tj', [DocumentController::class, 'editPdfjsRewriteTj'])->name('documents.editPdfjsRewriteTj');
+Route::post('/documents/{document}/edit-pdfjs/redact-source-text', [DocumentController::class, 'editPdfjsRedactSourceText'])->name('documents.editPdfjsRedactSourceText');
+Route::post('/documents/{document}/edit-pdfjs/move-tj', [DocumentController::class, 'editPdfjsMoveTj'])->name('documents.editPdfjsMoveTj');
+Route::post('/documents/{document}/edit-pdfjs/reflow-text', [DocumentController::class, 'editPdfjsReflowText'])->name('documents.editPdfjsReflowText');
 Route::get('/documents/{document}/edit2', [DocumentController::class, 'edit2'])->name('documents.edit2');
 Route::get('/documents/{document}/ai', [DocumentController::class, 'ai'])->name('documents.ai');
 Route::get('/documents/{document}/guided', [DocumentController::class, 'guided'])->name('documents.guided');
@@ -79,6 +84,7 @@ Route::post('documents/{document}/process-fitz', [DocumentController::class, 'pr
 Route::get('documents/{document}/fitz-extraction-data', [DocumentController::class, 'getFitzExtractionData'])->name('documents.getFitzExtractionData');
 Route::match(['get', 'post'], '/documents/{document}/prepare-overlay', [DocumentController::class, 'prepareOverlay'])->name('documents.prepareOverlay');
 Route::get('/documents/{document}/clean-pdf', [DocumentController::class, 'cleanPdf'])->name('documents.cleanPdf');
+Route::get('/documents/{document}/baked-pdf', [DocumentController::class, 'bakedPdf'])->name('documents.bakedPdf');
 Route::get('/documents/{document}/edit/saved', [DocumentController::class, 'savedEditPreview'])->name('documents.savedEdit');
 Route::get('/documents/{document}/edit/saved/image/{variant}', [DocumentController::class, 'savedEditPreviewImage'])->name('documents.savedEditImage');
 Route::get('/documents/{document}/fonts', [DocumentController::class, 'getFonts'])->name('documents.getFonts');

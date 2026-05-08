@@ -41,7 +41,9 @@ export function getEditorPlainText(editor) {
         if (tag === 'BR') { out += '\n'; return; }
         const before = out.length;
         for (const child of node.childNodes) walk(child);
-        if (isBlockTag(tag) && out.length > before && !out.endsWith('\n')) out += '\n';
+        if (isBlockTag(tag)) {
+            if (out.length === before || !out.endsWith('\n')) out += '\n';
+        }
     };
     for (const child of editor.childNodes) walk(child);
     return out

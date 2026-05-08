@@ -196,12 +196,61 @@ def cff_raw_to_otf(cff_data: bytes, font_name: str = 'UnknownFont',
             all_bounds.append(b)
 
     upm = 1000
-    ascent = 800
-    descent = -200
     bbxMin = int(min(b[0] for b in all_bounds)) if all_bounds else 0
     bbxMax = int(max(b[2] for b in all_bounds)) if all_bounds else 800
     bbyMin = int(min(b[1] for b in all_bounds)) if all_bounds else -200
     bbyMax = int(max(b[3] for b in all_bounds)) if all_bounds else 800
+
+    # Derive ascent/descent from the CFF Top DICT FontBBox when available
+    # (Adobe CFF subsets carry the original font's design bbox, which encodes
+    # the source font's true ascent/descent extents). Fall back to the
+    # per-glyph aggregate bounds if FontBBox is missing or degenerate.
+    # PyMuPDF's `get_text(rawdict)` reports char.bbox using the OT
+    # hhea/sTypo metrics; if these are wrong, every per-glyph y-extent in
+    # the reconstructed font will be smaller than the original, and any
+    # downstream pixel comparison will see a vertical-shift diff at every
+    # glyph edge.
+    cff_font_bbox = getattr(top_dict, 'FontBBox', None)
+    bbox_yMin = bbox_yMax = None
+    if isinstance(cff_font_bbox, (list, tuple)) and len(cff_font_bbox) >= 4:
+        try:
+            cy0 = float(cff_font_bbox[1])
+            cy1 = float(cff_font_bbox[3])
+            if cy1 > cy0:
+                bbox_yMin = int(cy0)
+                bbox_yMax = int(cy1)
+        except Exception:
+            bbox_yMin = bbox_yMax = None
+    ascent = bbox_yMax if bbox_yMax is not None else 800
+    descent = bbox_yMin if bbox_yMin is not None else -200
+
+    # Derive cap height from the 'H' glyph outline when present (matches the
+    # convention used by Adobe Helvetica and other Latin fonts). Fall back to
+    # the ascent value when no suitable glyph is available.
+    cap_glyph_top = None
+    for cap_candidate in ('H', 'I', 'E', 'B'):
+        if cap_candidate in cs:
+            cap_pen = BoundsPen(None)
+            try:
+                cs[cap_candidate].draw(cap_pen)
+                if cap_pen.bounds:
+                    cap_glyph_top = int(cap_pen.bounds[3])
+                    break
+            except Exception:
+                continue
+    cap_height_value = cap_glyph_top if cap_glyph_top else 700
+
+    # x-height from 'x' glyph
+    x_height_top = None
+    if 'x' in cs:
+        x_pen = BoundsPen(None)
+        try:
+            cs['x'].draw(x_pen)
+            if x_pen.bounds:
+                x_height_top = int(x_pen.bounds[3])
+        except Exception:
+            x_height_top = None
+    x_height_value = x_height_top if x_height_top else 500
 
     # Mac timestamp = Unix timestamp + seconds(1904→1970)
     mac_ts = int(time.time()) + 2082844800
@@ -272,7 +321,7 @@ def cff_raw_to_otf(cff_data: bytes, font_name: str = 'UnknownFont',
     os2.sTypoAscender = ascent; os2.sTypoDescender = descent; os2.sTypoLineGap = 0
     os2.usWinAscent = ascent; os2.usWinDescent = abs(descent)
     os2.ulCodePageRange1 = 1; os2.ulCodePageRange2 = 0
-    os2.sxHeight = 500; os2.sCapHeight = 700
+    os2.sxHeight = x_height_value; os2.sCapHeight = cap_height_value
     os2.usDefaultChar = 0; os2.usBreakChar = 32; os2.usMaxContext = 0
     font['OS/2'] = os2
 

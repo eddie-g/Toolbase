@@ -10,7 +10,7 @@
  */
 
 import { clamp01 } from '../util/math.js';
-import { isShapeAnnotation, isLineShape } from './types.js';
+import { isShapeAnnotation, isLineShape, isHiddenPdfjsAnnotation } from './types.js';
 import { resolveAnnBox } from './box.js';
 import { sourceVisualRectPx } from './source-visual.js';
 import { annotationUsesStoredBoxForDisplay } from './uses-stored-box.js';
@@ -45,6 +45,7 @@ export function lineSelectionRectPx(ann, scale, canvasHeight, extraPaddingPx = 1
 }
 
 export function annRectPx(ann, scale, canvasHeight, opts = {}) {
+    if (isHiddenPdfjsAnnotation(ann)) return null;
     if (opts.expandLine !== false) {
         const lineRect = lineSelectionRectPx(ann, scale, canvasHeight);
         if (lineRect) return lineRect;
