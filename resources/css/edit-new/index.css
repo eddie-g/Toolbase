@@ -1,0 +1,2846 @@
+        @font-face {
+            font-family: 'HelveticaNeueLTStd-Roman';
+            src: url('/fonts/runtime-extracted/2147/HelveticaNeueLTStd-Roman.otf') format('opentype');
+            font-weight: 400;
+            font-style: normal;
+            font-display: block;
+        }
+        @font-face {
+            font-family: 'HelveticaNeueLTStd';
+            src: url('/fonts/runtime-extracted/2147/HelveticaNeueLTStd-Roman.otf') format('opentype');
+            font-weight: 400;
+            font-style: normal;
+            font-display: block;
+        }
+        *, *::before, *::after { box-sizing: border-box; }
+        body { margin: 0; background: #f3f4f6; font-family: system-ui, sans-serif; }
+
+        .top-bar {
+            position: sticky; top: 0; z-index: 40;
+            background: #fff; border-bottom: 1px solid #e5e7eb;
+            padding: 10px 20px; display: flex; align-items: center; gap: 12px;
+        }
+        .top-bar h1 { margin: 0; font-size: 15px; font-weight: 600; color: #111827; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        /* Rename UI: hover + active states for the document name. */
+        .top-bar .doc-name-wrap { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+        .top-bar .doc-name-display {
+            margin: 0; font-size: 15px; font-weight: 600; color: #111827;
+            min-width: 0; max-width: 100%;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            cursor: text; padding: 2px 6px; border-radius: 4px;
+            border: 1px solid transparent;
+        }
+        .top-bar .doc-name-display:hover { background: #f3f4f6; border-color: #e5e7eb; }
+        .top-bar .doc-name-display:focus-visible { outline: none; background: #fff; border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,0.15); }
+        .top-bar .doc-name-input {
+            margin: 0; font-size: 15px; font-weight: 600; color: #111827;
+            min-width: 0; flex: 1;
+            padding: 2px 6px; border-radius: 4px;
+            border: 1px solid #6366f1; background: #fff;
+            outline: none; box-shadow: 0 0 0 3px rgba(99,102,241,0.15);
+        }
+        .top-bar .doc-name-edit-btn {
+            background: none; border: none; padding: 2px; margin: 0;
+            color: #6b7280; cursor: pointer; border-radius: 4px;
+            display: inline-flex; align-items: center; justify-content: center;
+            line-height: 0;
+        }
+        .top-bar .doc-name-edit-btn:hover { background: #f3f4f6; color: #111827; }
+        .top-bar .doc-name-edit-btn:focus-visible { outline: none; background: #f3f4f6; box-shadow: 0 0 0 3px rgba(99,102,241,0.2); }
+        .top-bar a  { font-size: 13px; color: #6b7280; text-decoration: none; white-space: nowrap; }
+        .top-bar a:hover { color: #111827; }
+        .top-bar .save-status { font-size: 12px; color: #6b7280; white-space: nowrap; }
+        .top-bar .save-btn {
+            /* Auto-save is enabled: the manual Save button is hidden. Keep the
+               element in the DOM because existing JS (updateSaveUi, click
+               handler, etc.) still references it to reflect save state. */
+            display: none !important;
+        }
+        .top-bar .save-btn[disabled] {
+            background: #9ca3af;
+            cursor: not-allowed;
+        }
+        .top-bar .download-btn {
+            appearance: none;
+            border: none;
+            border-radius: 8px;
+            background: #2563eb;
+            color: #fff;
+            font-size: 13px;
+            font-weight: 600;
+            padding: 8px 14px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .top-bar .download-btn[disabled] {
+            background: #93c5fd;
+            cursor: wait;
+        }
+        .top-bar .history-btn {
+            appearance: none;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            background: #fff;
+            color: #374151;
+            font-size: 15px;
+            line-height: 1;
+            padding: 5px 9px;
+            cursor: pointer;
+            white-space: nowrap;
+            user-select: none;
+        }
+        .top-bar .history-btn:hover:not([disabled]) { background: #f3f4f6; }
+        .top-bar .history-btn[disabled] { color: #d1d5db; cursor: not-allowed; }
+        .top-bar .edit-mode-toggle {
+            appearance: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 999px;
+            background: linear-gradient(180deg, #ffffff 0%, #f9fafb 100%);
+            color: #374151;
+            padding: 6px 14px 6px 10px;
+            box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+            cursor: pointer;
+            transition: background .18s ease, color .18s ease, border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+            white-space: nowrap;
+        }
+        .top-bar .edit-mode-toggle:hover {
+            border-color: #9ca3af;
+            box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
+            transform: translateY(-1px);
+        }
+        .top-bar .edit-mode-toggle:focus-visible {
+            outline: 2px solid rgba(59, 130, 246, 0.35);
+            outline-offset: 2px;
+        }
+        .top-bar .edit-mode-toggle.is-active {
+            background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
+            border-color: #111827;
+            color: #f9fafb;
+            box-shadow: 0 14px 28px rgba(17, 24, 39, 0.2);
+        }
+        .top-bar .edit-mode-toggle__icon {
+            width: 24px;
+            height: 24px;
+            border-radius: 999px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: #eef2f7;
+            color: #4b5563;
+            transition: background .18s ease, color .18s ease;
+            flex-shrink: 0;
+        }
+        .top-bar .edit-mode-toggle.is-active .edit-mode-toggle__icon {
+            background: rgba(245, 158, 11, 0.16);
+            color: #fbbf24;
+        }
+        .top-bar .edit-mode-toggle__label {
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+        }
+        .top-bar .add-text-btn {
+            padding: 8px 14px;
+            font-size: 13px;
+            font-weight: 500;
+            line-height: 1.2;
+        }
+        .top-bar .add-text-btn.active { background: #dbeafe; color: #1d4ed8; border-color: #93c5fd; }
+        .top-bar .add-shape-btn {
+            padding: 8px 14px;
+            font-size: 13px;
+            font-weight: 500;
+            line-height: 1.2;
+        }
+        .top-bar .add-shape-btn.active {
+            background: linear-gradient(180deg, #dcfce7 0%, #bbf7d0 100%);
+            color: #166534;
+            border-color: #86efac;
+        }
+
+        #pages-wrap { padding: 88px 20px 24px; max-width: 1100px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; align-items: center; }
+
+        .page-card { background: #fff; border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.08); overflow: visible; width: fit-content; max-width: none; }
+        .page-label {
+            padding: 8px 16px; border-bottom: 1px solid #f3f4f6;
+            font-size: 12px; font-weight: 500; color: #6b7280;
+            display: flex; align-items: center; justify-content: space-between;
+            width: 100%;
+        }
+        .page-canvas-wrap { display: flex; justify-content: center; background: #e5e7eb; padding: 16px; width: 100%; }
+
+        .page-content {
+            position: relative;
+            flex-shrink: 0;
+            box-shadow: 0 2px 8px rgba(0,0,0,.15);
+            line-height: 0;
+        }
+        .page-content img { display: block; width: 100%; height: 100%; object-fit: fill; }
+        .page-content .page-canvas { display: block; width: 100%; height: 100%; }
+
+        /* Overlay canvas — covers the page, receives pointer events for hit-testing */
+        .overlay-canvas {
+            position: absolute; top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 2;
+        }
+
+        /* PDF.js TextLayer (v4) — invisible spans positioned over the page
+         * canvas so the user can natively select / copy PDF text. Container
+         * is pointer-events:none so clicks on empty space fall through to
+         * the overlay-canvas for annotation hit-testing; <span>s opt back
+         * into pointer events so they're selectable.
+         *
+         * Cribbed from pdfjs-dist/web/pdf_viewer.css to keep span positioning
+         * aligned with the canvas-rendered glyphs underneath. */
+        .textLayer {
+            position: absolute;
+            inset: 0;
+            overflow: hidden;
+            line-height: 1.0;
+            text-size-adjust: none;
+            forced-color-adjust: none;
+            transform-origin: 0 0;
+            z-index: 3;
+            pointer-events: none;
+            opacity: 1;
+            caret-color: CanvasText;
+        }
+        .textLayer :is(span, br) {
+            color: transparent;
+            position: absolute;
+            white-space: pre;
+            cursor: text;
+            transform-origin: 0% 0%;
+            pointer-events: auto;
+        }
+        .textLayer span.markedContent {
+            top: 0;
+            height: 0;
+        }
+        .textLayer ::selection {
+            background: rgb(37 99 235 / 30%);
+        }
+        .textLayer br::selection {
+            background: transparent;
+        }
+        .textLayer .endOfContent {
+            display: block;
+            position: absolute;
+            inset: 100% 0 0;
+            z-index: -1;
+            cursor: default;
+            user-select: none;
+        }
+        .textLayer.selecting .endOfContent {
+            top: 0;
+        }
+
+        .acro-layer {
+            position: absolute; top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 3;
+        }
+
+        /* Phase 2 of the PDF.js v4 migration: AnnotationEditorLayer container.
+           Hidden / inert by default. Activated via ?phase2=1 query flag,
+           which adds .phase2-enabled to <body>. When in FREETEXT mode the
+           layer accepts pointer events so the user can click to drop a new
+           text editor; otherwise it stays click-through. */
+        .annotation-editor-layer {
+            position: absolute; top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 4;
+            display: none;
+        }
+        body.phase2-enabled .annotation-editor-layer {
+            display: block;
+        }
+        body.phase2-mode-freetext .annotation-editor-layer {
+            pointer-events: auto;
+            cursor: text;
+        }
+        /* PDF.js renders editor children with absolute positioning relative
+           to the layer; let them paint above the page canvas/text layer. */
+        .annotation-editor-layer .editToolbar,
+        .annotation-editor-layer .freeTextEditor,
+        .annotation-editor-layer .inkEditor,
+        .annotation-editor-layer .stampEditor,
+        .annotation-editor-layer .highlightEditor {
+            pointer-events: auto;
+        }
+
+        .page-card input[type="number"],
+        .edit-new-acro input[type="number"],
+        .active-editor input[type="number"],
+        .rich-html-layer input[type="number"] {
+            -moz-appearance: textfield;
+            appearance: textfield;
+        }
+
+        .page-card input[type="number"]::-webkit-outer-spin-button,
+        .page-card input[type="number"]::-webkit-inner-spin-button,
+        .edit-new-acro input[type="number"]::-webkit-outer-spin-button,
+        .edit-new-acro input[type="number"]::-webkit-inner-spin-button,
+        .active-editor input[type="number"]::-webkit-outer-spin-button,
+        .active-editor input[type="number"]::-webkit-inner-spin-button,
+        .rich-html-layer input[type="number"]::-webkit-outer-spin-button,
+        .rich-html-layer input[type="number"]::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        /* Rich-HTML display layer — non-active annotations with per-selection formatting
+         * (ann._richHtml) are rendered as positioned DIVs so the canvas and editor use the
+         * same DOM layout. The layer is pointer-events:none so clicks still hit the canvas
+         * for selection. z-index sits above the overlay canvas but below the active editor. */
+        .rich-html-layer {
+            position: absolute; top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 4;
+        }
+        .rich-html-item {
+            position: absolute;
+            box-sizing: border-box;
+            padding: 0; margin: 0;
+            overflow: visible;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        /* Debug DOM overlay — opt-in via ?dbgdom=1. Mirrors every annotation
+         * into a labelled <div> so devtools "Inspect element" reveals what
+         * each piece of text is. Click-through; no visual change unless
+         * body.debug-dom-on is set. */
+        .debug-dom-layer {
+            position: absolute; top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 6;
+            display: none;
+        }
+        body.debug-dom-on .debug-dom-layer { display: block; }
+        .debug-dom-item {
+            position: absolute;
+            box-sizing: border-box;
+            border: 1px dashed rgba(217, 70, 239, 0.7);
+            background: rgba(217, 70, 239, 0.06);
+            font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+            color: #6b21a8;
+            overflow: hidden;
+            padding: 0;
+        }
+        .debug-dom-item[data-user-authored="true"] { border-color: rgba(16, 185, 129, 0.8); color: #047857; background: rgba(16, 185, 129, 0.06); }
+        .debug-dom-item[data-locked="true"] { border-style: solid; }
+        .debug-dom-label {
+            display: block;
+            background: rgba(217, 70, 239, 0.85);
+            color: #fff;
+            padding: 1px 4px;
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .debug-dom-item[data-user-authored="true"] .debug-dom-label { background: rgba(16, 185, 129, 0.85); }
+        .debug-dom-text {
+            display: block;
+            padding: 2px 4px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .edit-new-acro {
+            position: absolute;
+            box-sizing: border-box;
+            border: 1.25px solid rgba(37, 99, 235, 0.45);
+            background: rgba(219, 234, 254, 0.7);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .edit-new-acro.is-choice {
+            background: transparent;
+        }
+
+        .edit-new-acro.is-interactive {
+            pointer-events: auto;
+        }
+
+        .edit-new-acro.is-interactive:hover {
+            background: rgba(219, 234, 254, 0.9);
+        }
+
+        .edit-new-acro.is-interactive:focus-within {
+            border-color: rgba(37, 99, 235, 0.9);
+            background: rgba(255, 255, 255, 0.95);
+            z-index: 1;
+        }
+
+        /* Click-target wrapper — covers the full field area */
+        .edit-new-acro-label {
+            position: absolute;
+            inset: 0;
+            overflow: hidden;
+            cursor: text;
+        }
+        .edit-new-acro-label.is-multiline {
+            overflow-y: auto;
+        }
+        /* The actual contenteditable inner element */
+        .edit-new-acro-label > .acro-editable {
+            display: block;
+            width: 100%;
+            box-sizing: border-box;
+            padding: 0 4px;
+            font-family: Arial, Helvetica, sans-serif;
+            color: #0f172a;
+            overflow: hidden;
+            white-space: nowrap;
+            outline: none;
+            cursor: text;
+            /* line-height set dynamically to field height so text is vertically centred */
+        }
+        .edit-new-acro-label.is-multiline > .acro-editable {
+            white-space: pre-wrap;
+            line-height: 1.2;
+            overflow-y: auto;
+            padding-top: 2px;
+        }
+
+        .edit-new-acro-mark {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #2563eb;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        /* Active editor — transparent contenteditable placed exactly over the selected annotation.
+         * Background is transparent so the clean PDF shows through; the canvas already draws a
+         * dashed selection border around the block. No border/bg here keeps it invisible until
+         * the user types. */
+        .active-editor {
+            display: none;
+            position: absolute;
+            padding: 0; margin: 0;
+            border: none; outline: none;
+            background: transparent;
+            overflow: visible;
+            white-space: pre-wrap;
+            word-break: break-word;
+            pointer-events: auto;
+            user-select: text;
+            cursor: text;
+            caret-color: #2563eb;
+            z-index: 5;
+        }
+        /* New text annotation creation state — mirrors .text-box-creator from the edit view */
+        .active-editor[data-creating="1"] {
+            background: rgba(110, 231, 183, 0.04) !important;
+            border: 2px dashed rgba(110, 231, 183, 0.7) !important;
+            border-radius: 4px !important;
+            padding: 4px 8px !important;
+            min-height: 36px !important;
+            overflow: visible !important;
+            box-sizing: border-box;
+        }
+        .active-editor[data-creating="1"]:focus {
+            background: rgba(255, 255, 255, 0.95) !important;
+            border-color: rgba(110, 231, 183, 0.9) !important;
+        }
+        .active-editor[data-creating="1"]:empty::before {
+            content: 'Type text here...';
+            color: #9ca3af;
+            font-size: 13px;
+            font-family: Arial, Helvetica, sans-serif;
+            font-weight: normal;
+            font-style: normal;
+            pointer-events: none;
+            display: block;
+            line-height: 1.4;
+        }
+        /* When the canvas owns the painting (pristine extracted + actively
+         * editing), the editor still holds contenteditable text nodes for the
+         * caret + execCommand to work, but every visible glyph and inline
+         * background must be hidden so the canvas baseline shows through. The
+         * inner spans built by buildEditorHTML / buildSourceFlowEditorHTML set
+         * their own inline color, so we override descendants with !important.
+         */
+        .active-editor[data-canvas-owns="1"],
+        .active-editor[data-canvas-owns="1"] * {
+            color: transparent !important;
+            -webkit-text-fill-color: transparent !important;
+            background: transparent !important;
+            text-shadow: none !important;
+        }
+        /*
+         * When canvas owns the visible glyph painting, the editor's text nodes
+         * exist only to host the caret + selection. The browser's default
+         * ::selection forces selected text to white (high-contrast over the
+         * blue selection background) which would reveal the editor's glyphs
+         * sitting at slightly different per-character X positions than the
+         * canvas-painted source glyphs (the editor uses CSS layout + uniform
+         * scaleX, the canvas uses per-span PDF origins). Keep the selected
+         * glyphs transparent so the user only ever sees the canvas glyphs;
+         * the faint blue selection rectangle still indicates the caret range.
+         */
+        .active-editor[data-canvas-owns="1"]::selection,
+        .active-editor[data-canvas-owns="1"] *::selection {
+            color: transparent !important;
+            -webkit-text-fill-color: transparent !important;
+            background: rgba(37, 99, 235, 0.30) !important;
+            text-shadow: none !important;
+        }
+        .active-editor[data-canvas-owns="1"]::-moz-selection,
+        .active-editor[data-canvas-owns="1"] *::-moz-selection {
+            color: transparent !important;
+            -webkit-text-fill-color: transparent !important;
+            background: rgba(37, 99, 235, 0.30) !important;
+            text-shadow: none !important;
+        }
+
+        /* Galley editor mode (Iceni-style): per-source-span absolute-positioned
+         * caret targets layered over the page overlay canvas. The canvas paints
+         * all original PDF spans at exact PDF positions; the contenteditable
+         * holds invisible source-span text nodes for caret/selection plus a
+         * trailing visible "tail" span per line where appended user input
+         * accumulates. New chars in tails are persisted into ann._galleyAppends
+         * so drawOriginalSource paints them after the source spans, keeping
+         * the appended text visible after blur (when ae is hidden). */
+        .active-editor[data-render-mode="galley"] {
+            white-space: normal !important;
+            overflow: visible !important;
+            word-break: normal !important;
+        }
+        .active-editor[data-render-mode="galley"] .ae-galley-line {
+            position: absolute;
+            margin: 0;
+            padding: 0;
+            white-space: pre;
+        }
+        .active-editor[data-render-mode="galley"] .ae-galley-source-span,
+        .active-editor[data-render-mode="galley"] .ae-galley-tail {
+            position: absolute;
+            top: 0;
+            margin: 0;
+            padding: 0;
+            white-space: pre;
+            box-sizing: border-box;
+        }
+        /* Tail spans that contain user-appended text must remain visible even
+         * when canvas-owns hides everything else. Source-span text stays
+         * invisible — the page overlay canvas paints it via drawOriginalSource.
+         */
+        .active-editor[data-canvas-owns="1"] [data-galley-new="1"],
+        .active-editor[data-canvas-owns="1"] [data-galley-new="1"] * {
+            color: inherit !important;
+            -webkit-text-fill-color: initial !important;
+        }
+        .active-editor[data-canvas-owns="1"] [data-galley-new="1"]::selection,
+        .active-editor[data-canvas-owns="1"] [data-galley-new="1"] *::selection {
+            color: inherit !important;
+            -webkit-text-fill-color: initial !important;
+            background: rgba(37, 99, 235, 0.30) !important;
+        }
+
+        .annotation-tbc-menu {
+            display: none;
+            position: absolute;
+            align-items: center;
+            gap: 2px;
+            background: rgba(17, 24, 39, 0.95);
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 8px;
+            padding: 4px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+            z-index: 6;
+            white-space: nowrap;
+            backdrop-filter: blur(8px);
+            transform: translateX(-50%);
+        }
+        /* When per-annotation PM editors own all text annotations, the floating
+         * tool menu is hidden; the user edits in place via PM. */
+        body.pm-all-mode .annotation-tbc-menu { display: none !important; }
+        body.pm-all-mode #ann-format-bar { display: none !important; }
+
+        .annotation-tbc-menu.is-below {
+            transform: translate(-50%, 8px);
+        }
+        .annotation-tbc-menu .tbc-menu-btn {
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+            border: 1px solid transparent;
+            color: #9ca3af;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.15s;
+        }
+        .annotation-tbc-menu .tbc-menu-btn:hover {
+            background: rgba(255,255,255,0.1);
+            color: #e5e7eb;
+            border-color: rgba(255,255,255,0.12);
+        }
+        .annotation-tbc-menu .tbc-menu-btn.tbc-ok { color: #6ee7b7; }
+        .annotation-tbc-menu .tbc-menu-btn.tbc-ok:hover {
+            background: rgba(110, 231, 183, 0.15);
+            border-color: rgba(110, 231, 183, 0.3);
+        }
+        .annotation-tbc-menu .tbc-menu-btn.tbc-delete { color: #f87171; }
+        .annotation-tbc-menu .tbc-menu-btn.tbc-delete:hover {
+            background: rgba(248, 113, 113, 0.15);
+            border-color: rgba(248, 113, 113, 0.3);
+        }
+        .annotation-tbc-menu .tbc-menu-btn.tbc-lock { color: #93c5fd; }
+        .annotation-tbc-menu .tbc-menu-btn.tbc-lock:hover {
+            background: rgba(147, 197, 253, 0.15);
+            border-color: rgba(147, 197, 253, 0.35);
+        }
+        .annotation-tbc-menu .tbc-menu-btn.tbc-lock.is-active {
+            background: rgba(59, 130, 246, 0.28);
+            border-color: rgba(147, 197, 253, 0.6);
+            color: #dbeafe;
+        }
+        .annotation-tbc-menu .tbc-menu-btn.tbc-debug { color: #c4b5fd; }
+        .annotation-tbc-menu .tbc-menu-btn.tbc-debug:hover {
+            background: rgba(196, 181, 253, 0.15);
+            border-color: rgba(196, 181, 253, 0.35);
+        }
+        .annotation-tbc-menu .tbc-menu-divider {
+            width: 1px;
+            height: 20px;
+            background: rgba(255,255,255,0.12);
+            margin: 0 2px;
+        }
+
+        /* ── Editor HTML debug modal ─────────────────────────────────── */
+        #dbg-editor-modal {
+            position: fixed;
+            inset: 0;
+            z-index: 100000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        }
+        #dbg-editor-modal .dbg-modal-backdrop {
+            position: absolute;
+            inset: 0;
+            background: rgba(15, 18, 25, 0.62);
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+        }
+        #dbg-editor-modal .dbg-modal-card {
+            position: relative;
+            width: 98vw;
+            max-width: 98vw;
+            height: 96vh;
+            max-height: 96vh;
+            background: #11141b;
+            color: #e5e7eb;
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 14px;
+            box-shadow: 0 30px 80px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.04);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            animation: dbgModalIn 0.18s ease-out;
+        }
+        @keyframes dbgModalIn {
+            from { opacity: 0; transform: translateY(8px) scale(0.985); }
+            to   { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        #dbg-editor-modal .dbg-modal-header {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 14px 18px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+            background: linear-gradient(180deg, rgba(255,255,255,0.03), transparent);
+        }
+        #dbg-editor-modal .dbg-modal-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: 0.2px;
+        }
+        #dbg-editor-modal .dbg-modal-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #c4b5fd;
+            box-shadow: 0 0 10px rgba(196,181,253,0.7);
+        }
+        #dbg-editor-modal .dbg-modal-badge {
+            font-size: 11px;
+            font-weight: 600;
+            padding: 3px 8px;
+            border-radius: 999px;
+            background: rgba(196,181,253,0.16);
+            color: #ddd6fe;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+        }
+        #dbg-editor-modal .dbg-modal-meta {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-left: auto;
+            margin-right: 8px;
+            flex-wrap: wrap;
+        }
+        #dbg-editor-modal .dbg-modal-meta code {
+            font-size: 11px;
+            padding: 2px 7px;
+            border-radius: 5px;
+            background: rgba(255,255,255,0.05);
+            color: #94a3b8;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        }
+        #dbg-editor-modal .dbg-modal-close {
+            width: 30px;
+            height: 30px;
+            border-radius: 8px;
+            border: 0;
+            background: transparent;
+            color: #94a3b8;
+            font-size: 22px;
+            line-height: 1;
+            cursor: pointer;
+            transition: background 0.15s, color 0.15s;
+        }
+        #dbg-editor-modal .dbg-modal-close:hover {
+            background: rgba(255,255,255,0.08);
+            color: #f1f5f9;
+        }
+        #dbg-editor-modal .dbg-modal-body {
+            padding: 12px 6px 14px;
+            overflow-y: auto;
+            display: grid;
+            gap: 16px;
+        }
+        #dbg-editor-modal .dbg-modal-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            border: 1px solid transparent;
+        }
+        #dbg-editor-modal .dbg-modal-status.is-original {
+            background: rgba(34, 197, 94, 0.15);
+            border-color: rgba(34, 197, 94, 0.35);
+            color: #86efac;
+        }
+        #dbg-editor-modal .dbg-modal-status.is-edited {
+            background: rgba(251, 146, 60, 0.18);
+            border-color: rgba(251, 146, 60, 0.4);
+            color: #fdba74;
+        }
+        #dbg-editor-modal .dbg-tabs {
+            display: flex;
+            gap: 2px;
+            padding: 0 18px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+            margin-bottom: -16px;
+        }
+        #dbg-editor-modal .dbg-tab {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            padding: 8px 14px;
+            background: transparent;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: #64748b;
+            cursor: pointer;
+            transition: color 0.15s, border-color 0.15s;
+        }
+        #dbg-editor-modal .dbg-tab:hover { color: #cbd5e1; }
+        #dbg-editor-modal .dbg-tab.is-active {
+            color: #ede9fe;
+            border-bottom-color: #c4b5fd;
+        }
+        #dbg-editor-modal .dbg-section { display: none; }
+        #dbg-editor-modal .dbg-section.is-active { display: block; }
+        #dbg-editor-modal .dbg-section-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 6px;
+        }
+        #dbg-editor-modal .dbg-section-head h3 {
+            margin: 0;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: #94a3b8;
+        }
+        #dbg-editor-modal .dbg-section-hint {
+            font-size: 11px;
+            color: #64748b;
+        }
+        #dbg-editor-modal .dbg-copy-btn {
+            font-size: 11px;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 6px;
+            border: 1px solid rgba(255,255,255,0.08);
+            background: rgba(255,255,255,0.03);
+            color: #cbd5e1;
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s;
+        }
+        #dbg-editor-modal .dbg-copy-btn:hover {
+            background: rgba(196,181,253,0.12);
+            border-color: rgba(196,181,253,0.3);
+            color: #ede9fe;
+        }
+        #dbg-editor-modal .dbg-section-actions {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        #dbg-editor-modal .dbg-save-btn {
+            font-size: 13px;
+            font-weight: 700;
+            padding: 4px 12px;
+            border-radius: 6px;
+            border: 1px solid rgba(34,197,94,0.45);
+            background: rgba(34,197,94,0.18);
+            color: #bbf7d0;
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s;
+        }
+        #dbg-editor-modal .dbg-save-btn:hover {
+            background: rgba(34,197,94,0.32);
+            border-color: rgba(34,197,94,0.7);
+            color: #f0fdf4;
+        }
+        #dbg-editor-modal .dbg-save-btn:disabled {
+            opacity: 0.5;
+            cursor: default;
+        }
+        #dbg-editor-modal .dbg-save-status {
+            font-size: 11px;
+            color: #94a3b8;
+        }
+        #dbg-editor-modal .dbg-live-host[contenteditable="true"] {
+            outline: 2px dashed rgba(196,181,253,0.4);
+            outline-offset: 2px;
+            cursor: text;
+            min-height: 24px;
+        }
+        #dbg-editor-modal .dbg-live-host[contenteditable="true"]:focus {
+            outline-color: rgba(196,181,253,0.8);
+        }
+        #dbg-editor-modal .dbg-pre {
+            margin: 0;
+            padding: 12px 14px;
+            background: #0b0d12;
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 8px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 12px;
+            line-height: 1.55;
+            color: #e2e8f0;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 260px;
+            overflow: auto;
+        }
+        #dbg-editor-modal .dbg-pre-style { color: #fcd34d; }
+        #dbg-editor-modal .dbg-pre-html { color: #93c5fd; }
+        #dbg-editor-modal .dbg-live-frame {
+            background: #f8fafc;
+            border-radius: 8px;
+            padding: 8px 6px;
+            min-height: 320px;
+            max-height: 80vh;
+            overflow: auto;
+            color: #111;
+            border: 1px solid rgba(255,255,255,0.05);
+            display: block;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        #dbg-editor-modal .dbg-live-host {
+            display: block;
+            min-width: 1px;
+        }
+        /* Universal preview-mode overrides — the live editor uses transforms
+         * (translateY for line baselines), absolute positioning, and negative
+         * coordinates relative to the page card. None of that makes sense
+         * inside most debug preview modes, so neutralize it for flow previews.
+         * Exact source previews opt out because those transforms are what make
+         * the modal match the canvas/PDF geometry.
+         *
+         * Targets the host AND any descendant — covers plain mode's
+         * `<div style="transform:translateY(-X)">` wrapper and rich-html
+         * inner spans alike. */
+        #dbg-editor-modal .dbg-live-host:not([data-render-mode="source-exact"]),
+        #dbg-editor-modal .dbg-live-host:not([data-render-mode="source-exact"]) * {
+            transform: none !important;
+        }
+        #dbg-editor-modal .dbg-live-host:not([data-render-mode="source-exact"]) > * {
+            position: static !important;
+            top: auto !important;
+            left: auto !important;
+            right: auto !important;
+            bottom: auto !important;
+            min-height: 0 !important;
+            height: auto !important;
+        }
+        /* Source-spans render mode reconstructs each PDF source line as a
+         * `<p position:relative>` containing per-span text and an absolutely
+         * positioned marker glyph (•/o/etc) at its true PDF x-offset. The
+         * universal `> * { position: static !important }` rule above would
+         * collapse every marker onto the host's padding-edge (all at
+         * `left:31px;top:0`), stacking them on top of each other. Restore
+         * the per-line positioning context for this mode only. */
+        #dbg-editor-modal .dbg-live-host[data-render-mode="source-spans"] > p {
+            position: relative !important;
+        }
+        #dbg-editor-modal .dbg-live-host[data-render-mode="source-spans"] [data-source-marker] {
+            position: absolute !important;
+        }
+        #dbg-editor-modal .dbg-live-host[data-render-mode="source-spans"] [data-source-column] {
+            position: absolute !important;
+        }
+        /* Multi-column source rows hold absolutely-positioned column spans
+         * that don't contribute to flow height. The universal
+         * `> * { min-height: 0 !important }` rule above would collapse the
+         * row, causing consecutive rows to overlap. Re-apply the row's
+         * intrinsic line-height as min-height via a CSS variable carried
+         * on the row element. */
+        #dbg-editor-modal .dbg-live-host[data-render-mode="source-spans"] > p[data-source-row] {
+            min-height: var(--row-min-h, 0px) !important;
+            height: auto !important;
+        }
+        /* Inner content wrappers (e.g. the `<div>` produced by
+         * renderPlainEditorHTML carrying explicit line-height/min-height
+         * sized for canvas-overlay placement) also need their height
+         * constraints relaxed so wrapped text expands the block instead of
+         * spilling onto the next sibling. */
+        #dbg-editor-modal .dbg-live-host:not([data-render-mode="source-exact"]) > * > div,
+        #dbg-editor-modal .dbg-live-host:not([data-render-mode="source-exact"]) > * > p {
+            min-height: 0 !important;
+            height: auto !important;
+        }
+        /* For the debug preview we render galley/source content in normal
+         * document flow rather than mirroring the absolute coords used in
+         * the live editor. The live coords are page-card relative and would
+         * push lines out of view; flow layout shows the structure clearly. */
+        #dbg-editor-modal .dbg-live-host[data-render-mode="galley"],
+        #dbg-editor-modal .dbg-live-host[data-render-mode="source"],
+        #dbg-editor-modal .dbg-live-host[data-render-mode="source-flow"] {
+            position: relative !important;
+            white-space: normal !important;
+            overflow: visible !important;
+            word-break: normal !important;
+            display: block !important;
+        }
+        #dbg-editor-modal .dbg-live-host[data-render-mode="galley"] .ae-galley-line,
+        #dbg-editor-modal .dbg-live-host[data-render-mode="source"] .ae-galley-line,
+        #dbg-editor-modal .dbg-live-host[data-render-mode="source-flow"] .ae-galley-line {
+            position: static !important;
+            top: auto !important;
+            left: auto !important;
+            width: auto !important;
+            height: auto !important;
+            margin: 0 0 4px 0;
+            padding: 0;
+            white-space: pre-wrap;
+            display: block;
+        }
+        #dbg-editor-modal .dbg-live-host[data-render-mode="galley"] .ae-galley-source-span,
+        #dbg-editor-modal .dbg-live-host[data-render-mode="galley"] .ae-galley-tail,
+        #dbg-editor-modal .dbg-live-host[data-render-mode="source"] .ae-galley-source-span,
+        #dbg-editor-modal .dbg-live-host[data-render-mode="source"] .ae-galley-tail,
+        #dbg-editor-modal .dbg-live-host[data-render-mode="source-flow"] .ae-galley-source-span,
+        #dbg-editor-modal .dbg-live-host[data-render-mode="source-flow"] .ae-galley-tail {
+            position: static !important;
+            top: auto !important;
+            left: auto !important;
+            width: auto !important;
+            height: auto !important;
+            margin: 0;
+            padding: 0;
+            white-space: pre-wrap;
+            box-sizing: border-box;
+            display: inline;
+        }
+        .shape-action-bar {
+            display: none;
+            position: absolute;
+            align-items: center;
+            gap: 4px;
+            background: rgba(11, 19, 32, 0.95);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 10px;
+            padding: 4px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.38);
+            z-index: 6;
+            transform: translateX(-50%);
+            white-space: nowrap;
+            backdrop-filter: blur(8px);
+        }
+        .shape-action-bar.is-below {
+            transform: translate(-50%, 8px);
+        }
+        .shape-action-bar__btn {
+            width: 30px;
+            height: 30px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 7px;
+            border: 1px solid rgba(77, 208, 168, 0.28);
+            background: rgba(77, 208, 168, 0.14);
+            color: #6ee7b7;
+            cursor: pointer;
+            transition: background 0.16s ease, transform 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+        }
+        .shape-action-bar__btn:hover {
+            background: rgba(77, 208, 168, 0.24);
+            border-color: rgba(77, 208, 168, 0.45);
+            transform: scale(1.05);
+        }
+        .shape-action-bar__btn.is-danger {
+            background: rgba(248, 113, 113, 0.14);
+            border-color: rgba(248, 113, 113, 0.26);
+            color: #fca5a5;
+        }
+        .shape-action-bar__btn.is-danger:hover {
+            background: rgba(248, 113, 113, 0.24);
+            border-color: rgba(248, 113, 113, 0.4);
+        }
+        .shape-action-bar__btn.is-active {
+            background: rgba(77, 208, 168, 0.42);
+            border-color: rgba(77, 208, 168, 0.7);
+            color: #ecfeff;
+        }
+        .shape-action-bar__tag {
+            display: none;
+            align-items: center;
+            height: 30px;
+            padding: 0 9px;
+            border-radius: 999px;
+            background: rgba(59, 130, 246, 0.18);
+            border: 1px solid rgba(96, 165, 250, 0.32);
+            color: #dbeafe;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.01em;
+        }
+
+        .text-drag-selection {
+            position: absolute;
+            border: 2px dashed rgba(110, 231, 183, 0.9);
+            background: rgba(110, 231, 183, 0.12);
+            border-radius: 4px;
+            pointer-events: none;
+            z-index: 7;
+        }
+
+        .resize-handle {
+            display: none;
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            background: #ffffff;
+            border: 2px solid #2563eb;
+            border-radius: 9999px;
+            padding: 0;
+            z-index: 6;
+        }
+        .resize-handle[data-dir="nw"] { cursor: nwse-resize; }
+        .resize-handle[data-dir="ne"] { cursor: nesw-resize; }
+        .resize-handle[data-dir="sw"] { cursor: nesw-resize; }
+        .resize-handle[data-dir="se"] { cursor: nwse-resize; }
+
+        .rotate-handle {
+            display: none;
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            margin: 0;
+            padding: 0;
+            background: rgba(59, 130, 246, 0.92);
+            border: 2px solid #0b1320;
+            border-radius: 9999px;
+            color: #fff;
+            cursor: grab;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            line-height: 1;
+            z-index: 7;
+            user-select: none;
+        }
+        .rotate-handle.is-active { cursor: grabbing; background: rgba(37, 99, 235, 1); }
+        .rotate-handle svg { display: block; pointer-events: none; }
+
+        .shape-selection-box {
+            display: none;
+            position: absolute;
+            border: 1px dashed #2563eb;
+            background: transparent;
+            pointer-events: none;
+            box-sizing: border-box;
+            z-index: 5;
+        }
+
+        #error-banner { background: #fef2f2; border: 1px solid #fecaca; border-radius: 10px; padding: 12px 16px; font-size: 13px; color: #dc2626; display: none; }
+        #save-toast { position: fixed; bottom: 20px; right: 20px; background: #1e293b; color: #fff; font-size: 13px; padding: 8px 16px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 100; }
+        #save-toast.show { opacity: 1; }
+        #shape-constrain-tip { position: fixed; background: #1e293b; color: #fff; font-size: 12px; padding: 6px 10px; border-radius: 6px; opacity: 0; transition: opacity .15s; pointer-events: none; z-index: 120; white-space: nowrap; box-shadow: 0 2px 6px rgba(0,0,0,.25); }
+        #shape-constrain-tip.show { opacity: 1; }
+        #shape-constrain-tip kbd { background: #334155; color: #fff; padding: 1px 5px; border-radius: 3px; font-family: inherit; font-size: 11px; }
+        /* ── Floating tool bar ─────────────────────────────────────────────── */
+        .floating-tool-bar {
+            position: fixed;
+            top: 68px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: inline-flex;
+            align-items: center;
+            gap: 2px;
+            padding: 6px 8px;
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.10), 0 1px 4px rgba(0,0,0,0.06);
+            z-index: 39;
+            white-space: nowrap;
+        }
+        .ftb-group {
+            display: inline-flex;
+            align-items: center;
+            gap: 1px;
+        }
+        .ftb-sep {
+            width: 1px;
+            height: 28px;
+            background: #e5e7eb;
+            margin: 0 6px;
+            flex-shrink: 0;
+        }
+        .ftb-btn {
+            display: inline-flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 3px;
+            width: 54px;
+            height: 50px;
+            padding: 0;
+            border: 1px solid transparent;
+            border-radius: 8px;
+            background: transparent;
+            color: #4b5563;
+            cursor: pointer;
+            font-size: 10px;
+            font-weight: 500;
+            font-family: system-ui, sans-serif;
+            line-height: 1;
+            transition: background .12s, color .12s, border-color .12s;
+            user-select: none;
+            position: relative;
+        }
+        .ftb-btn svg { flex-shrink: 0; }
+        .ftb-btn:hover { background: #f3f4f6; color: #111827; }
+        .ftb-btn[disabled] { opacity: 0.42; cursor: not-allowed; }
+        .ftb-btn[disabled]:hover { background: transparent; color: #4b5563; }
+        .ftb-btn.is-active {
+            background: #eff6ff;
+            color: #1d4ed8;
+            border-color: #bfdbfe;
+        }
+        .ftb-btn.is-active svg { stroke: #1d4ed8; }
+        .ftb-btn.is-disabled { opacity: 0.42; cursor: default; }
+        .ftb-btn.is-disabled:hover { background: transparent; color: #4b5563; }
+
+        /* ── Shape Format Bar (compact toolbar matching .ann-format-bar) ──── */
+        .shape-tool-panel {
+            position: fixed;
+            top: 134px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: none;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: nowrap;
+            padding: 6px 10px;
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.10), 0 1px 4px rgba(0,0,0,0.06);
+            z-index: 38;
+            white-space: nowrap;
+            font-size: 13px;
+            color: #1a202c;
+            overflow-x: auto;
+            max-width: calc(100vw - 32px);
+            font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+        }
+        .shape-tool-panel.is-visible { display: flex; }
+        .draw-tool-panel {
+            position: fixed;
+            top: 136px;
+            right: 22px;
+            display: none;
+            flex-direction: column;
+            gap: 14px;
+            width: 88px;
+            padding: 14px 12px;
+            border-radius: 22px;
+            border: 1px solid rgba(148, 163, 184, 0.28);
+            background:
+                radial-gradient(circle at top, rgba(191, 219, 254, 0.72), transparent 34%),
+                linear-gradient(180deg, rgba(255,255,255,0.97) 0%, rgba(248,250,252,0.98) 100%);
+            box-shadow:
+                0 24px 54px rgba(15, 23, 42, 0.16),
+                0 8px 20px rgba(15, 23, 42, 0.08);
+            z-index: 39;
+            align-items: center;
+            backdrop-filter: blur(14px);
+        }
+        .draw-tool-panel.is-visible { display: flex; }
+        .draw-tool-panel__head {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+        .draw-tool-panel__title {
+            margin: 0;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #0f172a;
+        }
+        .draw-tool-panel__close {
+            appearance: none;
+            width: 28px;
+            height: 28px;
+            border: 1px solid rgba(203, 213, 225, 0.9);
+            border-radius: 999px;
+            background: rgba(255,255,255,0.88);
+            color: #475569;
+            cursor: pointer;
+            font-size: 18px;
+            line-height: 1;
+            transition: background .14s ease, color .14s ease, transform .14s ease;
+        }
+        .draw-tool-panel__close:hover {
+            background: #ffffff;
+            color: #0f172a;
+            transform: scale(1.04);
+        }
+        .draw-tool-panel__stack {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            align-items: center;
+        }
+        .draw-tool-panel__tool-group {
+            width: 100%;
+            display: grid;
+            gap: 8px;
+        }
+        .draw-tool-btn {
+            appearance: none;
+            width: 100%;
+            height: 44px;
+            border: 1px solid rgba(203, 213, 225, 0.85);
+            border-radius: 16px;
+            background: rgba(255,255,255,0.9);
+            color: #475569;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: transform .14s ease, border-color .14s ease, color .14s ease, box-shadow .14s ease;
+        }
+        .draw-tool-btn:hover {
+            transform: translateY(-1px);
+            border-color: rgba(96, 165, 250, 0.9);
+            color: #0f172a;
+        }
+        .draw-tool-btn.is-active {
+            border-color: rgba(37, 99, 235, 0.4);
+            color: #1d4ed8;
+            box-shadow: inset 0 0 0 1px rgba(191, 219, 254, 0.9), 0 10px 20px rgba(37, 99, 235, 0.12);
+            background: linear-gradient(180deg, rgba(239, 246, 255, 0.98) 0%, rgba(219, 234, 254, 0.96) 100%);
+        }
+        .draw-tool-btn svg {
+            width: 20px;
+            height: 20px;
+            stroke: currentColor;
+            fill: none;
+            stroke-width: 1.9;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            pointer-events: none;
+        }
+        .draw-tool-panel__section-label {
+            width: 100%;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #64748b;
+            text-align: left;
+        }
+        .draw-tool-panel__slider-wrap {
+            width: 100%;
+            display: grid;
+            gap: 6px;
+            justify-items: center;
+        }
+        .draw-tool-panel__slider-wrap input[type="range"] {
+            writing-mode: vertical-lr;
+            direction: rtl;
+            width: 34px;
+            height: 116px;
+            margin: 0;
+            accent-color: #2563eb;
+        }
+        .draw-tool-panel__readout {
+            font-size: 11px;
+            font-weight: 700;
+            color: #334155;
+            font-variant-numeric: tabular-nums;
+        }
+        .draw-tool-panel__colors {
+            width: 100%;
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+        }
+        .draw-color-swatch {
+            appearance: none;
+            width: 28px;
+            height: 28px;
+            border-radius: 999px;
+            border: 2px solid rgba(255,255,255,0.92);
+            box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.42);
+            background: var(--swatch-color, #111827);
+            cursor: pointer;
+            transition: transform .14s ease, box-shadow .14s ease;
+            justify-self: center;
+        }
+        .draw-color-swatch:hover {
+            transform: scale(1.08);
+        }
+        .draw-color-swatch.is-active {
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.82), 0 0 0 5px rgba(191, 219, 254, 0.88);
+        }
+        .draw-tool-panel__custom-color {
+            width: 36px;
+            height: 36px;
+            padding: 0;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+        }
+        .draw-tool-panel__status {
+            width: 100%;
+            font-size: 11px;
+            line-height: 1.45;
+            color: #475569;
+            text-align: left;
+        }
+        .draw-preview-layer,
+        .draw-edit-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            z-index: 4;
+        }
+        .draw-edit-layer {
+            z-index: 5;
+        }
+        .sfb-shape-grid {
+            display: inline-flex;
+            gap: 2px;
+            background: #f3f4f6;
+            border-radius: 7px;
+            padding: 2px;
+            flex-shrink: 0;
+        }
+        .sfb-shape-btn {
+            width: 28px;
+            height: 28px;
+            border: 1px solid transparent;
+            background: transparent;
+            border-radius: 5px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: #6b7280;
+            padding: 0;
+            transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+        }
+        .sfb-shape-btn:hover { background: #ffffff; color: #111827; }
+        .sfb-shape-btn.is-active {
+            background: #ffffff;
+            border-color: #93c5fd;
+            color: #1d4ed8;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+        }
+        .sfb-shape-btn svg {
+            width: 16px;
+            height: 16px;
+            stroke: currentColor;
+            fill: none;
+            stroke-width: 1.8;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            pointer-events: none;
+        }
+        .sfb-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: #374151;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+            flex-shrink: 0;
+        }
+        .sfb-mini-label {
+            font-size: 10px;
+            font-weight: 600;
+            color: #9ca3af;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            flex-shrink: 0;
+        }
+        .sfb-color {
+            width: 26px;
+            height: 26px;
+            border-radius: 6px;
+            overflow: hidden;
+            border: 1px solid #e5e7eb;
+            cursor: pointer;
+            position: relative;
+            flex-shrink: 0;
+            background:
+                linear-gradient(45deg, #e5e7eb 25%, transparent 25%) 0 0 / 8px 8px,
+                linear-gradient(-45deg, #e5e7eb 25%, transparent 25%) 0 4px / 8px 8px,
+                linear-gradient(45deg, transparent 75%, #e5e7eb 75%) 4px -4px / 8px 8px,
+                linear-gradient(-45deg, transparent 75%, #e5e7eb 75%) -4px 0 / 8px 8px,
+                #ffffff;
+        }
+        .sfb-color input[type="color"] {
+            position: absolute;
+            inset: -50%;
+            width: 200%;
+            height: 200%;
+            border: none;
+            padding: 0;
+            background: transparent;
+            cursor: pointer;
+        }
+        .sfb-slider {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 90px;
+            height: 4px;
+            background: #e5e7eb;
+            border-radius: 999px;
+            cursor: pointer;
+            margin: 0;
+            flex-shrink: 0;
+        }
+        .sfb-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 999px;
+            background: #ffffff;
+            border: 2px solid #3b82f6;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.18);
+            cursor: pointer;
+        }
+        .sfb-slider::-moz-range-thumb {
+            width: 14px;
+            height: 14px;
+            border-radius: 999px;
+            background: #ffffff;
+            border: 2px solid #3b82f6;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.18);
+            cursor: pointer;
+        }
+        .sfb-slider:focus { outline: none; }
+        .sfb-readout {
+            font-size: 11px;
+            font-weight: 600;
+            color: #6b7280;
+            font-variant-numeric: tabular-nums;
+            min-width: 36px;
+            text-align: left;
+            flex-shrink: 0;
+        }
+
+        .markup-modal {
+            position: fixed;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            z-index: 59;
+        }
+        .markup-modal.is-open { display: flex; }
+        .markup-modal__scrim {
+            position: absolute;
+            inset: 0;
+            background:
+                radial-gradient(circle at top, rgba(20, 184, 166, 0.18), transparent 34%),
+                radial-gradient(circle at bottom right, rgba(245, 158, 11, 0.12), transparent 30%),
+                rgba(15, 23, 42, 0.56);
+            backdrop-filter: blur(10px);
+        }
+        .markup-modal__card {
+            position: relative;
+            width: min(920px, calc(100vw - 32px));
+            max-height: min(760px, calc(100vh - 32px));
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            overflow: hidden;
+            padding: 24px;
+            border-radius: 28px;
+            border: 1px solid rgba(148, 163, 184, 0.28);
+            background:
+                linear-gradient(180deg, rgba(255,255,255,0.96) 0%, rgba(247,250,252,0.98) 100%);
+            box-shadow:
+                0 34px 88px rgba(15, 23, 42, 0.28),
+                0 10px 24px rgba(15, 23, 42, 0.14);
+        }
+        .markup-modal__header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 18px;
+        }
+        .markup-modal__eyebrow {
+            margin: 0 0 6px;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #0f766e;
+        }
+        .markup-modal__title {
+            margin: 0;
+            font-size: 28px;
+            line-height: 1.05;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            color: #0f172a;
+        }
+        .markup-modal__subtitle {
+            margin: 8px 0 0;
+            max-width: 560px;
+            font-size: 14px;
+            line-height: 1.5;
+            color: #475569;
+        }
+        .markup-modal__close {
+            appearance: none;
+            width: 40px;
+            height: 40px;
+            border: 1px solid #dbe3ee;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.88);
+            color: #334155;
+            font-size: 24px;
+            line-height: 1;
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: transform .16s ease, background .16s ease, border-color .16s ease;
+        }
+        .markup-modal__close:hover {
+            transform: scale(1.04);
+            background: #ffffff;
+            border-color: #cbd5e1;
+        }
+        .markup-modal__tabs {
+            display: inline-flex;
+            align-self: flex-start;
+            gap: 6px;
+            padding: 5px;
+            border-radius: 999px;
+            background: #dbeafe;
+        }
+        .markup-modal__tab {
+            appearance: none;
+            border: none;
+            border-radius: 999px;
+            background: transparent;
+            color: #475569;
+            font-size: 13px;
+            font-weight: 700;
+            padding: 10px 16px;
+            cursor: pointer;
+            transition: background .16s ease, color .16s ease, box-shadow .16s ease;
+        }
+        .markup-modal__tab.is-active {
+            background: #ffffff;
+            color: #0f172a;
+            box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+        }
+        .markup-modal__body {
+            min-height: 0;
+            flex: 1;
+        }
+        .markup-modal__panel {
+            display: none;
+            min-height: 0;
+        }
+        .markup-modal__panel.is-active {
+            display: grid;
+            grid-template-columns: minmax(250px, 300px) minmax(0, 1fr);
+            gap: 18px;
+            height: 100%;
+        }
+        .markup-modal__controls,
+        .markup-modal__stage,
+        .markup-modal__erase {
+            min-height: 0;
+            border: 1px solid #dbe3ee;
+            border-radius: 24px;
+            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.75);
+        }
+        .markup-modal__controls {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            padding: 18px;
+            overflow-y: auto;
+        }
+        .markup-modal__stage {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            padding: 18px;
+            background:
+                radial-gradient(circle at top left, rgba(153, 246, 228, 0.44), transparent 36%),
+                linear-gradient(180deg, #ffffff 0%, #f0fdfa 100%);
+        }
+        .markup-modal__section-title {
+            margin: 0;
+            font-size: 15px;
+            font-weight: 700;
+            color: #0f172a;
+        }
+        .markup-modal__section-copy {
+            margin: 4px 0 0;
+            font-size: 13px;
+            line-height: 1.5;
+            color: #64748b;
+        }
+        .markup-modal__field {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .markup-modal__field-label {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #64748b;
+        }
+        .markup-modal__field-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .markup-modal__color-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            width: fit-content;
+            padding: 8px 12px;
+            border-radius: 999px;
+            border: 1px solid #dbe3ee;
+            background: #ffffff;
+        }
+        .markup-modal__color-chip input[type="color"] {
+            width: 28px;
+            height: 28px;
+            border: none;
+            padding: 0;
+            background: transparent;
+            cursor: pointer;
+        }
+        .markup-modal__color-value,
+        .markup-modal__slider-value {
+            font-size: 12px;
+            font-weight: 700;
+            color: #334155;
+        }
+        .markup-modal__canvas-shell {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 340px;
+            padding: 20px;
+            border-radius: 22px;
+            border: 1px solid rgba(148, 163, 184, 0.28);
+            background:
+                linear-gradient(45deg, rgba(226, 232, 240, 0.85) 25%, transparent 25%) 0 0 / 24px 24px,
+                linear-gradient(-45deg, rgba(226, 232, 240, 0.85) 25%, transparent 25%) 0 12px / 24px 24px,
+                linear-gradient(45deg, transparent 75%, rgba(226, 232, 240, 0.85) 75%) 12px -12px / 24px 24px,
+                linear-gradient(-45deg, transparent 75%, rgba(226, 232, 240, 0.85) 75%) -12px 0 / 24px 24px,
+                #ffffff;
+        }
+        .markup-modal__canvas {
+            width: 100%;
+            max-width: 100%;
+            height: auto;
+            display: block;
+            border-radius: 18px;
+            background: rgba(255,255,255,0.92);
+            box-shadow: 0 14px 30px rgba(15, 23, 42, 0.1);
+            touch-action: none;
+        }
+        .markup-modal__hint {
+            font-size: 12px;
+            font-weight: 600;
+            color: #475569;
+        }
+        .markup-modal__erase {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 14px;
+            padding: 18px;
+            background:
+                radial-gradient(circle at top right, rgba(254, 215, 170, 0.42), transparent 30%),
+                linear-gradient(180deg, #ffffff 0%, #fff7ed 100%);
+        }
+        .markup-modal__erase-card {
+            padding: 16px;
+            border-radius: 18px;
+            border: 1px solid rgba(251, 191, 36, 0.2);
+            background: rgba(255,255,255,0.88);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .markup-modal__erase-card strong {
+            font-size: 14px;
+            color: #0f172a;
+        }
+        .markup-modal__erase-card span {
+            font-size: 13px;
+            line-height: 1.5;
+            color: #64748b;
+        }
+        .markup-modal__footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+        }
+        .markup-modal__status {
+            min-height: 18px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #64748b;
+        }
+        .markup-modal__status.is-error { color: #dc2626; }
+        .markup-modal__status.is-ready { color: #166534; }
+        .markup-modal__actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .markup-btn {
+            appearance: none;
+            border: 1px solid #cbd5e1;
+            border-radius: 999px;
+            background: #ffffff;
+            color: #334155;
+            font-size: 13px;
+            font-weight: 700;
+            padding: 11px 18px;
+            cursor: pointer;
+            transition: transform .16s ease, box-shadow .16s ease, background .16s ease, border-color .16s ease;
+        }
+        .markup-btn:hover:not([disabled]) {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+        }
+        .markup-btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+        .markup-btn--primary {
+            border-color: #0f766e;
+            background: linear-gradient(180deg, #14b8a6 0%, #0f766e 100%);
+            color: #ffffff;
+            box-shadow: 0 14px 26px rgba(20, 184, 166, 0.24);
+        }
+        body.markup-tool-modal-open {
+            overflow: hidden;
+        }
+
+        .signature-modal {
+            position: fixed;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            z-index: 60;
+        }
+        .signature-modal.is-open { display: flex; }
+        .signature-modal__scrim {
+            position: absolute;
+            inset: 0;
+            background:
+                radial-gradient(circle at top, rgba(37, 99, 235, 0.18), transparent 38%),
+                rgba(15, 23, 42, 0.52);
+            backdrop-filter: blur(8px);
+        }
+        .signature-modal__card {
+            position: relative;
+            width: min(980px, calc(100vw - 32px));
+            max-height: min(760px, calc(100vh - 32px));
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            overflow: hidden;
+            padding: 24px;
+            border-radius: 28px;
+            border: 1px solid rgba(148, 163, 184, 0.32);
+            background:
+                linear-gradient(180deg, rgba(255,255,255,0.96) 0%, rgba(248,250,252,0.98) 100%);
+            box-shadow:
+                0 36px 90px rgba(15, 23, 42, 0.28),
+                0 10px 24px rgba(15, 23, 42, 0.14);
+        }
+        .signature-modal__header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 18px;
+        }
+        .signature-modal__eyebrow {
+            margin: 0 0 6px;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #2563eb;
+        }
+        .signature-modal__title {
+            margin: 0;
+            font-size: 28px;
+            line-height: 1.05;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            color: #0f172a;
+        }
+        .signature-modal__subtitle {
+            margin: 8px 0 0;
+            font-size: 14px;
+            line-height: 1.5;
+            color: #475569;
+            max-width: 540px;
+        }
+        .signature-modal__close {
+            appearance: none;
+            width: 40px;
+            height: 40px;
+            border: 1px solid #dbe3ee;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.85);
+            color: #334155;
+            font-size: 24px;
+            line-height: 1;
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: transform .16s ease, background .16s ease, border-color .16s ease;
+        }
+        .signature-modal__close:hover {
+            transform: scale(1.04);
+            background: #ffffff;
+            border-color: #cbd5e1;
+        }
+        .signature-modal__tabs {
+            display: inline-flex;
+            align-self: flex-start;
+            gap: 6px;
+            padding: 5px;
+            border-radius: 999px;
+            background: #e2e8f0;
+        }
+        .signature-modal__tab {
+            appearance: none;
+            border: none;
+            border-radius: 999px;
+            background: transparent;
+            color: #475569;
+            font-size: 13px;
+            font-weight: 600;
+            padding: 10px 16px;
+            cursor: pointer;
+            transition: background .16s ease, color .16s ease, box-shadow .16s ease;
+        }
+        .signature-modal__tab.is-active {
+            background: #ffffff;
+            color: #0f172a;
+            box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+        }
+        .signature-modal__body {
+            display: grid;
+            grid-template-columns: minmax(250px, 300px) minmax(0, 1fr);
+            gap: 18px;
+            min-height: 0;
+            flex: 1;
+        }
+        .signature-modal__sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            min-height: 0;
+            overflow-y: auto;
+            padding-right: 4px;
+        }
+        .signature-modal__panel {
+            display: none;
+            flex-direction: column;
+            gap: 14px;
+            padding: 18px;
+            border-radius: 20px;
+            border: 1px solid #dbe3ee;
+            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.75);
+        }
+        .signature-modal__panel.is-active { display: flex; }
+        .signature-modal__panel-title {
+            margin: 0;
+            font-size: 15px;
+            font-weight: 700;
+            color: #0f172a;
+        }
+        .signature-modal__panel-copy {
+            margin: 0;
+            font-size: 13px;
+            line-height: 1.5;
+            color: #64748b;
+        }
+        .signature-field {
+            display: flex;
+            flex-direction: column;
+            gap: 7px;
+        }
+        .signature-field__label {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #64748b;
+        }
+        .signature-field__row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .signature-field__row--stack {
+            align-items: flex-start;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .signature-field input[type="text"],
+        .signature-field select {
+            width: 100%;
+            appearance: none;
+            border: 1px solid #cbd5e1;
+            border-radius: 12px;
+            background: #ffffff;
+            color: #0f172a;
+            font-size: 14px;
+            padding: 12px 14px;
+            outline: none;
+            transition: border-color .16s ease, box-shadow .16s ease;
+        }
+        .signature-field input[type="text"]:focus,
+        .signature-field select:focus {
+            border-color: #60a5fa;
+            box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.18);
+        }
+        .signature-field input[type="range"] {
+            width: 100%;
+            margin: 0;
+        }
+        .signature-color-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            border-radius: 999px;
+            border: 1px solid #dbe3ee;
+            background: #ffffff;
+            width: fit-content;
+        }
+        .signature-color-chip input[type="color"] {
+            width: 28px;
+            height: 28px;
+            border: none;
+            padding: 0;
+            background: transparent;
+            cursor: pointer;
+        }
+        .signature-color-chip__value {
+            font-size: 12px;
+            font-weight: 700;
+            color: #334155;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+        .signature-slider-readout {
+            min-width: 34px;
+            font-size: 12px;
+            font-weight: 700;
+            color: #334155;
+            text-align: right;
+        }
+        .signature-slider-stack {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+        }
+        .signature-upload {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            min-height: 152px;
+            padding: 18px;
+            border: 1px dashed #93c5fd;
+            border-radius: 18px;
+            background:
+                radial-gradient(circle at top, rgba(191, 219, 254, 0.55), transparent 65%),
+                #eff6ff;
+            text-align: center;
+            cursor: pointer;
+            overflow: hidden;
+        }
+        .signature-upload input[type="file"] {
+            position: absolute;
+            inset: 0;
+            opacity: 0;
+            cursor: pointer;
+        }
+        .signature-upload__icon {
+            width: 46px;
+            height: 46px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 14px;
+            background: rgba(37, 99, 235, 0.12);
+            color: #2563eb;
+        }
+        .signature-upload__title {
+            font-size: 15px;
+            font-weight: 700;
+            color: #0f172a;
+        }
+        .signature-upload__copy {
+            font-size: 13px;
+            line-height: 1.5;
+            color: #64748b;
+            max-width: 220px;
+        }
+        .signature-upload__meta {
+            font-size: 12px;
+            font-weight: 600;
+            color: #1d4ed8;
+        }
+        .signature-library {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            min-height: 0;
+            padding: 16px;
+            border-radius: 20px;
+            border: 1px solid #dbe3ee;
+            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.75);
+        }
+        .signature-library__header {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .signature-library__title {
+            margin: 0;
+            font-size: 14px;
+            font-weight: 700;
+            color: #0f172a;
+        }
+        .signature-library__copy {
+            margin: 0;
+            font-size: 12px;
+            line-height: 1.5;
+            color: #64748b;
+        }
+        .signature-library__save-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 8px;
+        }
+        .signature-library__load-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 8px;
+        }
+        .signature-library__name {
+            flex: 1;
+            min-width: 0;
+            appearance: none;
+            border: 1px solid #cbd5e1;
+            border-radius: 12px;
+            background: #ffffff;
+            color: #0f172a;
+            font-size: 13px;
+            padding: 10px 12px;
+            outline: none;
+            transition: border-color .16s ease, box-shadow .16s ease;
+        }
+        .signature-library__name:focus {
+            border-color: #60a5fa;
+            box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.18);
+        }
+        .signature-library__select {
+            min-width: 0;
+            appearance: none;
+            border: 1px solid #cbd5e1;
+            border-radius: 12px;
+            background: #ffffff;
+            color: #0f172a;
+            font-size: 13px;
+            padding: 10px 12px;
+            outline: none;
+            transition: border-color .16s ease, box-shadow .16s ease;
+        }
+        .signature-library__select:focus {
+            border-color: #60a5fa;
+            box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.18);
+        }
+        .signature-library__save-btn {
+            min-width: 110px;
+        }
+        .signature-library__load-btn {
+            min-width: 82px;
+        }
+        .signature-library__cta {
+            appearance: none;
+            border: 1px solid #cbd5e1;
+            border-radius: 12px;
+            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            color: #334155;
+            font-size: 12px;
+            font-weight: 700;
+            line-height: 1.2;
+            padding: 10px 14px;
+            cursor: pointer;
+            transition: background .16s ease, border-color .16s ease, color .16s ease, box-shadow .16s ease;
+        }
+        .signature-library__cta:hover:not([disabled]) {
+            background: #eff6ff;
+            border-color: #93c5fd;
+            color: #1d4ed8;
+            box-shadow: 0 8px 18px rgba(37, 99, 235, 0.10);
+        }
+        .signature-library__cta:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+        .signature-library__list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            min-height: 0;
+            max-height: 220px;
+            overflow-y: auto;
+            padding-right: 2px;
+        }
+        .signature-library__empty {
+            padding: 14px 12px;
+            border: 1px dashed #cbd5e1;
+            border-radius: 14px;
+            background: rgba(241, 245, 249, 0.7);
+            font-size: 12px;
+            line-height: 1.5;
+            color: #64748b;
+            text-align: center;
+        }
+        .signature-library__item {
+            display: grid;
+            grid-template-columns: 74px minmax(0, 1fr);
+            gap: 10px;
+            align-items: center;
+            padding: 10px;
+            border: 1px solid #dbe3ee;
+            border-radius: 16px;
+            background: #ffffff;
+        }
+        .signature-library__thumb {
+            width: 74px;
+            height: 40px;
+            border-radius: 10px;
+            border: 1px solid rgba(148, 163, 184, 0.22);
+            background:
+                linear-gradient(45deg, rgba(226, 232, 240, 0.85) 25%, transparent 25%) 0 0 / 14px 14px,
+                linear-gradient(-45deg, rgba(226, 232, 240, 0.85) 25%, transparent 25%) 0 7px / 14px 14px,
+                linear-gradient(45deg, transparent 75%, rgba(226, 232, 240, 0.85) 75%) 7px -7px / 14px 14px,
+                linear-gradient(-45deg, transparent 75%, rgba(226, 232, 240, 0.85) 75%) -7px 0 / 14px 14px,
+                #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        .signature-library__thumb img {
+            max-width: 100%;
+            max-height: 100%;
+            display: block;
+        }
+        .signature-library__meta {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .signature-library__name-text {
+            font-size: 13px;
+            font-weight: 700;
+            color: #0f172a;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .signature-library__detail {
+            font-size: 11px;
+            color: #64748b;
+            text-transform: capitalize;
+        }
+        .signature-library__actions {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .signature-library__btn {
+            appearance: none;
+            border: 1px solid #cbd5e1;
+            border-radius: 999px;
+            background: #ffffff;
+            color: #334155;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 6px 10px;
+            cursor: pointer;
+            transition: background .16s ease, border-color .16s ease, color .16s ease;
+        }
+        .signature-library__btn:hover {
+            background: #eff6ff;
+            border-color: #93c5fd;
+            color: #1d4ed8;
+        }
+        .signature-library__btn.is-danger:hover {
+            background: #fef2f2;
+            border-color: #fecaca;
+            color: #dc2626;
+        }
+        .signature-stage {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            padding: 18px;
+            border-radius: 24px;
+            border: 1px solid #dbe3ee;
+            background:
+                radial-gradient(circle at top left, rgba(191, 219, 254, 0.48), transparent 34%),
+                linear-gradient(180deg, #ffffff 0%, #eff6ff 100%);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.76);
+        }
+        .signature-stage__header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .signature-stage__title {
+            margin: 0;
+            font-size: 15px;
+            font-weight: 700;
+            color: #0f172a;
+        }
+        .signature-stage__copy {
+            margin: 4px 0 0;
+            font-size: 13px;
+            color: #64748b;
+        }
+        .signature-clear-btn {
+            appearance: none;
+            border: 1px solid #cbd5e1;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.88);
+            color: #334155;
+            font-size: 12px;
+            font-weight: 700;
+            padding: 9px 14px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .signature-stage__canvas-shell {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 340px;
+            padding: 20px;
+            border-radius: 22px;
+            border: 1px solid rgba(148, 163, 184, 0.28);
+            background:
+                linear-gradient(45deg, rgba(226, 232, 240, 0.85) 25%, transparent 25%) 0 0 / 24px 24px,
+                linear-gradient(-45deg, rgba(226, 232, 240, 0.85) 25%, transparent 25%) 0 12px / 24px 24px,
+                linear-gradient(45deg, transparent 75%, rgba(226, 232, 240, 0.85) 75%) 12px -12px / 24px 24px,
+                linear-gradient(-45deg, transparent 75%, rgba(226, 232, 240, 0.85) 75%) -12px 0 / 24px 24px,
+                #ffffff;
+        }
+        .signature-canvas {
+            width: 100%;
+            max-width: 100%;
+            height: auto;
+            display: block;
+            border-radius: 18px;
+            background: rgba(255,255,255,0.86);
+            box-shadow: 0 14px 30px rgba(15, 23, 42, 0.1);
+            touch-action: none;
+        }
+        .signature-stage__hint {
+            font-size: 12px;
+            font-weight: 600;
+            color: #475569;
+        }
+        .signature-modal__footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+        }
+        .signature-modal__status {
+            min-height: 18px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #64748b;
+        }
+        .signature-modal__status.is-error { color: #dc2626; }
+        .signature-modal__status.is-ready { color: #166534; }
+        .signature-modal__actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .signature-btn {
+            appearance: none;
+            border: 1px solid #cbd5e1;
+            border-radius: 999px;
+            background: #ffffff;
+            color: #334155;
+            font-size: 13px;
+            font-weight: 700;
+            padding: 11px 18px;
+            cursor: pointer;
+            transition: transform .16s ease, box-shadow .16s ease, background .16s ease, border-color .16s ease;
+        }
+        .signature-btn:hover:not([disabled]) {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+        }
+        .signature-btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+        .signature-btn--primary {
+            border-color: #2563eb;
+            background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
+            color: #ffffff;
+            box-shadow: 0 14px 26px rgba(37, 99, 235, 0.28);
+        }
+        body.signature-modal-open {
+            overflow: hidden;
+        }
+
+        @media (max-width: 860px) {
+            .draw-tool-panel {
+                top: auto;
+                right: 12px;
+                left: 12px;
+                bottom: 12px;
+                width: auto;
+                flex-direction: row;
+                align-items: stretch;
+                justify-content: flex-start;
+                gap: 12px;
+                overflow-x: auto;
+                padding: 12px 14px;
+            }
+            .draw-tool-panel__head,
+            .draw-tool-panel__stack {
+                width: auto;
+                flex-shrink: 0;
+            }
+            .draw-tool-panel__stack {
+                flex-direction: row;
+                align-items: center;
+            }
+            .draw-tool-panel__tool-group {
+                width: auto;
+                grid-template-columns: repeat(2, 44px);
+            }
+            .draw-tool-panel__slider-wrap {
+                width: auto;
+            }
+            .draw-tool-panel__slider-wrap input[type="range"] {
+                writing-mode: initial;
+                direction: ltr;
+                width: 112px;
+                height: 32px;
+            }
+            .draw-tool-panel__colors {
+                width: auto;
+                grid-template-columns: repeat(4, 28px);
+            }
+            .markup-modal {
+                padding: 12px;
+            }
+            .markup-modal__card {
+                width: min(100%, 100vw - 24px);
+                max-height: calc(100vh - 24px);
+                padding: 18px;
+                border-radius: 22px;
+            }
+            .markup-modal__panel.is-active,
+            .markup-modal__erase {
+                grid-template-columns: 1fr;
+            }
+            .markup-modal__canvas-shell {
+                min-height: 240px;
+                padding: 14px;
+            }
+            .markup-modal__footer {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .markup-modal__actions {
+                justify-content: stretch;
+            }
+            .signature-modal {
+                padding: 12px;
+            }
+            .signature-modal__card {
+                width: min(100%, 100vw - 24px);
+                max-height: calc(100vh - 24px);
+                padding: 18px;
+                border-radius: 22px;
+            }
+            .signature-modal__body {
+                grid-template-columns: 1fr;
+            }
+            .signature-library__load-row,
+            .signature-library__save-row {
+                grid-template-columns: 1fr;
+            }
+            .signature-stage__canvas-shell {
+                min-height: 240px;
+                padding: 14px;
+            }
+            .signature-modal__footer {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .signature-modal__actions {
+                justify-content: stretch;
+            }
+            .signature-btn {
+                flex: 1;
+                justify-content: center;
+            }
+        }
+
+        /* Image import modal — modern, lightweight; reuses signature-btn for buttons. */
+        .image-import-modal {
+            position: fixed; inset: 0;
+            display: none;
+            align-items: center; justify-content: center;
+            padding: 24px;
+            z-index: 60;
+        }
+        .image-import-modal.is-open { display: flex; }
+        .image-import-modal__scrim {
+            position: absolute; inset: 0;
+            background:
+                radial-gradient(circle at top, rgba(37, 99, 235, 0.18), transparent 38%),
+                rgba(15, 23, 42, 0.52);
+            backdrop-filter: blur(8px);
+        }
+        .image-import-modal__card {
+            position: relative;
+            width: min(560px, calc(100vw - 32px));
+            max-height: min(680px, calc(100vh - 32px));
+            display: flex; flex-direction: column;
+            gap: 18px;
+            padding: 24px;
+            border-radius: 24px;
+            border: 1px solid rgba(148, 163, 184, 0.32);
+            background: linear-gradient(180deg, rgba(255,255,255,0.96) 0%, rgba(248,250,252,0.98) 100%);
+            box-shadow: 0 36px 90px rgba(15, 23, 42, 0.28), 0 10px 24px rgba(15, 23, 42, 0.14);
+        }
+        .image-import-modal__close {
+            position: absolute; top: 14px; right: 14px;
+            width: 32px; height: 32px;
+            border-radius: 10px;
+            border: 1px solid rgba(148,163,184,0.28);
+            background: rgba(255,255,255,0.7);
+            color: #475569;
+            font-size: 20px; line-height: 1;
+            cursor: pointer;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
+        }
+        .image-import-modal__close:hover { background: #f1f5f9; color: #0f172a; }
+        .image-import-modal__header { display: flex; flex-direction: column; gap: 4px; padding-right: 36px; }
+        .image-import-modal__eyebrow {
+            text-transform: uppercase; letter-spacing: 0.12em;
+            font-size: 11px; font-weight: 600;
+            color: #2563eb;
+        }
+        .image-import-modal__title {
+            font-size: 22px; font-weight: 700;
+            color: #0f172a; margin: 0;
+        }
+        .image-import-modal__subtitle {
+            font-size: 13px; color: #475569; margin: 0;
+        }
+        .image-import-modal__body { display: flex; flex: 1; min-height: 0; }
+        .image-import-dropzone {
+            position: relative;
+            flex: 1;
+            display: flex; align-items: center; justify-content: center;
+            min-height: 220px;
+            border: 2px dashed rgba(148, 163, 184, 0.55);
+            border-radius: 18px;
+            background: rgba(241, 245, 249, 0.55);
+            cursor: pointer;
+            transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+            outline: none;
+            padding: 16px;
+        }
+        .image-import-dropzone:hover,
+        .image-import-dropzone:focus-visible {
+            border-color: #2563eb;
+            background: rgba(219, 234, 254, 0.45);
+        }
+        .image-import-dropzone.is-drag {
+            border-color: #2563eb;
+            background: rgba(191, 219, 254, 0.55);
+            box-shadow: inset 0 0 0 4px rgba(37, 99, 235, 0.08);
+        }
+        .image-import-dropzone__inner {
+            display: flex; flex-direction: column; align-items: center; gap: 10px;
+            color: #475569; text-align: center;
+            pointer-events: none;
+        }
+        .image-import-dropzone__inner svg { color: #94a3b8; }
+        .image-import-dropzone__title { font-size: 15px; font-weight: 600; color: #0f172a; }
+        .image-import-dropzone__subtitle { font-size: 13px; color: #475569; }
+        .image-import-dropzone__link { color: #2563eb; font-weight: 600; text-decoration: underline; }
+        .image-import-dropzone__hint { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+        .image-import-preview {
+            position: relative;
+            display: flex; flex-direction: column; align-items: center; gap: 10px;
+            width: 100%; max-height: 100%;
+        }
+        .image-import-preview img {
+            max-width: 100%;
+            max-height: 280px;
+            border-radius: 12px;
+            border: 1px solid rgba(148,163,184,0.28);
+            background: #fff;
+            box-shadow: 0 8px 22px rgba(15,23,42,0.12);
+            object-fit: contain;
+        }
+        .image-import-preview__meta { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+        .image-import-preview__name { font-size: 13px; font-weight: 600; color: #0f172a; word-break: break-all; }
+        .image-import-preview__dims { font-size: 12px; color: #64748b; }
+        .image-import-preview__remove {
+            position: absolute; top: -6px; right: -6px;
+            width: 28px; height: 28px;
+            border-radius: 999px;
+            border: 1px solid rgba(148,163,184,0.4);
+            background: #fff;
+            color: #475569;
+            font-size: 18px; line-height: 1;
+            cursor: pointer;
+            display: inline-flex; align-items: center; justify-content: center;
+            box-shadow: 0 4px 10px rgba(15,23,42,0.12);
+            pointer-events: auto;
+        }
+        .image-import-preview__remove:hover { background: #fee2e2; color: #b91c1c; border-color: #fecaca; }
+        .image-import-modal__footer {
+            display: flex; align-items: center; justify-content: space-between; gap: 12px;
+            padding-top: 4px;
+            border-top: 1px solid rgba(148, 163, 184, 0.22);
+            padding-top: 14px;
+        }
+        .image-import-modal__status { font-size: 12px; color: #64748b; flex: 1; min-width: 0; }
+        .image-import-modal__actions { display: inline-flex; gap: 8px; }
+        @media (max-width: 600px) {
+            .image-import-modal__card { padding: 18px; gap: 14px; }
+            .image-import-modal__footer { flex-direction: column; align-items: stretch; }
+            .image-import-modal__actions { justify-content: stretch; }
+            .image-import-modal__actions .signature-btn { flex: 1; justify-content: center; }
+        }
+
+        .floating-zoom-bar {
+            position: fixed;
+            left: 50%;
+            bottom: 18px;
+            transform: translateX(-50%);
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            background: rgba(32, 36, 45, 0.95);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 10px;
+            color: #e5e7eb;
+            z-index: 9999;
+            box-shadow: 0 12px 30px rgba(0,0,0,0.35);
+            font-size: 14px;
+            backdrop-filter: blur(8px);
+        }
+        .floating-zoom-bar .divider {
+            width: 1px;
+            height: 20px;
+            background: rgba(255,255,255,0.2);
+        }
+        .floating-zoom-bar button {
+            border: none;
+            background: rgba(255,255,255,0.08);
+            color: #f3f4f6;
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .floating-zoom-bar button:hover {
+            background: rgba(255,255,255,0.16);
+        }
+        .floating-zoom-bar input[type="number"] {
+            width: 54px;
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.2);
+            color: #f3f4f6;
+            padding: 4px 6px;
+            border-radius: 6px;
+            text-align: center;
+            font-size: 14px;
+        }
+        .floating-zoom-bar .zoom-label {
+            min-width: 48px;
+            text-align: center;
+            font-weight: 600;
+        }
+
+        /* ── Text Format Bar ─────────────────────────────────────────────────── */
+        .ann-format-bar {
+            position: fixed;
+            top: 134px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: none;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: nowrap;
+            padding: 6px 10px;
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.10), 0 1px 4px rgba(0,0,0,0.06);
+            z-index: 38;
+            white-space: nowrap;
+            font-size: 13px;
+            color: #1a202c;
+            overflow-x: auto;
+            max-width: calc(100vw - 32px);
+        }
+        .ann-format-bar.is-visible { display: flex; }
+        .afb-divider {
+            width: 1px;
+            height: 22px;
+            background: #e5e7eb;
+            margin: 0 2px;
+            flex-shrink: 0;
+        }
+        .ann-format-bar select {
+            background: #f3f4f6;
+            border: 1px solid #e5e7eb;
+            color: #1a202c;
+            border-radius: 6px;
+            padding: 4px 6px;
+            font-size: 12px;
+            height: 30px;
+            outline: none;
+            cursor: pointer;
+            -webkit-appearance: none;
+            appearance: none;
+            padding-right: 20px;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%239ca3af'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 6px center;
+        }
+        .ann-format-bar select:focus { border-color: #93c5fd; outline: none; }
+        .afb-font-select { width: 140px; }
+        .afb-size-group {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .afb-size-label {
+            font-size: 11px;
+            color: #6b7280;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            flex-shrink: 0;
+        }
+        .afb-size-slider {
+            width: 80px;
+            height: 20px;
+            padding: 0;
+            border: none;
+            background: transparent;
+            accent-color: #3b82f6;
+            cursor: ew-resize;
+        }
+        .afb-size-value {
+            min-width: 36px;
+            padding: 0 6px;
+            height: 30px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 6px;
+            background: #f3f4f6;
+            border: 1px solid #e5e7eb;
+            font-size: 12px;
+            font-variant-numeric: tabular-nums;
+            color: #1a202c;
+        }
+        .afb-color-wrap {
+            position: relative;
+            width: 30px;
+            height: 30px;
+            border-radius: 6px;
+            overflow: hidden;
+            border: 1px solid #e5e7eb;
+            flex-shrink: 0;
+            cursor: pointer;
+            background: #f3f4f6;
+        }
+        .afb-color-wrap input[type="color"] {
+            position: absolute;
+            width: 200%;
+            height: 200%;
+            top: -50%;
+            left: -50%;
+            border: none;
+            cursor: pointer;
+            padding: 0;
+        }
+        .afb-opacity-group {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .afb-btn {
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #f3f4f6;
+            border: 1px solid #e5e7eb;
+            color: #6b7280;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
+            flex-shrink: 0;
+        }
+        .afb-btn:hover { background: #e5e7eb; color: #111827; }
+        .afb-btn.is-active,
+        .afb-btn[aria-pressed="true"] {
+            background: linear-gradient(180deg, #dbeafe 0%, #bfdbfe 100%);
+            border-color: #3b82f6;
+            color: #1d4ed8;
+        }
+        .afb-btn.is-danger { color: #ef4444; }
+        .afb-btn.is-danger:hover { background: #fee2e2; border-color: #fca5a5; color: #dc2626; }
+        /* Faux selection overlay shown while the native color picker has
+           focus (the contenteditable's real ::selection is hidden by the
+           browser when it loses focus, so we mirror the range rects). */
+        .afb-faux-selection {
+            position: fixed;
+            background: rgba(59, 130, 246, 0.45);
+            pointer-events: none;
+            z-index: 9999;
+            border-radius: 1px;
+            mix-blend-mode: multiply;
+        }

@@ -70,6 +70,81 @@ class PdfAnnotationSuppression
             }
         }
 
+        // Suppress enclosing simple-line variants when strictly narrower siblings
+        // together cover their full range. E.g. `X_lines-0-4` is redundant once
+        // both `X_lines-0-1` and `X_lines-2-4` exist — rendering all three stacks
+        // the "big" variant on top of the children, causing visible duplicates.
+        $baseToSimpleRanges = [];
+        foreach ($annotationIds as $annId) {
+            $range = $extractSimpleLineRange($annId);
+            if ($range === null) {
+                continue;
+            }
+            $baseToSimpleRanges[$range['base']][] = [
+                'id'    => $annId,
+                'start' => $range['start'],
+                'end'   => $range['end'],
+            ];
+        }
+
+        foreach ($baseToSimpleRanges as $base => $ranges) {
+            if (count($ranges) < 2) {
+                continue;
+            }
+
+            foreach ($ranges as $outer) {
+                $outerStart = $outer['start'];
+                $outerEnd   = $outer['end'];
+                $outerWidth = $outerEnd - $outerStart;
+                if ($outerWidth < 1) {
+                    continue;
+                }
+
+                // Collect strictly-narrower siblings whose range is fully inside [outerStart, outerEnd].
+                $strictChildren = [];
+                $hasStrictChild = false;
+                foreach ($ranges as $inner) {
+                    if ($inner['id'] === $outer['id']) {
+                        continue;
+                    }
+                    if ($inner['start'] < $outerStart || $inner['end'] > $outerEnd) {
+                        continue;
+                    }
+                    $strictChildren[] = $inner;
+                    if ($inner['start'] > $outerStart || $inner['end'] < $outerEnd) {
+                        $hasStrictChild = true;
+                    }
+                }
+
+                if (!$hasStrictChild || empty($strictChildren)) {
+                    continue;
+                }
+
+                // Walk the outer range; every line must be covered by at least one child.
+                $covered = true;
+                $cursor = $outerStart;
+                while ($cursor <= $outerEnd) {
+                    $nextEnd = null;
+                    foreach ($strictChildren as $child) {
+                        if ($child['start'] <= $cursor && $child['end'] >= $cursor) {
+                            if ($nextEnd === null || $child['end'] > $nextEnd) {
+                                $nextEnd = $child['end'];
+                            }
+                        }
+                    }
+                    if ($nextEnd === null) {
+                        $covered = false;
+                        break;
+                    }
+                    $cursor = $nextEnd + 1;
+                }
+
+                if ($covered) {
+                    $suppressed[$outer['id']] = true;
+                }
+            }
+        }
+
         $baseToSimpleLines = [];
         foreach ($annotationIds as $annId) {
             if (preg_match('/^(.+?)_lines-\d+-\d+$/', $annId, $m)) {

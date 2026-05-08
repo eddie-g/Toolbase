@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>{{ $document->original_name }} — Edit New (PDF.js viewer)</title>
+
+    {{-- Pre-load pdf.js v4 as a global, mirroring edit-new.blade so any of
+         the legacy partials' inline scripts that touch window.pdfjsLib stay
+         no-op-safe. --}}
+    <script type="module">
+        import * as pdfjsLib from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/legacy/build/pdf.min.mjs';
+        pdfjsLib.GlobalWorkerOptions.workerSrc =
+            'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/legacy/build/pdf.worker.min.mjs';
+        window.pdfjsLib = pdfjsLib;
+        window.dispatchEvent(new Event('pdfjsLibReady'));
+    </script>
+
+    @vite(['resources/css/app.css', 'resources/js/app.js'])
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:ital,wght@0,400;0,700;1,400;1,700&family=Bebas+Neue&family=Cabin:ital,wght@0,400;0,700;1,400;1,700&family=Crimson+Text:ital,wght@0,400;0,700;1,400;1,700&family=DM+Sans:ital,wght@0,400;0,700;1,400;1,700&family=Dosis:wght@400;700&family=Fira+Sans:ital,wght@0,400;0,700;1,400;1,700&family=Heebo:wght@400;700&family=Hind:wght@400;700&family=Inter:ital,wght@0,400;0,700;1,400;1,700&family=Josefin+Sans:ital,wght@0,400;0,700;1,400;1,700&family=Kanit:ital,wght@0,400;0,700;1,400;1,700&family=Karla:ital,wght@0,400;0,700;1,400;1,700&family=Lato:ital,wght@0,400;0,700;1,400;1,700&family=Lora:ital,wght@0,400;0,700;1,400;1,700&family=Manrope:wght@400;700&family=Merriweather:ital,wght@0,400;0,700;1,400;1,700&family=Montserrat:ital,wght@0,400;0,700;1,400;1,700&family=Mukta:wght@400;700&family=Mulish:ital,wght@0,400;0,700;1,400;1,700&family=Noto+Sans:ital,wght@0,400;0,700;1,400;1,700&family=Noto+Serif:ital,wght@0,400;0,700;1,400;1,700&family=Nunito:ital,wght@0,400;0,700;1,400;1,700&family=Open+Sans:ital,wght@0,400;0,700;1,400;1,700&family=Oswald:wght@400;700&family=PT+Sans:ital,wght@0,400;0,700;1,400;1,700&family=Playfair+Display:ital,wght@0,400;0,700;1,400;1,700&family=Poppins:ital,wght@0,400;0,700;1,400;1,700&family=Quicksand:wght@400;700&family=Raleway:ital,wght@0,400;0,700;1,400;1,700&family=Roboto+Condensed:ital,wght@0,400;0,700;1,400;1,700&family=Roboto+Mono:ital,wght@0,400;0,700;1,400;1,700&family=Roboto+Slab:wght@400;700&family=Roboto:ital,wght@0,400;0,700;1,400;1,700&family=Rubik:ital,wght@0,400;0,700;1,400;1,700&family=Source+Sans+3:ital,wght@0,400;0,700;1,400;1,700&family=Ubuntu:ital,wght@0,400;0,700;1,400;1,700&family=Work+Sans:ital,wght@0,400;0,700;1,400;1,700&display=swap">
+
+    {{-- Same edit-new chrome stylesheet (topbar, toolbar, panels, modals). --}}
+    @vite(['resources/css/edit-new/index.css'])
+
+    {{-- New viewer's own stylesheet on top — overrides #pages-wrap so it
+         can host the absolutely-positioned PDFViewer container. --}}
+    @vite(['resources/css/edit-new-pdfjs/index.css'])
+</head>
+<body class="enpv-body">
+
+{{-- Same root + data attrs as edit-new (kept so legacy partials read the
+     same dataset shape). The new viewer JS reads the *-url attrs. --}}
+<div id="edit-new-root"
+     data-doc-id="{{ $document->id }}"
+     data-csrf="{{ csrf_token() }}"
+     data-info-url="{{ route('pdfTests.documentInfo', $document) }}"
+     data-save-url="{{ route('documents.saveAnnotationState', $document) }}"
+     data-download-url="{{ route('documents.downloadAnnotatedPdf', $document) }}"></div>
+
+{{-- Same UI partials as /edit-new. The legacy main.js is intentionally NOT
+     loaded, so all interactive buttons are inert (visual only) for now.
+     The new pdf.js viewer takes over the canvas/page area below. --}}
+@include('documents.edit-new._topbar')
+@include('documents.edit-new._pages')
+@include('documents.edit-new._floating-toolbar')
+@include('documents.edit-new._shape-panel')
+@include('documents.edit-new._draw-panel')
+@include('documents.edit-new._markup-modal')
+@include('documents.edit-new._signature-modal')
+@include('documents.edit-new._image-modal')
+@include('documents.edit-new._zoom-bar')
+@include('documents.edit-new._format-bar')
+
+{{-- New PDF.js viewer mount + new viewer's data hooks. The blade's #pages-wrap
+     becomes the host for #viewerContainer (CSS overrides #pages-wrap layout
+     so the absolute child fills the available space). --}}
+<div id="enpv-root"
+     data-doc-id="{{ $document->id }}"
+     data-csrf="{{ csrf_token() }}"
+     data-pdf-url="{{ route('documents.originalFile', $document) }}"
+     data-baked-url="{{ route('documents.bakedPdf', $document) }}"
+     data-clean-url="{{ route('documents.cleanPdf', $document) }}"
+     data-rewrite-url="{{ route('documents.editPdfjsRewriteTj', $document) }}"
+     data-redact-url="{{ route('documents.editPdfjsRedactSourceText', $document) }}"
+     data-move-url="{{ route('documents.editPdfjsMoveTj', $document) }}"
+     data-reflow-url="{{ route('documents.editPdfjsReflowText', $document) }}">
+    <div id="viewerContainer">
+        <div id="viewer" class="pdfViewer"></div>
+    </div>
+     <div id="enpv-loading-screen" class="enpv-loading-screen" role="status" aria-live="polite">
+          <div class="enpv-loading-card">
+               <div class="enpv-loading-spinner" aria-hidden="true"></div>
+               <div class="enpv-loading-title">Preparing PDF...</div>
+          </div>
+     </div>
+
+    {{-- Floating inline editor for click-to-edit on textLayer spans. --}}
+    <div id="enpv-edit-bar" class="enpv-edit-bar" hidden>
+        <div class="enpv-edit-row">
+            <input id="enpv-input" type="text" autocomplete="off" spellcheck="false">
+            <button id="enpv-apply" class="enpv-btn enpv-primary">Apply</button>
+            <button id="enpv-cancel" class="enpv-btn">Cancel</button>
+        </div>
+        <div id="enpv-orig" class="enpv-orig"></div>
+    </div>
+
+    {{-- Status pill (small, lower-left). The legacy save-status in the topbar
+         is left untouched but inert. --}}
+    <div id="enpv-status" class="enpv-status-pill">Loading…</div>
+    <button id="enpv-download" class="enpv-btn enpv-download-fab" disabled>Download edited PDF</button>
+
+    {{-- Floating hover menu for the currently-selected annotation box.
+         Mirrors the legacy /edit-new `tm-${pi+1}` text-menu affordance.
+         Hidden until a box is selected; reparented on demand to the page
+         div that hosts the box so coordinates stay correct across zoom. --}}
+    <div id="enpv-ann-menu" class="enpv-ann-menu" hidden>
+        <button type="button" class="enpv-ann-menu-btn enpv-ann-menu-grip" data-action="move" title="Drag to move">⠿</button>
+          <button type="button" class="enpv-ann-menu-btn enpv-ann-menu-lock" data-action="lock" title="Lock annotation" aria-label="Lock annotation">
+               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="9" rx="2"></rect><path d="M8 11V8a4 4 0 1 1 8 0v3"></path></svg>
+          </button>
+          <button type="button" class="enpv-ann-menu-btn" data-action="front" title="Bring to front" aria-label="Bring to front">⬆</button>
+          <button type="button" class="enpv-ann-menu-btn" data-action="back" title="Send to back" aria-label="Send to back">⬇</button>
+          <div class="enpv-ann-menu-divider" aria-hidden="true"></div>
+          <button type="button" class="enpv-ann-menu-btn enpv-ann-menu-ok" data-action="edit" title="Edit text" aria-label="Edit text">
+               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
+          <div class="enpv-ann-menu-divider" aria-hidden="true"></div>
+          <button type="button" class="enpv-ann-menu-btn" data-action="uppercase" title="UPPERCASE" aria-label="Uppercase"><span>Tt</span></button>
+          <button type="button" class="enpv-ann-menu-btn" data-action="lowercase" title="lowercase" aria-label="Lowercase"><span>tl</span></button>
+          <div class="enpv-ann-menu-divider" aria-hidden="true"></div>
+          <button type="button" class="enpv-ann-menu-btn" data-action="copy" title="Copy text" aria-label="Copy text">
+               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
+          <button type="button" class="enpv-ann-menu-btn enpv-ann-menu-delete" data-action="delete" title="Delete" aria-label="Delete">
+               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          </button>
+          <div class="enpv-ann-menu-divider" aria-hidden="true"></div>
+          <button type="button" class="enpv-ann-menu-btn" data-action="deselect" title="Deselect (Esc)" aria-label="Deselect">✕</button>
+    </div>
+</div>
+
+@vite(['resources/js/edit-new-pdfjs/main.js'])
+
+</body>
+</html>

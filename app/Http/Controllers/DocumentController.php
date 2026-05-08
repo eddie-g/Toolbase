@@ -13,6 +13,7 @@ use App\Support\PdfAnnotationSuppression;
 use App\Models\User;
 use App\Models\UserActivity;
 use App\Models\UserPdfMonthlyUsage;
+use App\Http\Controllers\PdfTestController;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -413,9 +414,14 @@ class DocumentController extends Controller
     private function resolvePythonBinaryForPdfEditor(?string $requiredModule = null): string
     {
         $candidates = array_values(array_unique([
+            base_path('.venv/bin/python'),
+            base_path('venv/bin/python'),
+            base_path('.venv/Scripts/python.exe'),
+            base_path('venv/Scripts/python.exe'),
+            base_path('python/venv/bin/python'),
+            base_path('python/venv/Scripts/python.exe'),
             '/usr/bin/python3',
             'python3',
-            base_path('python/venv/bin/python'),
         ]));
 
         foreach ($candidates as $candidate) {
@@ -754,11 +760,39 @@ class DocumentController extends Controller
     {
         $annotationAssets = $this->annotationAssets();
 
-        return array_map(static function ($annotation) use ($annotationAssets, $document) {
-            return is_array($annotation)
-                ? $annotationAssets->normalizeForPersistence($document, $annotation)
-                : $annotation;
+        return array_map(function ($annotation) use ($annotationAssets, $document) {
+            if (!is_array($annotation)) {
+                return $annotation;
+            }
+
+            return $this->normalizeTextAnnotationBackgroundForExport(
+                $annotationAssets->normalizeForPersistence($document, $annotation)
+            );
         }, $annotations);
+    }
+
+    private function normalizeTextAnnotationBackgroundForExport(array $annotation): array
+    {
+        if (strtolower(trim((string) ($annotation['type'] ?? ''))) !== 'text') {
+            return $annotation;
+        }
+
+        $background = strtolower(trim((string) ($annotation['backgroundColor'] ?? '')));
+        $backgroundExplicit = filter_var(
+            $annotation['backgroundColorExplicit'] ?? false,
+            FILTER_VALIDATE_BOOL
+        );
+
+        if ($background === '' || $background === 'transparent') {
+            $annotation['backgroundColor'] = 'transparent';
+            return $annotation;
+        }
+
+        if (!$backgroundExplicit && in_array($background, ['#fff', '#ffffff', 'white'], true)) {
+            $annotation['backgroundColor'] = 'transparent';
+        }
+
+        return $annotation;
     }
 
     private function isDurablePromotedAnnotation(array $annotation): bool
@@ -767,10 +801,52 @@ class DocumentController extends Controller
             && trim((string) ($annotation['promotedSourceKey'] ?? '')) !== '';
     }
 
+    private function annotationFlagIsTruthy(array $annotation, string $key): bool
+    {
+        return filter_var($annotation[$key] ?? false, FILTER_VALIDATE_BOOLEAN);
+    }
+
+    private function isPdfjsVisibleExportAnnotation(array $annotation): bool
+    {
+        $type = strtolower(trim((string) ($annotation['type'] ?? '')));
+        if (!in_array($type, ['text', 'image', 'signature'], true)) {
+            return false;
+        }
+        $state = strtolower(trim((string) ($annotation['db_state'] ?? $annotation['state'] ?? '')));
+        if ($state === 'deleted' && !$this->annotationFlagIsTruthy($annotation, 'pdfjsDeleted')) {
+            return false;
+        }
+        if (str_starts_with(trim((string) ($annotation['id'] ?? '')), 'promoted_')) {
+            return false;
+        }
+
+        return !$this->annotationFlagIsTruthy($annotation, 'promotedFromExtraction');
+    }
+
+    private function filterAnnotationsForPdfjsVisibleExport(array $annotations): array
+    {
+        return array_values(array_filter(
+            $annotations,
+            fn ($annotation) => is_array($annotation) && $this->isPdfjsVisibleExportAnnotation($annotation)
+        ));
+    }
+
     private function durablePdfStateIdentityKeyFromAnnotation(array $annotation): string
     {
         if ($this->isDurablePromotedAnnotation($annotation)) {
-            return 'promoted:' . trim((string) $annotation['promotedSourceKey']);
+            $sourceKey = trim((string) $annotation['promotedSourceKey']);
+            // Multiple annotations can legitimately share the same promoted
+            // source block (a primary `promoted_X_Y` plus per-line
+            // `promoted_X_Y_row_*` siblings produced when the source block
+            // wraps onto several lines). Including the annotation id in the
+            // identity key prevents these siblings from colliding during
+            // upsertPdfStateSessionSnapshot, where the second/third sibling
+            // would otherwise overwrite the row that just received the user's
+            // edited text.
+            $annotationId = trim((string) ($annotation['id'] ?? ''));
+            return $annotationId !== ''
+                ? 'promoted:' . $sourceKey . ':' . $annotationId
+                : 'promoted:' . $sourceKey;
         }
 
         $annotationId = trim((string) ($annotation['id'] ?? ''));
@@ -791,13 +867,16 @@ class DocumentController extends Controller
     private function isPromotedSuppressionRecord(PdfState $record): bool
     {
         $annotationData = is_array($record->annotation_data) ? $record->annotation_data : [];
-        return filter_var(
-            $annotationData['_promotedSuppression'] ?? false,
-            FILTER_VALIDATE_BOOLEAN
-        ) && filter_var(
-            $annotationData['_explicitPromotedDelete'] ?? false,
-            FILTER_VALIDATE_BOOLEAN
-        );
+        return (
+            filter_var(
+                $annotationData['_promotedSuppression'] ?? false,
+                FILTER_VALIDATE_BOOLEAN
+            ) && filter_var(
+                $annotationData['_explicitPromotedDelete'] ?? false,
+                FILTER_VALIDATE_BOOLEAN
+            )
+        ) || str_starts_with(trim((string) ($annotationData['id'] ?? '')), '__deleted_promoted__')
+            || str_starts_with(trim((string) ($annotationData['id'] ?? '')), 'deleted_promoted:');
     }
 
     private function findExistingPdfStateRecordForAnnotation(
@@ -814,6 +893,22 @@ class DocumentController extends Controller
 
         if ($this->isDurablePromotedAnnotation($annotation)) {
             $sourceKey = trim((string) ($annotation['promotedSourceKey'] ?? ''));
+            $annotationId = trim((string) ($annotation['id'] ?? ''));
+            // Prefer matching by both source key + annotation id so that
+            // multi-line promoted siblings each resolve to their own row.
+            // Fall back to source-key-only when an id is missing or when no
+            // id-qualified row exists yet (legacy rows persisted before the
+            // identity-key collision fix only carried the source key).
+            if ($annotationId !== '') {
+                $exact = (clone $query)
+                    ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.promotedSourceKey')) = ?", [$sourceKey])
+                    ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.id')) = ?", [$annotationId])
+                    ->orderByDesc('updated_at')
+                    ->first();
+                if ($exact) {
+                    return $exact;
+                }
+            }
             return $query
                 ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.promotedSourceKey')) = ?", [$sourceKey])
                 ->orderByDesc('updated_at')
@@ -1181,12 +1276,14 @@ class DocumentController extends Controller
     {
         $annotationAssets = $this->annotationAssets();
 
-        $prepared = array_values(array_filter(array_map(static function ($annotation) use ($annotationAssets) {
+        $prepared = array_values(array_filter(array_map(function ($annotation) use ($annotationAssets) {
             if (!is_array($annotation)) {
                 return null;
             }
 
-            $enriched = $annotationAssets->enrichForPython($annotation);
+            $enriched = $this->normalizeTextAnnotationBackgroundForExport(
+                $annotationAssets->enrichForPython($annotation)
+            );
             $annotationType = strtolower((string) ($enriched['type'] ?? ''));
 
             // Interactive PDF form fields are exported client-side with pdf-lib.
@@ -1801,6 +1898,10 @@ class DocumentController extends Controller
             return [];
         }
 
+        if (!config('pdf_editor.line_grouping_editor_mode', false)) {
+            return [$baseAnnotation];
+        }
+
         if (count($textLines) < 2 || count($sourceLineBBoxes) < 2 || count($textLines) !== count($sourceLineBBoxes)) {
             return [$baseAnnotation];
         }
@@ -1847,7 +1948,9 @@ class DocumentController extends Controller
                 continue;
             }
 
-            $blocks = is_array($pageData['blocks'] ?? null) ? $pageData['blocks'] : [];
+            $blocks = $this->mergeContainedStandaloneAnnotationBaseBlocks(
+                is_array($pageData['blocks'] ?? null) ? $pageData['blocks'] : []
+            );
             foreach ($blocks as $block) {
                 if (!is_array($block)) {
                     continue;
@@ -2020,6 +2123,142 @@ class DocumentController extends Controller
         unset($group);
 
         return array_values($groups);
+    }
+
+    private function mergeContainedStandaloneAnnotationBaseBlocks(array $blocks): array
+    {
+        if (count($blocks) < 2) {
+            return $blocks;
+        }
+
+        $mergedBlocks = array_values($blocks);
+        $removedIndices = [];
+
+        foreach ($mergedBlocks as $childIndex => $childBlock) {
+            if (isset($removedIndices[$childIndex])) {
+                continue;
+            }
+
+            $childLineBBoxes = array_values(array_filter(
+                is_array($childBlock['line_bboxes'] ?? null) ? $childBlock['line_bboxes'] : [],
+                static fn ($bbox) => is_array($bbox) && count($bbox) >= 4
+            ));
+            $childTextLines = is_array($childBlock['text_lines'] ?? null) ? array_values($childBlock['text_lines']) : [];
+            $childText = trim((string) ($childTextLines[0] ?? $childBlock['text'] ?? ''));
+            $childBBox = $this->normalizeAnnotationBaseBlockBBox($childBlock);
+
+            if (count($childLineBBoxes) !== 1 || $childText === '' || !$childBBox) {
+                continue;
+            }
+
+            $bestParentIndex = null;
+            $bestBlankLineIndex = null;
+            $bestParentArea = null;
+
+            foreach ($mergedBlocks as $parentIndex => $parentBlock) {
+                if ($parentIndex === $childIndex || isset($removedIndices[$parentIndex])) {
+                    continue;
+                }
+
+                $parentBBox = $this->normalizeAnnotationBaseBlockBBox($parentBlock);
+                if (
+                    !$parentBBox
+                    || !$this->annotationBaseRectContains($parentBBox, $childBBox, 0.5)
+                    || !$this->annotationBaseBlocksAreMergeCompatible($parentBlock, $childBlock)
+                ) {
+                    continue;
+                }
+
+                $parentLineBBoxes = array_values(array_filter(
+                    is_array($parentBlock['line_bboxes'] ?? null) ? $parentBlock['line_bboxes'] : [],
+                    static fn ($bbox) => is_array($bbox) && count($bbox) >= 4
+                ));
+                $parentTextLines = is_array($parentBlock['text_lines'] ?? null) ? array_values($parentBlock['text_lines']) : [];
+                if (count($parentLineBBoxes) < 2 || count($parentTextLines) !== count($parentLineBBoxes)) {
+                    continue;
+                }
+
+                foreach ($parentLineBBoxes as $lineIndex => $lineBBox) {
+                    if (
+                        trim((string) ($parentTextLines[$lineIndex] ?? '')) !== ''
+                        || !$this->annotationBaseNestedBlockFitsBlankLineSlot(
+                            array_map('floatval', array_slice($lineBBox, 0, 4)),
+                            array_map('floatval', array_slice($childLineBBoxes[0], 0, 4))
+                        )
+                    ) {
+                        continue;
+                    }
+
+                    $parentArea = max(1.0, ($parentBBox[2] - $parentBBox[0]) * ($parentBBox[3] - $parentBBox[1]));
+                    if ($bestParentArea === null || $parentArea < $bestParentArea) {
+                        $bestParentIndex = $parentIndex;
+                        $bestBlankLineIndex = $lineIndex;
+                        $bestParentArea = $parentArea;
+                    }
+                }
+            }
+
+            if ($bestParentIndex === null || $bestBlankLineIndex === null) {
+                continue;
+            }
+
+            $parentBlock = $mergedBlocks[$bestParentIndex];
+            $parentTextLines = array_values($parentBlock['text_lines'] ?? []);
+            $parentLineBBoxes = array_values($parentBlock['line_bboxes'] ?? []);
+            $parentTextLines[$bestBlankLineIndex] = $childText;
+            $parentLineBBoxes[$bestBlankLineIndex] = array_map('floatval', array_slice($childLineBBoxes[0], 0, 4));
+
+            $allLineBBoxes = array_values(array_filter(
+                $parentLineBBoxes,
+                static fn ($bbox) => is_array($bbox) && count($bbox) >= 4
+            ));
+            if (empty($allLineBBoxes)) {
+                continue;
+            }
+
+            $left = min(array_map(static fn (array $bbox): float => (float) $bbox[0], $allLineBBoxes));
+            $top = min(array_map(static fn (array $bbox): float => (float) $bbox[1], $allLineBBoxes));
+            $right = max(array_map(static fn (array $bbox): float => (float) $bbox[2], $allLineBBoxes));
+            $bottom = max(array_map(static fn (array $bbox): float => (float) $bbox[3], $allLineBBoxes));
+
+            $mergedSpans = array_merge(
+                is_array($parentBlock['spans'] ?? null) ? array_values($parentBlock['spans']) : [],
+                is_array($childBlock['spans'] ?? null) ? array_values($childBlock['spans']) : []
+            );
+            usort($mergedSpans, static function (array $leftSpan, array $rightSpan): int {
+                $leftBBox = is_array($leftSpan['bbox'] ?? null) ? array_slice($leftSpan['bbox'], 0, 4) : [0, 0, 0, 0];
+                $rightBBox = is_array($rightSpan['bbox'] ?? null) ? array_slice($rightSpan['bbox'], 0, 4) : [0, 0, 0, 0];
+                $leftTop = (float) ($leftBBox[1] ?? 0);
+                $rightTop = (float) ($rightBBox[1] ?? 0);
+                if (abs($leftTop - $rightTop) > 0.25) {
+                    return $leftTop <=> $rightTop;
+                }
+
+                return ((float) ($leftBBox[0] ?? 0)) <=> ((float) ($rightBBox[0] ?? 0));
+            });
+
+            $parentBlock['text_lines'] = $parentTextLines;
+            $parentBlock['text'] = implode("\n", $parentTextLines);
+            $parentBlock['line_bboxes'] = $parentLineBBoxes;
+            $parentBlock['left'] = $left;
+            $parentBlock['top'] = $top;
+            $parentBlock['width'] = max(0.0, $right - $left);
+            $parentBlock['height'] = max(0.0, $bottom - $top);
+            $parentBlock['bbox'] = [$left, $top, $right, $bottom];
+            $parentBlock['line_count'] = count($parentTextLines);
+            $parentBlock['spans'] = $mergedSpans;
+            $mergedBlocks[$bestParentIndex] = $parentBlock;
+            $removedIndices[$childIndex] = true;
+        }
+
+        $result = [];
+        foreach ($mergedBlocks as $index => $block) {
+            if (!isset($removedIndices[$index])) {
+                $result[] = $block;
+            }
+        }
+
+        return $result;
     }
 
     private function syncMaterializedPdfGroups(
@@ -2436,7 +2675,13 @@ class DocumentController extends Controller
 
         ksort($pages);
         foreach ($pages as &$page) {
+            $page['blocks'] = $this->mergeContainedStandaloneAnnotationBaseBlocks(
+                is_array($page['blocks'] ?? null) ? $page['blocks'] : []
+            );
             $page['blocks'] = $this->splitNestedAnnotationBaseBlocks(
+                is_array($page['blocks'] ?? null) ? $page['blocks'] : []
+            );
+            $page['blocks'] = $this->normalizeAnnotationBaseDotLeaderRows(
                 is_array($page['blocks'] ?? null) ? $page['blocks'] : []
             );
             usort($page['blocks'], static function (array $left, array $right): int {
@@ -2502,6 +2747,73 @@ class DocumentController extends Controller
             || ($rectA[3] + $padding) <= ($rectB[1] - $padding)
             || ($rectB[3] + $padding) <= ($rectA[1] - $padding)
         );
+    }
+
+    private function annotationBaseRectContains(array $outerRect, array $innerRect, float $padding = 0.0): bool
+    {
+        return ($innerRect[0] + $padding) >= ($outerRect[0] - $padding)
+            && ($innerRect[1] + $padding) >= ($outerRect[1] - $padding)
+            && ($innerRect[2] - $padding) <= ($outerRect[2] + $padding)
+            && ($innerRect[3] - $padding) <= ($outerRect[3] + $padding);
+    }
+
+    private function annotationBaseBlocksAreMergeCompatible(array $parentBlock, array $childBlock): bool
+    {
+        $normalizeValue = static fn ($value): string => trim(strtolower((string) $value));
+
+        $parentFont = $normalizeValue($parentBlock['font'] ?? $parentBlock['fontSourceName'] ?? '');
+        $childFont = $normalizeValue($childBlock['font'] ?? $childBlock['fontSourceName'] ?? '');
+        if ($parentFont !== '' && $childFont !== '' && $parentFont !== $childFont) {
+            return false;
+        }
+
+        $parentWeight = $normalizeValue($parentBlock['font_weight'] ?? $parentBlock['fontWeight'] ?? '');
+        $childWeight = $normalizeValue($childBlock['font_weight'] ?? $childBlock['fontWeight'] ?? '');
+        if ($parentWeight !== '' && $childWeight !== '' && $parentWeight !== $childWeight) {
+            return false;
+        }
+
+        $parentItalic = (bool) ($parentBlock['italic'] ?? false)
+            || $normalizeValue($parentBlock['fontStyle'] ?? '') === 'italic';
+        $childItalic = (bool) ($childBlock['italic'] ?? false)
+            || $normalizeValue($childBlock['fontStyle'] ?? '') === 'italic';
+        if ($parentItalic !== $childItalic) {
+            return false;
+        }
+
+        $parentColor = $normalizeValue($parentBlock['hex_color'] ?? $parentBlock['textColor'] ?? '');
+        $childColor = $normalizeValue($childBlock['hex_color'] ?? $childBlock['textColor'] ?? '');
+        if ($parentColor !== '' && $childColor !== '' && $parentColor !== $childColor) {
+            return false;
+        }
+
+        $parentFontSize = isset($parentBlock['font_size']) && is_numeric($parentBlock['font_size'])
+            ? (float) $parentBlock['font_size']
+            : (isset($parentBlock['fontSize']) && is_numeric($parentBlock['fontSize']) ? (float) $parentBlock['fontSize'] : null);
+        $childFontSize = isset($childBlock['font_size']) && is_numeric($childBlock['font_size'])
+            ? (float) $childBlock['font_size']
+            : (isset($childBlock['fontSize']) && is_numeric($childBlock['fontSize']) ? (float) $childBlock['fontSize'] : null);
+
+        return $parentFontSize === null
+            || $childFontSize === null
+            || abs($parentFontSize - $childFontSize) <= 0.5;
+    }
+
+    private function annotationBaseNestedBlockFitsBlankLineSlot(array $blankLineBBox, array $childLineBBox): bool
+    {
+        $blankWidth = max(0.0, (float) ($blankLineBBox[2] ?? 0) - (float) ($blankLineBBox[0] ?? 0));
+        if ($blankWidth > 2.0 && !$this->annotationBaseRectsIntersect($blankLineBBox, $childLineBBox, 0.5)) {
+            return false;
+        }
+
+        $blankTop = (float) ($blankLineBBox[1] ?? 0);
+        $blankBottom = (float) ($blankLineBBox[3] ?? $blankTop);
+        $childTop = (float) ($childLineBBox[1] ?? 0);
+        $childBottom = (float) ($childLineBBox[3] ?? $childTop);
+        $childCenter = ($childTop + $childBottom) / 2;
+
+        return $childCenter >= ($blankTop - 2.0)
+            && $childCenter <= ($blankBottom + 2.0);
     }
 
     private function splitNestedAnnotationBaseBlocks(array $blocks): array
@@ -2628,6 +2940,311 @@ class DocumentController extends Controller
         });
 
         return $result;
+    }
+
+    private function normalizeAnnotationBaseDotLeaderRows(array $blocks): array
+    {
+        if (count($blocks) < 2) {
+            return $blocks;
+        }
+
+        $originalBlocks = array_values($blocks);
+        $spanEntries = [];
+        $dotSpanCount = 0;
+        $formCodeSpanCount = 0;
+        $maxBlockNum = 0;
+
+        foreach ($originalBlocks as $blockIndex => $block) {
+            $maxBlockNum = max($maxBlockNum, (int) ($block['block_num'] ?? 0));
+            $spans = is_array($block['spans'] ?? null) ? array_values($block['spans']) : [];
+            if (empty($spans)) {
+                continue;
+            }
+
+            foreach ($spans as $spanIndex => $span) {
+                if (!is_array($span)) {
+                    continue;
+                }
+
+                $bbox = is_array($span['bbox'] ?? null) ? array_slice($span['bbox'], 0, 4) : null;
+                if (!is_array($bbox) || count($bbox) < 4) {
+                    continue;
+                }
+
+                $origin = is_array($span['origin'] ?? null) ? $span['origin'] : [];
+                $baseline = isset($origin[1]) && is_numeric($origin[1])
+                    ? (float) $origin[1]
+                    : (float) ($bbox[3] ?? 0);
+                if (!is_finite($baseline)) {
+                    continue;
+                }
+
+                $text = (string) ($span['render_text'] ?? $span['text'] ?? '');
+                if (preg_match('/^\s*\.\s*$/', $text) === 1) {
+                    $dotSpanCount++;
+                }
+                if (preg_match('/^\s*\.?\s*(?:W-[A-Z0-9-]+|[0-9]{4}\s+or\s+W-\d)/i', trim($text)) === 1) {
+                    $formCodeSpanCount++;
+                }
+
+                $spanEntries[] = [
+                    'block' => $block,
+                    'block_index' => $blockIndex,
+                    'span_index' => $spanIndex,
+                    'span' => $span,
+                    'bbox' => array_map('floatval', $bbox),
+                    'baseline' => $baseline,
+                    'x' => (float) ($bbox[0] ?? 0),
+                ];
+            }
+        }
+
+        if ($dotSpanCount < 8 || $formCodeSpanCount < 1 || count($spanEntries) < 3) {
+            return $blocks;
+        }
+
+        usort($spanEntries, static function (array $left, array $right): int {
+            if (abs($left['baseline'] - $right['baseline']) > 1.0) {
+                return $left['baseline'] <=> $right['baseline'];
+            }
+            if (abs($left['x'] - $right['x']) > 0.25) {
+                return $left['x'] <=> $right['x'];
+            }
+            return ((int) $left['span_index']) <=> ((int) $right['span_index']);
+        });
+
+        $rows = [];
+        foreach ($spanEntries as $entry) {
+            $lastIndex = count($rows) - 1;
+            if ($lastIndex < 0 || abs($entry['baseline'] - $rows[$lastIndex]['baseline']) > 1.25) {
+                $rows[] = [
+                    'baseline' => $entry['baseline'],
+                    'entries' => [$entry],
+                ];
+                continue;
+            }
+
+            $rows[$lastIndex]['entries'][] = $entry;
+            $rows[$lastIndex]['baseline'] = (
+                ($rows[$lastIndex]['baseline'] * (count($rows[$lastIndex]['entries']) - 1))
+                + $entry['baseline']
+            ) / count($rows[$lastIndex]['entries']);
+        }
+
+        $rebuiltBlocks = [];
+        $touchedBlockIndexes = [];
+        $syntheticBlockNum = $maxBlockNum + 1;
+        foreach ($rows as $row) {
+            $entries = $row['entries'];
+            usort($entries, static function (array $left, array $right): int {
+                if (abs($left['x'] - $right['x']) > 0.25) {
+                    return $left['x'] <=> $right['x'];
+                }
+                return ((int) $left['span_index']) <=> ((int) $right['span_index']);
+            });
+
+            $rowDotCount = 0;
+            $rowHasFormCode = false;
+            foreach ($entries as $entry) {
+                $text = trim((string) ($entry['span']['render_text'] ?? $entry['span']['text'] ?? ''));
+                if ($text === '.') {
+                    $rowDotCount++;
+                }
+                if (preg_match('/^\s*\.?\s*(?:W-[A-Z0-9-]+|[0-9]{4}\s+or\s+W-\d)/i', $text) === 1) {
+                    $rowHasFormCode = true;
+                }
+            }
+            if ($rowDotCount < 3 && !$rowHasFormCode) {
+                continue;
+            }
+
+            $entries = $this->synthesizeMissingAnnotationBaseLeaderDots($entries, (float) $row['baseline']);
+            $spans = array_values(array_map(static fn (array $entry): array => $entry['span'], $entries));
+            if (empty($spans)) {
+                continue;
+            }
+
+            $bboxes = array_values(array_filter(array_map(
+                static fn (array $entry): ?array => is_array($entry['bbox'] ?? null) && count($entry['bbox']) >= 4
+                    ? array_map('floatval', array_slice($entry['bbox'], 0, 4))
+                    : null,
+                $entries
+            )));
+            if (empty($bboxes)) {
+                continue;
+            }
+
+            $left = min(array_map(static fn (array $bbox): float => (float) $bbox[0], $bboxes));
+            $top = min(array_map(static fn (array $bbox): float => (float) $bbox[1], $bboxes));
+            $right = max(array_map(static fn (array $bbox): float => (float) $bbox[2], $bboxes));
+            $bottom = max(array_map(static fn (array $bbox): float => (float) $bbox[3], $bboxes));
+            if (($right - $left) <= 1 || ($bottom - $top) <= 0) {
+                continue;
+            }
+
+            $template = $entries[0]['block'];
+            foreach ($entries as $entry) {
+                $text = trim((string) ($entry['span']['render_text'] ?? $entry['span']['text'] ?? ''));
+                if ($text !== '.' && $text !== '') {
+                    $template = $entry['block'];
+                    break;
+                }
+            }
+
+            $lineText = $this->annotationBaseTextFromOrderedSpans($spans);
+            if ($lineText === '') {
+                continue;
+            }
+
+            $block = $template;
+            $block['block_num'] = (int) ($template['block_num'] ?? 0);
+            if (isset($rebuiltBlocks[$block['block_num']])) {
+                $block['block_num'] = $syntheticBlockNum++;
+            }
+            $block['text'] = $lineText;
+            $block['text_lines'] = [$lineText];
+            $block['line_bboxes'] = [[$left, $top, $right, $bottom]];
+            $block['left'] = $left;
+            $block['top'] = $top;
+            $block['width'] = max(0.0, $right - $left);
+            $block['height'] = max(0.0, $bottom - $top);
+            $block['bbox'] = [$left, $top, $right, $bottom];
+            $block['line_count'] = 1;
+            $block['spans'] = $spans;
+            $rebuiltBlocks[$block['block_num']] = $block;
+            foreach ($entries as $entry) {
+                if (isset($entry['block_index'])) {
+                    $touchedBlockIndexes[(int) $entry['block_index']] = true;
+                }
+            }
+        }
+
+        if (empty($rebuiltBlocks)) {
+            return $blocks;
+        }
+
+        $keptBlocks = [];
+        foreach ($originalBlocks as $blockIndex => $block) {
+            if (!isset($touchedBlockIndexes[$blockIndex])) {
+                $keptBlocks[] = $block;
+            }
+        }
+
+        return array_values(array_merge($keptBlocks, array_values($rebuiltBlocks)));
+    }
+
+    private function annotationBaseTextFromOrderedSpans(array $spans): string
+    {
+        $parts = [];
+        foreach ($spans as $span) {
+            if (!is_array($span)) {
+                continue;
+            }
+            $text = preg_replace('/[ \t]+/', ' ', (string) ($span['render_text'] ?? $span['text'] ?? ''));
+            if ($text === '') {
+                continue;
+            }
+            $parts[] = trim($text);
+        }
+
+        return trim(preg_replace('/[ \t]{2,}/', ' ', implode(' ', $parts)));
+    }
+
+    private function synthesizeMissingAnnotationBaseLeaderDots(array $entries, float $baseline): array
+    {
+        if (count($entries) < 2) {
+            return $entries;
+        }
+
+        $rightCodeIndex = null;
+        foreach ($entries as $index => $entry) {
+            $text = trim((string) ($entry['span']['render_text'] ?? $entry['span']['text'] ?? ''));
+            if (preg_match('/^\s*\.?\s*W-[A-Z0-9-]+/i', $text) === 1) {
+                $rightCodeIndex = $index;
+                break;
+            }
+        }
+
+        if ($rightCodeIndex === null || $rightCodeIndex === 0) {
+            return $entries;
+        }
+
+        $rightEntry = $entries[$rightCodeIndex];
+        $rightBBox = array_map('floatval', array_slice($rightEntry['bbox'], 0, 4));
+        $rightLeft = (float) ($rightBBox[0] ?? 0);
+        $leftEntry = null;
+        for ($index = $rightCodeIndex - 1; $index >= 0; $index--) {
+            $text = trim((string) ($entries[$index]['span']['render_text'] ?? $entries[$index]['span']['text'] ?? ''));
+            if ($text !== '.' && $text !== '') {
+                $leftEntry = $entries[$index];
+                break;
+            }
+        }
+
+        if (!$leftEntry) {
+            return $entries;
+        }
+
+        $leftBBox = array_map('floatval', array_slice($leftEntry['bbox'], 0, 4));
+        $leftRight = (float) ($leftBBox[2] ?? 0);
+        $gap = $rightLeft - $leftRight;
+        if ($gap < 54.0) {
+            return $entries;
+        }
+
+        $existingDots = 0;
+        foreach ($entries as $entry) {
+            $text = trim((string) ($entry['span']['render_text'] ?? $entry['span']['text'] ?? ''));
+            $bbox = array_map('floatval', array_slice($entry['bbox'], 0, 4));
+            $x = (float) ($bbox[0] ?? 0);
+            if ($text === '.' && $x > $leftRight && $x < $rightLeft) {
+                $existingDots++;
+            }
+        }
+
+        if ($existingDots >= 3) {
+            return $entries;
+        }
+
+        $templateSpan = $rightEntry['span'];
+        $fontSize = isset($templateSpan['font_size']) && is_numeric($templateSpan['font_size'])
+            ? (float) $templateSpan['font_size']
+            : (isset($templateSpan['size']) && is_numeric($templateSpan['size']) ? (float) $templateSpan['size'] : 8.0);
+        $dotWidth = max(1.2, min(3.0, $fontSize * 0.28));
+        $dotHeight = max(0.75, min(2.0, $fontSize * 0.12));
+        $step = 12.0;
+        $syntheticEntries = [];
+        for ($x = $leftRight + $step; $x < ($rightLeft - $step); $x += $step) {
+            $span = $templateSpan;
+            $span['text'] = '.';
+            $span['render_text'] = '.';
+            $span['bbox'] = [$x, $baseline - $dotHeight, $x + $dotWidth, $baseline];
+            $span['origin'] = [$x, $baseline];
+            $span['synthetic_leader_dot'] = true;
+            $syntheticEntries[] = [
+                'block' => $rightEntry['block'],
+                'block_index' => $rightEntry['block_index'],
+                'span_index' => -1,
+                'span' => $span,
+                'bbox' => $span['bbox'],
+                'baseline' => $baseline,
+                'x' => $x,
+            ];
+        }
+
+        if (empty($syntheticEntries)) {
+            return $entries;
+        }
+
+        $entries = array_merge($entries, $syntheticEntries);
+        usort($entries, static function (array $left, array $right): int {
+            if (abs($left['x'] - $right['x']) > 0.25) {
+                return $left['x'] <=> $right['x'];
+            }
+            return ((int) $left['span_index']) <=> ((int) $right['span_index']);
+        });
+
+        return $entries;
     }
 
     private function materializeFitzExtractionToPdfState(Document $document, $extractionRow): int
@@ -3136,10 +3753,14 @@ class DocumentController extends Controller
             $this->applyPdfStateOwnershipScope($deletedQuery, $ownership['user_id'], $ownership['admin_id'], $sessionId);
             $deletedQuery->get(['annotation_data'])
                 ->each(function (PdfState $record) use (&$mergedKeys) {
-                    if (!$this->isPromotedSuppressionRecord($record)) {
+                    $annotationData = is_array($record->annotation_data) ? $record->annotation_data : [];
+                    if (
+                        !$this->isPromotedSuppressionRecord($record)
+                        && empty($annotationData['promotedFromExtraction'])
+                    ) {
                         return;
                     }
-                    $sourceKey = trim((string) data_get($record->annotation_data, 'promotedSourceKey', ''));
+                    $sourceKey = trim((string) data_get($annotationData, 'promotedSourceKey', ''));
                     if ($sourceKey !== '') {
                         $mergedKeys[$sourceKey] = true;
                     }
@@ -4865,8 +5486,16 @@ class DocumentController extends Controller
         ]);
     }
 
-    public function edit(Document $document)
+    public function edit(Request $request, Document $document)
     {
+        $mimeType = strtolower((string) ($document->mime_type ?? 'application/pdf'));
+        if (!$request->boolean('legacy') && !str_starts_with($mimeType, 'image/')) {
+            return redirect()->route('documents.editNew', [
+                'document' => $document,
+                'pdfjs' => 1,
+            ]);
+        }
+
         return view('documents.edit', [
             'document' => $document,
             'activeTab' => 'pdf-editor',
@@ -4875,10 +5504,358 @@ class DocumentController extends Controller
         ]);
     }
 
-    public function editNew(Document $document)
+    public function editNew(\Illuminate\Http\Request $request, Document $document)
     {
+        // Staged migration: ?pdfjs=1 mounts the official pdf.js PDFViewer +
+        // editor stack (canvasWrapper / textLayer / annotationLayer /
+        // annotationEditorLayer) against the redacted clean PDF. Default
+        // continues to render the existing custom overlay editor.
+        if ($request->query('pdfjs') === '1') {
+            return view('documents.edit-new-pdfjs', [
+                'document' => $document,
+            ]);
+        }
         return view('documents.edit-new', [
             'document' => $document,
+        ]);
+    }
+
+    public function editPdfjs(Document $document)
+    {
+        return redirect()->route('documents.editNew', [
+            'document' => $document,
+            'pdfjs' => 1,
+        ]);
+    }
+
+    public function editPdfjsRewriteTj(Request $request, Document $document)
+    {
+        $isMultipart = $request->isJson() === false && $request->hasFile('pdf');
+        if ($isMultipart) {
+            $editsRaw = $request->input('edits');
+            if (is_string($editsRaw)) {
+                $editsRaw = json_decode($editsRaw, true);
+            }
+            if (!is_array($editsRaw) || count($editsRaw) === 0) {
+                return response()->json(['error' => 'edits[] missing or invalid'], 422);
+            }
+            $request->merge(['edits' => $editsRaw]);
+        }
+
+        $validated = $request->validate([
+            'edits' => ['required', 'array', 'min:1'],
+            'edits.*.page' => ['required', 'integer', 'min:0'],
+            'edits.*.match_xref' => ['nullable', 'integer'],
+            'edits.*.original_text' => ['required', 'string'],
+            'edits.*.new_text' => ['required', 'string'],
+            'edits.*.occurrence' => ['nullable', 'integer', 'min:0'],
+        ]);
+
+        $tmpIn = tempnam(sys_get_temp_dir(), 'editpdfjs_in_') . '.pdf';
+        if ($isMultipart) {
+            $upload = $request->file('pdf');
+            if (!$upload->isValid()) {
+                @unlink($tmpIn);
+                return response()->json(['error' => 'Invalid uploaded PDF'], 422);
+            }
+            move_uploaded_file($upload->getRealPath(), $tmpIn);
+        } else {
+            if (!$document->original_backup_path || !Storage::exists($document->original_backup_path)) {
+                @unlink($tmpIn);
+                return response()->json(['error' => 'Original PDF missing'], 404);
+            }
+            copy(Storage::path($document->original_backup_path), $tmpIn);
+        }
+        $tmpOut = tempnam(sys_get_temp_dir(), 'editpdfjs_out_') . '.pdf';
+        $editsJsonPath = tempnam(sys_get_temp_dir(), 'editpdfjs_edits_') . '.json';
+        file_put_contents($editsJsonPath, json_encode($validated['edits']));
+
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('pikepdf');
+        $script = base_path('python/pdf-editor/rewrite_tj_inplace.py');
+
+        $cmd = sprintf(
+            '%s %s --in %s --out %s --edits %s 2>&1',
+            escapeshellcmd($pythonBinary),
+            escapeshellarg($script),
+            escapeshellarg($tmpIn),
+            escapeshellarg($tmpOut),
+            escapeshellarg($editsJsonPath)
+        );
+        exec($cmd, $output, $exitCode);
+        @unlink($tmpIn);
+        @unlink($editsJsonPath);
+
+        if ($exitCode !== 0 || !file_exists($tmpOut)) {
+            @unlink($tmpOut);
+            return response()->json([
+                'error' => 'Rewrite failed',
+                'stdout' => implode("\n", $output),
+                'exit' => $exitCode,
+            ], 500);
+        }
+
+        $bytes = file_get_contents($tmpOut);
+        @unlink($tmpOut);
+        return response($bytes, 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="edited.pdf"',
+        ]);
+    }
+
+    public function editPdfjsRedactSourceText(Request $request, Document $document)
+    {
+        $isMultipart = $request->isJson() === false && $request->hasFile('pdf');
+        if ($isMultipart) {
+            $editsRaw = $request->input('edits');
+            if (is_string($editsRaw)) {
+                $editsRaw = json_decode($editsRaw, true);
+            }
+            if (!is_array($editsRaw) || count($editsRaw) === 0) {
+                return response()->json(['error' => 'edits[] missing or invalid'], 422);
+            }
+            $request->merge(['edits' => $editsRaw]);
+        }
+
+        $validated = $request->validate([
+            'edits' => ['required', 'array', 'min:1'],
+            'edits.*.page' => ['required', 'integer', 'min:0'],
+            'edits.*.original_text' => ['nullable', 'string'],
+            'edits.*.occurrence' => ['nullable', 'integer', 'min:0'],
+            'edits.*.source_bbox' => ['nullable', 'array'],
+            'edits.*.source_bbox.x' => ['required_with:edits.*.source_bbox', 'numeric'],
+            'edits.*.source_bbox.y' => ['required_with:edits.*.source_bbox', 'numeric'],
+            'edits.*.source_bbox.w' => ['required_with:edits.*.source_bbox', 'numeric'],
+            'edits.*.source_bbox.h' => ['required_with:edits.*.source_bbox', 'numeric'],
+        ]);
+
+        $tmpIn = tempnam(sys_get_temp_dir(), 'editpdfjs_redactin_') . '.pdf';
+        if ($isMultipart) {
+            $upload = $request->file('pdf');
+            if (!$upload->isValid()) {
+                @unlink($tmpIn);
+                return response()->json(['error' => 'Invalid uploaded PDF'], 422);
+            }
+            move_uploaded_file($upload->getRealPath(), $tmpIn);
+        } else {
+            if (!$document->original_backup_path || !Storage::exists($document->original_backup_path)) {
+                @unlink($tmpIn);
+                return response()->json(['error' => 'Original PDF missing'], 404);
+            }
+            copy(Storage::path($document->original_backup_path), $tmpIn);
+        }
+
+        $tmpOut = tempnam(sys_get_temp_dir(), 'editpdfjs_redactout_') . '.pdf';
+        $editsJsonPath = tempnam(sys_get_temp_dir(), 'editpdfjs_redact_edits_') . '.json';
+        file_put_contents($editsJsonPath, json_encode($validated['edits']));
+
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+        $script = base_path('python/pdf-editor/redact_pdfjs_source_text.py');
+
+        $cmd = sprintf(
+            '%s %s --in %s --out %s --edits %s 2>&1',
+            escapeshellcmd($pythonBinary),
+            escapeshellarg($script),
+            escapeshellarg($tmpIn),
+            escapeshellarg($tmpOut),
+            escapeshellarg($editsJsonPath)
+        );
+        exec($cmd, $output, $exitCode);
+        @unlink($tmpIn);
+        @unlink($editsJsonPath);
+
+        if ($exitCode !== 0 || !file_exists($tmpOut)) {
+            @unlink($tmpOut);
+            return response()->json([
+                'error' => 'Source text redaction failed',
+                'stdout' => implode("\n", $output),
+                'exit' => $exitCode,
+            ], 500);
+        }
+
+        $bytes = file_get_contents($tmpOut);
+        @unlink($tmpOut);
+        return response($bytes, 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="source-redacted.pdf"',
+        ]);
+    }
+
+    public function editPdfjsMoveTj(Request $request, Document $document)
+    {
+        $isMultipart = $request->isJson() === false && $request->hasFile('pdf');
+        if ($isMultipart) {
+            $movesRaw = $request->input('moves');
+            if (is_string($movesRaw)) {
+                $movesRaw = json_decode($movesRaw, true);
+            }
+            if (!is_array($movesRaw) || count($movesRaw) === 0) {
+                return response()->json(['error' => 'moves[] missing or invalid'], 422);
+            }
+            $request->merge(['moves' => $movesRaw]);
+        }
+
+        $validated = $request->validate([
+            'moves' => ['required', 'array', 'min:1'],
+            'moves.*.page' => ['required', 'integer', 'min:0'],
+            'moves.*.original_text' => ['nullable', 'string'],
+            'moves.*.occurrence' => ['nullable', 'integer', 'min:0'],
+            'moves.*.source_bbox' => ['nullable', 'array'],
+            'moves.*.source_bbox.x' => ['required_with:moves.*.source_bbox', 'numeric'],
+            'moves.*.source_bbox.y' => ['required_with:moves.*.source_bbox', 'numeric'],
+            'moves.*.source_bbox.w' => ['required_with:moves.*.source_bbox', 'numeric'],
+            'moves.*.source_bbox.h' => ['required_with:moves.*.source_bbox', 'numeric'],
+            'moves.*.lock_rects' => ['nullable', 'array'],
+            'moves.*.lock_rects.*' => ['array'],
+            'moves.*.lock_rects.*.x' => ['required', 'numeric'],
+            'moves.*.lock_rects.*.y' => ['required', 'numeric'],
+            'moves.*.lock_rects.*.w' => ['required', 'numeric'],
+            'moves.*.lock_rects.*.h' => ['required', 'numeric'],
+            'moves.*.dx_pts' => ['required', 'numeric'],
+            'moves.*.dy_pts' => ['required', 'numeric'],
+        ]);
+
+        $tmpIn = tempnam(sys_get_temp_dir(), 'editpdfjs_movein_') . '.pdf';
+        if ($isMultipart) {
+            // Client uploaded the *current* PDF state; subsequent moves
+            // must operate on the just-rewritten bytes, not the pristine
+            // original_backup_path, otherwise the source_bbox derived
+            // from the moved render won't match anything.
+            $upload = $request->file('pdf');
+            if (!$upload->isValid()) {
+                @unlink($tmpIn);
+                return response()->json(['error' => 'Invalid uploaded PDF'], 422);
+            }
+            move_uploaded_file($upload->getRealPath(), $tmpIn);
+        } else {
+            if (!$document->original_backup_path || !Storage::exists($document->original_backup_path)) {
+                @unlink($tmpIn);
+                return response()->json(['error' => 'Original PDF missing'], 404);
+            }
+            copy(Storage::path($document->original_backup_path), $tmpIn);
+        }
+
+        $tmpOut = tempnam(sys_get_temp_dir(), 'editpdfjs_moveout_') . '.pdf';
+        $movesJsonPath = tempnam(sys_get_temp_dir(), 'editpdfjs_moves_') . '.json';
+        file_put_contents($movesJsonPath, json_encode($validated['moves']));
+
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('pikepdf');
+        $script = base_path('python/pdf-editor/move_text_inplace.py');
+
+        $cmd = sprintf(
+            '%s %s --in %s --out %s --moves %s 2>&1',
+            escapeshellcmd($pythonBinary),
+            escapeshellarg($script),
+            escapeshellarg($tmpIn),
+            escapeshellarg($tmpOut),
+            escapeshellarg($movesJsonPath)
+        );
+        exec($cmd, $output, $exitCode);
+        @unlink($tmpIn);
+        @unlink($movesJsonPath);
+
+        if ($exitCode !== 0 || !file_exists($tmpOut)) {
+            @unlink($tmpOut);
+            return response()->json([
+                'error' => 'Move failed',
+                'stdout' => implode("\n", $output),
+                'exit' => $exitCode,
+            ], 500);
+        }
+
+        $bytes = file_get_contents($tmpOut);
+        @unlink($tmpOut);
+        return response($bytes, 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="moved.pdf"',
+        ]);
+    }
+
+    public function editPdfjsReflowText(Request $request, Document $document)
+    {
+        $isMultipart = $request->isJson() === false && $request->hasFile('pdf');
+        if ($isMultipart) {
+            $raw = $request->input('reflows');
+            if (is_string($raw)) $raw = json_decode($raw, true);
+            if (!is_array($raw) || count($raw) === 0) {
+                return response()->json(['error' => 'reflows[] missing or invalid'], 422);
+            }
+            $request->merge(['reflows' => $raw]);
+        }
+
+        $validated = $request->validate([
+            'reflows' => ['required', 'array', 'min:1'],
+            'reflows.*.page' => ['required', 'integer', 'min:0'],
+            'reflows.*.original_text' => ['nullable', 'string'],
+            'reflows.*.source_bbox' => ['required', 'array'],
+            'reflows.*.source_bbox.x' => ['required', 'numeric'],
+            'reflows.*.source_bbox.y' => ['required', 'numeric'],
+            'reflows.*.source_bbox.w' => ['required', 'numeric'],
+            'reflows.*.source_bbox.h' => ['required', 'numeric'],
+            'reflows.*.new_bbox' => ['required', 'array'],
+            'reflows.*.new_bbox.x' => ['required', 'numeric'],
+            'reflows.*.new_bbox.y' => ['required', 'numeric'],
+            'reflows.*.new_bbox.w' => ['required', 'numeric'],
+            'reflows.*.new_bbox.h' => ['required', 'numeric'],
+            'reflows.*.lock_rects' => ['nullable', 'array'],
+            'reflows.*.lock_rects.*' => ['array'],
+            'reflows.*.lock_rects.*.x' => ['required', 'numeric'],
+            'reflows.*.lock_rects.*.y' => ['required', 'numeric'],
+            'reflows.*.lock_rects.*.w' => ['required', 'numeric'],
+            'reflows.*.lock_rects.*.h' => ['required', 'numeric'],
+            'reflows.*.lines' => ['nullable', 'array'],
+            'reflows.*.lines.*' => ['string'],
+            'reflows.*.font_size_pts' => ['nullable', 'numeric'],
+        ]);
+
+        $tmpIn = tempnam(sys_get_temp_dir(), 'editpdfjs_reflowin_') . '.pdf';
+        if ($isMultipart) {
+            $upload = $request->file('pdf');
+            if (!$upload->isValid()) {
+                @unlink($tmpIn);
+                return response()->json(['error' => 'Invalid uploaded PDF'], 422);
+            }
+            move_uploaded_file($upload->getRealPath(), $tmpIn);
+        } else {
+            if (!$document->original_backup_path || !Storage::exists($document->original_backup_path)) {
+                @unlink($tmpIn);
+                return response()->json(['error' => 'Original PDF missing'], 404);
+            }
+            copy(Storage::path($document->original_backup_path), $tmpIn);
+        }
+
+        $tmpOut = tempnam(sys_get_temp_dir(), 'editpdfjs_reflowout_') . '.pdf';
+        $jsonPath = tempnam(sys_get_temp_dir(), 'editpdfjs_reflows_') . '.json';
+        file_put_contents($jsonPath, json_encode($validated['reflows']));
+
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('pikepdf');
+        $script = base_path('python/pdf-editor/move_text_inplace.py');
+
+        $cmd = sprintf(
+            '%s %s --in %s --out %s --reflows %s 2>&1',
+            escapeshellcmd($pythonBinary),
+            escapeshellarg($script),
+            escapeshellarg($tmpIn),
+            escapeshellarg($tmpOut),
+            escapeshellarg($jsonPath)
+        );
+        exec($cmd, $output, $exitCode);
+        @unlink($tmpIn);
+        @unlink($jsonPath);
+
+        if ($exitCode !== 0 || !file_exists($tmpOut)) {
+            @unlink($tmpOut);
+            return response()->json([
+                'error' => 'Reflow failed',
+                'stdout' => implode("\n", $output),
+                'exit' => $exitCode,
+            ], 500);
+        }
+
+        $bytes = file_get_contents($tmpOut);
+        @unlink($tmpOut);
+        return response($bytes, 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="reflowed.pdf"',
         ]);
     }
 
@@ -6612,6 +7589,114 @@ class DocumentController extends Controller
         return response()->file($cleanPath, [
             'Content-Type' => 'application/pdf',
             'Content-Disposition' => 'inline; filename="clean.pdf"',
+            'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+            'Pragma' => 'no-cache',
+            'Expires' => '0',
+        ]);
+    }
+
+    /**
+     * Bake all unedited promoted annotations into the clean base PDF using the
+     * exact writer + normalization pipeline that /admin/pdf-comparison's
+     * "Edit-new snapshot" panel uses. /edit-new loads this as the base so the
+     * canvas does not need to redraw promoted source spans (eliminating the
+     * overprint/duplicate-text class of bugs and guaranteeing pixel-equivalence
+     * with the comparison snapshot).
+     */
+    public function bakedPdf(\Illuminate\Http\Request $request, Document $document)
+    {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
+        $cleanPath = $this->ensureCleanPdfPath(
+            $document,
+            $pythonBinary,
+            $this->resolveEditorEmail(),
+            session()->getId()
+        );
+        if (!$cleanPath || !file_exists($cleanPath)) {
+            return response()->json(['error' => 'Clean PDF not found'], 404);
+        }
+
+        $sourcePdfPath = Storage::path($document->path);
+        if ($document->original_backup_path && Storage::exists($document->original_backup_path)) {
+            $candidate = Storage::path($document->original_backup_path);
+            if (is_file($candidate)) {
+                $sourcePdfPath = $candidate;
+            }
+        }
+        if (!is_file($sourcePdfPath)) {
+            return response()->json(['error' => 'Source PDF not found'], 404);
+        }
+
+        $bakedPath = Storage::path('temp/baked_' . $document->id . '.pdf');
+        $bakedDir = dirname($bakedPath);
+        if (!is_dir($bakedDir)) {
+            @mkdir($bakedDir, 0775, true);
+        }
+
+        // Cache: rebuild whenever clean PDF or extraction is newer than baked.
+        $cleanMtime = (int) @filemtime($cleanPath);
+        $latestExtractionAt = (int) optional(
+            \App\Models\PdfExtractionFitz::where('document_id', $document->id)
+                ->orderByDesc('updated_at')
+                ->value('updated_at')
+        )?->timestamp;
+        $latestStateAt = (int) optional(
+            \App\Models\PdfState::where('document_id', $document->id)
+                ->orderByDesc('updated_at')
+                ->value('updated_at')
+        )?->timestamp;
+        $needsRebuild = !is_file($bakedPath)
+            || @filemtime($bakedPath) < max($cleanMtime, $latestExtractionAt, $latestStateAt);
+
+        if ($needsRebuild) {
+            $annotations = app(PdfTestController::class)
+                ->buildEditNewComparisonAnnotations($request, $document, $sourcePdfPath);
+
+            $tempDir = storage_path('app/temp');
+            if (!is_dir($tempDir)) {
+                @mkdir($tempDir, 0775, true);
+            }
+            $annotationsFile = $tempDir . '/baked_anns_' . $document->id . '_' . Str::uuid() . '.json';
+            $annotationsJson = json_encode($annotations, JSON_INVALID_UTF8_SUBSTITUTE);
+            if ($annotationsJson === false || @file_put_contents($annotationsFile, $annotationsJson) === false) {
+                return response()->json(['error' => 'Failed to prepare annotations'], 500);
+            }
+
+            $script = base_path('python/pdf-editor/bake_edit_new_base.py');
+            $generatedPath = $tempDir . '/baked_pdf_' . $document->id . '_' . Str::uuid() . '.pdf';
+            $command = sprintf(
+                '%s %s %s %s %s %s 2>&1',
+                escapeshellarg($pythonBinary),
+                escapeshellarg($script),
+                escapeshellarg($cleanPath),
+                escapeshellarg($sourcePdfPath),
+                escapeshellarg($annotationsFile),
+                escapeshellarg($generatedPath)
+            );
+            $output = [];
+            $exitCode = 0;
+            exec($command, $output, $exitCode);
+            @unlink($annotationsFile);
+
+            if ($exitCode !== 0 || !is_file($generatedPath)) {
+                \Log::warning('Failed to bake edit-new base PDF', [
+                    'document_id' => $document->id,
+                    'exit_code' => $exitCode,
+                    'output' => implode("\n", $output),
+                ]);
+                return response()->json(['error' => 'Failed to bake PDF'], 500);
+            }
+
+            if (!@rename($generatedPath, $bakedPath)) {
+                @copy($generatedPath, $bakedPath);
+                @unlink($generatedPath);
+            }
+        }
+
+        return response()->file($bakedPath, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="baked.pdf"',
             'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
             'Pragma' => 'no-cache',
             'Expires' => '0',
@@ -8668,20 +9753,64 @@ class DocumentController extends Controller
         ]);
 
         $sessionId = trim((string) $validated['session_id']);
-        $ownership = $this->resolvePdfStateOwnership($document);
-        $annotationIds = array_values(array_filter(array_map(
-            static fn ($v) => is_string($v) ? trim($v) : '',
-            $validated['annotation_ids']
-        )));
-        $deletedPromotedSourceKeys = array_values(array_filter(array_map(
-            static fn ($v) => is_string($v) ? trim($v) : '',
-            is_array($validated['deleted_promoted_source_keys'] ?? null)
-                ? $validated['deleted_promoted_source_keys']
-                : []
-        )));
-        $deletedPromotedSourceKeyLookup = array_fill_keys($deletedPromotedSourceKeys, true);
+        $annotationIds = is_array($validated['annotation_ids']) ? $validated['annotation_ids'] : [];
+        $explicitKeys = is_array($validated['deleted_promoted_source_keys'] ?? null)
+            ? $validated['deleted_promoted_source_keys']
+            : [];
 
-        foreach ($annotationIds as $annotationId) {
+        $deletedPromotedSourceKeys = $this->applyAnnotationDeletions(
+            $document,
+            $sessionId,
+            $annotationIds,
+            $explicitKeys
+        );
+
+        foreach ($deletedPromotedSourceKeys as $sourceKey) {
+            $this->ensurePromotedSuppressionRecordForSession($document, $sessionId, $sourceKey);
+        }
+
+        return response()->json([
+            'success' => true,
+            'deleted' => count(array_filter($annotationIds, 'is_string')),
+            'deleted_promoted_source_keys' => $deletedPromotedSourceKeys,
+        ]);
+    }
+
+    /**
+     * Mark PdfState rows as deleted for the given annotation ids, plus bulk-mark
+     * any rows whose promotedSourceKey matches the explicit list (or is auto-
+     * discovered from a deleted promotedFromExtraction annotation). Returns the
+     * sorted, unique list of promoted source keys that were affected.
+     *
+     * Suppression-record bookkeeping is the caller's responsibility (either via
+     * ensurePromotedSuppressionRecordForSession or the
+     * syncDeletedPromotedSourceKeysForSession path used by saveAnnotationState).
+     */
+    private function applyAnnotationDeletions(
+        Document $document,
+        string $sessionId,
+        array $annotationIds,
+        array $explicitDeletedPromotedSourceKeys
+    ): array {
+        $ownership = $this->resolvePdfStateOwnership($document);
+
+        $normalizedAnnotationIds = array_values(array_filter(array_map(
+            static fn ($v) => is_string($v) ? trim($v) : '',
+            $annotationIds
+        )));
+
+        $deletedPromotedSourceKeyLookup = [];
+        foreach ($explicitDeletedPromotedSourceKeys as $key) {
+            if (!is_string($key)) {
+                continue;
+            }
+            $normalized = trim($key);
+            if ($normalized !== '') {
+                $deletedPromotedSourceKeyLookup[$normalized] = true;
+            }
+        }
+
+        foreach ($normalizedAnnotationIds as $annotationId) {
             $recordQuery = PdfState::where('document_id', $document->id)
                 ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.id')) = ?", [$annotationId])
                 ->where('state', '!=', 'extracted');
@@ -8716,15 +9845,9 @@ class DocumentController extends Controller
                 ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.promotedSourceKey')) = ?", [$sourceKey]);
             $this->applyPdfStateOwnershipScope($promotedDeleteQuery, $ownership['user_id'], $ownership['admin_id'], $sessionId);
             $promotedDeleteQuery->update(['state' => 'deleted']);
-
-            $this->ensurePromotedSuppressionRecordForSession($document, $sessionId, $sourceKey);
         }
 
-        return response()->json([
-            'success' => true,
-            'deleted' => count($annotationIds),
-            'deleted_promoted_source_keys' => $deletedPromotedSourceKeys,
-        ]);
+        return $deletedPromotedSourceKeys;
     }
 
     /**
@@ -8741,6 +9864,8 @@ class DocumentController extends Controller
             'session_annotations.*.type' => 'required_with:session_annotations|string',
             'session_annotations.*.pageIndex' => 'required_with:session_annotations',
             'acro_form_entries' => 'nullable|array',
+            'deleted_annotation_ids' => 'nullable|array',
+            'deleted_annotation_ids.*' => 'string',
             'deleted_promoted_source_keys' => 'nullable|array',
             'deleted_promoted_source_keys.*' => 'string',
             'session_id' => 'nullable|string',
@@ -8768,12 +9893,32 @@ class DocumentController extends Controller
         $sessionId = is_string($validated['session_id'] ?? null)
             ? trim((string) $validated['session_id'])
             : '';
+
+        // Apply pending deletions (annotation ids + promoted source keys) inline
+        // so the frontend only needs a single round-trip to persist a save that
+        // also removed annotations. The helper performs the same PdfState marking
+        // that the dedicated deleteAnnotations endpoint does; suppression-record
+        // bookkeeping is handled below by syncDeletedPromotedSourceKeysForSession.
+        $explicitDeletedKeys = is_array($validated['deleted_promoted_source_keys'] ?? null)
+            ? array_values(array_filter($validated['deleted_promoted_source_keys'], 'is_string'))
+            : [];
+        $deletedAnnotationIds = is_array($validated['deleted_annotation_ids'] ?? null)
+            ? $validated['deleted_annotation_ids']
+            : [];
+        $combinedDeletedKeys = $explicitDeletedKeys;
+        if (!empty($deletedAnnotationIds) || !empty($explicitDeletedKeys)) {
+            $combinedDeletedKeys = $this->applyAnnotationDeletions(
+                $document,
+                $sessionId,
+                $deletedAnnotationIds,
+                $explicitDeletedKeys
+            );
+        }
+
         $deletedPromotedSourceKeys = $this->mergeDeletedPromotedSourceKeys(
             $document,
             $sessionId,
-            is_array($validated['deleted_promoted_source_keys'] ?? null)
-                ? array_values(array_filter($validated['deleted_promoted_source_keys'], 'is_string'))
-                : [],
+            $combinedDeletedKeys,
             $sessionAnnotationsPayload
         );
 
@@ -8832,6 +9977,7 @@ class DocumentController extends Controller
             'use_clean_pdf' => 'nullable|boolean',
             'use_original_pdf' => 'nullable|boolean',
             'use_exact_download_path' => 'nullable|boolean',
+            'use_pdfjs_visible_export' => 'nullable|boolean',
             'session_id' => 'nullable|string',
         ]);
 
@@ -8898,6 +10044,7 @@ class DocumentController extends Controller
         $useCleanPdf = $request->boolean('use_clean_pdf');
         $useOriginalPdf = $request->boolean('use_original_pdf');
         $useExactDownloadPath = $request->boolean('use_exact_download_path');
+        $usePdfjsVisibleExport = $request->boolean('use_pdfjs_visible_export');
         $editorEmail = $this->resolveEditorEmail();
         $originalSourcePdfPath = $pdfPath;
         if ($document->original_backup_path && Storage::exists($document->original_backup_path)) {
@@ -8912,7 +10059,7 @@ class DocumentController extends Controller
         // be used to preserve untouched pages because their text layer is stripped.
         $sourcePdfPath = $pdfPath;
         $preservePdfPath = $pdfPath;
-        $useExactCleanRebuild = $useExactDownloadPath && !empty($sessionAnnotationsPayload);
+        $useExactCleanRebuild = $useExactDownloadPath && !$usePdfjsVisibleExport && !empty($sessionAnnotationsPayload);
         if ($useExactCleanRebuild) {
             $cleanPath = $this->ensureCleanPdfPath(
                 $document,
@@ -8924,6 +10071,9 @@ class DocumentController extends Controller
                 return response()->json(['success' => false, 'message' => 'Clean PDF source not found.'], 404);
             }
             $sourcePdfPath = $cleanPath;
+            $preservePdfPath = $originalSourcePdfPath;
+        } elseif ($usePdfjsVisibleExport) {
+            $sourcePdfPath = $originalSourcePdfPath;
             $preservePdfPath = $originalSourcePdfPath;
         } elseif ($useOriginalPdf && $document->original_backup_path && Storage::exists($document->original_backup_path)) {
             $originalPath = Storage::path($document->original_backup_path);
@@ -8954,6 +10104,14 @@ class DocumentController extends Controller
             // source PDF for unchanged promoted extraction blocks.
             $redrawPageIndices = [];
             $renderAnnotationsPayload = [];
+        } elseif ($usePdfjsVisibleExport) {
+            // The PDF.js viewer renders the original PDF and only paints custom
+            // source masks / overlay annotations on top. Export must follow that
+            // same visible model, not the clean rebuild that re-stamps every
+            // promoted extraction block.
+            $annotationsPayload = $this->filterAnnotationsForPdfjsVisibleExport($annotationsPayload);
+            $redrawPageIndices = [];
+            $renderAnnotationsPayload = [];
         }
 
         $tempDir = storage_path('app/temp');
@@ -8971,6 +10129,19 @@ class DocumentController extends Controller
         $annotationsFile = $tempDir . '/download_ann_' . $document->id . '_' . uniqid('', true) . '.json';
         $pythonAnnotationsPayload = $useExactCleanRebuild ? $sessionAnnotationsPayload : $annotationsPayload;
         $preparedAnnotationsForPython = $this->prepareAnnotationsForPython($pythonAnnotationsPayload);
+        // Stamp __documentId on every annotation so apply_annotations_direct_new.py
+        // can load this document's embedded-font metadata (temp/embedded_fonts_{id}.json)
+        // and resolve `ann.fontFamily` like "DejaVuSans" to the actual embedded TTF.
+        // Without this, resolve_embedded_font_entry() returns None and the export
+        // falls back to FONT_FILE_VARIANTS["Helvetica"] (Arimo), so the saved PDF
+        // does not match the editor display which loads PDF_<cleanName> via @font-face.
+        $preparedAnnotationsForPython = array_map(static function ($annotation) use ($document) {
+            if (!is_array($annotation)) {
+                return $annotation;
+            }
+            $annotation['__documentId'] = $document->id;
+            return $annotation;
+        }, $preparedAnnotationsForPython);
         if ($useExactCleanRebuild) {
             $preparedAnnotationsForPython = array_map(static function ($annotation) use ($preservePdfPath) {
                 if (!is_array($annotation)) {
@@ -8987,7 +10158,7 @@ class DocumentController extends Controller
         }
 
         $script = base_path(
-            $useExactDownloadPath
+            ($useExactDownloadPath || $usePdfjsVisibleExport)
                 ? 'python/pdf-editor/apply_annotations_direct_new.py'
                 : 'python/pdf-editor/apply_annotations_direct.py'
         );

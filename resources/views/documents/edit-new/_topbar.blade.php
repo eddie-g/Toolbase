@@ -1,0 +1,42 @@
+<div class="top-bar">
+    <div class="doc-name-wrap" id="doc-name-wrap"
+         data-rename-url="{{ route('documents.rename', $document) }}"
+         data-original-name="{{ $document->original_name }}">
+        <span id="doc-name-display"
+              class="doc-name-display"
+              role="button"
+              tabindex="0"
+              title="Click to rename document">{{ $document->original_name }}</span>
+        <input id="doc-name-input"
+               class="doc-name-input"
+               type="text"
+               maxlength="240"
+               style="display:none;"
+               aria-label="Document name"
+               value="{{ $document->original_name }}" />
+        <button id="doc-name-edit-btn" type="button" class="doc-name-edit-btn" title="Rename document" aria-label="Rename document">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 20h9"/>
+                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>
+            </svg>
+        </button>
+    </div>
+    <span id="save-status" class="save-status">Saved</span>
+    <button id="undo-btn" type="button" class="history-btn" title="Undo (Ctrl+Z)" disabled>&#8592;</button>
+    <button id="redo-btn" type="button" class="history-btn" title="Redo (Ctrl+Y)" disabled>&#8594;</button>
+    <button id="edit-mode-toggle" type="button" class="edit-mode-toggle" aria-pressed="false" title="Turn edit mode on to show editable text boxes">
+        <span class="edit-mode-toggle__icon" aria-hidden="true">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 20h9"/>
+                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>
+            </svg>
+        </span>
+            <span id="edit-mode-toggle-label" class="edit-mode-toggle__label">Edit Mode OFF</span>
+    </button>
+    <button id="add-text-btn" type="button" class="history-btn add-text-btn" title="Add Text — click or drag on the page to place a new text block">Add Text</button>
+    <button id="add-shape-btn" type="button" class="history-btn add-shape-btn" title="Shapes — choose a shape and drag on the page to draw it">Shapes</button>
+    <button id="save-btn" type="button" class="save-btn">Save</button>
+    <button id="download-pdf-btn" type="button" class="download-btn">Download PDF</button>
+    <a href="{{ route('documents.edit', $document) }}">← Edit</a>
+    <a href="{{ route('documents.index') }}">All documents</a>
+</div>

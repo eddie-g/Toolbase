@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 
 import importlib.util
+import io
 import pathlib
 import sys
 import unittest
 
 import fitz
+from PIL import Image
 
 
 MODULE_PATH = pathlib.Path(__file__).resolve().parents[1] / "pdf-editor" / "apply_annotations_direct_new.py"
@@ -53,6 +55,8 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
             self.draw_rect_calls = []
             self.insert_text_calls = []
             self.draw_line_calls = []
+            self.add_redact_annot_calls = []
+            self.apply_redactions_calls = []
             self.shape_draw_rect_calls = []
             self.shape_draw_line_calls = []
             self.shape_draw_polyline_calls = []
@@ -67,6 +71,12 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
 
         def draw_line(self, start, end, **kwargs):
             self.draw_line_calls.append((fitz.Point(start), fitz.Point(end), kwargs))
+
+        def add_redact_annot(self, rect, **kwargs):
+            self.add_redact_annot_calls.append((fitz.Rect(rect), kwargs))
+
+        def apply_redactions(self, **kwargs):
+            self.apply_redactions_calls.append(kwargs)
 
         def new_shape(self):
             return ApplyAnnotationsDirectTests.FakeShape(self)
@@ -170,6 +180,40 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         self.assertEqual(len(page.draw_rect_calls), 0)
         self.assertEqual(len(page.shape_draw_rect_calls), 0)
 
+    def test_promoted_source_erase_uses_redaction_when_background_is_transparent(self):
+        annotation = {
+            "promotedFromExtraction": True,
+            "promotedDirty": True,
+            "backgroundColor": "transparent",
+        }
+        page = self.FakePage()
+        current_rect = fitz.Rect(100, 100, 180, 124)
+        lines = [{"rect": fitz.Rect(110, 102, 170, 118)}]
+
+        self.module.erase_promoted_source_text_region(page, annotation, current_rect, lines)
+
+        self.assertEqual(len(page.draw_rect_calls), 0)
+        self.assertEqual(len(page.shape_draw_rect_calls), 0)
+        self.assertEqual(len(page.add_redact_annot_calls), 1)
+        self.assertEqual(page.add_redact_annot_calls[0][1].get("fill"), None)
+        self.assertGreaterEqual(len(page.apply_redactions_calls), 1)
+
+    def test_promoted_source_erase_draws_fill_when_custom_background_requested(self):
+        annotation = {
+            "promotedFromExtraction": True,
+            "promotedDirty": True,
+            "backgroundColor": "#d9d9d9",
+        }
+        page = self.FakePage()
+        current_rect = fitz.Rect(100, 100, 180, 124)
+        lines = [{"rect": fitz.Rect(110, 102, 170, 118)}]
+
+        self.module.erase_promoted_source_text_region(page, annotation, current_rect, lines)
+
+        self.assertEqual(len(page.add_redact_annot_calls), 0)
+        self.assertEqual(len(page.apply_redactions_calls), 0)
+        self.assertEqual(len(page.shape_draw_rect_calls), 1)
+
     def test_draw_text_without_rect_uses_editor_left_padding_for_visible_text(self):
         annotation = {
             "text": "This is the world",
@@ -188,6 +232,70 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         self.assertEqual(len(page.insert_text_calls), 1)
         insert_point, _, _ = page.insert_text_calls[0]
         self.assertAlmostEqual(insert_point.x, annotation["pdfX"] + 6.0, places=3)
+
+    def test_normalize_direct_draw_white_image_bytes_forces_visible_pixels_to_white(self):
+        image = Image.new("RGBA", (3, 1))
+        image.putdata([
+            (64, 64, 64, 48),
+            (255, 255, 255, 255),
+            (10, 10, 10, 0),
+        ])
+        encoded = io.BytesIO()
+        image.save(encoded, format="PNG")
+
+        normalized = self.module.normalize_direct_draw_white_image_bytes(
+            {
+                "type": "image",
+                "imageToolSource": "direct-draw",
+                "drawStrokeColor": "#ffffff",
+            },
+            encoded.getvalue(),
+        )
+
+        with Image.open(io.BytesIO(normalized)) as result:
+            rgba = result.convert("RGBA")
+            pixel_access = rgba.load()
+            pixels = [pixel_access[x, 0] for x in range(rgba.width)]
+
+        self.assertEqual(pixels[0], (255, 255, 255, 48))
+        self.assertEqual(pixels[1], (255, 255, 255, 255))
+        self.assertEqual(pixels[2][3], 0)
+
+    def test_normalize_direct_draw_white_image_bytes_infers_legacy_white_stroke_without_color_metadata(self):
+        image = Image.new("RGBA", (5, 1))
+        image.putdata([
+            (210, 210, 210, 72),
+            (238, 238, 238, 160),
+            (255, 255, 255, 255),
+            (236, 236, 236, 160),
+            (208, 208, 208, 72),
+        ])
+        encoded = io.BytesIO()
+        image.save(encoded, format="PNG")
+
+        normalized = self.module.normalize_direct_draw_white_image_bytes(
+            {
+                "type": "image",
+                "imageToolSource": "direct-draw",
+            },
+            encoded.getvalue(),
+        )
+
+        with Image.open(io.BytesIO(normalized)) as result:
+            rgba = result.convert("RGBA")
+            pixel_access = rgba.load()
+            pixels = [pixel_access[x, 0] for x in range(rgba.width)]
+
+        self.assertEqual(
+            pixels,
+            [
+                (255, 255, 255, 72),
+                (255, 255, 255, 160),
+                (255, 255, 255, 255),
+                (255, 255, 255, 160),
+                (255, 255, 255, 72),
+            ],
+        )
 
     def test_draw_text_with_manual_heading_break_still_wraps_following_paragraph_to_bounds(self):
         annotation = {
@@ -591,6 +699,38 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         self.assertLess(start.x, end.x)
         self.assertLess(start.y, end.y)
 
+    def test_draw_shape_square_uses_full_annotation_bounds(self):
+        annotation = {
+            "type": "shape",
+            "shapeType": "square",
+            "pdfX": 32.040514534589285,
+            "pdfY": 352.6765862474232,
+            "pdfWidth": 544.38569836929,
+            "pdfHeight": 48.949172958379506,
+            "fillColor": "#935b1b",
+            "fillOpacity": 1,
+            "strokeColor": "#0f172a",
+            "strokeWidth": 1,
+            "strokeOpacity": 0,
+        }
+
+        page = self.FakePage()
+
+        self.module.draw_shape(page, annotation)
+
+        self.assertEqual(len(page.shape_draw_polyline_calls), 1)
+        points = page.shape_draw_polyline_calls[0]
+        rect = self.module.to_rect(page, annotation)
+
+        self.assertAlmostEqual(points[0].x, rect.x0, places=3)
+        self.assertAlmostEqual(points[0].y, rect.y0, places=3)
+        self.assertAlmostEqual(points[1].x, rect.x1, places=3)
+        self.assertAlmostEqual(points[1].y, rect.y0, places=3)
+        self.assertAlmostEqual(points[2].x, rect.x1, places=3)
+        self.assertAlmostEqual(points[2].y, rect.y1, places=3)
+        self.assertAlmostEqual(points[3].x, rect.x0, places=3)
+        self.assertAlmostEqual(points[3].y, rect.y1, places=3)
+
     def test_should_preserve_promoted_source_lines_respects_reflow_flag(self):
         annotation = {
             "promotedFromExtraction": True,
@@ -803,6 +943,178 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
                 "fontStyle": "normal",
             }),
         )
+
+    def test_draw_text_using_exact_source_lines_scales_wide_line_to_fit_source_rect(self):
+        page = self.FakePage()
+        annotation = {
+            "fontFamily": "Helvetica",
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "textColor": "#000000",
+        }
+        line = {
+            "rect": fitz.Rect(72, 100, 130, 114),
+            "text": "THIS LINE IS TOO WIDE",
+            "baseline_x": 72,
+            "baseline_y": 111,
+            "align": 0,
+            "font_family": "Helvetica",
+            "font_source_name": "Helvetica",
+            "font_size": 12,
+            "font_weight": "400",
+            "font_style": "normal",
+            "color": "#000000",
+            "underline": False,
+        }
+
+        result = self.module.draw_text_using_exact_source_lines(
+            page,
+            annotation,
+            [line],
+            fitz.Font("helv"),
+            "helv",
+            12,
+            (0.0, 0.0, 0.0),
+            1.0,
+            0,
+            None,
+        )
+
+        self.assertTrue(result)
+        self.assertEqual(len(page.insert_text_calls), 1)
+        morph = page.insert_text_calls[0][2]["morph"]
+        self.assertIsNotNone(morph)
+        self.assertLess(morph[1].a, 1.0)
+        self.assertAlmostEqual(morph[0].x, 72.0, places=3)
+        self.assertAlmostEqual(morph[0].y, 111.0, places=3)
+
+    def test_draw_text_using_exact_source_lines_preserves_vertical_rotation(self):
+        page = self.FakePage()
+        annotation = {
+            "fontFamily": "Helvetica",
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "textColor": "#000000",
+        }
+        line = {
+            "rect": fitz.Rect(80, 120, 96, 210),
+            "text": "Type or print clearly.",
+            "baseline_x": 93,
+            "baseline_y": 208,
+            "align": 0,
+            "rotation": -90,
+            "font_family": "Helvetica",
+            "font_source_name": "Helvetica",
+            "font_size": 12,
+            "font_weight": "400",
+            "font_style": "normal",
+            "color": "#000000",
+            "underline": False,
+        }
+
+        result = self.module.draw_text_using_exact_source_lines(
+            page,
+            annotation,
+            [line],
+            fitz.Font("helv"),
+            "helv",
+            12,
+            (0.0, 0.0, 0.0),
+            1.0,
+            0,
+            None,
+        )
+
+        self.assertTrue(result)
+        self.assertEqual(len(page.insert_text_calls), 1)
+        morph = page.insert_text_calls[0][2]["morph"]
+        self.assertIsNotNone(morph)
+        self.assertAlmostEqual(morph[1].a, 0.0, places=3)
+        self.assertGreater(morph[1].b, 0.7)
+        self.assertLess(morph[1].c, -0.7)
+        self.assertAlmostEqual(morph[1].d, 0.0, places=3)
+
+    def test_normalize_exact_source_span_layout_preserves_vertical_rotation(self):
+        annotation = {
+            "promotedFromExtraction": True,
+            "sourceLineBBoxes": [
+                [80, 120, 96, 210],
+            ],
+            "sourceTextLines": [
+                "Type or print clearly.",
+            ],
+            "sourceSpans": [
+                {
+                    "text": "Type or print clearly.",
+                    "bbox": [80, 120, 96, 210],
+                    "origin": [93, 208],
+                    "font": "Helvetica",
+                    "fontSize": 12,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#000000",
+                    "rotation": -90,
+                    "direction": [0, -1],
+                },
+            ],
+        }
+
+        layout = self.module.normalize_exact_source_span_layout(
+            annotation,
+            "Type or print clearly.",
+            12,
+            fitz.Rect(80, 120, 96, 210),
+        )
+
+        self.assertEqual(len(layout), 1)
+        self.assertEqual(len(layout[0]["spans"]), 1)
+        self.assertEqual(layout[0]["spans"][0]["span_rotation"], -90.0)
+
+    def test_draw_text_using_exact_source_spans_preserves_rotation_and_fits_extent(self):
+        page = self.FakePage()
+        annotation = {
+            "fontFamily": "Helvetica",
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "textColor": "#000000",
+        }
+        layout = [{
+            "rect": fitz.Rect(80, 120, 96, 210),
+            "rotation": -90,
+            "spans": [{
+                "text": "Type or print clearly.",
+                "rect": fitz.Rect(80, 120, 96, 210),
+                "baseline_x": 93,
+                "baseline_y": 208,
+                "font_family": "Helvetica",
+                "font_source_name": "Helvetica",
+                "font_size": 12,
+                "font_weight": "400",
+                "font_style": "normal",
+                "color": "#000000",
+                "underline": False,
+                "span_rotation": -90,
+            }],
+        }]
+
+        result = self.module.draw_text_using_exact_source_spans(
+            page,
+            annotation,
+            layout,
+            1.0,
+            None,
+        )
+
+        self.assertTrue(result)
+        self.assertEqual(len(page.insert_text_calls), 1)
+        call = page.insert_text_calls[0]
+        self.assertLess(call[2]["fontsize"], 12.0)
+        morph = call[2]["morph"]
+        self.assertIsNotNone(morph)
+        self.assertAlmostEqual(morph[1].a, 0.0, places=3)
+        self.assertAlmostEqual(morph[1].b, 1.0, places=3)
+        self.assertAlmostEqual(morph[1].c, -1.0, places=3)
+        self.assertAlmostEqual(morph[1].d, 0.0, places=3)
 
     def test_normalize_exact_source_line_layout_prefers_edited_annotation_color(self):
         annotation = {

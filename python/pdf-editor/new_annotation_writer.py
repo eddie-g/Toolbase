@@ -594,8 +594,34 @@ def build_html_font_face_css() -> str:
 HTML_FONT_FACE_CSS = build_html_font_face_css()
 
 
+def _promoted_annotation_was_resized(ann: Dict[str, Any]) -> bool:
+    """True if the annotation's current PDF box differs meaningfully from its
+    extracted source block — i.e. the user dragged a resize handle.
+    """
+    try:
+        cur_w = float(ann.get("pdfWidth") or 0)
+        cur_h = float(ann.get("pdfHeight") or 0)
+        src_w = float(ann.get("sourceBlockWidth") or 0)
+        src_h = float(ann.get("sourceBlockHeight") or 0)
+    except Exception:
+        return False
+    if cur_w <= 0 or src_w <= 0:
+        return False
+    if abs(cur_w - src_w) > 2.0:
+        return True
+    if cur_h > 0 and src_h > 0 and abs(cur_h - src_h) > 2.0:
+        return True
+    return False
+
+
 def should_preserve_promoted_source_lines(ann: Dict[str, Any], text: str) -> bool:
     if not bool(ann.get("promotedFromExtraction")):
+        return False
+
+    # If the user resized the annotation box the export must reflow into the new
+    # bounds. Preserving the original PDF layout here causes text to spread
+    # horizontally past the new box.
+    if bool(ann.get("promotedDirty")) and _promoted_annotation_was_resized(ann):
         return False
 
     normalized_text_lines = str(text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
@@ -646,7 +672,11 @@ def build_annotation_htmlbox_css(ann: Dict[str, Any], font_size: float, opacity:
         line_height_value = float(ann.get("lineHeight") or 0)
     except Exception:
         line_height_value = 0.0
-    line_height_css = f"{line_height_value}pt" if line_height_value > 0 else "normal"
+    # Match the browser's blockLineHeightPx formula (fontSize * 1.18) with a
+    # unitless value so rich-html spans with per-span font-sizes scale
+    # correctly. MuPDF's "normal" default produced tighter line spacing than
+    # the editor.
+    line_height_css = f"{line_height_value}pt" if line_height_value > 0 else "1.18"
     white_space = "pre" if preserve_extracted_lines else "pre-wrap"
     overflow_wrap = "normal" if preserve_extracted_lines else "break-word"
     word_break = "normal" if preserve_extracted_lines else "break-word"
@@ -760,6 +790,35 @@ def resolve_annotation_font_style(ann: Dict[str, Any]) -> str:
             return "oblique"
 
     return font_style
+
+
+def resolve_source_span_font_style(span: Dict[str, Any], fallback: str = "normal") -> str:
+    explicit = str(span.get("fontStyle") or span.get("font_style") or "").strip()
+    if explicit:
+        return explicit
+
+    if "italic" in span:
+        return "italic" if bool(span.get("italic")) else "normal"
+
+    try:
+        flags = int(span.get("flags") or 0)
+        if flags & 2:
+            return "italic"
+    except Exception:
+        pass
+
+    font_name = str(
+        span.get("font")
+        or span.get("embedded_font_name")
+        or span.get("font_source_name")
+        or ""
+    ).lower()
+    if "oblique" in font_name:
+        return "oblique"
+    if "italic" in font_name:
+        return "italic"
+
+    return str(fallback or "normal").strip() or "normal"
 
 
 def resolve_annotation_font_weight(ann: Dict[str, Any]) -> str:
@@ -1223,7 +1282,7 @@ def normalize_exact_source_line_layout(
                 "font": str(span.get("font") or "").strip(),
                 "font_size": float(span.get("fontSize") or span.get("font_size") or font_size or 0),
                 "font_weight": str(span.get("fontWeight") or span.get("font_weight") or ann.get("fontWeight") or "400"),
-                "font_style": str(span.get("fontStyle") or span.get("font_style") or ann.get("fontStyle") or "normal"),
+                "font_style": resolve_source_span_font_style(span, ann.get("fontStyle") or "normal"),
                 "color": str(span.get("color") or ann.get("textColor") or "#000000"),
                 "underline": bool(span.get("underline")),
             })
@@ -1297,7 +1356,8 @@ def normalize_exact_source_line_layout(
         dominant_source_font_style = str(dominant_source_span.get("font_style") or "").strip() or None
         dominant_source_underline = bool(dominant_source_span.get("underline"))
 
-    force_annotation_font_family = (
+    style_dirty = bool(ann.get("styleDirty"))
+    force_annotation_font_family = style_dirty and (
         bool(raw_annotation_font_family or raw_annotation_font_source_name)
         and (
             not dominant_source_font_family
@@ -1310,12 +1370,12 @@ def normalize_exact_source_line_layout(
         and bool(dominant_source_color)
         and annotation_text_color.lower() != dominant_source_color.lower()
     )
-    force_annotation_font_weight = (
+    force_annotation_font_weight = style_dirty and (
         bool(annotation_font_weight)
         and bool(dominant_source_font_weight)
         and annotation_font_weight.lower() != dominant_source_font_weight.lower()
     )
-    force_annotation_font_style = (
+    force_annotation_font_style = style_dirty and (
         bool(annotation_font_style)
         and bool(dominant_source_font_style)
         and annotation_font_style.lower() != dominant_source_font_style.lower()
@@ -1327,7 +1387,7 @@ def normalize_exact_source_line_layout(
         except Exception:
             dominant_source_font_size = None
     font_size_tolerance = max(0.5, float(font_size or 0.0) * 0.02)
-    force_annotation_font_size = (
+    force_annotation_font_size = style_dirty and (
         float(font_size or 0.0) > 0
         and dominant_source_font_size is not None
         and abs(float(font_size) - float(dominant_source_font_size)) > font_size_tolerance
@@ -1691,7 +1751,7 @@ def normalize_exact_source_span_layout(
             ),
             "font_size": float(span.get("fontSize") or span.get("font_size") or font_size or 0),
             "font_weight": str(span.get("fontWeight") or span.get("font_weight") or ann.get("fontWeight") or "400"),
-            "font_style": str(span.get("fontStyle") or span.get("font_style") or ann.get("fontStyle") or "normal"),
+            "font_style": resolve_source_span_font_style(span, ann.get("fontStyle") or "normal"),
             "color": _normalize_color(span.get("hex_color") if span.get("hex_color") is not None else span.get("color"), str(ann.get("textColor") or "#000000")),
             "underline": bool(span.get("underline")),
             "span_rotation": float(span.get("rotation") or 0.0),
@@ -2142,7 +2202,7 @@ def build_dirty_promoted_style_mapped_span_layout(
             ),
             "font_size": float(span.get("fontSize") or span.get("font_size") or ann.get("fontSize") or 12),
             "font_weight": str(span.get("fontWeight") or span.get("font_weight") or ann.get("fontWeight") or "400"),
-            "font_style": str(span.get("fontStyle") or span.get("font_style") or ann.get("fontStyle") or "normal"),
+            "font_style": resolve_source_span_font_style(span, ann.get("fontStyle") or "normal"),
             "color": str(span.get("hex_color") or span.get("color") or ann.get("textColor") or "#000000"),
             "underline": bool(span.get("underline")),
         })
@@ -2392,6 +2452,22 @@ def draw_text_using_exact_source_spans(
     if not lines:
         return False
 
+    # For clean unedited promoted-from-extraction annotations the source span
+    # origin/size is authoritative — the original PDF rendered those exact glyphs
+    # at that exact origin and size, and any auto-shrink / word-justify /
+    # leading-whitespace-shift compensation we apply here causes pixel-level
+    # drift versus the original (the metric-compensation logic exists to make
+    # SUBSTITUTE fonts look acceptable, but we now have the embedded font and
+    # any further "fitting" introduces error).  Mirror what the canvas-overlay
+    # `drawOriginalSource` path does in pdfRecon2 / edit-new: paint each span
+    # at its origin with its size, no fitting.
+    _skip_metric_compensation = (
+        bool(ann.get("promotedFromExtraction"))
+        and not bool(ann.get("promotedDirty"))
+        and not bool(ann.get("userAuthored"))
+        and not bool(ann.get("promotedReflowEnabled"))
+    )
+
     for line_entry in lines:
         if not isinstance(line_entry, dict):
             continue
@@ -2468,7 +2544,7 @@ def draw_text_using_exact_source_spans(
             # the stored text.  Shift draw_x right by that difference so the first
             # visible glyph lands where it did in the original PDF, restoring the
             # visual gap between the field number and its description text.
-            if _prev_span_rect is not None and _prev_span_text is not None:
+            if not _skip_metric_compensation and _prev_span_rect is not None and _prev_span_text is not None:
                 _adj_gap = abs(_prev_span_rect.x1 - span_rect.x0)
                 if _adj_gap < 0.5:
                     _bbox_w = span_rect.x1 - span_rect.x0
@@ -2498,7 +2574,7 @@ def draw_text_using_exact_source_spans(
             _span_avail_w = span_rect.x1 - draw_x
             _use_word_justify = False
             _word_extra_spacing = 0.0
-            if _span_avail_w > 1.0:
+            if not _skip_metric_compensation and _span_avail_w > 1.0:
                 _measured_w = span_font.text_length(span_text, fontsize=span_font_size)
                 if _measured_w > _span_avail_w:
                     # Reserve one space-width at the right edge of the scale target so
@@ -3430,8 +3506,10 @@ def draw_shape(page: fitz.Page, ann: Dict[str, Any]) -> None:
         draw_open_lines([(rp(line_start_x, line_start_y), rp(line_end_x, line_end_y))])
         return
 
-    # Default rectangle
-    points = [rp(0.05, 0.05), rp(0.95, 0.05), rp(0.95, 0.95), rp(0.05, 0.95), rp(0.05, 0.05)]
+    # Default rectangle: use the full annotation bounds. The editor stores the
+    # square/rectangle box as the intended final geometry; insetting by 5% on
+    # each side shrinks exported bars relative to the DOM preview.
+    points = [rp(0.0, 0.0), rp(1.0, 0.0), rp(1.0, 1.0), rp(0.0, 1.0), rp(0.0, 0.0)]
     draw_poly(points, close_path=True, line_join=1)
 
 
