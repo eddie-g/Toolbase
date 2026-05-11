@@ -809,7 +809,7 @@ class DocumentController extends Controller
     private function isPdfjsVisibleExportAnnotation(array $annotation): bool
     {
         $type = strtolower(trim((string) ($annotation['type'] ?? '')));
-        if (!in_array($type, ['text', 'image', 'signature'], true)) {
+        if (!in_array($type, ['text', 'image', 'signature', 'shape'], true)) {
             return false;
         }
         $state = strtolower(trim((string) ($annotation['db_state'] ?? $annotation['state'] ?? '')));
@@ -10108,7 +10108,9 @@ class DocumentController extends Controller
             // The PDF.js viewer renders the original PDF and only paints custom
             // source masks / overlay annotations on top. Export must follow that
             // same visible model, not the clean rebuild that re-stamps every
-            // promoted extraction block.
+            // promoted extraction block. Do not add a separate pre-redaction
+            // pass here: apply_annotations_direct_new.py owns source masking,
+            // neighbor-safe erasure, and replacement stamping in one pass.
             $annotationsPayload = $this->filterAnnotationsForPdfjsVisibleExport($annotationsPayload);
             $redrawPageIndices = [];
             $renderAnnotationsPayload = [];

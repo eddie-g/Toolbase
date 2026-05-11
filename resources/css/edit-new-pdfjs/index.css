@@ -69,10 +69,21 @@ body.enpv-body .floating-zoom-bar button:disabled {
 
 /* The Edit PDF toggles (top bar + floating toolbar) ARE wired here too. */
 body.enpv-body #edit-mode-toggle,
-body.enpv-body #ftb-edit-mode {
+body.enpv-body #ftb-edit-mode,
+body.enpv-body #add-text-btn,
+body.enpv-body #ftb-add-text,
+body.enpv-body #ftb-add-image,
+body.enpv-body #add-shape-btn,
+body.enpv-body #ftb-add-shape,
+body.enpv-body #shape-tool-panel,
+body.enpv-body #shape-tool-panel button,
+body.enpv-body #shape-tool-panel input {
     pointer-events: auto;
     opacity: 1;
     cursor: pointer !important;
+}
+body.enpv-body #shape-tool-panel {
+    z-index: 2147483502;
 }
 
 /* PDF.js uses the shared top-bar, but this page needs an explicit manual
@@ -89,22 +100,24 @@ body.enpv-body #download-pdf-btn {
     cursor: pointer !important;
 }
 
-/* The shared /edit-new format bar is mounted on this route, but only the
- * font-family selector is wired in the pdf.js implementation for now. */
+/* The shared /edit-new format bar is mounted on this route and wired into
+ * the pdf.js text-overlay model. */
 body.enpv-body #ann-format-bar {
     z-index: 2147483501;
 }
 body.enpv-body #ann-format-bar button,
 body.enpv-body #ann-format-bar input,
 body.enpv-body #ann-format-bar select {
+    pointer-events: auto;
+    opacity: 1;
+    cursor: inherit;
+}
+body.enpv-body #ann-format-bar button:disabled,
+body.enpv-body #ann-format-bar input:disabled,
+body.enpv-body #ann-format-bar select:disabled {
     pointer-events: none;
     opacity: 0.45;
     cursor: not-allowed !important;
-}
-body.enpv-body #ann-format-bar #afb-font {
-    pointer-events: auto;
-    opacity: 1;
-    cursor: pointer !important;
 }
 body.enpv-body #download-pdf-btn:disabled {
     opacity: 0.5;
@@ -291,14 +304,32 @@ body.enpv-edit-on .pdfViewer .textLayer span[data-enpv-page]:not(.markedContent)
     outline: 1px dashed rgba(59, 130, 246, 0.8) !important;
     background-color: rgba(147, 197, 253, 0.18) !important;
 }
+body.enpv-add-text-on #viewerContainer,
+body.enpv-add-text-on .pdfViewer .page,
+body.enpv-add-text-on .pdfViewer .page * {
+    cursor: text !important;
+}
+.enpv-text-drag-selection,
+.text-drag-selection {
+    position: absolute;
+    border: 2px dashed rgba(110, 231, 183, 0.9);
+    background: rgba(110, 231, 183, 0.12);
+    border-radius: 4px;
+    pointer-events: none;
+    z-index: 100010;
+    box-sizing: border-box;
+}
 .enpv-annotation-box-layer {
     position: absolute;
     inset: 0;
-    z-index: 100000;
+    z-index: 100010;
     /* Layer itself is transparent; individual boxes are interactive when
      * edit mode is on so they can be selected and dragged. */
     pointer-events: none;
     overflow: visible;
+}
+body.enpv-body .pdfViewer .page > .annotationLayer {
+    z-index: 100001;
 }
 .enpv-annotation-box {
     position: absolute;
@@ -307,7 +338,7 @@ body.enpv-edit-on .pdfViewer .textLayer span[data-enpv-page]:not(.markedContent)
     /* Default transparent so the form's many overlapping text-run boxes
      * don't compound into a wash of blue. The hover/selected/editing
      * rules below add fill on demand. */
-    background: transparent;
+    background: var(--enpv-bg-color, transparent);
     /* Re-enable pointer-events on the box itself so the user can click /
      * drag, while the host layer stays click-through everywhere else
      * (so text selection still works between boxes). */
@@ -330,6 +361,9 @@ body.enpv-edit-on .pdfViewer .textLayer span[data-enpv-page]:not(.markedContent)
     margin: 0;
     color: var(--enpv-text-color, #000);
     background: transparent;
+    text-align: var(--enpv-text-align, left);
+    text-decoration: var(--enpv-text-decoration, none);
+    text-decoration-line: var(--enpv-text-decoration-line, none);
     overflow-wrap: break-word;
     word-break: normal;
     white-space: normal;
@@ -372,20 +406,58 @@ body.enpv-edit-on .pdfViewer .textLayer span[data-enpv-page]:not(.markedContent)
     background: rgba(147, 197, 253, 0.22);
     box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.5);
 }
+.enpv-annotation-box.is-selected.has-custom-bg,
+.enpv-annotation-box.has-custom-bg:hover {
+    background: var(--enpv-bg-color, transparent);
+}
 body.enpv-edit-on .enpv-annotation-box:not(.is-persisted-overlay):not(.is-editing):hover,
 body.enpv-edit-on .enpv-annotation-box:not(.is-persisted-overlay):not(.is-editing).is-selected {
     background: transparent;
+}
+body.enpv-edit-on .enpv-annotation-box.has-custom-bg:not(.is-editing):hover,
+body.enpv-edit-on .enpv-annotation-box.has-custom-bg:not(.is-editing).is-selected {
+    background: var(--enpv-bg-color, transparent);
+}
+.enpv-annotation-box.is-rich-editor:not(.is-editing) .enpv-text-content {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: stretch;
+    line-height: var(--enpv-line-height, 1);
 }
 .enpv-annotation-box.is-selected.is-editing {
     background: transparent;
 }
 .enpv-annotation-box.is-persisted-overlay {
-    background: transparent;
+    background: var(--enpv-bg-color, transparent);
 }
 .enpv-annotation-box.is-persisted-overlay:not(.is-editing) .enpv-text-content {
     display: flex;
-    align-items: flex-end;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
     line-height: 1;
+}
+.enpv-annotation-box[data-text-align="center"] .enpv-text-content {
+    text-align: center;
+}
+.enpv-annotation-box[data-text-align="right"] .enpv-text-content {
+    text-align: right;
+}
+.enpv-annotation-box.is-persisted-overlay:not(.is-editing)[data-vertical-align="top"] .enpv-text-content,
+body.enpv-edit-on .enpv-annotation-box.is-rich-editor:not(.is-editing)[data-vertical-align="top"] .enpv-text-content,
+body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay[data-vertical-align="top"] .enpv-text-content {
+    justify-content: flex-start;
+}
+.enpv-annotation-box.is-persisted-overlay:not(.is-editing)[data-vertical-align="middle"] .enpv-text-content,
+body.enpv-edit-on .enpv-annotation-box.is-rich-editor:not(.is-editing)[data-vertical-align="middle"] .enpv-text-content,
+body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay[data-vertical-align="middle"] .enpv-text-content {
+    justify-content: center;
+}
+.enpv-annotation-box.is-persisted-overlay:not(.is-editing)[data-vertical-align="bottom"] .enpv-text-content,
+body.enpv-edit-on .enpv-annotation-box.is-rich-editor:not(.is-editing)[data-vertical-align="bottom"] .enpv-text-content,
+body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay[data-vertical-align="bottom"] .enpv-text-content {
+    justify-content: flex-end;
 }
 .enpv-annotation-box.is-source-fidelity:not(.is-editing) .enpv-text-content {
     display: block;
@@ -397,20 +469,44 @@ body.enpv-edit-on .enpv-annotation-box:not(.is-persisted-overlay):not(.is-editin
     transform-origin: 0 0;
 }
 body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay {
-    background: transparent;
+    background: var(--enpv-bg-color, transparent);
     border: none;
     box-shadow: none;
     pointer-events: none;
 }
+body.enpv-body .enpv-annotation-box.enpv-shape-box,
+body.enpv-shape-on .enpv-annotation-box.enpv-shape-box,
+body:not(.enpv-edit-on) .enpv-annotation-box.enpv-shape-box.is-selected {
+    pointer-events: auto;
+}
+body:not(.enpv-edit-on) .enpv-annotation-box.enpv-shape-box.is-selected {
+    border: 1px solid rgba(59, 130, 246, 0.95);
+    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.5);
+}
+body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay.is-editing {
+    border: 1px dashed rgba(96, 165, 250, 0.55);
+    pointer-events: auto;
+}
+body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay[data-user-created="1"].is-selected {
+    border: 1px solid rgba(59, 130, 246, 0.95);
+    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.5);
+    pointer-events: auto;
+}
+body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay.is-editing .enpv-text-content {
+    pointer-events: auto;
+}
 body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay .enpv-text-content {
     display: flex;
-    align-items: flex-end;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
     line-height: 1;
 }
 .enpv-annotation-box.is-persisted-overlay.is-rich-editor:not(.is-editing) .enpv-text-content,
 body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay.is-rich-editor .enpv-text-content {
-    display: block;
-    align-items: initial;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
     line-height: var(--enpv-line-height, 1);
 }
 body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay:hover {
@@ -447,15 +543,39 @@ body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay:hover {
     display: none;
     z-index: 2;
 }
-.enpv-annotation-box.is-selected.is-editing .enpv-resize-handle { display: block; }
+.enpv-annotation-box.is-selected.is-editing .enpv-resize-handle,
+.enpv-annotation-box.is-selected.enpv-shape-box .enpv-resize-handle { display: block; }
 .enpv-resize-handle.t { top: 0;    left: 50%; cursor: ns-resize; }
 .enpv-resize-handle.b { top: 100%; left: 50%; cursor: ns-resize; }
 .enpv-resize-handle.l { top: 50%;  left: 0;   cursor: ew-resize; }
 .enpv-resize-handle.r { top: 50%;  left: 100%;cursor: ew-resize; }
+.enpv-resize-handle.nw { top: 0;    left: 0;    cursor: nwse-resize; }
+.enpv-resize-handle.ne { top: 0;    left: 100%; cursor: nesw-resize; }
+.enpv-resize-handle.sw { top: 100%; left: 0;    cursor: nesw-resize; }
+.enpv-resize-handle.se { top: 100%; left: 100%; cursor: nwse-resize; }
+.enpv-resize-handle[data-edge="line-start"],
+.enpv-resize-handle[data-edge="line-end"] {
+    cursor: move;
+}
 body.enpv-resizing,
 body.enpv-resizing * { user-select: none !important; }
 body.enpv-dragging,
 body.enpv-dragging * { cursor: grabbing !important; user-select: none !important; }
+
+.enpv-shape-box {
+    background: transparent;
+}
+.enpv-shape-svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    pointer-events: none;
+}
+.enpv-shape-box.is-shape-preview {
+    opacity: 0.75;
+    border-color: rgba(59, 130, 246, 0.65);
+}
 
 /* Floating hover menu for the currently-selected annotation box.
  * Mirrors the legacy /edit-new `tm-${pi+1}` text-menu affordance: sits
@@ -629,14 +749,21 @@ body.enpv-body #ftb-sign {
 body.enpv-body .signature-modal {
     z-index: 2147483600;
 }
+body.enpv-body .image-import-modal {
+    z-index: 2147483600;
+}
 body.enpv-body .signature-modal,
-body.enpv-body .signature-modal * {
+body.enpv-body .signature-modal *,
+body.enpv-body .image-import-modal,
+body.enpv-body .image-import-modal * {
     pointer-events: auto;
 }
 body.enpv-body .signature-modal button,
 body.enpv-body .signature-modal input,
 body.enpv-body .signature-modal select,
-body.enpv-body .signature-modal textarea {
+body.enpv-body .signature-modal textarea,
+body.enpv-body .image-import-modal button,
+body.enpv-body .image-import-modal input {
     pointer-events: auto;
     opacity: 1;
     cursor: pointer !important;
@@ -645,12 +772,15 @@ body.enpv-body .signature-modal input[type='text'],
 body.enpv-body .signature-modal input[type='color'],
 body.enpv-body .signature-modal input[type='range'],
 body.enpv-body .signature-modal input[type='file'],
-body.enpv-body .signature-modal textarea {
+body.enpv-body .signature-modal textarea,
+body.enpv-body .image-import-modal input[type='file'] {
     cursor: text !important;
 }
 body.enpv-body .signature-modal button:disabled,
 body.enpv-body .signature-modal input:disabled,
-body.enpv-body .signature-modal select:disabled {
+body.enpv-body .signature-modal select:disabled,
+body.enpv-body .image-import-modal button:disabled,
+body.enpv-body .image-import-modal input:disabled {
     opacity: 0.5;
     cursor: not-allowed !important;
 }
@@ -664,36 +794,50 @@ body.enpv-signature-placing .pdfViewer .page * {
 
 /* Signature annotation boxes — image-backed stamps that can be dragged
  * via the existing onAnnBoxPointerDown / floating menu. */
-.enpv-annotation-box.enpv-signature-box {
+.enpv-annotation-box.enpv-signature-box,
+.enpv-annotation-box.enpv-image-box {
     background: transparent;
     border: 1px dashed transparent;
     overflow: visible;
     padding: 0;
     pointer-events: auto;
 }
-body.enpv-body .enpv-annotation-box.enpv-signature-box.is-persisted-overlay {
+body.enpv-body .enpv-annotation-box.enpv-signature-box.is-persisted-overlay,
+body.enpv-body .enpv-annotation-box.enpv-image-box.is-persisted-overlay {
     background: transparent;
     pointer-events: auto;
 }
 body.enpv-edit-on .enpv-annotation-box.enpv-signature-box,
-body.enpv-body .enpv-annotation-box.enpv-signature-box.is-selected {
+body.enpv-edit-on .enpv-annotation-box.enpv-image-box,
+body.enpv-body .enpv-annotation-box.enpv-signature-box.is-selected,
+body.enpv-body .enpv-annotation-box.enpv-image-box.is-selected {
     border-color: rgba(96, 165, 250, 0.55);
 }
 body.enpv-edit-on .enpv-annotation-box.enpv-signature-box.is-selected,
-body.enpv-body .enpv-annotation-box.enpv-signature-box.is-selected {
+body.enpv-edit-on .enpv-annotation-box.enpv-image-box.is-selected,
+body.enpv-body .enpv-annotation-box.enpv-signature-box.is-selected,
+body.enpv-body .enpv-annotation-box.enpv-image-box.is-selected {
     border-color: rgba(59, 130, 246, 0.9);
     box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
 }
 body.enpv-edit-on .enpv-annotation-box.enpv-signature-box.is-locked,
-body.enpv-body .enpv-annotation-box.enpv-signature-box.is-locked {
+body.enpv-edit-on .enpv-annotation-box.enpv-image-box.is-locked,
+body.enpv-body .enpv-annotation-box.enpv-signature-box.is-locked,
+body.enpv-body .enpv-annotation-box.enpv-image-box.is-locked {
     border-color: rgba(248, 113, 113, 0.7);
 }
-.enpv-annotation-box.enpv-signature-box > .enpv-signature-img {
+.enpv-annotation-box.enpv-signature-box > .enpv-signature-img,
+.enpv-annotation-box.enpv-image-box > .enpv-image-img {
     width: 100%;
     height: 100%;
-    object-fit: contain;
     pointer-events: none;
     user-select: none;
     -webkit-user-drag: none;
     display: block;
+}
+.enpv-annotation-box.enpv-signature-box > .enpv-signature-img {
+    object-fit: contain;
+}
+.enpv-annotation-box.enpv-image-box > .enpv-image-img {
+    object-fit: fill;
 }

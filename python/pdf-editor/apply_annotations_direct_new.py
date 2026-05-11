@@ -975,6 +975,37 @@ def _pdfjs_source_base_rect(page: fitz.Page, ann: Dict[str, Any]) -> Optional[fi
     return fitz.Rect(x, ph - (y + h), x + w, ph - y) & page.rect
 
 
+def exact_embedded_font_entry_for_document(document_id: Any, font_name: str) -> Optional[Dict[str, Any]]:
+    name = str(font_name or "").strip()
+    if not name:
+        return None
+    metadata = load_embedded_font_metadata(document_id)
+    if not metadata:
+        return None
+    normalized_name = normalize_exact_font_family(name)
+    for font_key, font_data in metadata.items():
+        if not isinstance(font_data, dict):
+            continue
+        clean_name = str(font_data.get("clean_name") or font_key or "").strip()
+        pdf_font_name = str(font_data.get("pdf_font_name") or "").strip()
+        candidates = {
+            clean_name,
+            normalize_exact_font_family(clean_name),
+            pdf_font_name,
+            pdf_font_name.split("+", 1)[-1] if "+" in pdf_font_name else pdf_font_name,
+        }
+        if name not in candidates and normalized_name not in candidates:
+            continue
+        absolute_path = embedded_font_public_path_to_absolute(font_data.get("file_path"))
+        if not absolute_path:
+            continue
+        return {
+            "clean_name": clean_name,
+            "fontfile": absolute_path,
+        }
+    return None
+
+
 def _source_mask_target_contains_rect(target_rect: fitz.Rect, rect: fitz.Rect) -> bool:
     if target_rect.is_empty or rect.is_empty:
         return False
@@ -1056,15 +1087,27 @@ def _clamp_inflated_source_mask_to_neighbors(
 
         vertical_overlap = min(target_rect.y1, neighbor.y1) - max(target_rect.y0, neighbor.y0)
         horizontal_overlap = min(target_rect.x1, neighbor.x1) - max(target_rect.x0, neighbor.x0)
+        target_center_x = (target_rect.x0 + target_rect.x1) / 2.0
+        target_center_y = (target_rect.y0 + target_rect.y1) / 2.0
+        neighbor_center_x = (neighbor.x0 + neighbor.x1) / 2.0
+        neighbor_center_y = (neighbor.y0 + neighbor.y1) / 2.0
 
         if neighbor.y1 <= target_rect.y0 and horizontal_overlap > 0:
             safe.y0 = max(safe.y0, neighbor.y1 + gap)
         elif neighbor.y0 >= target_rect.y1 and horizontal_overlap > 0:
             safe.y1 = min(safe.y1, neighbor.y0 - gap)
+        elif neighbor.y0 > target_rect.y0 and neighbor_center_y > target_center_y and horizontal_overlap > 0:
+            safe.y1 = min(safe.y1, neighbor.y0 - gap)
+        elif neighbor.y1 < target_rect.y1 and neighbor_center_y < target_center_y and horizontal_overlap > 0:
+            safe.y0 = max(safe.y0, neighbor.y1 + gap)
         elif neighbor.x1 <= target_rect.x0 and vertical_overlap > 0:
             safe.x0 = max(safe.x0, neighbor.x1 + gap)
         elif neighbor.x0 >= target_rect.x1 and vertical_overlap > 0:
             safe.x1 = min(safe.x1, neighbor.x0 - gap)
+        elif neighbor.x0 > target_rect.x0 and neighbor_center_x > target_center_x and vertical_overlap > 0:
+            safe.x1 = min(safe.x1, neighbor.x0 - gap)
+        elif neighbor.x1 < target_rect.x1 and neighbor_center_x < target_center_x and vertical_overlap > 0:
+            safe.x0 = max(safe.x0, neighbor.x1 + gap)
 
     if safe.is_empty or safe.width <= 0.05 or safe.height <= 0.05:
         return fitz.Rect(target_rect)
@@ -1083,12 +1126,27 @@ def calculate_safe_pdfjs_source_mask(page: fitz.Page, target_rect: fitz.Rect) ->
 
 
 def pdfjs_source_mask_rect(page: fitz.Page, ann: Dict[str, Any]) -> Optional[fitz.Rect]:
+    # Visible PDF.js export uses the immutable frontend source rectangle.
+    # Do not re-discover the text with page.search_for() here: backend text
+    # geometry can drift from the browser geometry and produce duplicate
+    # "repaired" neighbors or oversized masks.
     base_rect = _pdfjs_source_base_rect(page, ann)
     if base_rect is None or base_rect.is_empty:
         return None
+    if _boolish(ann.get("movedTextOverlay")):
+        # A moved PDF.js source box is an explicit replacement. Match the
+        # browser mask exactly: erase the immutable source rectangle with only
+        # small padding. Neighbor clamping can leave source glyph fragments
+        # behind when PDF text bboxes overlap, e.g. 4506-T / (April 2025).
+        return fitz.Rect(
+            base_rect.x0 - PDFJS_SOURCE_MASK_PADDING_X_PTS,
+            base_rect.y0 - PDFJS_SOURCE_MASK_PADDING_Y_PTS,
+            base_rect.x1 + PDFJS_SOURCE_MASK_PADDING_X_PTS,
+            base_rect.y1 + PDFJS_SOURCE_MASK_PADDING_Y_PTS,
+        ) & page.rect
     rect = calculate_safe_pdfjs_source_mask(page, base_rect)
     source_text = sanitize_pdf_text(ann.get("pdfjsSourceText") or ann.get("originalText") or ann.get("text") or "")
-    if source_text and not re.search(r"[gjpqy,;]", source_text, re.IGNORECASE):
+    if not _boolish(ann.get("movedTextOverlay")) and source_text and not re.search(r"[gjpqy,;]", source_text, re.IGNORECASE):
         bottom_trim = min(1.0, max(0.35, float(base_rect.height) * 0.1))
         if rect.height > bottom_trim + 0.5:
             rect.y1 = max(rect.y0 + 0.05, rect.y1 - bottom_trim)
@@ -1316,7 +1374,8 @@ def draw_pdfjs_source_mask(page: fitz.Page, ann: Dict[str, Any]) -> None:
     # content-stream text object, so masking the title line on PDFs like I-983
     # also deletes the middle of the subtitle below it.
     fill = sample_pdfjs_mask_fill(page, rect)
-    for mask_piece in split_pdfjs_source_mask_around_page_rules(page, rect):
+    mask_pieces = [fitz.Rect(rect)] if _boolish(ann.get("movedTextOverlay")) else split_pdfjs_source_mask_around_page_rules(page, rect)
+    for mask_piece in mask_pieces:
         page.draw_rect(mask_piece, color=None, fill=fill, width=0, overlay=True)
 
 
@@ -1352,7 +1411,8 @@ def resolve_pdfjs_visible_overlay_typography(page: fitz.Page, ann: Dict[str, Any
     # span's single-line baseline. Forcing source typography here makes export
     # draw one unwrapped insert_text run that can escape the saved box/page.
     if (
-        _boolish(ann.get("userForcedRichText"))
+        _boolish(ann.get("styleDirty"))
+        or _boolish(ann.get("userForcedRichText"))
         or str(ann.get("pdfjsEditorMode") or "").strip().lower() == "rich"
         or str(ann.get("richTextPromotionReason") or "").strip().lower() == "manual-resize"
     ):
@@ -4933,6 +4993,22 @@ def split_text_preserving_manual_line_breaks(text: str) -> list[str]:
     return normalized.split("\n")
 
 
+def normalized_pdfjs_visual_lines(ann: Dict[str, Any], text: str) -> list[str]:
+    raw_lines = ann.get("pdfjsVisualLines")
+    if not isinstance(raw_lines, list):
+        return []
+    lines = [sanitize_pdf_text(line).strip() for line in raw_lines]
+    lines = [line for line in lines if line]
+    if len(lines) <= 1:
+        return []
+    def compare(value: Any) -> str:
+        return re.sub(r"-\s+", "-", normalize_pdfjs_compare_text(value))
+
+    if compare(" ".join(lines)) != compare(text):
+        return []
+    return lines
+
+
 def normalize_rotation_degrees(value: Any) -> float:
     try:
         rotation = float(value or 0.0)
@@ -5718,7 +5794,8 @@ def draw_text(
                 morph=morph,
             )
         draw_font = custom_font or fitz.Font(fontname)
-        if pdfjs_visible_overlay and _boolish(render_ann.get("pdfjsUseSourceTypography")):
+        pdfjs_visual_lines = normalized_pdfjs_visual_lines(render_ann, text) if pdfjs_visible_overlay else []
+        if pdfjs_visible_overlay and _boolish(render_ann.get("pdfjsUseSourceTypography")) and not pdfjs_visual_lines:
             try:
                 baseline_y = rect.y0 + float(render_ann.get("pdfjsSourceBaselineOffsetY") or 0.0)
             except Exception:
@@ -5741,10 +5818,11 @@ def draw_text(
             if resolve_annotation_underline(ann):
                 text_width = draw_font.text_length(text, fontsize=size)
                 underline_y = baseline_y + max(0.5, size * 0.08)
+                underline_end_x = draw_x + text_width
                 draw_rotated_line(
                     page,
                     fitz.Point(draw_x, underline_y),
-                    fitz.Point(draw_x + text_width, underline_y),
+                    fitz.Point(underline_end_x, underline_y),
                     color=color,
                     width=max(0.5, size * 0.06),
                     opacity=opacity,
@@ -5867,7 +5945,9 @@ def draw_text(
         )
         explicit_text_lines = split_text_preserving_manual_line_breaks(text)
         preview_lines = (
-            explicit_text_lines
+            pdfjs_visual_lines
+            if pdfjs_visual_lines
+            else explicit_text_lines
             if preserve_extracted_lines or use_pdfjs_source_typography
             else (
                 ["" for _ in rich_wrapped_lines]
@@ -5995,7 +6075,7 @@ def draw_text(
         padding_top = preview_padding_top
         available_width = preview_available_width
         lines = preview_lines
-        if not preserve_extracted_lines and not use_pdfjs_source_typography and available_width > 1:
+        if not pdfjs_visual_lines and not preserve_extracted_lines and not use_pdfjs_source_typography and available_width > 1:
             safe_lines: list[str] = []
             for line in lines:
                 if not line or draw_font.text_length(line, fontsize=size) <= (available_width + 0.01):
