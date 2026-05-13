@@ -1,0 +1,118 @@
+{
+  "title": "PDF.js source edit contract",
+  "scope": "Source-backed text edits made in /documents/{id}/edit-new?pdfjs=1 and exported through the PDF.js visible download path.",
+  "sourceOfTruth": {
+    "savedAnnotation": "The saved annotation record is authoritative for replacement text and edit state.",
+    "sourceGeometry": "pdfjsSourceX, pdfjsSourceY, pdfjsSourceW, and pdfjsSourceH are the immutable source rectangle used for masking/redaction.",
+    "sourceText": "pdfjsSourceText, falling back to originalText, is the immutable original PDF text for comparison and redaction lookup."
+  },
+  "steps": [
+    {
+      "step": 1,
+      "id": "PDFJS-SOURCE-EDIT-001",
+      "title": "Changed source text is a replacement, not a paint-over",
+      "rule": "When a source-backed PDF.js text annotation is changed, moved, or deleted, export must remove/redact the original source text before drawing any replacement text or visual background mask.",
+      "requiredInputs": [
+        "savedTextOverlay or pdfjsDeleted",
+        "pdfjsSourceX",
+        "pdfjsSourceY",
+        "pdfjsSourceW",
+        "pdfjsSourceH",
+        "pdfjsSourceText or originalText",
+        "text for non-deleted replacements"
+      ],
+      "implementation": {
+        "status": "implemented-in-exporter",
+        "pythonContractFunction": "pdfjs_source_edit_requires_redaction",
+        "exporter": "python/pdf-editor/apply_annotations_direct_new.py",
+        "tests": "python/test_helpers/test_pdf_annotation_contract.py",
+        "behavior": "The exporter redacts matching source text rects first, then paints the sampled source mask fill, then stamps replacement text."
+      }
+    },
+    {
+      "step": 2,
+      "id": "PDFJS-SOURCE-EDIT-002",
+      "title": "Replacement text comes only from saved annotation text",
+      "rule": "The export path must draw the saved annotation text as the replacement and must not recover replacement text from the PDF.js text layer or extraction source.",
+      "requiredInputs": [
+        "text for non-deleted replacements",
+        "pdfjsDeleted for deletion-only source edits"
+      ],
+      "implementation": {
+        "status": "implemented-in-exporter",
+        "pythonContractFunction": "pdfjs_source_edit_replacement_text",
+        "exporter": "python/pdf-editor/apply_annotations_direct_new.py",
+        "tests": "python/test_helpers/test_pdf_annotation_contract.py",
+        "behavior": "The exporter resolves PDF.js source replacement ink from the saved annotation text field only. Missing text stays empty, deleted source edits draw no replacement, and pdfjsSourceText/originalText are never used as replacement fallback."
+      }
+    },
+    {
+      "step": 3,
+      "id": "PDFJS-SOURCE-EDIT-003",
+      "title": "Edit mode owns source boxes, not floating overlays",
+      "rule": "While Edit PDF is on, unmoved source-backed saved overlays must be matched into source edit boxes instead of pre-rendered as persisted overlay boxes over the original text.",
+      "requiredInputs": [
+        "Edit PDF mode is on",
+        "savedTextOverlay",
+        "pdfjsSourceX or pdfjsSourceY or pdfjsAnchorUid or pdfjsSourceText",
+        "movedTextOverlay is false",
+        "pdfjsDeleted is false",
+        "pdfjsEditorMode is not rich",
+        "userForcedRichText is false"
+      ],
+      "implementation": {
+        "status": "implemented-in-frontend",
+        "frontendContractFunction": "pdfjsSourceOverlayShouldUseSourceBoxInEditMode",
+        "frontendContractModule": "resources/js/edit-new-pdfjs/source-edit-contract.js",
+        "editor": "resources/js/edit-new-pdfjs/main.js",
+        "tests": "resources/js/edit-new-pdfjs/source-edit-contract.test.mjs",
+        "behavior": "renderAnnotationBoxLayer filters unmoved source-backed saved overlays out of the pre-rendered persisted overlay pass while edit mode is on, so findPersistedAnnotationForSpan can attach the saved annotation to the source edit box instead of painting it over the original text."
+      }
+    },
+    {
+      "step": 4,
+      "id": "PDFJS-SOURCE-EDIT-004",
+      "title": "Browser and export use the same source metrics",
+      "rule": "Download export must use the same source rectangle, source font metadata, transform scale, and replacement text semantics that the browser uses for the source edit.",
+      "requiredInputs": [
+        "pdfjsSourceX",
+        "pdfjsSourceY",
+        "pdfjsSourceW",
+        "pdfjsSourceH",
+        "pdfjsSourceText or originalText",
+        "text for replacement ink",
+        "pdfjsSourceTransformScaleX or pdfjsSourceTransform",
+        "pdfjsSourceFontFamily",
+        "pdfjsSourceFontWeight",
+        "pdfjsSourceFontStyle",
+        "pdfjsSourceFontSizePx",
+        "pdfjsSourceLineHeightPx",
+        "pdfjsSourceTextWidthPx",
+        "pdfjsSourceTextColor"
+      ],
+      "implementation": {
+        "status": "implemented-in-exporter-contract",
+        "pythonContractFunction": "pdfjs_source_edit_export_metrics",
+        "supportingPythonFunctions": [
+          "pdfjs_source_edit_source_rect",
+          "pdfjs_source_edit_transform_scale_x",
+          "pdfjs_source_edit_replacement_text"
+        ],
+        "browserMetricWriters": [
+          "resources/js/edit-new-pdfjs/main.js buildAnnotationFromSpan",
+          "resources/js/edit-new-pdfjs/main.js captureSourceSpanMetrics",
+          "resources/js/edit-new-pdfjs/main.js copySourceSpanMetricsToAnnotation"
+        ],
+        "exporter": "python/pdf-editor/apply_annotations_direct_new.py",
+        "tests": "python/test_helpers/test_pdf_annotation_contract.py",
+        "behavior": "The exporter resolves a single metrics snapshot from the saved annotation payload. Source masking uses the saved pdfjsSource rectangle, replacement ink uses saved text semantics, and layout scaling uses the saved PDF.js source transform scale unless the annotation has been promoted to rich/manual mode."
+      }
+    },
+    {
+      "step": 5,
+      "id": "PDFJS-SOURCE-EDIT-005",
+      "title": "Changed source rows need end-to-end tests",
+      "rule": "A changed source row must be covered from saved annotation payload through exported PDF text search/render checks."
+    }
+  ]
+}

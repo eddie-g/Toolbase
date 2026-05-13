@@ -47,6 +47,7 @@ import {
 import { setImageImportStatus as _setImageImportStatus } from '../edit-new/image-import/status.js';
 import { imageImportPendingAsset } from '../edit-new/store/misc-state.js';
 import { installSignatureFeature, isSignatureAnnotation } from './signature.js';
+import { pdfjsSourceOverlayShouldUseSourceBoxInEditMode } from './source-edit-contract.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
 
@@ -426,6 +427,11 @@ function isImageBox(box, existingAnnotation = null) {
         || isImageAnnotation(existingAnnotation);
 }
 
+function isImageBackedBox(box) {
+    const type = String(box?.dataset?.annotationType || '').toLowerCase();
+    return type === 'signature' || type === 'image';
+}
+
 function isShapeBox(box, existingAnnotation = null) {
     return String(box?.dataset?.annotationType || '').toLowerCase() === 'shape'
         || isShapeAnnotation(existingAnnotation);
@@ -800,10 +806,16 @@ function sourceOwnerMatches(owner, targetRect, targetText) {
     const ownerRatio = overlap / Math.max(0.0001, pdfRectArea(ownerRect));
     const targetRatio = overlap / Math.max(0.0001, pdfRectArea(targetRect));
     const centerDistance = pdfRectCenterDistance(ownerRect, targetRect);
-    const size = Math.max(ownerRect.w, ownerRect.h, targetRect.w, targetRect.h, 1);
-    const closeCenters = centerDistance <= Math.max(4, size * 0.65);
+    // Text runs are wide and short, so using `max(w, h)` for the
+    // proximity threshold lets a single line claim ownership of the
+    // entire paragraph above/below it (centerDistance ~= line height
+    // is still << w*0.25). Use the line height (rect height) for the
+    // distance threshold so adjacent paragraph lines don't get
+    // suppressed as 'owned' by their neighbor.
+    const lineSize = Math.max(ownerRect.h, targetRect.h, 1);
+    const closeCenters = centerDistance <= Math.max(4, lineSize * 1.5);
     const textMatches = !owner.text || !targetText || owner.text === targetText;
-    const strongGeometry = ownerRatio >= 0.55 || targetRatio >= 0.55 || centerDistance <= Math.max(2, size * 0.25);
+    const strongGeometry = ownerRatio >= 0.55 || targetRatio >= 0.55 || centerDistance <= Math.max(2, lineSize * 0.5);
     const usableGeometry = ownerRatio >= 0.25 || targetRatio >= 0.25 || closeCenters;
     return textMatches ? usableGeometry : strongGeometry;
 }
@@ -820,6 +832,11 @@ function buildSourceOwnershipRegistry(annotations) {
             const targetRect = promotedSourcePdfBox(annotation);
             if (!targetText || !targetRect) return null;
             return owners.find((owner) => sourceOwnerMatches(owner, targetRect, targetText)) || null;
+        },
+        ownerForSourceRect(targetRect, targetText = '') {
+            const normalizedText = normalizeComparableText(targetText);
+            if (!targetRect) return null;
+            return owners.find((owner) => sourceOwnerMatches(owner, targetRect, normalizedText)) || null;
         },
         isOwned(annotation) {
             return Boolean(this.ownerFor(annotation));
@@ -855,6 +872,7 @@ function appendPromotedFallbackOverlays(layer, annotations, pageIndex, viewport,
         if (!rendered) continue;
         if (rendered.mask) layer.appendChild(rendered.mask);
         layer.appendChild(rendered.box);
+        refreshAttachedSourceFidelityTextFit(rendered.box);
     }
 }
 
@@ -889,6 +907,12 @@ function buildAnnotationFromSpan(spanEl, nextText, existingAnnotation = null) {
     const sourceScaleX = sourceTransformScaleX(sourceTransform);
     const annotationId = String(existingAnnotation?.id || anchorSpan.dataset.enpvPersistentId || spanEl.dataset.enpvPersistentId || buildPdfjsAnnotationId(pageIndex, sourceInfo.index));
     const sourceText = String(existingAnnotation?.pdfjsSourceText || existingAnnotation?.originalText || sourceInfo.text || spanEl.dataset.enpvOriginal || spanEl.textContent || '');
+    const sourceStyle = promotedSourceStyleForPdfjsSource(
+        pageIndex,
+        pdfRect,
+        sourceText,
+        Number(viewport.height) / scale,
+    );
 
     const sourceTextColor = existingAnnotation?.pdfjsSourceTextColor || '';
     const preferSourceColor = sourceTextColor
@@ -907,7 +931,7 @@ function buildAnnotationFromSpan(spanEl, nextText, existingAnnotation = null) {
         id: annotationId,
         type: 'text',
         pageIndex,
-        text: String(nextText ?? sourceInfo.text ?? spanEl.textContent ?? ''),
+        text: String(nextText ?? sourceInfo.visualText ?? sourceInfo.text ?? spanEl.textContent ?? ''),
         originalText: String(existingAnnotation?.originalText || sourceText),
         pdfX: pdfRect.x,
         pdfY: pdfRect.y,
@@ -917,8 +941,8 @@ function buildAnnotationFromSpan(spanEl, nextText, existingAnnotation = null) {
         requestedFontSize: Number.isFinite(fontSizePx) && scale > 0 ? (fontSizePx / scale) : (Number(existingAnnotation?.requestedFontSize) || undefined),
         lineHeight: Number.isFinite(lineHeightPx) && scale > 0 ? (lineHeightPx / scale) : (Number(existingAnnotation?.lineHeight) || undefined),
         fontFamily: String(existingAnnotation?.fontFamily || cs.fontFamily || ''),
-        fontWeight: String(existingAnnotation?.fontWeight || cs.fontWeight || 'normal'),
-        fontStyle: String(existingAnnotation?.fontStyle || cs.fontStyle || 'normal'),
+        fontWeight: String(existingAnnotation?.fontWeight || sourceStyle?.fontWeight || cs.fontWeight || 'normal'),
+        fontStyle: String(existingAnnotation?.fontStyle || sourceStyle?.fontStyle || cs.fontStyle || 'normal'),
         opacity: Number(existingAnnotation?.opacity ?? 1) || 1,
         textColor,
         color: textColor,
@@ -933,8 +957,8 @@ function buildAnnotationFromSpan(spanEl, nextText, existingAnnotation = null) {
         pdfjsSourceOccurrence: immutableSourceString(existingAnnotation?.pdfjsSourceOccurrence, sourceInfo.occurrence || '0'),
         pdfjsSourceFidelity: existingAnnotation?.pdfjsSourceFidelity ?? true,
         pdfjsSourceFontFamily: immutableSourceString(existingAnnotation?.pdfjsSourceFontFamily, cs.fontFamily || ''),
-        pdfjsSourceFontWeight: immutableSourceString(existingAnnotation?.pdfjsSourceFontWeight, cs.fontWeight || ''),
-        pdfjsSourceFontStyle: immutableSourceString(existingAnnotation?.pdfjsSourceFontStyle, cs.fontStyle || ''),
+        pdfjsSourceFontWeight: immutableSourceString(existingAnnotation?.pdfjsSourceFontWeight, sourceStyle?.fontWeight || cs.fontWeight || ''),
+        pdfjsSourceFontStyle: immutableSourceString(existingAnnotation?.pdfjsSourceFontStyle, sourceStyle?.fontStyle || cs.fontStyle || ''),
         pdfjsSourceLetterSpacing: immutableSourceString(existingAnnotation?.pdfjsSourceLetterSpacing, cs.letterSpacing || 'normal'),
         pdfjsSourceTransform: immutableSourceString(existingAnnotation?.pdfjsSourceTransform, sourceTransform),
         pdfjsSourceTransformScaleX: immutableSourceString(existingAnnotation?.pdfjsSourceTransformScaleX, sourceScaleX),
@@ -1102,6 +1126,7 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         underline,
         textAlign,
         verticalAlign,
+        userSizedTextBox: box.dataset.userSizedTextBox === '1' || boolish(existingAnnotation?.userSizedTextBox),
         userCreated: isUserBox || boolish(existingAnnotation?.userCreated),
         userAuthored: isUserBox || boolish(existingAnnotation?.userAuthored),
         skipPdfjsSourceMask: isUserBox || boolish(existingAnnotation?.skipPdfjsSourceMask),
@@ -1146,7 +1171,7 @@ function findPersistedAnnotationForSpan(pageIndex, currentRect, text, originalTe
         const textMatches = [annotation.text, annotation.originalText, annotation.pdfjsSourceText]
             .map((value) => normalizeComparableText(value))
             .some((value) => value && (value === targetText || value === targetOriginal));
-        if (uidMismatches && !textMatches && geometryScore > 24) continue;
+        if (uidMismatches && !textMatches) continue;
         const score = geometryScore + ((uidMatches || textMatches) ? 0 : 48) + (uidMismatches && !textMatches ? 24 : 0);
         if (score < bestScore) {
             best = annotation;
@@ -1459,6 +1484,32 @@ function inflatePdfRect(pdfRect, paddingPts = SOURCE_MASK_PADDING_PTS) {
     };
 }
 
+// Source bboxes captured from PDF text-stream metrics describe the
+// baseline-to-x-height extent of a run, not the full visible glyph
+// rectangle that is painted on the canvas. Ascenders/cap-height extend
+// above the bbox top and descenders sit below the baseline. When we
+// drop a background-colored mask over the source location to hide the
+// original glyphs (after a move or for a saved overlay), the bbox-sized
+// mask leaves a thin band of glyph tops/bottoms visible. Pad the rect
+// proportionally to the source height so the mask covers the full
+// painted extent without depending on font-specific metrics we don't
+// have client-side.
+function inflateSourceMaskPdfRect(pdfRect) {
+    if (!pdfRect) return null;
+    const sidePad = Number(SOURCE_MASK_PADDING_PTS) || 0;
+    const h = Number(pdfRect.h) || 0;
+    const topPad = Math.max(sidePad, h * 0.35);
+    const bottomPad = Math.max(sidePad, h * 0.15);
+    return {
+        x: pdfRect.x - sidePad,
+        // PDF coords: y is bottom-origin, so subtracting from y extends
+        // the rect downward (covering descenders below the baseline).
+        y: pdfRect.y - bottomPad,
+        w: pdfRect.w + (sidePad * 2),
+        h: h + topPad + bottomPad,
+    };
+}
+
 function applyAnnotationTypographyToBox(box, annotation, scale, sourceStyle = null) {
     if (!box) return;
     const fontSizePts = Number(annotation?.fontSize ?? annotation?.requestedFontSize ?? box.dataset.fontSizePts);
@@ -1517,16 +1568,16 @@ function applyAnnotationTypographyToBox(box, annotation, scale, sourceStyle = nu
     box.dataset.verticalAlign = verticalAlign;
 }
 
-function captureSourceSpanMetrics(box, spanEl, spanRect, scale, pageDiv = null) {
+function captureSourceSpanMetrics(box, spanEl, spanRect, scale, pageDiv = null, sourceStyle = null) {
     if (!box || !spanEl) return;
     const cs = window.getComputedStyle(spanEl);
     const rect = spanRect || spanEl.getBoundingClientRect();
-    const fontSizePx = Math.max(1, rect.height || Number.parseFloat(cs.fontSize || '') || 12);
+    const fontSizePx = Math.max(1, Number.parseFloat(cs.fontSize || '') || rect.height || 12);
     const transform = cs.transform && cs.transform !== 'none' ? cs.transform : '';
     const transformScaleX = sourceTransformScaleX(transform);
     box.dataset.sourceFontFamily = cs.fontFamily || '';
-    box.dataset.sourceFontWeight = cs.fontWeight || '';
-    box.dataset.sourceFontStyle = cs.fontStyle || '';
+    box.dataset.sourceFontWeight = sourceStyle?.fontWeight || cs.fontWeight || '';
+    box.dataset.sourceFontStyle = sourceStyle?.fontStyle || cs.fontStyle || '';
     box.dataset.sourceLetterSpacing = cs.letterSpacing || 'normal';
     box.dataset.sourceTransform = transform;
     box.dataset.sourceTransformScaleX = String(transformScaleX);
@@ -1555,6 +1606,8 @@ function captureSourceSpanMetrics(box, spanEl, spanRect, scale, pageDiv = null) 
 
 function restoreSourceSpanMetricsFromAnnotation(box, annotation) {
     if (!box || !annotation) return;
+    const restoredScaleX = Number.parseFloat(annotation.pdfjsSourceTransformScaleX || '');
+    const hasValidRestoredScaleX = !Number.isFinite(restoredScaleX) || (restoredScaleX >= 0.25 && restoredScaleX <= 3);
     const mappings = [
         ['sourceFontFamily', 'pdfjsSourceFontFamily'],
         ['sourceFontWeight', 'pdfjsSourceFontWeight'],
@@ -1569,6 +1622,9 @@ function restoreSourceSpanMetricsFromAnnotation(box, annotation) {
         ['sourceTextColor', 'pdfjsSourceTextColor'],
     ];
     for (const [datasetKey, annotationKey] of mappings) {
+        if (!hasValidRestoredScaleX && ['sourceTransform', 'sourceTransformScaleX', 'sourceTextWidthPx', 'sourceTransformOrigin'].includes(datasetKey)) {
+            continue;
+        }
         const value = annotation[annotationKey];
         if (value != null && String(value) !== '') box.dataset[datasetKey] = String(value);
     }
@@ -1582,6 +1638,114 @@ function sourceTransformScaleX(transform) {
     } catch (_) {
         return 1;
     }
+}
+
+function sourceSpanPdfRectFromPromotedSpan(sourceSpan, pageHeight) {
+    const bbox = sourceSpan?.bbox;
+    if (!Array.isArray(bbox) || bbox.length < 4 || !(pageHeight > 0)) return null;
+    const x0 = Number(bbox[0]);
+    const y0 = Number(bbox[1]);
+    const x1 = Number(bbox[2]);
+    const y1 = Number(bbox[3]);
+    if (![x0, y0, x1, y1].every(Number.isFinite) || x1 <= x0 || y1 <= y0) return null;
+    return { x: x0, y: pageHeight - y1, w: x1 - x0, h: y1 - y0 };
+}
+
+function fontWeightFromPromotedSourceSpan(sourceSpan) {
+    const explicit = String(sourceSpan?.fontWeight || sourceSpan?.font_weight || '').trim();
+    const parsed = Number.parseInt(explicit, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return String(parsed);
+    if (boolish(sourceSpan?.bold)) return '700';
+    const fontName = String(sourceSpan?.font || sourceSpan?.embedded_font_name || '').toLowerCase();
+    if (/bold|black|heavy|semibold|demibold/.test(fontName)) return '700';
+    return '';
+}
+
+function fontStyleFromPromotedSourceSpan(sourceSpan) {
+    if (boolish(sourceSpan?.italic)) return 'italic';
+    const fontName = String(sourceSpan?.font || sourceSpan?.embedded_font_name || '').toLowerCase();
+    return /italic|oblique/.test(fontName) ? 'italic' : '';
+}
+
+function promotedSourceStyleForPdfjsSource(pageIndex, sourceRect, sourceText, pageHeight) {
+    if (!sourceRect || !(pageHeight > 0)) return null;
+    const targetText = normalizeComparableText(sourceText);
+    let best = null;
+    let bestScore = Number.POSITIVE_INFINITY;
+    for (const annotation of annotationBoxesByPage.get(pageIndex) || []) {
+        if (!isPromotedExtractionAnnotation(annotation) || !Array.isArray(annotation.sourceSpans)) continue;
+        for (const sourceSpan of annotation.sourceSpans) {
+            const spanRect = sourceSpanPdfRectFromPromotedSpan(sourceSpan, pageHeight);
+            if (!spanRect) continue;
+            const overlap = pdfRectOverlapArea(sourceRect, spanRect);
+            const targetRatio = overlap / Math.max(0.0001, pdfRectArea(sourceRect));
+            const spanRatio = overlap / Math.max(0.0001, pdfRectArea(spanRect));
+            if (targetRatio < 0.45 && spanRatio < 0.45) continue;
+            const spanText = normalizeComparableText(sourceSpan.text || sourceSpan.rawText || sourceSpan.render_text || '');
+            const textMatches = !targetText || !spanText || targetText === spanText;
+            const score = scorePdfRectDistance(sourceRect, spanRect) + (textMatches ? 0 : 12);
+            if (score < bestScore) {
+                bestScore = score;
+                best = sourceSpan;
+            }
+        }
+    }
+    if (!best) return null;
+    return {
+        fontWeight: fontWeightFromPromotedSourceSpan(best),
+        fontStyle: fontStyleFromPromotedSourceSpan(best),
+    };
+}
+
+function applySourceFidelityTextFit(box, tc) {
+    if (!box || !tc) return;
+    const rawSourceScaleX = Number.parseFloat(box.dataset.sourceTransformScaleX || '1') || 1;
+    const sourceScaleX = rawSourceScaleX >= 0.25 && rawSourceScaleX <= 3 ? rawSourceScaleX : 1;
+    const targetWidth = Math.max(
+        1,
+        Number(box.clientWidth) || 0,
+        Number(box.getBoundingClientRect?.().width) || 0,
+        Number.parseFloat(box.style.width || '') || 0,
+    );
+    const sourceLayoutWidth = Math.max(
+        Number.parseFloat(tc.style.width || '') || 0,
+        Number.parseFloat(box.dataset.sourceTextWidthPx || '') || 0,
+    );
+    let rangeContentWidth = 0;
+    if (tc.isConnected) {
+        const previousTransform = tc.style.transform;
+        tc.style.transform = '';
+        const range = document.createRange();
+        range.selectNodeContents(tc);
+        rangeContentWidth = range.getBoundingClientRect().width || 0;
+        range.detach?.();
+        tc.style.transform = previousTransform;
+    }
+    const measuredContentWidth = Math.max(
+        rangeContentWidth,
+        Number(tc.scrollWidth) || 0,
+        sourceLayoutWidth,
+    );
+    if (!(targetWidth > 0) || !(measuredContentWidth > 0)) return;
+    if (sourceLayoutWidth > 0 && measuredContentWidth > sourceLayoutWidth * 1.35) return;
+    const fitScaleX = Math.min(sourceScaleX, targetWidth / measuredContentWidth);
+    if (!(fitScaleX > 0) || !Number.isFinite(fitScaleX)) return;
+    tc.style.width = `${measuredContentWidth}px`;
+    tc.style.transformOrigin = '0 0';
+    tc.style.transform = Math.abs(fitScaleX - 1) < 0.0001
+        ? ''
+        : `matrix(${fitScaleX}, 0, 0, 1, 0, 0)`;
+}
+
+function refreshAttachedSourceFidelityTextFit(box) {
+    if (!box?.classList?.contains('is-source-fidelity')) return;
+    const tc = selectedBoxTextElement(box);
+    if (!tc) return;
+    applySourceFidelityTextFit(box, tc);
+    requestAnimationFrame?.(() => {
+        if (!box.isConnected) return;
+        applySourceFidelityTextFit(box, tc);
+    });
 }
 
 function copySourceSpanMetricsToAnnotation(annotation, box, options = {}) {
@@ -1657,6 +1821,7 @@ function applySourceFidelityTypography(box, options = {}) {
     tc.style.lineHeight = lineHeightPx;
     tc.style.transformOrigin = box.dataset.sourceTransformOrigin || '0 0';
     tc.style.transform = box.dataset.sourceTransform || '';
+    applySourceFidelityTextFit(box, tc);
     if (options.editing) {
         box.dataset.sourceFidelityEditing = '1';
         tc.style.height = 'auto';
@@ -1908,12 +2073,24 @@ function richTextContentWidthPx(box) {
 
 function fitRichTextBoxToContent(box, anchor = 'top', options = {}) {
     if (!box || editorModeForBox(box) !== 'rich') return false;
-    const contentHeight = richTextContentHeightPx(box);
-    if (!(contentHeight > 0)) return false;
-    const targetHeight = Math.max(12, contentHeight + 2);
-    const currentHeight = Number.parseFloat(box.style.height || '') || box.getBoundingClientRect().height || box.offsetHeight || 0;
     const allowShrink = options.allowShrink === true;
     let changed = false;
+    if (options.fitWidth === true) {
+        const maxWidth = Number.parseFloat(options.maxWidthPx ?? '');
+        const naturalWidth = Math.max(12, richTextContentWidthPx(box) + 2);
+        const targetWidth = Number.isFinite(maxWidth) && maxWidth > 0
+            ? Math.min(naturalWidth, Math.max(12, maxWidth))
+            : naturalWidth;
+        const currentWidth = Number.parseFloat(box.style.width || '') || box.getBoundingClientRect().width || box.offsetWidth || 0;
+        if (targetWidth > 0 && (allowShrink || currentWidth < targetWidth - 0.5) && Math.abs(currentWidth - targetWidth) > 0.5) {
+            box.style.width = `${targetWidth}px`;
+            changed = true;
+        }
+    }
+    const contentHeight = richTextContentHeightPx(box);
+    if (!(contentHeight > 0)) return changed;
+    const targetHeight = Math.max(12, contentHeight + 2);
+    const currentHeight = Number.parseFloat(box.style.height || '') || box.getBoundingClientRect().height || box.offsetHeight || 0;
     if (allowShrink || currentHeight < targetHeight - 0.5) {
         if (Math.abs(currentHeight - targetHeight) > 0.5) {
             if (anchor === 'bottom') {
@@ -1924,15 +2101,15 @@ function fitRichTextBoxToContent(box, anchor = 'top', options = {}) {
             changed = true;
         }
     }
-    if (options.fitWidth === true) {
-        const targetWidth = Math.max(12, richTextContentWidthPx(box) + 2);
-        const currentWidth = Number.parseFloat(box.style.width || '') || box.getBoundingClientRect().width || box.offsetWidth || 0;
-        if (targetWidth > 0 && (allowShrink || currentWidth < targetWidth - 0.5) && Math.abs(currentWidth - targetWidth) > 0.5) {
-            box.style.width = `${targetWidth}px`;
-            changed = true;
-        }
-    }
     return changed;
+}
+
+function maxUserCreatedTextBoxWidthPx(box) {
+    if (!box?.parentElement) return null;
+    const layerWidth = box.parentElement.clientWidth || box.parentElement.getBoundingClientRect?.().width || 0;
+    if (!(layerWidth > 0)) return null;
+    const left = Number.parseFloat(box.style.left || '') || 0;
+    return Math.max(12, layerWidth - left - 1);
 }
 
 function clampBoxInsidePage(box) {
@@ -1958,9 +2135,13 @@ function fitUserCreatedTextBoxToContent(box, options = {}) {
     const existing = persistedAnnotationsById.get(String(box?.dataset?.annotationId || '')) || null;
     if (!isUserCreatedTextBox(box, existing)) return false;
     if (!userCreatedBoxHasText(box)) return false;
+    if (box.dataset.userSizedTextBox === '1' || boolish(existing?.userSizedTextBox)) {
+        return clampBoxInsidePage(box);
+    }
     const changed = fitRichTextBoxToContent(box, options.anchor || 'top', {
         allowShrink: true,
         fitWidth: true,
+        maxWidthPx: maxUserCreatedTextBoxWidthPx(box),
     });
     const clamped = clampBoxInsidePage(box);
     return changed || clamped;
@@ -1980,10 +2161,9 @@ function fitPersistedRichOverlayBoxesToContent(layer) {
 
 function prepareBoxForLiveResize(box) {
     if (!box) return;
-    const isSignatureBox = box.dataset.annotationType === 'signature';
     const isShape = box.dataset.annotationType === 'shape';
     if (isShape) return;
-    if (!isSignatureBox) {
+    if (!isImageBackedBox(box)) {
         box.dataset.userForcedRichText = '1';
         box.dataset.richTextPromotionReason = box.dataset.richTextPromotionReason || 'manual-resize';
     }
@@ -1994,6 +2174,9 @@ function prepareBoxForLiveResize(box) {
     if (renderedHeight > 0) box.style.height = `${renderedHeight}px`;
     box.style.minHeight = '';
     delete box.dataset.preEditHeight;
+    if (isImageBackedBox(box)) {
+        return;
+    }
     if (editorModeForBox(box) === 'source') {
         promoteBoxToRichTextMode(box, 'manual-resize');
     } else {
@@ -2011,14 +2194,83 @@ function onTextContentBeforeInput(ev) {
     }
 }
 
+function plainTextFromClipboardData(clipboardData) {
+    const text = clipboardData?.getData?.('text/plain') || '';
+    if (text) return text.replace(/\r\n?/g, '\n');
+    const html = clipboardData?.getData?.('text/html') || '';
+    if (!html) return '';
+    const div = document.createElement('div');
+    div.innerHTML = html;
+    return String(div.innerText || div.textContent || '').replace(/\r\n?/g, '\n');
+}
+
+function ensureSelectionInsideContentEditable(target) {
+    if (!target) return null;
+    const sel = window.getSelection();
+    if (sel?.rangeCount && target.contains(sel.anchorNode) && target.contains(sel.focusNode)) {
+        return sel.getRangeAt(0);
+    }
+    target.focus();
+    const range = document.createRange();
+    range.selectNodeContents(target);
+    range.collapse(false);
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    return range;
+}
+
+function insertPlainTextIntoContentEditable(target, text) {
+    if (!target || !text) return false;
+    target.focus();
+    if (document.queryCommandSupported?.('insertText') && document.execCommand('insertText', false, text)) {
+        return true;
+    }
+    const range = ensureSelectionInsideContentEditable(target);
+    if (!range) return false;
+    range.deleteContents();
+    const parts = String(text).split('\n');
+    parts.forEach((part, index) => {
+        if (index > 0) range.insertNode(document.createElement('br'));
+        if (part) range.insertNode(document.createTextNode(part));
+        range.collapse(false);
+    });
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    return true;
+}
+
+function forcePastedUserTextToDefaultSize(box) {
+    if (!box) return;
+    const scale = Number.parseFloat(box.parentElement?.dataset?.scale || '')
+        || Number.parseFloat(box.dataset.renderScale || '')
+        || Number(pdfViewer.currentScale)
+        || 1;
+    const fontSizePts = 12;
+    box.dataset.fontSizePts = String(fontSizePts);
+    box.style.setProperty('--enpv-font-size', `${fontSizePts * scale}px`);
+    box.style.setProperty('--enpv-line-height', `${fontSizePts * 1.2 * scale}px`);
+}
+
 function onTextContentPaste(ev) {
     const box = ev.currentTarget?.closest?.('.enpv-annotation-box');
-    if (!box || editorModeForBox(box) !== 'source') return;
-    const text = ev.clipboardData?.getData('text/plain') || '';
-    const html = ev.clipboardData?.getData('text/html') || '';
-    if (/\r|\n/.test(text) || html.trim()) {
-        promoteBoxToRichTextMode(box, html.trim() ? 'rich-paste' : 'multiline-paste');
+    if (!box) return;
+    const text = plainTextFromClipboardData(ev.clipboardData);
+    if (!text) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (editorModeForBox(box) === 'source' && /\n/.test(text)) {
+        promoteBoxToRichTextMode(box, 'plain-text-paste');
     }
+    if (isUserCreatedTextBox(box, persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null)) {
+        forcePastedUserTextToDefaultSize(box);
+    }
+    insertPlainTextIntoContentEditable(ev.currentTarget, text);
+    ev.currentTarget.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        inputType: 'insertText',
+        data: text,
+    }));
 }
 
 function onTextContentBlur(ev) {
@@ -2134,120 +2386,6 @@ function updateShapeSvgForBox(box, annotation, scale = 1) {
         el.setAttribute('transform', `rotate(${Number(ann.rotation) || 0} ${width / 2} ${height / 2})`);
     }
     svg.appendChild(el);
-    updateShapeResizeHandlesForBox(box, ann);
-}
-
-function clampUnit(value, fallback = 0) {
-    const numeric = Number(value);
-    if (!Number.isFinite(numeric)) return fallback;
-    return Math.max(0, Math.min(1, numeric));
-}
-
-function updateShapeResizeHandlesForBox(box, annotation = null) {
-    if (!box || box.dataset.annotationType !== 'shape') return;
-    const ann = normalizeShapeAnnotation({
-        ...(annotation || {}),
-        type: 'shape',
-        shapeType: box.dataset.shapeType || annotation?.shapeType || 'circle',
-        lineStartX: box.dataset.lineStartX,
-        lineStartY: box.dataset.lineStartY,
-        lineEndX: box.dataset.lineEndX,
-        lineEndY: box.dataset.lineEndY,
-    });
-    const isLine = normalizeShapeType(ann.shapeType) === 'line';
-    const handles = Array.from(box.querySelectorAll(':scope > .enpv-resize-handle'));
-
-    if (isLine) {
-        const endpoints = {
-            'line-start': {
-                x: clampUnit(ann.lineStartX, 0),
-                y: clampUnit(ann.lineStartY, 0),
-                aria: 'Move line start',
-            },
-            'line-end': {
-                x: clampUnit(ann.lineEndX, 1),
-                y: clampUnit(ann.lineEndY, 1),
-                aria: 'Move line end',
-            },
-        };
-        handles.forEach((handle, index) => {
-            const role = index === 0 ? 'line-start' : (index === 1 ? 'line-end' : '');
-            if (!role) {
-                handle.style.display = 'none';
-                return;
-            }
-            const endpoint = endpoints[role];
-            handle.dataset.edge = role;
-            handle.setAttribute('aria-label', endpoint.aria);
-            handle.style.left = `${endpoint.x * 100}%`;
-            handle.style.top = `${endpoint.y * 100}%`;
-            handle.style.cursor = 'move';
-            handle.style.display = '';
-        });
-        return;
-    }
-
-    const cornerEdges = ['nw', 'ne', 'sw', 'se'];
-    handles.forEach((handle, index) => {
-        const edge = cornerEdges[index] || '';
-        if (!edge) {
-            handle.style.display = 'none';
-            return;
-        }
-        handle.dataset.edge = edge;
-        handle.setAttribute('aria-label', `Resize ${edge.toUpperCase()}`);
-        handle.style.removeProperty('display');
-        handle.style.removeProperty('left');
-        handle.style.removeProperty('top');
-        handle.style.removeProperty('cursor');
-    });
-}
-
-function linePdfEndpointsFromAnnotation(annotation) {
-    const box = annotationCurrentPdfBox(annotation);
-    if (!box) return null;
-    const ann = normalizeShapeAnnotation({ ...annotation, type: 'shape', shapeType: 'line' });
-    return {
-        start: {
-            x: box.x + (box.w * clampUnit(ann.lineStartX, 0)),
-            y: box.y + (box.h * (1 - clampUnit(ann.lineStartY, 0))),
-        },
-        end: {
-            x: box.x + (box.w * clampUnit(ann.lineEndX, 1)),
-            y: box.y + (box.h * (1 - clampUnit(ann.lineEndY, 1))),
-        },
-    };
-}
-
-function pageDimensionsPtsForBox(box, scale) {
-    const pageIndex = Number.parseInt(box?.dataset?.pageIndex || '-1', 10);
-    const pageView = Number.isFinite(pageIndex) && pageIndex >= 0 ? pdfViewer.getPageView(pageIndex) : null;
-    const viewport = pageView?.viewport;
-    if (!viewport || !(scale > 0)) return null;
-    return {
-        pageIndex,
-        viewport,
-        width: Number(viewport.width) / scale,
-        height: Number(viewport.height) / scale,
-    };
-}
-
-function applyShapeAnnotationGeometryToBox(box, annotation, scale) {
-    const pageInfo = pageDimensionsPtsForBox(box, scale);
-    if (!box || !annotation || !pageInfo) return;
-    const rect = pdfRectToCanvasRect({
-        x: Number(annotation.pdfX) || 0,
-        y: Number(annotation.pdfY) || 0,
-        w: Math.max(1, Number(annotation.pdfWidth) || 1),
-        h: Math.max(1, Number(annotation.pdfHeight) || 1),
-    }, pageInfo.viewport, scale);
-    if (!rect) return;
-    box.style.left = `${rect.left}px`;
-    box.style.top = `${rect.top}px`;
-    box.style.width = `${Math.max(1, rect.width)}px`;
-    box.style.height = `${Math.max(1, rect.height)}px`;
-    applyShapeAnnotationToBoxDataset(box, annotation);
-    updateShapeSvgForBox(box, annotation, scale);
 }
 
 function applyShapeAnnotationToBoxDataset(box, annotation) {
@@ -2267,6 +2405,79 @@ function applyShapeAnnotationToBoxDataset(box, annotation) {
     box.dataset.lineEndX = String(ann.lineEndX ?? 1);
     box.dataset.lineEndY = String(ann.lineEndY ?? 1);
     box.dataset.lineCap = ann.lineCap || 'round';
+}
+
+function clampLineUnit(value, fallback) {
+    const n = Number.parseFloat(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(0, Math.min(1, n));
+}
+
+function lineEndpointPointsForBox(box, viewport, scale) {
+    if (!box || !viewport || !(scale > 0)) return null;
+    const leftPx = Number.parseFloat(box.style.left || '0') || 0;
+    const topPx = Number.parseFloat(box.style.top || '0') || 0;
+    const widthPx = Number.parseFloat(box.style.width || '0') || box.offsetWidth || 0;
+    const heightPx = Number.parseFloat(box.style.height || '0') || box.offsetHeight || 0;
+    const dxPts = Number.parseFloat(box.dataset.dxPts || '0') || 0;
+    const dyPts = Number.parseFloat(box.dataset.dyPts || '0') || 0;
+    const pdfLeft = (leftPx / scale) + dxPts;
+    const pdfBottom = (Number(viewport.height) - (topPx + heightPx)) / scale - dyPts;
+    const pdfWidth = widthPx / scale;
+    const pdfHeight = heightPx / scale;
+    const lineStartX = clampLineUnit(box.dataset.lineStartX, 0);
+    const lineStartY = clampLineUnit(box.dataset.lineStartY, 0);
+    const lineEndX = clampLineUnit(box.dataset.lineEndX, 1);
+    const lineEndY = clampLineUnit(box.dataset.lineEndY, 1);
+    return {
+        start: {
+            x: pdfLeft + (pdfWidth * lineStartX),
+            y: pdfBottom + (pdfHeight * (1 - lineStartY)),
+        },
+        end: {
+            x: pdfLeft + (pdfWidth * lineEndX),
+            y: pdfBottom + (pdfHeight * (1 - lineEndY)),
+        },
+    };
+}
+
+function updateShapeResizeHandlesForBox(box) {
+    if (!box || box.dataset.annotationType !== 'shape') return;
+    if (normalizeShapeType(box.dataset.shapeType) !== 'line') return;
+    const width = Math.max(1, Number.parseFloat(box.style.width || '') || box.offsetWidth || 1);
+    const height = Math.max(1, Number.parseFloat(box.style.height || '') || box.offsetHeight || 1);
+    const startHandle = box.querySelector('.enpv-resize-handle[data-edge="line-start"]');
+    const endHandle = box.querySelector('.enpv-resize-handle[data-edge="line-end"]');
+    if (startHandle) {
+        startHandle.style.left = `${clampLineUnit(box.dataset.lineStartX, 0) * width}px`;
+        startHandle.style.top = `${clampLineUnit(box.dataset.lineStartY, 0) * height}px`;
+    }
+    if (endHandle) {
+        endHandle.style.left = `${clampLineUnit(box.dataset.lineEndX, 1) * width}px`;
+        endHandle.style.top = `${clampLineUnit(box.dataset.lineEndY, 1) * height}px`;
+    }
+}
+
+function applyLineGeometryToBox(box, lineBox, viewport, scale) {
+    const rect = pdfRectToCanvasRect({
+        x: lineBox.left,
+        y: lineBox.bottom,
+        w: lineBox.width,
+        h: lineBox.height,
+    }, viewport, scale);
+    if (!rect) return null;
+    box.style.left = `${rect.left}px`;
+    box.style.top = `${rect.top}px`;
+    box.style.width = `${Math.max(1, rect.width)}px`;
+    box.style.height = `${Math.max(1, rect.height)}px`;
+    box.dataset.dxPts = '0';
+    box.dataset.dyPts = '0';
+    box.dataset.lineStartX = String(lineBox.lineStartX);
+    box.dataset.lineStartY = String(lineBox.lineStartY);
+    box.dataset.lineEndX = String(lineBox.lineEndX);
+    box.dataset.lineEndY = String(lineBox.lineEndY);
+    updateShapeResizeHandlesForBox(box);
+    return rect;
 }
 
 function createShapeOverlayBox(annotation, pageIndex, viewport, scale, allowInteraction) {
@@ -2339,6 +2550,10 @@ function createPersistedOverlayBox(annotation, pageIndex, viewport, scale, editM
     if (boolish(annotation.userCreated)) box.dataset.userCreated = '1';
     if (boolish(annotation.userAuthored)) box.dataset.userAuthored = '1';
     if (boolish(annotation.skipPdfjsSourceMask)) box.dataset.skipPdfjsSourceMask = '1';
+    if (boolish(annotation.userSizedTextBox)) {
+        box.dataset.userSizedTextBox = '1';
+        box.classList.add('is-user-sized-text');
+    }
     if (boolish(annotation.styleDirty)) box.dataset.styleDirty = '1';
     if (annotation.userForcedRichText === true) box.dataset.userForcedRichText = '1';
     if (annotation.richTextPromotionReason) box.dataset.richTextPromotionReason = String(annotation.richTextPromotionReason);
@@ -2505,14 +2720,14 @@ function sourceMaskRectForBox(box) {
         || sourceRect.w <= 0 || sourceRect.h <= 0) {
         return null;
     }
-    return pdfRectToCanvasRect(inflatePdfRect(sourceRect), viewport, scale);
+    return pdfRectToCanvasRect(inflateSourceMaskPdfRect(sourceRect), viewport, scale);
 }
 
 function sourceMaskCanvasRectForAnnotation(annotation, viewport, scale, pageIndex = null) {
     if (!annotation || !viewport || !scale) return null;
     const sourceRect = annotationBaselinePdfBox(annotation);
     if (!sourceRect) return null;
-    return pdfRectToCanvasRect(inflatePdfRect(sourceRect), viewport, scale);
+    return pdfRectToCanvasRect(inflateSourceMaskPdfRect(sourceRect), viewport, scale);
 }
 
 function shouldMaskSourceForAnnotation(annotation) {
@@ -2790,13 +3005,16 @@ function collapsedPersistedOverlayRect(rect, box, annotation, scale) {
 function addEditableBoxChrome(box) {
     box.addEventListener('pointerdown', onAnnBoxPointerDown);
     box.addEventListener('dblclick', onAnnBoxDblClick);
-    const edges = box.dataset.annotationType === 'shape'
-        ? ['nw', 'ne', 'sw', 'se']
-        : ['t', 'r', 'b', 'l'];
+    const shapeType = box.dataset.annotationType === 'shape' ? normalizeShapeType(box.dataset.shapeType) : '';
+    const edges = shapeType === 'line'
+        ? ['line-start', 'line-end']
+        : (isImageBox(box) || box.dataset.annotationType === 'shape' ? ['nw', 'ne', 'sw', 'se'] : ['t', 'r', 'b', 'l']);
     for (const edge of edges) {
         const handle = document.createElement('div');
         handle.className = `enpv-resize-handle ${edge}`;
         handle.dataset.edge = edge;
+        if (edge === 'line-start') handle.setAttribute('aria-label', 'Move line start');
+        if (edge === 'line-end') handle.setAttribute('aria-label', 'Move line end');
         handle.addEventListener('pointerdown', onResizeHandlePointerDown);
         box.appendChild(handle);
     }
@@ -2891,6 +3109,7 @@ function createNewTextAnnotation(pageIndex, canvasX, canvasY, canvasWidth = null
         styleDirty: true,
         userCreated: true,
         userAuthored: true,
+        userSizedTextBox: hasDraggedSize,
         userForcedRichText: true,
         pdfjsEditorMode: 'rich',
         skipPdfjsSourceMask: true,
@@ -3000,9 +3219,14 @@ function createImageBoxElement(annotation, pageIndex, viewport, scale, editModeO
     img.alt = 'Image';
     box.appendChild(img);
 
+    const label = document.createElement('span');
+    label.className = 'enpv-image-selection-label';
+    label.textContent = 'image';
+    box.appendChild(label);
+
     if (hooks) {
         box.addEventListener('pointerdown', hooks.onAnnBoxPointerDown);
-        for (const edge of ['t', 'r', 'b', 'l']) {
+        for (const edge of ['nw', 'ne', 'sw', 'se']) {
             const handle = document.createElement('div');
             handle.className = `enpv-resize-handle ${edge}`;
             handle.dataset.edge = edge;
@@ -3032,6 +3256,102 @@ function createNewTextBoxOnPage(pageIndex, canvasX, canvasY, canvasWidth = null,
     }
     markManualSaveNeeded();
     return annotation;
+}
+
+function pickImageImportTargetPage() {
+    const pageDivs = Array.from(container?.querySelectorAll?.('.pdfViewer .page[data-page-number]') || []);
+    if (!pageDivs.length) return null;
+    const containerRect = container.getBoundingClientRect();
+    const viewportLeft = containerRect.left;
+    const viewportRight = containerRect.right;
+    const viewportTop = containerRect.top;
+    const viewportBottom = containerRect.bottom;
+    const viewportCenterX = (viewportLeft + viewportRight) / 2;
+    const viewportCenterY = (viewportTop + viewportBottom) / 2;
+    let best = null;
+    let bestOverlap = -Infinity;
+    for (const pageDiv of pageDivs) {
+        const rect = pageDiv.getBoundingClientRect();
+        const overlapW = Math.max(0, Math.min(rect.right, viewportRight) - Math.max(rect.left, viewportLeft));
+        const overlapH = Math.max(0, Math.min(rect.bottom, viewportBottom) - Math.max(rect.top, viewportTop));
+        const overlap = overlapW * overlapH;
+        if (overlap > bestOverlap) {
+            bestOverlap = overlap;
+            best = { pageDiv, rect };
+        }
+    }
+    if (!best) return null;
+    const pageNumber = Number.parseInt(best.pageDiv.dataset.pageNumber || '1', 10);
+    const pageIndex = Number.isFinite(pageNumber) ? pageNumber - 1 : 0;
+    const pageView = pdfViewer.getPageView(pageIndex);
+    const viewport = pageView?.viewport;
+    const scale = Number(viewport?.scale) || Number(pdfViewer.currentScale) || 1;
+    if (!viewport || !(scale > 0)) return { pageIndex, centerPt: null };
+    const localX = Math.max(0, Math.min(best.rect.width || 1, viewportCenterX - best.rect.left));
+    const localY = Math.max(0, Math.min(best.rect.height || 1, viewportCenterY - best.rect.top));
+    return {
+        pageIndex,
+        centerPt: {
+            x: localX / scale,
+            y: (Number(viewport.height) - localY) / scale,
+        },
+    };
+}
+
+function insertImageImportAsset(asset, target = null) {
+    if (!asset || (!asset.dataUrl && !asset.src)) return null;
+    const pageIndex = Number.isInteger(target?.pageIndex) ? target.pageIndex : Math.max(0, pdfViewer.currentPageNumber - 1);
+    const annotation = createImageAnnotationOnPage(pageIndex, asset, target?.centerPt || null);
+    if (!annotation) return null;
+    pushHistorySnapshot('add image');
+    upsertPersistedAnnotation(annotation);
+    renderAnnotationBoxLayer(pageIndex);
+    requestAnimationFrame(() => {
+        const pageDiv = pdfViewer.getPageView(pageIndex)?.div;
+        const box = pageDiv?.querySelector(`.enpv-annotation-box[data-annotation-id="${cssEscape(annotation.id)}"]`) || null;
+        if (box) selectAnnBox(box);
+    });
+    markManualSaveNeeded();
+    setStatus('Image placed. Drag to reposition or resize, then click Save.');
+    return annotation;
+}
+
+function cancelImagePlacement(options = {}) {
+    if (!imagePlacementState) return;
+    imagePlacementState = null;
+    document.body.classList.remove('enpv-image-placing');
+    if (options.showStatus !== false) setStatus('Image placement cancelled.');
+}
+
+function beginImagePlacement(asset) {
+    if (!asset || (!asset.dataUrl && !asset.src)) return false;
+    imagePlacementState = { asset: { ...asset } };
+    document.body.classList.add('enpv-image-placing');
+    setStatus('Click the page location for the image.');
+    return true;
+}
+
+function placePendingImageAtPointer(event) {
+    if (!imagePlacementState) return;
+    if (event.button !== 0) return;
+    const pageIndex = pageIndexFromEventTarget(event.target);
+    if (!Number.isFinite(pageIndex) || pageIndex < 0) return;
+    const point = pdfjsPointFromPageClient(pageIndex, event.clientX, event.clientY);
+    if (!point) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
+    const asset = imagePlacementState.asset;
+    const annotation = insertImageImportAsset(asset, {
+        pageIndex,
+        centerPt: { x: point.pdfX, y: point.pdfY },
+    });
+    if (!annotation) {
+        setStatus('Could not place that image.', true);
+        return;
+    }
+    cancelImagePlacement({ showStatus: false });
 }
 
 function removeAddTextPreview() {
@@ -3115,11 +3435,13 @@ function createAnnotationBoxFromSpan(spanEl) {
         span.dataset.enpvPersistentId = annotationId;
     }
 
+    const sourcePageHeight = Number(viewport.height) / scale;
+    const sourceStyle = promotedSourceStyleForPdfjsSource(pageIndex, sourceBbox, sourceInfo.text || baseText, sourcePageHeight);
     const cs = window.getComputedStyle(anchorSpan);
     let fsPx = parseFloat(cs.fontSize) || 0;
     if (spanRect.height > fsPx) fsPx = spanRect.height;
     if (!(fsPx > 1)) fsPx = Math.max(8, rect.height);
-    captureSourceSpanMetrics(box, anchorSpan, spanRect, scale, pageView.div);
+    captureSourceSpanMetrics(box, anchorSpan, spanRect, scale, pageView.div, sourceStyle);
     restoreSourceSpanMetricsFromAnnotation(box, matchedAnnotation);
     if (matchedAnnotation?.fontFamily) box.style.setProperty('--enpv-font-family', matchedAnnotation.fontFamily);
     if (Number(matchedAnnotation?.fontSize) > 0) box.dataset.fontSizePts = String(Number(matchedAnnotation.fontSize));
@@ -3138,7 +3460,7 @@ function createAnnotationBoxFromSpan(spanEl) {
     tc.setAttribute('aria-multiline', 'true');
     tc.contentEditable = 'false';
     tc.spellcheck = false;
-    tc.textContent = String(matchedAnnotation?.text || sourceInfo.text || spanEl.textContent || spanEl.dataset.enpvOriginal || '');
+    tc.textContent = String(matchedAnnotation?.text || sourceInfo.visualText || sourceInfo.text || spanEl.textContent || spanEl.dataset.enpvOriginal || '');
     box.appendChild(tc);
     if (matchedAnnotation?.userForcedRichText === true || matchedAnnotation?.pdfjsEditorMode === 'rich') {
         box.dataset.userForcedRichText = '1';
@@ -3445,7 +3767,8 @@ function buildSourceGroupText(items) {
         if (!segment.trim()) continue;
         if (previous) {
             const gap = item.rect.left - previous.rect.right;
-            if (gap > spaceGapPx && text && !text.endsWith(' ') && !segment.startsWith(' ')) {
+            const punctuationGap = sourceSegmentNeedsPunctuationSpace(previous.text, segment, gap, charWidth);
+            if ((gap > spaceGapPx || punctuationGap) && text && !text.endsWith(' ') && !segment.startsWith(' ')) {
                 text += ' ';
             }
         }
@@ -3458,6 +3781,83 @@ function buildSourceGroupText(items) {
         previous = item;
     }
     return text.trim();
+}
+
+function sourceSegmentNeedsPunctuationSpace(previousText, nextText, gapPx, charWidth) {
+    if (!(gapPx > Math.max(1, charWidth * 0.25))) return false;
+    const previous = String(previousText || '').trimEnd();
+    const next = String(nextText || '').trimStart();
+    return /[:;,.!?)]$/.test(previous) && /^[A-Za-z0-9(]/.test(next);
+}
+
+function buildSourceGroupVisualText(items) {
+    const charWidth = medianNumber(
+        items.map((item) => {
+            const len = String(item.text || '').replace(/\s+/g, '').length;
+            return len > 0 ? item.rect.width / len : NaN;
+        }),
+        6,
+    );
+    const spaceWidth = Math.max(2, charWidth * 0.48);
+    const visibleGapThreshold = Math.max(2, charWidth * 0.45);
+    let text = '';
+    let previous = null;
+    for (const item of items) {
+        let segment = String(item.text || '').replace(/\s+/g, ' ');
+        if (!segment.trim()) continue;
+        if (previous) {
+            const gap = item.rect.left - previous.rect.right;
+            if (gap > visibleGapThreshold && text && !segment.startsWith(' ')) {
+                const spaceCount = Math.max(1, Math.round(gap / spaceWidth));
+                text = text.replace(/ +$/g, '');
+                text += ' '.repeat(spaceCount);
+                segment = segment.trimStart();
+            } else if (sourceSegmentNeedsPunctuationSpace(previous.text, segment, gap, charWidth) && text && !text.endsWith(' ') && !segment.startsWith(' ')) {
+                text += ' ';
+                segment = segment.trimStart();
+            } else if ((/\s$/.test(String(previous.text || '')) || /^\s/.test(segment)) && text && !text.endsWith(' ') && !segment.startsWith(' ')) {
+                text += ' ';
+                segment = segment.trimStart();
+            } else if (text.endsWith(' ')) {
+                segment = segment.trimStart();
+            }
+        } else {
+            segment = segment.trimStart();
+        }
+        text += segment;
+        previous = item;
+    }
+    return text.trim();
+}
+
+function liveSourceGroupItems(group, layerEl) {
+    if (!group || !layerEl) return [];
+    const layerRect = layerEl.getBoundingClientRect?.();
+    if (!layerRect) return [];
+    return Array.from(group.spans || [])
+        .map((span, order) => {
+            const text = String(span?.textContent || '');
+            const rect = span ? textLayerRelativeRect(span, layerRect) : null;
+            if (!text.trim() || !rect) return null;
+            return { span, text, rect, order };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.rect.left - b.rect.left || a.order - b.order);
+}
+
+function refreshSourceGroupTextFromDom(group, layerEl) {
+    const items = liveSourceGroupItems(group, layerEl);
+    if (!items.length) return group;
+    const text = buildSourceGroupText(items);
+    if (!text) return group;
+    const visualText = buildSourceGroupVisualText(items) || text;
+    const rect = unionRects(items.map((item) => item.rect));
+    group.text = text;
+    group.visualText = visualText;
+    if (rect?.width > 0 && rect?.height > 0) group.rect = rect;
+    group.spans = items.map((item) => item.span);
+    group.anchor = group.anchor || group.spans[0];
+    return group;
 }
 
 function rectOverlapRatioOfSmaller(left, right) {
@@ -3569,26 +3969,36 @@ function normalizedSourceFontWeight(value) {
     return Number.isFinite(parsed) ? parsed : 400;
 }
 
+function sourceItemsAreInlineTextFlow(previous, item, gapPx, minHeight, centerDelta) {
+    const previousText = String(previous?.text || '').trim();
+    const itemText = String(item?.text || '').trim();
+    if (!/[A-Za-z0-9]$/.test(previousText) || !/^[A-Za-z0-9]/.test(itemText)) return false;
+    const lowerGapLimit = -Math.max(3, minHeight * 0.35);
+    const upperGapLimit = Math.max(4, minHeight * 0.6);
+    return gapPx >= lowerGapLimit && gapPx <= upperGapLimit && centerDelta <= minHeight * 0.25;
+}
+
 function shouldSplitMixedTypography(previous, item, gapPx) {
     if (!previous || !item) return false;
     if (previous.isVertical !== item.isVertical) return true;
     if (previous.fontStyle !== item.fontStyle) return true;
     if (Math.abs(previous.fontWeight - item.fontWeight) >= 200) return true;
     if (previous.fontFamily && item.fontFamily && previous.fontFamily !== item.fontFamily) return true;
-    const previousScaleX = Number(previous.transformScaleX) || 1;
-    const itemScaleX = Number(item.transformScaleX) || 1;
-    const transformRatio = Math.max(previousScaleX, itemScaleX) / Math.max(0.0001, Math.min(previousScaleX, itemScaleX));
-    if (transformRatio >= 1.18) return true;
     const previousHeight = Number(previous.rect?.height) || 0;
     const itemHeight = Number(item.rect?.height) || 0;
     const minHeight = Math.max(0.0001, Math.min(previousHeight, itemHeight));
+    const centerDelta = Math.abs((Number(previous.rect?.centerY) || 0) - (Number(item.rect?.centerY) || 0));
+    const isInlineTextFlow = sourceItemsAreInlineTextFlow(previous, item, gapPx, minHeight, centerDelta);
+    const previousScaleX = Number(previous.transformScaleX) || 1;
+    const itemScaleX = Number(item.transformScaleX) || 1;
+    const transformRatio = Math.max(previousScaleX, itemScaleX) / Math.max(0.0001, Math.min(previousScaleX, itemScaleX));
+    if (transformRatio >= 1.18 && !isInlineTextFlow) return true;
     const maxHeight = Math.max(previousHeight, itemHeight);
     const heightRatio = maxHeight / minHeight;
     const previousFont = Number(previous.fontSizePx) || previousHeight;
     const itemFont = Number(item.fontSizePx) || itemHeight;
     const fontRatio = Math.max(previousFont, itemFont) / Math.max(0.0001, Math.min(previousFont, itemFont));
     if (heightRatio >= 1.45 || fontRatio >= 1.45) return true;
-    const centerDelta = Math.abs((Number(previous.rect?.centerY) || 0) - (Number(item.rect?.centerY) || 0));
     return gapPx > 2 && centerDelta > minHeight * 0.38;
 }
 
@@ -3673,11 +4083,13 @@ function collectSourceTextGroups(layerEl, pageIndex, pageDiv = null) {
         const flush = () => {
             if (!current.length) return;
             const text = buildSourceGroupText(current);
+            const visualText = buildSourceGroupVisualText(current);
             const rect = unionRects(current.map((item) => item.rect));
             if (text && rect?.width > 0 && rect?.height > 0) {
                 groups.push({
                     pageIndex,
                     text,
+                    visualText,
                     rect,
                     spans: current.map((item) => item.span),
                     anchor: current[0].span,
@@ -3755,10 +4167,12 @@ function sourceInfoForSpan(spanEl) {
     if (!layerEl || !layerRect) return null;
     const group = sourceGroupForSpan(spanEl);
     if (group) {
+        refreshSourceGroupTextFromDom(group, layerEl);
         return {
             pageIndex,
             anchor: group.anchor || spanEl,
             text: group.text,
+            visualText: group.visualText || group.text,
             rect: group.rect,
             clientRect: sourceGroupClientRect(group, layerEl),
             index: group.index,
@@ -3773,6 +4187,7 @@ function sourceInfoForSpan(spanEl) {
         pageIndex,
         anchor: spanEl,
         text: String(spanEl.dataset.enpvOriginal || spanEl.textContent || ''),
+        visualText: String(spanEl.dataset.enpvOriginal || spanEl.textContent || ''),
         rect,
         clientRect: spanEl.getBoundingClientRect(),
         index,
@@ -3814,23 +4229,47 @@ function wireTextLayerClicks(layerEl, pageIndex) {
     }
     const groups = collectSourceTextGroups(layerEl, pageIndex, pageDiv);
     sourceGroupsByPage.set(pageIndex, { layerEl, groups });
-    for (const group of groups) {
-        const text = group.text;
-        if (!text || !text.trim()) continue;
-        const occ = counters.get(text) || 0;
-        counters.set(text, occ + 1);
-        group.occurrence = occ;
-        for (const span of group.spans) {
-            span.dataset.enpvIndex = String(group.index);
-            span.dataset.enpvGroupIndex = String(group.index);
-            span.dataset.enpvPage = String(pageIndex);
-            span.dataset.enpvOccurrence = String(occ);
-            span.dataset.enpvOriginal = text;
-            if (span === group.anchor) span.dataset.enpvGroupAnchor = '1';
-            span.addEventListener('click', onSpanClick);
-            span.addEventListener('dblclick', onSpanDblClick);
+    const applyGroups = (sourceGroups) => {
+        counters.clear();
+        for (const group of sourceGroups) {
+            refreshSourceGroupTextFromDom(group, layerEl);
+            const text = group.text;
+            if (!text || !text.trim()) continue;
+            const occ = counters.get(text) || 0;
+            counters.set(text, occ + 1);
+            group.occurrence = occ;
+            for (const span of group.spans) {
+                span.dataset.enpvIndex = String(group.index);
+                span.dataset.enpvGroupIndex = String(group.index);
+                span.dataset.enpvPage = String(pageIndex);
+                span.dataset.enpvOccurrence = String(occ);
+                span.dataset.enpvOriginal = text;
+                if (span === group.anchor) span.dataset.enpvGroupAnchor = '1';
+                if (span.dataset.enpvClickWired !== '1') {
+                    span.addEventListener('click', onSpanClick);
+                    span.addEventListener('dblclick', onSpanDblClick);
+                    span.dataset.enpvClickWired = '1';
+                }
+            }
         }
-    }
+    };
+    applyGroups(groups);
+    window.setTimeout(() => {
+        if (!layerEl.isConnected) return;
+        const latestPageDiv = pdfViewer.getPageView(pageIndex)?.div || null;
+        const refreshedGroups = collectSourceTextGroups(layerEl, pageIndex, latestPageDiv);
+        sourceGroupsByPage.set(pageIndex, { layerEl, groups: refreshedGroups });
+        for (const span of spans) {
+            delete span.dataset.enpvIndex;
+            delete span.dataset.enpvGroupIndex;
+            delete span.dataset.enpvGroupAnchor;
+            delete span.dataset.enpvPage;
+            delete span.dataset.enpvOccurrence;
+            delete span.dataset.enpvOriginal;
+        }
+        applyGroups(refreshedGroups);
+        renderAnnotationBoxLayer(pageIndex);
+    }, 60);
 }
 
 function safeLocalStorageGet(key) {
@@ -4149,6 +4588,7 @@ function pageNeedsOverlayProtection(pageIndex) {
     return annotations.some((annotation) => {
         if (!annotation) return false;
         if (isSignatureAnnotation(annotation)) return true;
+        if (isImageAnnotation(annotation)) return true;
         if (String(annotation.type || '').toLowerCase() !== 'text') return false;
         if (isPromotedExtractionAnnotation(annotation)) return cleanPromotedSourceText(annotation) !== '';
         if (boolish(annotation.pdfjsDeleted)) return true;
@@ -4197,6 +4637,7 @@ function renderAnnotationBoxLayer(pageIndex) {
     const persistedTextAnnotations = allTextAnnotations.filter((annotation) => !isPromotedExtractionAnnotation(annotation));
     const promotedTextAnnotations = allTextAnnotations.filter((annotation) => isPromotedExtractionAnnotation(annotation));
     const persistedSignatureAnnotations = allAnnotations.filter(isSignatureAnnotation);
+    const persistedImageAnnotations = allAnnotations.filter(isImageAnnotation);
     const shapeAnnotations = allAnnotations.filter(isShapeAnnotation);
     const visibleTextAnnotations = persistedTextAnnotations.filter(
         (annotation) => annotation.pdfjsDeleted !== true
@@ -4213,7 +4654,6 @@ function renderAnnotationBoxLayer(pageIndex) {
     const textLayerEl = pageView?.textLayer?.div || pageView?.textLayer?.textLayerDiv;
     if (!pageDiv || !viewport) return;
     markPageOverlaysPending(pageIndex);
-    if (editModeOn && !textLayerEl) return;
 
     removeAnnotationBoxLayer(pageIndex);
 
@@ -4231,6 +4671,10 @@ function renderAnnotationBoxLayer(pageIndex) {
     const renderableVisibleTextAnnotations = visibleTextAnnotations.filter(
         (annotation) => !isSuppressedStalePdfjsOverlay(annotation),
     );
+    const preRenderedVisibleTextAnnotations = editModeOn
+        ? renderableVisibleTextAnnotations.filter((annotation) => !pdfjsSourceOverlayShouldUseSourceBoxInEditMode(annotation, editModeOn))
+        : renderableVisibleTextAnnotations;
+    const preRenderedSourceOwners = buildSourceOwnershipRegistry(preRenderedVisibleTextAnnotations);
     const sourceOwners = buildSourceOwnershipRegistry(
         persistedTextAnnotations.filter((annotation) => !isSuppressedStalePdfjsOverlay(annotation)),
     );
@@ -4243,11 +4687,12 @@ function renderAnnotationBoxLayer(pageIndex) {
             : true;
     });
     if (!editModeOn
-        && renderableVisibleTextAnnotations.length === 0
+        && preRenderedVisibleTextAnnotations.length === 0
         && deletedTextMasks.length === 0
         && shapeAnnotations.length === 0
         && !(shapeCreationState?.active && shapeCreationState.pageIndex === pageIndex)
         && persistedSignatureAnnotations.length === 0
+        && persistedImageAnnotations.length === 0
         && promotedFallbackTextAnnotations.length === 0) {
         removeAnnotationBoxLayer(pageIndex);
         markPageOverlaysReady(pageIndex);
@@ -4275,13 +4720,14 @@ function renderAnnotationBoxLayer(pageIndex) {
         persistedOverlayRects.push(rendered.rect);
         layer.appendChild(rendered.box);
     }
-    for (const annotation of renderableVisibleTextAnnotations) {
+    for (const annotation of preRenderedVisibleTextAnnotations) {
         const allowInteraction = editModeOn || (addTextModeOn && isUserCreatedTextAnnotation(annotation));
         const rendered = createPersistedOverlayBox(annotation, pageIndex, viewport, scale, allowInteraction);
         if (!rendered) continue;
         persistedOverlayRects.push(rendered.maskRect || rendered.rect);
         if (rendered.mask) layer.appendChild(rendered.mask);
         layer.appendChild(rendered.box);
+        refreshAttachedSourceFidelityTextFit(rendered.box);
     }
     // Signature annotations: render as image-backed boxes that reuse the
     // text box drag/select/lock infrastructure (onAnnBoxPointerDown).
@@ -4295,6 +4741,13 @@ function renderAnnotationBoxLayer(pageIndex) {
             if (sigBox) layer.appendChild(sigBox);
         }
     }
+    for (const annotation of persistedImageAnnotations) {
+        const imageBox = createImageBoxElement(annotation, pageIndex, viewport, scale, editModeOn, {
+            onAnnBoxPointerDown,
+            onResizeHandlePointerDown,
+        });
+        if (imageBox) layer.appendChild(imageBox);
+    }
 
     if (!editModeOn) {
         appendPromotedFallbackOverlays(layer, promotedFallbackTextAnnotations, pageIndex, viewport, scale, editModeOn);
@@ -4307,6 +4760,12 @@ function renderAnnotationBoxLayer(pageIndex) {
         }
         pageDiv.appendChild(layer);
         fitPersistedRichOverlayBoxesToContent(layer);
+        markPageOverlaysReady(pageIndex);
+        return;
+    }
+
+    if (!textLayerEl) {
+        if (layer.childElementCount) pageDiv.appendChild(layer);
         markPageOverlaysReady(pageIndex);
         return;
     }
@@ -4376,6 +4835,7 @@ function renderAnnotationBoxLayer(pageIndex) {
     }
 
     for (const group of sourceGroups) {
+        refreshSourceGroupTextFromDom(group, textLayerEl);
         const span = group.anchor;
         const spanRect = sourceGroupClientRect(group, textLayerEl);
         if (!span || !spanRect) continue;
@@ -4398,6 +4858,7 @@ function renderAnnotationBoxLayer(pageIndex) {
             w: rect.width / scale,
             h: rect.height / scale,
         };
+        if (preRenderedSourceOwners.ownerForSourceRect(sourceBbox, group.text || '')) continue;
         const uid = `${pageIndex}:${group.index}`;
         const matchedAnnotation = findPersistedAnnotationForSpan(
             pageIndex,
@@ -4447,7 +4908,9 @@ function renderAnnotationBoxLayer(pageIndex) {
             sourceSpan.dataset.enpvPersistentId = annotationId;
         }
 
-        captureSourceSpanMetrics(box, span, spanRect, scale, pageDiv);
+        const sourcePageHeight = Number(viewport.height) / scale;
+        const sourceStyle = promotedSourceStyleForPdfjsSource(pageIndex, sourceBbox, group.text || baseText, sourcePageHeight);
+        captureSourceSpanMetrics(box, span, spanRect, scale, pageDiv, sourceStyle);
         restoreSourceSpanMetricsFromAnnotation(box, matchedAnnotation);
         if (matchedAnnotation?.fontFamily) box.style.setProperty('--enpv-font-family', matchedAnnotation.fontFamily);
         const fontSizePts = Number(matchedAnnotation?.fontSize);
@@ -4472,7 +4935,7 @@ function renderAnnotationBoxLayer(pageIndex) {
         tc.setAttribute('aria-multiline', 'true');
         tc.contentEditable = 'false';
         tc.spellcheck = false;
-        tc.textContent = String(matchedAnnotation?.text || group.text || span.textContent || span.dataset.enpvOriginal || '');
+        tc.textContent = String(matchedAnnotation?.text || group.visualText || group.text || span.textContent || span.dataset.enpvOriginal || '');
         box.appendChild(tc);
         if (matchedAnnotation?.userForcedRichText === true || matchedAnnotation?.pdfjsEditorMode === 'rich') {
             box.dataset.userForcedRichText = '1';
@@ -4689,7 +5152,7 @@ function pdfjsShapeAnnotationFromPoints(startPt, endPt, pageIndex, options = {})
     const pageHeightPts = Number(viewport.height) / scale;
     const defaults = readCurrentShapeState();
     const constrain = options.constrain === true;
-    const uid = `shape_${generateUuidV4()}`;
+    const uid = String(options.uid || `shape_${generateUuidV4()}`);
     const common = {
         _uid: uid,
         id: buildPdfjsAnnotationId(pageIndex, uid),
@@ -4759,10 +5222,86 @@ function pdfjsShapeAnnotationFromPoints(startPt, endPt, pageIndex, options = {})
     return ann;
 }
 
+function removeShapeCreationPreview(state = shapeCreationState) {
+    if (!state) return;
+    if (state.previewRaf) {
+        cancelAnimationFrame(state.previewRaf);
+        state.previewRaf = 0;
+    }
+    state.previewBox?.remove?.();
+    state.previewBox = null;
+}
+
+function ensureShapePreviewLayer(pageIndex, pageDiv, scale) {
+    if (!pageDiv) return null;
+    let layer = pageDiv.querySelector(':scope > .enpv-annotation-box-layer');
+    if (!layer) {
+        layer = document.createElement('div');
+        layer.className = 'enpv-annotation-box-layer';
+        layer.dataset.pageIndex = String(pageIndex);
+        layer.dataset.scale = String(scale);
+        layer.dataset.editMode = document.body.classList.contains('enpv-edit-on') ? '1' : '0';
+        pageDiv.appendChild(layer);
+        markPageOverlaysReady(pageIndex);
+    }
+    return layer;
+}
+
+function updateShapeCreationPreviewBox(state) {
+    if (!state?.active || !state.previewAnn) return;
+    const pageView = pdfViewer.getPageView(state.pageIndex);
+    const pageDiv = pageView?.div || state.pageDiv;
+    const viewport = pageView?.viewport;
+    const scale = Number(viewport?.scale) || Number(pdfViewer.currentScale) || 1;
+    if (!pageDiv || !viewport || !scale) return;
+    const layer = ensureShapePreviewLayer(state.pageIndex, pageDiv, scale);
+    if (!layer) return;
+    const ann = normalizeShapeAnnotation({ ...state.previewAnn });
+    let box = state.previewBox;
+    if (!box || !box.isConnected) {
+        const rendered = createShapeOverlayBox(ann, state.pageIndex, viewport, scale, false);
+        if (!rendered) return;
+        box = rendered.box;
+        box.classList.add('is-shape-preview');
+        layer.appendChild(box);
+        state.previewBox = box;
+        return;
+    }
+    const currentPdfBox = annotationCurrentPdfBox(ann) || {
+        x: Number(ann.pdfX),
+        y: Number(ann.pdfY),
+        w: Number(ann.pdfWidth),
+        h: Number(ann.pdfHeight),
+    };
+    const rect = pdfRectToCanvasRect(currentPdfBox, viewport, scale);
+    if (!rect || rect.width <= 0 || rect.height <= 0) return;
+    box.dataset.uid = String(ann._uid || ann.id || `${state.pageIndex}:shape-preview`);
+    box.dataset.annotationId = String(ann.id || buildPdfjsAnnotationId(state.pageIndex, box.dataset.uid));
+    box.dataset.pageIndex = String(state.pageIndex);
+    box.dataset.locked = '0';
+    box.dataset.zIndex = String(Number(ann.zIndex) || 2);
+    applyShapeAnnotationToBoxDataset(box, ann);
+    box.style.left = `${rect.left}px`;
+    box.style.top = `${rect.top}px`;
+    box.style.width = `${Math.max(1, rect.width)}px`;
+    box.style.height = `${Math.max(1, rect.height)}px`;
+    box.style.zIndex = box.dataset.zIndex;
+    updateShapeSvgForBox(box, ann, scale);
+}
+
+function scheduleShapeCreationPreviewUpdate(state = shapeCreationState) {
+    if (!state || state.previewRaf) return;
+    state.previewRaf = requestAnimationFrame(() => {
+        state.previewRaf = 0;
+        updateShapeCreationPreviewBox(state);
+    });
+}
+
 function startShapeCreation(ev) {
     if (!document.body.classList.contains('enpv-shape-on')) return;
     if (ev.button !== 0 || dragState || resizeState) return;
     if (ev.target?.closest?.('.enpv-annotation-box')) return;
+    if (ev.target?.closest?.('.enpv-ann-menu')) return;
     const pageIndex = pageIndexFromEventTarget(ev.target);
     if (!Number.isFinite(pageIndex) || pageIndex < 0) return;
     const point = pdfjsPointFromPageClient(pageIndex, ev.clientX, ev.clientY);
@@ -4772,21 +5311,26 @@ function startShapeCreation(ev) {
     ev.stopPropagation();
     deselectAnnBox();
     shapeCreationState = {
+        active: true,
         pageIndex,
         pointerId: ev.pointerId,
+        uid: `shape_${generateUuidV4()}`,
         startPt: { x: point.pdfX, y: point.pdfY },
         currentPt: { x: point.pdfX, y: point.pdfY },
         pageDiv: point.pageDiv,
-        previewAnn: pdfjsShapeAnnotationFromPoints(
-            { x: point.pdfX, y: point.pdfY },
-            { x: point.pdfX, y: point.pdfY },
-            pageIndex,
-            { constrain: ev.shiftKey },
-        ),
+        previewAnn: null,
+        previewBox: null,
+        previewRaf: 0,
         moved: false,
     };
+    shapeCreationState.previewAnn = pdfjsShapeAnnotationFromPoints(
+        { x: point.pdfX, y: point.pdfY },
+        { x: point.pdfX, y: point.pdfY },
+        pageIndex,
+        { constrain: ev.shiftKey, uid: shapeCreationState.uid },
+    );
     try { point.pageDiv.setPointerCapture?.(ev.pointerId); } catch (_) {}
-    renderAnnotationBoxLayer(pageIndex);
+    updateShapeCreationPreviewBox(shapeCreationState);
 }
 
 function updateShapeCreation(ev) {
@@ -4796,11 +5340,11 @@ function updateShapeCreation(ev) {
     const point = pdfjsPointFromPageClient(state.pageIndex, ev.clientX, ev.clientY);
     if (!point) return;
     state.currentPt = { x: point.pdfX, y: point.pdfY };
-    state.previewAnn = pdfjsShapeAnnotationFromPoints(state.startPt, state.currentPt, state.pageIndex, { constrain: ev.shiftKey });
+    state.previewAnn = pdfjsShapeAnnotationFromPoints(state.startPt, state.currentPt, state.pageIndex, { constrain: ev.shiftKey, uid: state.uid });
     const dx = state.currentPt.x - state.startPt.x;
     const dy = state.currentPt.y - state.startPt.y;
     if (Math.hypot(dx, dy) > 3) state.moved = true;
-    renderAnnotationBoxLayer(state.pageIndex);
+    scheduleShapeCreationPreviewUpdate(state);
 }
 
 function finishShapeCreation(ev) {
@@ -4811,6 +5355,7 @@ function finishShapeCreation(ev) {
     try { state.pageDiv?.releasePointerCapture?.(ev.pointerId); } catch (_) {}
     const ann = state.previewAnn ? normalizeShapeAnnotation(state.previewAnn) : null;
     const pageIndex = state.pageIndex;
+    removeShapeCreationPreview(state);
     shapeCreationState = null;
     if (!ann) {
         renderAnnotationBoxLayer(pageIndex);
@@ -4842,6 +5387,7 @@ container.addEventListener('pointerup', finishShapeCreation, { capture: true });
 container.addEventListener('pointercancel', (ev) => {
     if (!shapeCreationState || shapeCreationState.pointerId !== ev.pointerId) return;
     const pageIndex = shapeCreationState.pageIndex;
+    removeShapeCreationPreview(shapeCreationState);
     shapeCreationState = null;
     renderAnnotationBoxLayer(pageIndex);
 }, { capture: true });
@@ -4879,6 +5425,7 @@ let selectedAnnBoxIsEditing = false;
 let dragState = null;
 let addTextCreationState = null;
 let shapeCreationState = null;
+let imagePlacementState = null;
 // Signature feature handle — installed below once viewer is wired.
 let signatureFeature = null;
 
@@ -4888,8 +5435,22 @@ function cssEscape(s) {
 }
 
 function findSelectedBox() {
-    if (!selectedAnnBoxUid) return null;
-    return document.querySelector(`.enpv-annotation-box.is-selected[data-uid="${cssEscape(selectedAnnBoxUid)}"]`);
+    if (selectedAnnBoxUid) {
+        const uidSelector = `.enpv-annotation-box[data-uid="${cssEscape(selectedAnnBoxUid)}"]`;
+        const selectedByUid = document.querySelector(`.enpv-annotation-box.is-selected[data-uid="${cssEscape(selectedAnnBoxUid)}"]`);
+        if (selectedByUid) return selectedByUid;
+        const byUid = document.querySelector(uidSelector);
+        if (byUid) {
+            byUid.classList.add('is-selected');
+            return byUid;
+        }
+    }
+    const selected = document.querySelector('.enpv-annotation-box.is-selected');
+    if (selected) {
+        selectedAnnBoxUid = selected.dataset.uid || null;
+        return selected;
+    }
+    return null;
 }
 
 function isAnnBoxLocked(box) {
@@ -5180,6 +5741,26 @@ function setAnnBoxLocked(box, locked) {
 function refreshAnnMenuState(box) {
     if (!annMenu || !box) return;
     const locked = isAnnBoxLocked(box);
+    const annotationType = String(box.dataset.annotationType || '').toLowerCase();
+    const isImageMenu = annotationType === 'image';
+    const isShapeMenu = annotationType === 'shape';
+    const compactMenuActions = isShapeMenu
+        ? new Set(['move', 'lock', 'delete'])
+        : new Set(['lock', 'delete']);
+    annMenu.classList.toggle('is-image-menu', isImageMenu);
+    annMenu.classList.toggle('is-shape-menu', isShapeMenu);
+    annMenu.querySelectorAll('[data-action]').forEach((button) => {
+        const action = String(button.dataset.action || '');
+        const visible = (!isImageMenu && !isShapeMenu) || compactMenuActions.has(action);
+        button.hidden = !visible;
+        button.style.display = visible ? '' : 'none';
+        button.setAttribute('aria-hidden', visible ? 'false' : 'true');
+    });
+    annMenu.querySelectorAll('.enpv-ann-menu-divider').forEach((divider) => {
+        divider.hidden = isImageMenu || isShapeMenu;
+        divider.style.display = (isImageMenu || isShapeMenu) ? 'none' : '';
+        divider.setAttribute('aria-hidden', 'true');
+    });
     const lockButton = annMenu.querySelector('[data-action="lock"]');
     if (lockButton) {
         lockButton.setAttribute('aria-pressed', locked ? 'true' : 'false');
@@ -5415,6 +5996,7 @@ function positionAnnMenuOver(box) {
     const dxPx = dxPts * scale;
     const dyPx = dyPts * scale;
     annMenu.hidden = false;
+    refreshAnnMenuState(box);
     const menuHeight = Math.max(annMenu.offsetHeight || 38, 32);
     const menuWidth = Math.max(annMenu.offsetWidth || 1, 1);
     const layerWidth = layer.clientWidth || pdfViewer.getPageView(Number.parseInt(box.dataset.pageIndex || '-1', 10))?.div?.clientWidth || 0;
@@ -5431,7 +6013,6 @@ function positionAnnMenuOver(box) {
     annMenu.style.top = `${finalTop}px`;
     annMenu.classList.toggle('is-below', false);
     annMenu.classList.toggle('is-top-gutter', finalTop < 0);
-    refreshAnnMenuState(box);
 }
 
 function selectAnnBox(box) {
@@ -5498,6 +6079,7 @@ function beginEditMode(box) {
         }
         return;
     }
+    if (box.dataset.annotationType === 'image') return;
     const preEditHeightPx = box.getBoundingClientRect().height
         || Number.parseFloat(box.style.height || '')
         || box.offsetHeight
@@ -5510,8 +6092,13 @@ function beginEditMode(box) {
     // min-height after `height:auto`, a temporarily wrapped single-line
     // title can measure as two lines and that whitespace gets committed.
     box.dataset.preEditHeight = `${preEditHeightPx}px`;
-    box.style.minHeight = `${preEditHeightPx}px`;
-    box.style.height = 'auto';
+    if (box.dataset.userSizedTextBox === '1') {
+        box.style.minHeight = '';
+        box.style.height = `${preEditHeightPx}px`;
+    } else {
+        box.style.minHeight = `${preEditHeightPx}px`;
+        box.style.height = 'auto';
+    }
 
     const tc = box.querySelector('.enpv-text-content');
     if (tc) {
@@ -5677,10 +6264,10 @@ function deselectAnnBox(options = {}) {
 function onAnnBoxPointerDown(ev) {
     if (ev.button !== 0) return;
     const box = ev.currentTarget;
-    const isSignatureBox = box?.dataset?.annotationType === 'signature';
+    const isImageBacked = isImageBackedBox(box);
     const isShape = box?.dataset?.annotationType === 'shape';
     const addTextUserBox = box?.dataset?.userCreated === '1';
-    if (!document.body.classList.contains('enpv-edit-on') && !document.body.classList.contains('enpv-shape-on') && !isSignatureBox && !isShape && !addTextUserBox) return;
+    if (!document.body.classList.contains('enpv-edit-on') && !document.body.classList.contains('enpv-shape-on') && !isImageBacked && !isShape && !addTextUserBox) return;
     // While the box is in in-place edit mode, suppress drag/select
     // entirely so the user can interact with the inner text without
     // accidentally moving the box. The user exits edit mode by clicking
@@ -5715,10 +6302,10 @@ function onResizeHandlePointerDown(ev) {
     const handle = ev.currentTarget;
     const box = handle.parentElement;
     if (!box) return;
-    const isSignatureBox = box.dataset.annotationType === 'signature';
+    const isImageBacked = isImageBackedBox(box);
     const isShape = box.dataset.annotationType === 'shape';
     const addTextUserBox = box.dataset.userCreated === '1';
-    if (!document.body.classList.contains('enpv-edit-on') && !document.body.classList.contains('enpv-shape-on') && !isSignatureBox && !isShape && !addTextUserBox) return;
+    if (!document.body.classList.contains('enpv-edit-on') && !document.body.classList.contains('enpv-shape-on') && !isImageBacked && !isShape && !addTextUserBox) return;
     if (isAnnBoxLocked(box)) return;
     // Only call selectAnnBox if the box isn't already selected — it's
     // a no-op for the selected box now, but being explicit makes the
@@ -5735,6 +6322,11 @@ function beginResize(box, edge, ev) {
     const layer = box.parentElement;
     if (!layer) return;
     const scale = parseFloat(layer.dataset.scale || '1') || 1;
+    const pageIndex = Number.parseInt(box.dataset.pageIndex || '-1', 10);
+    const pageView = Number.isFinite(pageIndex) && pageIndex >= 0 ? pdfViewer.getPageView(pageIndex) : null;
+    const linePoints = edge === 'line-start' || edge === 'line-end'
+        ? lineEndpointPointsForBox(box, pageView?.viewport, scale)
+        : null;
     // Snapshot starting geometry in CSS-px so the live update is just an
     // additive delta. Final commit converts to PDF points.
     resizeState = {
@@ -5745,10 +6337,9 @@ function beginResize(box, edge, ev) {
         startTop: parseFloat(box.style.top) || 0,
         startWidth: parseFloat(box.style.width) || box.offsetWidth,
         startHeight: parseFloat(box.style.height) || box.offsetHeight,
-        startAnnotation: buildAnnotationFromBox(
-            box,
-            persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null,
-        ),
+        startLineStartPoint: linePoints?.start || null,
+        startLineEndPoint: linePoints?.end || null,
+        pageIndex,
     };
     document.body.classList.add('enpv-resizing');
     if (annMenu) annMenu.hidden = true;
@@ -5762,61 +6353,51 @@ function onResizePointerMove(ev) {
     if (!resizeState) return;
     const { box, edge, startClientX, startClientY,
             startLeft, startTop, startWidth, startHeight } = resizeState;
-    if (box.dataset.annotationType === 'shape' && (edge === 'line-start' || edge === 'line-end')) {
-        const startAnnotation = resizeState.startAnnotation || buildAnnotationFromBox(
-            box,
-            persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null,
-        );
-        const endpoints = linePdfEndpointsFromAnnotation(startAnnotation);
-        const pageInfo = pageDimensionsPtsForBox(box, resizeState.scale);
-        if (!endpoints || !pageInfo) return;
-        const point = pdfjsPointFromPageClient(pageInfo.pageIndex, ev.clientX, ev.clientY);
-        if (!point) return;
-        const dragged = {
-            x: Math.max(0, Math.min(pageInfo.width, point.pdfX)),
-            y: Math.max(0, Math.min(pageInfo.height, point.pdfY)),
-        };
-        const nextGeometry = edge === 'line-start'
-            ? (() => {
-                const snappedStart = snapLineEndpoint(endpoints.end.x, endpoints.end.y, dragged.x, dragged.y);
-                return computeLineBoxGeometry(snappedStart.x, snappedStart.y, endpoints.end.x, endpoints.end.y);
-            })()
-            : (() => {
-                const snappedEnd = snapLineEndpoint(endpoints.start.x, endpoints.start.y, dragged.x, dragged.y);
-                return computeLineBoxGeometry(endpoints.start.x, endpoints.start.y, snappedEnd.x, snappedEnd.y);
-            })();
-        const annotation = normalizeShapeAnnotation({
-            ...(startAnnotation || {}),
-            type: 'shape',
-            shapeType: 'line',
-            pdfX: nextGeometry.left,
-            pdfY: nextGeometry.bottom,
-            pdfWidth: nextGeometry.width,
-            pdfHeight: nextGeometry.height,
-            lineStartX: nextGeometry.lineStartX,
-            lineStartY: nextGeometry.lineStartY,
-            lineEndX: nextGeometry.lineEndX,
-            lineEndY: nextGeometry.lineEndY,
-        });
-        applyShapeAnnotationGeometryToBox(box, annotation, resizeState.scale);
-        resizeState.endLeft = parseFloat(box.style.left) || 0;
-        resizeState.endTop = parseFloat(box.style.top) || 0;
-        resizeState.endWidth = parseFloat(box.style.width) || box.offsetWidth;
-        resizeState.endHeight = parseFloat(box.style.height) || box.offsetHeight;
-        return;
-    }
     const dx = ev.clientX - startClientX;
     const dy = ev.clientY - startClientY;
     const MIN = 12; // px
     let left = startLeft, top = startTop, w = startWidth, h = startHeight;
-    if (edge === 'r' || edge.includes('e')) { w = Math.max(MIN, startWidth + dx); }
-    if (edge === 'l' || edge.includes('w')) {
+    if ((edge === 'line-start' || edge === 'line-end') && resizeState.startLineStartPoint && resizeState.startLineEndPoint) {
+        const point = pdfjsPointFromPageClient(resizeState.pageIndex, ev.clientX, ev.clientY);
+        if (!point) return;
+        const startPoint = resizeState.startLineStartPoint;
+        const endPoint = resizeState.startLineEndPoint;
+        const lineBox = edge === 'line-start'
+            ? (() => {
+                const snappedStart = snapLineEndpoint(endPoint.x, endPoint.y, point.pdfX, point.pdfY);
+                return computeLineBoxGeometry(snappedStart.x, snappedStart.y, endPoint.x, endPoint.y);
+            })()
+            : (() => {
+                const snappedEnd = snapLineEndpoint(startPoint.x, startPoint.y, point.pdfX, point.pdfY);
+                return computeLineBoxGeometry(startPoint.x, startPoint.y, snappedEnd.x, snappedEnd.y);
+            })();
+        const rect = applyLineGeometryToBox(box, lineBox, point.viewport, resizeState.scale);
+        if (!rect) return;
+        const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
+        updateShapeSvgForBox(box, buildAnnotationFromBox(box, existing) || existing || {}, resizeState.scale || 1);
+        updateShapeResizeHandlesForBox(box);
+        left = rect.left;
+        top = rect.top;
+        w = Math.max(MIN, rect.width);
+        h = Math.max(MIN, rect.height);
+    } else if (['nw', 'ne', 'sw', 'se'].includes(edge)) {
+        const rawWidth = edge.includes('w') ? startWidth - dx : startWidth + dx;
+        const rawHeight = edge.includes('n') ? startHeight - dy : startHeight + dy;
+        const minScale = Math.max(MIN / Math.max(1, startWidth), MIN / Math.max(1, startHeight));
+        const widthScale = rawWidth / Math.max(1, startWidth);
+        const heightScale = rawHeight / Math.max(1, startHeight);
+        const nextScale = Math.max(minScale, Math.max(widthScale, heightScale));
+        w = Math.max(MIN, startWidth * nextScale);
+        h = Math.max(MIN, startHeight * nextScale);
+        if (edge.includes('w')) left = startLeft + (startWidth - w);
+        if (edge.includes('n')) top = startTop + (startHeight - h);
+    } else if (edge === 'r') { w = Math.max(MIN, startWidth + dx); }
+    else if (edge === 'l') {
         const nw = Math.max(MIN, startWidth - dx);
         left = startLeft + (startWidth - nw);
         w = nw;
-    }
-    if (edge === 'b' || edge.includes('s')) { h = Math.max(MIN, startHeight + dy); }
-    if (edge === 't' || edge.includes('n')) {
+    } else if (edge === 'b') { h = Math.max(MIN, startHeight + dy); }
+    else if (edge === 't') {
         const nh = Math.max(MIN, startHeight - dy);
         top = startTop + (startHeight - nh);
         h = nh;
@@ -5828,6 +6409,7 @@ function onResizePointerMove(ev) {
     if (box.dataset.annotationType === 'shape') {
         const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
         updateShapeSvgForBox(box, buildAnnotationFromBox(box, existing) || existing || {}, resizeState?.scale || 1);
+        updateShapeResizeHandlesForBox(box);
     }
     if (editorModeForBox(box) === 'rich' && (edge === 'l' || edge === 'r')) {
         fitRichTextBoxToContent(box, edge === 't' ? 'bottom' : 'top');
@@ -6223,8 +6805,7 @@ function onAnnBoxPointerUp() {
     if (moved) pushHistorySnapshot('move annotation');
     const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
     const isUserBox = isUserCreatedTextBox(box, existing);
-    const isShape = isShapeBox(box, existing);
-    if (moved && (isUserBox || isShape)) {
+    if (moved && isUserBox) {
         const left = Number.parseFloat(box.style.left || '0') || 0;
         const top = Number.parseFloat(box.style.top || '0') || 0;
         box.style.left = `${left + (dxPts * scale)}px`;
@@ -6238,7 +6819,7 @@ function onAnnBoxPointerUp() {
     box.dataset.dxPts = String(dxPts);
     box.dataset.dyPts = String(dyPts);
     if (moved) {
-        if (!isUserBox && !isShape) promoteSourceBoxToMovedOverlay(box);
+        if (!isUserBox) promoteSourceBoxToMovedOverlay(box);
         else {
             removeAnnBoxSourceMasks(box);
             fitUserCreatedTextBoxToContent(box);
@@ -6574,10 +7155,11 @@ function openEditor(spanEl) {
     spanEl.classList.add('enpv-editing');
 
     const sourceInfo = sourceInfoForSpan(spanEl);
-    const original = sourceInfo?.text || spanEl.dataset.enpvOriginal || spanEl.textContent;
+    const sourceOriginal = sourceInfo?.text || spanEl.dataset.enpvOriginal || spanEl.textContent;
+    const displayOriginal = sourceInfo?.visualText || sourceOriginal;
     const pageNum = parseInt(spanEl.dataset.enpvPage, 10) + 1;
-    editOrig.textContent = `was: "${original}" — page ${pageNum}`;
-    editInput.value = original;
+    editOrig.textContent = `was: "${displayOriginal}" — page ${pageNum}`;
+    editInput.value = displayOriginal;
 
     if (editBar.parentElement !== container) container.appendChild(editBar);
 
@@ -6667,8 +7249,8 @@ function buildSourceRewriteEditForBox(box, annotation, previousText) {
     if (Math.abs(dxPts) > 0.01 || Math.abs(dyPts) > 0.01) return null;
     const tc = selectedBoxTextElement(box);
     const newText = String(tc?.innerText ?? tc?.textContent ?? annotation.text ?? '');
-    const originalText = String(previousText ?? '');
-    if (!originalText || newText === originalText) return null;
+    const originalText = String(annotation.pdfjsSourceText || box.dataset.baseText || box.dataset.originalText || previousText || '');
+    if (!originalText || newText === originalText || normalizeComparableText(newText) === normalizeComparableText(originalText)) return null;
     if (/\r|\n/.test(originalText) || /\r|\n/.test(newText)) return null;
     const page = Number.parseInt(box.dataset.pageIndex || '-1', 10);
     if (!Number.isFinite(page) || page < 0) return null;
@@ -6788,7 +7370,7 @@ function buildPersistedSourceRewriteEdit(annotation) {
     if (annotation.userForcedRichText === true || annotation.pdfjsEditorMode === 'rich') return null;
     const sourceText = String(annotation.pdfjsSourceText || annotation.originalText || '');
     const newText = String(annotation.text || '');
-    if (!sourceText || !newText || sourceText === newText) return null;
+    if (!sourceText || !newText || sourceText === newText || normalizeComparableText(sourceText) === normalizeComparableText(newText)) return null;
     if (/\r|\n/.test(sourceText) || /\r|\n/.test(newText)) return null;
     const baseline = annotationBaselinePdfBox(annotation);
     const current = annotationCurrentPdfBox(annotation);
@@ -6879,7 +7461,8 @@ async function applyEdit() {
     const newText = editInput.value;
     const activeSourceInfo = sourceInfoForSpan(activeRun);
     const original = activeSourceInfo?.text || activeRun.dataset.enpvOriginal || activeRun.textContent || '';
-    if (newText === original) { closeEditor(); return; }
+    const displayOriginal = activeSourceInfo?.visualText || original;
+    if (newText === displayOriginal || normalizeComparableText(newText) === normalizeComparableText(original)) { closeEditor(); return; }
     const existingAnnotation = (() => {
         const pageIndex = parseInt(activeRun.dataset.enpvPage || '-1', 10);
         const pageView = Number.isFinite(pageIndex) && pageIndex >= 0 ? pdfViewer.getPageView(pageIndex) : null;
@@ -7331,6 +7914,7 @@ function setShapeMode(on, options = {}) {
     if (active && document.body.classList.contains('enpv-add-text-on')) setAddTextMode(false);
     if (!active && shapeCreationState) {
         const pageIndex = shapeCreationState.pageIndex;
+        removeShapeCreationPreview(shapeCreationState);
         shapeCreationState = null;
         renderAnnotationBoxLayer(pageIndex);
     }
@@ -7417,22 +8001,143 @@ for (const button of addShapeButtons) {
 }
 syncShapePanelUi();
 
+function imageImportRefs() {
+    return {
+        imageImportModal,
+        imageImportFileInput,
+        imageImportPreview,
+        imageImportPreviewImg,
+        imageImportPreviewName,
+        imageImportPreviewDims,
+        imageImportDropzoneInner,
+        imageImportApply,
+        imageImportStatus,
+    };
+}
+
+function setImageImportStatus(text, isError = false) {
+    _setImageImportStatus(imageImportStatus, text, isError);
+}
+
+function clearImageImportSelection() {
+    _clearImageImportSelection(imageImportRefs());
+}
+
+function closeImageImportModal() {
+    _closeImageImportModal(imageImportRefs());
+}
+
+function openImageImportModal() {
+    cancelImagePlacement({ showStatus: false });
+    setAddTextMode(false, { skipRender: true });
+    setShapeMode(false);
+    signatureFeature?.cancelSignaturePlacement?.();
+    _openImageImportModal(imageImportRefs());
+}
+
+function imageImportLoadFile(file) {
+    _imageImportLoadFile(file, imageImportRefs());
+}
+
+floatingAddImageButton?.addEventListener('click', () => openImageImportModal());
+imageImportScrim?.addEventListener('click', () => closeImageImportModal());
+imageImportClose?.addEventListener('click', () => closeImageImportModal());
+imageImportCancel?.addEventListener('click', () => closeImageImportModal());
+imageImportClear?.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    clearImageImportSelection();
+});
+imageImportFileInput?.addEventListener('change', (event) => {
+    const file = event.target?.files?.[0];
+    if (file) imageImportLoadFile(file);
+});
+if (imageImportDropzone) {
+    imageImportDropzone.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            imageImportFileInput?.click();
+        }
+    });
+    ['dragenter', 'dragover'].forEach((eventName) => {
+        imageImportDropzone.addEventListener(eventName, (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            imageImportDropzone.classList.add('is-drag');
+        });
+    });
+    ['dragleave', 'dragend', 'drop'].forEach((eventName) => {
+        imageImportDropzone.addEventListener(eventName, (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            imageImportDropzone.classList.remove('is-drag');
+        });
+    });
+    imageImportDropzone.addEventListener('drop', (event) => {
+        const file = event.dataTransfer?.files?.[0];
+        if (file) imageImportLoadFile(file);
+    });
+}
+document.addEventListener('paste', (event) => {
+    if (!imageImportModal?.classList.contains('is-open')) return;
+    const items = event.clipboardData?.items || [];
+    for (const item of items) {
+        if (item.kind === 'file' && String(item.type || '').startsWith('image/')) {
+            const file = item.getAsFile();
+            if (file) {
+                event.preventDefault();
+                imageImportLoadFile(file);
+                break;
+            }
+        }
+    }
+});
+document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && imagePlacementState) {
+        cancelImagePlacement();
+        return;
+    }
+    if (event.key === 'Escape' && imageImportModal?.classList.contains('is-open')) {
+        closeImageImportModal();
+    }
+});
+imageImportApply?.addEventListener('click', () => {
+    if (!imageImportPendingAsset) return;
+    try {
+        if (!beginImagePlacement(imageImportPendingAsset)) throw new Error('Could not prepare that image.');
+    } catch (error) {
+        console.error('Image insert failed', error);
+        setImageImportStatus(error?.message || 'Could not insert that image.', true);
+        return;
+    }
+    closeImageImportModal();
+});
+container?.addEventListener('pointerdown', placePendingImageAtPointer, { capture: true });
+
 function commitShapeInspectorToSelectedBox(options = {}) {
     const state = readCurrentShapeState();
     const box = findSelectedBox();
     const existing = persistedAnnotationsById.get(String(box?.dataset?.annotationId || '')) || null;
     if (!box || !isShapeBox(box, existing)) {
-        renderAllAnnotationBoxLayers({ preserveCurrent: true });
-        return;
+        return false;
+    }
+    if (isAnnBoxLocked(box)) {
+        setStatus('Annotation is locked.', true);
+        reflectShapeStateToInputs(buildAnnotationFromBox(box, existing) || existing || state, shapeInspectorRefs);
+        return false;
     }
     if (options.pushHistory === true) pushHistorySnapshot('change shape style');
     const annotation = buildAnnotationFromBox(box, existing) || existing;
-    if (!annotation) return;
+    if (!annotation) return false;
     applyShapeStateToAnnotation(annotation, state);
     applyShapeAnnotationToBoxDataset(box, annotation);
     updateShapeSvgForBox(box, annotation, Number.parseFloat(box.parentElement?.dataset?.scale || '1') || 1);
     upsertPersistedAnnotation(annotation);
+    box.classList.add('is-selected');
+    selectedAnnBoxUid = box.dataset.uid || selectedAnnBoxUid;
+    positionAnnMenuOver(box);
     markManualSaveNeeded();
+    return true;
 }
 
 shapeTypeButtons.forEach((button) => {
