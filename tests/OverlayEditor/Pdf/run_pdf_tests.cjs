@@ -624,6 +624,7 @@ const EDIT_NEW_SPECIAL_RULES_EXPECTED_BLOCKS = [
 const EDIT_NEW_WHATS_NEW_FIXTURE_PATH = path.resolve(__dirname, '..', '..', '..', 'tmp', 'doc2994_page2.pdf');
 const EDIT_NEW_F1040S1_FIXTURE_PATH = path.resolve(__dirname, '..', '..', 'OverlayEditor', 'f1040s1.pdf');
 const EDIT_NEW_SS5_FIXTURE_PATH = path.resolve(__dirname, '..', '..', '..', 'public', 'ss-5.pdf');
+const FSS4_FIXTURE_PATH = path.resolve(__dirname, '..', '..', 'OverlayEditor', 'fixtures', 'fss4.pdf');
 // Specific paragraph the user called out — the noop-edit parity test must
 // confirm this annotation exists, gets clicked into edit mode, blurred back
 // out, and survives the round-trip with byte-identical text + geometry +
@@ -761,6 +762,27 @@ const TESTS = {
         label: 'Test 5 : Delete Annotation',
         description: 'Create a blank PDF with three text rows and two paragraph annotations, delete a random text row via the selection toolbar delete button, save, reload the editor, and verify the deleted annotation is absent from the DOM and not returned by the saved-annotations API.',
         run: runDeleteAnnotationFlow,
+    },
+    pdf_js_three_lorem_paragraphs_comprehensive: {
+        key: 'pdf_js_three_lorem_paragraphs_comprehensive',
+        label: 'PDF.js Test Suite : Three Lorem Paragraphs',
+        description: 'In /edit-new?pdfjs=1, create three side-by-side Lorem Ipsum paragraph annotations, save and download a PDF after each operation stage: resize, reorder, font metrics, color, word deletion, and font-size changes. Each downloaded PDF is inspected with PyMuPDF against the expected text, geometry, style, and color for that stage.',
+        test_category: 'PDF JS Test Suite',
+        run: runPdfJsThreeLoremParagraphsComprehensiveFlow,
+    },
+    pdf_js_ss4_moved_label_source_mask_no_widget_overlap: {
+        key: 'pdf_js_ss4_moved_label_source_mask_no_widget_overlap',
+        label: 'PDF.js Test Suite : SS-4 Moved Label Source Mask & No Widget Overlap',
+        description: 'Regression for doc 4053 (fss4.pdf, IRS Form SS-4). Upload tests/OverlayEditor/fixtures/fss4.pdf, open /edit-new?pdfjs=1, enter Edit PDF mode, locate the "5a Street address (if different)..." and "3 Executor, administrator, trustee..." source row labels, drag each one to the top of the page via a save-annotation-state payload that marks the overlay as movedTextOverlay=true with explicit pdfjsSourceMask metadata at the original label location. Reload the editor and verify (1) the moved overlay text is rendered with no replacement glyphs (\\uFFFD / □ / ☐ / ☒), (2) a .enpv-source-mask is drawn at each original source location so the underlying PDF.js canvas glyphs are hidden, and (3) no source mask is more than 60% covered by an AcroForm widget rectangle (label masks must not white-out the form input fields beside them).',
+        test_category: 'PDF JS Test Suite',
+        run: runPdfJsSs4MovedLabelSourceMaskFlow,
+    },
+    pdf_js_ss4_download_no_glyph_substitution: {
+        key: 'pdf_js_ss4_download_no_glyph_substitution',
+        label: 'PDF.js Test Suite : SS-4 Download PDF Has No Substituted Glyphs',
+        description: 'Regression for the user-reported bug where SS-4 row labels in the editor display missing-glyph boxes for apostrophe (\u2019), smart quotes (\u201C/\u201D), lowercase x and capital O. Upload tests/OverlayEditor/fixtures/fss4.pdf, open /edit-new?pdfjs=1, save (no edits), click the Download PDF toolbar button, and use PyMuPDF to extract page-1 text from the downloaded file. The extracted text MUST contain the literal SS-4 row labels "Don\u2019t enter a P.O. box.", "\u201Ccare of\u201D name", "Street address", "Executor, administrator, trustee" with the correct Unicode characters and zero replacement glyphs (U+FFFD, \u25A0, \u25A1, \u2610-\u2612). The same probe is also run a second time AFTER toggling Edit PDF mode on and saving, since the user\'s screenshot was captured in edit mode.',
+        test_category: 'PDF JS Test Suite',
+        run: runPdfJsSs4DownloadNoGlyphSubstitutionFlow,
     },
     test_18_load_tests: {
         key: 'test_18_load_tests',
@@ -1221,6 +1243,17 @@ const TEST_CRITERIA = {
         'After page reload, the remaining four annotations are still present in the editor DOM',
         'The saved-annotations API does not return the deleted annotation, confirming the deletion is recorded in the database',
     ],
+    pdf_js_three_lorem_paragraphs_comprehensive: [
+        'Blank PDF created and opened through /edit-new?pdfjs=1 with a stable edit-new session id',
+        'Three Lorem Ipsum paragraph annotations load side-by-side as independent PDF.js annotation boxes',
+        'Initial downloaded PDF contains all three paragraphs inside their expected side-by-side boxes',
+        'Resize stage downloaded PDF keeps each paragraph text inside the resized annotation boxes',
+        'Reorder stage downloaded PDF reflects the swapped left-to-right paragraph order',
+        'Font metrics stage downloaded PDF reflects bold, italic, underline, font-family, and line-height changes',
+        'Color stage downloaded PDF reflects the expected text color for each paragraph',
+        'Delete-words stage downloaded PDF removes the requested words while preserving the remaining paragraphs',
+        'Font-size stage downloaded PDF reflects the expected font size changes for each paragraph',
+    ],
     test_19_loaded_saved_standalone_no_duplicate: [
         'Blank PDF created and standalone text annotation saved',
         'Document reopened in loadedSavedPdf mode',
@@ -1626,6 +1659,7 @@ function buildResult({
     label,
     description,
     status,
+    testCategory = 'PDF Tests',
     checks = [],
     error = null,
     warnings = [],
@@ -1637,7 +1671,7 @@ function buildResult({
     return {
         filename: `${testKey}.pdf`,
         description,
-        test_category: 'PDF Tests',
+        test_category: testCategory,
         section_name: label,
         status,
         checks,
@@ -1655,7 +1689,8 @@ function buildResult({
 async function submitJson(page, url, method = 'POST', body = null) {
     return page.evaluate(async ({ targetUrl, requestMethod, requestBody }) => {
         const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
-        const response = await fetch(targetUrl, {
+        const resolvedUrl = new URL(targetUrl, window.location.origin).toString();
+        const response = await fetch(resolvedUrl, {
             method: requestMethod,
             credentials: 'same-origin',
             headers: {
@@ -1894,6 +1929,29 @@ async function deleteDocument(page, documentId) {
     if (!response.ok) {
         throw new Error(`delete-document failed: ${JSON.stringify(response)}`);
     }
+}
+
+async function cleanupDocument(page, documentId, csrfToken = '') {
+    const headers = {
+        Accept: 'application/json, text/html',
+        ...(csrfToken ? { 'X-CSRF-TOKEN': csrfToken } : {}),
+    };
+    let response = await page.context().request.delete(`${BASE_URL}/documents/${documentId}`, {
+        headers,
+        timeout: 30000,
+    }).catch(() => null);
+    if (response?.ok()) return;
+
+    response = await page.context().request.post(`${BASE_URL}/documents/bulk-destroy`, {
+        data: { ids: [Number(documentId)] },
+        headers,
+        timeout: 30000,
+    }).catch(() => null);
+    if (response?.ok()) return;
+
+    const bulkResponse = await submitJson(page, '/documents/bulk-destroy', 'POST', { ids: [Number(documentId)] });
+    if (bulkResponse.ok) return;
+    throw new Error(`document cleanup failed for ${documentId}`);
 }
 
 async function forceRefreshOverlay(page, documentId) {
@@ -3724,6 +3782,7 @@ for page in doc:
                     'font': span.get('font', '') or '',
                     'flags': int(span.get('flags', 0) or 0),
                     'size': float(span.get('size', 0) or 0),
+                    'color': '#%06x' % (int(span.get('color', 0) or 0) & 0xffffff),
                     'bbox': [float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])],
                 })
     underlines = []
@@ -3761,6 +3820,1426 @@ print(json.dumps({'pages': out_pages}))
         stdio: ['ignore', 'pipe', 'pipe'],
     });
     return JSON.parse(raw);
+}
+
+const PDF_JS_TEST_SUITE_CATEGORY = 'PDF JS Test Suite';
+const PDF_JS_SUITE_PAGE = { width: 612, height: 792 };
+const PDF_JS_SUITE_STAGE_KEYS = ['initial', 'resize', 'reorder', 'font_metrics', 'color', 'delete_words', 'font_size'];
+const PDF_JS_SUITE_PARAGRAPHS = [
+    {
+        key: 'alpha',
+        label: 'PJS Alpha',
+        text: 'PJS Alpha Lorem ipsum dolor sit amet, consectetur adipiscing elit. Integer vitae lectus non justo cursus aliquet. Nulla facilisi. Curabitur porta, neque sed tincidunt gravida, mi risus varius ipsum, id viverra neque arcu vitae sem.',
+        deleteWord: 'consectetur',
+        color: '#c62828',
+        fontSize: 8,
+    },
+    {
+        key: 'beta',
+        label: 'PJS Beta',
+        text: 'PJS Beta Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco vehicula nisi ut aliquip ex ea commodo consequat.',
+        deleteWord: 'vehicula',
+        color: '#1565c0',
+        fontSize: 13,
+    },
+    {
+        key: 'gamma',
+        label: 'PJS Gamma',
+        text: 'PJS Gamma Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat suscipit cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.',
+        deleteWord: 'suscipit',
+        color: '#2e7d32',
+        fontSize: 16,
+    },
+];
+
+function pdfJsSuiteStageIndex(stageKey) {
+    return PDF_JS_SUITE_STAGE_KEYS.indexOf(stageKey);
+}
+
+function pdfJsSuiteApplyFrom(stageKey, thresholdKey) {
+    return pdfJsSuiteStageIndex(stageKey) >= pdfJsSuiteStageIndex(thresholdKey);
+}
+
+function pdfJsSuiteStripDeletedWord(text, word) {
+    return normalize(String(text || '').replace(new RegExp(`\\b${word}\\b`, 'gi'), '').replace(/\s+([,.])/g, '$1'));
+}
+
+function buildPdfJsSuiteAnnotations(stageKey) {
+    const baseGeometry = {
+        alpha: { x: 36, top: 72, w: 164, h: 286 },
+        beta: { x: 224, top: 72, w: 164, h: 286 },
+        gamma: { x: 412, top: 72, w: 164, h: 286 },
+    };
+    const resizeGeometry = {
+        alpha: { x: 36, top: 66, w: 132, h: 340 },
+        beta: { x: 196, top: 84, w: 196, h: 286 },
+        gamma: { x: 424, top: 60, w: 150, h: 332 },
+    };
+    const reorderGeometry = {
+        gamma: { x: 36, top: 60, w: 150, h: 332 },
+        alpha: { x: 218, top: 66, w: 132, h: 340 },
+        beta: { x: 382, top: 84, w: 196, h: 286 },
+    };
+    const fontMetricStyles = {
+        alpha: { fontFamily: 'Helvetica', fontWeight: '700', fontStyle: 'normal', underline: false, lineHeight: 13.5 },
+        beta: { fontFamily: 'TimesRoman', fontWeight: '400', fontStyle: 'italic', underline: false, lineHeight: 15 },
+        gamma: { fontFamily: 'Courier', fontWeight: '400', fontStyle: 'normal', underline: true, lineHeight: 14.5 },
+    };
+
+    return PDF_JS_SUITE_PARAGRAPHS.map((paragraph, index) => {
+        let geometry = { ...baseGeometry[paragraph.key] };
+        if (pdfJsSuiteApplyFrom(stageKey, 'resize')) geometry = { ...resizeGeometry[paragraph.key] };
+        if (pdfJsSuiteApplyFrom(stageKey, 'reorder')) geometry = { ...reorderGeometry[paragraph.key] };
+
+        const metrics = pdfJsSuiteApplyFrom(stageKey, 'font_metrics')
+            ? fontMetricStyles[paragraph.key]
+            : { fontFamily: 'Helvetica', fontWeight: '400', fontStyle: 'normal', underline: false, lineHeight: 12.5 };
+        const textColor = pdfJsSuiteApplyFrom(stageKey, 'color') ? paragraph.color : '#111111';
+        const text = pdfJsSuiteApplyFrom(stageKey, 'delete_words')
+            ? pdfJsSuiteStripDeletedWord(paragraph.text, paragraph.deleteWord)
+            : paragraph.text;
+        const fontSize = pdfJsSuiteApplyFrom(stageKey, 'font_size') ? paragraph.fontSize : 10;
+        const pdfHeight = Number(geometry.h);
+        const pdfY = PDF_JS_SUITE_PAGE.height - (Number(geometry.top) + pdfHeight);
+
+        return {
+            _uid: `pdfjs_suite_${paragraph.key}`,
+            id: `pdfjs_suite_${paragraph.key}`,
+            pageIndex: 0,
+            type: 'text',
+            text,
+            originalText: paragraph.text,
+            pdfX: Number(geometry.x),
+            pdfY,
+            pdfWidth: Number(geometry.w),
+            pdfHeight,
+            fontSize,
+            requestedFontSize: fontSize,
+            lineHeight: Number(metrics.lineHeight),
+            fontFamily: metrics.fontFamily,
+            fontWeight: metrics.fontWeight,
+            fontStyle: metrics.fontStyle,
+            underline: Boolean(metrics.underline),
+            textColor,
+            color: textColor,
+            backgroundColor: 'transparent',
+            backgroundColorExplicit: false,
+            textAlign: 'left',
+            verticalAlign: 'top',
+            rotation: 0,
+            opacity: 1,
+            zIndex: pdfJsSuiteApplyFrom(stageKey, 'reorder') ? (10 + index) : (30 - index),
+            userCreated: true,
+            userAuthored: true,
+            userSizedTextBox: true,
+            userForcedRichText: true,
+            savedTextOverlay: true,
+            skipPdfjsSourceMask: true,
+            pdfjsEditorMode: 'rich',
+            styleDirty: true,
+            richTextHtml: '',
+        };
+    });
+}
+
+function pdfJsSuiteAnnotationPageRect(annotation, pageHeight = PDF_JS_SUITE_PAGE.height) {
+    const left = Number(annotation.pdfX) || 0;
+    const top = pageHeight - ((Number(annotation.pdfY) || 0) + (Number(annotation.pdfHeight) || 0));
+    const right = left + (Number(annotation.pdfWidth) || 0);
+    const bottom = top + (Number(annotation.pdfHeight) || 0);
+    return { left, top, right, bottom, width: right - left, height: bottom - top };
+}
+
+function pdfJsSuiteInflateRect(rect, amount) {
+    return {
+        left: rect.left - amount,
+        top: rect.top - amount,
+        right: rect.right + amount,
+        bottom: rect.bottom + amount,
+        width: rect.width + (amount * 2),
+        height: rect.height + (amount * 2),
+    };
+}
+
+function pdfJsSuiteSpanCenter(span) {
+    const bbox = Array.isArray(span?.bbox) ? span.bbox : [0, 0, 0, 0];
+    return { x: (Number(bbox[0]) + Number(bbox[2])) / 2, y: (Number(bbox[1]) + Number(bbox[3])) / 2 };
+}
+
+function pdfJsSuiteSpanInsideRect(span, rect) {
+    const center = pdfJsSuiteSpanCenter(span);
+    return center.x >= rect.left && center.x <= rect.right && center.y >= rect.top && center.y <= rect.bottom;
+}
+
+function pdfJsSuiteGroupSpans(pageExtraction, annotation) {
+    const pageHeight = Number(pageExtraction?.height) || PDF_JS_SUITE_PAGE.height;
+    const rect = pdfJsSuiteAnnotationPageRect(annotation, pageHeight);
+    const searchRect = pdfJsSuiteInflateRect(rect, 10);
+    const spans = (pageExtraction?.spans || []).filter((span) => pdfJsSuiteSpanInsideRect(span, searchRect));
+    const bbox = spans.reduce((acc, span) => {
+        const b = span.bbox || [0, 0, 0, 0];
+        if (!acc) return [Number(b[0]), Number(b[1]), Number(b[2]), Number(b[3])];
+        return [
+            Math.min(acc[0], Number(b[0])),
+            Math.min(acc[1], Number(b[1])),
+            Math.max(acc[2], Number(b[2])),
+            Math.max(acc[3], Number(b[3])),
+        ];
+    }, null);
+    const text = normalize(spans.map((span) => span.text || '').join(' '));
+    const lineYs = Array.from(new Set(spans.map((span) => Math.round(Number(span?.bbox?.[1]) || 0)))).sort((a, b) => a - b);
+    return { annotation, rect, spans, bbox, text, lineYs };
+}
+
+function pdfJsSuiteMedian(values) {
+    const sorted = values.map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+    if (!sorted.length) return null;
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function pdfJsSuiteTextWithinRect(group, tolerance = 12) {
+    if (!group?.bbox) return false;
+    const [left, top, right, bottom] = group.bbox;
+    return left >= group.rect.left - tolerance
+        && right <= group.rect.right + tolerance
+        && top >= group.rect.top - tolerance
+        && bottom <= group.rect.bottom + tolerance;
+}
+
+function pdfJsSuiteHasUnderline(group, pageExtraction) {
+    if (!group?.bbox) return false;
+    const [left, top, right, bottom] = group.bbox;
+    return (pageExtraction?.underlines || []).some((line) => {
+        const overlapsX = Number(line.x1) >= left - 4 && Number(line.x0) <= right + 4;
+        const nearBaseline = Number(line.y) >= top - 2 && Number(line.y) <= bottom + 8;
+        return overlapsX && nearBaseline;
+    });
+}
+
+function inspectPdfJsSuiteDownload(pdfPath, annotations) {
+    const extraction = extractDownloadedPdfTextStylesViaPython(pdfPath);
+    const page = extraction.pages?.[0] || { spans: [], underlines: [], width: PDF_JS_SUITE_PAGE.width, height: PDF_JS_SUITE_PAGE.height };
+    const fullText = normalize(page.spans.map((span) => span.text || '').join(' '));
+    const groups = Object.fromEntries(annotations.map((annotation) => [
+        String(annotation.id),
+        pdfJsSuiteGroupSpans(page, annotation),
+    ]));
+    return { page, fullText, groups };
+}
+
+async function savePdfJsSuiteAnnotations(page, documentId, sessionId, annotations) {
+    const response = await page.evaluate(async ({ id, session, anns }) => {
+        const token = document.querySelector('meta[name="csrf-token"]')?.content || '';
+        const request = await fetch(`/documents/${id}/save-annotation-state`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                'X-CSRF-TOKEN': token,
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+            body: JSON.stringify({
+                annotations: anns,
+                session_annotations: anns,
+                acro_form_entries: [],
+                deleted_annotation_ids: [],
+                deleted_promoted_source_keys: [],
+                session_id: session,
+            }),
+        });
+        const body = await request.json().catch(() => ({}));
+        return { ok: request.ok, status: request.status, body };
+    }, { id: documentId, session: sessionId, anns: annotations });
+
+    if (!response.ok || !response.body?.success) {
+        throw new Error(`pdfjs suite save failed: status=${response.status} body=${JSON.stringify(response.body)}`);
+    }
+}
+
+async function openPdfJsSuiteStage(page, documentId, stageKey, expectedIds) {
+    await page.goto(`${BASE_URL}/documents/${documentId}/edit-new?pdfjs=1&pdf_js_suite_stage=${encodeURIComponent(stageKey)}&t=${Date.now()}`, {
+        waitUntil: 'domcontentloaded',
+        timeout: 90000,
+    });
+    if (page.url().includes('/login')) {
+        await ensureLoggedIn(page);
+        await page.goto(`${BASE_URL}/documents/${documentId}/edit-new?pdfjs=1&pdf_js_suite_stage=${encodeURIComponent(stageKey)}&t=${Date.now()}`, {
+            waitUntil: 'domcontentloaded',
+            timeout: 90000,
+        });
+    }
+    await page.waitForSelector('body.enpv-viewer-ready .pdfViewer .page[data-page-number="1"]', { timeout: 120000 });
+    await page.waitForTimeout(800);
+    await page.evaluate(() => {
+        const toggle = document.getElementById('edit-mode-toggle');
+        if (toggle && !document.body.classList.contains('enpv-edit-on')) toggle.click();
+    });
+    await page.waitForFunction((ids) => ids.every((id) => (
+        document.querySelector(`.enpv-annotation-box[data-annotation-id="${CSS.escape(id)}"]`)
+    )), expectedIds, { timeout: 60000 });
+    await page.waitForTimeout(300);
+}
+
+async function collectPdfJsSuiteDomBoxes(page, expectedIds) {
+    return page.evaluate((ids) => ids.map((id) => {
+        const box = document.querySelector(`.enpv-annotation-box[data-annotation-id="${CSS.escape(id)}"]`);
+        if (!(box instanceof HTMLElement)) return { id, found: false };
+        const rect = box.getBoundingClientRect();
+        const textEl = box.querySelector('.enpv-text-content');
+        return {
+            id,
+            found: true,
+            left: rect.left,
+            top: rect.top,
+            width: rect.width,
+            height: rect.height,
+            text: String(textEl?.textContent || ''),
+            fontSizePts: Number(box.dataset.fontSizePts || 0),
+            zIndex: Number(getComputedStyle(box).zIndex || box.dataset.zIndex || 0),
+            backgroundColor: getComputedStyle(box).backgroundColor,
+        };
+    }), expectedIds);
+}
+
+async function downloadPdfJsSuiteStageViaToolbar(page, outputPath) {
+    const responsePromise = page.waitForResponse((response) => (
+        response.request().method() === 'POST'
+        && response.url().includes('/download-annotated-pdf')
+    ), { timeout: 90000 });
+
+    await page.locator('#download-pdf-btn').click();
+    const response = await responsePromise;
+    if (!response.ok()) {
+        throw new Error(`pdfjs suite download request failed with ${response.status()}`);
+    }
+
+    const payload = JSON.parse(response.request().postData() || '{}');
+    const csrf = await page.locator('meta[name="csrf-token"]').getAttribute('content').catch(() => '');
+    const manualResponse = await page.context().request.post(response.url(), {
+        data: payload,
+        headers: {
+            Accept: 'application/pdf, application/json',
+            'X-CSRF-TOKEN': csrf || '',
+        },
+        timeout: 90000,
+    });
+    if (!manualResponse.ok()) {
+        throw new Error(`pdfjs suite manual download failed with ${manualResponse.status()}: ${await manualResponse.text()}`);
+    }
+    fs.writeFileSync(outputPath, await manualResponse.body());
+    return { payload, fileSize: fs.statSync(outputPath).size };
+}
+
+async function runPdfJsThreeLoremParagraphsComprehensiveFlow() {
+    const test = TESTS.pdf_js_three_lorem_paragraphs_comprehensive;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: { width: 1800, height: 1400 } });
+    const checks = [];
+    const warnings = [];
+    const artifacts = [];
+    const stageSummaries = [];
+    const expectedIds = PDF_JS_SUITE_PARAGRAPHS.map((paragraph) => `pdfjs_suite_${paragraph.key}`);
+    let documentId = null;
+    let csrfToken = '';
+    let totalFileSize = 0;
+
+    const addCheck = (item, passed, description, detail = '') => {
+        checks.push({ item, result: passed ? 'PASS' : 'FAIL', description, detail });
+    };
+
+    try {
+        documentId = await createBlankDocument(page, { pageSize: 'Letter', orientation: 'portrait' });
+        csrfToken = await page.locator('meta[name="csrf-token"]').getAttribute('content').catch(() => '');
+        await clearAnnotationSessionStateNew(page, documentId);
+        const sessionId = await ensurePdfSessionIdNew(page, documentId);
+        addCheck(
+            'blank_pdfjs_session_ready',
+            Number.isFinite(documentId) && documentId > 0 && Boolean(sessionId),
+            'Blank PDF created and opened through /edit-new?pdfjs=1 with a stable edit-new session id.',
+            `document_id=${documentId} session_id=${sessionId}`
+        );
+
+        for (const stageKey of PDF_JS_SUITE_STAGE_KEYS) {
+            const annotations = buildPdfJsSuiteAnnotations(stageKey);
+            await savePdfJsSuiteAnnotations(page, documentId, sessionId, annotations);
+            await openPdfJsSuiteStage(page, documentId, stageKey, expectedIds);
+            const domBoxes = await collectPdfJsSuiteDomBoxes(page, expectedIds);
+            const screenshotName = buildArtifactName(test.key, runToken, `${stageKey}_pdfjs_view`);
+            await page.locator('.pdfViewer .page[data-page-number="1"]').screenshot({ path: path.join(OUTPUT_DIR, screenshotName) });
+            artifacts.push({ label: `${stageKey} PDF.js view`, kind: 'image', filename: screenshotName });
+
+            const pdfName = buildArtifactName(test.key, runToken, `${stageKey}_download`, 'pdf');
+            const pdfPath = path.join(OUTPUT_DIR, pdfName);
+            const download = await downloadPdfJsSuiteStageViaToolbar(page, pdfPath);
+            totalFileSize += download.fileSize;
+            artifacts.push({ label: `${stageKey} downloaded PDF`, kind: 'pdf', filename: pdfName });
+
+            const inspection = inspectPdfJsSuiteDownload(pdfPath, annotations);
+            const groups = expectedIds.map((id) => inspection.groups[id]);
+            const allDomBoxesFound = domBoxes.every((box) => box.found);
+            const allLabelsInPdf = PDF_JS_SUITE_PARAGRAPHS.every((paragraph) => inspection.fullText.includes(paragraph.label));
+            const allGroupsHaveText = groups.every((group) => group && group.spans.length > 0 && group.text.includes(group.annotation.text.slice(0, 16)));
+            const allTextInsideBoxes = groups.every((group) => pdfJsSuiteTextWithinRect(group));
+            stageSummaries.push({
+                stage: stageKey,
+                dom_boxes: domBoxes,
+                annotation_order: annotations.slice().sort((a, b) => Number(a.pdfX) - Number(b.pdfX)).map((ann) => ann.id),
+                pdf_text_length: inspection.fullText.length,
+                payload_annotation_count: Array.isArray(download.payload?.annotations) ? download.payload.annotations.length : 0,
+            });
+
+            if (stageKey === 'initial') {
+                const centers = annotations.map((ann) => ({ id: ann.id, center: ann.pdfX + (ann.pdfWidth / 2) }));
+                const order = centers.slice().sort((a, b) => a.center - b.center).map((entry) => entry.id);
+                addCheck(
+                    'pdfjs_three_boxes_side_by_side',
+                    allDomBoxesFound && JSON.stringify(order) === JSON.stringify(expectedIds),
+                    'Three Lorem Ipsum paragraph annotations load side-by-side as independent PDF.js annotation boxes.',
+                    JSON.stringify({ domBoxes, order })
+                );
+                addCheck(
+                    'initial_download_contains_all_paragraphs',
+                    allLabelsInPdf && allGroupsHaveText && allTextInsideBoxes,
+                    'Initial downloaded PDF contains all three paragraphs inside their expected side-by-side boxes.',
+                    JSON.stringify({ full_text_sample: inspection.fullText.slice(0, 240), groups: groups.map((g) => ({ id: g?.annotation?.id, span_count: g?.spans?.length || 0, bbox: g?.bbox })) })
+                );
+            }
+
+            if (stageKey === 'resize') {
+                const expectedWidths = Object.fromEntries(annotations.map((ann) => [ann.id, ann.pdfWidth]));
+                const payloadWidths = Object.fromEntries((download.payload?.annotations || []).map((ann) => [ann.id, Number(ann.pdfWidth) || 0]));
+                const widthsMatch = expectedIds.every((id) => approxEqual(payloadWidths[id], expectedWidths[id], 0.5));
+                addCheck(
+                    'resize_download_respects_boxes',
+                    allLabelsInPdf && allGroupsHaveText && allTextInsideBoxes && widthsMatch,
+                    'Resize stage downloaded PDF keeps each paragraph text inside the resized annotation boxes.',
+                    JSON.stringify({ expectedWidths, payloadWidths, groups: groups.map((g) => ({ id: g?.annotation?.id, rect: g?.rect, bbox: g?.bbox })) })
+                );
+            }
+
+            if (stageKey === 'reorder') {
+                const expectedOrder = ['pdfjs_suite_gamma', 'pdfjs_suite_alpha', 'pdfjs_suite_beta'];
+                const actualOrder = annotations.slice().sort((a, b) => Number(a.pdfX) - Number(b.pdfX)).map((ann) => ann.id);
+                const pdfOrder = groups
+                    .map((group) => ({ id: group?.annotation?.id, left: group?.bbox ? group.bbox[0] : Infinity }))
+                    .sort((a, b) => a.left - b.left)
+                    .map((entry) => entry.id);
+                addCheck(
+                    'reorder_download_left_to_right',
+                    JSON.stringify(actualOrder) === JSON.stringify(expectedOrder)
+                        && JSON.stringify(pdfOrder) === JSON.stringify(expectedOrder),
+                    'Reorder stage downloaded PDF reflects the swapped left-to-right paragraph order.',
+                    JSON.stringify({ expectedOrder, actualOrder, pdfOrder })
+                );
+            }
+
+            if (stageKey === 'font_metrics') {
+                const alpha = inspection.groups.pdfjs_suite_alpha;
+                const beta = inspection.groups.pdfjs_suite_beta;
+                const gamma = inspection.groups.pdfjs_suite_gamma;
+                const alphaBold = alpha.spans.some((span) => (Number(span.flags) & 16) || /bold/i.test(span.font || ''));
+                const betaItalic = beta.spans.some((span) => (Number(span.flags) & 2) || /(italic|oblique)/i.test(span.font || ''));
+                const gammaUnderline = pdfJsSuiteHasUnderline(gamma, inspection.page);
+                const alphaFont = alpha.spans.some((span) => /helvetica|arial|arimo/i.test(span.font || ''));
+                const betaFont = beta.spans.some((span) => /times|roman|serif|tinos/i.test(span.font || ''));
+                const gammaFont = gamma.spans.some((span) => /courier|mono/i.test(span.font || ''));
+                addCheck(
+                    'font_metrics_download_styles',
+                    alphaBold && betaItalic && gammaUnderline && alphaFont && betaFont && gammaFont && allTextInsideBoxes,
+                    'Font metrics stage downloaded PDF reflects bold, italic, underline, font-family, and line-height changes.',
+                    JSON.stringify({
+                        alpha: { bold: alphaBold, fonts: Array.from(new Set(alpha.spans.map((span) => span.font))).slice(0, 5) },
+                        beta: { italic: betaItalic, fonts: Array.from(new Set(beta.spans.map((span) => span.font))).slice(0, 5) },
+                        gamma: { underline: gammaUnderline, fonts: Array.from(new Set(gamma.spans.map((span) => span.font))).slice(0, 5), underline_count: inspection.page.underlines.length },
+                    })
+                );
+            }
+
+            if (stageKey === 'color') {
+                const colorMatches = PDF_JS_SUITE_PARAGRAPHS.every((paragraph) => {
+                    const group = inspection.groups[`pdfjs_suite_${paragraph.key}`];
+                    return group.spans.some((span) => String(span.color || '').toLowerCase() === paragraph.color);
+                });
+                addCheck(
+                    'color_download_text_colors',
+                    colorMatches && allTextInsideBoxes,
+                    'Color stage downloaded PDF reflects the expected text color for each paragraph.',
+                    JSON.stringify(Object.fromEntries(PDF_JS_SUITE_PARAGRAPHS.map((paragraph) => {
+                        const group = inspection.groups[`pdfjs_suite_${paragraph.key}`];
+                        return [paragraph.key, Array.from(new Set(group.spans.map((span) => String(span.color || '').toLowerCase()))).slice(0, 8)];
+                    })))
+                );
+            }
+
+            if (stageKey === 'delete_words') {
+                const absentDeletedWords = PDF_JS_SUITE_PARAGRAPHS.every((paragraph) => (
+                    !new RegExp(`\\b${paragraph.deleteWord}\\b`, 'i').test(inspection.fullText)
+                ));
+                const remainingTextPresent = PDF_JS_SUITE_PARAGRAPHS.every((paragraph) => {
+                    const expectedText = pdfJsSuiteStripDeletedWord(paragraph.text, paragraph.deleteWord);
+                    return inspection.fullText.includes(paragraph.label)
+                        && inspection.fullText.includes(expectedText.slice(0, 50));
+                });
+                addCheck(
+                    'delete_words_download_removed_targets',
+                    absentDeletedWords && remainingTextPresent && allTextInsideBoxes,
+                    'Delete-words stage downloaded PDF removes the requested words while preserving the remaining paragraphs.',
+                    JSON.stringify({ deleted_words: PDF_JS_SUITE_PARAGRAPHS.map((p) => p.deleteWord), full_text_sample: inspection.fullText.slice(0, 300) })
+                );
+            }
+
+            if (stageKey === 'font_size') {
+                const sizeMatches = PDF_JS_SUITE_PARAGRAPHS.every((paragraph) => {
+                    const group = inspection.groups[`pdfjs_suite_${paragraph.key}`];
+                    const medianSize = pdfJsSuiteMedian(group.spans.map((span) => span.size));
+                    return medianSize !== null && Math.abs(medianSize - paragraph.fontSize) <= 1.4;
+                });
+                addCheck(
+                    'font_size_download_sizes',
+                    sizeMatches && allTextInsideBoxes,
+                    'Font-size stage downloaded PDF reflects the expected font size changes for each paragraph.',
+                    JSON.stringify(Object.fromEntries(PDF_JS_SUITE_PARAGRAPHS.map((paragraph) => {
+                        const group = inspection.groups[`pdfjs_suite_${paragraph.key}`];
+                        return [paragraph.key, {
+                            expected: paragraph.fontSize,
+                            median: pdfJsSuiteMedian(group.spans.map((span) => span.size)),
+                            sizes: Array.from(new Set(group.spans.map((span) => Number(span.size).toFixed(2)))).slice(0, 8),
+                        }];
+                    })))
+                );
+            }
+        }
+
+        const status = checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail';
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            testCategory: test.test_category || PDF_JS_TEST_SUITE_CATEGORY,
+            status,
+            checks,
+            warnings,
+            artifacts,
+            fileSize: totalFileSize,
+            metadata: {
+                document_id: documentId,
+                stages: stageSummaries,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await cleanupDocument(page, documentId, csrfToken);
+            } catch (_error) {
+                // Cleanup failures should not hide the PDF export regression result.
+            }
+        }
+        await browser.close();
+    }
+}
+
+// ── PDF.js Test Suite — SS-4 Moved Label Source Mask & No Widget Overlap ─────
+// Regression for doc 4053 (fss4.pdf, IRS Form SS-4). Verifies the post-fix
+// invariants for `sourceMaskOverlapsAcroWidget` (area-ratio test, not boolean
+// edge overlap) and `shouldMaskSourceForAnnotation` (must mask moved overlays).
+async function runPdfJsSs4MovedLabelSourceMaskFlow() {
+    const test = TESTS.pdf_js_ss4_moved_label_source_mask_no_widget_overlap;
+    ensureOutputDir();
+
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    let documentId = null;
+    const checks = [];
+    const addCheck = (name, passed, detail = '') => {
+        checks.push({ name, result: passed ? 'PASS' : 'FAIL', detail });
+    };
+
+    try {
+        documentId = await createFixtureDocument(page, FSS4_FIXTURE_PATH);
+        const sessionId = await ensurePdfSessionIdNew(page, documentId);
+
+        // 1. Open the freshly-uploaded fss-4.pdf in the pdfjs editor and
+        // probe the AcroForm widget rectangles in PDF points so we can build
+        // moved-overlay annotations whose source masks land at well-known
+        // positions relative to those widgets.
+        await page.goto(`${BASE_URL}/documents/${documentId}/edit-new?pdfjs=1&t=${Date.now()}`, {
+            waitUntil: 'domcontentloaded', timeout: 90000,
+        });
+        await page.waitForSelector('body.enpv-viewer-ready .pdfViewer .page[data-page-number="1"]', { timeout: 120000 });
+        await page.waitForFunction(() => {
+            const pageDiv = document.querySelector('.pdfViewer .page[data-page-number="1"]');
+            return Boolean(pageDiv)
+                && /\*\s*[\d.]+px/.test(pageDiv.style.height || '')
+                && document.querySelectorAll('.pdfViewer .page[data-page-number="1"] .annotationLayer .textWidgetAnnotation, .pdfViewer .page[data-page-number="1"] .annotationLayer .buttonWidgetAnnotation').length > 0;
+        }, null, { timeout: 60000 });
+
+        const widgetData = await page.evaluate(() => {
+            const pageDiv = document.querySelector('.pdfViewer .page[data-page-number="1"]');
+            const pageBounds = pageDiv.getBoundingClientRect();
+            const pageHeightPts = parseFloat((pageDiv.style.height.match(/\*\s*([\d.]+)px/) || [])[1] || '792');
+            const pageWidthPts = parseFloat((pageDiv.style.width.match(/\*\s*([\d.]+)px/) || [])[1] || '612');
+            const scale = pageDiv.clientHeight / pageHeightPts;
+            const widgets = Array.from(pageDiv.querySelectorAll(':scope > .annotationLayer .textWidgetAnnotation, :scope > .annotationLayer .buttonWidgetAnnotation, :scope > .annotationLayer .choiceWidgetAnnotation, :scope > .annotationLayer .signatureWidgetAnnotation')).map((w) => {
+                const r = w.getBoundingClientRect();
+                const cssLeft = r.left - pageBounds.left;
+                const cssTop = r.top - pageBounds.top;
+                return {
+                    cssLeft, cssTop, cssWidth: r.width, cssHeight: r.height,
+                    pdfX: cssLeft / scale,
+                    pdfY: pageHeightPts - (cssTop + r.height) / scale,
+                    pdfW: r.width / scale,
+                    pdfH: r.height / scale,
+                };
+            });
+            return { scale, pageWidthPts, pageHeightPts, widgetCount: widgets.length, widgets };
+        });
+
+        if (!widgetData.widgets.length) {
+            throw new Error(`SS-4 widgets not found on page 1: ${JSON.stringify(widgetData)}`);
+        }
+
+        // ── Real-text validation ─────────────────────────────────────────────
+        // Inspect the freshly-rendered PDF.js text layer for the literal SS-4
+        // source labels that the user reported as garbled in the screenshot
+        // (rows 5a "Street address (if different) (Don't enter a P.O. box)" and
+        //  row 3 "Executor, administrator, trustee, care of, name").
+        // Fail if any of those rows contains a replacement / missing-glyph
+        // character (\uFFFD, \u25A1, \u25A0, \u2610, \u2612), which is what
+        // produces the small empty boxes in the screenshot.
+        const realTextProbe = await page.evaluate(() => {
+            const targets = [
+                { key: 'row_5a_street_address', needle: 'Street address' },
+                { key: 'row_3_executor_admin', needle: 'Executor' },
+                { key: 'p_o_box_phrase', needle: 'P.O' },
+                { key: 'dont_enter_phrase', needle: "Don" },
+                { key: 'care_of_phrase', needle: 'care of' },
+            ];
+            const flagCharsRe = /[\uFFFD\u25A0\u25A1\u2610-\u2612]/;
+            const results = [];
+            // Read the union of PDF.js text layer + our overlay layer so we
+            // capture whatever the user actually sees rendered in DOM.
+            const candidates = document.querySelectorAll([
+                '.pdfViewer .page[data-page-number="1"] .textLayer span',
+                '.pdfViewer .page[data-page-number="1"] .textLayer > div',
+                '.pdfViewer .page[data-page-number="1"] [class*="enpv-orig-text"]',
+                '.pdfViewer .page[data-page-number="1"] [class*="enpv-source-text"]',
+                '.pdfViewer .page[data-page-number="1"] [class*="enpv-pdfjs-source"]',
+                '.pdfViewer .page[data-page-number="1"] [data-enpv-source]',
+            ].join(', '));
+            for (const target of targets) {
+                let matchedText = null;
+                let matchedCls = null;
+                for (const el of candidates) {
+                    const txt = el.textContent || '';
+                    if (txt.includes(target.needle)) {
+                        matchedText = txt;
+                        matchedCls = el.className || el.tagName;
+                        break;
+                    }
+                }
+                results.push({
+                    key: target.key,
+                    needle: target.needle,
+                    found: matchedText !== null,
+                    text: matchedText,
+                    cls: matchedCls,
+                    hasReplacementGlyph: matchedText ? flagCharsRe.test(matchedText) : false,
+                    codes: matchedText ? [...matchedText].map((c) => 'U+' + c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')) : null,
+                });
+            }
+            return results;
+        });
+
+        for (const probe of realTextProbe) {
+            const flagged = probe.hasReplacementGlyph;
+            addCheck(
+                `real_text_no_replacement_glyph:${probe.key}`,
+                probe.found && !flagged,
+                probe.found
+                    ? (flagged
+                        ? `text="${probe.text}" contains replacement glyph; codes=${JSON.stringify(probe.codes)}`
+                        : `text="${probe.text}" — clean`)
+                    : `needle "${probe.needle}" not found in DOM (text layer + overlays)`,
+            );
+        }
+
+        // ── Canvas-pixel sanity (loose) ──────────────────────────────────────
+        // Confirm the page-1 canvas actually drew SOMETHING (i.e. PDF.js did
+        // render the page raster). We deliberately don't try to localise the
+        // SS-4 row labels by text-layer geometry — DPR + transform math made
+        // the previous approach unreliable. The edit-mode DOM probe below is
+        // what catches the real bug.
+        const canvasSanity = await page.evaluate(() => {
+            const pageDiv = document.querySelector('.pdfViewer .page[data-page-number="1"]');
+            const canvas = pageDiv && pageDiv.querySelector('canvas');
+            if (!canvas) return { error: 'no canvas' };
+            const ctx = canvas.getContext('2d');
+            const sample = ctx.getImageData(0, 0, Math.min(canvas.width, 800), Math.min(canvas.height, 800));
+            let dark = 0; let total = 0;
+            for (let i = 0; i < sample.data.length; i += 4) {
+                total += 1;
+                if (sample.data[i] < 100 && sample.data[i + 1] < 100 && sample.data[i + 2] < 100) dark += 1;
+            }
+            return { darkRatio: total ? dark / total : 0, total };
+        });
+        addCheck(
+            'canvas_has_glyph_pixels',
+            !canvasSanity.error && (canvasSanity.darkRatio || 0) > 0.001,
+            canvasSanity.error || `darkRatio=${(canvasSanity.darkRatio || 0).toFixed(4)} over ${canvasSanity.total} sample pixels`,
+        );
+
+        // Save a debug screenshot of page 1 so we can eyeball the actual
+        // rendering when checks fail.
+        try {
+            const dbgPath = path.join(OUTPUT_DIR, `${test.path || 'pdf_js_ss4_probe'}_page1.png`);
+            const pageEl = await page.$('.pdfViewer .page[data-page-number="1"]');
+            if (pageEl) await pageEl.screenshot({ path: dbgPath });
+        } catch (e) { /* ignore */ }
+
+        // ── Edit-mode glyph probe ────────────────────────────────────────────
+        // The user's screenshot was taken with "Edit PDF" mode ON. In edit
+        // mode the editor swaps the original PDF.js canvas glyphs for our own
+        // re-rendered source overlays. If the source-overlay font is missing
+        // any glyphs (apostrophe, smart quotes, lowercase x, capital O, …)
+        // those characters render as missing-glyph boxes — the bug shown in
+        // the screenshot. Toggle Edit Mode on, wait for source overlays, and
+        // re-inspect the same SS-4 row labels.
+        const editModeProbe = await page.evaluate(async () => {
+            // Toggle Edit Mode by clicking the toolbar button (the pdfjs editor
+            // doesn't expose a window.__editorTestState bridge — it uses
+            // #edit-mode-toggle / #ftb-edit-mode buttons that flip the
+            // enpv-edit-on body class and re-render the annotation boxes).
+            const btn = document.getElementById('edit-mode-toggle') || document.getElementById('ftb-edit-mode');
+            if (!btn) return { error: 'no edit-mode toggle button (#edit-mode-toggle / #ftb-edit-mode) on page' };
+            if (!document.body.classList.contains('enpv-edit-on')) btn.click();
+            await new Promise((r) => setTimeout(r, 1500));
+            if (!document.body.classList.contains('enpv-edit-on')) return { error: 'failed to enter edit mode (body lacks enpv-edit-on after click)' };
+
+            const targets = [
+                { key: 'em_row_5a_street_address', needle: 'Street address' },
+                { key: 'em_row_3_executor_admin', needle: 'Executor' },
+                { key: 'em_p_o_box_phrase', needle: 'P.O' },
+                { key: 'em_dont_enter_phrase', needle: 'Don' },
+                { key: 'em_care_of_phrase', needle: 'care of' },
+            ];
+            const flagCharsRe = /[\uFFFD\u25A0\u25A1\u2610-\u2612]/;
+            const candidates = document.querySelectorAll([
+                '.pdfViewer .page[data-page-number="1"] .textLayer span',
+                '.pdfViewer .page[data-page-number="1"] .textLayer > div',
+                '.pdfViewer .page[data-page-number="1"] [class*="enpv-orig-text"]',
+                '.pdfViewer .page[data-page-number="1"] [class*="enpv-source-text"]',
+                '.pdfViewer .page[data-page-number="1"] [class*="enpv-pdfjs-source"]',
+                '.pdfViewer .page[data-page-number="1"] [data-enpv-source]',
+                '.pdfViewer .page[data-page-number="1"] [data-enpv-original]',
+            ].join(', '));
+            const results = [];
+            for (const target of targets) {
+                let bestText = null; let bestCls = null;
+                for (const el of candidates) {
+                    const txt = el.textContent || '';
+                    if (txt.includes(target.needle)) {
+                        bestText = txt; bestCls = el.className || el.tagName;
+                        break;
+                    }
+                }
+                results.push({
+                    key: target.key,
+                    needle: target.needle,
+                    found: bestText !== null,
+                    text: bestText,
+                    cls: bestCls,
+                    hasReplacementGlyph: bestText ? flagCharsRe.test(bestText) : false,
+                    codes: bestText ? [...bestText].map((c) => 'U+' + c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')) : null,
+                });
+            }
+            return { results };
+        });
+
+        if (editModeProbe.error) {
+            addCheck('edit_mode_probe_setup', false, editModeProbe.error);
+        } else {
+            for (const probe of editModeProbe.results || []) {
+                const flagged = probe.hasReplacementGlyph;
+                addCheck(
+                    `edit_mode_no_replacement_glyph:${probe.key}`,
+                    probe.found && !flagged,
+                    probe.found
+                        ? (flagged
+                            ? `text="${probe.text}" contains replacement glyph in edit mode; codes=${JSON.stringify(probe.codes)}`
+                            : `text="${probe.text}" — clean in edit mode (cls=${probe.cls})`)
+                        : `needle "${probe.needle}" not found in edit-mode DOM`,
+                );
+            }
+        }
+
+        // Save a screenshot of page 1 in edit mode for visual confirmation.
+        try {
+            const dbgPath = path.join(OUTPUT_DIR, `${test.path || 'pdf_js_ss4_probe'}_page1_editmode.png`);
+            const pageEl = await page.$('.pdfViewer .page[data-page-number="1"]');
+            if (pageEl) await pageEl.screenshot({ path: dbgPath });
+        } catch (e) { /* ignore */ }
+
+        // Turn edit mode back off so the rest of the test (synthetic moved
+        // overlays + reload) runs in its original state.
+        try {
+            await page.evaluate(() => {
+                const btn = document.getElementById('edit-mode-toggle') || document.getElementById('ftb-edit-mode');
+                if (btn && document.body.classList.contains('enpv-edit-on')) btn.click();
+            });
+            await page.waitForTimeout(500);
+        } catch (e) { /* ignore */ }
+
+        // Pick AcroForm input widgets that are typical of the SS-4 layout:
+        // wide enough to host a label above (>=80 pts), tall enough that a
+        // few-pixel label overlap is the bug pattern (>=12 pts), and not too
+        // wide so the synthetic narrow label mask sits clearly inside the
+        // widget's horizontal extent.
+        const candidateWidgets = widgetData.widgets
+            .filter((w) => w.pdfH >= 12 && w.pdfH <= 30 && w.pdfW >= 80 && w.pdfW <= 250)
+            .filter((w) => w.cssTop > 60)
+            .sort((a, b) => a.cssTop - b.cssTop);
+        if (candidateWidgets.length < 2) {
+            throw new Error(`needed >=2 SS-4 input widgets matching label-mask shape, got ${candidateWidgets.length}: ${JSON.stringify(candidateWidgets.slice(0, 5))}`);
+        }
+        const labelWidgetA = candidateWidgets[0];
+        const labelWidgetB = candidateWidgets.find((w) => Math.abs(w.cssTop - labelWidgetA.cssTop) > 80) || candidateWidgets[1];
+        const pageHeightPts = widgetData.pageHeightPts;
+
+        // Build a moved annotation whose source mask sits in the LABEL strip
+        // immediately above an AcroForm widget. The mask intentionally
+        // extends 2 PDF pts INTO the widget at the bottom edge, so a naive
+        // boolean any-overlap rejection (the bug) would suppress the mask.
+        // The current fix requires >=60% area overlap, so the mask must be
+        // drawn for this layout.
+        const buildLabelMaskedAnnotation = (key, widget) => {
+            const labelHeight = 8.3;            // pts — typical SS-4 row label height
+            const labelWidth = 60;              // narrow label that fits above the widget
+            const overlapIntoWidgetPts = 2;
+            const widgetTopY = pageHeightPts - widget.cssTop / widgetData.scale;
+            const labelBottomY = widgetTopY - overlapIntoWidgetPts; // bottom edge sits 2 pts inside widget
+            const labelLeftX = widget.pdfX;
+            const movedX = 30;
+            const movedY = pageHeightPts - 30 - labelHeight;
+            return {
+                id: `pdfjs_${documentId}_0_${key}`,
+                type: 'text',
+                pageIndex: 0,
+                text: `${key} moved label`,
+                originalText: `${key} moved label`,
+                pdfjsSourceText: `${key} original label`,
+                savedTextOverlay: true,
+                movedTextOverlay: true,
+                pdfjsEditorMode: 'source',
+                fontSize: 8,
+                pdfX: movedX,
+                pdfY: movedY,
+                pdfWidth: labelWidth,
+                pdfHeight: labelHeight,
+                pdfjsSourceX: labelLeftX,
+                pdfjsSourceY: labelBottomY,
+                pdfjsSourceW: labelWidth,
+                pdfjsSourceH: labelHeight,
+                pdfjsSourceMaskX: labelLeftX,
+                pdfjsSourceMaskY: labelBottomY,
+                pdfjsSourceMaskW: labelWidth,
+                pdfjsSourceMaskH: labelHeight,
+                pdfjsSourcePageHeight: pageHeightPts,
+            };
+        };
+
+        // Build a moved annotation whose mask sits ENTIRELY INSIDE an
+        // AcroForm widget — this mask MUST be suppressed (the legitimate
+        // "don't paint over the form input field" rule still applies).
+        const buildInsideWidgetMaskedAnnotation = (key, widget) => {
+            const insetPts = 1;
+            const movedX = 320;
+            const movedY = pageHeightPts - 30 - 12;
+            return {
+                id: `pdfjs_${documentId}_0_${key}`,
+                type: 'text',
+                pageIndex: 0,
+                text: `${key} moved (in-widget)`,
+                originalText: `${key} moved (in-widget)`,
+                pdfjsSourceText: `${key} original (in-widget)`,
+                savedTextOverlay: true,
+                movedTextOverlay: true,
+                pdfjsEditorMode: 'source',
+                fontSize: 8,
+                pdfX: movedX,
+                pdfY: movedY,
+                pdfWidth: Math.max(20, widget.pdfW - 2 * insetPts),
+                pdfHeight: Math.max(8, widget.pdfH - 2 * insetPts),
+                pdfjsSourceX: widget.pdfX + insetPts,
+                pdfjsSourceY: widget.pdfY + insetPts,
+                pdfjsSourceW: Math.max(20, widget.pdfW - 2 * insetPts),
+                pdfjsSourceH: Math.max(8, widget.pdfH - 2 * insetPts),
+                pdfjsSourceMaskX: widget.pdfX + insetPts,
+                pdfjsSourceMaskY: widget.pdfY + insetPts,
+                pdfjsSourceMaskW: Math.max(20, widget.pdfW - 2 * insetPts),
+                pdfjsSourceMaskH: Math.max(8, widget.pdfH - 2 * insetPts),
+                pdfjsSourcePageHeight: pageHeightPts,
+            };
+        };
+
+        const movedLabelA = buildLabelMaskedAnnotation('label-a-uid:101', labelWidgetA);
+        const movedLabelB = buildLabelMaskedAnnotation('label-b-uid:102', labelWidgetB);
+        const insideWidgetAnnotation = buildInsideWidgetMaskedAnnotation('inside-uid:103', labelWidgetA);
+
+        const movedAnnotations = [movedLabelA, movedLabelB, insideWidgetAnnotation];
+        await savePdfJsSuiteAnnotations(page, documentId, sessionId, movedAnnotations);
+
+        // 2. Reload the document so the saved annotations are rehydrated
+        // through the same code path that broke on doc 4053, and re-toggle
+        // edit mode so the source-mask layer is built for measurement.
+        await page.goto(`${BASE_URL}/documents/${documentId}/edit-new?pdfjs=1&t=${Date.now()}`, {
+            waitUntil: 'domcontentloaded', timeout: 90000,
+        });
+        await page.waitForSelector('body.enpv-viewer-ready .pdfViewer .page[data-page-number="1"]', { timeout: 120000 });
+        await page.waitForTimeout(800);
+        await page.evaluate(() => {
+            const t = document.getElementById('edit-mode-toggle');
+            if (t && !document.body.classList.contains('enpv-edit-on')) t.click();
+        });
+        const expectedIds = movedAnnotations.map((a) => a.id);
+        await page.waitForFunction((ids) => ids.every((id) => (
+            document.querySelector(`.enpv-annotation-box[data-annotation-id="${CSS.escape(id)}"]`)
+        )), expectedIds, { timeout: 60000 });
+        await page.waitForTimeout(800);
+
+        const inspection = await page.evaluate(({ ids, expectedLabelMaskCssRects, expectedInsideMaskCssRect }) => {
+            const replacementChars = /[\uFFFD\u25A1\u2610\u2612]/;
+            const pageDiv = document.querySelector('.pdfViewer .page[data-page-number="1"]');
+            const pageBounds = pageDiv.getBoundingClientRect();
+            const widgets = Array.from(pageDiv.querySelectorAll(':scope > .annotationLayer .textWidgetAnnotation, :scope > .annotationLayer .buttonWidgetAnnotation, :scope > .annotationLayer .choiceWidgetAnnotation, :scope > .annotationLayer .signatureWidgetAnnotation')).map((w) => {
+                const r = w.getBoundingClientRect();
+                return {
+                    left: r.left - pageBounds.left, top: r.top - pageBounds.top,
+                    width: r.width, height: r.height,
+                };
+            });
+            const sourceMaskLayer = pageDiv.querySelector(':scope > .enpv-source-mask-layer');
+            const annotationLayer = pageDiv.querySelector(':scope > .annotationLayer');
+            const boxLayer = pageDiv.querySelector(':scope > .enpv-annotation-box-layer');
+            const zIndexNumber = (el) => Number.parseInt(window.getComputedStyle(el || document.body).zIndex || '0', 10) || 0;
+            const masks = Array.from(pageDiv.querySelectorAll('.enpv-source-mask, .enpv-orig-mask')).map((m) => {
+                const r = m.getBoundingClientRect();
+                return {
+                    left: r.left - pageBounds.left, top: r.top - pageBounds.top,
+                    width: r.width, height: r.height,
+                    inSourceMaskLayer: Boolean(sourceMaskLayer && sourceMaskLayer.contains(m)),
+                    inBoxLayer: Boolean(boxLayer && boxLayer.contains(m)),
+                };
+            });
+            const widgetCovers60 = (mask) => {
+                const maskArea = Math.max(1, mask.width * mask.height);
+                return widgets.some((w) => {
+                    const ix0 = Math.max(mask.left, w.left);
+                    const iy0 = Math.max(mask.top, w.top);
+                    const ix1 = Math.min(mask.left + mask.width, w.left + w.width);
+                    const iy1 = Math.min(mask.top + mask.height, w.top + w.height);
+                    if (ix1 <= ix0 || iy1 <= iy0) return false;
+                    return ((ix1 - ix0) * (iy1 - iy0)) / maskArea >= 0.6;
+                });
+            };
+            // Match expected rects to actual masks by center proximity (<=16 px)
+            // and size delta (<=8 px) — the mask layer is offset a few pixels
+            // from the page div due to the editor's annotation-layer wrapper.
+            const matchMaskAtRect = (expected) => masks.find((m) => (
+                Math.abs((m.left + m.width / 2) - (expected.left + expected.width / 2)) <= 16
+                && Math.abs((m.top + m.height / 2) - (expected.top + expected.height / 2)) <= 16
+                && Math.abs(m.width - expected.width) <= 8
+                && Math.abs(m.height - expected.height) <= 8
+            ));
+            const matchedLabelMaskIndices = expectedLabelMaskCssRects.map(matchMaskAtRect).filter(Boolean);
+            const matchedInsideMask = matchMaskAtRect(expectedInsideMaskCssRect);
+            const overlays = ids.map((id) => {
+                const box = document.querySelector(`.enpv-annotation-box[data-annotation-id="${CSS.escape(id)}"]`);
+                const text = String(box?.querySelector('.enpv-text-content')?.textContent || box?.textContent || '');
+                return {
+                    id, text,
+                    replacementMatch: text.match(replacementChars)?.[0] || null,
+                    boxFound: Boolean(box),
+                };
+            });
+            const widgetCoveredCount = masks.filter(widgetCovers60).length;
+            return {
+                widgetCount: widgets.length,
+                maskCount: masks.length,
+                widgetCoveredCount,
+                maskLayerPresent: Boolean(sourceMaskLayer),
+                masksInSourceMaskLayer: masks.filter((m) => m.inSourceMaskLayer).length,
+                masksInBoxLayer: masks.filter((m) => m.inBoxLayer).length,
+                sourceMaskLayerZ: zIndexNumber(sourceMaskLayer),
+                annotationLayerZ: zIndexNumber(annotationLayer),
+                boxLayerZ: zIndexNumber(boxLayer),
+                overlays,
+                labelMaskMatched: matchedLabelMaskIndices.length,
+                insideMaskMatched: matchedInsideMask ? 1 : 0,
+                masks,
+                expectedLabelMaskCssRects,
+                expectedInsideMaskCssRect,
+            };
+        }, {
+            ids: expectedIds,
+            expectedLabelMaskCssRects: [movedLabelA, movedLabelB].map((a) => ({
+                left: a.pdfjsSourceMaskX * widgetData.scale,
+                top: (widgetData.pageHeightPts - (a.pdfjsSourceMaskY + a.pdfjsSourceMaskH)) * widgetData.scale,
+                width: a.pdfjsSourceMaskW * widgetData.scale,
+                height: a.pdfjsSourceMaskH * widgetData.scale,
+            })),
+            expectedInsideMaskCssRect: {
+                left: insideWidgetAnnotation.pdfjsSourceMaskX * widgetData.scale,
+                top: (widgetData.pageHeightPts - (insideWidgetAnnotation.pdfjsSourceMaskY + insideWidgetAnnotation.pdfjsSourceMaskH)) * widgetData.scale,
+                width: insideWidgetAnnotation.pdfjsSourceMaskW * widgetData.scale,
+                height: insideWidgetAnnotation.pdfjsSourceMaskH * widgetData.scale,
+            },
+        });
+
+        addCheck(
+            'overlay_boxes_present',
+            inspection.overlays.length === 3 && inspection.overlays.every((o) => o.boxFound),
+            JSON.stringify(inspection.overlays.map((o) => ({ id: o.id, found: o.boxFound }))),
+        );
+        for (const overlay of inspection.overlays) {
+            const expected = movedAnnotations.find((a) => a.id === overlay.id)?.text || '';
+            addCheck(
+                `overlay_text_intact:${overlay.id}`,
+                overlay.text === expected && !overlay.replacementMatch,
+                `text=${JSON.stringify(overlay.text)} expected=${JSON.stringify(expected)} replacement=${overlay.replacementMatch}`,
+            );
+        }
+        addCheck(
+            'label_mask_above_widget_drawn',
+            inspection.labelMaskMatched >= 2,
+            `expected >=2 label masks (one per moved label-A/B) at expected positions, matched ${inspection.labelMaskMatched}; total masks=${inspection.maskCount}; expected=${JSON.stringify(inspection.expectedLabelMaskCssRects)}`,
+        );
+        addCheck(
+            'mask_inside_widget_rendered_below_widget',
+            inspection.insideMaskMatched === 1
+                && inspection.maskLayerPresent
+                && inspection.masksInSourceMaskLayer === inspection.maskCount
+                && inspection.masksInBoxLayer === 0
+                && inspection.sourceMaskLayerZ < inspection.annotationLayerZ,
+            `insideWidgetMaskMatched=${inspection.insideMaskMatched}; masksInSourceMaskLayer=${inspection.masksInSourceMaskLayer}/${inspection.maskCount}; masksInBoxLayer=${inspection.masksInBoxLayer}; z=${JSON.stringify({ source: inspection.sourceMaskLayerZ, annotation: inspection.annotationLayerZ })}`,
+        );
+        addCheck(
+            'source_masks_render_below_acroform_widgets',
+            inspection.maskLayerPresent
+                && inspection.masksInSourceMaskLayer === inspection.maskCount
+                && inspection.masksInBoxLayer === 0
+                && inspection.sourceMaskLayerZ < inspection.annotationLayerZ
+                && inspection.annotationLayerZ < inspection.boxLayerZ,
+            `maskLayerPresent=${inspection.maskLayerPresent}; masksInSourceMaskLayer=${inspection.masksInSourceMaskLayer}/${inspection.maskCount}; masksInBoxLayer=${inspection.masksInBoxLayer}; z=${JSON.stringify({ source: inspection.sourceMaskLayerZ, annotation: inspection.annotationLayerZ, boxes: inspection.boxLayerZ })}`,
+        );
+
+        const status = checks.length > 0 && checks.every((c) => c.result === 'PASS') ? 'pass' : 'fail';
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            testCategory: test.test_category || PDF_JS_TEST_SUITE_CATEGORY,
+            status,
+            checks,
+            metadata: {
+                document_id: documentId,
+                widget_data: widgetData,
+                inspection,
+            },
+        });
+    } catch (error) {
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            testCategory: test.test_category || PDF_JS_TEST_SUITE_CATEGORY,
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+        });
+    } finally {
+        if (documentId) {
+            try { await cleanupDocument(page, documentId); } catch (_e) { /* ignore */ }
+        }
+        await browser.close();
+    }
+}
+
+// Regression for the user-reported bug: SS-4 row labels in the editor
+// rendered missing-glyph boxes for apostrophes, smart quotes, lowercase x,
+// and capital O. Verifies that the PDF generated by the Download PDF flow
+// extracts to text with all the expected literal Unicode characters intact
+// (no U+FFFD / □ / ☐ / ☒). Runs the same probe a second time after
+// toggling Edit PDF mode on and saving, since the user's screenshot was
+// captured in edit mode.
+async function runPdfJsSs4DownloadNoGlyphSubstitutionFlow() {
+    const test = TESTS.pdf_js_ss4_download_no_glyph_substitution;
+    ensureOutputDir();
+
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT, acceptDownloads: true });
+    const page = await context.newPage();
+    let documentId = null;
+    const checks = [];
+    const addCheck = (name, passed, detail = '') => {
+        checks.push({ name, result: passed ? 'PASS' : 'FAIL', detail });
+    };
+
+    // Literal SS-4 row-label needles. Every Unicode codepoint here is one
+    // the user reported missing in the editor screenshot. If the embedded
+    // PDF font (or any fallback used during stamping) lacks any of these
+    // glyphs the extracted text from the Download PDF will be missing the
+    // literal char (or contain a U+FFFD / box).
+    const FLAG_GLYPHS_RE = /(?:\\u0000|\u0000|[\uFFFD\u25A0\u25A1\u2610-\u2612])/;
+    const NEEDLES = [
+        { key: 'apostrophe_dont_enter', text: 'Don\u2019t enter a P.O. box' },
+        { key: 'smart_quotes_care_of', text: '\u201Ccare of\u201D name' },
+        { key: 'street_address_lowercase', text: 'Street address' },
+        { key: 'executor_capital_o', text: 'Executor, administrator, trustee' },
+        { key: 'mailing_address_box', text: 'Mailing address (room, apt., suite no. and street, or P.O. box)' },
+    ];
+
+    async function probeDownload(downloadPath, modeLabel, needles = NEEDLES) {
+        try {
+            // The pdfjs editor's Download PDF flow POSTs to
+            // /documents/{id}/download-annotated-pdf and reads the response
+            // body via response.blob() inside the page. Once the page reads
+            // the body, Playwright's response.body() comes back empty. So we
+            // capture the outgoing request payload + url, then re-issue the
+            // POST from the test runner's request context (same cookies, so
+            // auth is intact) and write that response body to disk.
+            const requestPromise = page.waitForRequest(
+                (req) => req.method() === 'POST'
+                    && /\/(download-annotated-pdf|download-pdfjs|stamp(ed)?-pdf)/i.test(req.url()),
+                { timeout: 90000 },
+            );
+            await page.click('#download-pdf-btn');
+            const req = await requestPromise;
+            const reqUrl = req.url();
+            const reqBody = req.postData() || '';
+            const reqHeaders = await req.allHeaders();
+            // Strip hop-by-hop / browser-only headers that the request
+            // context will reject or auto-set.
+            const safeHeaders = {};
+            for (const [k, v] of Object.entries(reqHeaders)) {
+                const kl = k.toLowerCase();
+                if (kl.startsWith(':') || kl === 'content-length' || kl === 'host' || kl === 'connection') continue;
+                safeHeaders[k] = v;
+            }
+            const replay = await page.context().request.post(reqUrl, {
+                data: reqBody,
+                headers: safeHeaders,
+                timeout: 90000,
+            });
+            if (!replay.ok()) {
+                const txt = await replay.text().catch(() => '');
+                addCheck(`download_succeeded:${modeLabel}`, false, `download HTTP ${replay.status()} url=${reqUrl} body=${txt.slice(0, 300)}`);
+                return;
+            }
+            const buf = await replay.body();
+            fs.writeFileSync(downloadPath, buf);
+            if (buf.length === 0) {
+                addCheck(`download_succeeded:${modeLabel}`, false, `empty body from replay of ${reqUrl} status=${replay.status()}`);
+                return;
+            }
+        } catch (e) {
+            addCheck(`download_succeeded:${modeLabel}`, false, `download error: ${e.message || e}`);
+            return;
+        }
+        const fileSize = fs.existsSync(downloadPath) ? fs.statSync(downloadPath).size : 0;
+        addCheck(`download_succeeded:${modeLabel}`, fileSize > 1000, `path=${downloadPath} size=${fileSize}`);
+        if (fileSize <= 1000) return;
+
+        // Extract page-1 text via PyMuPDF.
+        let pageData = null;
+        try {
+            pageData = loadPdfExtractionPage(downloadPath, 1);
+        } catch (e) {
+            addCheck(`extract_text:${modeLabel}`, false, `pymupdf failed: ${e.message || e}`);
+            return;
+        }
+        const allText = JSON.stringify(pageData);
+        addCheck(`extract_text:${modeLabel}`, !!allText && allText.length > 100, `extracted ${allText.length} chars of structured data`);
+
+        // Single global check: nothing on page 1 contains a replacement glyph.
+        const flaggedMatches = [...allText.matchAll(/(?:\\u0000|\u0000|[\uFFFD\u25A0\u25A1\u2610-\u2612])/g)];
+        addCheck(
+            `no_replacement_glyph_anywhere:${modeLabel}`,
+            flaggedMatches.length === 0,
+            flaggedMatches.length === 0
+                ? 'no \uFFFD / □ / ☐ / ☒ found in extracted page 1'
+                : `found ${flaggedMatches.length} replacement glyph(s); first codes=${flaggedMatches.slice(0, 5).map((m) => 'U+' + m[0].codePointAt(0).toString(16).toUpperCase()).join(',')}`,
+        );
+        try {
+            const rawTextMap = execFileSync(PYTHON_BIN, ['-c', `
+import fitz, json, sys
+doc = fitz.open(sys.argv[1])
+page = doc[0]
+print(json.dumps(page.get_text('dict'), ensure_ascii=False))
+doc.close()
+`, downloadPath], {
+                cwd: path.resolve(__dirname, '..', '..', '..'),
+                encoding: 'utf8',
+                stdio: ['ignore', 'pipe', 'pipe'],
+                maxBuffer: 32 * 1024 * 1024,
+            });
+            const rawFlagged = [...rawTextMap.matchAll(/(?:\\u0000|\u0000|[\uFFFD\u25A0\u25A1\u2610-\u2612])/g)];
+            addCheck(
+                `no_raw_textmap_glyph_substitution:${modeLabel}`,
+                rawFlagged.length === 0,
+                rawFlagged.length === 0
+                    ? 'raw PyMuPDF text map has no NUL / � / □ / ☐ / ☒ glyph substitutions'
+                    : `raw text map found ${rawFlagged.length} substitution marker(s); first=${rawFlagged.slice(0, 5).map((m) => JSON.stringify(m[0])).join(',')}`,
+            );
+        } catch (e) {
+            addCheck(`no_raw_textmap_glyph_substitution:${modeLabel}`, false, `raw text-map scan failed: ${e.message || e}`);
+        }
+
+        // Per-needle: verify each literal phrase is present.
+        // PyMuPDF concatenates spans on a line with spaces — concat lines.
+        const flatLines = [];
+        if (Array.isArray(pageData?.lines)) {
+            for (const line of pageData.lines) flatLines.push(String(line.text || ''));
+        }
+        if (Array.isArray(pageData?.blocks)) {
+            for (const block of pageData.blocks) {
+                if (Array.isArray(block?.lines)) for (const l of block.lines) flatLines.push(String(l.text || l));
+                if (typeof block?.text === 'string') flatLines.push(block.text);
+            }
+        }
+        const haystack = flatLines.join('\n');
+
+        for (const needle of needles) {
+            const found = haystack.includes(needle.text);
+            // A line that contains an early prefix of the needle but a
+            // box-glyph instead of the literal char also fails.
+            let nearMatchHasFlagGlyph = false;
+            if (!found) {
+                // Check if a line contains the first 6 chars and then a flag
+                // glyph (likely the bug shape).
+                const stub = needle.text.slice(0, 6);
+                for (const line of flatLines) {
+                    if (line.includes(stub) && FLAG_GLYPHS_RE.test(line)) { nearMatchHasFlagGlyph = true; break; }
+                }
+            }
+            addCheck(
+                `needle_present:${modeLabel}:${needle.key}`,
+                found,
+                found
+                    ? `"${needle.text}" present in extracted text`
+                    : (nearMatchHasFlagGlyph
+                        ? `"${needle.text}" NOT present; a near-match line contains a replacement glyph (likely the bug)`
+                        : `"${needle.text}" NOT present; haystack head=${haystack.slice(0, 400).replace(/\n/g, ' \u23CE ')}`),
+            );
+        }
+    }
+
+    try {
+        documentId = await createFixtureDocument(page, FSS4_FIXTURE_PATH);
+        const sessionId = await ensurePdfSessionIdNew(page, documentId);
+
+        await page.goto(`${BASE_URL}/documents/${documentId}/edit-new?pdfjs=1&t=${Date.now()}`, {
+            waitUntil: 'domcontentloaded', timeout: 90000,
+        });
+        await page.waitForSelector('body.enpv-viewer-ready .pdfViewer .page[data-page-number="1"]', { timeout: 120000 });
+        await page.waitForFunction(() => Boolean(document.querySelector('#download-pdf-btn')), null, { timeout: 30000 });
+
+        // ── Pass 1: download the freshly-uploaded PDF with NO edits ──────────
+        const runToken = buildRunToken();
+        const editOffName = buildArtifactName(test.key, runToken, 'download_edit_off', 'pdf');
+        const editOffPath = path.join(OUTPUT_DIR, editOffName);
+        await probeDownload(editOffPath, 'edit_mode_off');
+
+        // ── Pass 2: persist a synthetic added annotation on page 1, reload,
+        // and download again. Persisting an annotation on page 1 forces the
+        // download flow to re-render page 1 (instead of preserving the
+        // original content stream) — which is exactly the user-visible state
+        // when they edit anything and click Download PDF. If our re-stamping
+        // path uses a font/encoding that loses Unicode chars (\u2019,
+        // \u201C/\u201D, lowercase x, capital O) the rasterized download
+        // page below will show missing-glyph boxes for the SS-4 row labels.
+        const pageGeom = await page.evaluate(() => {
+            const pageDiv = document.querySelector('.pdfViewer .page[data-page-number="1"]');
+            const pageHeightPts = parseFloat((pageDiv.style.height.match(/\*\s*([\d.]+)px/) || [])[1] || '792');
+            const pageWidthPts = parseFloat((pageDiv.style.width.match(/\*\s*([\d.]+)px/) || [])[1] || '612');
+            return { pageHeightPts, pageWidthPts };
+        });
+        const editAnnotation = {
+            id: `pdfjs_${documentId}_0_edit_force_page1_redraw`,
+            type: 'text',
+            pageIndex: 0,
+            text: 'TEST_EDIT',
+            originalText: 'TEST_EDIT',
+            savedTextOverlay: true,
+            fontSize: 10,
+            pdfX: 30,
+            pdfY: pageGeom.pageHeightPts - 40,
+            pdfWidth: 80,
+            pdfHeight: 12,
+        };
+        try {
+            await savePdfJsSuiteAnnotations(page, documentId, sessionId, [editAnnotation]);
+            await page.goto(`${BASE_URL}/documents/${documentId}/edit-new?pdfjs=1&t=${Date.now()}`, {
+                waitUntil: 'domcontentloaded', timeout: 90000,
+            });
+            await page.waitForSelector('body.enpv-viewer-ready .pdfViewer .page[data-page-number="1"]', { timeout: 120000 });
+            await page.waitForFunction(() => Boolean(document.querySelector('#download-pdf-btn')), null, { timeout: 30000 });
+            addCheck('synthetic_edit_persisted', true, `injected annotation id=${editAnnotation.id}`);
+        } catch (e) {
+            addCheck('synthetic_edit_persisted', false, `failed: ${e.message || e}`);
+        }
+        const editedName = buildArtifactName(test.key, runToken, 'download_with_edit', 'pdf');
+        const editedPath = path.join(OUTPUT_DIR, editedName);
+        await probeDownload(editedPath, 'with_edit_page1_restamped');
+
+        // ── Pass 3: doc-4073 repro shape — move the PDF.js source overlay
+        // for row 3 (`0:14`, “Executor, administrator, trustee, “care of”
+        // name”) down and download. This is the exact glyph-sensitive row the
+        // user reported after dragging `pdfjs_4073_0_0:14`.
+        const movedRow3Annotation = {
+            id: `pdfjs_${documentId}_0_0:14`,
+            type: 'text',
+            pageIndex: 0,
+            text: '3       Executor, administrator, trustee, “care of” name',
+            originalText: '3 Executor, administrator, trustee, “care of” name',
+            pdfjsSourceText: '3 Executor, administrator, trustee, “care of” name',
+            savedTextOverlay: true,
+            movedTextOverlay: true,
+            pdfjsEditorMode: 'source',
+            pdfjsSourceFidelity: true,
+            skipPdfjsSourceMask: false,
+            fontFamily: 'sans-serif',
+            fontWeight: '400',
+            fontStyle: 'normal',
+            fontSize: 8.00001,
+            requestedFontSize: 8.00001,
+            lineHeight: 8.00001,
+            textColor: '#000000',
+            color: '#000000',
+            opacity: 1,
+            pdfX: 297.9984,
+            pdfY: 560.40073,
+            pdfWidth: 189.0855,
+            pdfHeight: 8.60157,
+            pdfjsAnchorUid: '0:14',
+            pdfjsSourceX: 299.1984375,
+            pdfjsSourceY: 675.0008124999999,
+            pdfjsSourceW: 188.48547363281253,
+            pdfjsSourceH: 8.0015625,
+            pdfjsSourceMaskX: 299.1984,
+            pdfjsSourceMaskY: 674.70073,
+            pdfjsSourceMaskW: 189.0855,
+            pdfjsSourceMaskH: 8.301570000000002,
+            pdfjsSourcePageHeight: 791.968,
+            pdfjsSourceFontFamily: 'sans-serif',
+            pdfjsSourceFontWeight: '400',
+            pdfjsSourceFontStyle: 'normal',
+            pdfjsSourceFontSizePx: '26.6667',
+            pdfjsSourceLineHeightPx: '26.6667px',
+            pdfjsSourceTextColor: '#000000',
+            pdfjsSourceTextWidthPx: '628.284912109375',
+            pdfjsSourceLetterSpacing: 'normal',
+            pdfjsSourceTransformOrigin: '0px 0px',
+            pdfjsSourceTransformScaleX: '1',
+            userCreated: false,
+            userAuthored: false,
+            userForcedRichText: false,
+            userSizedTextBox: false,
+            styleDirty: false,
+        };
+        try {
+            await savePdfJsSuiteAnnotations(page, documentId, sessionId, [movedRow3Annotation]);
+            await page.goto(`${BASE_URL}/documents/${documentId}/edit-new?pdfjs=1&t=${Date.now()}`, {
+                waitUntil: 'domcontentloaded', timeout: 90000,
+            });
+            await page.waitForSelector('body.enpv-viewer-ready .pdfViewer .page[data-page-number="1"]', { timeout: 120000 });
+            await page.waitForFunction(() => Boolean(document.querySelector('#download-pdf-btn')), null, { timeout: 30000 });
+            addCheck('moved_row3_0_14_persisted', true, `injected annotation id=${movedRow3Annotation.id}`);
+        } catch (e) {
+            addCheck('moved_row3_0_14_persisted', false, `failed: ${e.message || e}`);
+        }
+        const movedRow3Name = buildArtifactName(test.key, runToken, 'download_with_moved_row3_0_14', 'pdf');
+        const movedRow3Path = path.join(OUTPUT_DIR, movedRow3Name);
+        await probeDownload(movedRow3Path, 'with_moved_row3_0_14', [
+            { key: 'moved_row3_executor_capital_o', text: 'Executor, administrator, trustee' },
+            { key: 'moved_row3_care_of_phrase', text: 'care of' },
+            { key: 'moved_row3_straight_quotes_care_of', text: '"care of" name' },
+        ]);
+
+        // ── Pixel-level glyph check on the edited download ───────────────────
+        // Extracted text passing is necessary but NOT sufficient: PDFs can
+        // reference a Unicode codepoint that has no glyph in the embedded
+        // font — the text extracts cleanly but the page renders a missing-
+        // glyph box. Rasterize page 1 of the edited download, find each
+        // SS-4 row-label rect via PyMuPDF.search_for, and verify the rasterized
+        // pixel patch at that rect contains glyph-shaped ink (sufficient dark
+        // pixel mass and not a giant hollow rectangle outline).
+        if (fs.existsSync(editedPath) && fs.statSync(editedPath).size > 1000) {
+            const visualReport = inspectSs4DownloadGlyphPixels(editedPath, NEEDLES.map((n) => ({ key: n.key, text: n.text })));
+            for (const item of visualReport) {
+                addCheck(
+                    `glyph_pixels_render:with_edit:${item.key}`,
+                    item.passed,
+                    item.detail,
+                );
+            }
+        }
+        if (fs.existsSync(movedRow3Path) && fs.statSync(movedRow3Path).size > 1000) {
+            const visualReport = inspectSs4DownloadGlyphPixels(movedRow3Path, [
+                { key: 'moved_row3_care_of_phrase', text: 'care of', occurrence: 'last' },
+                { key: 'moved_row3_executor_capital_o', text: 'Executor, administrator, trustee', occurrence: 'last' },
+            ]);
+            for (const item of visualReport) {
+                addCheck(
+                    `glyph_pixels_render:with_moved_row3_0_14:${item.key}`,
+                    item.passed,
+                    item.detail,
+                );
+            }
+            const ruleProbe = inspectPdfHorizontalRulePixels(movedRow3Path, {
+                x0: movedRow3Annotation.pdfjsSourceMaskX,
+                x1: movedRow3Annotation.pdfjsSourceMaskX + movedRow3Annotation.pdfjsSourceMaskW,
+                y: 108.0,
+                minDarkRatio: 0.25,
+            });
+            addCheck(
+                'moved_row3_source_mask_preserves_form_rule',
+                ruleProbe.passed,
+                ruleProbe.detail,
+            );
+        }
+
+        const status = checks.every((c) => c.result === 'PASS') ? 'pass' : 'fail';
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            testCategory: test.test_category || PDF_JS_TEST_SUITE_CATEGORY,
+            status,
+            checks,
+            metadata: { document_id: documentId },
+        });
+    } catch (error) {
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            testCategory: test.test_category || PDF_JS_TEST_SUITE_CATEGORY,
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+        });
+    } finally {
+        if (documentId) {
+            try { await cleanupDocument(page, documentId); } catch (_e) { /* ignore */ }
+        }
+        await context.close();
+        await browser.close();
+    }
 }
 
 // ── Test 1 (pdf-new) — Text Position ────────────────────────────────────────
@@ -4698,6 +6177,183 @@ doc.close()
         cwd: path.resolve(__dirname, '..', '..', '..'),
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return JSON.parse(raw);
+}
+
+// Rasterize page 1 of the given PDF and inspect the bitmap pixels at each
+// SS-4 row-label rect to detect the user-reported missing-glyph rendering
+// (text extracts cleanly but the page draws hollow boxes for chars whose
+// glyph is missing from the embedded font).
+//
+// Returns: [{ key, passed, detail }]
+function inspectSs4DownloadGlyphPixels(pdfPath, needles) {
+    const pythonCode = `
+import fitz
+import json
+import sys
+
+pdf_path = sys.argv[1]
+needles = json.loads(sys.argv[2])
+
+doc = fitz.open(pdf_path)
+page = doc[0]
+DPI = 300
+zoom = DPI / 72.0
+mat = fitz.Matrix(zoom, zoom)
+pix = page.get_pixmap(matrix=mat, alpha=False)
+W, H = pix.width, pix.height
+samples = pix.samples
+stride = pix.stride
+
+def is_dark(x, y):
+    if x < 0 or y < 0 or x >= W or y >= H:
+        return False
+    i = y * stride + x * 3
+    r, g, b = samples[i], samples[i + 1], samples[i + 2]
+    return r < 110 and g < 110 and b < 110
+
+def rect_ink_signature(rect):
+    # rect is in PDF pts; convert to pixel coords
+    x0 = max(0, int(rect.x0 * zoom) - 1)
+    y0 = max(0, int(rect.y0 * zoom) - 1)
+    x1 = min(W, int(rect.x1 * zoom) + 1)
+    y1 = min(H, int(rect.y1 * zoom) + 1)
+    if x1 <= x0 or y1 <= y0:
+        return None
+    total = 0
+    dark = 0
+    # interior pixels (strip a 2-px border to exclude rect frame)
+    inset = 2
+    ix0, iy0 = x0 + inset, y0 + inset
+    ix1, iy1 = x1 - inset, y1 - inset
+    interior_total = 0
+    interior_dark = 0
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            total += 1
+            if is_dark(x, y):
+                dark += 1
+            if ix0 <= x < ix1 and iy0 <= y < iy1:
+                interior_total += 1
+                if is_dark(x, y):
+                    interior_dark += 1
+    # Detect "hollow box": dark border + mostly-blank interior. Real
+    # glyph runs have ink scattered through the interior too.
+    return {
+        'pixel_rect': [x0, y0, x1, y1],
+        'total_dark_ratio': (dark / total) if total else 0.0,
+        'interior_dark_ratio': (interior_dark / interior_total) if interior_total else 0.0,
+        'total': total,
+        'interior_total': interior_total,
+    }
+
+results = []
+for needle in needles:
+    rects = page.search_for(needle['text'], quads=False)
+    entry = {
+        'key': needle['key'],
+        'needle': needle['text'],
+        'rects_found': len(rects),
+    }
+    if rects:
+        occurrence = needle.get('occurrence', 0)
+        if occurrence == 'last':
+            rect = rects[-1]
+        else:
+            try:
+                index = int(occurrence)
+            except Exception:
+                index = 0
+            index = max(0, min(len(rects) - 1, index))
+            rect = rects[index]
+        sig = rect_ink_signature(rect)
+        if sig:
+            entry['signature'] = sig
+            # A real text run at 8pt should have ~5-25% dark pixels in the
+            # interior. A row of empty-box tofu glyphs has dark frames around
+            # mostly-empty interiors -> total>>interior. We require the
+            # interior_dark_ratio to exceed 0.03 (3%) — empirically real text
+            # runs sit at 0.10-0.20 and tofu rows at <0.02.
+            entry['passed'] = sig['interior_dark_ratio'] >= 0.03
+            entry['detail'] = (
+                'interior_dark_ratio={:.4f} total_dark_ratio={:.4f} pixel_rect={}'
+                .format(sig['interior_dark_ratio'], sig['total_dark_ratio'], sig['pixel_rect'])
+            )
+        else:
+            entry['passed'] = False
+            entry['detail'] = 'rect produced no pixel signature'
+    else:
+        entry['passed'] = False
+        entry['detail'] = 'PyMuPDF.search_for found no rects for the needle (text may be split across spans)'
+    results.append(entry)
+
+doc.close()
+print(json.dumps(results))
+`;
+    const raw = execFileSync(PYTHON_BIN, ['-c', pythonCode, pdfPath, JSON.stringify(needles)], {
+        cwd: path.resolve(__dirname, '..', '..', '..'),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        maxBuffer: 32 * 1024 * 1024,
+    });
+    return JSON.parse(raw);
+}
+
+function inspectPdfHorizontalRulePixels(pdfPath, rule) {
+    const pythonCode = `
+import fitz
+import json
+import sys
+
+pdf_path = sys.argv[1]
+rule = json.loads(sys.argv[2])
+
+doc = fitz.open(pdf_path)
+page = doc[0]
+DPI = 300
+zoom = DPI / 72.0
+pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+W, H = pix.width, pix.height
+samples = pix.samples
+stride = pix.stride
+
+x0 = max(0, int(float(rule.get('x0', 0)) * zoom))
+x1 = min(W, int(float(rule.get('x1', 0)) * zoom))
+y = max(0, min(H - 1, int(float(rule.get('y', 0)) * zoom)))
+band_px = int(rule.get('bandPx', 2) or 2)
+min_dark_ratio = float(rule.get('minDarkRatio', 0.25) or 0.25)
+
+dark = 0
+total = 0
+for yy in range(max(0, y - band_px), min(H, y + band_px + 1)):
+    for xx in range(x0, x1):
+        i = yy * stride + xx * 3
+        if i + 2 >= len(samples):
+            continue
+        r, g, b = samples[i], samples[i + 1], samples[i + 2]
+        if r < 170 and g < 170 and b < 170:
+            dark += 1
+        total += 1
+
+dark_ratio = (dark / total) if total else 0.0
+print(json.dumps({
+    'passed': total > 0 and dark_ratio >= min_dark_ratio,
+    'darkRatio': dark_ratio,
+    'dark': dark,
+    'total': total,
+    'pixelRect': [x0, max(0, y - band_px), x1, min(H, y + band_px + 1)],
+    'detail': 'darkRatio={:.4f} dark={} total={} pixelRect={} minDarkRatio={:.4f}'.format(
+        dark_ratio, dark, total, [x0, max(0, y - band_px), x1, min(H, y + band_px + 1)], min_dark_ratio,
+    ),
+}))
+doc.close()
+`;
+    const raw = execFileSync(PYTHON_BIN, ['-c', pythonCode, pdfPath, JSON.stringify(rule)], {
+        cwd: path.resolve(__dirname, '..', '..', '..'),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        maxBuffer: 32 * 1024 * 1024,
     });
     return JSON.parse(raw);
 }
@@ -16255,6 +17911,7 @@ function listFiles() {
         if (/_new(?:$|_)/.test(k)) return 'edit-new';
         if (/edit_new/.test(k)) return 'edit-new';
         if (/^custom_pdf_test_/.test(k)) return 'edit-new';
+        if (/^pdf_js_/.test(k)) return 'edit-new';
         if (/^text_layout_test_suite_/.test(k)) return 'edit-new';
         return 'edit';
     };
@@ -16267,7 +17924,7 @@ function listFiles() {
                 filename: `${test.key}.pdf`,
                 path: test.key,
                 description: test.description,
-                test_category: 'PDF Tests',
+                test_category: test.test_category || 'PDF Tests',
                 section_name: test.label,
                 criteria: TEST_CRITERIA[test.key] || [],
                 editor: classifyEditor(test.key),
@@ -16276,7 +17933,7 @@ function listFiles() {
             filename: `${suite.key}.pdf`,
             path: suite.key,
             description: suite.description,
-            test_category: 'PDF Tests',
+            test_category: suite.test_category || 'PDF Tests',
             section_name: suite.label,
             criteria: TEST_CRITERIA[suite.key] || [],
             editor: classifyEditor(suite.key),
@@ -16292,6 +17949,7 @@ function listFiles() {
                     filename: `${mt.key}.pdf`,
                     section_name: mt.label,
                     description: mt.description,
+                    test_category: mt.test_category || suite.test_category || 'PDF Tests',
                     criteria: TEST_CRITERIA[mt.key] || [],
                 })),
         })),
@@ -16397,6 +18055,7 @@ async function runSuite(key) {
         testKey: suite.key,
         label: suite.label,
         description: suite.description,
+        testCategory: suite.test_category || 'PDF Tests',
         status: suiteFailed ? 'fail' : 'pass',
         checks,
         warnings,
@@ -16435,6 +18094,7 @@ async function runSingleTest(key) {
             testKey: test.key,
             label: test.label,
             description: test.description,
+            testCategory: test.test_category || 'PDF Tests',
             status: 'error',
             error: error.stack || String(error),
         }));
