@@ -55,6 +55,160 @@ class PdfAnnotationContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "text-1@page:1"):
             self.module.assert_text_annotations_redraw_contract(annotations, [0])
 
+    def test_pdfjs_source_edit_requires_redaction_for_changed_source_text(self):
+        annotation = {
+            "id": "pdfjs_4037_0_source:0:53",
+            "type": "text",
+            "savedTextOverlay": True,
+            "pdfjsSourceX": 47.953125,
+            "pdfjsSourceY": 261.928125,
+            "pdfjsSourceW": 538.6199707031251,
+            "pdfjsSourceH": 6.6,
+            "pdfjsSourceText": "or a maximum rental charge of $1,242.20 plus applicable taxes",
+            "text": "or a maximum rental charge of $2,999.20 plus applicable taxes",
+        }
+
+        self.assertTrue(self.module.pdfjs_source_edit_requires_redaction(annotation))
+
+    def test_pdfjs_source_edit_does_not_require_redaction_for_unchanged_source_text(self):
+        annotation = {
+            "id": "pdfjs_4037_0_source:0:53",
+            "type": "text",
+            "savedTextOverlay": True,
+            "pdfjsSourceX": 47.953125,
+            "pdfjsSourceText": "Unchanged text",
+            "text": "Unchanged text",
+        }
+
+        self.assertFalse(self.module.pdfjs_source_edit_requires_redaction(annotation))
+
+    def test_pdfjs_source_edit_requires_redaction_for_deleted_source_text(self):
+        annotation = {
+            "id": "pdfjs_4037_0_source:0:53",
+            "type": "text",
+            "pdfjsDeleted": True,
+            "pdfjsSourceX": 47.953125,
+            "pdfjsSourceText": "Deleted source text",
+            "text": "",
+        }
+
+        self.assertTrue(self.module.pdfjs_source_edit_requires_redaction(annotation))
+
+    def test_pdfjs_source_edit_skip_mask_disables_redaction(self):
+        annotation = {
+            "id": "user-text-1",
+            "type": "text",
+            "savedTextOverlay": True,
+            "skipPdfjsSourceMask": True,
+            "pdfjsSourceX": 47.953125,
+            "pdfjsSourceText": "Original",
+            "text": "Changed",
+        }
+
+        self.assertFalse(self.module.pdfjs_source_edit_requires_redaction(annotation))
+
+    def test_pdfjs_source_edit_replacement_text_uses_saved_text_only(self):
+        annotation = {
+            "id": "pdfjs_4037_0_source:0:53",
+            "type": "text",
+            "savedTextOverlay": True,
+            "pdfjsSourceX": 47.953125,
+            "pdfjsSourceText": "or a maximum rental charge of $1,242.20 plus applicable taxes",
+            "originalText": "or a maximum rental charge of $1,242.20 plus applicable taxes",
+            "text": "or a maximum rental charge of $2,999.20 plus applicable taxes",
+        }
+
+        self.assertEqual(
+            self.module.pdfjs_source_edit_replacement_text(annotation),
+            "or a maximum rental charge of $2,999.20 plus applicable taxes",
+        )
+
+    def test_pdfjs_source_edit_replacement_text_never_falls_back_to_source_text(self):
+        annotation = {
+            "id": "pdfjs_4037_0_source:0:53",
+            "type": "text",
+            "savedTextOverlay": True,
+            "pdfjsSourceX": 47.953125,
+            "pdfjsSourceText": "source text must not be drawn",
+            "originalText": "original text must not be drawn",
+        }
+
+        self.assertEqual(self.module.pdfjs_source_edit_replacement_text(annotation), "")
+
+    def test_pdfjs_source_edit_replacement_text_is_empty_for_deleted_source_text(self):
+        annotation = {
+            "id": "pdfjs_deleted_pdfjs_4037_0_source:0:53",
+            "type": "text",
+            "pdfjsDeleted": True,
+            "pdfjsSourceX": 47.953125,
+            "pdfjsSourceText": "deleted source text must not be redrawn",
+            "text": "stale replacement must not be drawn",
+        }
+
+        self.assertEqual(self.module.pdfjs_source_edit_replacement_text(annotation), "")
+
+    def test_pdfjs_source_edit_export_metrics_uses_saved_browser_source_metrics(self):
+        annotation = {
+            "id": "pdfjs_4037_0_source:0:53",
+            "type": "text",
+            "savedTextOverlay": True,
+            "pdfjsSourceX": 47.953125,
+            "pdfjsSourceY": 261.928125,
+            "pdfjsSourceW": 538.6199707031251,
+            "pdfjsSourceH": 6.6,
+            "pdfjsSourceText": "or a maximum rental charge of $1,242.20 plus applicable taxes",
+            "text": "or a maximum rental charge of $1,942.20 plus applicable taxes",
+            "pdfjsSourceFidelity": True,
+            "pdfjsSourceFontFamily": "sans-serif",
+            "pdfjsSourceFontWeight": "700",
+            "pdfjsSourceFontStyle": "normal",
+            "pdfjsSourceFontSizePx": "22",
+            "pdfjsSourceLineHeightPx": "22px",
+            "pdfjsSourceTextWidthPx": "1389.262811909985",
+            "pdfjsSourceTextColor": "#303030",
+            "pdfjsSourceTransform": "matrix(1.29234, 0, 0, 1, 0, 0)",
+            "pdfjsSourceTransformScaleX": "1.29234",
+            "pdfjsSourceTransformOrigin": "0px 0px",
+        }
+
+        metrics = self.module.pdfjs_source_edit_export_metrics(annotation)
+
+        self.assertEqual(
+            metrics["sourceRect"],
+            {"x": 47.953125, "y": 261.928125, "w": 538.6199707031251, "h": 6.6},
+        )
+        self.assertEqual(metrics["sourceText"], "or a maximum rental charge of $1,242.20 plus applicable taxes")
+        self.assertEqual(metrics["replacementText"], "or a maximum rental charge of $1,942.20 plus applicable taxes")
+        self.assertEqual(metrics["transformScaleX"], 1.29234)
+        self.assertEqual(metrics["sourceFontFamily"], "sans-serif")
+        self.assertEqual(metrics["sourceFontWeight"], "700")
+        self.assertEqual(metrics["sourceFontStyle"], "normal")
+        self.assertEqual(metrics["sourceTextColor"], "#303030")
+        self.assertTrue(metrics["sourceFidelity"])
+
+    def test_pdfjs_source_edit_transform_scale_falls_back_to_transform_matrix(self):
+        annotation = {
+            "id": "pdfjs_4037_0_source:0:53",
+            "type": "text",
+            "savedTextOverlay": True,
+            "pdfjsSourceX": 47.953125,
+            "pdfjsSourceTransform": "matrix(1.29234, 0, 0, 1, 0, 0)",
+        }
+
+        self.assertEqual(self.module.pdfjs_source_edit_transform_scale_x(annotation), 1.29234)
+
+    def test_pdfjs_source_edit_transform_scale_ignores_source_scale_for_rich_mode(self):
+        annotation = {
+            "id": "pdfjs_4037_0_source:0:53",
+            "type": "text",
+            "savedTextOverlay": True,
+            "pdfjsSourceX": 47.953125,
+            "pdfjsEditorMode": "rich",
+            "pdfjsSourceTransformScaleX": "1.29234",
+        }
+
+        self.assertEqual(self.module.pdfjs_source_edit_transform_scale_x(annotation), 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()

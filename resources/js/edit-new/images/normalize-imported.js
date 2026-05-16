@@ -12,8 +12,10 @@
 
 import { readFileAsDataUrl, loadImageElement } from '../util/image-load.js';
 
+const IMPORTABLE_IMAGE_EXTENSION_RE = /\.(png|jpe?g|gif|webp|svg)$/i;
+
 export async function normalizeImportedImageAsset(file) {
-    if (!file || !String(file.type || '').startsWith('image/')) {
+    if (!file || (!String(file.type || '').startsWith('image/') && !IMPORTABLE_IMAGE_EXTENSION_RE.test(String(file.name || '')))) {
         throw new Error('Choose an image file to import.');
     }
     const sourceDataUrl = await readFileAsDataUrl(file);

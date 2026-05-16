@@ -7,12 +7,32 @@
 
 import { setImageImportPendingAsset } from '../store/misc-state.js';
 import { editModeEnabled } from '../store/editor-modes.js';
+import { normalizeImportedImageAsset } from '../images/normalize-imported.js';
 import { setImageImportStatus } from './status.js';
 
 export const IMAGE_IMPORT_ACCEPTED_TYPES = new Set([
     'image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp', 'image/svg+xml',
 ]);
+export const IMAGE_IMPORT_ACCEPTED_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']);
 export const IMAGE_IMPORT_MAX_BYTES = 25 * 1024 * 1024; // 25 MB
+
+function imageImportFileExtension(file) {
+    const match = String(file?.name || '').toLowerCase().match(/\.([a-z0-9]+)$/);
+    return match ? match[1] : '';
+}
+
+function isAcceptedImageImportFile(file) {
+    if (!file) return false;
+    const mime = String(file.type || '').toLowerCase();
+    if (IMAGE_IMPORT_ACCEPTED_TYPES.has(mime)) return true;
+    const ext = imageImportFileExtension(file);
+    if (!IMAGE_IMPORT_ACCEPTED_EXTENSIONS.has(ext)) return false;
+    return mime === ''
+        || mime === 'application/octet-stream'
+        || mime === 'application/xml'
+        || mime === 'text/xml'
+        || mime === 'text/plain';
+}
 
 export function clearImageImportSelection(refs) {
     if (!refs) return;
@@ -61,7 +81,7 @@ export function closeImageImportModal(refs) {
  * Validates mime/size, then drives status text + preview DOM via the
  * supplied refs.
  */
-export function imageImportLoadFile(file, refs) {
+export async function imageImportLoadFile(file, refs) {
     if (!file || !refs) return;
     const {
         imageImportPreview,
@@ -72,8 +92,7 @@ export function imageImportLoadFile(file, refs) {
         imageImportApply,
         imageImportStatus,
     } = refs;
-    const mime = String(file.type || '').toLowerCase();
-    if (!IMAGE_IMPORT_ACCEPTED_TYPES.has(mime)) {
+    if (!isAcceptedImageImportFile(file)) {
         setImageImportStatus(imageImportStatus, 'Unsupported file type. Use PNG, JPG, GIF, WebP, or SVG.', true);
         return;
     }
@@ -81,35 +100,23 @@ export function imageImportLoadFile(file, refs) {
         setImageImportStatus(imageImportStatus, 'File is too large (max 25 MB).', true);
         return;
     }
-    const reader = new FileReader();
-    reader.onerror = () => setImageImportStatus(imageImportStatus, 'Could not read that file.', true);
-    reader.onload = (ev) => {
-        const dataUrl = String(ev.target?.result || '');
-        if (!dataUrl) {
-            setImageImportStatus(imageImportStatus, 'Could not read that file.', true);
-            return;
-        }
-        const probe = new Image();
-        probe.onerror = () => setImageImportStatus(imageImportStatus, 'That image could not be decoded.', true);
-        probe.onload = () => {
-            const w = probe.naturalWidth || probe.width || 1;
-            const h = probe.naturalHeight || probe.height || 1;
-            setImageImportPendingAsset({
-                dataUrl,
-                fileName: file.name || 'image',
-                mimeType: mime,
-                width: w,
-                height: h,
-            });
-            if (imageImportPreviewImg) imageImportPreviewImg.src = dataUrl;
-            if (imageImportPreviewName) imageImportPreviewName.textContent = file.name || 'image';
-            if (imageImportPreviewDims) imageImportPreviewDims.textContent = `${w} × ${h} px`;
-            if (imageImportPreview) imageImportPreview.hidden = false;
-            if (imageImportDropzoneInner) imageImportDropzoneInner.style.display = 'none';
-            if (imageImportApply) imageImportApply.disabled = false;
-            setImageImportStatus(imageImportStatus, 'Ready to insert on the current page.');
+    setImageImportStatus(imageImportStatus, 'Preparing image...');
+    try {
+        const asset = {
+            ...(await normalizeImportedImageAsset(file)),
+            fileName: file.name || 'image.png',
         };
-        probe.src = dataUrl;
-    };
-    reader.readAsDataURL(file);
+        setImageImportPendingAsset(asset);
+        if (imageImportPreviewImg) imageImportPreviewImg.src = asset.dataUrl;
+        if (imageImportPreviewName) imageImportPreviewName.textContent = asset.fileName || file.name || 'image';
+        if (imageImportPreviewDims) imageImportPreviewDims.textContent = `${asset.width} × ${asset.height} px`;
+        if (imageImportPreview) imageImportPreview.hidden = false;
+        if (imageImportDropzoneInner) imageImportDropzoneInner.style.display = 'none';
+        if (imageImportApply) imageImportApply.disabled = false;
+        setImageImportStatus(imageImportStatus, 'Ready to insert.');
+    } catch (error) {
+        setImageImportPendingAsset(null);
+        if (imageImportApply) imageImportApply.disabled = true;
+        setImageImportStatus(imageImportStatus, error?.message || 'That image could not be decoded.', true);
+    }
 }

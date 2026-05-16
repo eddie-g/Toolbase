@@ -10,7 +10,7 @@
         </div>
         <div class="image-import-modal__body">
             <label class="image-import-dropzone" id="image-import-dropzone" tabindex="0">
-                <input type="file" id="image-import-file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" hidden>
+                <input type="file" id="image-import-file" accept=".jpg,.jpeg,.png,.gif,.webp,.svg,image/png,image/jpeg,image/gif,image/webp,image/svg+xml" hidden>
                 <div class="image-import-dropzone__inner" id="image-import-dropzone-inner">
                     <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
                         <rect x="3" y="3" width="18" height="18" rx="3"/>

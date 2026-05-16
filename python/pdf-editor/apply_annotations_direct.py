@@ -1919,6 +1919,18 @@ def split_text_preserving_manual_line_breaks(text: str) -> list[str]:
     return normalized.split("\n")
 
 
+def should_preserve_pdfjs_source_visual_spacing(ann: Dict[str, Any], text: str) -> bool:
+    if not bool(ann.get("savedTextOverlay")):
+        return False
+    if not bool(ann.get("pdfjsSourceFidelity")):
+        return False
+    if bool(ann.get("userForcedRichText")) or str(ann.get("pdfjsEditorMode") or "").lower() == "rich":
+        return False
+    if "\n" in str(text or "").replace("\r\n", "\n").replace("\r", "\n"):
+        return False
+    return bool(re.search(r" {2,}", str(text or "")))
+
+
 def normalize_rotation_degrees(value: Any) -> float:
     try:
         rotation = float(value or 0.0)
@@ -2329,6 +2341,7 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
         except Exception:
             custom_font = None
             fontname = resolve_text_fontname(ann)
+    preserve_pdfjs_visual_spacing = should_preserve_pdfjs_source_visual_spacing(ann, text)
     if rect is not None and not rect.is_empty:
         pivot = fitz.Point((rect.x0 + rect.x1) / 2.0, (rect.y0 + rect.y1) / 2.0)
         morph = build_rotation_morph(rotation, pivot)
@@ -2375,13 +2388,13 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
             except Exception:
                 html_archive = None
         preview_font = custom_font or fitz.Font(fontname)
-        preview_padding_x = 0.0 if preserve_extracted_lines else min(6.0, max(1.0, rect.width * 0.03))
-        preview_padding_top = 0.0 if preserve_extracted_lines else min(2.0, max(0.5, rect.height * 0.01))
+        preview_padding_x = 0.0 if (preserve_extracted_lines or preserve_pdfjs_visual_spacing) else min(6.0, max(1.0, rect.width * 0.03))
+        preview_padding_top = 0.0 if (preserve_extracted_lines or preserve_pdfjs_visual_spacing) else min(2.0, max(0.5, rect.height * 0.01))
         preview_available_width = max(1.0, rect.width - (preview_padding_x * 2.0))
         explicit_text_lines = split_text_preserving_manual_line_breaks(text)
         preview_lines = (
             explicit_text_lines
-            if (preserve_extracted_lines or len(explicit_text_lines) > 1)
+            if (preserve_extracted_lines or preserve_pdfjs_visual_spacing or len(explicit_text_lines) > 1)
             else wrap_text_to_width(preview_font, text, size, preview_available_width)
         )
         ascender, descender = resolve_font_vertical_metrics(preview_font)
@@ -2455,11 +2468,29 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
                 break
 
             text_width = draw_font.text_length(line, fontsize=size) if line else 0.0
+            line_scale_x = 1.0
+            if preserve_pdfjs_visual_spacing and text_width > 0 and available_width > 0:
+                raw_line_scale_x = available_width / text_width
+                if math.isfinite(raw_line_scale_x) and raw_line_scale_x > 0:
+                    line_scale_x = max(0.1, min(3.0, raw_line_scale_x))
+                    if abs(line_scale_x - 1.0) <= 0.015:
+                        line_scale_x = 1.0
+            scaled_text_width = text_width * line_scale_x
             draw_x = text_rect.x0 + padding_x
             if align == 1:
-                draw_x = text_rect.x0 + padding_x + max(0.0, (available_width - text_width) / 2.0)
+                draw_x = text_rect.x0 + padding_x + max(0.0, (available_width - scaled_text_width) / 2.0)
             elif align == 2:
-                draw_x = text_rect.x1 - padding_x - text_width
+                draw_x = text_rect.x1 - padding_x - scaled_text_width
+
+            line_morph = morph
+            if line_scale_x != 1.0:
+                line_morph = combine_morphs(
+                    (
+                        fitz.Point(draw_x, line_baseline_y),
+                        fitz.Matrix(line_scale_x, 0.0, 0.0, 1.0, 0.0, 0.0),
+                    ),
+                    morph,
+                )
 
             page.insert_text(
                 fitz.Point(draw_x, line_baseline_y),
@@ -2470,7 +2501,7 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
                 overlay=True,
                 fill_opacity=opacity,
                 stroke_opacity=opacity,
-                morph=morph,
+                morph=line_morph,
             )
 
             if resolve_annotation_underline(ann) and line:
@@ -2478,11 +2509,11 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
                 draw_rotated_line(
                     page,
                     fitz.Point(draw_x, underline_y),
-                    fitz.Point(draw_x + text_width, underline_y),
+                    fitz.Point(draw_x + scaled_text_width, underline_y),
                     color=color,
                     width=max(0.5, size * 0.06),
                     opacity=opacity,
-                    morph=morph,
+                    morph=line_morph,
                 )
         return
 

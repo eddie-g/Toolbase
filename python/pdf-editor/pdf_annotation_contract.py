@@ -2,6 +2,7 @@
 
 import copy
 import html
+import math
 import re
 from typing import Any, Dict, Iterable, Optional, Sequence
 
@@ -13,6 +14,12 @@ _CONTROL_TEXT_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]")
 _PRIVATE_USE_RE = re.compile(r"[\uE000-\uF8FF]")
 _NBSP_ENTITY_RE = re.compile(r"&nbsp;|&#160;|&#xA0;|&#xa0;", re.IGNORECASE)
 _NON_TEXT_KINDS = {"shape", "table", "eraser", "signature", "image"}
+
+
+def _boolish(value: Any) -> bool:
+    if value is True or value == 1:
+        return True
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def sanitize_pdf_text(text: Any) -> str:
@@ -48,6 +55,116 @@ def is_text_annotation(annotation: Dict[str, Any]) -> bool:
         key in annotation
         for key in ("text", "richTextHtml", "sourceTextLines", "sourceSpans", "promotedFromExtraction")
     )
+
+
+def normalize_pdfjs_compare_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", sanitize_pdf_text(value or "")).strip()
+
+
+def is_pdfjs_source_backed_text_annotation(annotation: Dict[str, Any]) -> bool:
+    if not is_text_annotation(annotation):
+        return False
+    if _boolish(annotation.get("promotedFromExtraction")):
+        return False
+    return (
+        _boolish(annotation.get("savedTextOverlay"))
+        or _boolish(annotation.get("pdfjsDeleted"))
+        or annotation.get("pdfjsSourceX") is not None
+        or annotation.get("pdfjsSourceY") is not None
+        or annotation.get("pdfjsAnchorUid") is not None
+    )
+
+
+def pdfjs_source_edit_requires_redaction(annotation: Dict[str, Any]) -> bool:
+    if not is_pdfjs_source_backed_text_annotation(annotation):
+        return False
+    if _boolish(annotation.get("skipPdfjsSourceMask")):
+        return False
+    if _boolish(annotation.get("pdfjsDeleted")):
+        return True
+    if _boolish(annotation.get("movedTextOverlay")):
+        return True
+    source_text = normalize_pdfjs_compare_text(annotation.get("pdfjsSourceText") or annotation.get("originalText") or "")
+    current_text = normalize_pdfjs_compare_text(annotation.get("text") or "")
+    return bool(source_text and current_text and source_text != current_text)
+
+
+def pdfjs_source_edit_replacement_text(annotation: Dict[str, Any]) -> str:
+    if not is_pdfjs_source_backed_text_annotation(annotation):
+        return sanitize_pdf_text(annotation.get("text") or "")
+    if _boolish(annotation.get("pdfjsDeleted")):
+        return ""
+    return sanitize_pdf_text(annotation.get("text") if "text" in annotation else "")
+
+
+def _finite_float(value: Any) -> Optional[float]:
+    try:
+        parsed = float(value)
+    except Exception:
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def pdfjs_source_edit_source_rect(annotation: Dict[str, Any]) -> Optional[Dict[str, float]]:
+    x = _finite_float(annotation.get("pdfjsSourceX"))
+    y = _finite_float(annotation.get("pdfjsSourceY"))
+    width = _finite_float(annotation.get("pdfjsSourceW"))
+    height = _finite_float(annotation.get("pdfjsSourceH"))
+    if x is None or y is None or width is None or height is None:
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return {"x": x, "y": y, "w": width, "h": height}
+
+
+def pdfjs_source_edit_transform_scale_x(annotation: Dict[str, Any]) -> float:
+    if (
+        _boolish(annotation.get("userForcedRichText"))
+        or str(annotation.get("pdfjsEditorMode") or "").strip().lower() == "rich"
+        or str(annotation.get("richTextPromotionReason") or "").strip().lower() == "manual-resize"
+    ):
+        return 1.0
+
+    # The captured pdfjsSourceTransformScaleX is the horizontal stretch pdf.js
+    # applies to its transparent sans-serif text layer so the spans overlay
+    # the *visible* PDF glyphs at their original position. Once the user has
+    # moved the overlay box, the rendered text is no longer trying to align
+    # with the original PDF stream — so applying the captured stretch in the
+    # exporter just blows the text past its bbox (and the page edge). The
+    # editor masks this by clamping fitScaleX to box width in
+    # applySourceFidelityTextFit; the PyMuPDF exporter has no such clamp.
+    if _boolish(annotation.get("movedTextOverlay")):
+        return 1.0
+
+    raw_scale = annotation.get("pdfjsSourceTransformScaleX")
+    if raw_scale in (None, ""):
+        raw_transform = str(annotation.get("pdfjsSourceTransform") or "").strip()
+        match = re.match(r"matrix\(([^,]+),", raw_transform)
+        raw_scale = match.group(1) if match else None
+    scale_x = _finite_float(raw_scale) or 1.0
+    if scale_x <= 0:
+        return 1.0
+    scale_x = max(0.2, min(4.0, scale_x))
+    return 1.0 if abs(scale_x - 1.0) <= 0.001 else scale_x
+
+
+def pdfjs_source_edit_export_metrics(annotation: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "sourceRect": pdfjs_source_edit_source_rect(annotation),
+        "sourceText": sanitize_pdf_text(annotation.get("pdfjsSourceText") or annotation.get("originalText") or ""),
+        "replacementText": pdfjs_source_edit_replacement_text(annotation),
+        "transformScaleX": pdfjs_source_edit_transform_scale_x(annotation),
+        "sourceFontFamily": str(annotation.get("pdfjsSourceFontFamily") or ""),
+        "sourceFontWeight": str(annotation.get("pdfjsSourceFontWeight") or ""),
+        "sourceFontStyle": str(annotation.get("pdfjsSourceFontStyle") or ""),
+        "sourceFontSizePx": str(annotation.get("pdfjsSourceFontSizePx") or ""),
+        "sourceLineHeightPx": str(annotation.get("pdfjsSourceLineHeightPx") or ""),
+        "sourceTextWidthPx": str(annotation.get("pdfjsSourceTextWidthPx") or ""),
+        "sourceTextColor": str(annotation.get("pdfjsSourceTextColor") or ""),
+        "sourceTransform": str(annotation.get("pdfjsSourceTransform") or ""),
+        "sourceTransformOrigin": str(annotation.get("pdfjsSourceTransformOrigin") or ""),
+        "sourceFidelity": _boolish(annotation.get("pdfjsSourceFidelity")),
+    }
 
 
 def normalize_annotation_for_pdf_export(annotation: Dict[str, Any]) -> Dict[str, Any]:

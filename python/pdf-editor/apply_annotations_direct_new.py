@@ -26,6 +26,10 @@ except Exception:  # pragma: no cover - optional runtime dependency
 
 from pdf_annotation_contract import (
     normalize_annotations_for_pdf_export,
+    pdfjs_source_edit_export_metrics,
+    pdfjs_source_edit_requires_redaction,
+    pdfjs_source_edit_source_rect,
+    pdfjs_source_edit_transform_scale_x,
     sanitize_pdf_text,
     sanitize_rich_text_html,
 )
@@ -937,40 +941,17 @@ def suppress_pdfjs_deleted_masks_owned_by_replacements(annotations: list) -> Non
 
 
 def pdfjs_visible_overlay_scale_x(ann: Dict[str, Any]) -> float:
-    # Rich/manual PDF.js overlays are rendered in the browser as normal editor
-    # boxes. Source span transforms are metadata for the original PDF.js text
-    # layer and should not shrink the export layout width for these boxes.
-    if (
-        _boolish(ann.get("userForcedRichText"))
-        or str(ann.get("pdfjsEditorMode") or "").strip().lower() == "rich"
-        or str(ann.get("richTextPromotionReason") or "").strip().lower() == "manual-resize"
-    ):
-        return 1.0
-    raw_scale = ann.get("pdfjsSourceTransformScaleX")
-    if raw_scale in (None, ""):
-        raw_transform = str(ann.get("pdfjsSourceTransform") or "").strip()
-        match = re.match(r"matrix\(([^,]+),", raw_transform)
-        raw_scale = match.group(1) if match else None
-    try:
-        scale_x = float(raw_scale or 1.0)
-    except Exception:
-        return 1.0
-    if not math.isfinite(scale_x) or scale_x <= 0:
-        return 1.0
-    scale_x = max(0.2, min(4.0, scale_x))
-    return 1.0 if abs(scale_x - 1.0) <= 0.001 else scale_x
+    return pdfjs_source_edit_transform_scale_x(ann)
 
 
 def _pdfjs_source_base_rect(page: fitz.Page, ann: Dict[str, Any]) -> Optional[fitz.Rect]:
-    try:
-        x = float(ann.get("pdfjsSourceX"))
-        y = float(ann.get("pdfjsSourceY"))
-        w = float(ann.get("pdfjsSourceW"))
-        h = float(ann.get("pdfjsSourceH"))
-    except Exception:
+    source_rect = pdfjs_source_edit_source_rect(ann)
+    if source_rect is None:
         return None
-    if w <= 0 or h <= 0:
-        return None
+    x = source_rect["x"]
+    y = source_rect["y"]
+    w = source_rect["w"]
+    h = source_rect["h"]
     ph = page.rect.height
     return fitz.Rect(x, ph - (y + h), x + w, ph - y) & page.rect
 
@@ -1183,6 +1164,37 @@ def pdfjs_source_text_redaction_rects(page: fitz.Page, ann: Dict[str, Any], sour
     return [source_rect]
 
 
+def pdfjs_source_text_needs_redaction(ann: Dict[str, Any]) -> bool:
+    return pdfjs_source_edit_requires_redaction(ann)
+
+
+def redact_pdfjs_source_text(page: fitz.Page, ann: Dict[str, Any], source_rect: fitz.Rect, fill: tuple[float, float, float]) -> bool:
+    if source_rect is None or source_rect.is_empty:
+        return False
+    if not pdfjs_source_text_needs_redaction(ann):
+        return False
+    redaction_rects = pdfjs_source_text_redaction_rects(page, ann, source_rect)
+    if not redaction_rects:
+        return False
+    added = False
+    for redaction_rect in redaction_rects:
+        rect = fitz.Rect(redaction_rect) & page.rect
+        if rect.is_empty or rect.width <= 0.05 or rect.height <= 0.05:
+            continue
+        try:
+            page.add_redact_annot(rect, fill=fill)
+            added = True
+        except Exception:
+            continue
+    if not added:
+        return False
+    try:
+        _apply_redactions_compat(page)
+        return True
+    except Exception:
+        return False
+
+
 def sample_pdfjs_mask_fill(page: fitz.Page, rect: fitz.Rect) -> tuple[float, float, float]:
     if rect is None or rect.is_empty:
         return (1.0, 1.0, 1.0)
@@ -1369,11 +1381,10 @@ def draw_pdfjs_source_mask(page: fitz.Page, ann: Dict[str, Any]) -> None:
     rect = pdfjs_source_mask_rect(page, ann)
     if rect is None or rect.is_empty:
         return
-    # Match the browser's .enpv-source-mask behavior for the pdf.js visible
-    # export path.  A real PDF redaction can remove every glyph in a shared
-    # content-stream text object, so masking the title line on PDFs like I-983
-    # also deletes the middle of the subtitle below it.
+    # Remove changed source glyphs first, then keep the browser-style source
+    # mask fill so the replacement sits on the sampled page background.
     fill = sample_pdfjs_mask_fill(page, rect)
+    redact_pdfjs_source_text(page, ann, rect, fill)
     mask_pieces = [fitz.Rect(rect)] if _boolish(ann.get("movedTextOverlay")) else split_pdfjs_source_mask_around_page_rules(page, rect)
     for mask_piece in mask_pieces:
         page.draw_rect(mask_piece, color=None, fill=fill, width=0, overlay=True)
@@ -2790,7 +2801,9 @@ def is_italic_style(value: Any) -> bool:
 
 
 def resolve_embedded_font_entry(ann: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    if is_pdfjs_visible_overlay_text(ann):
+    is_pdfjs_visible_overlay = is_pdfjs_visible_overlay_text(ann)
+    has_exact_pdfjs_source_font = bool(str(ann.get("fontSourceName") or "").strip())
+    if is_pdfjs_visible_overlay and not has_exact_pdfjs_source_font:
         return None
 
     if (
@@ -2817,11 +2830,9 @@ def resolve_embedded_font_entry(ann: Dict[str, Any]) -> Optional[Dict[str, Any]]
         raw_exact = raw_family
     normalized_exact = normalize_exact_font_family(raw_exact)
     normalized_family = normalize_exact_font_family(raw_family)
-    if (
-        should_bypass_embedded_font(raw_exact)
-        or should_bypass_embedded_font(normalized_exact)
-        or should_bypass_embedded_font(normalized_family)
-    ):
+    if should_bypass_embedded_font(raw_exact) or should_bypass_embedded_font(normalized_exact):
+        return None
+    if not has_exact_pdfjs_source_font and should_bypass_embedded_font(normalized_family):
         return None
     prefer_exact_promoted_embedded_face = (
         bool(ann.get("promotedFromExtraction"))
@@ -5009,6 +5020,23 @@ def normalized_pdfjs_visual_lines(ann: Dict[str, Any], text: str) -> list[str]:
     return lines
 
 
+def should_preserve_pdfjs_source_visual_spacing(ann: Dict[str, Any], text: str) -> bool:
+    if not _boolish(ann.get("savedTextOverlay")):
+        return False
+    if not _boolish(ann.get("pdfjsSourceFidelity")):
+        return False
+    if (
+        _boolish(ann.get("userForcedRichText"))
+        or str(ann.get("pdfjsEditorMode") or "").strip().lower() == "rich"
+        or str(ann.get("richTextPromotionReason") or "").strip().lower() == "manual-resize"
+    ):
+        return False
+    normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    if "\n" in normalized:
+        return False
+    return bool(re.search(r" {2,}", normalized))
+
+
 def normalize_rotation_degrees(value: Any) -> float:
     try:
         rotation = float(value or 0.0)
@@ -5736,7 +5764,8 @@ def draw_text(
             return
     elif mask_only and _boolish(render_ann.get("pdfjsDeleted")):
         return
-    text = sanitize_pdf_text(render_ann.get("text") or "")
+    pdfjs_export_metrics = pdfjs_source_edit_export_metrics(render_ann) if pdfjs_visible_overlay else None
+    text = pdfjs_export_metrics["replacementText"] if pdfjs_export_metrics else sanitize_pdf_text(render_ann.get("text") or "")
     if not text:
         return
     # Always use `fontSize` (PDF points, set by the editor as px/currentScale) rather than
@@ -5795,7 +5824,16 @@ def draw_text(
             )
         draw_font = custom_font or fitz.Font(fontname)
         pdfjs_visual_lines = normalized_pdfjs_visual_lines(render_ann, text) if pdfjs_visible_overlay else []
-        if pdfjs_visible_overlay and _boolish(render_ann.get("pdfjsUseSourceTypography")) and not pdfjs_visual_lines:
+        preserve_pdfjs_visual_spacing = (
+            pdfjs_visible_overlay
+            and should_preserve_pdfjs_source_visual_spacing(render_ann, text)
+        )
+        if (
+            pdfjs_visible_overlay
+            and _boolish(render_ann.get("pdfjsUseSourceTypography"))
+            and not pdfjs_visual_lines
+            and not preserve_pdfjs_visual_spacing
+        ):
             try:
                 baseline_y = rect.y0 + float(render_ann.get("pdfjsSourceBaselineOffsetY") or 0.0)
             except Exception:
@@ -5887,9 +5925,13 @@ def draw_text(
         ):
             return
         pdfjs_scale_x = (
-            1.0
-            if _boolish(render_ann.get("pdfjsUseSourceTypography"))
-            else (pdfjs_visible_overlay_scale_x(render_ann) if pdfjs_visible_overlay else 1.0)
+            pdfjs_visible_overlay_scale_x(render_ann)
+            if preserve_pdfjs_visual_spacing
+            else (
+                1.0
+                if _boolish(render_ann.get("pdfjsUseSourceTypography"))
+                else (pdfjs_visible_overlay_scale_x(render_ann) if pdfjs_visible_overlay else 1.0)
+            )
         )
         if (
             abs(rotation) < 1e-6
@@ -5948,7 +5990,7 @@ def draw_text(
             pdfjs_visual_lines
             if pdfjs_visual_lines
             else explicit_text_lines
-            if preserve_extracted_lines or use_pdfjs_source_typography
+            if preserve_extracted_lines or use_pdfjs_source_typography or preserve_pdfjs_visual_spacing
             else (
                 ["" for _ in rich_wrapped_lines]
                 if rich_wrapped_lines
@@ -6075,7 +6117,13 @@ def draw_text(
         padding_top = preview_padding_top
         available_width = preview_available_width
         lines = preview_lines
-        if not pdfjs_visual_lines and not preserve_extracted_lines and not use_pdfjs_source_typography and available_width > 1:
+        if (
+            not pdfjs_visual_lines
+            and not preserve_extracted_lines
+            and not use_pdfjs_source_typography
+            and not preserve_pdfjs_visual_spacing
+            and available_width > 1
+        ):
             safe_lines: list[str] = []
             for line in lines:
                 if not line or draw_font.text_length(line, fontsize=size) <= (available_width + 0.01):
@@ -6324,7 +6372,7 @@ def normalize_direct_draw_white_image_bytes(ann: Dict[str, Any], image_bytes: by
         return image_bytes
 
 
-def annotation_uses_white_direct_draw(ann: Dict[str, Any], image: "Image.Image") -> bool:
+def annotation_uses_white_direct_draw(ann: Dict[str, Any], image: Any) -> bool:
     declared_color = parse_annotation_hex_rgb(ann.get("drawStrokeColor"))
     if declared_color is not None:
         return is_near_white_rgb(declared_color)
@@ -6354,7 +6402,7 @@ def is_near_white_rgb(rgb: tuple[int, int, int], threshold: int = 244, max_sprea
     return min(rgb) >= threshold and (max(rgb) - min(rgb)) <= max_spread
 
 
-def image_looks_like_white_direct_draw(image: "Image.Image") -> bool:
+def image_looks_like_white_direct_draw(image: Any) -> bool:
     weighted_alpha = 0
     weighted_red = 0
     weighted_green = 0
