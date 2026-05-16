@@ -3,7 +3,9 @@
 import importlib.util
 import io
 import pathlib
+import shutil
 import sys
+import tempfile
 import unittest
 
 import fitz
@@ -164,6 +166,341 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
             page.insert_text_calls[0][1],
             "Spiders in The Lord of the Rings",
         )
+
+    def test_pdfjs_visible_export_masks_do_not_punch_moved_replacement_glyphs(self):
+        source_pdf = pathlib.Path(__file__).resolve().parents[2] / "public" / "spiders.pdf"
+        annotations = [
+            {
+                "id": "pdfjs_overlap_source_3",
+                "pdfX": 78.2907,
+                "pdfY": 609.9936299999999,
+                "text": "Tolkien's spiders embody ancient evil, corruption, and the consuming nature of fdsfsdf.",
+                "type": "text",
+                "color": "#000000",
+                "opacity": 1,
+                "fontSize": 11.00001,
+                "pdfWidth": 433.4700000000001,
+                "fontStyle": "normal",
+                "pdfHeight": 11.00157,
+                "textColor": "#000000",
+                "fontFamily": "sans-serif",
+                "fontWeight": "400",
+                "lineHeight": 11.00001,
+                "originalText": "Tolkien's spiders embody ancient evil, corruption, and the consuming nature of darkness.",
+                "pdfjsSourceH": 11.0015625,
+                "pdfjsSourceW": 433.46989746093755,
+                "pdfjsSourceX": 77.99062500000001,
+                "pdfjsSourceY": 627.0937499999999,
+                "pdfjsEditorMode": "source",
+                "pdfjsSourceText": "Tolkien's spiders embody ancient evil, corruption, and the consuming nature of darkness.",
+                "movedTextOverlay": True,
+                "savedTextOverlay": True,
+                "pdfjsSourceFidelity": True,
+                "pdfjsSourceFontStyle": "normal",
+                "pdfjsSourceTextColor": "#000000",
+                "pdfjsSourceFontFamily": "sans-serif",
+                "pdfjsSourceFontSizePx": "36.6667",
+                "pdfjsSourceFontWeight": "400",
+                "pdfjsSourceTextWidthPx": "1440.061053064827",
+                "pdfjsSourceLineHeightPx": "36.6667px",
+                "pdfjsSourceTransformScaleX": "1.00336",
+            },
+            {
+                "id": "pdfjs_overlap_source_4",
+                "pdfX": 78.2907,
+                "pdfY": 627.0516299999999,
+                "text": "Their presence connects the main story to deeper mythological roots that stretch back to the",
+                "type": "text",
+                "color": "#000000",
+                "opacity": 1,
+                "fontSize": 11.00001,
+                "pdfWidth": 448.155,
+                "fontStyle": "normal",
+                "pdfHeight": 11.00157,
+                "textColor": "#000000",
+                "fontFamily": "sans-serif",
+                "fontWeight": "400",
+                "lineHeight": 11.00001,
+                "originalText": "Their presence connects the main story to deeper mythological roots that stretch back to the",
+                "pdfjsSourceH": 11.0015625,
+                "pdfjsSourceW": 448.1548828125,
+                "pdfjsSourceX": 77.99062500000001,
+                "pdfjsSourceY": 612.0515624999999,
+                "pdfjsEditorMode": "source",
+                "pdfjsSourceText": "Their presence connects the main story to deeper mythological roots that stretch back to the",
+                "movedTextOverlay": True,
+                "savedTextOverlay": True,
+                "pdfjsSourceFidelity": True,
+                "pdfjsSourceFontStyle": "normal",
+                "pdfjsSourceTextColor": "#000000",
+                "pdfjsSourceFontFamily": "sans-serif",
+                "pdfjsSourceFontSizePx": "36.6667",
+                "pdfjsSourceFontWeight": "400",
+                "pdfjsSourceTextWidthPx": "1493.655434168558",
+                "pdfjsSourceLineHeightPx": "36.6667px",
+                "pdfjsSourceTransformScaleX": "1.00013",
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_pdf = pathlib.Path(tmpdir) / "spiders_overlap.pdf"
+            shutil.copyfile(source_pdf, output_pdf)
+
+            self.module.apply_annotations(str(output_pdf), annotations)
+
+            doc = fitz.open(output_pdf)
+            try:
+                page = doc[0]
+                matching_spans = []
+                for block in page.get_text("rawdict").get("blocks", []):
+                    for line in block.get("lines", []) or []:
+                        for span in line.get("spans", []) or []:
+                            chars = span.get("chars") or []
+                            span_text = "".join(char.get("c", "") for char in chars)
+                            if span_text.startswith("Their presence"):
+                                matching_spans.append(span)
+
+                target_span = min(matching_spans, key=lambda span: float(span.get("bbox", [0, 999])[1]), default=None)
+                self.assertIsNotNone(target_span)
+                scale = 4
+                pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+                image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                chars = target_span["chars"]
+                for index in (12, 15, 28, 37, 49, 78, 83):
+                    bbox = chars[index]["bbox"]
+                    x0, y0, x1, y1 = [int(round(value * scale)) for value in bbox]
+                    crop = image.crop((
+                        max(0, x0 - 1),
+                        max(0, y0 - 1),
+                        min(image.width, x1 + 1),
+                        min(image.height, y1 + 1),
+                    ))
+                    pixels = crop.tobytes()
+                    dark_pixels = sum(
+                        1 for offset in range(0, len(pixels), 3)
+                        if pixels[offset] < 120
+                        and pixels[offset + 1] < 120
+                        and pixels[offset + 2] < 120
+                    )
+                    self.assertGreater(
+                        dark_pixels,
+                        25,
+                        f"character {index} in moved replacement text was visually erased",
+                    )
+            finally:
+                doc.close()
+
+    def test_pdfjs_moved_source_line_uses_current_box_metrics(self):
+        source_pdf = pathlib.Path(__file__).resolve().parents[2] / "public" / "spiders.pdf"
+        annotation = {
+            "id": "pdfjs_moved_encounters_alignment",
+            "pdfX": 289.1907,
+            "pdfY": 381.3000299999999,
+            "text": "encounters with spiders especially memorable.",
+            "type": "text",
+            "color": "#000000",
+            "opacity": 1,
+            "fontSize": 11.00001,
+            "pdfWidth": 228.6234,
+            "fontStyle": "normal",
+            "pageIndex": 1,
+            "pdfHeight": 11.60157,
+            "textColor": "#000000",
+            "fontFamily": "sans-serif",
+            "fontWeight": "400",
+            "lineHeight": 11.00001,
+            "originalText": "encounters with spiders especially memorable.",
+            "pdfjsSourceH": 11.0015625,
+            "pdfjsSourceW": 228.02343750000003,
+            "pdfjsSourceX": 77.99062500000001,
+            "pdfjsSourceY": 554.0999999999999,
+            "pdfjsEditorMode": "source",
+            "pdfjsSourceText": "encounters with spiders especially memorable.",
+            "movedTextOverlay": True,
+            "savedTextOverlay": True,
+            "pdfjsSourceFidelity": True,
+            "pdfjsSourceFontStyle": "normal",
+            "pdfjsSourceTextColor": "#000000",
+            "pdfjsSourceFontFamily": "sans-serif",
+            "pdfjsSourceFontSizePx": "36.6667",
+            "pdfjsSourceFontWeight": "400",
+            "pdfjsSourceTextWidthPx": "760.0477230910764",
+            "pdfjsSourceLineHeightPx": "36.6667px",
+            "pdfjsSourceTransform": "matrix(1.00004, 0, 0, 1, 0, 0)",
+            "pdfjsSourceTransformOrigin": "0px 0px",
+            "pdfjsSourceTransformScaleX": "1.00004",
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_pdf = pathlib.Path(tmpdir) / "spiders_alignment.pdf"
+            shutil.copyfile(source_pdf, output_pdf)
+
+            self.module.apply_annotations(str(output_pdf), [annotation])
+
+            doc = fitz.open(output_pdf)
+            try:
+                page = doc[1]
+                resilience_rects = page.search_for("resilience, and the enduring power of light.")
+                self.assertTrue(resilience_rects)
+                moved_rects = [
+                    rect
+                    for rect in page.search_for("encounters with spiders especially memorable.")
+                    if rect.y0 > 350
+                ]
+                self.assertEqual(len(moved_rects), 1)
+                moved_rect = moved_rects[0]
+
+                self.assertLess(abs(moved_rect.x0 - annotation["pdfX"]), 0.05)
+                self.assertLess(
+                    abs(moved_rect.y0 - resilience_rects[0].y0),
+                    0.01,
+                    "moved source-backed text must share the target PDF line glyph top",
+                )
+                self.assertLess(
+                    abs(moved_rect.y1 - resilience_rects[0].y1),
+                    0.01,
+                    "moved source-backed text must share the target PDF line glyph bottom",
+                )
+            finally:
+                doc.close()
+
+    def test_pdfjs_moved_mixed_style_source_line_stays_on_page(self):
+        source_pdf = pathlib.Path(__file__).resolve().parents[2] / "public" / "spiders.pdf"
+        annotation = {
+            "id": "pdfjs_moved_shelob_mixed_style_line",
+            "pdfX": 79.19073529411764,
+            "pdfY": 276.89475000000004,
+            "text": "While Shelob is the most prominent spider in The Lord of the Rings, spiders appear",
+            "type": "text",
+            "color": "#000000",
+            "opacity": 1,
+            "fontSize": 11.00001,
+            "pdfWidth": 405.15,
+            "fontStyle": "normal",
+            "pageIndex": 1,
+            "pdfHeight": 11.001573529411766,
+            "textColor": "#000000",
+            "fontFamily": "sans-serif",
+            "fontWeight": "400",
+            "lineHeight": 11.000007352941177,
+            "originalText": "While Shelob is the most prominent spider in The Lord of the Rings, spiders appear",
+            "pdfjsSourceH": 11.0015625,
+            "pdfjsSourceW": 405.1498168945313,
+            "pdfjsSourceX": 77.99062500000001,
+            "pdfjsSourceY": 497.0953124999999,
+            "pdfjsEditorMode": "source",
+            "pdfjsSourceText": "While Shelob is the most prominent spider in The Lord of the Rings, spiders appear",
+            "movedTextOverlay": True,
+            "savedTextOverlay": True,
+            "pdfjsSourceFidelity": True,
+            "pdfjsSourceFontStyle": "normal",
+            "pdfjsSourceTextColor": "#000000",
+            "pdfjsSourceFontFamily": "sans-serif",
+            "pdfjsSourceFontSizePx": "36.6667",
+            "pdfjsSourceFontWeight": "400",
+            "pdfjsSourceTextWidthPx": "1350.3913583397702",
+            "pdfjsSourceLineHeightPx": "36.6667px",
+            "pdfjsSourceTransform": "matrix(1.00008, 0, 0, 1, 0, 0)",
+            "pdfjsSourceTransformOrigin": "0px 0px",
+            "pdfjsSourceTransformScaleX": "1.00008",
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_pdf = pathlib.Path(tmpdir) / "spiders_mixed_style_line.pdf"
+            shutil.copyfile(source_pdf, output_pdf)
+
+            self.module.apply_annotations(str(output_pdf), [annotation])
+
+            doc = fitz.open(output_pdf)
+            try:
+                page = doc[1]
+                rects = [
+                    rect
+                    for rect in page.search_for(annotation["text"])
+                    if rect.y0 > 450
+                ]
+                self.assertEqual(len(rects), 1)
+                moved_rect = rects[0]
+                self.assertLessEqual(moved_rect.x1, page.rect.x1 + 0.01)
+                self.assertLess(abs(moved_rect.x0 - annotation["pdfX"]), 0.05)
+
+                matching_spans = []
+                for block in page.get_text("dict").get("blocks", []):
+                    for line in block.get("lines", []) or []:
+                        for span in line.get("spans", []) or []:
+                            if span.get("text") == annotation["text"]:
+                                matching_spans.append(span)
+                moved_spans = [span for span in matching_spans if span.get("bbox", [0, 0])[1] > 450]
+                self.assertEqual(len(moved_spans), 1)
+                self.assertEqual(moved_spans[0].get("font"), "Helvetica")
+            finally:
+                doc.close()
+
+    def test_pdfjs_moved_source_line_near_right_edge_is_fit_to_page(self):
+        source_pdf = pathlib.Path(__file__).resolve().parents[2] / "public" / "spiders.pdf"
+        annotation = {
+            "id": "pdfjs_moved_shelob_right_edge_guard",
+            "pdfX": 500.0,
+            "pdfY": 276.89475000000004,
+            "text": "While Shelob is the most prominent spider in The Lord of the Rings, spiders appear",
+            "type": "text",
+            "color": "#000000",
+            "opacity": 1,
+            "fontSize": 11.00001,
+            "pdfWidth": 405.15,
+            "fontStyle": "normal",
+            "pageIndex": 1,
+            "pdfHeight": 11.001573529411766,
+            "textColor": "#000000",
+            "fontFamily": "sans-serif",
+            "fontWeight": "400",
+            "lineHeight": 11.000007352941177,
+            "originalText": "While Shelob is the most prominent spider in The Lord of the Rings, spiders appear",
+            "pdfjsSourceH": 11.0015625,
+            "pdfjsSourceW": 405.1498168945313,
+            "pdfjsSourceX": 77.99062500000001,
+            "pdfjsSourceY": 497.0953124999999,
+            "pdfjsEditorMode": "source",
+            "pdfjsSourceText": "While Shelob is the most prominent spider in The Lord of the Rings, spiders appear",
+            "movedTextOverlay": True,
+            "savedTextOverlay": True,
+            "pdfjsSourceFidelity": True,
+            "pdfjsSourceFontStyle": "normal",
+            "pdfjsSourceTextColor": "#000000",
+            "pdfjsSourceFontFamily": "sans-serif",
+            "pdfjsSourceFontSizePx": "36.6667",
+            "pdfjsSourceFontWeight": "400",
+            "pdfjsSourceTextWidthPx": "1350.3913583397702",
+            "pdfjsSourceLineHeightPx": "36.6667px",
+            "pdfjsSourceTransform": "matrix(1.00008, 0, 0, 1, 0, 0)",
+            "pdfjsSourceTransformOrigin": "0px 0px",
+            "pdfjsSourceTransformScaleX": "1.00008",
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_pdf = pathlib.Path(tmpdir) / "spiders_right_edge_guard.pdf"
+            shutil.copyfile(source_pdf, output_pdf)
+
+            self.module.apply_annotations(str(output_pdf), [annotation])
+
+            doc = fitz.open(output_pdf)
+            try:
+                page = doc[1]
+                rects = [
+                    rect
+                    for rect in page.search_for(annotation["text"])
+                    if rect.y0 > 450
+                ]
+                self.assertEqual(len(rects), 1)
+                moved_rect = rects[0]
+                self.assertGreaterEqual(moved_rect.x0, annotation["pdfX"] - 0.05)
+                self.assertLessEqual(
+                    moved_rect.x1,
+                    page.rect.x1 + 0.01,
+                    "moved source-backed PDF.js text must never render past the page edge",
+                )
+            finally:
+                doc.close()
 
     def test_skip_promoted_source_erase_does_not_paint_background_rect(self):
         annotation = {

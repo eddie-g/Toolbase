@@ -76,6 +76,30 @@
                 </nav>
             </div>
 
+            {{-- Category filters --}}
+            <div x-show="!loading && visibleCategories.length" class="flex flex-wrap items-center gap-2">
+                <button type="button"
+                        x-on:click="setActiveCategory('all')"
+                        x-bind:class="activeCategory === 'all'
+                            ? 'bg-danger-600 text-white ring-danger-600'
+                            : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 ring-gray-200 dark:ring-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/70'"
+                        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold ring-1 transition-colors">
+                    All categories
+                    <span class="opacity-75" x-text="editorCount(activeTab)"></span>
+                </button>
+                <template x-for="category in visibleCategories" :key="category">
+                    <button type="button"
+                            x-on:click="setActiveCategory(category)"
+                            x-bind:class="activeCategory === category
+                                ? 'bg-danger-600 text-white ring-danger-600'
+                                : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 ring-gray-200 dark:ring-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/70'"
+                            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold ring-1 transition-colors">
+                        <span x-text="category"></span>
+                        <span class="opacity-75" x-text="categoryCount(category)"></span>
+                    </button>
+                </template>
+            </div>
+
             {{-- Loading state --}}
             <template x-if="loading">
                 <div class="flex items-center gap-3 py-12 justify-center">
@@ -107,6 +131,8 @@
                                     <div class="flex items-center gap-2 flex-wrap">
                                         <span class="text-xs font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500"
                                               x-text="'Test ' + (visibleFiles.indexOf(file) + 1)"></span>
+                                        <span class="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300"
+                                              x-text="categoryName(file)"></span>
                                         <template x-if="latestResultFor(file.path)">
                                             <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold uppercase"
                                                   x-bind:class="latestResultFor(file.path).status === 'pass'
@@ -199,6 +225,10 @@
                 <div class="flex items-center gap-2 min-w-0">
                     <span class="text-xs font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500 shrink-0"
                           x-text="activeFile ? 'Test ' + (visibleFiles.indexOf(activeFile) + 1) : ''"></span>
+                    <template x-if="activeFile">
+                        <span class="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300"
+                              x-text="categoryName(activeFile)"></span>
+                    </template>
                     <span class="font-semibold text-gray-900 dark:text-white truncate"
                           x-text="activeFile ? (activeFile.section_name || activeFile.filename) : ''"></span>
                 </div>
@@ -539,18 +569,46 @@
                 latestRunCreatedAt: null,
                 activeArtifact: null,
                 activeTab: 'edit-new',
-                get visibleFiles() {
+                activeCategory: 'all',
+                categoryName(file) {
+                    return (file && file.test_category) ? file.test_category : 'PDF Tests';
+                },
+                get editorFiles() {
                     return (this.files || []).filter((f) => (f.editor || 'edit-new') === this.activeTab);
+                },
+                get visibleCategories() {
+                    return Array.from(new Set(this.editorFiles.map((f) => this.categoryName(f)))).sort((a, b) => a.localeCompare(b));
+                },
+                get visibleFiles() {
+                    return this.editorFiles.filter((f) => this.activeCategory === 'all' || this.categoryName(f) === this.activeCategory);
                 },
                 editorCount(tab) {
                     return (this.files || []).filter((f) => (f.editor || 'edit-new') === tab).length;
                 },
+                categoryCount(category) {
+                    return this.editorFiles.filter((f) => this.categoryName(f) === category).length;
+                },
                 setActiveTab(tab) {
                     if (this.globalRunning) return;
                     this.activeTab = tab;
+                    if (this.activeCategory !== 'all' && !this.visibleCategories.includes(this.activeCategory)) {
+                        this.activeCategory = 'all';
+                    }
                     try {
                         const url = new URL(window.location.href);
                         url.searchParams.set('editor', tab);
+                        if (this.activeCategory === 'all') url.searchParams.delete('category');
+                        else url.searchParams.set('category', this.activeCategory);
+                        history.replaceState(history.state || {}, '', url.toString());
+                    } catch (_e) { /* ignore */ }
+                },
+                setActiveCategory(category) {
+                    if (this.globalRunning) return;
+                    this.activeCategory = category || 'all';
+                    try {
+                        const url = new URL(window.location.href);
+                        if (this.activeCategory === 'all') url.searchParams.delete('category');
+                        else url.searchParams.set('category', this.activeCategory);
                         history.replaceState(history.state || {}, '', url.toString());
                     } catch (_e) { /* ignore */ }
                 },
@@ -607,6 +665,10 @@
                     if (editorParam === 'edit' || editorParam === 'edit-new') {
                         this.activeTab = editorParam;
                     }
+                    const categoryParam = params.get('category');
+                    if (categoryParam && this.visibleCategories.includes(categoryParam)) {
+                        this.activeCategory = categoryParam;
+                    }
                     const testParam = params.get('test');
                     if (testParam && this.files.length) {
                         const match = this.files.find((f) => f.path === testParam);
@@ -614,6 +676,7 @@
                             // Make sure the test's editor tab is active so the
                             // user sees the right list when they close detail.
                             if (match.editor) this.activeTab = match.editor;
+                            this.activeCategory = this.categoryName(match);
                             this.openTest(match);
                         }
                     }
@@ -623,7 +686,13 @@
                         const state = event.state || {};
                         if (state.pdfTestScreen === 'detail' && state.testKey) {
                             const match = this.files.find((f) => f.path === state.testKey);
-                            if (match) { this.activeFile = match; this.screen = 'detail'; return; }
+                            if (match) {
+                                if (match.editor) this.activeTab = match.editor;
+                                this.activeCategory = this.categoryName(match);
+                                this.activeFile = match;
+                                this.screen = 'detail';
+                                return;
+                            }
                         }
                         this.screen = 'list';
                         this.activeFile = null;

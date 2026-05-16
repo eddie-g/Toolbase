@@ -33,6 +33,17 @@ def sanitize_pdf_text(text: Any) -> str:
     return value
 
 
+def sanitize_pdfjs_source_text(text: Any) -> str:
+    if text is None:
+        return ""
+    value = html.unescape(str(text))
+    value = value.replace("\u00A0", " ").replace("\uFFFD", "")
+    value = _FORBIDDEN_TEXT_RE.sub(lambda match: " " if match.group(0) == "\u00A0" else "", value)
+    value = _PRIVATE_USE_RE.sub("", value)
+    value = _CONTROL_TEXT_RE.sub("", value)
+    return value
+
+
 def sanitize_rich_text_html(html_value: Any) -> str:
     if html_value is None:
         return ""
@@ -94,7 +105,7 @@ def pdfjs_source_edit_replacement_text(annotation: Dict[str, Any]) -> str:
         return sanitize_pdf_text(annotation.get("text") or "")
     if _boolish(annotation.get("pdfjsDeleted")):
         return ""
-    return sanitize_pdf_text(annotation.get("text") if "text" in annotation else "")
+    return sanitize_pdfjs_source_text(annotation.get("text") if "text" in annotation else "")
 
 
 def _finite_float(value: Any) -> Optional[float]:
@@ -151,7 +162,7 @@ def pdfjs_source_edit_transform_scale_x(annotation: Dict[str, Any]) -> float:
 def pdfjs_source_edit_export_metrics(annotation: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "sourceRect": pdfjs_source_edit_source_rect(annotation),
-        "sourceText": sanitize_pdf_text(annotation.get("pdfjsSourceText") or annotation.get("originalText") or ""),
+        "sourceText": sanitize_pdfjs_source_text(annotation.get("pdfjsSourceText") or annotation.get("originalText") or ""),
         "replacementText": pdfjs_source_edit_replacement_text(annotation),
         "transformScaleX": pdfjs_source_edit_transform_scale_x(annotation),
         "sourceFontFamily": str(annotation.get("pdfjsSourceFontFamily") or ""),

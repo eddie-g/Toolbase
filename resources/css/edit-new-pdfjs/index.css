@@ -328,6 +328,13 @@ body.enpv-add-text-on .pdfViewer .page * {
     pointer-events: none;
     overflow: visible;
 }
+.enpv-source-mask-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 100000;
+    pointer-events: none;
+    overflow: visible;
+}
 body.enpv-body .pdfViewer .page > .annotationLayer {
     z-index: 100001;
 }
@@ -380,6 +387,11 @@ body.enpv-body .pdfViewer .page > .annotationLayer {
     background: transparent;
     cursor: default;
 }
+.enpv-annotation-box.is-editing.has-custom-bg,
+.enpv-annotation-box.is-editing.has-custom-bg:hover,
+.enpv-annotation-box.is-selected.is-editing.has-custom-bg {
+    background: var(--enpv-bg-color, transparent);
+}
 .enpv-annotation-box.is-editing .enpv-text-content {
     display: block;
 }
@@ -422,10 +434,7 @@ body.enpv-edit-on .enpv-annotation-box.has-custom-bg:not(.is-editing).is-selecte
     background: var(--enpv-bg-color, transparent);
 }
 .enpv-annotation-box.is-rich-editor:not(.is-editing) .enpv-text-content {
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-start;
-    align-items: stretch;
+    display: block;
     line-height: var(--enpv-line-height, 1);
 }
 .enpv-annotation-box.is-selected.is-editing {
@@ -435,10 +444,7 @@ body.enpv-edit-on .enpv-annotation-box.has-custom-bg:not(.is-editing).is-selecte
     background: var(--enpv-bg-color, transparent);
 }
 .enpv-annotation-box.is-persisted-overlay:not(.is-editing) .enpv-text-content {
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    justify-content: flex-start;
+    display: block;
     line-height: 1;
 }
 .enpv-annotation-box[data-text-align="center"] .enpv-text-content {
@@ -450,16 +456,22 @@ body.enpv-edit-on .enpv-annotation-box.has-custom-bg:not(.is-editing).is-selecte
 .enpv-annotation-box.is-persisted-overlay:not(.is-editing)[data-vertical-align="top"] .enpv-text-content,
 body.enpv-edit-on .enpv-annotation-box.is-rich-editor:not(.is-editing)[data-vertical-align="top"] .enpv-text-content,
 body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay[data-vertical-align="top"] .enpv-text-content {
+    display: flex;
+    flex-direction: column;
     justify-content: flex-start;
 }
 .enpv-annotation-box.is-persisted-overlay:not(.is-editing)[data-vertical-align="middle"] .enpv-text-content,
 body.enpv-edit-on .enpv-annotation-box.is-rich-editor:not(.is-editing)[data-vertical-align="middle"] .enpv-text-content,
 body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay[data-vertical-align="middle"] .enpv-text-content {
+    display: flex;
+    flex-direction: column;
     justify-content: center;
 }
 .enpv-annotation-box.is-persisted-overlay:not(.is-editing)[data-vertical-align="bottom"] .enpv-text-content,
 body.enpv-edit-on .enpv-annotation-box.is-rich-editor:not(.is-editing)[data-vertical-align="bottom"] .enpv-text-content,
 body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay[data-vertical-align="bottom"] .enpv-text-content {
+    display: flex;
+    flex-direction: column;
     justify-content: flex-end;
 }
 .enpv-annotation-box.is-source-fidelity:not(.is-editing) .enpv-text-content {
@@ -499,17 +511,12 @@ body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay.is-editing .en
     pointer-events: auto;
 }
 body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay .enpv-text-content {
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    justify-content: flex-start;
+    display: block;
     line-height: 1;
 }
 .enpv-annotation-box.is-persisted-overlay.is-rich-editor:not(.is-editing) .enpv-text-content,
 body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay.is-rich-editor .enpv-text-content {
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
+    display: block;
     line-height: var(--enpv-line-height, 1);
 }
 body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay:hover {
