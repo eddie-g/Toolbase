@@ -47,7 +47,10 @@ import {
 import { setImageImportStatus as _setImageImportStatus } from '../edit-new/image-import/status.js';
 import { imageImportPendingAsset } from '../edit-new/store/misc-state.js';
 import { installSignatureFeature, isSignatureAnnotation } from './signature.js';
-import { pdfjsSourceOverlayShouldUseSourceBoxInEditMode } from './source-edit-contract.js';
+import {
+    pdfjsPromotedOverlayShouldRenderAsPersistedOverlay,
+    pdfjsSourceOverlayShouldUseSourceBoxInEditMode,
+} from './source-edit-contract.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
 
@@ -126,6 +129,7 @@ const CSRF = root.dataset.csrf;
 const DOC_ID = root.dataset.docId;
 const INFO_URL = editNewRoot?.dataset?.infoUrl;
 const SAVE_URL = editNewRoot?.dataset?.saveUrl;
+const OVERWRITE_TEXT_URL = editNewRoot?.dataset?.overwriteUrl || '/documents/overwrite-annotation-text';
 const DOWNLOAD_URL = editNewRoot?.dataset?.downloadUrl;
 
 let currentPdfDoc = null;
@@ -415,6 +419,24 @@ function isPromotedExtractionAnnotation(annotation) {
         || String(annotation.id || '').startsWith('promoted_');
 }
 
+// Find a persisted promoted (extracted-source) annotation on the given page
+// whose originalText / pdfjsSourceText / text matches `text`. Used to expose
+// the stable persisted id (e.g. "promoted_1_25") on source-editor boxes via
+// `data-persisted-annotation-id` so external callers can target the right
+// PdfState row without guessing at the editor's runtime anchor id.
+function findPersistedPromotedAnnotationByText(pageIndex, text) {
+    const target = String(text ?? '').replace(/\s+/g, ' ').trim();
+    if (!target) return null;
+    for (const annotation of persistedAnnotationsById.values()) {
+        if (!isPromotedExtractionAnnotation(annotation)) continue;
+        if (Number(annotation.pageIndex) !== Number(pageIndex)) continue;
+        const candidates = [annotation.originalText, annotation.pdfjsSourceText, annotation.text]
+            .map((v) => String(v ?? '').replace(/\s+/g, ' ').trim());
+        if (candidates.includes(target)) return annotation;
+    }
+    return null;
+}
+
 function shouldIncludeInPdfjsVisibleExport(annotation) {
     if (!annotation || typeof annotation !== 'object') return false;
     if (isPromotedExtractionAnnotation(annotation)) return false;
@@ -524,6 +546,9 @@ function sanitizeRichTextHtmlForAnnotation(html) {
 }
 
 function richTextHtmlForBox(box) {
+    if (box?.dataset?.editorMode === 'source' && box.dataset.userForcedRichText !== '1') {
+        return '';
+    }
     const tc = selectedBoxTextElement(box);
     if (!tc) return '';
     const html = sanitizeRichTextHtmlForAnnotation(tc.innerHTML);
@@ -975,6 +1000,7 @@ function buildAnnotationFromSpan(spanEl, nextText, existingAnnotation = null) {
     const lineHeightPx = Number.parseFloat(cs.lineHeight || '');
     const sourceTransform = cs.transform && cs.transform !== 'none' ? cs.transform : '';
     const sourceScaleX = sourceTransformScaleX(sourceTransform);
+    const sourceRotation = sourceTransformRotationDegrees(sourceTransform);
     const annotationId = String(existingAnnotation?.id || anchorSpan.dataset.enpvPersistentId || spanEl.dataset.enpvPersistentId || buildPdfjsAnnotationId(pageIndex, sourceInfo.index));
     const sourceText = String(existingAnnotation?.pdfjsSourceText || existingAnnotation?.originalText || sourceInfo.text || spanEl.dataset.enpvOriginal || spanEl.textContent || '');
     const sourceStyle = promotedSourceStyleForPdfjsSource(
@@ -1032,7 +1058,8 @@ function buildAnnotationFromSpan(spanEl, nextText, existingAnnotation = null) {
         pdfjsSourceLetterSpacing: immutableSourceString(existingAnnotation?.pdfjsSourceLetterSpacing, cs.letterSpacing || 'normal'),
         pdfjsSourceTransform: immutableSourceString(existingAnnotation?.pdfjsSourceTransform, sourceTransform),
         pdfjsSourceTransformScaleX: immutableSourceString(existingAnnotation?.pdfjsSourceTransformScaleX, sourceScaleX),
-        pdfjsSourceTextWidthPx: immutableSourceString(existingAnnotation?.pdfjsSourceTextWidthPx, sourceScaleX ? (width / sourceScaleX) : width),
+        pdfjsSourceTransformRotation: immutableSourceString(existingAnnotation?.pdfjsSourceTransformRotation, sourceRotation),
+        pdfjsSourceTextWidthPx: immutableSourceString(existingAnnotation?.pdfjsSourceTextWidthPx, sourceTextAdvanceWidthFromRect(sourceRect, sourceScaleX, sourceTransform)),
         pdfjsSourceTransformOrigin: immutableSourceString(existingAnnotation?.pdfjsSourceTransformOrigin, cs.transformOrigin || '0 0'),
         pdfjsSourceFontSizePx: immutableSourceString(existingAnnotation?.pdfjsSourceFontSizePx, Number.isFinite(fontSizePx) ? fontSizePx : height),
         pdfjsSourceLineHeightPx: immutableSourceString(existingAnnotation?.pdfjsSourceLineHeightPx, Number.isFinite(lineHeightPx) ? lineHeightPx : (Number.isFinite(fontSizePx) ? fontSizePx : height)),
@@ -1061,6 +1088,8 @@ function buildAnnotationFromSpan(spanEl, nextText, existingAnnotation = null) {
                                 fontSizePx: Number.parseFloat(sCs.fontSize || '') || 0,
                                 leftPx: r.left - layerRect.left,
                                 rightPx: r.right - layerRect.left,
+                                topPx: r.top - layerRect.top,
+                                bottomPx: r.bottom - layerRect.top,
                             };
                         })
                         .filter(Boolean)
@@ -1265,6 +1294,9 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         annotation.pdfjsSourceMaskY = sourceMaskBox.y;
         annotation.pdfjsSourceMaskW = sourceMaskBox.w;
         annotation.pdfjsSourceMaskH = sourceMaskBox.h;
+        if (box.dataset.sourceMaskAscenderPadding === '1' || boolish(existingAnnotation?.pdfjsSourceMaskAscenderPadding)) {
+            annotation.pdfjsSourceMaskAscenderPadding = true;
+        }
     }
     copySourceSpanMetricsToAnnotation(annotation, box);
 
@@ -1304,6 +1336,38 @@ function findPersistedAnnotationForSpan(pageIndex, currentRect, text, originalTe
     if (bestScore > 96) return null;
     if (consume) best._renderMatched = true;
     return best;
+}
+
+function deletedPdfjsSourceOwnsSpan(pageIndex, currentRect, text, originalText, sourceUid = '', annotationId = '') {
+    const targetId = String(annotationId || '').trim();
+    if (targetId && pendingDeletedAnnotationIds.has(targetId)) return true;
+
+    const candidates = annotationBoxesByPage.get(pageIndex) || [];
+    const targetText = normalizeComparableText(text || originalText || '');
+    const targetUid = String(sourceUid || '').trim();
+    const spanSourceProxy = {
+        pdfjsSourceX: currentRect?.x,
+        pdfjsSourceY: currentRect?.y,
+        pdfjsSourceW: currentRect?.w,
+        pdfjsSourceH: currentRect?.h,
+    };
+
+    return candidates.some((annotation) => {
+        if (!annotation || !boolish(annotation.pdfjsDeleted)) return false;
+        const deletedOriginalId = String(annotation.pdfjsDeletedAnnotationId || '').trim();
+        if (targetId && deletedOriginalId && deletedOriginalId === targetId) return true;
+        const deletedUid = String(annotation.pdfjsAnchorUid || '').trim();
+        if (targetUid && deletedUid && deletedUid === targetUid) return true;
+
+        const deletedText = normalizeComparableText(
+            annotation.pdfjsSourceText
+            || annotation.originalText
+            || annotation.text
+            || '',
+        );
+        if (targetText && deletedText && targetText !== deletedText) return false;
+        return pdfjsSourceBoxesMatch(annotation, spanSourceProxy);
+    });
 }
 
 function pdfRectToCanvasRect(pdfRect, viewport, scale) {
@@ -1615,11 +1679,11 @@ function inflatePdfRect(pdfRect, paddingPts = SOURCE_MASK_PADDING_PTS) {
 // proportionally to the source height so the mask covers the full
 // painted extent without depending on font-specific metrics we don't
 // have client-side.
-function inflateSourceMaskPdfRect(pdfRect) {
+function inflateSourceMaskPdfRect(pdfRect, topMultiplier = 0.35) {
     if (!pdfRect) return null;
     const sidePad = Number(SOURCE_MASK_PADDING_PTS) || 0;
     const h = Number(pdfRect.h) || 0;
-    const topPad = Math.max(sidePad, h * 0.35);
+    const topPad = Math.max(sidePad, h * topMultiplier);
     const bottomPad = Math.max(sidePad, h * 0.15);
     return {
         x: pdfRect.x - sidePad,
@@ -1629,6 +1693,16 @@ function inflateSourceMaskPdfRect(pdfRect) {
         w: pdfRect.w + (sidePad * 2),
         h: h + topPad + bottomPad,
     };
+}
+
+function explicitSourceMaskNeedsAscenderPadding(source) {
+    if (!source) return false;
+    const dataset = source.dataset || null;
+    if (boolish(source.pdfjsSourceMaskAscenderPadding) || dataset?.sourceMaskAscenderPadding === '1') return true;
+    const candidates = dataset
+        ? [dataset.sourceText, dataset.originalText]
+        : [source.pdfjsSourceText, source.originalText];
+    return candidates.every((value) => String(value ?? '').trim() === '');
 }
 
 function applyAnnotationTypographyToBox(box, annotation, scale, sourceStyle = null) {
@@ -1712,6 +1786,8 @@ function captureSourceSpanRunsForBox(box, group, layerEl) {
                     fontSizePx: Number.parseFloat(cs.fontSize || '') || 0,
                     leftPx: clientRect.left - layerRect.left,
                     rightPx: clientRect.right - layerRect.left,
+                    topPx: clientRect.top - layerRect.top,
+                    bottomPx: clientRect.bottom - layerRect.top,
                 };
             })
             .filter(Boolean)
@@ -1731,13 +1807,15 @@ function captureSourceSpanMetrics(box, spanEl, spanRect, scale, pageDiv = null, 
     const fontSizePx = Math.max(1, Number.parseFloat(cs.fontSize || '') || rect.height || 12);
     const transform = cs.transform && cs.transform !== 'none' ? cs.transform : '';
     const transformScaleX = sourceTransformScaleX(transform);
+    const transformRotation = sourceTransformRotationDegrees(transform);
     box.dataset.sourceFontFamily = cs.fontFamily || '';
     box.dataset.sourceFontWeight = sourceStyle?.fontWeight || cs.fontWeight || '';
     box.dataset.sourceFontStyle = sourceStyle?.fontStyle || cs.fontStyle || '';
     box.dataset.sourceLetterSpacing = cs.letterSpacing || 'normal';
     box.dataset.sourceTransform = transform;
     box.dataset.sourceTransformScaleX = String(transformScaleX);
-    box.dataset.sourceTextWidthPx = String(rect.width / transformScaleX);
+    box.dataset.sourceTransformRotation = Number.isFinite(transformRotation) ? String(transformRotation) : '';
+    box.dataset.sourceTextWidthPx = String(sourceTextAdvanceWidthFromRect(rect, transformScaleX, transform));
     box.dataset.sourceTransformOrigin = cs.transformOrigin || '0 0';
     box.dataset.sourceFontSizePx = String(fontSizePx);
     box.dataset.sourceLineHeightPx = `${fontSizePx}px`;
@@ -1771,6 +1849,7 @@ function restoreSourceSpanMetricsFromAnnotation(box, annotation) {
         ['sourceLetterSpacing', 'pdfjsSourceLetterSpacing'],
         ['sourceTransform', 'pdfjsSourceTransform'],
         ['sourceTransformScaleX', 'pdfjsSourceTransformScaleX'],
+        ['sourceTransformRotation', 'pdfjsSourceTransformRotation'],
         ['sourceTextWidthPx', 'pdfjsSourceTextWidthPx'],
         ['sourceTransformOrigin', 'pdfjsSourceTransformOrigin'],
         ['sourceFontSizePx', 'pdfjsSourceFontSizePx'],
@@ -1795,6 +1874,58 @@ function sourceTransformScaleX(transform) {
     } catch (_) {
         return 1;
     }
+}
+
+function sourceTransformRotationDegrees(transform) {
+    if (!transform || transform === 'none') return 0;
+    try {
+        const matrix = new DOMMatrixReadOnly(transform);
+        const angle = Math.atan2(matrix.b, matrix.a) * (180 / Math.PI);
+        return Number.isFinite(angle) ? angle : 0;
+    } catch (_) {
+        const match = String(transform).match(/matrix\(\s*([-\d.]+)\s*,\s*([-\d.]+)/i);
+        if (!match) return 0;
+        const a = Number.parseFloat(match[1]);
+        const b = Number.parseFloat(match[2]);
+        if (!Number.isFinite(a) || !Number.isFinite(b)) return 0;
+        return Math.atan2(b, a) * (180 / Math.PI);
+    }
+}
+
+function sourceTextAdvanceWidthFromRect(rect, transformScaleX = 1, transform = '') {
+    if (!rect) return 0;
+    const scaleX = Number(transformScaleX) || 1;
+    const visualAdvance = sourceItemTransformIsVertical(transform)
+        ? Number(rect.height)
+        : Number(rect.width);
+    return Math.max(1, visualAdvance / Math.max(0.0001, scaleX));
+}
+
+function sourceFidelityTextIsVertical(box) {
+    const transform = String(box?.dataset?.sourceTransform || '');
+    if (sourceItemTransformIsVertical(transform)) return true;
+    const rotation = Number.parseFloat(box?.dataset?.sourceTransformRotation || '');
+    return Number.isFinite(rotation) && Math.abs(Math.sin(rotation * (Math.PI / 180))) > 0.5;
+}
+
+function sourceFidelityVerticalTransform(box, textAdvancePx, fitScaleX = 1) {
+    const rotation = Number.parseFloat(box?.dataset?.sourceTransformRotation || '');
+    const angle = Number.isFinite(rotation) && Math.abs(rotation) > 1
+        ? rotation
+        : sourceTransformRotationDegrees(String(box?.dataset?.sourceTransform || ''));
+    const scale = Number.isFinite(Number(fitScaleX)) && Number(fitScaleX) > 0 ? Number(fitScaleX) : 1;
+    const scalePart = Math.abs(scale - 1) < 0.0001 ? '' : ` scaleX(${scale})`;
+    if (angle > 0) {
+        const lineHeightPx = Number.parseFloat(selectedBoxTextElement(box)?.style?.lineHeight || '')
+            || Number.parseFloat(box?.style?.getPropertyValue?.('--enpv-line-height') || '')
+            || Number.parseFloat(box?.style?.getPropertyValue?.('--enpv-font-size') || '')
+            || Number(box?.clientWidth)
+            || Number.parseFloat(box?.style?.width || '')
+            || 1;
+        return `translate(${lineHeightPx}px, 0px) rotate(90deg)${scalePart}`;
+    }
+    const advancePx = Math.max(1, Number(textAdvancePx) || 1) * scale;
+    return `translate(0px, ${advancePx}px) rotate(-90deg)${scalePart}`;
 }
 
 function sourceSpanPdfRectFromPromotedSpan(sourceSpan, pageHeight) {
@@ -1858,11 +1989,12 @@ function applySourceFidelityTextFit(box, tc) {
     if (!box || !tc) return;
     const rawSourceScaleX = Number.parseFloat(box.dataset.sourceTransformScaleX || '1') || 1;
     const sourceScaleX = rawSourceScaleX >= 0.25 && rawSourceScaleX <= 3 ? rawSourceScaleX : 1;
+    const isVertical = sourceFidelityTextIsVertical(box);
     const targetWidth = Math.max(
         1,
-        Number(box.clientWidth) || 0,
-        Number(box.getBoundingClientRect?.().width) || 0,
-        Number.parseFloat(box.style.width || '') || 0,
+        Number(isVertical ? box.clientHeight : box.clientWidth) || 0,
+        Number(isVertical ? box.getBoundingClientRect?.().height : box.getBoundingClientRect?.().width) || 0,
+        Number.parseFloat(isVertical ? box.style.height : box.style.width || '') || 0,
     );
     const sourceLayoutWidth = Math.max(
         Number.parseFloat(tc.style.width || '') || 0,
@@ -1889,9 +2021,14 @@ function applySourceFidelityTextFit(box, tc) {
     if (!(fitScaleX > 0) || !Number.isFinite(fitScaleX)) return;
     tc.style.width = `${measuredContentWidth}px`;
     tc.style.transformOrigin = '0 0';
-    tc.style.transform = Math.abs(fitScaleX - 1) < 0.0001
-        ? ''
-        : `matrix(${fitScaleX}, 0, 0, 1, 0, 0)`;
+    if (isVertical) {
+        tc.style.height = tc.style.lineHeight || box.style.getPropertyValue('--enpv-line-height') || box.style.getPropertyValue('--enpv-font-size') || '';
+        tc.style.transform = sourceFidelityVerticalTransform(box, measuredContentWidth, fitScaleX);
+    } else {
+        tc.style.transform = Math.abs(fitScaleX - 1) < 0.0001
+            ? ''
+            : `matrix(${fitScaleX}, 0, 0, 1, 0, 0)`;
+    }
 }
 
 function refreshAttachedSourceFidelityTextFit(box) {
@@ -1926,6 +2063,7 @@ function copySourceSpanMetricsToAnnotation(annotation, box, options = {}) {
     fillMetric('pdfjsSourceLetterSpacing', 'sourceLetterSpacing');
     fillMetric('pdfjsSourceTransform', 'sourceTransform');
     fillMetric('pdfjsSourceTransformScaleX', 'sourceTransformScaleX');
+    fillMetric('pdfjsSourceTransformRotation', 'sourceTransformRotation');
     fillMetric('pdfjsSourceTextWidthPx', 'sourceTextWidthPx');
     fillMetric('pdfjsSourceTransformOrigin', 'sourceTransformOrigin');
     fillMetric('pdfjsSourceFontSizePx', 'sourceFontSizePx');
@@ -1972,16 +2110,19 @@ function applySourceFidelityTypography(box, options = {}) {
     tc.style.overflowWrap = 'normal';
     tc.style.display = 'block';
     tc.style.alignItems = '';
+    const isVertical = sourceFidelityTextIsVertical(box);
     if (Number.isFinite(sourceTextWidthPx) && sourceTextWidthPx > 0) {
         tc.style.width = `${sourceTextWidthPx * sourceRatio}px`;
     }
     tc.style.lineHeight = lineHeightPx;
-    tc.style.transformOrigin = box.dataset.sourceTransformOrigin || '0 0';
-    tc.style.transform = box.dataset.sourceTransform || '';
+    tc.style.transformOrigin = isVertical ? '0 0' : (box.dataset.sourceTransformOrigin || '0 0');
+    tc.style.transform = isVertical
+        ? sourceFidelityVerticalTransform(box, Number.isFinite(sourceTextWidthPx) ? sourceTextWidthPx * sourceRatio : box.clientHeight || 1)
+        : (box.dataset.sourceTransform || '');
     applySourceFidelityTextFit(box, tc);
     if (options.editing) {
         box.dataset.sourceFidelityEditing = '1';
-        tc.style.height = 'auto';
+        tc.style.height = isVertical ? lineHeightPx : 'auto';
         tc.style.minHeight = lineHeightPx;
         tc.style.overflow = 'visible';
     }
@@ -1998,9 +2139,9 @@ function applySourceFidelityTypography(box, options = {}) {
 //
 // On entering edit mode we replace `tc.textContent` with structured spans —
 // one `.enpv-edit-run` per source span (carrying font-weight/font-style),
-// with `.enpv-edit-gap` separator spans whose `word-spacing` is computed from
-// the actual pdf.js gap minus a standard space width. `white-space: pre-wrap`
-// keeps the gap spans from collapsing.
+// with `.enpv-edit-gap` separator spans containing enough literal spaces to
+// cover the actual pdf.js gap. `white-space: pre-wrap` keeps those spaces
+// from collapsing, and `textContent` then matches the visual offset.
 //
 // On endEditMode we strip the markup and restore plain text so the
 // source-fidelity render path (which uses one font-weight) takes over again.
@@ -2024,6 +2165,82 @@ function measureStandardSpaceWidthPx(fontFamily, fontWeight, fontStyle, fontSize
     return metrics?.width || size * 0.27;
 }
 
+function cssQuoteFontFamily(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    if (raw.includes(',')) return raw;
+    if (/^["'].*["']$/.test(raw)) return raw;
+    return `"${raw.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+function normalizeSourceRunText(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function sourceRunTextWithSyntheticGaps(items, start = 0, end = items.length) {
+    let output = '';
+    let prev = null;
+    for (const item of items.slice(start, end)) {
+        if (prev) {
+            const gapPx = Math.max(0, Number(item.leftPx) - Number(prev.rightPx));
+            const standardSpacePx = measureStandardSpaceWidthPx(
+                item.fontFamily,
+                item.fontWeight,
+                item.fontStyle,
+                item.fontSizePx,
+            );
+            if (gapPx > Math.max(1, standardSpacePx * 0.45)) output += ' ';
+        }
+        output += String(item.text || '');
+        prev = item;
+    }
+    return normalizeSourceRunText(output);
+}
+
+function remapSourceRunItemsForCurrentText(items, currentText) {
+    const normalizedCurrent = normalizeSourceRunText(currentText);
+    if (!normalizedCurrent) return items;
+    const normalizedOriginal = sourceRunTextWithSyntheticGaps(items);
+    if (normalizedCurrent === normalizedOriginal) return items;
+
+    const cloneItems = () => items.map((item) => ({ ...item, sourceText: String(item.text || '') }));
+    const applyChangedText = (nextItems, index, text) => {
+        const normalized = normalizeSourceRunText(text);
+        if (!normalized) return null;
+        nextItems[index].text = normalized;
+        nextItems[index].textChangedFromSource = normalized !== normalizeSourceRunText(nextItems[index].sourceText);
+        return nextItems;
+    };
+
+    if (items.length >= 2) {
+        const suffix = sourceRunTextWithSyntheticGaps(items, 1);
+        if (suffix && normalizedCurrent.endsWith(suffix)) {
+            const changedPrefix = normalizedCurrent.slice(0, normalizedCurrent.length - suffix.length).trim();
+            const nextItems = applyChangedText(cloneItems(), 0, changedPrefix);
+            if (nextItems) return nextItems;
+        }
+
+        const prefix = sourceRunTextWithSyntheticGaps(items, 0, items.length - 1);
+        if (prefix && normalizedCurrent.startsWith(prefix)) {
+            const changedSuffix = normalizedCurrent.slice(prefix.length).trim();
+            const nextItems = applyChangedText(cloneItems(), items.length - 1, changedSuffix);
+            if (nextItems) return nextItems;
+        }
+
+        if (items.length === 2) {
+            const match = normalizedCurrent.match(/^(\S+)\s+(.+)$/u);
+            if (match) {
+                const nextItems = cloneItems();
+                if (applyChangedText(nextItems, 0, match[1]) && applyChangedText(nextItems, 1, match[2])) {
+                    return nextItems;
+                }
+            }
+        }
+    }
+
+    return null;
+}
+
 function buildSourceEditSpanItems(group, layerEl) {
     if (!group || !layerEl) return [];
     const items = liveSourceGroupItems(group, layerEl);
@@ -2038,6 +2255,8 @@ function buildSourceEditSpanItems(group, layerEl) {
         const clientRect = span?.getBoundingClientRect?.();
         const leftPx = layerRect && clientRect ? (clientRect.left - layerRect.left) : item.rect.left;
         const rightPx = layerRect && clientRect ? (clientRect.right - layerRect.left) : (item.rect.left + item.rect.width);
+        const topPx = layerRect && clientRect ? (clientRect.top - layerRect.top) : item.rect.top;
+        const bottomPx = layerRect && clientRect ? (clientRect.bottom - layerRect.top) : (item.rect.top + item.rect.height);
         return {
             text: trimmed,
             fontFamily: cs?.fontFamily || '',
@@ -2046,6 +2265,8 @@ function buildSourceEditSpanItems(group, layerEl) {
             fontSizePx: Number.parseFloat(cs?.fontSize || '') || 0,
             leftPx,
             rightPx,
+            topPx,
+            bottomPx,
             index,
         };
     }).filter(Boolean);
@@ -2075,6 +2296,41 @@ function sourceGroupForBox(box) {
     return null;
 }
 
+function buildSourceSpanItemsFromAnnotation(annotation, scale = 1) {
+    const sourceSpans = Array.isArray(annotation?.sourceSpans) ? annotation.sourceSpans : [];
+    return sourceSpans
+        .map((span, index) => {
+            const bbox = Array.isArray(span?.bbox) ? span.bbox : null;
+            if (!bbox || bbox.length < 4) return null;
+            const text = normalizeSourceRunText(span?.text || span?.rawText || span?.render_text || '');
+            if (!text) return null;
+            const x0 = Number(bbox[0]);
+            const y0 = Number(bbox[1]);
+            const x1 = Number(bbox[2]);
+            const y1 = Number(bbox[3]);
+            if (![x0, y0, x1, y1].every(Number.isFinite) || x1 <= x0 || y1 <= y0) return null;
+            const explicitWeight = String(span?.fontWeight || span?.font_weight || '').trim();
+            const parsedWeight = Number.parseInt(explicitWeight, 10);
+            const fontWeight = Number.isFinite(parsedWeight) && parsedWeight > 0
+                ? String(parsedWeight)
+                : (boolish(span?.bold) ? '700' : '400');
+            const fontStyle = boolish(span?.italic) ? 'italic' : 'normal';
+            return {
+                text,
+                fontFamily: String(span?.embedded_font_name || span?.font || span?.embedded_font_family || ''),
+                fontWeight,
+                fontStyle,
+                fontSizePx: (Number(span?.fontSize || span?.font_size) || 0) * (Number(scale) || 1),
+                leftPx: x0 * (Number(scale) || 1),
+                rightPx: x1 * (Number(scale) || 1),
+                topPx: y0 * (Number(scale) || 1),
+                bottomPx: y1 * (Number(scale) || 1),
+                index,
+            };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.leftPx - b.leftPx);
+}
 
 function applySourceFidelitySpanEditMarkup(box, options = {}) {
     if (!box) return false;
@@ -2099,42 +2355,94 @@ function applySourceFidelitySpanEditMarkup(box, options = {}) {
             }
         }
     }
+    if ((!Array.isArray(items) || items.length < 2) && box.dataset.annotationId) {
+        const annotation = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
+        const scale = Number.parseFloat(box.parentElement?.dataset?.scale || '')
+            || Number.parseFloat(box.dataset.renderScale || '')
+            || 1;
+        items = buildSourceSpanItemsFromAnnotation(annotation, scale);
+        if (Array.isArray(items) && items.length >= 2) {
+            try { box.dataset.sourceSpanRuns = JSON.stringify(items); } catch (_) { /* noop */ }
+        }
+    }
     if (!Array.isArray(items) || items.length < 2) return false;
 
-    // Skip if user previously edited the text away from the original.
-    const currentText = String(tc.textContent || '').replace(/\s+/g, ' ').trim();
-    const reconstructed = items.map((it) => String(it.text || '')).join(' ').replace(/\s+/g, ' ').trim();
-    if (currentText && currentText !== reconstructed) return false;
+    // Convert captured per-run size/top offsets to the current render scale.
+    const referenceFontSizePx = Math.max(1, ...items.map((item) => Number(item.fontSizePx) || 0));
+    const baselineItems = items.filter((item) => {
+        const size = Number(item.fontSizePx) || referenceFontSizePx;
+        return size >= referenceFontSizePx * 0.9 && Number.isFinite(Number(item.topPx));
+    });
+    const referenceTopPx = baselineItems.length
+        ? Math.min(...baselineItems.map((item) => Number(item.topPx)))
+        : Math.min(...items.map((item) => Number(item.topPx)).filter(Number.isFinite));
+    const currentScale = Number.parseFloat(box.parentElement?.dataset?.scale || '') || 0;
+    const originalScale = Number.parseFloat(box.dataset.renderScale || '') || currentScale || 0;
+    const sourceRunScaleRatio = currentScale > 0 && originalScale > 0 ? currentScale / originalScale : 1;
 
-    // Convert run leftPx/rightPx (captured at the original render scale) to a
-    // ratio over the line width, then re-apply at the current rendered width.
-    const firstLeft = items[0].leftPx;
-    const lastRight = items[items.length - 1].rightPx;
-    const captureSpan = Math.max(1, lastRight - firstLeft);
-
-    let html = '';
-    let prev = null;
+    // Skip if user previously edited the text away from the original. Insert a
+    // synthetic space only when the captured visual gap is at least space-like;
+    // superscripts are often separate PDF.js spans with no real text gap.
+    let reconstructed = '';
+    let previousItem = null;
     for (const item of items) {
-        if (prev) {
-            const gapPx = Math.max(0, item.leftPx - prev.rightPx);
-            const gapRatio = gapPx / captureSpan;
+        if (previousItem) {
+            const gapPx = Math.max(0, Number(item.leftPx) - Number(previousItem.rightPx));
             const standardSpacePx = measureStandardSpaceWidthPx(
                 item.fontFamily,
                 item.fontWeight,
                 item.fontStyle,
                 item.fontSizePx,
             );
-            // Use captured gap directly (in px). word-spacing inflates the
-            // single literal space inside the gap-span to `space + extra`.
-            const extra = gapPx - standardSpacePx;
-            const wsAttr = extra > 0.5
-                ? ` style="word-spacing:${extra.toFixed(2)}px"`
-                : '';
-            html += `<span class="enpv-edit-gap" data-source-span-gap="1"${wsAttr}> </span>`;
+            if (gapPx > Math.max(1, standardSpacePx * 0.45)) reconstructed += ' ';
+        }
+        reconstructed += String(item.text || '');
+        previousItem = item;
+    }
+    const currentText = String(tc.textContent || '').replace(/\s+/g, ' ').trim();
+    reconstructed = reconstructed.replace(/\s+/g, ' ').trim();
+    if (currentText && currentText !== reconstructed) {
+        items = remapSourceRunItemsForCurrentText(items, currentText);
+        if (!Array.isArray(items) || items.length < 2) return false;
+    }
+
+    let html = '';
+    let prev = null;
+    for (const item of items) {
+        if (prev) {
+            const gapPx = Math.max(0, item.leftPx - prev.rightPx);
+            const standardSpacePx = measureStandardSpaceWidthPx(
+                item.fontFamily,
+                item.fontWeight,
+                item.fontStyle,
+                item.fontSizePx,
+            );
+            if (gapPx > Math.max(1, standardSpacePx * 0.45)) {
+                const spaceCount = Math.max(1, Math.min(120, Math.round(gapPx / Math.max(0.1, standardSpacePx))));
+                html += `<span class="enpv-edit-gap" data-source-span-gap="1" data-source-span-gap-spaces="${spaceCount}">${' '.repeat(spaceCount)}</span>`;
+            }
         }
         const styleParts = [];
+        const fontFamily = String(item.fontFamily || '').trim();
+        if (fontFamily) {
+            styleParts.push(`font-family:${item.textChangedFromSource ? 'Arial, sans-serif' : cssQuoteFontFamily(fontFamily)}`);
+        } else if (item.textChangedFromSource) {
+            styleParts.push('font-family:Arial, sans-serif');
+        }
         if (item.fontWeight) styleParts.push(`font-weight:${item.fontWeight}`);
         if (item.fontStyle && item.fontStyle !== 'normal') styleParts.push(`font-style:${item.fontStyle}`);
+        const itemFontSizePx = Number(item.fontSizePx) || 0;
+        const itemTopPx = Number(item.topPx);
+        if (itemFontSizePx > 0 && referenceFontSizePx > 0 && Math.abs(itemFontSizePx - referenceFontSizePx) > 0.25) {
+            styleParts.push(`font-size:${(itemFontSizePx / referenceFontSizePx).toFixed(4)}em`);
+        }
+        if (Number.isFinite(itemTopPx) && Number.isFinite(referenceTopPx)) {
+            const topDelta = (itemTopPx - referenceTopPx) * sourceRunScaleRatio;
+            if (Math.abs(topDelta) > 0.35) {
+                styleParts.push('position:relative');
+                styleParts.push(`top:${topDelta.toFixed(2)}px`);
+            }
+        }
         const styleAttr = styleParts.length ? ` style="${styleParts.join(';')}"` : '';
         html += `<span class="enpv-edit-run" data-source-span-run="1"${styleAttr}>${escapeHtmlForSpanEdit(String(item.text || ''))}</span>`;
         prev = item;
@@ -2149,8 +2457,6 @@ function applySourceFidelitySpanEditMarkup(box, options = {}) {
         tc.style.whiteSpace = 'pre-wrap';
         box.dataset.sourceSpanEditActive = '1';
     }
-    // Suppress gapRatio unused warning — kept for future re-scale logic.
-    void captureSpan;
     return true;
 }
 
@@ -2166,6 +2472,12 @@ function clearSourceFidelitySpanEditMarkup(box) {
     }
     if (isEdit) delete box.dataset.sourceSpanEditActive;
     if (isDisplay) delete box.dataset.sourceSpanDisplayActive;
+}
+
+function clearSourceFidelitySpanState(box) {
+    if (!box) return;
+    delete box.dataset.sourceSpanEditActive;
+    delete box.dataset.sourceSpanDisplayActive;
 }
 
 function boxHasSourceTypography(box) {
@@ -2209,6 +2521,15 @@ function clearTransientSourceFidelity(box) {
     box.classList.remove('is-source-fidelity');
     delete box.dataset.sourceFidelityEditing;
     resetSourceFidelityInlineStyles(box);
+    // The box is reverting to canvas-rendered text. Strip any leftover
+    // per-span display markup (which would otherwise render with no font-size
+    // because `.is-source-fidelity` typography is gone) and detach the source
+    // mask so the underlying PDF.js canvas glyphs become visible again.
+    // Without these, double-click → edit → deselect leaves the box with
+    // display:none text content layered over a white mask that hides the
+    // original glyphs — the row appears empty.
+    clearSourceFidelitySpanEditMarkup(box);
+    removeAnnBoxSourceMasks(box);
 }
 
 function setBoxEditorMode(box, mode) {
@@ -2942,6 +3263,9 @@ function createPersistedOverlayBox(annotation, pageIndex, viewport, scale, editM
         box.dataset.sourceMaskY = String(sourceMaskBox.y);
         box.dataset.sourceMaskW = String(sourceMaskBox.w);
         box.dataset.sourceMaskH = String(sourceMaskBox.h);
+        if (explicitSourceMaskNeedsAscenderPadding(annotation)) {
+            box.dataset.sourceMaskAscenderPadding = '1';
+        }
     }
     if (boolish(annotation.userSizedTextBox)) {
         box.dataset.userSizedTextBox = '1';
@@ -3007,6 +3331,11 @@ function createPersistedOverlayBox(annotation, pageIndex, viewport, scale, editM
     const mask = createSourceMaskElement(maskRect, pageDiv, {
         preserveRules: !boolish(annotation.movedTextOverlay),
     });
+    if (mask && boolish(annotation.movedTextOverlay)) {
+        if (!applyMovedOverlayPerRunMaskSegments(mask, box, maskRect, pageDiv)) {
+            scheduleRuleAwareMaskRefresh(mask, maskRect, pageDiv, { minRectWidth: 18 });
+        }
+    }
     return { box, rect, mask, maskRect };
 }
 
@@ -3111,7 +3440,12 @@ function sourceMaskRectForBox(box) {
     if (!layer || !viewport) return null;
     const scale = Number.parseFloat(layer.dataset.scale || '1') || 1;
     const explicitMaskRect = boxSourceMaskPdfBox(box);
-    if (explicitMaskRect) return pdfRectToCanvasRect(explicitMaskRect, viewport, scale);
+    if (explicitMaskRect) {
+        const rect = explicitSourceMaskNeedsAscenderPadding(box)
+            ? inflateSourceMaskPdfRect(explicitMaskRect, 0.55)
+            : explicitMaskRect;
+        return pdfRectToCanvasRect(rect, viewport, scale);
+    }
     const sourceRect = {
         x: Number.parseFloat(box.dataset.sourceBboxX || box.dataset.baseBboxX || ''),
         y: Number.parseFloat(box.dataset.sourceBboxY || box.dataset.baseBboxY || ''),
@@ -3128,7 +3462,12 @@ function sourceMaskRectForBox(box) {
 function sourceMaskCanvasRectForAnnotation(annotation, viewport, scale, pageIndex = null) {
     if (!annotation || !viewport || !scale) return null;
     const explicitMaskRect = annotationSourceMaskPdfBox(annotation);
-    if (explicitMaskRect) return pdfRectToCanvasRect(explicitMaskRect, viewport, scale);
+    if (explicitMaskRect) {
+        const rect = explicitSourceMaskNeedsAscenderPadding(annotation)
+            ? inflateSourceMaskPdfRect(explicitMaskRect, 0.55)
+            : explicitMaskRect;
+        return pdfRectToCanvasRect(rect, viewport, scale);
+    }
     const sourceRect = annotationBaselinePdfBox(annotation);
     if (!sourceRect) return null;
     return pdfRectToCanvasRect(inflateSourceMaskPdfRect(sourceRect), viewport, scale);
@@ -3430,6 +3769,78 @@ function createDeletedEraseElement(rect, pageDiv = null) {
     return mask;
 }
 
+// Build per-run white rectangles inside a moved-text overlay's source mask.
+// Returns true if at least one run was rendered, false to signal the caller
+// should fall back to a solid block. Each child rectangle covers the canvas
+// extent of one source span run (so glyphs at the original location are
+// hidden) and leaves the gaps between runs uncovered — preserving any
+// vertical column rules / form grid lines that pass through those gaps.
+function applyMovedOverlayPerRunMaskSegments(mask, box, rect, pageDiv) {
+    if (!mask || !box || !rect) return false;
+    const raw = box.dataset.sourceSpanRuns;
+    if (!raw) return false;
+    let items = null;
+    try { items = JSON.parse(raw); } catch (_) { items = null; }
+    if (!Array.isArray(items) || items.length === 0) return false;
+    const layer = box.parentElement;
+    const currentScale = Number.parseFloat(layer?.dataset?.scale || '') || 0;
+    const originalScale = Number.parseFloat(box.dataset.renderScale || '') || currentScale || 0;
+    if (!(currentScale > 0) || !(originalScale > 0)) return false;
+    const ratio = currentScale / originalScale;
+    const bg = samplePageBackgroundColor(pageDiv, rect) || '#ffffff';
+    const ruleGaps = detectHorizontalCanvasRuleGaps(pageDiv, rect, { minRectWidth: 18 });
+    const children = [];
+    const appendSegment = (left, top, width, height) => {
+        if (width <= 0 || height <= 0) return;
+        const seg = document.createElement('div');
+        seg.className = 'enpv-source-mask-run';
+        seg.style.position = 'absolute';
+        seg.style.left = `${left}px`;
+        seg.style.top = `${top}px`;
+        seg.style.width = `${width}px`;
+        seg.style.height = `${height}px`;
+        seg.style.background = bg;
+        seg.style.pointerEvents = 'none';
+        children.push(seg);
+    };
+    for (const item of items) {
+        const leftPx = Number(item?.leftPx);
+        const rightPx = Number(item?.rightPx);
+        const topPx = Number(item?.topPx);
+        const bottomPx = Number(item?.bottomPx);
+        if (![leftPx, rightPx].every(Number.isFinite)) continue;
+        const hasVerticalBounds = Number.isFinite(topPx) && Number.isFinite(bottomPx) && bottomPx > topPx;
+        if (rightPx <= leftPx) continue;
+        const segLeft = leftPx * ratio - rect.left;
+        const segW = (rightPx - leftPx) * ratio;
+        const segTop = hasVerticalBounds ? (topPx * ratio - rect.top) : 0;
+        const segH = hasVerticalBounds ? ((bottomPx - topPx) * ratio) : rect.height;
+        // Clamp to mask bounds (defensively — the rect should contain all runs).
+        const clampedLeft = Math.max(0, segLeft);
+        const clampedTop = Math.max(0, segTop);
+        const clampedRight = Math.min(rect.width, segLeft + segW);
+        const clampedBottom = Math.min(rect.height, segTop + segH);
+        const w = clampedRight - clampedLeft;
+        const h = clampedBottom - clampedTop;
+        if (w <= 0 || h <= 0) continue;
+        let cursor = clampedTop;
+        for (const gap of ruleGaps) {
+            const gapTop = Math.max(0, Number(gap?.top) || 0);
+            const gapBottom = Math.min(rect.height, gapTop + (Number(gap?.height) || 0));
+            if (gapBottom <= cursor || gapTop >= clampedBottom) continue;
+            const next = Math.max(cursor, Math.min(clampedBottom, gapTop));
+            appendSegment(clampedLeft, cursor, w, next - cursor);
+            cursor = Math.max(cursor, Math.min(clampedBottom, gapBottom));
+        }
+        appendSegment(clampedLeft, cursor, w, clampedBottom - cursor);
+    }
+    if (children.length === 0) return false;
+    // Container becomes transparent; only the per-run children paint.
+    mask.style.background = 'transparent';
+    mask.replaceChildren(...children);
+    return true;
+}
+
 function attachSourceMaskForBox(box) {
     if (!box) return null;
     if (!ENABLE_PDFJS_DOM_SOURCE_MASKS) {
@@ -3463,7 +3874,19 @@ function attachSourceMaskForBox(box) {
         : layer.closest('.page');
     mask.style.background = samplePageBackgroundColor(pageDiv, rect);
     if (box.dataset.movedTextOverlay === '1') {
-        mask.replaceChildren();
+        // For moved-text overlays, paint per-run rectangles instead of one
+        // solid block. The source bbox spans the full annotation row (e.g.
+        // "State/province  Country  ZIP/foreign code") but the actual glyphs
+        // sit in three narrow runs with wide gaps between them. A solid mask
+        // covers everything in the row INCLUDING vertical column rules / form
+        // grid lines that pass through the gaps, producing visible "cuts" in
+        // those rules at the source location after the user drags the text
+        // elsewhere. Per-run rectangles only hide the original glyph regions
+        // and leave the gaps (and any rules passing through them) intact.
+        if (!applyMovedOverlayPerRunMaskSegments(mask, box, rect, pageDiv)) {
+            mask.replaceChildren();
+            scheduleRuleAwareMaskRefresh(mask, rect, pageDiv, { minRectWidth: 18 });
+        }
     } else {
         scheduleRuleAwareMaskRefresh(mask, rect, pageDiv, { minRectWidth: 18 });
     }
@@ -3920,6 +4343,18 @@ function createAnnotationBoxFromSpan(spanEl) {
     );
     const handleUid = sourceHandleUid(pageIndex, uid, matchedAnnotation);
     const annotationId = sourceHandleAnnotationId(pageIndex, uid, matchedAnnotation);
+    if (deletedPdfjsSourceOwnsSpan(
+        pageIndex,
+        sourceBbox,
+        sourceInfo.text || '',
+        sourceInfo.text || spanEl.dataset.enpvOriginal || spanEl.textContent || '',
+        uid,
+        annotationId,
+    )) {
+        spanEl.dataset.enpvDeletedSource = '1';
+        return null;
+    }
+    delete spanEl.dataset.enpvDeletedSource;
     const existingBox = layer.querySelector(`.enpv-annotation-box[data-uid="${cssEscape(handleUid)}"]`);
     if (existingBox) return existingBox;
     const sourceSnapshotRect = annotationBaselinePdfBox(matchedAnnotation) || sourceBbox;
@@ -5112,7 +5547,10 @@ function pageNeedsOverlayProtection(pageIndex) {
         if (isSignatureAnnotation(annotation)) return true;
         if (isImageAnnotation(annotation)) return true;
         if (String(annotation.type || '').toLowerCase() !== 'text') return false;
-        if (isPromotedExtractionAnnotation(annotation)) return cleanPromotedSourceText(annotation) !== '';
+        if (isPromotedExtractionAnnotation(annotation)) {
+            return pdfjsPromotedOverlayShouldRenderAsPersistedOverlay(annotation)
+                || cleanPromotedSourceText(annotation) !== '';
+        }
         if (boolish(annotation.pdfjsDeleted)) return true;
         if (annotation._pdfjsCanvasRewritten === true) return false;
         if (isRedundantPdfjsSourceOverlay(annotation)) return false;
@@ -5162,11 +5600,19 @@ function renderAnnotationBoxLayer(pageIndex) {
     const persistedSignatureAnnotations = allAnnotations.filter(isSignatureAnnotation);
     const persistedImageAnnotations = allAnnotations.filter(isImageAnnotation);
     const shapeAnnotations = allAnnotations.filter(isShapeAnnotation);
-    const visibleTextAnnotations = persistedTextAnnotations.filter(
+    const visiblePersistedTextAnnotations = persistedTextAnnotations.filter(
         (annotation) => annotation.pdfjsDeleted !== true
             && annotation._pdfjsCanvasRewritten !== true
             && !isRedundantPdfjsSourceOverlay(annotation),
     );
+    const visiblePromotedTextAnnotations = promotedTextAnnotations.filter(
+        (annotation) => pdfjsPromotedOverlayShouldRenderAsPersistedOverlay(annotation)
+            && annotation._pdfjsCanvasRewritten !== true,
+    );
+    const visibleTextAnnotations = [
+        ...visiblePersistedTextAnnotations,
+        ...visiblePromotedTextAnnotations,
+    ];
     const deletedTextMasks = persistedTextAnnotations.filter(
         (annotation) => annotation.pdfjsDeleted === true
             && !deletedPdfjsMaskIsOwnedByReplacement(annotation, visibleTextAnnotations),
@@ -5207,7 +5653,10 @@ function renderAnnotationBoxLayer(pageIndex) {
     const sourceOwners = buildSourceOwnershipRegistry(
         persistedTextAnnotations.filter((annotation) => !isSuppressedStalePdfjsOverlay(annotation)),
     );
-    const promotedFallbackCandidates = promotedTextAnnotations.filter((annotation) => cleanPromotedSourceText(annotation));
+    const promotedFallbackCandidates = promotedTextAnnotations.filter(
+        (annotation) => !visiblePromotedTextAnnotations.includes(annotation)
+            && cleanPromotedSourceText(annotation),
+    );
     const promotedFallbackTextAnnotations = promotedFallbackCandidates.filter((annotation) => {
         if (!cleanPromotedSourceText(annotation)) return false;
         if (sourceOwners.isOwned(annotation)) return false;
@@ -5419,6 +5868,12 @@ function renderAnnotationBoxLayer(pageIndex) {
         box.className = 'enpv-annotation-box';
         box.dataset.uid = handleUid;
         box.dataset.annotationId = annotationId;
+        {
+            const persistedPromoted = matchedAnnotation && isPromotedExtractionAnnotation(matchedAnnotation)
+                ? matchedAnnotation
+                : findPersistedPromotedAnnotationByText(pageIndex, group.text || span.dataset.enpvOriginal || span.textContent || '');
+            if (persistedPromoted?.id) box.dataset.persistedAnnotationId = String(persistedPromoted.id);
+        }
         box.dataset.pageIndex = String(pageIndex);
         box.dataset.originalText = String(matchedAnnotation?.originalText || baseText);
         box.dataset.occurrence = String(group.occurrence || span.dataset.enpvOccurrence || '0');
@@ -6880,6 +7335,7 @@ function deleteAnnBox(box, options = {}) {
         box._enpvOrigMask.remove();
         box._enpvOrigMask = null;
     }
+    removeAnnBoxSourceMasks(box);
     if (annMenu) annMenu.hidden = true;
     hideAnnotationFormatBar();
     const pageIndex = Number.parseInt(box.dataset.pageIndex || '-1', 10);
@@ -7147,12 +7603,20 @@ function endEditMode(box) {
         tc.removeEventListener('keyup', captureInlineTextSelection);
         tc.contentEditable = 'false';
     }
-    // Strip per-span edit markup before commit so the persisted text and
-    // post-edit source-fidelity render path see plain text only.
-    clearSourceFidelitySpanEditMarkup(box);
+    const isRichTextCommit = box.dataset.editorMode === 'rich' || box.dataset.userForcedRichText === '1';
+    if (isRichTextCommit) {
+        // The temporary source-span marker can outlive promotion to rich text.
+        // Do not flatten here: selected inline formatting, such as bolding
+        // only "4a", is represented by authored spans in the same DOM.
+        clearSourceFidelitySpanState(box);
+    } else {
+        // Strip per-span edit markup before commit so the persisted text and
+        // post-edit source-fidelity render path see plain text only.
+        clearSourceFidelitySpanEditMarkup(box);
+    }
     // Re-apply per-span display markup so post-edit rendering keeps the
     // mixed font-weights captured from the original PDF text layer.
-    if (box.classList.contains('is-source-fidelity')) {
+    if (!isRichTextCommit && box.classList.contains('is-source-fidelity')) {
         applySourceFidelitySpanEditMarkup(box, { purpose: 'display' });
     }
     box.style.minHeight = '';
@@ -8086,6 +8550,8 @@ function onSpanClick(ev) {
     const box = createAnnotationBoxFromSpan(ev.currentTarget);
     if (box) {
         selectAnnBox(box);
+    } else if (ev.currentTarget?.dataset?.enpvDeletedSource === '1') {
+        return;
     } else {
         showError('Could not create an annotation box for this text run.');
     }
@@ -8106,6 +8572,7 @@ function onSpanDblClick(ev) {
     ev.preventDefault();
     const box = createAnnotationBoxFromSpan(ev.currentTarget);
     if (!box) {
+        if (ev.currentTarget?.dataset?.enpvDeletedSource === '1') return;
         showError('Could not create an annotation box for this text run.');
         return;
     }
@@ -8396,6 +8863,45 @@ async function rewriteSourceAnnotationBoxText(annotationId, edit) {
     setStatus(`Applied ${pendingEditCount} edit${pendingEditCount === 1 ? '' : 's'}.`);
 }
 
+async function overwritePromotedAnnotationText(annotation, newText, originalTextHint = '') {
+    if (!annotation?.id || !OVERWRITE_TEXT_URL) return false;
+    const response = await fetch(OVERWRITE_TEXT_URL, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            'X-CSRF-TOKEN': CSRF,
+        },
+        body: JSON.stringify({
+            document_id: Number(DOC_ID),
+            annotation_id: String(annotation.id),
+            text: String(newText ?? ''),
+            original_text: String(originalTextHint || annotation.originalText || annotation.pdfjsSourceText || annotation.text || ''),
+            session_id: getSessionId(),
+            generate_new: 1,
+        }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result?.success) {
+        throw new Error(result?.message || `Promoted text overwrite failed (${response.status})`);
+    }
+
+    const next = {
+        ...annotation,
+        text: String(newText ?? ''),
+        sourceTextLines: [String(newText ?? '')],
+        promotedDirty: true,
+        savedTextOverlay: true,
+        preserveSourceTypography: true,
+    };
+    upsertPersistedAnnotation(next);
+    if (result.file_url) {
+        await loadPdfFromUrl(String(result.file_url));
+    }
+    return true;
+}
+
 function buildPersistedSourceRewriteEdit(annotation) {
     if (!annotation || annotation._pdfjsCanvasRewritten === true) return null;
     if (annotation._pdfjsSourceRedacted === true) return null;
@@ -8532,6 +9038,15 @@ async function applyEdit() {
     setStatus('Applying edit…');
     editApply.disabled = true;
     try {
+        if (isPromotedExtractionAnnotation(existingAnnotation)) {
+            await overwritePromotedAnnotationText(existingAnnotation, newText, displayOriginal || original);
+            pendingEditCount += 1;
+            closeEditor();
+            setDownloadButtonsDisabled(false, 'Download PDF');
+            setStatus(`Applied ${pendingEditCount} edit${pendingEditCount === 1 ? '' : 's'}.`);
+            return;
+        }
+
         const r = await postPdfjsTextRewrite([edit]);
         if (!r.ok) {
             const fallbackAnnotation = buildAnnotationFromSpan(activeRun, newText, existingAnnotation);

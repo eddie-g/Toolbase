@@ -75,6 +75,7 @@ Route::post('/documents/{document}/load-saved-pdf', [DocumentController::class, 
 Route::post('/documents/{document}/mark-annotations-saved', [DocumentController::class, 'markAnnotationsSaved'])->name('documents.markAnnotationsSaved');
 Route::post('/documents/{document}/delete-annotations', [DocumentController::class, 'deleteAnnotations'])->name('documents.deleteAnnotations');
 Route::post('/documents/{document}/apply-annotations-direct', [DocumentController::class, 'applyAnnotationsDirect'])->name('documents.applyAnnotationsDirect');
+Route::post('/documents/overwrite-annotation-text', [DocumentController::class, 'overwriteAnnotationText'])->name('documents.overwriteAnnotationText');
 Route::post('/documents/{document}/save-annotation-state', [DocumentController::class, 'saveAnnotationState'])->name('documents.saveAnnotationState');
 Route::post('/documents/{document}/download-annotated-pdf', [DocumentController::class, 'downloadAnnotatedPdf'])->name('documents.downloadAnnotatedPdf');
 Route::get('/documents/{document}/saved-acro-form-state', [DocumentController::class, 'getSavedAcroFormState'])->name('documents.getSavedAcroFormState');

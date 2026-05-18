@@ -38,6 +38,7 @@
      data-csrf="{{ csrf_token() }}"
      data-info-url="{{ route('pdfTests.documentInfo', $document) }}"
      data-save-url="{{ route('documents.saveAnnotationState', $document) }}"
+     data-overwrite-url="{{ route('documents.overwriteAnnotationText') }}"
      data-download-url="{{ route('documents.downloadAnnotatedPdf', $document) }}"></div>
 
 {{-- Same UI partials as /edit-new. The legacy main.js is intentionally NOT

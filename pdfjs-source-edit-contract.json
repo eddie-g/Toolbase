@@ -49,14 +49,16 @@
     {
       "step": 3,
       "id": "PDFJS-SOURCE-EDIT-003",
-      "title": "Edit mode owns source boxes, not floating overlays",
-      "rule": "While Edit PDF is on, unmoved source-backed saved overlays must be matched into source edit boxes instead of pre-rendered as persisted overlay boxes over the original text.",
+      "title": "Edit mode only owns unchanged source boxes",
+      "rule": "While Edit PDF is on, unchanged source-backed saved overlays may be matched into source edit boxes instead of pre-rendered as persisted overlay boxes. Changed replacement text, style-dirty overlays, rich/manual overlays, moved overlays, and deleted overlays must remain visible through the persisted overlay path.",
       "requiredInputs": [
         "Edit PDF mode is on",
         "savedTextOverlay",
         "pdfjsSourceX or pdfjsSourceY or pdfjsAnchorUid or pdfjsSourceText",
+        "text equals pdfjsSourceText or originalText after whitespace normalization",
         "movedTextOverlay is false",
         "pdfjsDeleted is false",
+        "styleDirty is false",
         "pdfjsEditorMode is not rich",
         "userForcedRichText is false"
       ],
@@ -66,7 +68,7 @@
         "frontendContractModule": "resources/js/edit-new-pdfjs/source-edit-contract.js",
         "editor": "resources/js/edit-new-pdfjs/main.js",
         "tests": "resources/js/edit-new-pdfjs/source-edit-contract.test.mjs",
-        "behavior": "renderAnnotationBoxLayer filters unmoved source-backed saved overlays out of the pre-rendered persisted overlay pass while edit mode is on, so findPersistedAnnotationForSpan can attach the saved annotation to the source edit box instead of painting it over the original text."
+        "behavior": "renderAnnotationBoxLayer filters only unchanged source-backed saved overlays out of the pre-rendered persisted overlay pass while edit mode is on, so findPersistedAnnotationForSpan can attach no-op saved annotations to source edit boxes without hiding real replacement text."
       }
     },
     {
@@ -111,6 +113,25 @@
     {
       "step": 5,
       "id": "PDFJS-SOURCE-EDIT-005",
+      "title": "Edited promoted rows remain visible in edit mode",
+      "rule": "Promoted-from-extraction rows that have changed text, rich/manual styling, movement, reflow, or dirty/user-authored state must render as persisted overlays while Edit PDF is on. Clean unchanged promoted rows may still use the lightweight fallback/source text path to avoid duplicating original PDF text.",
+      "requiredInputs": [
+        "promotedFromExtraction or promoted_* id",
+        "text differs from pdfjsSourceText or originalText, or dirty/user-authored/rich/manual/reflow state is truthy",
+        "pdfjsDeleted is false"
+      ],
+      "implementation": {
+        "status": "implemented-in-frontend",
+        "frontendContractFunction": "pdfjsPromotedOverlayShouldRenderAsPersistedOverlay",
+        "frontendContractModule": "resources/js/edit-new-pdfjs/source-edit-contract.js",
+        "editor": "resources/js/edit-new-pdfjs/main.js",
+        "tests": "resources/js/edit-new-pdfjs/source-edit-contract.test.mjs",
+        "behavior": "renderAnnotationBoxLayer includes edited promoted text in the pre-rendered persisted overlay pass and excludes those same rows from the clean promoted fallback pass. pageNeedsOverlayProtection also treats edited promoted rows as protected overlays."
+      }
+    },
+    {
+      "step": 6,
+      "id": "PDFJS-SOURCE-EDIT-006",
       "title": "Changed source rows need end-to-end tests",
       "rule": "A changed source row must be covered from saved annotation payload through exported PDF text search/render checks."
     }

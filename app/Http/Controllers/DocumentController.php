@@ -765,10 +765,164 @@ class DocumentController extends Controller
                 return $annotation;
             }
 
-            return $this->normalizeTextAnnotationBackgroundForExport(
+            $normalized = $this->normalizeTextAnnotationBackgroundForExport(
                 $annotationAssets->normalizeForPersistence($document, $annotation)
             );
+
+            // Mirror overwriteAnnotationText(): when a promoted (extracted-
+            // source) text annotation arrives from the frontend Save/Download
+            // path with a text value that differs from its captured source
+            // text, flip the same dirty/typography flags the API endpoint
+            // sets. Without this, ensureRichTextHtmlForMultiStyleSource()
+            // short-circuits on !$isDirtyPromoted, the multi-span
+            // richTextHtml is never synthesized, and apply_annotations_direct_new.py
+            // renders the new string in a single-style fallback layout — so
+            // the same edit produced via the API renders correctly while the
+            // frontend Save+Download path renders with wrong spacing/weight.
+            $normalized = $this->markPromotedTextDirtyForRender($normalized);
+
+            return $this->ensureRichTextHtmlForMultiStyleSource($normalized);
         }, $annotations);
+    }
+
+    /**
+     * For promoted text annotations (id `promoted_*` or
+     * promotedFromExtraction=true) whose `text` no longer matches the
+     * captured source baseline, set the flags the Python writer uses to
+     * pick the redact+restamp + per-span typography branch. Mirrors the
+     * flag set in overwriteAnnotationText().
+     */
+    private function markPromotedTextDirtyForRender(array $annotation): array
+    {
+        if (strtolower(trim((string) ($annotation['type'] ?? ''))) !== 'text') {
+            return $annotation;
+        }
+
+        $isPromoted = $this->annotationFlagIsTruthy($annotation, 'promotedFromExtraction')
+            || str_starts_with((string) ($annotation['id'] ?? ''), 'promoted_');
+        if (!$isPromoted) {
+            return $annotation;
+        }
+
+        $normalize = static function ($v): string {
+            $s = preg_replace('/\s+/u', ' ', (string) ($v ?? '')) ?? '';
+            return trim($s);
+        };
+        $text   = $normalize($annotation['text'] ?? '');
+        $source = $normalize(
+            $annotation['pdfjsSourceText']
+            ?? $annotation['originalText']
+            ?? ''
+        );
+        if ($text === '' || $source === '' || $text === $source) {
+            return $annotation;
+        }
+
+        $annotation['promotedDirty']             = true;
+        $annotation['savedTextOverlay']          = true;
+        $annotation['preserveSourceTypography']  = true;
+        if (empty($annotation['pdfjsEditorMode'])) {
+            $annotation['pdfjsEditorMode']       = 'source';
+        }
+        return $annotation;
+    }
+
+    /**
+     * For dirty-promoted text annotations whose source was rendered from
+     * multiple styled sourceSpans (e.g. bold "5a" prefix + regular body),
+     * synthesize a richTextHtml fragment from the current `text` so the
+     * Python writer's rich-text pipeline stamps each run with the correct
+     * weight/italic. Without this, save + download paths collapse the
+     * whole replacement string to the dominant source span's font — and
+     * since the bold source span's subset only contains "5a" glyphs, the
+     * body characters (M, O, ...) render as .notdef tofu boxes.
+     *
+     * This mirrors the same synthesis already wired into
+     * overwriteAnnotationText(), but applied at the persistence layer so
+     * saveAnnotations + downloadAnnotatedPdf both benefit.
+     */
+    private function ensureRichTextHtmlForMultiStyleSource(array $annotation): array
+    {
+        if (strtolower(trim((string) ($annotation['type'] ?? ''))) !== 'text') {
+            return $annotation;
+        }
+
+        $isDirtyPromoted = $this->annotationFlagIsTruthy($annotation, 'promotedDirty')
+            || $this->annotationFlagIsTruthy($annotation, 'sourceExactTextEdited')
+            || $this->annotationFlagIsTruthy($annotation, 'preserveSourceLayout')
+            || $this->annotationFlagIsTruthy($annotation, 'preserveSourceTypography');
+        if (!$isDirtyPromoted) {
+            return $annotation;
+        }
+
+        $existingRich = trim((string) ($annotation['richTextHtml'] ?? ''));
+        if ($existingRich === '') {
+            $existingRich = trim((string) (
+                $annotation['annotation_data']['richTextHtml'] ?? ''
+            ));
+        }
+        $trustExistingRichText = $existingRich !== ''
+            && (
+                $this->annotationFlagIsTruthy($annotation, 'userForcedRichText')
+                || trim((string) ($annotation['pdfjsEditorMode'] ?? '')) === 'rich'
+                || (
+                    isset($annotation['annotation_data']) && is_array($annotation['annotation_data'])
+                    && (
+                        $this->annotationFlagIsTruthy($annotation['annotation_data'], 'userForcedRichText')
+                        || trim((string) ($annotation['annotation_data']['pdfjsEditorMode'] ?? '')) === 'rich'
+                    )
+                )
+            );
+        if ($trustExistingRichText) {
+            return $annotation;
+        }
+
+        $text = (string) ($annotation['text'] ?? '');
+        if ($text === '') {
+            return $annotation;
+        }
+
+        $synthesized = $this->synthesizeRichTextFromSourceSpans($annotation, $text);
+        if ($synthesized === null) {
+            if ($existingRich !== '') {
+                return $annotation;
+            }
+            return $annotation;
+        }
+
+        $annotation['richTextHtml'] = $synthesized['html'];
+        // NOTE: do NOT also rewrite `text` to match the padded HTML chunk
+        // sequence — the writer scopes its glyph-coverage check against
+        // ann["text"], and adding spaces there has been observed to push
+        // the resolver into a single-run fallback that picks the dominant
+        // (often bold-subset) face for the whole string, surfacing tofu
+        // boxes for any glyph (e.g. M / O / x) that the bold subset never
+        // covered in the source PDF. Leaving the canonical text alone keeps
+        // the per-span coverage check in the rich branch intact.
+        // Mirror the overwriteAnnotationText() path: tell the writer to keep
+        // using the source-resolved embedded font (e.g. HelveticaNeueLTStd-Bd
+        // / -Roman) instead of falling back to bundled Arimo when promoted
+        // text is restamped. Without this the synthesized richTextHtml runs
+        // get the right *weight* but the wrong *family*. Also flip the
+        // pdfjs source-overlay flags so the writer enters the rich-text
+        // path that consumes richTextHtml — without these the writer falls
+        // back to the dirty-promoted layout that collapses the whole string
+        // to a single-style span.
+        $annotation['preserveSourceTypography'] = true;
+        $annotation['savedTextOverlay'] = true;
+        if (!isset($annotation['pdfjsEditorMode']) || $annotation['pdfjsEditorMode'] === '') {
+            $annotation['pdfjsEditorMode'] = 'source';
+        }
+        if (isset($annotation['annotation_data']) && is_array($annotation['annotation_data'])) {
+            $annotation['annotation_data']['richTextHtml'] = $synthesized['html'];
+            $annotation['annotation_data']['preserveSourceTypography'] = true;
+            $annotation['annotation_data']['savedTextOverlay'] = true;
+            if (!isset($annotation['annotation_data']['pdfjsEditorMode'])
+                || $annotation['annotation_data']['pdfjsEditorMode'] === '') {
+                $annotation['annotation_data']['pdfjsEditorMode'] = 'source';
+            }
+        }
+        return $annotation;
     }
 
     private function normalizeTextAnnotationBackgroundForExport(array $annotation): array
@@ -804,6 +958,172 @@ class DocumentController extends Controller
     private function annotationFlagIsTruthy(array $annotation, string $key): bool
     {
         return filter_var($annotation[$key] ?? false, FILTER_VALIDATE_BOOLEAN);
+    }
+
+    /**
+     * When overwriting text on a multi-span source annotation (e.g. an IRS-
+     * form label whose original is "5b City, state, and ZIP code..." split
+     * across a bold "5b" + regular body span), the writer otherwise picks
+     * the dominant (widest) span's typography and stamps the entire new
+     * string in that single weight — losing the bold prefix.
+     *
+     * This helper detects that pattern and synthesizes a richTextHtml
+     * fragment that preserves per-span weight/italic on the new text by
+     * splitting at whitespace boundaries that mirror the source span split.
+     * Returns null when the pattern doesn't apply (single span, uniform
+     * styles, no whitespace boundary in new text, etc.).
+     */
+    private function synthesizeRichTextFromSourceSpans(array $annotation, string $newText): ?array
+    {
+        $spans = $annotation['sourceSpans'] ?? null;
+        if (!is_array($spans) || count($spans) < 2) {
+            return null;
+        }
+
+        // Normalize spans to (text, bold, italic, baseline_y) tuples and drop
+        // anything that doesn't look like text. We only handle the single-
+        // visual-line case (all spans share the same baseline) for now; multi-
+        // line source blocks would need a far more invasive split heuristic.
+        $normalized = [];
+        $baselineY  = null;
+        foreach ($spans as $span) {
+            if (!is_array($span)) continue;
+            $text = trim((string) ($span['text'] ?? ''));
+            if ($text === '') continue;
+            $bbox = $span['bbox'] ?? null;
+            if (!is_array($bbox) || count($bbox) < 4) continue;
+            $y = (float) $bbox[1];
+            if ($baselineY === null) {
+                $baselineY = $y;
+            } elseif (abs($y - $baselineY) > 2.0) {
+                return null; // multi-line — bail out
+            }
+            $weight = (int) ($span['font_weight'] ?? ($span['bold'] ?? false ? 700 : 400));
+            if ($weight <= 0) {
+                $weight = $span['bold'] ?? false ? 700 : 400;
+            }
+            $italic = filter_var(
+                $span['italic'] ?? ($span['font_style'] ?? '') === 'italic',
+                FILTER_VALIDATE_BOOLEAN
+            );
+            $fontSize = (float) ($span['font_size'] ?? $span['fontSize'] ?? 0);
+            if ($fontSize <= 0) $fontSize = 8.0;
+            $spaceWidth = (float) ($span['space_width'] ?? 0);
+            if ($spaceWidth <= 0) $spaceWidth = $fontSize * 0.278; // Helvetica space ratio
+            $fontSourceName = trim((string) ($span['embedded_font_name'] ?? $span['font'] ?? ''));
+            $fontFamily = trim((string) ($span['embedded_font_family'] ?? $span['font'] ?? $fontSourceName));
+            $normalized[] = [
+                'text'        => $text,
+                'bold'        => $weight >= 600,
+                'italic'      => $italic,
+                'x0'          => (float) $bbox[0],
+                'font_size'   => $fontSize,
+                'space_width' => $spaceWidth,
+                'font_family' => $fontFamily,
+                'font_source_name' => $fontSourceName,
+            ];
+        }
+        if (count($normalized) < 2) return null;
+
+        // Sort by x position so spans are in visual reading order.
+        usort($normalized, fn ($a, $b) => $a['x0'] <=> $b['x0']);
+
+        // Compute visible-whitespace gap (in space-glyph count) between
+        // consecutive source spans. The source PDF positions spans with
+        // content-stream moves rather than literal spaces (e.g. "2" at
+        // x=54.4 then "Trade…" at x=74.42, with no whitespace chars in
+        // either span). The writer's rich-branch parser preserves bare
+        // whitespace between styled <span>s as standalone runs (see
+        // overwriteAnnotationText/promoted_1_63 where 8 literal spaces
+        // between bold "12c" and roman "County…" rendered the correct
+        // visual gap), so we emit the gap as N regular spaces sized from
+        // the source's own space_width.
+        $gapSpaces = [];
+        for ($i = 0; $i < count($normalized) - 1; $i++) {
+            $cur = $normalized[$i];
+            $next = $normalized[$i + 1];
+            $glyphWidth = mb_strlen($cur['text']) * $cur['font_size'] * 0.5;
+            $visibleGap = ($next['x0'] - $cur['x0']) - $glyphWidth;
+            $sw = max(0.1, $cur['space_width']);
+            $n = (int) round($visibleGap / $sw);
+            $gapSpaces[$i] = max(1, $n);
+        }
+
+        // If every span has identical style, nothing to preserve.
+        $signatures = array_map(
+            fn ($s) => ($s['bold'] ? '1' : '0') . ':' . ($s['italic'] ? '1' : '0'),
+            $normalized
+        );
+        if (count(array_unique($signatures)) < 2) return null;
+
+        // Split new text at whitespace runs into exactly N chunks (one per
+        // span). preg_split with PREG_SPLIT_DELIM_CAPTURE preserves the
+        // separators so we can re-emit them between styled <span>s.
+        $n     = count($normalized);
+        $parts = preg_split('/(\s+)/u', $newText, -1, PREG_SPLIT_DELIM_CAPTURE);
+        if (!is_array($parts)) return null;
+        // parts is [word, sep, word, sep, ..., word] — extract word/sep pairs.
+        $wordChunks = [];
+        for ($i = 0; $i < count($parts); $i += 2) {
+            $wordChunks[] = [
+                'text' => $parts[$i] ?? '',
+                'sep'  => $parts[$i + 1] ?? '',
+            ];
+        }
+        // Need at least n word-chunks to align with n spans; otherwise the
+        // user didn't preserve the visual split (e.g. typed "12cCounty...").
+        if (count($wordChunks) < $n) return null;
+
+        // Take the first n-1 word-chunks as-is; collapse all remaining
+        // chunks into the final span so the body keeps any internal spaces.
+        $aligned = array_slice($wordChunks, 0, $n - 1);
+        $tail    = array_slice($wordChunks, $n - 1);
+        $tailText = '';
+        foreach ($tail as $idx => $t) {
+            $tailText .= $t['text'];
+            // Append the trailing separator only if it's not the final chunk.
+            if ($idx !== count($tail) - 1) {
+                $tailText .= $t['sep'];
+            }
+        }
+        $aligned[] = ['text' => $tailText, 'sep' => ''];
+
+        $html = '';
+        $plain = '';
+        foreach ($normalized as $idx => $span) {
+            $chunk = $aligned[$idx]['text'];
+            $sep   = $aligned[$idx]['sep'];
+            $styles = [
+                'font-weight:' . ($span['bold'] ? '700' : '400'),
+                'font-style:' . ($span['italic'] ? 'italic' : 'normal'),
+            ];
+            $fontSourceName = trim((string) ($span['font_source_name'] ?? $span['font_family'] ?? ''));
+            if ($fontSourceName !== '') {
+                $safeFontSourceName = preg_replace('/[^A-Za-z0-9 _+.,-]/', '', $fontSourceName) ?? '';
+                if ($safeFontSourceName !== '') {
+                    $styles[] = 'font-family:&quot;' . htmlspecialchars($safeFontSourceName, ENT_QUOTES | ENT_HTML5, 'UTF-8') . '&quot;';
+                }
+            }
+            $escaped = htmlspecialchars($chunk, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            $html .= '<span style="' . implode(';', $styles) . '">' . $escaped . '</span>';
+            $plain .= $chunk;
+            if ($idx < count($normalized) - 1) {
+                // Emit the positional gap as bare regular spaces between
+                // styled <span>s. The Python writer's rich-branch parser
+                // captures bare whitespace between spans as a standalone
+                // run, and the writer emits each run with embedded-font
+                // metrics so multiple spaces actually consume their full
+                // width (unlike MuPDF htmlbox which would collapse them).
+                $count = $gapSpaces[$idx] ?? 1;
+                $gap = str_repeat(' ', $count);
+                $html .= $gap;
+                $plain .= $gap;
+            } elseif ($sep !== '') {
+                $html .= htmlspecialchars($sep, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                $plain .= $sep;
+            }
+        }
+        return ['html' => $html, 'text' => $plain];
     }
 
     private function isPdfjsVisibleExportAnnotation(array $annotation): bool
@@ -9367,6 +9687,369 @@ class DocumentController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Annotations applied directly to PDF.',
+        ]);
+    }
+
+    /**
+     * Overwrite a single saved annotation's text and re-render the PDF using
+     * the same writer that the pdfjs=1 / pdfjs visible export path uses
+     * (apply_annotations_direct_new.py). Looks up the annotation by id in
+     * pdf_state for the given document, replaces its text, redacts the source
+     * glyphs, draws the new overlay, and writes the result back to the
+     * document file. Persists the updated annotation_data on the pdf_state row.
+     *
+     * Expected JSON payload:
+     * {
+     *   "document_id": 4161,
+     *   "annotation_id": "pdfjs_4161_1_1:18",
+     *   "text": "New text to stamp in place of the original",
+     *   "original_text": "optional exact original text (data-original-text) — used as a tiebreaker when the runtime annotation_id (e.g. pdfjs_*_*_source:*) does not directly match a persisted row",
+     *   "session_id": "optional-editor-session-id",
+     *   "generate_new": 1 // optional — when truthy, file_url/view_url include a cache-busting ?v=<ts>
+     * }
+     */
+    public function overwriteAnnotationText(Request $request)
+    {
+        $validated = $request->validate([
+            'document_id'   => ['required', 'integer'],
+            'annotation_id' => ['required', 'string'],
+            'text'          => ['present', 'string'],
+            'original_text' => ['nullable', 'string'],
+            'session_id'    => ['nullable', 'string'],
+            'generate_new'  => ['nullable'],
+        ]);
+
+        $document = Document::find((int) $validated['document_id']);
+        if (!$document) {
+            return response()->json([
+                'success'     => false,
+                'message'     => 'Document not found.',
+                'document_id' => (int) $validated['document_id'],
+            ], 404);
+        }
+
+        $annotationId = trim((string) $validated['annotation_id']);
+        $newText      = (string) $validated['text'];
+        $sessionId    = is_string($validated['session_id'] ?? null) ? trim((string) $validated['session_id']) : '';
+        $originalTextHint = is_string($validated['original_text'] ?? null) ? (string) $validated['original_text'] : '';
+
+        if ($annotationId === '') {
+            return response()->json(['success' => false, 'message' => 'annotation_id is required.'], 422);
+        }
+
+        // Locate the saved annotation by its id within this document's pdf_state rows.
+        // The editor uses several runtime id shapes that do not always map
+        // directly to the persisted id:
+        //   * Persisted promoted rows:           promoted_{page1based}_{blockNum}
+        //   * Editor overlay id:                 pdfjs_{docId}_{pageIndex0based}_{uid}
+        //   * Editor source-editor box id:       pdfjs_{docId}_{pageIndex0based}_source:{pageIndex}:{spanIndex}
+        // We collect a few candidate persisted ids, then fall back to a
+        // page-scoped originalText/pdfjsSourceText/text match (using the
+        // optional original_text hint or the new text itself as a tiebreaker)
+        // because source-editor boxes are matched to promoted rows by
+        // geometry+text in the editor, not by id.
+        $candidateIds = [$annotationId];
+        $pageHint = null;
+        if (preg_match('/^pdfjs_\d+_(\d+)_(.+)$/', $annotationId, $m)) {
+            $pageHint = (int) $m[1];                              // zero-based page index
+            $anchor   = $m[2];
+            // strip a leading "source:" so source-editor anchors like
+            // "source:0:15" become "0:15" before we hunt for a trailing uid
+            $anchorForUid = preg_replace('/^source:/', '', $anchor);
+            if (preg_match('/(\d+)\s*$/', $anchorForUid, $u)) {
+                $uid = (int) $u[1];
+                $candidateIds[] = 'promoted_' . ($pageHint + 1) . '_' . $uid;
+            }
+        }
+        $candidateIds = array_values(array_unique($candidateIds));
+
+        $recordQuery = PdfState::query()
+            ->where('document_id', $document->id)
+            ->where(function ($q) use ($candidateIds) {
+                foreach ($candidateIds as $cid) {
+                    $q->orWhereRaw("JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.id')) = ?", [$cid]);
+                }
+            })
+            ->where('state', '!=', 'deleted')
+            ->orderByDesc('updated_at');
+        $record = null;
+        if ($sessionId !== '') {
+            // Prefer a row from the caller's session if one exists, but fall
+            // back to any matching row so the session_id hint is non-fatal.
+            $record = (clone $recordQuery)->where('session_id', $sessionId)->first();
+        }
+        if (!$record) {
+            $record = $recordQuery->first();
+        }
+
+        // Fallback: page-scoped text match. Used for source-editor boxes
+        // whose runtime id (e.g. "pdfjs_4153_0_source:0:15") is not derived
+        // from the persisted "promoted_{page}_{blockNum}" id and therefore
+        // can't be reverse-engineered. Callers should pass `original_text`
+        // (the box's data-original-text) for an exact match.
+        $textCandidates = [];
+        $normalize = static function ($v) {
+            $s = (string) ($v ?? '');
+            $s = preg_replace('/\s+/u', ' ', $s);
+            return trim($s);
+        };
+        if ($originalTextHint !== '') $textCandidates[] = $normalize($originalTextHint);
+        if (!$record && $pageHint !== null && !empty($textCandidates)) {
+            $pageRows = PdfState::query()
+                ->where('document_id', $document->id)
+                ->where('state', '!=', 'deleted')
+                ->orderByDesc('updated_at')
+                ->get(['id', 'annotation_data']);
+            foreach ($pageRows as $row) {
+                $d = is_array($row->annotation_data) ? $row->annotation_data : null;
+                if (!$d) continue;
+                if ((int) ($d['pageIndex'] ?? -1) !== $pageHint) continue;
+                $rowTexts = array_filter([
+                    $normalize($d['originalText'] ?? null),
+                    $normalize($d['pdfjsSourceText'] ?? null),
+                    $normalize($d['text'] ?? null),
+                ], static fn ($v) => $v !== '');
+                foreach ($textCandidates as $cand) {
+                    if ($cand !== '' && in_array($cand, $rowTexts, true)) {
+                        $record = $row;
+                        break 2;
+                    }
+                }
+            }
+        }
+
+        if (!$record || !is_array($record->annotation_data)) {
+            return response()->json([
+                'success'        => false,
+                'message'        => 'Annotation not found for this document. Pass `original_text` (the box\'s data-original-text) if the runtime annotation_id is a source-editor anchor (pdfjs_*_*_source:*).',
+                'document_id'    => $document->id,
+                'annotation_id'  => $annotationId,
+                'tried_ids'      => $candidateIds,
+                'page_hint'      => $pageHint,
+                'original_text'  => $originalTextHint,
+            ], 404);
+        }
+
+        $annotation = $record->annotation_data;
+        if (($annotation['type'] ?? null) !== 'text') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only text annotations can be overwritten via this endpoint.',
+            ], 422);
+        }
+
+        // Capture the original text as the source-text baseline so the writer's
+        // redaction pass knows exactly which glyphs to erase from the canvas.
+        // pdfjsSourceText is already populated for promoted/source-fidelity
+        // boxes; for plain overlay text fall back to the previous `text` value.
+        $previousText  = (string) ($annotation['text'] ?? '');
+        $sourceText    = (string) ($annotation['pdfjsSourceText']
+            ?? $annotation['originalText']
+            ?? $previousText);
+
+        $annotation['text']                  = $newText;
+        if (!isset($annotation['originalText']) || $annotation['originalText'] === '') {
+            $annotation['originalText']      = $sourceText;
+        }
+        if (!isset($annotation['pdfjsSourceText']) || $annotation['pdfjsSourceText'] === '') {
+            $annotation['pdfjsSourceText']   = $sourceText;
+        }
+        // Force the writer to mask the source and stamp the new text. These
+        // flags mirror what the editor sets when the user edits a source-backed
+        // box (see shouldMaskSourceForAnnotation in resources/js/edit-new-pdfjs/main.js).
+        //
+        // Intentionally do NOT set `styleDirty` here: this endpoint changes
+        // only the text, not typography. Setting styleDirty short-circuits
+        // resolve_pdfjs_visible_overlay_typography() in the writer, which is
+        // what matches the replacement glyphs to the source PDF span's actual
+        // font (e.g. ITCFranklinGothicStd-Dem). Without source resolution
+        // the writer falls back to the annotation's stored fontFamily/weight
+        // captured by extraction (lossy — generic family, weight 400), and
+        // the re-stamped text renders in the wrong weight.
+        $annotation['savedTextOverlay']      = true;
+        // Tell resolve_embedded_font_entry() that this is a text-only edit
+        // and the runtime-extracted source font (e.g. the full Demi face
+        // bundled under /public/fonts/runtime-extracted/{id}/) should still
+        // be used despite promotedDirty being set. Without this flag the
+        // writer falls back to bundled Arimo-Regular and the re-stamped
+        // heading looks visibly lighter than the original.
+        $annotation['preserveSourceTypography'] = true;
+        // For promoted (extracted-source) annotations the pdfjs writer
+        // (apply_annotations_direct_new.py) only redacts + restamps when
+        // promotedDirty is truthy — otherwise it short-circuits via
+        // should_preserve_promoted_source_lines() and the edit is a no-op.
+        if ($this->annotationFlagIsTruthy($annotation, 'promotedFromExtraction')
+            || str_starts_with((string) ($annotation['id'] ?? ''), 'promoted_')) {
+            $annotation['promotedDirty']     = true;
+        }
+        if (!isset($annotation['pdfjsEditorMode']) || $annotation['pdfjsEditorMode'] === '') {
+            $annotation['pdfjsEditorMode']   = 'source';
+        }
+        // Rebuild source-mode rich text from sourceSpans even if stale
+        // display-only richTextHtml was persisted earlier. The writer must
+        // see separate runs before it resolves per-run glyph coverage.
+        $annotation = $this->ensureRichTextHtmlForMultiStyleSource($annotation);
+        // Keep the persisted id intact (caller may have passed the runtime form).
+        $persistedAnnotationId = (string) ($annotation['id'] ?? '');
+        $annotation['__documentId']          = $document->id;
+
+        $pdfPath = Storage::path($document->path);
+        if (!file_exists($pdfPath)) {
+            return response()->json(['success' => false, 'message' => 'Document file not found.'], 404);
+        }
+
+        // Always run through the pdfjs visible-export writer
+        // (apply_annotations_direct_new.py) — the same drawer pdfjs=1 uses
+        // for saving. We deliberately skip filterAnnotationsForPdfjsVisibleExport
+        // here because that filter is designed for bulk download where
+        // promoted (extracted-source) rows must be left alone (their glyphs
+        // already exist in the source PDF). For a targeted single-annotation
+        // overwrite we WANT the writer to redact + restamp the source glyphs,
+        // which apply_annotations_direct_new.py does natively when the
+        // annotation carries pdfjsSourceText / sourceText baselines.
+        $sourcePdfPath = $pdfPath;
+        if ($document->original_backup_path && Storage::exists($document->original_backup_path)) {
+            $originalBackupPath = Storage::path($document->original_backup_path);
+            if (file_exists($originalBackupPath)) {
+                $sourcePdfPath = $originalBackupPath;
+            }
+        }
+        $fullAnnotations = [$annotation];
+        $script = base_path('python/pdf-editor/apply_annotations_direct_new.py');
+
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+        $tempDir = storage_path('app/temp');
+        if (!is_dir($tempDir)) {
+            @mkdir($tempDir, 0775, true);
+        }
+
+        $tempPdfPath = $tempDir . '/overwrite_ann_' . $document->id . '_' . Str::uuid() . '.pdf';
+        $annotationsFile = $tempDir . '/overwrite_ann_' . $document->id . '_' . uniqid('', true) . '.json';
+        $backupPath = $tempDir . '/overwrite_ann_backup_' . $document->id . '_' . Str::uuid() . '.pdf';
+
+        if (!@copy($sourcePdfPath, $tempPdfPath)) {
+            return response()->json(['success' => false, 'message' => 'Failed to prepare PDF working copy.'], 500);
+        }
+        @copy($pdfPath, $backupPath);
+
+        $payload = $this->prepareAnnotationsForPython($fullAnnotations);
+        $payload = array_map(static function ($entry) use ($document) {
+            if (is_array($entry)) {
+                $entry['__documentId'] = $document->id;
+            }
+            return $entry;
+        }, $payload);
+        if (empty($payload)) {
+            @unlink($tempPdfPath);
+            @unlink($backupPath);
+            return response()->json([
+                'success' => false,
+                'message' => 'Annotation payload became empty after prepare; nothing to apply.',
+            ], 500);
+        }
+
+        $annotationsJson = json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE);
+        if ($annotationsJson === false || @file_put_contents($annotationsFile, $annotationsJson) === false) {
+            @unlink($tempPdfPath);
+            @unlink($backupPath);
+            return response()->json(['success' => false, 'message' => 'Failed to write annotations payload.'], 500);
+        }
+
+        $command = sprintf(
+            '%s %s %s %s 2>&1',
+            escapeshellarg($pythonBinary),
+            escapeshellarg($script),
+            escapeshellarg($tempPdfPath),
+            escapeshellarg($annotationsFile)
+        );
+
+        $output = [];
+        $returnCode = 0;
+        exec($command, $output, $returnCode);
+
+        $stdout = implode("\n", $output);
+
+        if ($returnCode !== 0) {
+            @unlink($annotationsFile);
+            @unlink($tempPdfPath);
+            @unlink($backupPath);
+            \Log::error('Overwrite annotation text failed', [
+                'document_id'   => $document->id,
+                'annotation_id' => $annotationId,
+                'return_code'   => $returnCode,
+                'output'        => $stdout,
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to redact and stamp the new annotation text.',
+                'error'   => $stdout,
+            ], 500);
+        }
+
+        if (!@copy($tempPdfPath, $pdfPath)) {
+            // Roll back to the pre-call PDF bytes.
+            @copy($backupPath, $pdfPath);
+            @unlink($annotationsFile);
+            @unlink($tempPdfPath);
+            @unlink($backupPath);
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to write the redacted PDF back to the document file.',
+            ], 500);
+        }
+
+        // Keep the annotations payload around for debugging if the env requests it.
+        if (config('app.debug')) {
+            \Log::info('Overwrite annotation text succeeded', [
+                'document_id'   => $document->id,
+                'annotation_id' => $annotationId,
+                'persisted_id'  => $persistedAnnotationId,
+                'pdf_state_id'  => $record->id,
+                'annotations_in_payload' => count($payload),
+                'source_pdf'    => $sourcePdfPath,
+                'writer_output' => $stdout,
+            ]);
+        }
+        @unlink($annotationsFile);
+        @unlink($tempPdfPath);
+        @unlink($backupPath);
+
+        // Persist the annotation update on the pdf_state row so subsequent
+        // editor loads see the new text. Strip the controller-only marker
+        // and restore the original persisted id.
+        $persistedAnnotation = $annotation;
+        unset($persistedAnnotation['__documentId']);
+        if ($persistedAnnotationId !== '') {
+            $persistedAnnotation['id'] = $persistedAnnotationId;
+        }
+        $record->annotation_data = $persistedAnnotation;
+        $record->state = 'saved';
+        if ($sessionId !== '') {
+            $record->session_id = $sessionId;
+        }
+        $record->save();
+
+        $document->size_bytes = @filesize($pdfPath) ?: $document->size_bytes;
+        $document->updated_at = now();
+        $document->saveQuietly();
+
+        // By default return stable URLs (no cache-buster) so callers can reuse
+        // the same link across overwrites. Pass "generate_new": 1 in the
+        // payload to get a fresh cache-busted URL that forces a reload.
+        $generateNew = $request->boolean('generate_new');
+        $bust = $generateNew ? ('?v=' . urlencode((string) now()->timestamp)) : '';
+
+        return response()->json([
+            'success'        => true,
+            'message'        => 'Annotation text overwritten and PDF re-rendered.',
+            'document_id'    => $document->id,
+            'annotation_id'  => $annotationId,
+            'previous_text'  => $previousText,
+            'new_text'       => $newText,
+            'pdf_state_id'   => $record->id,
+            'session_id'     => $record->session_id,
+            'file_url'       => route('documents.file', $document) . $bust,
+            'view_url'       => route('documents.editPdfjs', $document) . $bust,
         ]);
     }
 

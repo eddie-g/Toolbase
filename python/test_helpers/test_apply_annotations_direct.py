@@ -535,6 +535,80 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         self.assertEqual(page.add_redact_annot_calls[0][1].get("fill"), None)
         self.assertGreaterEqual(len(page.apply_redactions_calls), 1)
 
+    def test_moved_promoted_source_erase_uses_original_source_mask_not_target(self):
+        annotation = {
+            "promotedFromExtraction": True,
+            "promotedDirty": True,
+            "movedTextOverlay": True,
+            "backgroundColor": "transparent",
+            "pdfjsSourceMaskX": 20,
+            "pdfjsSourceMaskY": 700,
+            "pdfjsSourceMaskW": 80,
+            "pdfjsSourceMaskH": 10,
+        }
+        page = self.FakePage()
+        target_rect = fitz.Rect(100, 100, 180, 124)
+        target_lines = [{"rect": fitz.Rect(110, 102, 170, 118)}]
+
+        self.module.erase_promoted_source_text_region(page, annotation, target_rect, target_lines)
+
+        self.assertEqual(len(page.add_redact_annot_calls), 1)
+        redact_rect = page.add_redact_annot_calls[0][0]
+        self.assertAlmostEqual(redact_rect.x0, 20.0, places=3)
+        self.assertAlmostEqual(redact_rect.y0, 82.0, places=3)
+        self.assertAlmostEqual(redact_rect.x1, 100.0, places=3)
+        self.assertAlmostEqual(redact_rect.y1, 92.0, places=3)
+
+    def test_moved_promoted_source_erase_without_source_mask_does_not_erase_target(self):
+        annotation = {
+            "promotedFromExtraction": True,
+            "promotedDirty": True,
+            "movedTextOverlay": True,
+            "backgroundColor": "transparent",
+        }
+        page = self.FakePage()
+        target_rect = fitz.Rect(100, 100, 180, 124)
+        target_lines = [{"rect": fitz.Rect(110, 102, 170, 118)}]
+
+        self.module.erase_promoted_source_text_region(page, annotation, target_rect, target_lines)
+
+        self.assertEqual(len(page.add_redact_annot_calls), 0)
+        self.assertEqual(len(page.draw_rect_calls), 0)
+        self.assertEqual(len(page.shape_draw_rect_calls), 0)
+
+    def test_pdfjs_moved_source_span_runs_preserve_superscript_position(self):
+        annotation = {
+            "type": "text",
+            "savedTextOverlay": True,
+            "movedTextOverlay": True,
+            "pdfjsSourceFidelity": True,
+            "pdfjsSourceX": 10,
+            "pdfjsSourceY": 20,
+            "pdfjsSourceW": 40,
+            "pdfjsSourceH": 12,
+            "text": "Box3",
+            "fontFamily": "Helvetica",
+            "fontSize": 10,
+            "pdfjsSourceSpanRuns": (
+                '[{"text":"Box","leftPx":10,"rightPx":28,"topPx":100,"bottomPx":112,'
+                '"fontSizePx":10,"fontFamily":"Helvetica"},'
+                '{"text":"3","leftPx":28,"rightPx":33,"topPx":90,"bottomPx":98,'
+                '"fontSizePx":6,"fontFamily":"Helvetica"}]'
+            ),
+        }
+        layout = self.module.normalize_pdfjs_source_span_run_layout(
+            annotation,
+            "Box3",
+            fitz.Rect(100, 100, 140, 120),
+            10,
+        )
+
+        self.assertEqual(len(layout), 1)
+        spans = layout[0]["spans"]
+        self.assertEqual([span["text"] for span in spans], ["Box", "3"])
+        self.assertLess(spans[1]["font_size"], spans[0]["font_size"])
+        self.assertLess(spans[1]["baseline_y"], spans[0]["baseline_y"])
+
     def test_promoted_source_erase_draws_fill_when_custom_background_requested(self):
         annotation = {
             "promotedFromExtraction": True,
@@ -1125,6 +1199,68 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
                 embedded_font_entry={"clean_name": "TimesNewRomanPSMT"},
             )
         )
+
+    def test_promoted_rich_span_layout_maps_saved_runs_to_source_faces(self):
+        annotation = {
+            "id": "promoted_1_22",
+            "promotedFromExtraction": True,
+            "preserveSourceTypography": True,
+            "text": "5a Mailing address (room, apt., suite no. and street, or P.O. box)",
+            "richTextHtml": (
+                '<span style="font-weight:700;font-style:normal">5a</span>   '
+                '<span style="font-weight:400;font-style:normal">'
+                'Mailing address (room, apt., suite no. and street, or P.O. box)'
+                '</span>'
+            ),
+            "fontFamily": "HelveticaNeueLTStd",
+            "fontSourceName": "HelveticaNeueLTStd-Bd",
+            "fontSize": 8,
+            "fontWeight": "700",
+            "fontStyle": "normal",
+            "textColor": "#000000",
+            "sourceSpans": [
+                {
+                    "text": "5a",
+                    "font": "HelveticaNeueLTStd-Bd",
+                    "embedded_font_name": "HelveticaNeueLTStd-Bd",
+                    "embedded_font_family": "HelveticaNeueLTStd",
+                    "font_weight": "700",
+                    "font_style": "normal",
+                    "font_size": 8,
+                },
+                {
+                    "text": "Mailing address (room, apt., suite no. and street, or P.O. box)",
+                    "font": "HelveticaNeueLTStd-Roman",
+                    "embedded_font_name": "HelveticaNeueLTStd-Roman",
+                    "embedded_font_family": "HelveticaNeueLTStd",
+                    "font_weight": "400",
+                    "font_style": "normal",
+                    "font_size": 8,
+                },
+            ],
+        }
+
+        ops = self.module.parse_rich_text_layout_ops(annotation)
+        wrapped = self.module.wrap_rich_text_layout_ops(ops, 1000)
+        layout = [{
+            "rect": fitz.Rect(0, 0, 1000, 12),
+            "rotation": 0,
+            "spans": [
+                {
+                    **run,
+                    "rect": fitz.Rect(0, 0, 10, 12),
+                    "baseline_x": 0,
+                    "baseline_y": 8,
+                }
+                for run in wrapped[0]
+            ],
+        }]
+
+        repaired = self.module.apply_source_faces_to_rich_span_layout(annotation, layout)
+
+        self.assertEqual(repaired[0]["spans"][0]["font_source_name"], "HelveticaNeueLTStd-Bd")
+        self.assertEqual(repaired[0]["spans"][-1]["font_source_name"], "HelveticaNeueLTStd-Roman")
+        self.assertIn("Mailing address", repaired[0]["spans"][-1]["text"])
 
     def test_drop_preview_side_padding_only_when_padding_causes_single_line_wrap(self):
         font = fitz.Font(fontfile=str(pathlib.Path("python/pdf-editor/fonts/EBGaramond-Regular.ttf")))

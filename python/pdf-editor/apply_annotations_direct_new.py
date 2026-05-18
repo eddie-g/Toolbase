@@ -7,6 +7,7 @@ independent of overlay/text save behavior.
 
 import base64
 import difflib
+import hashlib
 import html
 import io
 import json
@@ -41,6 +42,13 @@ FONT_DIR = os.path.join(SCRIPT_DIR, "fonts")
 PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
 PUBLIC_DIR = os.path.join(PROJECT_ROOT, "public")
 TEMP_DIR = os.path.join(PROJECT_ROOT, "storage", "app", "temp")
+# Admin-uploaded full (non-subsetted) source fonts. Filenames are the
+# original PostScript name (e.g. "ITCFranklinGothicStd-Demi.otf"). Resolved
+# before the runtime-extracted subset for perfect glyph coverage.
+FULL_FONT_DIR = os.path.join(PROJECT_ROOT, "storage", "app", "fonts", "full")
+# Substitute alias config (free metric-compatible fonts mapped by source
+# PostScript name pattern). Edited via config/font_substitutes.json.
+FONT_SUBSTITUTES_PATH = os.path.join(PROJECT_ROOT, "config", "font_substitutes.json")
 SOURCE_PDF_CACHE: dict[str, fitz.Document] = {}
 PROMOTED_SOURCE_REPLAY_PAD = 0.1
 
@@ -1194,9 +1202,37 @@ def redact_pdfjs_source_text(page: fitz.Page, ann: Dict[str, Any], source_rect: 
     redaction_rects = pdfjs_source_text_redaction_rects(page, ann, source_rect)
     if not redaction_rects:
         return False
-    added = False
+    # Tighten each redaction rect to per-word rects whose centroid falls
+    # inside it. fitz's apply_redactions removes ANY text whose bbox merely
+    # intersects the rect, so a tall heading's source rect can clip the
+    # adjacent row by 1-2pt and wipe an entire neighboring word
+    # (e.g. erasing "December 2025" when redacting "SS-4"). Centroid-based
+    # selection keeps neighbors intact.
+    try:
+        page_words = page.get_text("words")
+    except Exception:
+        page_words = []
+    tightened_rects: list[fitz.Rect] = []
     for redaction_rect in redaction_rects:
         rect = fitz.Rect(redaction_rect) & page.rect
+        if rect.is_empty:
+            continue
+        matched_any = False
+        for w in page_words:
+            x0, y0, x1, y1 = float(w[0]), float(w[1]), float(w[2]), float(w[3])
+            cx = (x0 + x1) * 0.5
+            cy = (y0 + y1) * 0.5
+            if rect.x0 <= cx <= rect.x1 and rect.y0 <= cy <= rect.y1:
+                tightened_rects.append(fitz.Rect(x0, y0, x1, y1))
+                matched_any = True
+        if not matched_any:
+            tightened_rects.append(rect)
+    added = False
+    for rect in tightened_rects:
+        rect = fitz.Rect(rect) & page.rect
+        if rect.is_empty or rect.width <= 0.05 or rect.height <= 0.05:
+            continue
+        rect = _shrink_redact_rect_to_avoid_neighbors(page, rect, page_words)
         if rect.is_empty or rect.width <= 0.05 or rect.height <= 0.05:
             continue
         try:
@@ -3006,6 +3042,7 @@ def resolve_embedded_font_entry(ann: Dict[str, Any]) -> Optional[Dict[str, Any]]
 
     if (
         bool(ann.get("promotedFromExtraction"))
+        and not _boolish(ann.get("preserveSourceTypography"))
         and (
             bool(ann.get("promotedDirty"))
             or bool(ann.get("userAuthored"))
@@ -3014,6 +3051,21 @@ def resolve_embedded_font_entry(ann: Dict[str, Any]) -> Optional[Dict[str, Any]]
         )
     ):
         return None
+
+    text_to_stamp = str(ann.get("text") or "")
+    preserve_source = _boolish(ann.get("preserveSourceTypography")) and bool(
+        ann.get("promotedFromExtraction")
+    )
+
+    # ── Priority 1: admin-uploaded FULL source font ────────────────────────
+    # If a non-subsetted OTF/TTF for this PostScript name has been dropped
+    # into storage/app/fonts/full/, prefer it over everything else. Perfect
+    # glyph coverage AND exact face.
+    raw_exact_psname = str(ann.get("fontSourceName") or "").strip()
+    if preserve_source and raw_exact_psname:
+        full_entry = resolve_full_font_entry(raw_exact_psname, text_to_stamp)
+        if full_entry is not None:
+            return full_entry
 
     document_id = ann.get("__documentId") or ann.get("documentId")
     metadata = load_embedded_font_metadata(document_id)
@@ -3095,7 +3147,224 @@ def resolve_embedded_font_entry(ann: Dict[str, Any]) -> Optional[Dict[str, Any]]
                 "fontfile": absolute_path,
             }
 
+    # Validate glyph coverage for promoted text-only overwrites. Runtime
+    # extracted source fonts are themselves subsets of the original embedded
+    # font: they only carry glyphs that appeared in the source PDF. Stamping
+    # new text that introduces unseen characters (e.g. "Flying" needs F/g but
+    # the source heading is "Application for Employer Identification Number"
+    # so the subset has no F or g) renders those chars as `.notdef` boxes.
+    # When that happens, try the substitute-alias chain (free metric-
+    # compatible bundled font) before giving up to the Arimo fallback.
+    if (
+        best_entry is not None
+        and preserve_source
+        and text_to_stamp
+        and not _embedded_font_covers_text(best_entry.get("fontfile"), text_to_stamp)
+    ):
+        sub_entry = resolve_substitute_font_entry(raw_exact_psname or raw_exact, ann)
+        if sub_entry is not None:
+            return sub_entry
+        return None
+
+    # Even if the extracted subset matched well, when the user asked for
+    # source-typography preservation but the subset doesn't cover the text,
+    # we landed in the branch above. The remaining cases (no embedded match
+    # found at all, but the user still wants the source face) get one more
+    # shot via the substitute table.
+    if best_entry is None and preserve_source and raw_exact_psname and text_to_stamp:
+        sub_entry = resolve_substitute_font_entry(raw_exact_psname, ann)
+        if sub_entry is not None:
+            return sub_entry
+
     return best_entry
+
+
+# ── Full-font + substitute resolvers ───────────────────────────────────────
+
+
+_FULL_FONT_INDEX: dict[str, str] | None = None
+_FONT_SUBSTITUTES: list[dict[str, Any]] | None = None
+
+
+def _build_full_font_index() -> dict[str, str]:
+    index: dict[str, str] = {}
+    if not os.path.isdir(FULL_FONT_DIR):
+        return index
+    try:
+        entries = os.listdir(FULL_FONT_DIR)
+    except OSError:
+        return index
+    for name in entries:
+        path = os.path.join(FULL_FONT_DIR, name)
+        if not os.path.isfile(path):
+            continue
+        stem, ext = os.path.splitext(name)
+        if ext.lower() not in {".otf", ".ttf"}:
+            continue
+        key = stem.strip().lower()
+        if key and key not in index:
+            index[key] = path
+    return index
+
+
+def _get_full_font_index() -> dict[str, str]:
+    global _FULL_FONT_INDEX
+    if _FULL_FONT_INDEX is None:
+        _FULL_FONT_INDEX = _build_full_font_index()
+    return _FULL_FONT_INDEX
+
+
+def resolve_full_font_entry(psname: str, text: str) -> Optional[Dict[str, Any]]:
+    """Return a font entry for an admin-uploaded full font matching `psname`
+    iff that font covers every glyph in `text`. Returns None otherwise."""
+    if not psname:
+        return None
+    index = _get_full_font_index()
+    if not index:
+        return None
+    key = psname.strip().lower()
+    path = index.get(key)
+    if path is None:
+        # Tolerate trailing "-Dem"/"-Demi" inconsistencies between source
+        # PDF font name and uploaded file by trying a few normalizations.
+        for variant in {key.replace("-dem", "-demi"), key.replace("-demi", "-dem"),
+                        key.replace(" ", ""), key.replace("_", "-")}:
+            if variant in index:
+                path = index[variant]
+                break
+    if path is None:
+        return None
+    if text and not _embedded_font_covers_text(path, text):
+        # Uploaded font is itself incomplete for the requested text.
+        return None
+    return {
+        "clean_name": os.path.splitext(os.path.basename(path))[0],
+        "family": os.path.splitext(os.path.basename(path))[0],
+        "css_weight": 400,
+        "css_style": "normal",
+        "fontfile": path,
+        "source": "full",
+    }
+
+
+def _load_font_substitutes() -> list[dict[str, Any]]:
+    global _FONT_SUBSTITUTES
+    if _FONT_SUBSTITUTES is not None:
+        return _FONT_SUBSTITUTES
+    rules: list[dict[str, Any]] = []
+    try:
+        with open(FONT_SUBSTITUTES_PATH, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        for rule in data.get("rules") or []:
+            if not isinstance(rule, dict):
+                continue
+            match = str(rule.get("match") or "").strip()
+            family = str(rule.get("family") or "").strip()
+            if not match or not family:
+                continue
+            rules.append({
+                "match": match.lower(),
+                "family": family,
+                "weight": str(rule.get("weight") or "normal").strip().lower(),
+                "style": str(rule.get("style") or "normal").strip().lower(),
+            })
+    except (OSError, json.JSONDecodeError):
+        pass
+    _FONT_SUBSTITUTES = rules
+    return rules
+
+
+def resolve_substitute_font_entry(psname: str, ann: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Map a commercial source font PostScript name onto a bundled free
+    metric-compatible substitute by consulting config/font_substitutes.json.
+    Returns a font entry pointing at the appropriate bundled file.
+
+    Note: substitutes are intentionally weight/style-aware via the
+    annotation's own font weight/style, NOT the substitute rule's defaults,
+    so a Bold span still gets a bold variant of the substitute family."""
+    if not psname:
+        return None
+    needle = psname.strip().lower()
+    if not needle:
+        return None
+    rule = None
+    for candidate in _load_font_substitutes():
+        if candidate["match"] in needle:
+            rule = candidate
+            break
+    if rule is None:
+        return None
+    family = rule["family"]
+    variants = FONT_FILE_VARIANTS.get(family)
+    if not variants:
+        return None
+
+    wants_bold = is_bold_weight(resolve_annotation_font_weight(ann))
+    wants_italic = is_italic_style(resolve_annotation_font_style(ann))
+    if wants_bold and wants_italic and variants.get("boldItalic"):
+        variant_key = "boldItalic"
+    elif wants_italic and variants.get("italic"):
+        variant_key = "italic"
+    elif wants_bold and variants.get("bold"):
+        variant_key = "bold"
+    else:
+        variant_key = "normal" if "normal" in variants else next(iter(variants))
+
+    path = variants.get(variant_key)
+    if not path or not os.path.isfile(path):
+        # Fall back to whatever variant of this family does exist.
+        for key in ("normal", "bold", "italic", "boldItalic"):
+            cand = variants.get(key)
+            if cand and os.path.isfile(cand):
+                path = cand
+                variant_key = key
+                break
+        else:
+            return None
+
+    return {
+        "clean_name": f"{family}-{variant_key}",
+        "family": family,
+        "css_weight": 700 if "bold" in variant_key.lower() else 400,
+        "css_style": "italic" if "italic" in variant_key.lower() else "normal",
+        "fontfile": path,
+        "source": "substitute",
+        "substitute_for": psname,
+    }
+
+
+_FONT_CMAP_CACHE: dict[str, set[int]] = {}
+
+
+def _embedded_font_covers_text(fontfile: Any, text: str) -> bool:
+    path = str(fontfile or "").strip()
+    if not path or not text:
+        return True
+    cmap = _FONT_CMAP_CACHE.get(path)
+    if cmap is None:
+        try:
+            from fontTools.ttLib import TTFont
+            tt = TTFont(path, lazy=True)
+            cmap = set(tt.getBestCmap().keys())
+            tt.close()
+        except Exception:
+            # Without a way to introspect we cannot prove the font is missing
+            # glyphs — assume it covers and let the writer attempt the stamp.
+            cmap = set()
+            _FONT_CMAP_CACHE[path] = cmap
+            return True
+        _FONT_CMAP_CACHE[path] = cmap
+    if not cmap:
+        return True
+    for ch in text:
+        codepoint = ord(ch)
+        # Whitespace and common controls are fine even if the cmap doesn't
+        # list them explicitly — fitz handles them via the space-width hint.
+        if codepoint <= 0x20:
+            continue
+        if codepoint not in cmap:
+            return False
+    return True
 
 
 def should_use_htmlbox_for_text(ann: Dict[str, Any], embedded_font_entry: Optional[Dict[str, Any]]) -> bool:
@@ -4240,6 +4509,7 @@ def _measure_style_run_text_width(
         "documentId": style.get("documentId"),
         "__documentId": style.get("__documentId"),
         "promotedFromExtraction": style.get("promotedFromExtraction"),
+        "preserveSourceTypography": style.get("preserveSourceTypography"),
         "promotedDirty": style.get("promotedDirty"),
         "userAuthored": style.get("userAuthored"),
         "styleDirty": style.get("styleDirty"),
@@ -4252,7 +4522,8 @@ def _measure_style_run_text_width(
     cache_key = _style_run_signature(style)
     font = font_cache.get(cache_key) if font_cache is not None else None
     if font is None:
-        fontfile = resolve_text_fontfile(style_ann)
+        style_ann["text"] = text
+        fontfile = resolve_text_fontfile_with_coverage(style_ann, text)
         if fontfile:
             font = fitz.Font(fontfile=fontfile)
         else:
@@ -4449,6 +4720,182 @@ def validate_style_mapped_span_layout(
     return actual_lines == normalized_expected
 
 
+def _rich_text_runs_per_line_for_dirty_promoted(
+    ann: Dict[str, Any],
+) -> list[list[Dict[str, Any]]]:
+    """Parse the annotation's richTextHtml into per-line styled runs.
+
+    Returns ``[]`` when there is no rich text payload, when the parser
+    yields a single uniform style across the whole annotation (nothing
+    per-run to preserve), or when parsing fails. Each returned run carries
+    only the fields the rich text actually specified (font_weight,
+    font_style, underline, color) plus ``text`` — callers merge these on
+    top of the line's base_style so font_family/size/document context are
+    inherited.
+    """
+    ops = parse_rich_text_layout_ops(ann)
+    if not ops:
+        return []
+    lines: list[list[Dict[str, Any]]] = [[]]
+    for op in ops:
+        if op.get("type") == "break":
+            lines.append([])
+            continue
+        if op.get("type") != "text":
+            continue
+        text = sanitize_pdf_text(op.get("text") or "")
+        if not text:
+            continue
+        run: Dict[str, Any] = {"text": text}
+        for key in ("font_weight", "font_style", "underline", "color"):
+            value = op.get(key)
+            if value is None or value == "":
+                continue
+            run[key] = value
+        lines[-1].append(run)
+    while lines and not lines[-1]:
+        lines.pop()
+    if not lines:
+        return []
+    # If every emitted run shares the same style signature there is no
+    # per-run formatting to preserve — let the source-span char-mapper run.
+    signatures = {
+        _style_run_signature(run)
+        for line_runs in lines
+        for run in line_runs
+    }
+    if len(signatures) < 2:
+        return []
+    return lines
+
+
+def _rich_runs_text_matches_line(
+    runs: list[Dict[str, Any]],
+    expected_line_text: str,
+) -> bool:
+    """True when concatenating run texts reproduces the expected line text
+    after whitespace normalization. This guards against editor-side rich
+    HTML drift (e.g. the user saved richTextHtml from a previous edit and
+    then changed plain `text` to something the rich payload no longer
+    matches) — in that case we fall back to the char-mapper.
+    """
+    rendered = "".join(sanitize_pdf_text(run.get("text") or "") for run in runs)
+    return _normalize_rich_text_compare_text(rendered) == _normalize_rich_text_compare_text(expected_line_text)
+
+
+def _match_source_span_face_for_style(
+    source_line_spans: list[Dict[str, Any]],
+    desired_weight: Any,
+    desired_style: Any,
+) -> Optional[Dict[str, Any]]:
+    """Find the source span whose weight+style best matches the requested
+    pair so a rich-text run can adopt that span's embedded font face.
+
+    Used by the dirty-promoted span layout to map per-run weight overrides
+    (e.g. "<b>12c</b>") onto the actual -Bd / -It / -BdIt subset the
+    source PDF embedded, instead of falling back to the dominant span's
+    regular face. Returns ``None`` when no source spans are present or
+    when nothing matches both weight and style (caller keeps the dominant
+    face in that case so coverage gates still apply).
+    """
+    if not source_line_spans:
+        return None
+    desired_bold = is_bold_weight(str(desired_weight or ""))
+    desired_italic = is_italic_style(str(desired_style or ""))
+    exact_match: Optional[Dict[str, Any]] = None
+    weight_only_match: Optional[Dict[str, Any]] = None
+    style_only_match: Optional[Dict[str, Any]] = None
+    for span in source_line_spans:
+        if not isinstance(span, dict):
+            continue
+        span_bold = is_bold_weight(str(span.get("font_weight") or ""))
+        span_italic = is_italic_style(str(span.get("font_style") or ""))
+        if span_bold == desired_bold and span_italic == desired_italic:
+            if exact_match is None:
+                exact_match = span
+        elif span_bold == desired_bold and weight_only_match is None:
+            weight_only_match = span
+        elif span_italic == desired_italic and style_only_match is None:
+            style_only_match = span
+    return exact_match or weight_only_match or style_only_match
+
+
+def _source_face_spans_for_annotation(ann: Dict[str, Any]) -> list[Dict[str, Any]]:
+    source_spans = ann.get("sourceSpans")
+    if not isinstance(source_spans, list):
+        return []
+
+    faces: list[Dict[str, Any]] = []
+    for span in source_spans:
+        if not isinstance(span, dict):
+            continue
+        font_source_name = str(
+            span.get("embedded_font_name")
+            or span.get("font")
+            or ann.get("fontSourceName")
+            or ann.get("fontFamily")
+            or ""
+        ).strip()
+        font_family = str(
+            span.get("embedded_font_family")
+            or span.get("font")
+            or ann.get("fontFamily")
+            or font_source_name
+            or ""
+        ).strip()
+        if not font_source_name and not font_family:
+            continue
+        faces.append({
+            "font_family": font_family or font_source_name,
+            "font_source_name": font_source_name or font_family,
+            "font_size": float(span.get("fontSize") or span.get("font_size") or ann.get("fontSize") or 12),
+            "font_weight": str(span.get("fontWeight") or span.get("font_weight") or ann.get("fontWeight") or "400"),
+            "font_style": str(span.get("fontStyle") or span.get("font_style") or ann.get("fontStyle") or "normal"),
+        })
+    return faces
+
+
+def apply_source_faces_to_rich_span_layout(
+    ann: Dict[str, Any],
+    layout: list[Dict[str, Any]],
+) -> list[Dict[str, Any]]:
+    if not (
+        bool(ann.get("promotedFromExtraction"))
+        and _boolish(ann.get("preserveSourceTypography"))
+    ):
+        return layout
+
+    source_faces = _source_face_spans_for_annotation(ann)
+    if not source_faces:
+        return layout
+
+    repaired_layout: list[Dict[str, Any]] = []
+    for line_entry in layout:
+        if not isinstance(line_entry, dict):
+            repaired_layout.append(line_entry)
+            continue
+        repaired_line = dict(line_entry)
+        repaired_spans: list[Dict[str, Any]] = []
+        for span_entry in line_entry.get("spans") or []:
+            if not isinstance(span_entry, dict):
+                continue
+            repaired_span = dict(span_entry)
+            matched_face = _match_source_span_face_for_style(
+                source_faces,
+                repaired_span.get("font_weight"),
+                repaired_span.get("font_style"),
+            )
+            if matched_face is not None:
+                for face_key in ("font_family", "font_source_name", "font_size"):
+                    face_value = matched_face.get(face_key)
+                    if face_value is not None and face_value != "":
+                        repaired_span[face_key] = face_value
+            repaired_spans.append(repaired_span)
+        repaired_line["spans"] = repaired_spans
+        repaired_layout.append(repaired_line)
+    return repaired_layout
+
+
 def build_dirty_promoted_style_mapped_span_layout(
     ann: Dict[str, Any],
     text: str,
@@ -4561,6 +5008,18 @@ def build_dirty_promoted_style_mapped_span_layout(
             spans_by_line[best_index].append(span)
 
     font_cache: Dict[tuple[Any, ...], fitz.Font] = {}
+    # Pre-parse multi-run rich text so the per-line loop can prefer the
+    # annotation's own per-run weight/style over the source-span char-mapper.
+    # The char-mapper does diff-based matching against the original source
+    # text, so any *new* characters that don't appear in the source (e.g.
+    # changing "5b City..." → "12c        County and max downs") fall back
+    # to the line's base_style — losing the bold prefix that the source's
+    # first span carried. The rich text payload (either editor-authored or
+    # synthesized by DocumentController::synthesizeRichTextFromSourceSpans
+    # when overwriting multi-span source annotations) already records the
+    # intended per-run formatting, so when it's present and multi-run we
+    # honour it directly.
+    rich_text_runs_per_line = _rich_text_runs_per_line_for_dirty_promoted(ann)
     mapped_layout: list[Dict[str, Any]] = []
     for index, line_entry in enumerate(line_layout):
         line_rect = line_entry.get("rect")
@@ -4596,11 +5055,49 @@ def build_dirty_promoted_style_mapped_span_layout(
         ):
             mapped_runs = [{**base_style, "text": expected_lines[index]}]
         else:
-            mapped_runs = _map_source_styles_onto_saved_text(
-                expected_lines[index],
-                source_line_spans,
-                base_style,
+            rich_runs_for_line = (
+                rich_text_runs_per_line[index]
+                if rich_text_runs_per_line and index < len(rich_text_runs_per_line)
+                else None
             )
+            if rich_runs_for_line and _rich_runs_text_matches_line(
+                rich_runs_for_line, expected_lines[index]
+            ):
+                mapped_runs = []
+                for run in rich_runs_for_line:
+                    merged = {**base_style, **run}
+                    # The rich text only specifies semantic weight/style
+                    # ("font-weight:700"), not which embedded font file to
+                    # use. base_style.font_source_name is the *dominant*
+                    # span's face (e.g. HelveticaNeueLTStd-Roman) so a
+                    # weight=700 run would otherwise still render in the
+                    # regular face. Look at the original source spans on
+                    # this line for one with matching weight+style and
+                    # adopt its font face so the bold prefix actually
+                    # picks up the -Bd (or equivalent) variant the source
+                    # PDF already embedded.
+                    matched_face = _match_source_span_face_for_style(
+                        source_line_spans,
+                        merged.get("font_weight"),
+                        merged.get("font_style"),
+                    )
+                    if matched_face is not None:
+                        for face_key in (
+                            "font_family",
+                            "font_source_name",
+                            "font_size",
+                        ):
+                            face_value = matched_face.get(face_key)
+                            if face_value is None or face_value == "":
+                                continue
+                            merged[face_key] = face_value
+                    mapped_runs.append(merged)
+            else:
+                mapped_runs = _map_source_styles_onto_saved_text(
+                    expected_lines[index],
+                    source_line_spans,
+                    base_style,
+                )
         if not mapped_runs:
             return []
 
@@ -4701,10 +5198,11 @@ def draw_text_using_exact_source_lines(
         if line_font_size <= 0:
             line_font_size = font_size
 
-        line_fontfile = resolve_text_fontfile(line_ann)
+        line_ann["text"] = line_text
+        line_fontfile = resolve_text_fontfile_with_coverage(line_ann, line_text)
         if line_fontfile:
             line_font = fitz.Font(fontfile=line_fontfile)
-            line_fontname = resolve_text_font_resource_name(line_ann)
+            line_fontname = resolve_text_font_resource_name(line_ann, line_fontfile)
             page.insert_font(fontname=line_fontname, fontfile=line_fontfile)
         else:
             resolved_fontname = resolve_text_fontname(line_ann)
@@ -4838,10 +5336,19 @@ def draw_text_using_exact_source_spans(
                 except Exception:
                     span_font_size = 12.0
 
-            span_fontfile = resolve_text_fontfile(span_ann)
+            # Coverage check inside `resolve_embedded_font_entry` validates the
+            # selected face against `ann["text"]`. Since each source span uses its
+            # own subsetted runtime font (e.g. the bold -Bd subset only contains
+            # glyphs that appeared in the source bold text), we must scope the
+            # coverage check to JUST this span's text. Otherwise glyphs that
+            # appear only in OTHER spans (e.g. 'x'/'s' in the regular tail) would
+            # cause this span's bold face to fail coverage and fall back to a
+            # generic substitute, losing the bold style.
+            span_ann["text"] = span_text
+            span_fontfile = resolve_text_fontfile_with_coverage(span_ann, span_text)
             if span_fontfile:
                 span_font = fitz.Font(fontfile=span_fontfile)
-                span_fontname = resolve_text_font_resource_name(span_ann)
+                span_fontname = resolve_text_font_resource_name(span_ann, span_fontfile)
                 page.insert_font(fontname=span_fontname, fontfile=span_fontfile)
             else:
                 span_fontname = resolve_text_fontname(span_ann)
@@ -5047,12 +5554,51 @@ def resolve_text_fontfile(ann: Dict[str, Any]) -> Optional[str]:
     return materialized if materialized and os.path.exists(materialized) else candidate
 
 
-def resolve_text_font_resource_name(ann: Dict[str, Any]) -> str:
+def resolve_text_fontfile_with_coverage(ann: Dict[str, Any], text: str) -> Optional[str]:
+    """Resolve a font file only if it can encode the exact text to draw.
+
+    Runtime-extracted PDF fonts are usually subsets. A style match is not
+    enough: if the subset does not contain every glyph in this run, using it
+    emits .notdef boxes in the exported PDF.
+    """
+    scoped_ann = dict(ann)
+    scoped_ann["text"] = text
+    fontfile = resolve_text_fontfile(scoped_ann)
+    if fontfile and _embedded_font_covers_text(fontfile, text):
+        return fontfile
+
+    source_name = str(scoped_ann.get("fontSourceName") or scoped_ann.get("fontFamily") or "").strip()
+    substitute = resolve_substitute_font_entry(source_name, scoped_ann)
+    sub_fontfile = substitute.get("fontfile") if substitute else None
+    if sub_fontfile and _embedded_font_covers_text(sub_fontfile, text):
+        return sub_fontfile
+
+    fallback_ann = dict(scoped_ann)
+    fallback_ann["pdfjsAvoidEmbeddedSourceFont"] = True
+    fallback_ann["fontSourceName"] = fallback_ann.get("fontFamily") or "Helvetica"
+    fallback_fontfile = resolve_text_fontfile(fallback_ann)
+    if fallback_fontfile and _embedded_font_covers_text(fallback_fontfile, text):
+        return fallback_fontfile
+
+    return None
+
+
+def _font_resource_file_suffix(fontfile: Any) -> str:
+    path = str(fontfile or "").strip()
+    if not path:
+        return ""
+    resolved = os.path.realpath(path)
+    digest = hashlib.sha1(resolved.encode("utf-8", errors="ignore")).hexdigest()[:10]
+    return f"F{digest}"
+
+
+def resolve_text_font_resource_name(ann: Dict[str, Any], fontfile: Any = None) -> str:
+    file_suffix = _font_resource_file_suffix(fontfile)
     embedded_entry = resolve_embedded_font_entry(ann)
     if embedded_entry:
         clean_name = str(embedded_entry.get("clean_name") or "Embedded").strip()
         safe_name = "".join(ch for ch in clean_name if ch.isalnum()) or "Embedded"
-        return f"Annot{safe_name}"
+        return f"Annot{safe_name}{file_suffix}"
     family = normalize_font_family(ann.get("fontFamily"))
     is_bold = is_bold_weight(resolve_annotation_font_weight(ann))
     is_italic = is_italic_style(resolve_annotation_font_style(ann))
@@ -5063,7 +5609,7 @@ def resolve_text_font_resource_name(ann: Dict[str, Any]) -> str:
         suffix = "Bold"
     elif is_italic:
         suffix = "Italic"
-    return f"Annot{family}{suffix}"
+    return f"Annot{family}{suffix}{file_suffix}"
 
 
 def parse_text_align(value: Any) -> int:
@@ -5283,6 +5829,118 @@ def should_preserve_pdfjs_moved_source_line(ann: Dict[str, Any], text: str) -> b
     return "\n" not in normalized
 
 
+def normalize_pdfjs_source_span_run_layout(
+    ann: Dict[str, Any],
+    text: str,
+    current_rect: fitz.Rect,
+    base_font_size: float,
+) -> list[Dict[str, Any]]:
+    if not is_pdfjs_visible_overlay_text(ann):
+        return []
+    if not _boolish(ann.get("movedTextOverlay")):
+        return []
+    raw = ann.get("pdfjsSourceSpanRuns")
+    if not raw:
+        return []
+    try:
+        items = json.loads(str(raw)) if isinstance(raw, str) else raw
+    except Exception:
+        return []
+    if not isinstance(items, list) or len(items) < 2:
+        return []
+
+    runs: list[Dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        run_text = sanitize_pdfjs_source_text(item.get("text") or "")
+        if not run_text:
+            continue
+        try:
+            left = float(item.get("leftPx"))
+            right = float(item.get("rightPx"))
+            top = float(item.get("topPx"))
+            bottom = float(item.get("bottomPx"))
+        except Exception:
+            continue
+        if right <= left or bottom <= top:
+            continue
+        try:
+            font_size_px = float(item.get("fontSizePx") or 0.0)
+        except Exception:
+            font_size_px = 0.0
+        runs.append({
+            "text": run_text,
+            "left": left,
+            "right": right,
+            "top": top,
+            "bottom": bottom,
+            "font_family": str(item.get("fontFamily") or ann.get("fontFamily") or "Helvetica"),
+            "font_source_name": str(item.get("fontFamily") or ann.get("fontSourceName") or ann.get("fontFamily") or "Helvetica"),
+            "font_size_px": font_size_px,
+            "font_weight": str(item.get("fontWeight") or ann.get("fontWeight") or "400"),
+            "font_style": str(item.get("fontStyle") or ann.get("fontStyle") or "normal"),
+        })
+    if len(runs) < 2:
+        return []
+
+    reconstructed = ""
+    previous = None
+    for run in runs:
+        if previous is not None:
+            gap = max(0.0, float(run["left"]) - float(previous["right"]))
+            space_width = max(1.0, float(previous.get("font_size_px") or run.get("font_size_px") or 8.0) * 0.25)
+            if gap > max(1.0, space_width * 0.45):
+                reconstructed += " "
+        reconstructed += str(run["text"])
+        previous = run
+    if normalize_pdfjs_compare_text(reconstructed) != normalize_pdfjs_compare_text(text):
+        return []
+
+    min_left = min(float(run["left"]) for run in runs)
+    max_right = max(float(run["right"]) for run in runs)
+    min_top = min(float(run["top"]) for run in runs)
+    max_bottom = max(float(run["bottom"]) for run in runs)
+    source_width = max(1.0, max_right - min_left)
+    source_height = max(1.0, max_bottom - min_top)
+    max_font_size_px = max(1.0, max(float(run.get("font_size_px") or 0.0) for run in runs))
+    x_scale = float(current_rect.width) / source_width if current_rect.width > 0 else 1.0
+    y_scale = float(current_rect.height) / source_height if current_rect.height > 0 else 1.0
+
+    spans: list[Dict[str, Any]] = []
+    for run in runs:
+        font_size = float(base_font_size or 12.0)
+        if float(run.get("font_size_px") or 0.0) > 0:
+            font_size *= float(run["font_size_px"]) / max_font_size_px
+        rect = fitz.Rect(
+            current_rect.x0 + ((float(run["left"]) - min_left) * x_scale),
+            current_rect.y0 + ((float(run["top"]) - min_top) * y_scale),
+            current_rect.x0 + ((float(run["right"]) - min_left) * x_scale),
+            current_rect.y0 + ((float(run["bottom"]) - min_top) * y_scale),
+        )
+        baseline_y = rect.y0 + (font_size * 0.8)
+        spans.append({
+            "text": run["text"],
+            "rect": rect,
+            "baseline_x": rect.x0,
+            "baseline_y": baseline_y,
+            "font_family": run["font_family"],
+            "font_source_name": run["font_source_name"],
+            "font_size": font_size,
+            "font_weight": run["font_weight"],
+            "font_style": run["font_style"],
+            "color": ann.get("textColor") or "#000000",
+            "underline": bool(ann.get("underline")),
+            "span_rotation": 0.0,
+        })
+
+    return [{
+        "rect": current_rect,
+        "rotation": 0.0,
+        "spans": spans,
+    }]
+
+
 def fit_moved_pdfjs_line_to_page_bounds(
     page: fitz.Page,
     draw_x: float,
@@ -5381,6 +6039,73 @@ def draw_rotated_line(
     shape.commit(overlay=True)
 
 
+def _shrink_redact_rect_to_avoid_neighbors(
+    page: fitz.Page,
+    rect: fitz.Rect,
+    page_words: list,
+) -> fitz.Rect:
+    """Shrink a redact rect so it no longer intersects any neighboring word
+    whose centroid lies outside the ORIGINAL rect.
+
+    fitz.apply_redactions removes any text whose word-bbox intersects the
+    redact rect (even by 1pt). Tall heading word-bboxes often descend past
+    their visual baseline and clip the next row, wiping unrelated words.
+
+    The centroid check is performed against the IMMUTABLE original rect to
+    avoid cascading collapse (Bug 1): if we measured against the shrinking
+    rect, an earlier eviction could push a legitimate target outside the
+    shrunk bounds and cause it to be evicted in turn.
+
+    If a collateral word's bbox engulfs the rect on all four sides we have
+    no edge to shrink to (Bug 2: empty candidates → ValueError). In that
+    degenerate case we leave the rect alone for this neighbor; the caller
+    accepts that some collateral damage is unavoidable rather than crashing.
+    """
+    if rect is None or rect.is_empty or not page_words:
+        return rect
+    original = fitz.Rect(rect)
+    shrunk = fitz.Rect(rect)
+    for w in page_words:
+        try:
+            x0, y0, x1, y1 = float(w[0]), float(w[1]), float(w[2]), float(w[3])
+        except Exception:
+            continue
+        cx = (x0 + x1) * 0.5
+        cy = (y0 + y1) * 0.5
+        # Target classification uses the ORIGINAL rect, not `shrunk`.
+        if original.x0 <= cx <= original.x1 and original.y0 <= cy <= original.y1:
+            continue
+        # Skip if the word no longer intersects what's left of the rect.
+        if x1 <= shrunk.x0 or x0 >= shrunk.x1 or y1 <= shrunk.y0 or y0 >= shrunk.y1:
+            continue
+        # Build edge-shrink candidates. Each entry is (edge, new_value, cost).
+        candidates = []
+        if y0 >= shrunk.y0:
+            candidates.append(("y1", y0 - 0.05, shrunk.y1 - y0))
+        if y1 <= shrunk.y1:
+            candidates.append(("y0", y1 + 0.05, y1 - shrunk.y0))
+        if x0 >= shrunk.x0:
+            candidates.append(("x1", x0 - 0.05, shrunk.x1 - x0))
+        if x1 <= shrunk.x1:
+            candidates.append(("x0", x1 + 0.05, x1 - shrunk.x0))
+        # If the word engulfs the rect on every side, no edge move can
+        # evict it. Skip rather than crash.
+        if not candidates:
+            continue
+        edge, new_value, _ = min(candidates, key=lambda c: c[2])
+        if edge == "y1":
+            shrunk.y1 = max(shrunk.y0, new_value)
+        elif edge == "y0":
+            shrunk.y0 = min(shrunk.y1, new_value)
+        elif edge == "x1":
+            shrunk.x1 = max(shrunk.x0, new_value)
+        elif edge == "x0":
+            shrunk.x0 = min(shrunk.x1, new_value)
+        if shrunk.is_empty:
+            return shrunk
+    return shrunk
+
+
 def _apply_redactions_compat(page: fitz.Page) -> None:
     try:
         page.apply_redactions(images=0, graphics=0)
@@ -5408,6 +6133,13 @@ def erase_promoted_source_text_region(
         return
     if not bool(ann.get("promotedFromExtraction")) or not bool(ann.get("promotedDirty")):
         return
+    if _boolish(ann.get("movedTextOverlay")):
+        source_mask_rect = _pdfjs_explicit_source_mask_rect(page, ann)
+        if source_mask_rect is None or source_mask_rect.is_empty:
+            return
+        current_rect = source_mask_rect
+        lines = []
+        morph = None
     if current_rect.is_empty:
         return
 
@@ -5435,7 +6167,32 @@ def erase_promoted_source_text_region(
 
         if redact_rects:
             try:
+                # Convert each broad erase rect into per-word redact rects
+                # centered inside it. This stops fitz's apply_redactions from
+                # nuking neighboring rows when our erase rect overlaps them
+                # by a few points (e.g. a tall heading whose source line bbox
+                # extends ~1-2pt into the next line's text).
+                tightened: list[fitz.Rect] = []
+                try:
+                    page_words = page.get_text("words")
+                except Exception:
+                    page_words = []
                 for erase_rect in redact_rects:
+                    matched = False
+                    for w in page_words:
+                        x0, y0, x1, y1 = float(w[0]), float(w[1]), float(w[2]), float(w[3])
+                        cx = (x0 + x1) * 0.5
+                        cy = (y0 + y1) * 0.5
+                        if (erase_rect.x0 <= cx <= erase_rect.x1
+                                and erase_rect.y0 <= cy <= erase_rect.y1):
+                            tightened.append(fitz.Rect(x0, y0, x1, y1))
+                            matched = True
+                    if not matched:
+                        tightened.append(erase_rect)
+                for erase_rect in tightened:
+                    erase_rect = _shrink_redact_rect_to_avoid_neighbors(page, erase_rect, page_words)
+                    if erase_rect.is_empty or erase_rect.width <= 0.05 or erase_rect.height <= 0.05:
+                        continue
                     page.add_redact_annot(erase_rect, fill=None)
                 _apply_redactions_compat(page)
                 return
@@ -6072,11 +6829,11 @@ def draw_text(
             and should_prefer_pdf_base_font_for_pdfjs_source_overlay(render_ann, text)
         )
     )
-    fontfile = None if prefer_pdf_font_text_rendering else resolve_text_fontfile(render_ann)
+    fontfile = None if prefer_pdf_font_text_rendering else resolve_text_fontfile_with_coverage(render_ann, text)
     if fontfile:
         try:
             custom_font = fitz.Font(fontfile=fontfile)
-            fontname = resolve_text_font_resource_name(render_ann)
+            fontname = resolve_text_font_resource_name(render_ann, fontfile)
             page.insert_font(fontname=fontname, fontfile=fontfile)
         except Exception:
             custom_font = None
@@ -6107,6 +6864,12 @@ def draw_text(
             pdfjs_visible_overlay
             and should_preserve_pdfjs_moved_source_line(render_ann, text)
         )
+        pdfjs_source_span_run_layout = normalize_pdfjs_source_span_run_layout(
+            render_ann,
+            text,
+            rect,
+            size,
+        ) if preserve_pdfjs_moved_source_line else []
         if (
             pdfjs_visible_overlay
             and _boolish(render_ann.get("pdfjsUseSourceTypography"))
@@ -6174,6 +6937,17 @@ def draw_text(
         if mask_only:
             return
         if (
+            pdfjs_source_span_run_layout
+            and draw_text_using_exact_source_spans(
+                page,
+                render_ann,
+                pdfjs_source_span_run_layout,
+                opacity,
+                morph,
+            )
+        ):
+            return
+        if (
             dirty_promoted_span_layout
             and draw_text_using_exact_source_spans(
                 page,
@@ -6221,6 +6995,10 @@ def draw_text(
             abs(rotation) < 1e-6
             and pdfjs_scale_x == 1.0
             and not _boolish(render_ann.get("pdfjsUseSourceTypography"))
+            and not (
+                bool(render_ann.get("promotedFromExtraction"))
+                and _boolish(render_ann.get("preserveSourceTypography"))
+            )
             and should_use_htmlbox_for_text(render_ann, embedded_font_entry)
             and not prefer_pdf_font_text_rendering
         ):
@@ -6309,6 +7087,7 @@ def draw_text(
                 align,
                 ascender,
             )
+            rich_span_layout = apply_source_faces_to_rich_span_layout(render_ann, rich_span_layout)
             if rich_span_layout and draw_text_using_exact_source_spans(
                 page,
                 ann,
