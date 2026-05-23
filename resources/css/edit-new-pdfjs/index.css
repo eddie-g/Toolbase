@@ -243,6 +243,7 @@ body.enpv-body.enpv-viewer-ready .enpv-loading-screen {
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
     background: #fff;
     overflow: visible !important;
+    isolation: isolate;
 }
 
 /* ----------------------------------------------------------------------
@@ -300,9 +301,20 @@ body.enpv-edit-on .pdfViewer .textLayer br { pointer-events: auto; }
 body.enpv-edit-on .pdfViewer .textLayer span[data-enpv-page]:not(.markedContent) {
     cursor: pointer !important;
 }
-body.enpv-edit-on .pdfViewer .textLayer span[data-enpv-page]:not(.markedContent):hover {
+body.enpv-edit-on .pdfViewer .textLayer span[data-enpv-page]:not(.markedContent):not([data-enpv-moved-source-hidden="1"]):hover {
     outline: 1px dashed rgba(59, 130, 246, 0.8) !important;
     background-color: rgba(147, 197, 253, 0.18) !important;
+}
+body.enpv-body .pdfViewer .textLayer [data-enpv-moved-source-hidden="1"],
+body.enpv-body .pdfViewer .textLayer [data-enpv-moved-source-hidden="1"] * {
+    pointer-events: none !important;
+    user-select: none !important;
+}
+body.enpv-body .pdfViewer .textLayer span[data-enpv-moved-source-hidden="1"],
+body.enpv-body .pdfViewer .textLayer [data-enpv-moved-source-hidden="1"] span {
+    color: transparent !important;
+    background: transparent !important;
+    outline: none !important;
 }
 body.enpv-add-text-on #viewerContainer,
 body.enpv-add-text-on .pdfViewer .page,
@@ -310,7 +322,8 @@ body.enpv-add-text-on .pdfViewer .page * {
     cursor: text !important;
 }
 .enpv-text-drag-selection,
-.text-drag-selection {
+.text-drag-selection,
+.enpv-marquee-selection {
     position: absolute;
     border: 2px dashed rgba(110, 231, 183, 0.9);
     background: rgba(110, 231, 183, 0.12);
@@ -319,10 +332,14 @@ body.enpv-add-text-on .pdfViewer .page * {
     z-index: 100010;
     box-sizing: border-box;
 }
+.enpv-marquee-selection {
+    border-color: rgba(59, 130, 246, 0.95);
+    background: rgba(59, 130, 246, 0.13);
+}
 .enpv-annotation-box-layer {
     position: absolute;
     inset: 0;
-    z-index: 100010;
+    z-index: 30;
     /* Layer itself is transparent; individual boxes are interactive when
      * edit mode is on so they can be selected and dragged. */
     pointer-events: none;
@@ -331,17 +348,18 @@ body.enpv-add-text-on .pdfViewer .page * {
 .enpv-source-mask-layer {
     position: absolute;
     inset: 0;
-    z-index: 100000;
+    z-index: 10;
     pointer-events: none;
     overflow: visible;
 }
 body.enpv-body .pdfViewer .page > .annotationLayer {
-    z-index: 100001;
+    z-index: 20;
 }
 .enpv-annotation-box {
     position: absolute;
     box-sizing: border-box;
     border: 1px dashed rgba(96, 165, 250, 0.55);
+    outline: none;
     /* Default transparent so the form's many overlapping text-run boxes
      * don't compound into a wash of blue. The hover/selected/editing
      * rules below add fill on demand. */
@@ -381,7 +399,7 @@ body.enpv-body .pdfViewer .page > .annotationLayer {
     font-style: var(--enpv-font-style, normal);
     outline: none;
     cursor: text;
-    user-select: text;
+    user-select: none;
 }
 .enpv-annotation-box.is-editing {
     background: transparent;
@@ -394,6 +412,7 @@ body.enpv-body .pdfViewer .page > .annotationLayer {
 }
 .enpv-annotation-box.is-editing .enpv-text-content {
     display: block;
+    user-select: text;
 }
 .enpv-annotation-box.is-user-sized-text .enpv-text-content {
     overflow: hidden;
@@ -429,6 +448,13 @@ body.enpv-edit-on .enpv-annotation-box:not(.is-persisted-overlay):not(.is-editin
 body.enpv-edit-on .enpv-annotation-box:not(.is-persisted-overlay):not(.is-editing).is-selected {
     background: transparent;
 }
+body.enpv-edit-on .enpv-annotation-box {
+    border: none;
+    outline: 1px dashed rgba(96, 165, 250, 0.55);
+}
+body.enpv-edit-on .enpv-annotation-box.is-selected {
+    outline: 1px solid rgba(59, 130, 246, 0.95);
+}
 body.enpv-edit-on .enpv-annotation-box.has-custom-bg:not(.is-editing):hover,
 body.enpv-edit-on .enpv-annotation-box.has-custom-bg:not(.is-editing).is-selected {
     background: var(--enpv-bg-color, transparent);
@@ -436,6 +462,11 @@ body.enpv-edit-on .enpv-annotation-box.has-custom-bg:not(.is-editing).is-selecte
 .enpv-annotation-box.is-rich-editor:not(.is-editing) .enpv-text-content {
     display: block;
     line-height: var(--enpv-line-height, 1);
+}
+body.enpv-edit-on .enpv-annotation-box.is-source-handle:not(.is-editing) .enpv-text-content,
+body.enpv-edit-on .enpv-annotation-box.is-image-ocr-handle:not(.is-editing) .enpv-text-content,
+body:not(.enpv-edit-on) .enpv-annotation-box.is-image-ocr-handle:not(.is-editing) .enpv-text-content {
+    display: none !important;
 }
 .enpv-annotation-box.is-selected.is-editing {
     background: transparent;
@@ -456,9 +487,7 @@ body.enpv-edit-on .enpv-annotation-box.has-custom-bg:not(.is-editing).is-selecte
 .enpv-annotation-box.is-persisted-overlay:not(.is-editing)[data-vertical-align="top"] .enpv-text-content,
 body.enpv-edit-on .enpv-annotation-box.is-rich-editor:not(.is-editing)[data-vertical-align="top"] .enpv-text-content,
 body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay[data-vertical-align="top"] .enpv-text-content {
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-start;
+    display: block;
 }
 .enpv-annotation-box.is-persisted-overlay:not(.is-editing)[data-vertical-align="middle"] .enpv-text-content,
 body.enpv-edit-on .enpv-annotation-box.is-rich-editor:not(.is-editing)[data-vertical-align="middle"] .enpv-text-content,
@@ -498,6 +527,13 @@ body:not(.enpv-edit-on) .enpv-annotation-box.enpv-shape-box.is-selected {
     border: 1px solid rgba(59, 130, 246, 0.95);
     box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.5);
 }
+body:not(.enpv-edit-on) .enpv-annotation-box.enpv-shape-box[data-shape-type="line"].is-selected,
+body.enpv-edit-on .enpv-annotation-box.enpv-shape-box[data-shape-type="line"],
+body.enpv-shape-on .enpv-annotation-box.enpv-shape-box[data-shape-type="line"].is-selected {
+    border: none;
+    outline: none;
+    box-shadow: none;
+}
 body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay.is-editing {
     border: 1px dashed rgba(96, 165, 250, 0.55);
     pointer-events: auto;
@@ -506,6 +542,13 @@ body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay[data-user-crea
     border: 1px solid rgba(59, 130, 246, 0.95);
     box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.5);
     pointer-events: auto;
+}
+body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay.enpv-shape-box[data-shape-type="line"][data-user-created="1"].is-selected,
+body.enpv-edit-on .enpv-annotation-box.is-persisted-overlay.enpv-shape-box[data-shape-type="line"][data-user-created="1"],
+body.enpv-shape-on .enpv-annotation-box.is-persisted-overlay.enpv-shape-box[data-shape-type="line"][data-user-created="1"].is-selected {
+    border: none;
+    outline: none;
+    box-shadow: none;
 }
 body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay.is-editing .enpv-text-content {
     pointer-events: auto;
@@ -532,10 +575,26 @@ body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay:hover {
 .enpv-source-mask {
     z-index: 0;
 }
+.pdfViewer .textLayer [data-enpv-deleted-source="1"],
+.pdfViewer .textLayer [data-enpv-moved-source-hidden="1"],
+.pdfViewer .textLayer [data-enpv-clean-promoted-hidden="1"] {
+    color: transparent !important;
+    opacity: 0 !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+}
 .enpv-annotation-box.is-dragging {
     cursor: grabbing;
     opacity: 0.85;
     will-change: transform;
+}
+.enpv-annotation-box.is-multi-selected {
+    border-color: rgba(37, 99, 235, 0.95);
+    outline: 1px solid rgba(37, 99, 235, 0.95);
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.22);
+}
+.enpv-annotation-box.is-multi-selected.is-dragging {
+    opacity: 0.85;
 }
 /* Resize handles: 4 dots placed on the midpoints of the box edges.
  * Only visible when the box is selected. Each handle gets a distinct
@@ -566,7 +625,14 @@ body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay:hover {
 .enpv-resize-handle.se { top: 100%; left: 100%; cursor: nwse-resize; }
 .enpv-resize-handle[data-edge="line-start"],
 .enpv-resize-handle[data-edge="line-end"] {
-    cursor: move;
+    width: 14px;
+    height: 14px;
+    margin: -7px 0 0 -7px;
+    cursor: grab;
+}
+.enpv-resize-handle[data-edge="line-start"]:active,
+.enpv-resize-handle[data-edge="line-end"]:active {
+    cursor: grabbing;
 }
 body.enpv-resizing,
 body.enpv-resizing * { user-select: none !important; }

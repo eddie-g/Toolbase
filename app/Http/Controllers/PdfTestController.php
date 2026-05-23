@@ -1762,6 +1762,269 @@ PYTHON;
         return $annotation;
     }
 
+    private function sourceSpanVisualText(array $span): string
+    {
+        return trim(preg_replace('/\s+/u', ' ', $this->sourceSpanDisplayText($span)) ?? '');
+    }
+
+    private function sourceSpanTextLooksLikeFieldLabel(string $text): bool
+    {
+        $text = trim($text);
+        if ($text === '') {
+            return false;
+        }
+
+        return preg_match('/^(?:\d{1,3}[a-z]?|[a-z])(?:[.)])?$/u', $text) === 1;
+    }
+
+    private function sourceSpanTextLooksLikeBodyLabel(string $text): bool
+    {
+        $text = trim($text);
+
+        return $text !== '' && preg_match('/[\pL]/u', $text) === 1;
+    }
+
+    private function positionedSourceSpansForSegmentation(array $annotation): array
+    {
+        $positioned = [];
+        foreach ((is_array($annotation['sourceSpans'] ?? null) ? $annotation['sourceSpans'] : []) as $span) {
+            if (!is_array($span)) {
+                continue;
+            }
+
+            $bbox = $this->sourceSpanBBox($span);
+            $text = $this->sourceSpanVisualText($span);
+            if (!$bbox || $text === '') {
+                continue;
+            }
+
+            $span['__normalized_bbox'] = $bbox;
+            $span['__visual_text'] = $text;
+            $positioned[] = $span;
+        }
+
+        usort($positioned, static function (array $leftSpan, array $rightSpan): int {
+            $leftBBox = $leftSpan['__normalized_bbox'];
+            $rightBBox = $rightSpan['__normalized_bbox'];
+            $topDelta = (float) $leftBBox[1] - (float) $rightBBox[1];
+            if (abs($topDelta) > 1.0) {
+                return $topDelta < 0 ? -1 : 1;
+            }
+
+            return ((float) $leftBBox[0]) <=> ((float) $rightBBox[0]);
+        });
+
+        return $positioned;
+    }
+
+    private function sourceSpansAreSingleVisualLine(array $spans): bool
+    {
+        if (count($spans) < 2) {
+            return false;
+        }
+
+        $firstBBox = $spans[0]['__normalized_bbox'] ?? null;
+        if (!is_array($firstBBox) || count($firstBBox) < 4) {
+            return false;
+        }
+
+        $top = (float) $firstBBox[1];
+        $bottom = (float) $firstBBox[3];
+        $height = max(1.0, $bottom - $top);
+        $center = ($top + $bottom) / 2.0;
+
+        foreach (array_slice($spans, 1) as $span) {
+            $bbox = $span['__normalized_bbox'] ?? null;
+            if (!is_array($bbox) || count($bbox) < 4) {
+                return false;
+            }
+            $spanTop = (float) $bbox[1];
+            $spanBottom = (float) $bbox[3];
+            $spanHeight = max(1.0, $spanBottom - $spanTop);
+            $spanCenter = ($spanTop + $spanBottom) / 2.0;
+            $verticalOverlap = max(0.0, min($bottom, $spanBottom) - max($top, $spanTop));
+            if ($verticalOverlap < min($height, $spanHeight) * 0.35 && abs($spanCenter - $center) > max(2.0, min($height, $spanHeight) * 0.75)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function sourceSpanUnionBBox(array $spans): ?array
+    {
+        $boxes = array_values(array_filter(array_map(
+            static fn (array $span): ?array => is_array($span['__normalized_bbox'] ?? null) ? $span['__normalized_bbox'] : null,
+            $spans
+        )));
+        if (empty($boxes)) {
+            return null;
+        }
+
+        return [
+            min(array_map(static fn (array $bbox): float => (float) $bbox[0], $boxes)),
+            min(array_map(static fn (array $bbox): float => (float) $bbox[1], $boxes)),
+            max(array_map(static fn (array $bbox): float => (float) $bbox[2], $boxes)),
+            max(array_map(static fn (array $bbox): float => (float) $bbox[3], $boxes)),
+        ];
+    }
+
+    private function sourceSpansSegmentText(array $spans): string
+    {
+        $parts = [];
+        foreach ($spans as $span) {
+            $text = $this->sourceSpanVisualText($span);
+            if ($text !== '') {
+                $parts[] = $text;
+            }
+        }
+
+        return trim(preg_replace('/\s+/u', ' ', implode(' ', $parts)) ?? '');
+    }
+
+    private function sourceSpanStyleValue(array $span, array $annotation, string $field, string $fallback = ''): string
+    {
+        return trim((string) (
+            $span[$field]
+            ?? $span[Str::camel($field)]
+            ?? $annotation[Str::camel($field)]
+            ?? $annotation[$field]
+            ?? $fallback
+        ));
+    }
+
+    private function promotedAnnotationFieldLabelSegments(array $annotation): array
+    {
+        if (empty($annotation['promotedFromExtraction']) || $this->promotedAnnotationHasUnsafeMergeEdits($annotation)) {
+            return [$annotation];
+        }
+
+        $annotationId = trim((string) ($annotation['id'] ?? ''));
+        if ($annotationId === '' || str_contains($annotationId, '_seg_')) {
+            return [$annotation];
+        }
+
+        $spans = $this->positionedSourceSpansForSegmentation($annotation);
+        if (!$this->sourceSpansAreSingleVisualLine($spans)) {
+            return [$annotation];
+        }
+
+        $firstText = $this->sourceSpanVisualText($spans[0]);
+        $remainingSpans = array_slice($spans, 1);
+        $remainingText = $this->sourceSpansSegmentText($remainingSpans);
+        if (!$this->sourceSpanTextLooksLikeFieldLabel($firstText) || !$this->sourceSpanTextLooksLikeBodyLabel($remainingText)) {
+            return [$annotation];
+        }
+
+        $rootSourceKey = trim((string) ($annotation['promotedSourceKey'] ?? ''));
+        if ($rootSourceKey === '') {
+            $rootSourceKey = trim((string) ($annotation['id'] ?? ''));
+        }
+        $segments = [
+            [
+                'role' => 'field_label',
+                'spans' => [$spans[0]],
+                'text' => $firstText,
+            ],
+            [
+                'role' => 'field_body_label',
+                'spans' => $remainingSpans,
+                'text' => $remainingText,
+            ],
+        ];
+
+        $result = [];
+        foreach ($segments as $index => $segment) {
+            $bbox = $this->sourceSpanUnionBBox($segment['spans']);
+            if (!$bbox || $segment['text'] === '') {
+                continue;
+            }
+
+            $styleSpan = $segment['spans'][0] ?? [];
+            $segmentAnnotation = $annotation;
+            $segmentAnnotation['id'] = $annotationId . '_seg_' . $index;
+            $segmentAnnotation['text'] = $segment['text'];
+            $segmentAnnotation['originalText'] = $segment['text'];
+            $segmentAnnotation['sourceTextLines'] = [$segment['text']];
+            $segmentAnnotation['sourceLineBBoxes'] = [$bbox];
+            $segmentAnnotation['sourceSpans'] = array_values(array_map(static function (array $span): array {
+                unset($span['__normalized_bbox'], $span['__visual_text']);
+                return $span;
+            }, $segment['spans']));
+            $segmentAnnotation['promotedParentId'] = $annotationId;
+            $segmentAnnotation['promotedSegmentIndex'] = $index;
+            $segmentAnnotation['promotedSegmentCount'] = count($segments);
+            $segmentAnnotation['promotedSegmentRole'] = $segment['role'];
+            $segmentAnnotation['promotedSourceRootKey'] = $rootSourceKey;
+            $segmentAnnotation['promotedSourceKey'] = $rootSourceKey . '__seg_' . $index;
+            $segmentAnnotation['fontWeight'] = $this->sourceSpanStyleValue($styleSpan, $annotation, 'font_weight', (string) ($annotation['fontWeight'] ?? '400')) ?: '400';
+            $segmentAnnotation['fontStyle'] = filter_var($styleSpan['italic'] ?? false, FILTER_VALIDATE_BOOLEAN) ? 'italic' : ($this->sourceSpanStyleValue($styleSpan, $annotation, 'font_style', (string) ($annotation['fontStyle'] ?? 'normal')) ?: 'normal');
+            $fontSize = $styleSpan['fontSize'] ?? $styleSpan['font_size'] ?? $annotation['fontSize'] ?? null;
+            if (is_numeric($fontSize)) {
+                $segmentAnnotation['fontSize'] = (float) $fontSize;
+                $segmentAnnotation['lineHeight'] = (float) $fontSize;
+            }
+            $fontSourceName = trim((string) ($styleSpan['embedded_font_name'] ?? $styleSpan['font'] ?? $annotation['fontSourceName'] ?? ''));
+            if ($fontSourceName !== '') {
+                $segmentAnnotation['fontSourceName'] = $fontSourceName;
+            }
+            $fontFamily = trim((string) ($styleSpan['embedded_font_family'] ?? $annotation['fontFamily'] ?? ''));
+            if ($fontFamily !== '') {
+                $segmentAnnotation['fontFamily'] = $fontFamily;
+            }
+            $color = trim((string) ($styleSpan['hex_color'] ?? $annotation['textColor'] ?? ''));
+            if ($color !== '') {
+                $segmentAnnotation['textColor'] = $color;
+                $segmentAnnotation['color'] = $color;
+            }
+            unset($segmentAnnotation['richTextHtml']);
+            $segmentAnnotation['promotedDirty'] = false;
+            $segmentAnnotation = $this->syncAnnotationGeometryFromSourceLineBBoxes($segmentAnnotation);
+            $result[] = $segmentAnnotation;
+        }
+
+        return count($result) === count($segments) ? $result : [$annotation];
+    }
+
+    private function splitPromotedFieldLabelAnnotationsForEditor(array $annotations): array
+    {
+        $expanded = [];
+        foreach ($annotations as $annotation) {
+            if (!is_array($annotation)) {
+                $expanded[] = $annotation;
+                continue;
+            }
+
+            foreach ($this->promotedAnnotationFieldLabelSegments($annotation) as $segment) {
+                $expanded[] = $segment;
+            }
+        }
+
+        $byId = [];
+        $unkeyed = [];
+        foreach ($expanded as $annotation) {
+            if (!is_array($annotation)) {
+                $unkeyed[] = $annotation;
+                continue;
+            }
+
+            $id = trim((string) ($annotation['id'] ?? ''));
+            if ($id === '') {
+                $unkeyed[] = $annotation;
+                continue;
+            }
+
+            $current = $byId[$id] ?? null;
+            $currentDbId = is_array($current) && is_numeric($current['db_id'] ?? null) ? (int) $current['db_id'] : -1;
+            $nextDbId = is_numeric($annotation['db_id'] ?? null) ? (int) $annotation['db_id'] : -1;
+            if ($current === null || $nextDbId >= $currentDbId) {
+                $byId[$id] = $annotation;
+            }
+        }
+
+        return array_values(array_merge($unkeyed, array_values($byId)));
+    }
+
     private function promotedAnnotationSourceRect(array $annotation): ?array
     {
         $lineBBoxes = $this->sanitizeSourceLineBBoxes($annotation['sourceLineBBoxes'] ?? []);
@@ -3314,6 +3577,20 @@ PYTHON;
         $annotations = collect($this->normalizeDotLeaderPromotedAnnotationsForEditor(
             $annotations->values()->all()
         ))->values();
+        $annotations = collect($this->splitPromotedFieldLabelAnnotationsForEditor(
+            $annotations->values()->all()
+        ))->values();
+        if (!empty($deletedPromotedSourceKeys)) {
+            $annotations = $annotations
+                ->reject(function ($annotation) use ($deletedPromotedSourceKeys) {
+                    if (!is_array($annotation)) {
+                        return false;
+                    }
+                    $sourceKey = trim((string) ($annotation['promotedSourceKey'] ?? ''));
+                    return $sourceKey !== '' && isset($deletedPromotedSourceKeys[$sourceKey]);
+                })
+                ->values();
+        }
 
         // Load embedded font metadata per source. Reconstruction can render either the
         // current file PDF or the clean/original-backed PDF, and each source may carry

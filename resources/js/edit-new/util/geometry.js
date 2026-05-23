@@ -1,4 +1,4 @@
-// Pure geometry helpers used by the editor: line endpoint snapping,
+// Pure geometry helpers used by the editor: line endpoint constraints,
 // line-bounding-box computation, and rotation degree normalization.
 // No DOM, no editor state.
 
@@ -11,10 +11,14 @@ import { clamp01 } from './math.js';
  * Python PDF exporter, so Y is flipped here.
  */
 export function computeLineBoxGeometry(startX, startY, endX, endY) {
-    const safeStartX = Number(startX) || 0;
-    const safeStartY = Number(startY) || 0;
-    const safeEndX = Number(endX) || 0;
-    const safeEndY = Number(endY) || 0;
+    const sx = Number(startX);
+    const sy = Number(startY);
+    const ex = Number(endX);
+    const ey = Number(endY);
+    const safeStartX = Number.isFinite(sx) ? sx : 0;
+    const safeStartY = Number.isFinite(sy) ? sy : 0;
+    const safeEndX = Number.isFinite(ex) ? ex : 0;
+    const safeEndY = Number.isFinite(ey) ? ey : 0;
     const left = Math.min(safeStartX, safeEndX);
     const bottom = Math.min(safeStartY, safeEndY);
     const top = Math.max(safeStartY, safeEndY);
@@ -32,10 +36,26 @@ export function computeLineBoxGeometry(startX, startY, endX, endY) {
     };
 }
 
+export function constrainLineEndpointTo45(startX, startY, endX, endY) {
+    const sx = Number(startX) || 0;
+    const sy = Number(startY) || 0;
+    const ex = Number(endX) || 0;
+    const ey = Number(endY) || 0;
+    const dx = ex - sx;
+    const dy = ey - sy;
+    const distance = Math.hypot(dx, dy);
+    if (distance < 1) return { x: ex, y: ey };
+    const snapStep = Math.PI / 4;
+    const angle = Math.round(Math.atan2(dy, dx) / snapStep) * snapStep;
+    return {
+        x: sx + Math.cos(angle) * distance,
+        y: sy + Math.sin(angle) * distance,
+    };
+}
+
 /**
- * Mirrors /edit's snapLineEndpoint: when the drag angle is within ~8° of
- * any 45° step (0°/45°/90°/...), snap the end point onto that ray so
- * straight horizontal / vertical / diagonal lines are easy to draw.
+ * Legacy gentle snap helper: when the drag angle is within ~8° of any
+ * 45° step (0°/45°/90°/...), snap the end point onto that ray.
  */
 export function snapLineEndpoint(startX, startY, endX, endY) {
     const sx = Number(startX) || 0;

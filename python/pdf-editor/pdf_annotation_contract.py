@@ -76,7 +76,7 @@ def is_pdfjs_source_backed_text_annotation(annotation: Dict[str, Any]) -> bool:
     if not is_text_annotation(annotation):
         return False
     if _boolish(annotation.get("promotedFromExtraction")):
-        return False
+        return is_pdfjs_promoted_source_backed_text_annotation(annotation)
     return (
         _boolish(annotation.get("savedTextOverlay"))
         or _boolish(annotation.get("pdfjsDeleted"))
@@ -84,6 +84,26 @@ def is_pdfjs_source_backed_text_annotation(annotation: Dict[str, Any]) -> bool:
         or annotation.get("pdfjsSourceY") is not None
         or annotation.get("pdfjsAnchorUid") is not None
     )
+
+
+def is_pdfjs_promoted_source_backed_text_annotation(annotation: Dict[str, Any]) -> bool:
+    if not is_text_annotation(annotation) or not _boolish(annotation.get("promotedFromExtraction")):
+        return False
+    has_source_anchor = (
+        annotation.get("pdfjsSourceX") is not None
+        or annotation.get("pdfjsSourceY") is not None
+        or annotation.get("pdfjsSourceMaskX") is not None
+        or annotation.get("pdfjsAnchorUid") is not None
+    )
+    if not (
+        has_source_anchor
+        or _boolish(annotation.get("savedTextOverlay"))
+        or _boolish(annotation.get("pdfjsDeleted"))
+        or _boolish(annotation.get("movedTextOverlay"))
+    ):
+        return False
+
+    return _boolish(annotation.get("pdfjsDeleted")) or _boolish(annotation.get("movedTextOverlay"))
 
 
 def pdfjs_source_edit_requires_redaction(annotation: Dict[str, Any]) -> bool:
@@ -184,7 +204,8 @@ def normalize_annotation_for_pdf_export(annotation: Dict[str, Any]) -> Dict[str,
         return normalized
 
     if "text" in normalized or normalized.get("type") in (None, "", "text"):
-        normalized["text"] = sanitize_pdf_text(normalized.get("text") or "")
+        sanitizer = sanitize_pdfjs_source_text if is_pdfjs_source_backed_text_annotation(normalized) else sanitize_pdf_text
+        normalized["text"] = sanitizer(normalized.get("text") or "")
 
     for field_name in ("originalText", "savedTextOverlay"):
         if isinstance(normalized.get(field_name), str):

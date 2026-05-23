@@ -94,6 +94,23 @@ class PdfAnnotationContractTests(unittest.TestCase):
 
         self.assertTrue(self.module.pdfjs_source_edit_requires_redaction(annotation))
 
+    def test_pdfjs_source_edit_requires_redaction_for_moved_promoted_source_text(self):
+        annotation = {
+            "id": "promoted_1_44",
+            "type": "text",
+            "promotedFromExtraction": True,
+            "savedTextOverlay": True,
+            "movedTextOverlay": True,
+            "pdfjsSourceX": 73.2,
+            "pdfjsSourceY": 192.79,
+            "pdfjsSourceW": 40,
+            "pdfjsSourceH": 8,
+            "pdfjsSourceText": "Real estate",
+            "text": "Real estate",
+        }
+
+        self.assertTrue(self.module.pdfjs_source_edit_requires_redaction(annotation))
+
     def test_pdfjs_source_edit_skip_mask_disables_redaction(self):
         annotation = {
             "id": "user-text-1",

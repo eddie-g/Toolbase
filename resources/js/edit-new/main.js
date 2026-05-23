@@ -76,7 +76,7 @@ import {
 } from './annotations/box-constrain.js';
 import {
     computeLineBoxGeometry,
-    snapLineEndpoint,
+    constrainLineEndpointTo45,
     normalizeRotationDegrees,
 } from './util/geometry.js';
 import {
@@ -6549,28 +6549,9 @@ import {
         const constrain = Boolean(options && options.constrain);
         const defaults = currentShapeDefaults();
         if (isLineShape(defaults.shapeType)) {
-            // When Shift is held, force-snap the line to the nearest 45°
-            // step regardless of the normal angular threshold, matching
-            // Photoshop's constrain-to-axis behaviour. Without Shift we
-            // fall back to the gentle auto-snap inside snapLineEndpoint.
-            let snapped;
-            if (constrain) {
-                const dx = endPt.x - startPt.x;
-                const dy = endPt.y - startPt.y;
-                const dist = Math.hypot(dx, dy);
-                if (dist < 1) {
-                    snapped = { x: endPt.x, y: endPt.y };
-                } else {
-                    const snapStep = Math.PI / 4;
-                    const snappedAngle = Math.round(Math.atan2(dy, dx) / snapStep) * snapStep;
-                    snapped = {
-                        x: startPt.x + Math.cos(snappedAngle) * dist,
-                        y: startPt.y + Math.sin(snappedAngle) * dist,
-                    };
-                }
-            } else {
-                snapped = snapLineEndpoint(startPt.x, startPt.y, endPt.x, endPt.y);
-            }
+            const snapped = constrain
+                ? constrainLineEndpointTo45(startPt.x, startPt.y, endPt.x, endPt.y)
+                : endPt;
             const lineBox = computeLineBoxGeometry(startPt.x, startPt.y, snapped.x, snapped.y);
             const ann = normalizeShapeAnnotation({
                 _uid: 'new_' + Date.now() + '_' + Math.random().toString(36).slice(2),

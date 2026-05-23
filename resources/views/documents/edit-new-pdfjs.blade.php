@@ -6,16 +6,16 @@
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{{ $document->original_name }} — Edit New (PDF.js viewer)</title>
 
-    {{-- Pre-load pdf.js v4 as a global, mirroring edit-new.blade so any of
-         the legacy partials' inline scripts that touch window.pdfjsLib stay
-         no-op-safe. --}}
-    <script type="module">
-        import * as pdfjsLib from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/legacy/build/pdf.min.mjs';
-        pdfjsLib.GlobalWorkerOptions.workerSrc =
-            'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/legacy/build/pdf.worker.min.mjs';
-        window.pdfjsLib = pdfjsLib;
-        window.dispatchEvent(new Event('pdfjsLibReady'));
-    </script>
+     {{-- Pre-load pdf.js v4 as a global, mirroring edit-new.blade so any of
+           the legacy partials' inline scripts that touch window.pdfjsLib stay
+           no-op-safe. --}}
+     <script type="module">
+          import * as pdfjsLib from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/legacy/build/pdf.min.mjs';
+          pdfjsLib.GlobalWorkerOptions.workerSrc =
+               'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/legacy/build/pdf.worker.min.mjs';
+          window.pdfjsLib = pdfjsLib;
+          window.dispatchEvent(new Event('pdfjsLibReady'));
+     </script>
 
     @vite(['resources/css/app.css', 'resources/js/app.js'])
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -37,6 +37,7 @@
      data-doc-id="{{ $document->id }}"
      data-csrf="{{ csrf_token() }}"
      data-info-url="{{ route('pdfTests.documentInfo', $document) }}"
+     data-fonts-url="{{ route('documents.getFonts', $document) }}"
      data-save-url="{{ route('documents.saveAnnotationState', $document) }}"
      data-overwrite-url="{{ route('documents.overwriteAnnotationText') }}"
      data-download-url="{{ route('documents.downloadAnnotatedPdf', $document) }}"></div>

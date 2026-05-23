@@ -4,8 +4,15 @@
   "sourceOfTruth": {
     "savedAnnotation": "The saved annotation record is authoritative for replacement text and edit state.",
     "sourceGeometry": "pdfjsSourceX, pdfjsSourceY, pdfjsSourceW, and pdfjsSourceH are the immutable source rectangle used for masking/redaction.",
+    "movedMaskGeometry": "For movedTextOverlay source masks, pdfjsSourceX/Y/W/H or sourceBboxX/Y/W/H are the exact immutable saved mask dimensions. DOM geometry, page offsets, visual annotation box dimensions, inflation, or padding must never alter the persisted/browser mask box. During PDF export only, the visual whiteout may be unioned with the matching original PDF glyph bbox for the same source text when the saved PDF.js line box under-covers the actual PDF ink; it must never expand from the moved/current annotation box or unrelated neighboring text.",
     "sourceText": "pdfjsSourceText, falling back to originalText, is the immutable original PDF text for comparison and redaction lookup."
   },
+  "preChangeChecks": [
+    "Before changing PDF.js source mask, moved overlay, sourceSpanRuns, annotation drag, or source bbox persistence code, verify this contract file and preserve movedMaskGeometry unchanged.",
+    "For movedTextOverlay source masks, test at least one actual browser move and assert mask left/top/width/height match the bbox-derived values from sourceBboxX/Y/W/H or pdfjsSourceX/Y/W/H within 0.25px.",
+    "Do not accept a change that fixes visual placement by adding DOM page offsets, using getBoundingClientRect height as source height, inflating the moved mask, or persisting visual annotation box dimensions as source mask dimensions.",
+    "For saved PDF.js moved-source overlays whose PDF.js bbox under-covers the original glyph ink, export must prove it covers only the matching source text glyph bbox near the immutable source box and must run node tests/OverlayEditor/run_pdfjs_moved_source_title_regression.cjs."
+  ],
   "steps": [
     {
       "step": 1,
@@ -134,6 +141,91 @@
       "id": "PDFJS-SOURCE-EDIT-006",
       "title": "Changed source rows need end-to-end tests",
       "rule": "A changed source row must be covered from saved annotation payload through exported PDF text search/render checks."
+    },
+    {
+      "step": 7,
+      "id": "PDFJS-SOURCE-EDIT-007",
+      "title": "Moved source masks keep exact PDF.js bboxes",
+      "rule": "When movedTextOverlay is true, the original-source mask must use the exact saved PDF.js/source bbox rectangle. The mask left, top, width, and height are derived only from pdfjsSourceX/Y/W/H or sourceBboxX/Y/W/H and the current PDF.js scale. They must not be changed by DOM offsets, visual annotation box dimensions, getBoundingClientRect-derived heights, inflation, padding, or rule-aware expansion.",
+      "requiredInputs": [
+        "movedTextOverlay is true",
+        "pdfjsSourceX/Y/W/H or sourceBboxX/Y/W/H",
+        "pdfjsSourcePageHeight or basePageHeight",
+        "current PDF.js scale",
+        "sourceSpanRuns only for horizontal splits inside the exact bbox"
+      ],
+      "verification": {
+        "requiredBeforeChangingThisPath": true,
+        "browserCase": "/documents/4169/edit-new?pdfjs=1, annotation pdfjs_4169_0_0:12",
+        "assertion": "After moving the annotation, the source mask style left/top/width/height must match bbox-derived values within 0.25px, and sourceMaskX/Y/W/H must remain equal to the source bbox values."
+      },
+      "implementation": {
+        "status": "implemented-in-frontend",
+        "editor": "resources/js/edit-new-pdfjs/main.js",
+        "frontendFunctions": [
+          "sourceMaskRectForBox",
+          "sourceMaskCanvasRectForAnnotation",
+          "rememberSourceMaskRectForCurrentBox",
+          "applyMovedOverlayRunMaskSegments"
+        ],
+        "behavior": "Moved masks use the exact source bbox for their container and only use sourceSpanRuns to split horizontally inside that bbox; no DOM coordinate offsets or visual box heights are allowed."
+      }
+    },
+    {
+      "step": 8,
+      "id": "PDFJS-SOURCE-EDIT-008",
+      "title": "Single-span promoted title edits use exact line fitting",
+      "rule": "Dirty promoted annotations with exactly one source text span must not use the multi-style dirty-promoted span mapper. They must render through the exact source-line path so replacement text is fitted back into the original source title bbox instead of collapsing, shifting, or overflowing after save/export.",
+      "requiredInputs": [
+        "promotedFromExtraction or promoted_* id",
+        "promotedDirty is true",
+        "sourceSpans contains exactly one non-empty text span",
+        "sourceLineBBoxes contains the original title/source line box",
+        "replacement text differs from originalText/source text"
+      ],
+      "verification": {
+        "requiredBeforeChangingThisPath": true,
+        "test": "node tests/OverlayEditor/run_promoted_single_span_title_regression.cjs",
+        "browserCase": "/documents/4169/edit-new?pdfjs=1, promoted_1_22, SS-4 -> SS-5",
+        "assertion": "The exported replacement is found in the title band and its rendered width remains within 0.75pt of the original source title width."
+      },
+      "implementation": {
+        "status": "implemented-in-exporter",
+        "exporter": "python/pdf-editor/apply_annotations_direct_new.py",
+        "pythonFunction": "build_dirty_promoted_style_mapped_span_layout",
+        "behavior": "Single-span dirty promoted edits return no multi-span layout, allowing normalize_exact_source_line_layout and draw_text_using_exact_source_lines to fit the replacement into the source bbox."
+      }
+    },
+    {
+      "step": 9,
+      "id": "PDFJS-SOURCE-EDIT-009",
+      "title": "Moved PDF.js title overlays cover source glyph ink",
+      "rule": "Saved PDF.js source overlays such as pdfjs_4170_0_0:0 must export like the frontend: the original source title ink is fully visually covered, and the replacement uses source-derived heavy title styling instead of thin generic text. If the saved PDF.js line box is shorter than the original PDF glyph bbox, export may union the immutable source mask with only the matching original source-text glyph bbox near that source box.",
+      "requiredInputs": [
+        "savedTextOverlay is true",
+        "movedTextOverlay is true",
+        "pdfjsSourceX/Y/W/H or pdfjsSourceMaskX/Y/W/H",
+        "pdfjsSourceText or originalText",
+        "text for replacement ink",
+        "source text exists in the original PDF near the immutable source box"
+      ],
+      "verification": {
+        "requiredBeforeChangingThisPath": true,
+        "test": "node tests/OverlayEditor/run_pdfjs_moved_source_title_regression.cjs",
+        "browserCase": "/documents/4170/edit-new?pdfjs=1, annotation pdfjs_4170_0_0:0, SS-4 -> SS-5",
+        "assertion": "The exported title crop has no visible old left-edge SS-4 ink and the SS-5 replacement dark-pixel density remains title-weight rather than thin regular text."
+      },
+      "implementation": {
+        "status": "implemented-in-exporter",
+        "exporter": "python/pdf-editor/apply_annotations_direct_new.py",
+        "pythonFunctions": [
+          "_pdfjs_matching_source_text_rect",
+          "pdfjs_source_mask_rect",
+          "_font_weight_from_source_name",
+          "resolve_pdfjs_visible_overlay_typography"
+        ],
+        "behavior": "The exporter keeps the saved/browser source mask box immutable, recovers the actual matching original PDF source glyph bbox only for visual ink coverage, and infers heavy source title weights from PDF font names such as HelveticaNeueLTStd-BlkCn."
+      }
     }
   ]
 }

@@ -1,49 +1,97 @@
 {
-  "title": "pdf commandments",
+  "title": "PDF editor commandments",
   "commandments": [
     {
       "id": 1,
-      "text": "When a new PDF is uploaded, redaction is run. Then Fitz extracts the text layer into annotations, and the annotations are placed onto the document."
+      "text": "Uploaded PDFs must be normalized into the editor pipeline before editing: run the redaction/base-prep step, extract the Fitz text layer, and materialize editable annotations from that extraction."
     },
     {
       "id": 2,
-      "text": "Each annotation shall be a row in the pdf_state table."
+      "text": "Every annotation must have a durable pdf_state row. The database annotation state is the source of truth for saved content, geometry, style, edit flags, deletion flags, and source metadata."
     },
     {
       "id": 3,
-      "text": "When a blank PDF is created, all text and shapes are annotations, and save shall persist the annotations into the database."
+      "text": "Blank PDFs are annotation-native documents. All text, shapes, images, signatures, and later edits on blank PDFs must save as annotations and reload from pdf_state."
     },
     {
       "id": 4,
-      "text": "When an annotation layer is loaded, the redacted PDF is used as the background and all annotations are placed on top of it."
+      "text": "The editor must load the prepared redacted/base PDF as the immutable page background, then render saved annotations on top. Extraction data may enrich missing metadata, but it must never override saved annotation content or edit state."
     },
     {
       "id": 5,
-      "text": "The redacted PDF shall always be the one that is loaded into the editor."
+      "text": "The prepared redacted/base PDF is always the document loaded into the editor and the base used for download export. Do not silently switch between original, extracted, cleaned, or generated PDFs."
     },
     {
       "id": 6,
-      "text": "When Download PDF is pressed, the annotations are merged into the redacted PDF. Until then, they are kept separate."
+      "text": "Download PDF must merge the current saved/export-visible annotations into the prepared redacted/base PDF. Until download, annotations stay separate from the base PDF."
     },
     {
       "id": 7,
-      "text": "ONLY the affected page is redrawn when an annotation is added, removed, or modified. Other pages are not redrawn."
+      "text": "Only pages affected by annotation changes may be redrawn. Unchanged pages must not be rasterized, rewritten, or visually altered during save/export."
     },
     {
       "id": 8,
-      "text": "Each TEXT annotation or modification(delete, move, update, change) should trigger a FULL PAGE REDRAW THERE ARE NO EXCEPTIONS TO THIS RULE."
+      "text": "Any text annotation change, including add, delete, move, update, resize, or style change, must trigger the full redraw/export handling for that affected page. There are no exceptions for text."
     },
     {
       "id": 9,
-      "text": "show_pdf_page shall be used only for unchanged promoted extraction text when the original source page and clip rectangle are known and the block is geometrically safe to replay as a clipped source rectangle. If the text was edited, the source page is unknown, or the block is a risky long/thin clip-replay case, the system shall use a more precise text replay/redraw path instead."
+      "text": "show_pdf_page may be used only for unchanged promoted extraction text when the source page, clip rectangle, and geometry are known safe. Edited, moved, deleted, unknown-source, long/thin, or otherwise risky promoted text must use precise text replay, redaction, or redraw logic instead."
     },
     {
       "id": 10,
-      "text": "Saved annotations in the pdf_state table are always the source of truth. When a saved annotation exists, the editor shall load and render that saved annotation from the database as authoritative content. Extraction data may enrich geometry or fill gaps, but it shall never override, normalize away, or reinterpret the saved annotation's content or edit state."
+      "text": "Saved promoted annotations are authoritative. hydrateSavedPromotedAnnotations() must receive both extractionPages and savedStandaloneAnnotations so saved edits can merge with fresh extraction data instead of dropping untouched extraction blocks."
     },
     {
       "id": 11,
-      "text": "hydrateSavedPromotedAnnotations() must always be called with extractionPages and savedStandaloneAnnotations. When a prior session has even one saved promoted annotation, shouldPreferSavedPromotedSnapshot() returns true — if extractionPages is omitted, only those saved annotations load and the remaining extraction blocks are skipped entirely. The function already has logic to merge saved edits with freshly-built extraction annotations; it must receive the extraction data to iterate over."
+      "text": "If any prior session has saved promoted annotations, shouldPreferSavedPromotedSnapshot() may prefer the saved snapshot, but extractionPages must still be available so the loader can merge saved edits with the rest of the extracted page text."
+    },
+    {
+      "id": 12,
+      "text": "Moved PDF.js source masks must persist the immutable source rectangle from pdfjsSourceX/Y/W/H or sourceBboxX/Y/W/H. Do not derive moved source mask geometry from DOM offsets, the moved annotation box, getBoundingClientRect heights, padding, or unrelated neighboring text."
+    },
+    {
+      "id": 13,
+      "text": "During PDF export, a moved source visual whiteout may union the immutable PDF.js source rectangle with the matching original PDF glyph bbox for the same source text if the PDF.js line box under-covers actual ink. It must never expand from the moved/current annotation box or unrelated neighbors."
+    },
+    {
+      "id": 14,
+      "text": "Before changing source masks, moved overlays, sourceSpanRuns, drag persistence, or source bbox code, verify a real moved annotation such as /documents/4169/edit-new?pdfjs=1 pdfjs_4169_0_0:12."
+    },
+    {
+      "id": 15,
+      "text": "Single-span promoted title edits, such as /documents/4169/edit-new?pdfjs=1 promoted_1_22 changing SS-4 to SS-5, must export through exact source-line fitting, not the multi-style dirty-promoted span mapper. Run node tests/OverlayEditor/run_promoted_single_span_title_regression.cjs before changing promotedDirty, sourceSpans, sourceLineBBoxes, or export text layout code."
+    },
+    {
+      "id": 16,
+      "text": "Saved PDF.js moved source title edits, such as /documents/4170/edit-new?pdfjs=1 pdfjs_4170_0_0:0 changing SS-4 to SS-5, must export like the frontend: fully cover the original title ink and draw the replacement as title-weight text. Run node tests/OverlayEditor/run_pdfjs_moved_source_title_regression.cjs and inspect the generated title crop before changing PDF.js visible source masking or moved overlay typography."
+    },
+    {
+      "id": 17,
+      "text": "Promoted extraction annotations may be skipped from download export only when they are untouched duplicates of immutable source PDF text. Never filter an annotation out merely because its id starts with promoted_ or promotedFromExtraction is true."
+    },
+    {
+      "id": 18,
+      "text": "If promoted text is moved, edited, deleted, style-changed, rich-text changed, user-authored, reflow-enabled, or otherwise dirty, it must be included in the export payload and rendered or redacted correctly in the downloaded PDF."
+    },
+    {
+      "id": 19,
+      "text": "Deleting PDF.js source-backed text is content deletion, not visual whiteout. The downloaded PDF must remove deleted source text from the PDF content stream with real redaction so search, copy/paste, and text extraction cannot find it."
+    },
+    {
+      "id": 20,
+      "text": "Visual masks are acceptable only as display paint or as a fallback when true redaction cannot be applied. A mask alone is never sufficient for deleted text because searchable hidden text is still a broken export."
+    },
+    {
+      "id": 21,
+      "text": "Before changing deleted PDF.js source export behavior, verify real deleted source annotations such as /documents/4172/edit-new?pdfjs=1 pdfjs_4172_0_0:10 and pdfjs_4172_0_0:13 return zero search hits in the downloaded PDF."
+    },
+    {
+      "id": 22,
+      "text": "Deleted PDF.js source text redaction must not paint visible white boxes over form backgrounds, bands, borders, or ruling lines. Use fill-less text redaction whenever possible so the text is removed from the content stream while the original page graphics remain visible. Before changing this behavior, verify a real deleted source annotation such as /documents/4173/edit-new?pdfjs=1 pdfjs_4173_0_0:17 does not leave white-box artifacts or broken form lines in the downloaded PDF."
+    },
+    {
+      "id": 23,
+      "text": "In the PDF.js browser editor, every moved source-backed text annotation must erase the full persisted PDF.js source mask bounding box as one solid sampled-background rectangle. Never segment the moved-source mask by glyph runs, text-layer spans, protected neighbor subtraction, or internal whitespace; leaving any part of the original source text, such as a trailing phrase, is a regression. Verify real moved rows such as /documents/4188/edit-new?pdfjs=1 pdfjs_4188_0_0:20 and pdfjs_4188_0_0:24 before changing moved source mask behavior."
     }
   ]
 }

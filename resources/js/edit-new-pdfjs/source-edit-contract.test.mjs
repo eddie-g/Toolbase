@@ -117,3 +117,17 @@ test('keeps style-only promoted edits as visible persisted overlays', () => {
         richTextHtml: '<b>Partnership</b>',
     }), true);
 });
+
+test('keeps moved promoted source text as a visible persisted overlay', () => {
+    assert.equal(pdfjsPromotedOverlayShouldRenderAsPersistedOverlay({
+        ...basePromotedOverlay,
+        savedTextOverlay: true,
+        movedTextOverlay: true,
+        pdfjsSourceX: 73.2,
+        pdfjsSourceY: 192.79,
+        pdfjsSourceW: 40,
+        pdfjsSourceH: 8,
+        pdfX: 13.88,
+        pdfY: 266.93,
+    }), true);
+});

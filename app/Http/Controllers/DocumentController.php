@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\ProcessUploadedDocumentJob;
 use App\Models\Document;
 use App\Models\GuidedTemplate;
 use App\Models\PdfAcroForm;
@@ -718,6 +719,72 @@ class DocumentController extends Controller
         }
     }
 
+    public function processUploadedDocument(int $documentId, ?string $userEmail = null, ?string $sessionId = null): void
+    {
+        $document = Document::find($documentId);
+        if (!$document) {
+            Log::warning('Queued upload processing skipped missing document', [
+                'document_id' => $documentId,
+            ]);
+            return;
+        }
+
+        $fullPath = Storage::path($document->path);
+        if (!is_file($fullPath)) {
+            Log::warning('Queued upload processing skipped missing PDF file', [
+                'document_id' => $document->id,
+                'path' => $document->path,
+            ]);
+            return;
+        }
+
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+        $resolvedUserEmail = is_string($userEmail) && trim($userEmail) !== ''
+            ? trim($userEmail)
+            : $this->resolveEditorEmail();
+        $resolvedSessionId = is_string($sessionId) ? trim($sessionId) : '';
+
+        $materializedAcroFormCount = $this->ensurePdfAcroFormMaterialized($document, $fullPath, $pythonBinary);
+        [$extractionReturnCode, $extractionOutput] = $this->runFitzExtraction(
+            $document,
+            $fullPath,
+            $resolvedUserEmail,
+            $resolvedSessionId,
+            $pythonBinary
+        );
+
+        if ($extractionReturnCode === 0) {
+            $latestExtraction = $this->findLatestFitzExtraction($document->id, $resolvedUserEmail, $resolvedSessionId);
+            if ($latestExtraction) {
+                $materializedCount = $this->materializeFitzExtractionToPdfState($document, $latestExtraction);
+                Log::info('Materialized queued upload extraction into pdf_state', [
+                    'document_id' => $document->id,
+                    'materialized_count' => $materializedCount,
+                ]);
+            } else {
+                Log::warning('Queued Fitz extraction completed but no extraction row was found for upload materialization', [
+                    'document_id' => $document->id,
+                    'user_email' => $resolvedUserEmail,
+                    'session_id' => $resolvedSessionId,
+                ]);
+            }
+        } else {
+            Log::warning('Queued upload-time Fitz extraction failed; overlay prep will retry', [
+                'document_id' => $document->id,
+                'python_binary' => $pythonBinary,
+                'return_code' => $extractionReturnCode,
+                'output' => implode("\n", $extractionOutput),
+            ]);
+        }
+
+        Log::info('Materialized queued upload AcroForm rows', [
+            'document_id' => $document->id,
+            'materialized_count' => $materializedAcroFormCount,
+        ]);
+
+        $this->refreshDocumentPreviewSnapshot($document);
+    }
+
     private function normalizeDocumentOriginalName(Document $document, string $value): string
     {
         $fallbackName = (string) ($document->original_name ?: basename((string) $document->path));
@@ -1056,37 +1123,111 @@ class DocumentController extends Controller
         );
         if (count(array_unique($signatures)) < 2) return null;
 
-        // Split new text at whitespace runs into exactly N chunks (one per
-        // span). preg_split with PREG_SPLIT_DELIM_CAPTURE preserves the
-        // separators so we can re-emit them between styled <span>s.
-        $n     = count($normalized);
-        $parts = preg_split('/(\s+)/u', $newText, -1, PREG_SPLIT_DELIM_CAPTURE);
-        if (!is_array($parts)) return null;
-        // parts is [word, sep, word, sep, ..., word] — extract word/sep pairs.
-        $wordChunks = [];
-        for ($i = 0; $i < count($parts); $i += 2) {
-            $wordChunks[] = [
-                'text' => $parts[$i] ?? '',
-                'sep'  => $parts[$i + 1] ?? '',
-            ];
-        }
-        // Need at least n word-chunks to align with n spans; otherwise the
-        // user didn't preserve the visual split (e.g. typed "12cCounty...").
-        if (count($wordChunks) < $n) return null;
-
-        // Take the first n-1 word-chunks as-is; collapse all remaining
-        // chunks into the final span so the body keeps any internal spaces.
-        $aligned = array_slice($wordChunks, 0, $n - 1);
-        $tail    = array_slice($wordChunks, $n - 1);
-        $tailText = '';
-        foreach ($tail as $idx => $t) {
-            $tailText .= $t['text'];
-            // Append the trailing separator only if it's not the final chunk.
-            if ($idx !== count($tail) - 1) {
-                $tailText .= $t['sep'];
+        $n = count($normalized);
+        $normalizeText = static function ($value): string {
+            $text = preg_replace('/\s+/u', ' ', (string) ($value ?? '')) ?? '';
+            return trim($text);
+        };
+        $tokensFor = static function ($value) use ($normalizeText): array {
+            $text = $normalizeText($value);
+            if ($text === '') {
+                return [];
             }
+            $tokens = preg_split('/\s+/u', $text);
+            return is_array($tokens) ? array_values(array_filter($tokens, static fn ($token) => $token !== '')) : [];
+        };
+        $startsWithTokens = static function (array $haystack, array $needle): bool {
+            if (count($needle) > count($haystack)) {
+                return false;
+            }
+            foreach ($needle as $idx => $token) {
+                if (($haystack[$idx] ?? null) !== $token) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        $endsWithTokens = static function (array $haystack, array $needle): bool {
+            $needleCount = count($needle);
+            if ($needleCount > count($haystack)) {
+                return false;
+            }
+            if ($needleCount === 0) {
+                return true;
+            }
+            $offset = count($haystack) - $needleCount;
+            foreach ($needle as $idx => $token) {
+                if (($haystack[$offset + $idx] ?? null) !== $token) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        $spanTokens = array_map(static fn ($span) => $tokensFor($span['text'] ?? ''), $normalized);
+        $newTokens = $tokensFor($newText);
+        $aligned = null;
+
+        // Prefer preserving the original physical source-span boundaries.
+        // Example: promoted_1_9 is stored as three source spans at three x
+        // positions: "10" | "Reason for applying" | "(check only one box)".
+        // When the user edits only the field number to "55", splitting the
+        // new string by the first three words produces the bad layout
+        // "55" | "Reason" | "for applying (check...)". Match the unchanged
+        // prefix/suffix source tokens instead so only the edited span changes.
+        for ($changedIdx = 0; $changedIdx < $n && $aligned === null; $changedIdx++) {
+            $prefixTokens = [];
+            for ($i = 0; $i < $changedIdx; $i++) {
+                array_push($prefixTokens, ...$spanTokens[$i]);
+            }
+            $suffixTokens = [];
+            for ($i = $changedIdx + 1; $i < $n; $i++) {
+                array_push($suffixTokens, ...$spanTokens[$i]);
+            }
+            if (!$startsWithTokens($newTokens, $prefixTokens) || !$endsWithTokens($newTokens, $suffixTokens)) {
+                continue;
+            }
+            $changedTokenCount = count($newTokens) - count($prefixTokens) - count($suffixTokens);
+            if ($changedTokenCount <= 0) {
+                continue;
+            }
+            $changedTokens = array_slice($newTokens, count($prefixTokens), $changedTokenCount);
+            $candidate = [];
+            foreach ($normalized as $idx => $span) {
+                $candidate[] = [
+                    'text' => $idx === $changedIdx ? implode(' ', $changedTokens) : $normalizeText($span['text'] ?? ''),
+                    'sep'  => '',
+                ];
+            }
+            $aligned = $candidate;
         }
-        $aligned[] = ['text' => $tailText, 'sep' => ''];
+
+        if ($aligned === null) {
+            // Fallback for broader edits: split new text at whitespace runs
+            // into exactly N chunks (one per span). preg_split with
+            // PREG_SPLIT_DELIM_CAPTURE preserves separators so we can re-emit
+            // them between styled <span>s.
+            $parts = preg_split('/(\s+)/u', $newText, -1, PREG_SPLIT_DELIM_CAPTURE);
+            if (!is_array($parts)) return null;
+            $wordChunks = [];
+            for ($i = 0; $i < count($parts); $i += 2) {
+                $wordChunks[] = [
+                    'text' => $parts[$i] ?? '',
+                    'sep'  => $parts[$i + 1] ?? '',
+                ];
+            }
+            if (count($wordChunks) < $n) return null;
+
+            $aligned = array_slice($wordChunks, 0, $n - 1);
+            $tail    = array_slice($wordChunks, $n - 1);
+            $tailText = '';
+            foreach ($tail as $idx => $t) {
+                $tailText .= $t['text'];
+                if ($idx !== count($tail) - 1) {
+                    $tailText .= $t['sep'];
+                }
+            }
+            $aligned[] = ['text' => $tailText, 'sep' => ''];
+        }
 
         $html = '';
         $plain = '';
@@ -1136,11 +1277,38 @@ class DocumentController extends Controller
         if ($state === 'deleted' && !$this->annotationFlagIsTruthy($annotation, 'pdfjsDeleted')) {
             return false;
         }
-        if (str_starts_with(trim((string) ($annotation['id'] ?? '')), 'promoted_')) {
-            return false;
+        $isPromoted = $this->annotationFlagIsTruthy($annotation, 'promotedFromExtraction')
+            || str_starts_with(trim((string) ($annotation['id'] ?? '')), 'promoted_');
+        if ($isPromoted) {
+            return $this->promotedAnnotationShouldRenderAsOverlay($annotation);
         }
 
         return !$this->annotationFlagIsTruthy($annotation, 'promotedFromExtraction');
+    }
+
+    private function promotedAnnotationShouldRenderAsOverlay(array $annotation): bool
+    {
+        if ($this->annotationFlagIsTruthy($annotation, 'pdfjsDeleted')) {
+            return false;
+        }
+
+        $text = preg_replace('/\s+/u', ' ', trim((string) ($annotation['text'] ?? ''))) ?? '';
+        $sourceText = preg_replace(
+            '/\s+/u',
+            ' ',
+            trim((string) ($annotation['pdfjsSourceText'] ?? $annotation['originalText'] ?? ''))
+        ) ?? '';
+        $textChanged = $text !== '' && $sourceText !== '' && $text !== $sourceText;
+
+        return $textChanged
+            || $this->annotationFlagIsTruthy($annotation, 'promotedDirty')
+            || $this->annotationFlagIsTruthy($annotation, 'userAuthored')
+            || $this->annotationFlagIsTruthy($annotation, 'styleDirty')
+            || $this->annotationFlagIsTruthy($annotation, 'userForcedRichText')
+            || $this->annotationFlagIsTruthy($annotation, 'movedTextOverlay')
+            || $this->annotationFlagIsTruthy($annotation, 'promotedReflowEnabled')
+            || trim((string) ($annotation['richTextHtml'] ?? '')) !== ''
+            || strtolower(trim((string) ($annotation['pdfjsEditorMode'] ?? ''))) === 'rich';
     }
 
     private function filterAnnotationsForPdfjsVisibleExport(array $annotations): array
@@ -4989,64 +5157,14 @@ class DocumentController extends Controller
             'mode' => $documentMode,
         ]);
 
-        // Auto-download fonts for this PDF in background
-        $fullPath = Storage::path($storedPath);
-        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
-        $fontScript = base_path('python/pdf-editor/auto_download_fonts.py');
-        $fontCommand = sprintf(
-            '%s %s %s > /dev/null 2>&1 &',
-            escapeshellarg($pythonBinary),
-            escapeshellarg($fontScript),
-            escapeshellarg($fullPath)
-        );
-        exec($fontCommand);
-
         $userEmail = $this->resolveEditorEmail();
         $sessionId = $request->session()->getId();
-        $materializedAcroFormCount = $this->ensurePdfAcroFormMaterialized($document, $fullPath, $pythonBinary);
-        [$extractionReturnCode, $extractionOutput] = $this->runFitzExtraction(
-            $document,
-            $fullPath,
-            $userEmail,
-            $sessionId,
-            $pythonBinary
-        );
-
-        if ($extractionReturnCode === 0) {
-            $latestExtraction = $this->findLatestFitzExtraction($document->id, $userEmail, $sessionId);
-            if ($latestExtraction) {
-                $materializedCount = $this->materializeFitzExtractionToPdfState($document, $latestExtraction);
-                Log::info('Materialized upload extraction into pdf_state', [
-                    'document_id' => $document->id,
-                    'materialized_count' => $materializedCount,
-                ]);
-            } else {
-                Log::warning('Fitz extraction completed but no extraction row was found for upload materialization', [
-                    'document_id' => $document->id,
-                    'user_email' => $userEmail,
-                    'session_id' => $sessionId,
-                ]);
-            }
-        } else {
-            Log::warning('Upload-time Fitz extraction failed; overlay prep will retry', [
-                'document_id' => $document->id,
-                'python_binary' => $pythonBinary,
-                'return_code' => $extractionReturnCode,
-                'output' => implode("\n", $extractionOutput),
-            ]);
-        }
-
-        Log::info('Materialized upload AcroForm rows', [
-            'document_id' => $document->id,
-            'materialized_count' => $materializedAcroFormCount,
-        ]);
-
-        $this->refreshDocumentPreviewSnapshot($document);
         $this->rememberSessionAccessibleDocument($request, $document);
+        ProcessUploadedDocumentJob::dispatch($document->id, $userEmail, $sessionId);
 
         return redirect()
             ->route('documents.edit', $document)
-            ->with('status', 'PDF uploaded. You can edit it below.');
+            ->with('status', 'PDF uploaded. Document loading continues in the background.');
     }
 
     public function createBlank(Request $request)
@@ -5186,16 +5304,6 @@ class DocumentController extends Controller
         $this->refreshDocumentPreviewSnapshot($document);
         $this->rememberSessionAccessibleDocument($request, $document);
 
-        // Auto-download fonts
-        $fontScript = base_path('python/pdf-editor/auto_download_fonts.py');
-        $fontCommand = sprintf(
-            '%s %s %s > /dev/null 2>&1 &',
-            escapeshellarg($pythonBinary),
-            escapeshellarg($fontScript),
-            escapeshellarg($storedFull)
-        );
-        exec($fontCommand);
-
         return redirect()
             ->route('documents.edit', $document)
             ->with('status', 'Template created. Customize it below.');
@@ -5294,16 +5402,6 @@ class DocumentController extends Controller
         $this->refreshDocumentPreviewSnapshot($document);
         $this->rememberSessionAccessibleDocument($request, $document);
 
-        // Auto-download fonts
-        $fontScript = base_path('python/pdf-editor/auto_download_fonts.py');
-        $fontCommand = sprintf(
-            '%s %s %s > /dev/null 2>&1 &',
-            escapeshellarg($pythonBinary),
-            escapeshellarg($fontScript),
-            escapeshellarg($storedFull)
-        );
-        exec($fontCommand);
-
         $editUrl = route('documents.guided', $document);
         if ($validated['style'] ?? null) {
             $editUrl .= '?style=' . urlencode($validated['style']);
@@ -5321,7 +5419,7 @@ class DocumentController extends Controller
         $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
 
         $validated = $request->validate([
-            '_template_type' => ['required', 'string', 'in:newsletter,business,realestate'],
+            '_template_type' => ['required', 'string', 'max:100'],
             '_template_slug' => ['required', 'string', 'max:100'],
         ]);
 
@@ -5404,16 +5502,6 @@ class DocumentController extends Controller
         $this->refreshDocumentPreviewSnapshot($document);
         $this->rememberSessionAccessibleDocument($request, $document);
 
-        // Auto-download fonts
-        $fontScript = base_path('python/pdf-editor/auto_download_fonts.py');
-        $fontCommand = sprintf(
-            '%s %s %s > /dev/null 2>&1 &',
-            escapeshellarg($pythonBinary),
-            escapeshellarg($fontScript),
-            escapeshellarg($storedFull)
-        );
-        exec($fontCommand);
-
         return redirect()
             ->route('documents.guided', ['document' => $document, 'template_type' => $templateType, 'template_slug' => $templateSlug])
             ->with('status', $template->name . ' created. Customize it below.');
@@ -5479,16 +5567,6 @@ class DocumentController extends Controller
             'size_bytes' => filesize($storedFull),
         ]);
 
-        // Auto-download fonts
-        $fontScript = base_path('python/pdf-editor/auto_download_fonts.py');
-        $fontCommand = sprintf(
-            '%s %s %s > /dev/null 2>&1 &',
-            escapeshellarg($pythonBinary),
-            escapeshellarg($fontScript),
-            escapeshellarg($storedFull)
-        );
-        exec($fontCommand);
-
         return response()->json([
             'success' => true,
             'python_binary' => $pythonBinary,
@@ -5544,16 +5622,6 @@ class DocumentController extends Controller
         $document->update([
             'size_bytes' => filesize($storedFull),
         ]);
-
-        // Auto-download fonts
-        $fontScript = base_path('python/pdf-editor/auto_download_fonts.py');
-        $fontCommand = sprintf(
-            '%s %s %s > /dev/null 2>&1 &',
-            escapeshellarg($pythonBinary),
-            escapeshellarg($fontScript),
-            escapeshellarg($storedFull)
-        );
-        exec($fontCommand);
 
         return response()->json(['success' => true]);
     }
@@ -8103,30 +8171,73 @@ class DocumentController extends Controller
     {
         $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
 
-        // Use the path column like other methods
         $pdfPath = Storage::path($document->path);
-        
         if (!file_exists($pdfPath)) {
             return response()->json(['error' => 'PDF not found'], 404);
         }
-        
-        // Run Python script to extract fonts
-        $pythonScript = base_path('python/pdf-editor/extract_pdf_fonts.py');
-        $command = sprintf(
-            '%s %s %s 2>&1',
-            escapeshellarg($pythonBinary),
-            escapeshellarg($pythonScript),
-            escapeshellarg($pdfPath)
-        );
-        
-        $output = shell_exec($command);
-        $result = json_decode($output, true);
-        
-        if (!$result || isset($result['error'])) {
-            return response()->json(['error' => $result['error'] ?? 'Failed to extract fonts'], 500);
+
+        $embeddedFontsPath = storage_path("app/temp/embedded_fonts_{$document->id}.json");
+        $embeddedFonts = [];
+        if (file_exists($embeddedFontsPath)) {
+            $decoded = json_decode((string) file_get_contents($embeddedFontsPath), true);
+            $embeddedFonts = is_array($decoded) ? $decoded : [];
         }
-        
-        return response()->json($result);
+
+        if (empty($embeddedFonts)) {
+            if (!is_dir(dirname($embeddedFontsPath))) {
+                mkdir(dirname($embeddedFontsPath), 0755, true);
+            }
+
+            $command = sprintf(
+                '%s -c %s 2>&1',
+                escapeshellarg($pythonBinary),
+                escapeshellarg(
+                    'import sys, json; '
+                    . 'sys.path.insert(0, ' . json_encode(base_path('python/pdf-editor')) . '); '
+                    . 'from extract_pdf_pymupdf import extract_embedded_fonts; '
+                    . 'fonts = extract_embedded_fonts(' . json_encode($pdfPath, JSON_UNESCAPED_SLASHES) . ', ' . (int) $document->id . '); '
+                    . 'open(' . json_encode($embeddedFontsPath, JSON_UNESCAPED_SLASHES) . ', "w", encoding="utf-8").write(json.dumps(fonts))'
+                )
+            );
+            $output = shell_exec($command);
+            if (file_exists($embeddedFontsPath)) {
+                $decoded = json_decode((string) file_get_contents($embeddedFontsPath), true);
+                $embeddedFonts = is_array($decoded) ? $decoded : [];
+            }
+
+            if (empty($embeddedFonts)) {
+                \Log::warning('No embedded fonts extracted for document font picker', [
+                    'document_id' => $document->id,
+                    'output' => $output,
+                ]);
+            }
+        }
+
+        $fonts = collect($embeddedFonts)
+            ->filter(static fn ($font) => is_array($font) && !empty($font['file_path']))
+            ->map(static function (array $font, string $key): array {
+                $cleanName = trim((string) ($font['clean_name'] ?? $key));
+                return [
+                    'name' => $cleanName,
+                    'clean_name' => $cleanName,
+                    'pdf_font_name' => (string) ($font['pdf_font_name'] ?? ''),
+                    'family' => (string) ($font['family'] ?? $cleanName),
+                    'file_path' => (string) ($font['file_path'] ?? ''),
+                    'file_ext' => (string) ($font['file_ext'] ?? ''),
+                    'css_weight' => (string) ($font['css_weight'] ?? '400'),
+                    'css_style' => (string) ($font['css_style'] ?? 'normal'),
+                    'css_stretch' => (string) ($font['css_stretch'] ?? 'normal'),
+                    'xref' => $font['xref'] ?? null,
+                ];
+            })
+            ->values()
+            ->all();
+
+        return response()->json([
+            'success' => true,
+            'fonts' => $fonts,
+            'embedded_fonts' => $embeddedFonts,
+        ]);
     }
 
     public function matchFonts(Document $document)

@@ -188,7 +188,7 @@ import fitz
 original_pdf_path, pdf_path, report_path, moved_json = sys.argv[1:5]
 moved = json.loads(moved_json)
 
-def find_title_block(pdf_path):
+def find_text_block(pdf_path, compact_match):
     doc = fitz.open(pdf_path)
     page = doc[0]
     found = None
@@ -198,7 +198,7 @@ def find_title_block(pdf_path):
         lines = block.get('lines', [])
         text = ''.join(''.join(span.get('text', '') for span in line.get('spans', [])) for line in lines)
         compact = ''.join(str(text or '').split()).lower()
-        if compact == 'drylabnews':
+        if compact == compact_match:
             bbox = block.get('bbox') or [0, 0, 0, 0]
             found = {
                 'block_index': block_index,
@@ -216,8 +216,37 @@ def find_title_block(pdf_path):
     doc.close()
     return found
 
-original_title_block = find_title_block(original_pdf_path)
-title_block = find_title_block(pdf_path)
+def count_visible_nonwhite_pixels(pdf_path, bbox):
+    if not bbox:
+        return {'count': 0, 'ratio': 0.0, 'width': 0, 'height': 0}
+    doc = fitz.open(pdf_path)
+    page = doc[0]
+    rect = fitz.Rect(
+        float(bbox['left']) - 1.0,
+        float(bbox['top']) - 1.0,
+        float(bbox['right']) + 1.0,
+        float(bbox['bottom']) + 1.0,
+    ) & page.rect
+    pix = page.get_pixmap(matrix=fitz.Matrix(4, 4), clip=rect, alpha=False)
+    samples = pix.samples
+    channels = max(1, int(getattr(pix, 'n', 3) or 3))
+    count = 0
+    for offset in range(0, len(samples), channels):
+        if offset + 2 >= len(samples):
+            continue
+        r = samples[offset]
+        g = samples[offset + 1]
+        b = samples[offset + 2]
+        if not (r > 245 and g > 245 and b > 245):
+            count += 1
+    total = max(1, pix.width * pix.height)
+    doc.close()
+    return {'count': count, 'ratio': count / total, 'width': pix.width, 'height': pix.height}
+
+original_title_block = find_text_block(original_pdf_path, 'drylabnews')
+title_block = find_text_block(pdf_path, 'drylabnews')
+strapline_block = find_text_block(pdf_path, 'forinvestors&friends·may2017')
+strapline_pixels = count_visible_nonwhite_pixels(pdf_path, strapline_block['bbox'] if strapline_block else None)
 
 expected_left = float(moved['pdfX'])
 expected_top = float(moved['sourcePageHeight']) - (float(moved['pdfY']) + float(moved['pdfHeight']))
@@ -233,6 +262,9 @@ report = {
     'left_delta': left_delta,
     'top_delta': top_delta,
     'top_shift_from_original': top_shift_from_original,
+    'strapline_block': strapline_block,
+    'strapline_pixels': strapline_pixels,
+    'strapline_visible': bool(strapline_block) and strapline_pixels['count'] >= 1000 and strapline_pixels['ratio'] >= 0.02,
 }
 
 with open(report_path, 'w', encoding='utf-8') as handle:
@@ -281,6 +313,7 @@ async function main() {
             && report.left_delta <= POSITION_TOLERANCE
             && typeof report.top_shift_from_original === 'number'
             && report.top_shift_from_original >= MIN_VISIBLE_TOP_SHIFT
+            && report.strapline_visible === true
             && moveResult.after.promotedDirty === true
             && pageErrors.length === 0;
 
