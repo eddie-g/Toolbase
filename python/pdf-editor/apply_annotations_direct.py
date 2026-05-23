@@ -831,7 +831,8 @@ def resolve_embedded_font_entry(ann: Dict[str, Any]) -> Optional[Dict[str, Any]]
         raw_exact = raw_family
     normalized_exact = normalize_exact_font_family(raw_exact)
     normalized_family = normalize_exact_font_family(raw_family)
-    if (
+    force_embedded_font = _boolish(ann.get("forceEmbeddedFont")) or _boolish(ann.get("pdfjsForceEmbeddedFont"))
+    if not force_embedded_font and (
         should_bypass_embedded_font(raw_exact)
         or should_bypass_embedded_font(normalized_exact)
         or should_bypass_embedded_font(normalized_family)

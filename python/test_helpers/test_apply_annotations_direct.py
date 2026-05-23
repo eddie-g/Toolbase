@@ -7,6 +7,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import fitz
 from PIL import Image
@@ -147,6 +148,38 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         self.assertAlmostEqual(background_rect.y1, expected_bottom, places=3)
         self.assertGreater(background_rect.y1, insert_point.y)
 
+    def test_pdfjs_source_overlay_white_text_does_not_get_placeholder_background(self):
+        annotation = {
+            "type": "text",
+            "text": "Unit Price",
+            "savedTextOverlay": True,
+            "pdfjsSourceText": "Unit Price",
+            "pdfjsSourceX": 320,
+            "pdfjsSourceY": 720,
+            "pdfjsSourceW": 52,
+            "pdfjsSourceH": 20,
+            "pdfX": 320,
+            "pdfY": 720,
+            "pdfWidth": 52,
+            "pdfHeight": 20,
+            "fontFamily": "Helvetica",
+            "fontSize": 8,
+            "textColor": "#ffffff",
+            "backgroundColor": "transparent",
+        }
+
+        page = self.FakePage()
+
+        with patch.object(
+            self.module,
+            "substitute_display_bg_for_invisible_text",
+            side_effect=AssertionError("PDF.js source overlays must not receive placeholder backgrounds"),
+        ):
+            self.module.draw_text(page, annotation, source_masks_already_drawn=True)
+
+        self.assertEqual(len(page.draw_rect_calls), 0)
+        self.assertEqual(len(page.shape_draw_rect_calls), 0)
+
     def test_draw_text_normalizes_nonbreaking_spaces_before_pdf_write(self):
         annotation = {
             "text": "Spiders\u00A0in\u00A0The\u00A0Lord\u00A0of\u00A0the\u00A0Rings",
@@ -166,6 +199,81 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
             page.insert_text_calls[0][1],
             "Spiders in The Lord of the Rings",
         )
+
+    def test_pdfjs_moved_source_line_ignores_source_baseline_offset(self):
+        text = (
+            "Measures and Assessments: Explain how the employer measures and confirms "
+            "whether individuals filling positions such as that being filled by the"
+        )
+        annotation = {
+            "id": "pdfjs_4172_2_2:19",
+            "type": "text",
+            "pageIndex": 0,
+            "text": text,
+            "originalText": text,
+            "pdfX": 46.5,
+            "pdfY": 175.61286,
+            "pdfWidth": 513.291,
+            "pdfHeight": 7.97814,
+            "fontFamily": "sans-serif",
+            "fontSize": 7.98,
+            "lineHeight": 7.98,
+            "textColor": "#000000",
+            "savedTextOverlay": True,
+            "movedTextOverlay": True,
+            "pdfjsSourceFidelity": True,
+            "pdfjsUseSourceTypography": True,
+            "pdfjsSourceBaselineOffsetX": 0,
+            "pdfjsSourceBaselineOffsetY": 16.01,
+            "pdfjsSourceX": 42.3,
+            "pdfjsSourceY": 181.0125,
+            "pdfjsSourceW": 513.292,
+            "pdfjsSourceH": 7.978,
+            "pdfjsSourceText": text,
+            "pdfjsSourceMaskX": 42.3,
+            "pdfjsSourceMaskY": 181.0125,
+            "pdfjsSourceMaskW": 513.292,
+            "pdfjsSourceMaskH": 7.978,
+            "pdfjsEditorMode": "source",
+        }
+
+        doc = fitz.open()
+        try:
+            page = doc.new_page(width=612, height=792)
+            self.module.draw_text(page, annotation, source_masks_already_drawn=True)
+            self.assertIn("Measures and Assessments", page.get_text())
+        finally:
+            doc.close()
+
+    def test_pdfjs_text_clamps_bad_baseline_offset_instead_of_rendering_blank(self):
+        annotation = {
+            "id": "pdfjs_bad_source_baseline",
+            "type": "text",
+            "pageIndex": 0,
+            "text": "Visible replacement",
+            "originalText": "Visible replacement",
+            "pdfX": 40,
+            "pdfY": 120,
+            "pdfWidth": 220,
+            "pdfHeight": 8,
+            "fontFamily": "sans-serif",
+            "fontSize": 8,
+            "lineHeight": 8,
+            "textColor": "#000000",
+            "savedTextOverlay": True,
+            "pdfjsSourceFidelity": True,
+            "pdfjsUseSourceTypography": True,
+            "pdfjsSourceBaselineOffsetX": 0,
+            "pdfjsSourceBaselineOffsetY": 24,
+        }
+
+        doc = fitz.open()
+        try:
+            page = doc.new_page(width=612, height=792)
+            self.module.draw_text(page, annotation, source_masks_already_drawn=True)
+            self.assertIn("Visible replacement", page.get_text())
+        finally:
+            doc.close()
 
     def test_pdfjs_visible_export_masks_do_not_punch_moved_replacement_glyphs(self):
         source_pdf = pathlib.Path(__file__).resolve().parents[2] / "public" / "spiders.pdf"
@@ -289,6 +397,428 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
                     )
             finally:
                 doc.close()
+
+    def test_pdfjs_source_mask_uses_exact_frontend_source_box(self):
+        page = self.FakePage()
+        annotation = {
+            "id": "pdfjs_exact_source_mask",
+            "type": "text",
+            "pageIndex": 0,
+            "text": "SS-5",
+            "savedTextOverlay": True,
+            "pdfjsSourceX": 54.2765625,
+            "pdfjsSourceY": 734.471125,
+            "pdfjsSourceW": 47.09007568359375,
+            "pdfjsSourceH": 24.0,
+            "pdfjsSourceText": "SS-4",
+        }
+
+        self.module.draw_pdfjs_source_mask(page, annotation)
+
+        self.assertEqual(len(page.draw_rect_calls), 1)
+        rect, _kwargs = page.draw_rect_calls[0]
+        self.assertAlmostEqual(rect.x0, annotation["pdfjsSourceX"], places=5)
+        self.assertAlmostEqual(rect.x1, annotation["pdfjsSourceX"] + annotation["pdfjsSourceW"], places=5)
+        self.assertAlmostEqual(rect.y0, 792 - (annotation["pdfjsSourceY"] + annotation["pdfjsSourceH"]), places=5)
+        self.assertAlmostEqual(rect.y1, 792 - annotation["pdfjsSourceY"], places=5)
+
+    def test_pdfjs_moved_source_mask_avoids_neighbor_text_for_non_promoted_overlay(self):
+        page = self.FakePage()
+        page.get_text = lambda mode: {
+            "blocks": [{
+                "lines": [{
+                    "spans": [{
+                        "chars": [
+                            {"c": "f", "bbox": [25, 90, 30, 100]},
+                            {"c": "o", "bbox": [31, 90, 36, 100]},
+                        ],
+                    }],
+                }],
+            }]
+        }
+        annotation = {
+            "id": "pdfjs_moved_source_mask_non_promoted",
+            "type": "text",
+            "pageIndex": 0,
+            "text": "DrylabNews",
+            "savedTextOverlay": True,
+            "movedTextOverlay": True,
+            "pdfjsSourceMaskX": 10,
+            "pdfjsSourceMaskY": 700,
+            "pdfjsSourceMaskW": 200,
+            "pdfjsSourceMaskH": 50,
+            "pdfjsSourceText": "DrylabNews",
+        }
+
+        self.module.draw_pdfjs_source_mask(page, annotation)
+
+        self.assertEqual(len(page.draw_rect_calls), 1)
+        rect, _kwargs = page.draw_rect_calls[0]
+        self.assertLessEqual(rect.y1, 90 - self.module.PDFJS_SOURCE_MASK_NEIGHBOR_GAP_PTS + 0.001)
+
+    def test_pdfjs_moved_source_mask_avoids_overlapping_non_source_line(self):
+        page = self.FakePage()
+        page.get_text = lambda mode: {
+            "blocks": [{
+                "lines": [{
+                    "spans": [{
+                        "chars": [
+                            {"c": "D", "bbox": [56.7, 56.7, 92.0, 154.2]},
+                            {"c": "r", "bbox": [92.0, 56.7, 122.0, 154.2]},
+                        ],
+                    }],
+                }, {
+                    "spans": [{
+                        "chars": [
+                            {"c": "f", "bbox": [332.8, 141.2, 338.0, 157.1]},
+                            {"c": "o", "bbox": [338.0, 141.2, 345.0, 157.1]},
+                        ],
+                    }],
+                }],
+            }]
+        }
+        annotation = {
+            "id": "pdfjs_moved_drylab_title_mask",
+            "type": "text",
+            "pageIndex": 0,
+            "text": "DrylabNews",
+            "savedTextOverlay": True,
+            "movedTextOverlay": True,
+            "pdfjsSourceMaskX": 56.7,
+            "pdfjsSourceMaskY": 792 - 154.2,
+            "pdfjsSourceMaskW": 493.4,
+            "pdfjsSourceMaskH": 97.5,
+            "pdfjsSourceText": "DrylabNews",
+        }
+
+        self.module.draw_pdfjs_source_mask(page, annotation)
+
+        self.assertEqual(len(page.draw_rect_calls), 1)
+        rect, _kwargs = page.draw_rect_calls[0]
+        self.assertLessEqual(rect.y1, 141.2 - self.module.PDFJS_SOURCE_MASK_NEIGHBOR_GAP_PTS + 0.001)
+
+    def test_pdfjs_moved_source_mask_ignores_other_moved_source_rects(self):
+        page = self.FakePage()
+        page.get_text = lambda mode: {
+            "blocks": [{
+                "lines": [{
+                    "spans": [{
+                        "chars": [
+                            {"c": "W", "bbox": [56.23, 33.73, 74.0, 57.73]},
+                            {"c": "-", "bbox": [74.0, 33.73, 82.0, 57.73]},
+                            {"c": "7", "bbox": [82.0, 33.73, 96.21, 57.73]},
+                        ],
+                    }],
+                }, {
+                    "spans": [{
+                        "chars": [
+                            {"c": "(", "bbox": [36.0, 56.59, 39.0, 63.59]},
+                            {"c": "R", "bbox": [39.0, 56.59, 45.0, 63.59]},
+                            {"c": "e", "bbox": [45.0, 56.59, 51.0, 63.59]},
+                            {"c": "v", "bbox": [51.0, 56.59, 57.0, 63.59]},
+                            {"c": ".", "bbox": [57.0, 56.59, 60.0, 63.59]},
+                            {"c": " ", "bbox": [60.0, 56.59, 62.0, 63.59]},
+                            {"c": "D", "bbox": [62.0, 56.59, 68.0, 63.59]},
+                            {"c": "e", "bbox": [68.0, 56.59, 74.0, 63.59]},
+                            {"c": "c", "bbox": [74.0, 56.59, 80.0, 63.59]},
+                            {"c": "e", "bbox": [80.0, 56.59, 86.0, 63.59]},
+                            {"c": "m", "bbox": [86.0, 56.59, 94.0, 63.59]},
+                            {"c": "b", "bbox": [94.0, 56.59, 100.0, 63.59]},
+                            {"c": "e", "bbox": [100.0, 56.59, 106.0, 63.59]},
+                            {"c": "r", "bbox": [106.0, 56.59, 112.0, 63.59]},
+                            {"c": " ", "bbox": [112.0, 56.59, 114.0, 63.59]},
+                            {"c": "2", "bbox": [114.0, 56.59, 120.0, 63.59]},
+                            {"c": "0", "bbox": [120.0, 56.59, 126.0, 63.59]},
+                            {"c": "2", "bbox": [126.0, 56.59, 132.0, 63.59]},
+                            {"c": "4", "bbox": [132.0, 56.59, 138.0, 63.59]},
+                            {"c": ")", "bbox": [138.0, 56.59, 141.0, 63.59]},
+                        ],
+                    }],
+                }],
+            }]
+        }
+        annotation = {
+            "id": "pdfjs_4188_0_0:4",
+            "type": "text",
+            "pageIndex": 0,
+            "text": "(Rev. December 2024)",
+            "savedTextOverlay": True,
+            "movedTextOverlay": True,
+            "pdfjsSourceMaskX": 36,
+            "pdfjsSourceMaskY": 728.3914375,
+            "pdfjsSourceMaskW": 69.5056549,
+            "pdfjsSourceMaskH": 6.8364375,
+            "pdfjsSourceText": "(Rev. December 2024)",
+            "__pdfjsMovedSourceRects": [fitz.Rect(56.23, 33.73, 96.21, 57.73)],
+        }
+
+        rect = self.module.pdfjs_source_mask_rect(page, annotation)
+
+        expected_source_y0 = 792 - (annotation["pdfjsSourceMaskY"] + annotation["pdfjsSourceMaskH"])
+        expected_padding_y = max(
+            self.module.PDFJS_SOURCE_MASK_PADDING_Y_PTS,
+            annotation["pdfjsSourceMaskH"] * 0.18,
+        )
+        self.assertAlmostEqual(rect.y0, expected_source_y0 - expected_padding_y, places=5)
+
+        without_ignored = dict(annotation)
+        without_ignored.pop("__pdfjsMovedSourceRects")
+        clamped_rect = self.module.pdfjs_source_mask_rect(page, without_ignored)
+        self.assertGreater(clamped_rect.y0, rect.y0 + 1.0)
+
+    def test_pdfjs_source_mask_does_not_split_around_glyph_like_rule(self):
+        page = self.FakePage()
+        page.get_drawings = lambda: [{
+            "rect": fitz.Rect(54.2765625, 48.09686, 101.366638, 48.64691),
+        }]
+        annotation = {
+            "id": "pdfjs_exact_source_mask_with_glyph_bar",
+            "type": "text",
+            "pageIndex": 0,
+            "text": "SS-5",
+            "savedTextOverlay": True,
+            "pdfjsSourceX": 54.2765625,
+            "pdfjsSourceY": 734.471125,
+            "pdfjsSourceW": 47.09007568359375,
+            "pdfjsSourceH": 24.0,
+            "pdfjsSourceText": "SS-4",
+        }
+
+        self.module.draw_pdfjs_source_mask(page, annotation)
+
+        self.assertEqual(len(page.draw_rect_calls), 1)
+        rect, _kwargs = page.draw_rect_calls[0]
+        self.assertAlmostEqual(rect.y0, 792 - (annotation["pdfjsSourceY"] + annotation["pdfjsSourceH"]), places=5)
+        self.assertAlmostEqual(rect.y1, 792 - annotation["pdfjsSourceY"], places=5)
+
+    def test_pdfjs_source_fidelity_text_uses_source_bbox_for_unmoved_export(self):
+        page = self.FakePage()
+        page.get_text = lambda mode: {
+            "blocks": [{
+                "lines": [{
+                    "spans": [{
+                        "text": "8a",
+                        "font": "Helvetica-Bold",
+                        "size": 10.0,
+                        "color": 0,
+                        "bbox": [38.0, 660.0, 52.0, 672.0],
+                        "origin": [44.0, 669.0],
+                    }],
+                }],
+            }],
+        }
+        annotation = {
+            "id": "pdfjs_unmoved_source_bbox_anchor",
+            "type": "text",
+            "pageIndex": 0,
+            "text": "99",
+            "originalText": "8a",
+            "pdfX": 44.0,
+            "pdfY": 120.0,
+            "pdfWidth": 24.0,
+            "pdfHeight": 12.0,
+            "fontFamily": "Helvetica",
+            "fontSize": 10.0,
+            "lineHeight": 10.0,
+            "textColor": "#000000",
+            "savedTextOverlay": True,
+            "pdfjsEditorMode": "source",
+            "pdfjsSourceFidelity": True,
+            "pdfjsSourceText": "8a",
+            "pdfjsSourceX": 30.0,
+            "pdfjsSourceY": 120.0,
+            "pdfjsSourceW": 14.0,
+            "pdfjsSourceH": 12.0,
+            "pdfjsSourceFontFamily": "sans-serif",
+            "pdfjsSourceFontWeight": "700",
+            "pdfjsSourceFontStyle": "normal",
+            "pdfjsSourceTransformScaleX": "1",
+        }
+
+        self.module.draw_text(page, annotation)
+
+        self.assertEqual(len(page.insert_text_calls), 1)
+        insert_point, text, _kwargs = page.insert_text_calls[0]
+        self.assertEqual(text, "99")
+        self.assertAlmostEqual(insert_point.x, annotation["pdfjsSourceX"], places=5)
+        self.assertNotAlmostEqual(insert_point.x, annotation["pdfX"], places=5)
+
+    def test_pdfjs_source_fidelity_uses_editor_width_for_long_unmoved_replacement(self):
+        page = self.FakePage()
+        page.get_text = lambda mode: {"blocks": []}
+        annotation = {
+            "id": "pdfjs_unmoved_long_replacement_width",
+            "type": "text",
+            "pageIndex": 0,
+            "text": "If a corporation, name the foreign country (if applicable)",
+            "originalText": "8a",
+            "pdfX": 44.0,
+            "pdfY": 120.0,
+            "pdfWidth": 320.0,
+            "pdfHeight": 12.0,
+            "fontFamily": "Helvetica",
+            "fontSize": 8.0,
+            "lineHeight": 8.0,
+            "textColor": "#000000",
+            "savedTextOverlay": True,
+            "pdfjsEditorMode": "source",
+            "pdfjsSourceFidelity": True,
+            "pdfjsSourceText": "8a",
+            "pdfjsSourceX": 30.0,
+            "pdfjsSourceY": 120.0,
+            "pdfjsSourceW": 14.0,
+            "pdfjsSourceH": 12.0,
+            "pdfjsSourceFontFamily": "sans-serif",
+            "pdfjsSourceFontWeight": "400",
+            "pdfjsSourceFontStyle": "normal",
+            "pdfjsSourceTransformScaleX": "1",
+        }
+
+        self.module.draw_text(page, annotation)
+
+        inserted = [call for call in page.insert_text_calls if call[1].strip()]
+        self.assertEqual(len(inserted), 1)
+        insert_point, text, _kwargs = inserted[0]
+        self.assertEqual(text, annotation["text"])
+        self.assertAlmostEqual(insert_point.x, annotation["pdfjsSourceX"], places=5)
+
+    def test_pdfjs_explicit_source_mask_is_not_expanded_to_matching_text(self):
+        page = self.FakePage()
+        annotation = {
+            "id": "pdfjs_exact_explicit_mask",
+            "type": "text",
+            "pageIndex": 0,
+            "text": "SS-5",
+            "savedTextOverlay": True,
+            "pdfjsSourceMaskX": 54.2765625,
+            "pdfjsSourceMaskY": 734.471125,
+            "pdfjsSourceMaskW": 47.09007568359375,
+            "pdfjsSourceMaskH": 24.0,
+            "pdfjsSourceText": "SS-4",
+        }
+
+        self.module.draw_pdfjs_source_mask(page, annotation)
+
+        self.assertEqual(len(page.draw_rect_calls), 1)
+        rect, _kwargs = page.draw_rect_calls[0]
+        self.assertAlmostEqual(rect.x0, annotation["pdfjsSourceMaskX"], places=5)
+        self.assertAlmostEqual(rect.x1, annotation["pdfjsSourceMaskX"] + annotation["pdfjsSourceMaskW"], places=5)
+        self.assertAlmostEqual(rect.y0, 792 - (annotation["pdfjsSourceMaskY"] + annotation["pdfjsSourceMaskH"]), places=5)
+        self.assertAlmostEqual(rect.y1, 792 - annotation["pdfjsSourceMaskY"], places=5)
+
+    def test_pdfjs_deleted_source_text_uses_redaction_not_visual_mask_only(self):
+        page = self.FakePage()
+        annotation = {
+            "id": "pdfjs_deleted_pdfjs_4172_0_0:13",
+            "type": "text",
+            "pdfjsDeleted": True,
+            "pdfjsSourceX": 180.309375,
+            "pdfjsSourceY": 615.65625,
+            "pdfjsSourceW": 74.6729736328125,
+            "pdfjsSourceH": 7.978125,
+            "pdfjsSourceText": "Degree Was Earned:",
+            "text": "",
+        }
+
+        self.module.erase_pdfjs_deleted_source_text(page, annotation)
+
+        self.assertEqual(len(page.add_redact_annot_calls), 1)
+        self.assertIsNone(page.add_redact_annot_calls[0][1].get("fill"))
+        self.assertGreaterEqual(len(page.apply_redactions_calls), 1)
+        self.assertEqual(len(page.draw_rect_calls), 0)
+
+    def test_pdfjs_changed_source_text_uses_redaction_before_replacement(self):
+        page = self.FakePage()
+        annotation = {
+            "id": "pdfjs_4173_0_0:2",
+            "type": "text",
+            "pageIndex": 0,
+            "savedTextOverlay": True,
+            "pdfjsSourceX": 43.2,
+            "pdfjsSourceY": 732.5015625,
+            "pdfjsSourceW": 86.73599853515626,
+            "pdfjsSourceH": 24.0,
+            "pdfjsSourceText": "1040-NR",
+            "text": "1030-NR",
+            "pdfX": 32.1,
+            "pdfY": 761.9016,
+            "pdfWidth": 139.536,
+            "pdfHeight": 28.2,
+            "fontFamily": "Montserrat",
+            "fontSize": 18,
+            "lineHeight": 21.6,
+            "fontWeight": "900",
+            "textColor": "#000000",
+            "movedTextOverlay": True,
+            "styleDirty": True,
+            "userForcedRichText": True,
+            "pdfjsEditorMode": "rich",
+        }
+
+        self.module.draw_text(page, annotation)
+
+        self.assertEqual(len(page.add_redact_annot_calls), 1)
+        self.assertIsNone(page.add_redact_annot_calls[0][1].get("fill"))
+        self.assertGreaterEqual(len(page.apply_redactions_calls), 1)
+        self.assertEqual(len(page.draw_rect_calls), 0)
+        self.assertEqual(len(page.insert_text_calls), 1)
+        self.assertEqual(page.insert_text_calls[0][1], "1030-NR")
+
+    def test_pdfjs_source_anchor_does_not_shift_to_neighboring_label(self):
+        blocks = [{
+            "lines": [{
+                "spans": [
+                    {
+                        "text": "Form",
+                        "bbox": [36.0, 38.0, 55.0, 50.0],
+                        "origin": [36.0, 49.0],
+                    },
+                    {
+                        "text": "SS-4",
+                        "bbox": [54.2765625, 20.0, 101.366638, 44.0],
+                        "origin": [54.2765625, 43.0],
+                    },
+                ],
+            }],
+        }]
+        source_rect = fitz.Rect(54.2765625, 33.528875, 101.366638, 57.528875)
+
+        span, _rect = self.module._pdfjs_source_line_anchor_span(blocks, source_rect, "ss-4")
+
+        self.assertIsNotNone(span)
+        self.assertEqual(span["text"], "SS-4")
+        self.assertAlmostEqual(span["origin"][0], 54.2765625, places=5)
+
+    def test_pdfjs_source_anchor_prefers_exact_span_over_overlapping_revision(self):
+        blocks = [{
+            "lines": [{
+                "spans": [
+                    {
+                        "text": "Form",
+                        "bbox": [36.0, 47.42, 56.23, 54.42],
+                        "origin": [36.0, 53.14],
+                    },
+                    {
+                        "text": "W-7",
+                        "bbox": [56.23, 33.73, 96.21, 57.73],
+                        "origin": [56.23, 53.14],
+                    },
+                ],
+            }, {
+                "spans": [{
+                    "text": "(Rev. December 2024)",
+                    "bbox": [36.0, 56.59, 105.5, 63.59],
+                    "origin": [36.0, 62.31],
+                }],
+            }],
+        }]
+        source_rect = fitz.Rect(56.2265625, 34.0800, 96.2127136, 57.4969)
+
+        span, _rect = self.module._pdfjs_source_line_anchor_span(blocks, source_rect, "w-7")
+
+        self.assertIsNotNone(span)
+        self.assertEqual(span["text"], "W-7")
+        self.assertAlmostEqual(span["origin"][0], 56.23, places=5)
 
     def test_pdfjs_moved_source_line_uses_current_box_metrics(self):
         source_pdf = pathlib.Path(__file__).resolve().parents[2] / "public" / "spiders.pdf"
@@ -534,6 +1064,80 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         self.assertEqual(len(page.add_redact_annot_calls), 1)
         self.assertEqual(page.add_redact_annot_calls[0][1].get("fill"), None)
         self.assertGreaterEqual(len(page.apply_redactions_calls), 1)
+
+    def test_moved_promoted_source_erase_uses_original_source_mask_not_target(self):
+        annotation = {
+            "promotedFromExtraction": True,
+            "promotedDirty": True,
+            "movedTextOverlay": True,
+            "backgroundColor": "transparent",
+            "pdfjsSourceMaskX": 20,
+            "pdfjsSourceMaskY": 700,
+            "pdfjsSourceMaskW": 80,
+            "pdfjsSourceMaskH": 10,
+        }
+        page = self.FakePage()
+        target_rect = fitz.Rect(100, 100, 180, 124)
+        target_lines = [{"rect": fitz.Rect(110, 102, 170, 118)}]
+
+        self.module.erase_promoted_source_text_region(page, annotation, target_rect, target_lines)
+
+        self.assertEqual(len(page.add_redact_annot_calls), 1)
+        redact_rect = page.add_redact_annot_calls[0][0]
+        self.assertAlmostEqual(redact_rect.x0, 20.0, places=3)
+        self.assertAlmostEqual(redact_rect.y0, 82.0, places=3)
+        self.assertAlmostEqual(redact_rect.x1, 100.0, places=3)
+        self.assertAlmostEqual(redact_rect.y1, 92.0, places=3)
+
+    def test_moved_promoted_source_erase_without_source_mask_does_not_erase_target(self):
+        annotation = {
+            "promotedFromExtraction": True,
+            "promotedDirty": True,
+            "movedTextOverlay": True,
+            "backgroundColor": "transparent",
+        }
+        page = self.FakePage()
+        target_rect = fitz.Rect(100, 100, 180, 124)
+        target_lines = [{"rect": fitz.Rect(110, 102, 170, 118)}]
+
+        self.module.erase_promoted_source_text_region(page, annotation, target_rect, target_lines)
+
+        self.assertEqual(len(page.add_redact_annot_calls), 0)
+        self.assertEqual(len(page.draw_rect_calls), 0)
+        self.assertEqual(len(page.shape_draw_rect_calls), 0)
+
+    def test_pdfjs_moved_source_span_runs_preserve_superscript_position(self):
+        annotation = {
+            "type": "text",
+            "savedTextOverlay": True,
+            "movedTextOverlay": True,
+            "pdfjsSourceFidelity": True,
+            "pdfjsSourceX": 10,
+            "pdfjsSourceY": 20,
+            "pdfjsSourceW": 40,
+            "pdfjsSourceH": 12,
+            "text": "Box3",
+            "fontFamily": "Helvetica",
+            "fontSize": 10,
+            "pdfjsSourceSpanRuns": (
+                '[{"text":"Box","leftPx":10,"rightPx":28,"topPx":100,"bottomPx":112,'
+                '"fontSizePx":10,"fontFamily":"Helvetica"},'
+                '{"text":"3","leftPx":28,"rightPx":33,"topPx":90,"bottomPx":98,'
+                '"fontSizePx":6,"fontFamily":"Helvetica"}]'
+            ),
+        }
+        layout = self.module.normalize_pdfjs_source_span_run_layout(
+            annotation,
+            "Box3",
+            fitz.Rect(100, 100, 140, 120),
+            10,
+        )
+
+        self.assertEqual(len(layout), 1)
+        spans = layout[0]["spans"]
+        self.assertEqual([span["text"] for span in spans], ["Box", "3"])
+        self.assertLess(spans[1]["font_size"], spans[0]["font_size"])
+        self.assertLess(spans[1]["baseline_y"], spans[0]["baseline_y"])
 
     def test_promoted_source_erase_draws_fill_when_custom_background_requested(self):
         annotation = {
@@ -1126,6 +1730,68 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
             )
         )
 
+    def test_promoted_rich_span_layout_maps_saved_runs_to_source_faces(self):
+        annotation = {
+            "id": "promoted_1_22",
+            "promotedFromExtraction": True,
+            "preserveSourceTypography": True,
+            "text": "5a Mailing address (room, apt., suite no. and street, or P.O. box)",
+            "richTextHtml": (
+                '<span style="font-weight:700;font-style:normal">5a</span>   '
+                '<span style="font-weight:400;font-style:normal">'
+                'Mailing address (room, apt., suite no. and street, or P.O. box)'
+                '</span>'
+            ),
+            "fontFamily": "HelveticaNeueLTStd",
+            "fontSourceName": "HelveticaNeueLTStd-Bd",
+            "fontSize": 8,
+            "fontWeight": "700",
+            "fontStyle": "normal",
+            "textColor": "#000000",
+            "sourceSpans": [
+                {
+                    "text": "5a",
+                    "font": "HelveticaNeueLTStd-Bd",
+                    "embedded_font_name": "HelveticaNeueLTStd-Bd",
+                    "embedded_font_family": "HelveticaNeueLTStd",
+                    "font_weight": "700",
+                    "font_style": "normal",
+                    "font_size": 8,
+                },
+                {
+                    "text": "Mailing address (room, apt., suite no. and street, or P.O. box)",
+                    "font": "HelveticaNeueLTStd-Roman",
+                    "embedded_font_name": "HelveticaNeueLTStd-Roman",
+                    "embedded_font_family": "HelveticaNeueLTStd",
+                    "font_weight": "400",
+                    "font_style": "normal",
+                    "font_size": 8,
+                },
+            ],
+        }
+
+        ops = self.module.parse_rich_text_layout_ops(annotation)
+        wrapped = self.module.wrap_rich_text_layout_ops(ops, 1000)
+        layout = [{
+            "rect": fitz.Rect(0, 0, 1000, 12),
+            "rotation": 0,
+            "spans": [
+                {
+                    **run,
+                    "rect": fitz.Rect(0, 0, 10, 12),
+                    "baseline_x": 0,
+                    "baseline_y": 8,
+                }
+                for run in wrapped[0]
+            ],
+        }]
+
+        repaired = self.module.apply_source_faces_to_rich_span_layout(annotation, layout)
+
+        self.assertEqual(repaired[0]["spans"][0]["font_source_name"], "HelveticaNeueLTStd-Bd")
+        self.assertEqual(repaired[0]["spans"][-1]["font_source_name"], "HelveticaNeueLTStd-Roman")
+        self.assertIn("Mailing address", repaired[0]["spans"][-1]["text"])
+
     def test_drop_preview_side_padding_only_when_padding_causes_single_line_wrap(self):
         font = fitz.Font(fontfile=str(pathlib.Path("python/pdf-editor/fonts/EBGaramond-Regular.ttf")))
         size = 53.25443786982248
@@ -1147,6 +1813,51 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
                 False,
             )
         )
+
+    def test_pdfjs_source_inline_rich_label_does_not_wrap_on_metric_drift(self):
+        annotation = {
+            "id": "pdfjs_4184_0_0:23",
+            "type": "text",
+            "pageIndex": 0,
+            "text": "New capital:",
+            "originalText": "New capital:",
+            "pdfX": 56.6802,
+            "pdfY": 212.09137,
+            "pdfWidth": 74.4243,
+            "pdfHeight": 11.49843,
+            "fontFamily": "sans-serif",
+            "fontSize": 11.5,
+            "fontWeight": "700",
+            "fontStyle": "italic",
+            "lineHeight": 11.49999,
+            "textColor": "#000000",
+            "richTextHtml": '<span style="font-style: italic">New capital:</span>',
+            "richTextPromotionReason": "font-style",
+            "styleDirty": True,
+            "userForcedRichText": True,
+            "pdfjsEditorMode": "rich",
+            "savedTextOverlay": True,
+            "pdfjsSourceFidelity": True,
+            "pdfjsSourceText": "New capital:",
+            "pdfjsSourceX": 56.680125,
+            "pdfjsSourceY": 212.0913625,
+            "pdfjsSourceW": 74.42415966796875,
+            "pdfjsSourceH": 11.4984375,
+            "pdfjsSourceTransformScaleX": "1.18851",
+            "__documentId": 4184,
+        }
+        ops = self.module.parse_rich_text_layout_ops(annotation)
+
+        self.assertEqual(
+            [[run["text"] for run in line] for line in self.module.wrap_rich_text_layout_ops(ops, annotation["pdfWidth"])],
+            [["New "], ["capital:"]],
+        )
+        self.assertTrue(self.module.should_preserve_pdfjs_source_inline_flow(annotation, annotation["text"]))
+
+        page = self.FakePage()
+        self.module.draw_text(page, annotation, source_masks_already_drawn=True)
+
+        self.assertEqual([call[1] for call in page.insert_text_calls], ["New capital:"])
 
     def test_normalize_exact_source_line_layout_preserves_line_style_metadata(self):
         annotation = {

@@ -129,12 +129,17 @@ async function main() {
             throw new Error(`Shape style controls did not update the selected shape: ${JSON.stringify(styledShape)}`);
         }
 
-        const handleDisplay = await page.evaluate(() => {
-            const handle = document.querySelector('.pdfViewer .page[data-page-number="1"] .enpv-shape-box.is-selected .enpv-resize-handle.se');
-            return handle ? window.getComputedStyle(handle).display : '';
+        const visibleShapeHandles = await page.evaluate(() => {
+            const selected = document.querySelector('.pdfViewer .page[data-page-number="1"] .enpv-shape-box.is-selected');
+            return Array.from(selected?.querySelectorAll('.enpv-resize-handle') || [])
+                .filter((handle) => window.getComputedStyle(handle).display !== 'none')
+                .map((handle) => handle.dataset.edge || '')
+                .sort();
         });
-        if (handleDisplay === 'none' || !handleDisplay) {
-            throw new Error(`Selected shape resize handle is not visible: ${handleDisplay}`);
+        for (const edge of ['nw', 'ne', 'sw', 'se', 't', 'b', 'l', 'r']) {
+            if (!visibleShapeHandles.includes(edge)) {
+                throw new Error(`Selected shape resize handle is not visible: ${JSON.stringify({ edge, visibleShapeHandles })}`);
+            }
         }
 
         const widthBeforeResize = await page.evaluate(() => {
@@ -153,6 +158,42 @@ async function main() {
         });
         if (widthAfterResize <= widthBeforeResize + 30) {
             throw new Error(`Shape resize did not increase width enough: before=${widthBeforeResize} after=${widthAfterResize}`);
+        }
+
+        const beforeVerticalResize = await page.evaluate(() => {
+            const selected = document.querySelector('.pdfViewer .page[data-page-number="1"] .enpv-shape-box.is-selected');
+            const rect = selected?.getBoundingClientRect();
+            return { width: rect?.width || 0, height: rect?.height || 0 };
+        });
+        const bottomHandle = await page.locator('.pdfViewer .page[data-page-number="1"] .enpv-shape-box.is-selected .enpv-resize-handle.b').boundingBox();
+        if (!bottomHandle) throw new Error('Could not locate selected shape bottom resize handle.');
+        await page.mouse.move(bottomHandle.x + bottomHandle.width / 2, bottomHandle.y + bottomHandle.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(bottomHandle.x + bottomHandle.width / 2, bottomHandle.y + bottomHandle.height / 2 + 70, { steps: 8 });
+        await page.mouse.up();
+        const afterVerticalResize = await page.evaluate(() => {
+            const selected = document.querySelector('.pdfViewer .page[data-page-number="1"] .enpv-shape-box.is-selected');
+            const rect = selected?.getBoundingClientRect();
+            return { width: rect?.width || 0, height: rect?.height || 0 };
+        });
+        if (afterVerticalResize.height <= beforeVerticalResize.height + 30 || Math.abs(afterVerticalResize.width - beforeVerticalResize.width) > 4) {
+            throw new Error(`Shape bottom handle did not resize vertically only: ${JSON.stringify({ beforeVerticalResize, afterVerticalResize })}`);
+        }
+
+        const beforeCornerShrink = afterVerticalResize;
+        const shrinkHandle = await page.locator('.pdfViewer .page[data-page-number="1"] .enpv-shape-box.is-selected .enpv-resize-handle.se').boundingBox();
+        if (!shrinkHandle) throw new Error('Could not locate selected shape southeast resize handle for shrink.');
+        await page.mouse.move(shrinkHandle.x + shrinkHandle.width / 2, shrinkHandle.y + shrinkHandle.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(shrinkHandle.x + shrinkHandle.width / 2 - 55, shrinkHandle.y + shrinkHandle.height / 2 - 55, { steps: 8 });
+        await page.mouse.up();
+        const afterCornerShrink = await page.evaluate(() => {
+            const selected = document.querySelector('.pdfViewer .page[data-page-number="1"] .enpv-shape-box.is-selected');
+            const rect = selected?.getBoundingClientRect();
+            return { width: rect?.width || 0, height: rect?.height || 0 };
+        });
+        if (afterCornerShrink.width >= beforeCornerShrink.width - 20 || afterCornerShrink.height >= beforeCornerShrink.height - 20) {
+            throw new Error(`Shape corner handle did not scale down: ${JSON.stringify({ beforeCornerShrink, afterCornerShrink })}`);
         }
 
         await page.click('#save-btn');
@@ -213,14 +254,15 @@ async function main() {
             await page.waitForSelector('#shape-tool-panel.is-visible', { timeout: 5000 });
         }
         await page.click('[data-shape-tool="line"]');
-        await page.mouse.move(pageBox.x + 560, pageBox.y + 520);
+        await page.mouse.move(pageBox.x + 420, pageBox.y + 520);
         await page.mouse.down();
-        await page.mouse.move(pageBox.x + 770, pageBox.y + 610, { steps: 8 });
+        await page.mouse.move(pageBox.x + 920, pageBox.y + 580, { steps: 8 });
         await page.mouse.up();
         await page.waitForSelector('.pdfViewer .page[data-page-number="1"] .enpv-shape-box.is-selected[data-shape-type="line"]', { timeout: 10000 });
 
         const lineAfterDraw = await page.evaluate(() => {
             const selected = document.querySelector('.pdfViewer .page[data-page-number="1"] .enpv-shape-box.is-selected[data-shape-type="line"]');
+            const svgLine = selected?.querySelector('svg.enpv-shape-svg line') || null;
             const visibleHandles = Array.from(selected?.querySelectorAll('.enpv-resize-handle') || [])
                 .filter((handle) => window.getComputedStyle(handle).display !== 'none')
                 .map((handle) => handle.dataset.edge || '');
@@ -232,13 +274,16 @@ async function main() {
                 lineStartY: selected?.dataset.lineStartY || '',
                 lineEndX: selected?.dataset.lineEndX || '',
                 lineEndY: selected?.dataset.lineEndY || '',
+                svgY1: Number(svgLine?.getAttribute('y1') || 0),
+                svgY2: Number(svgLine?.getAttribute('y2') || 0),
                 visibleHandles,
             };
         });
         if (
             !lineAfterDraw.id
             || lineAfterDraw.width < 40
-            || lineAfterDraw.height < 20
+            || lineAfterDraw.height < 10
+            || Math.abs(lineAfterDraw.svgY2 - lineAfterDraw.svgY1) < 8
             || lineAfterDraw.visibleHandles.length !== 2
             || !lineAfterDraw.visibleHandles.includes('line-start')
             || !lineAfterDraw.visibleHandles.includes('line-end')
@@ -250,11 +295,12 @@ async function main() {
         if (!lineEndHandle) throw new Error('Could not locate line endpoint handle.');
         await page.mouse.move(lineEndHandle.x + lineEndHandle.width / 2, lineEndHandle.y + lineEndHandle.height / 2);
         await page.mouse.down();
-        await page.mouse.move(lineEndHandle.x + lineEndHandle.width / 2 + 80, lineEndHandle.y + lineEndHandle.height / 2 - 55, { steps: 8 });
+        await page.mouse.move(lineEndHandle.x + lineEndHandle.width / 2 + 80, lineEndHandle.y + lineEndHandle.height / 2 - 8, { steps: 8 });
         await page.mouse.up();
 
         const lineAfterEndpointMove = await page.evaluate((lineId) => {
             const selected = document.querySelector(`.pdfViewer .page[data-page-number="1"] .enpv-shape-box[data-annotation-id="${CSS.escape(lineId)}"]`);
+            const svgLine = selected?.querySelector('svg.enpv-shape-svg line') || null;
             return {
                 selected: Boolean(selected?.classList.contains('is-selected')),
                 width: selected?.getBoundingClientRect().width || 0,
@@ -263,10 +309,13 @@ async function main() {
                 lineStartY: selected?.dataset.lineStartY || '',
                 lineEndX: selected?.dataset.lineEndX || '',
                 lineEndY: selected?.dataset.lineEndY || '',
+                svgY1: Number(svgLine?.getAttribute('y1') || 0),
+                svgY2: Number(svgLine?.getAttribute('y2') || 0),
             };
         }, lineAfterDraw.id);
         if (
             !lineAfterEndpointMove.selected
+            || Math.abs(lineAfterEndpointMove.svgY2 - lineAfterEndpointMove.svgY1) < 4
             || (
                 lineAfterEndpointMove.width === lineAfterDraw.width
                 && lineAfterEndpointMove.height === lineAfterDraw.height

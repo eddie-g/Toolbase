@@ -1,0 +1,207 @@
+{
+  "_comment": "Free metric-compatible substitutes for common commercial source fonts. Keys are matched (case-insensitive, substring) against the PostScript / source font name extracted from the PDF. The first matching rule wins, so list more specific rules first. `family` must exist in python/pdf-editor FONT_FILE_VARIANTS. `weight` is one of light/normal/bold; `style` is normal/italic. Used by python/pdf-editor/apply_annotations_direct_new.py:resolve_substitute_font_entry when the runtime-extracted subset can't cover the requested text.",
+  "rules": [
+    {
+      "match": "FranklinGothic",
+      "family": "Oswald",
+      "weight": "bold",
+      "style": "normal",
+      "note": "Heavy condensed sans — Oswald is the closest free analogue to ITC Franklin Gothic Demi/Bold."
+    },
+    {
+      "match": "HelveticaNeue",
+      "family": "Inter",
+      "weight": "normal",
+      "style": "normal",
+      "note": "Inter was explicitly designed as a Helvetica-class neutral grotesque."
+    },
+    {
+      "match": "Helvetica",
+      "family": "Inter",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "MyriadPro",
+      "family": "SourceSansPro",
+      "weight": "normal",
+      "style": "normal",
+      "note": "Source Sans 3 is Adobe's open-source descendant of Myriad."
+    },
+    {
+      "match": "Myriad",
+      "family": "SourceSansPro",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "MinionPro",
+      "family": "NotoSerif",
+      "weight": "normal",
+      "style": "normal",
+      "note": "Noto Serif is a close free analogue for Minion Pro."
+    },
+    {
+      "match": "Minion",
+      "family": "NotoSerif",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "Calibri",
+      "family": "Inter",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "Cambria",
+      "family": "Tinos",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "Candara",
+      "family": "Inter",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "Consolas",
+      "family": "RobotoMono",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "Constantia",
+      "family": "NotoSerif",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "Corbel",
+      "family": "Inter",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "Optima",
+      "family": "Lato",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "Futura",
+      "family": "Raleway",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "AvantGarde",
+      "family": "Raleway",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "GillSans",
+      "family": "Lato",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "TradeGothic",
+      "family": "Oswald",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "Univers",
+      "family": "Inter",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "Frutiger",
+      "family": "Inter",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "AGaramond",
+      "family": "Garamond",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "Garamond",
+      "family": "Garamond",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "Bodoni",
+      "family": "PlayfairDisplay",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "Didot",
+      "family": "PlayfairDisplay",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "BaskervilleOldStyle",
+      "family": "Lora",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "Baskerville",
+      "family": "Lora",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "PalatinoLinotype",
+      "family": "Tinos",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "Palatino",
+      "family": "Tinos",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "BookAntiqua",
+      "family": "Tinos",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "TimesNewRoman",
+      "family": "Tinos",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "Times",
+      "family": "TimesRoman",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "Arial",
+      "family": "Arimo",
+      "weight": "normal",
+      "style": "normal"
+    },
+    {
+      "match": "Courier",
+      "family": "Cousine",
+      "weight": "normal",
+      "style": "normal"
+    }
+  ]
+}

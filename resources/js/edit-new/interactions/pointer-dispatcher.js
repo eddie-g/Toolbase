@@ -20,7 +20,7 @@ import { dragState, resizeState, rotateState } from '../store/interaction-state.
 import { pageData } from '../store/page-data.js';
 import { pdfPtFromClient } from '../render/coords.js';
 import { isShapeAnnotation, isLineShape, isTextAnnotation } from '../annotations/types.js';
-import { snapLineEndpoint, computeLineBoxGeometry, normalizeRotationDegrees } from '../util/geometry.js';
+import { computeLineBoxGeometry, constrainLineEndpointTo45, normalizeRotationDegrees } from '../util/geometry.js';
 import { setAnnotationBox } from '../annotations/geometry-writes.js';
 import { annTextIsEdited } from '../annotations/state.js';
 import { editedTexts } from '../store/edited-texts.js';
@@ -136,12 +136,16 @@ export function installPointerDispatcher(deps) {
             };
             const nextGeometry = handle === 'line-start'
                 ? (() => {
-                    const snappedStart = snapLineEndpoint(endPoint.x, endPoint.y, draggedPoint.x, draggedPoint.y);
-                    return computeLineBoxGeometry(snappedStart.x, snappedStart.y, endPoint.x, endPoint.y);
+                    const nextStart = e.shiftKey
+                        ? constrainLineEndpointTo45(endPoint.x, endPoint.y, draggedPoint.x, draggedPoint.y)
+                        : draggedPoint;
+                    return computeLineBoxGeometry(nextStart.x, nextStart.y, endPoint.x, endPoint.y);
                 })()
                 : (() => {
-                    const snappedEnd = snapLineEndpoint(startPoint.x, startPoint.y, draggedPoint.x, draggedPoint.y);
-                    return computeLineBoxGeometry(startPoint.x, startPoint.y, snappedEnd.x, snappedEnd.y);
+                    const nextEnd = e.shiftKey
+                        ? constrainLineEndpointTo45(startPoint.x, startPoint.y, draggedPoint.x, draggedPoint.y)
+                        : draggedPoint;
+                    return computeLineBoxGeometry(startPoint.x, startPoint.y, nextEnd.x, nextEnd.y);
                 })();
 
             setAnnotationBox(ann, {
