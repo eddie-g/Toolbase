@@ -8,9 +8,6 @@
             <button type="button" class="draw-tool-btn is-active" id="draw-tool-pen" data-draw-direct-tool="pen" title="Pen" aria-label="Pen">
                 <svg viewBox="0 0 24 24"><path d="M4 20h8"></path><path d="M14.5 4.5a2.1 2.1 0 0 1 3 3L8 17l-4 1 1-4 9.5-9.5z"></path><path d="M13 6l5 5"></path></svg>
             </button>
-            <button type="button" class="draw-tool-btn" id="draw-tool-eraser" data-draw-direct-tool="eraser" title="Eraser" aria-label="Eraser">
-                <svg viewBox="0 0 24 24"><path d="m7 14 7.5-7.5a2.1 2.1 0 0 1 3 0l1 1a2.1 2.1 0 0 1 0 3L11 18H7z"></path><path d="M5 18h10"></path></svg>
-            </button>
         </div>
         <div class="draw-tool-panel__slider-wrap">
             <span class="draw-tool-panel__section-label">Size</span>
@@ -22,7 +19,7 @@
             <input type="range" id="draw-tool-opacity" min="10" max="100" step="1" value="100" aria-label="Draw opacity">
             <span class="draw-tool-panel__readout" id="draw-tool-opacity-value">100%</span>
         </div>
-        <div class="draw-tool-panel__stack" style="gap: 8px; width: 100%;">
+        <div class="draw-tool-panel__color-wrap">
             <span class="draw-tool-panel__section-label">Color</span>
             <div class="draw-tool-panel__colors">
                 <button type="button" class="draw-color-swatch is-active" data-draw-color="#111827" style="--swatch-color:#111827" aria-label="Black ink"></button>

@@ -3483,6 +3483,18 @@ def draw_shape(page: fitz.Page, ann: Dict[str, Any]) -> None:
         s.commit(overlay=True)
         return
 
+    if shape_type == "heart":
+        s = page.new_shape()
+        s.draw_bezier(rp(0.50, 0.90), rp(0.18, 0.66), rp(0.06, 0.48), rp(0.06, 0.30))
+        s.draw_bezier(rp(0.06, 0.30), rp(0.06, 0.16), rp(0.17, 0.06), rp(0.31, 0.06))
+        s.draw_bezier(rp(0.31, 0.06), rp(0.40, 0.06), rp(0.47, 0.11), rp(0.50, 0.18))
+        s.draw_bezier(rp(0.50, 0.18), rp(0.53, 0.11), rp(0.60, 0.06), rp(0.69, 0.06))
+        s.draw_bezier(rp(0.69, 0.06), rp(0.83, 0.06), rp(0.94, 0.16), rp(0.94, 0.30))
+        s.draw_bezier(rp(0.94, 0.30), rp(0.94, 0.48), rp(0.82, 0.66), rp(0.50, 0.90))
+        s.finish(color=stroke, fill=fill, width=stroke_width, closePath=True, lineCap=1, lineJoin=1, stroke_opacity=opacity, fill_opacity=opacity)
+        s.commit(overlay=True)
+        return
+
     if shape_type == "star":
         points = [
             rp(0.50, 0.05), rp(0.61, 0.38), rp(0.95, 0.38), rp(0.68, 0.58), rp(0.79, 0.91),

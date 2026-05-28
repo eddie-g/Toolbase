@@ -51,6 +51,42 @@ export function drawShapePath(ctx, shapeType, rect, lineGeometry = null) {
         return;
     }
 
+    if (type === 'heart') {
+        ctx.moveTo(centerX, top + height * 0.9);
+        ctx.bezierCurveTo(left + width * 0.18, top + height * 0.66, left + width * 0.06, top + height * 0.48, left + width * 0.06, top + height * 0.3);
+        ctx.bezierCurveTo(left + width * 0.06, top + height * 0.16, left + width * 0.17, top + height * 0.06, left + width * 0.31, top + height * 0.06);
+        ctx.bezierCurveTo(left + width * 0.4, top + height * 0.06, left + width * 0.47, top + height * 0.11, centerX, top + height * 0.18);
+        ctx.bezierCurveTo(left + width * 0.53, top + height * 0.11, left + width * 0.6, top + height * 0.06, left + width * 0.69, top + height * 0.06);
+        ctx.bezierCurveTo(left + width * 0.83, top + height * 0.06, left + width * 0.94, top + height * 0.16, left + width * 0.94, top + height * 0.3);
+        ctx.bezierCurveTo(left + width * 0.94, top + height * 0.48, left + width * 0.82, top + height * 0.66, centerX, top + height * 0.9);
+        ctx.closePath();
+        return;
+    }
+
+    if (type === 'arrow') {
+        ctx.moveTo(left + width * 0.1, centerY);
+        ctx.lineTo(left + width * 0.8, centerY);
+        ctx.moveTo(left + width * 0.65, top + height * 0.35);
+        ctx.lineTo(left + width * 0.8, centerY);
+        ctx.lineTo(left + width * 0.65, top + height * 0.65);
+        return;
+    }
+
+    if (type === 'x') {
+        ctx.moveTo(left + width * 0.15, top + height * 0.15);
+        ctx.lineTo(left + width * 0.85, top + height * 0.85);
+        ctx.moveTo(left + width * 0.85, top + height * 0.15);
+        ctx.lineTo(left + width * 0.15, top + height * 0.85);
+        return;
+    }
+
+    if (type === 'checkmark') {
+        ctx.moveTo(left + width * 0.15, top + height * 0.5);
+        ctx.lineTo(left + width * 0.4, top + height * 0.75);
+        ctx.lineTo(left + width * 0.85, top + height * 0.15);
+        return;
+    }
+
     if (type === 'polygon') {
         const points = normalizePolygonPointList(lineGeometry?.polygonPoints, defaultPolygonUnitPoints());
         points.forEach((point, index) => {

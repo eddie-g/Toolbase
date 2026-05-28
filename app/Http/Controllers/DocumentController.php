@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Jobs\ProcessUploadedDocumentJob;
 use App\Models\Document;
+use App\Models\DocumentNote;
 use App\Models\GuidedTemplate;
 use App\Models\PdfAcroForm;
 use App\Models\PdfGroup;
@@ -1780,6 +1781,10 @@ class DocumentController extends Controller
                 return null;
             }
 
+            if ($this->isUnchangedSyntheticSymbolAnnotation($enriched)) {
+                return null;
+            }
+
             return $enriched;
         }, $annotations)));
 
@@ -1802,6 +1807,35 @@ class DocumentController extends Controller
         }
 
         return $prepared;
+    }
+
+    private function isUnchangedSyntheticSymbolAnnotation(array $annotation): bool
+    {
+        if (strtolower(trim((string) ($annotation['type'] ?? ''))) !== 'text') {
+            return false;
+        }
+
+        if (!$this->annotationFlagIsTruthy($annotation, 'syntheticSymbol')) {
+            return false;
+        }
+
+        foreach (['pdfjsDeleted', 'userCreated', 'userAuthored', 'styleDirty', 'userForcedRichText', 'movedTextOverlay'] as $flag) {
+            if ($this->annotationFlagIsTruthy($annotation, $flag)) {
+                return false;
+            }
+        }
+
+        $text = trim((string) ($annotation['text'] ?? ''));
+        if ($text === '') {
+            return false;
+        }
+
+        $original = trim((string) ($annotation['originalText'] ?? $annotation['pdfjsSourceText'] ?? ''));
+        if ($original !== '' && $original !== $text) {
+            return false;
+        }
+
+        return in_array($text, ['•', '●', '·', '∙', '◦', '▪', '▫'], true);
     }
 
     private function createOriginalBackup(string $storedPath): ?string
@@ -5876,14 +5910,6 @@ class DocumentController extends Controller
 
     public function edit(Request $request, Document $document)
     {
-        $mimeType = strtolower((string) ($document->mime_type ?? 'application/pdf'));
-        if (!$request->boolean('legacy') && !str_starts_with($mimeType, 'image/')) {
-            return redirect()->route('documents.editNew', [
-                'document' => $document,
-                'pdfjs' => 1,
-            ]);
-        }
-
         return view('documents.edit', [
             'document' => $document,
             'activeTab' => 'pdf-editor',
@@ -5913,6 +5939,149 @@ class DocumentController extends Controller
         return redirect()->route('documents.editNew', [
             'document' => $document,
             'pdfjs' => 1,
+        ]);
+    }
+
+    private function documentNotesQuery(Document $document)
+    {
+        $ownership = $this->resolveDocumentOwnership($document);
+
+        return DocumentNote::query()
+            ->where('document_id', $document->id)
+            ->where('user_id', $ownership['user_id'])
+            ->where('admin_id', $ownership['admin_id']);
+    }
+
+    private function serializeDocumentNote(DocumentNote $note): array
+    {
+        return [
+            'id' => $note->id,
+            'document_id' => $note->document_id,
+            'page_index' => $note->page_index,
+            'page_number' => $note->page_index !== null ? $note->page_index + 1 : null,
+            'anchor_x' => $note->anchor_x,
+            'anchor_y' => $note->anchor_y,
+            'has_anchor' => $note->page_index !== null && $note->anchor_x !== null && $note->anchor_y !== null,
+            'body' => $note->body,
+            'created_at' => optional($note->created_at)->toIso8601String(),
+            'updated_at' => optional($note->updated_at)->toIso8601String(),
+        ];
+    }
+
+    private function normalizeDocumentNoteAnchor(array $validated): array
+    {
+        $pageIndex = $validated['page_index'] ?? null;
+        $anchorX = array_key_exists('anchor_x', $validated) ? $validated['anchor_x'] : null;
+        $anchorY = array_key_exists('anchor_y', $validated) ? $validated['anchor_y'] : null;
+
+        if ($pageIndex === null || $anchorX === null || $anchorY === null) {
+            return [$pageIndex, null, null];
+        }
+
+        return [$pageIndex, (float) $anchorX, (float) $anchorY];
+    }
+
+    private function ownedDocumentNoteOrFail(Document $document, DocumentNote $note): DocumentNote
+    {
+        $owned = $this->documentNotesQuery($document)
+            ->whereKey($note->id)
+            ->first();
+
+        abort_if($owned === null, 404);
+
+        return $owned;
+    }
+
+    public function getDocumentNotes(Request $request, Document $document)
+    {
+        $notes = $this->documentNotesQuery($document)
+            ->orderByRaw('page_index is null')
+            ->orderBy('page_index')
+            ->latest('updated_at')
+            ->get()
+            ->map(fn (DocumentNote $note) => $this->serializeDocumentNote($note))
+            ->values();
+
+        return response()->json([
+            'success' => true,
+            'notes' => $notes,
+        ]);
+    }
+
+    public function storeDocumentNote(Request $request, Document $document)
+    {
+        $validated = $request->validate([
+            'body' => ['required', 'string', 'max:20000'],
+            'page_index' => ['nullable', 'integer', 'min:0'],
+            'anchor_x' => ['nullable', 'numeric', 'min:0', 'max:1'],
+            'anchor_y' => ['nullable', 'numeric', 'min:0', 'max:1'],
+        ]);
+
+        $body = trim((string) $validated['body']);
+        if ($body === '') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Write a note before saving.',
+            ], 422);
+        }
+
+        $ownership = $this->resolveDocumentOwnership($document);
+        [$pageIndex, $anchorX, $anchorY] = $this->normalizeDocumentNoteAnchor($validated);
+        $note = DocumentNote::create([
+            'document_id' => $document->id,
+            'user_id' => $ownership['user_id'],
+            'admin_id' => $ownership['admin_id'],
+            'page_index' => $pageIndex,
+            'anchor_x' => $anchorX,
+            'anchor_y' => $anchorY,
+            'body' => $body,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'note' => $this->serializeDocumentNote($note),
+        ], 201);
+    }
+
+    public function updateDocumentNote(Request $request, Document $document, DocumentNote $note)
+    {
+        $note = $this->ownedDocumentNoteOrFail($document, $note);
+        $validated = $request->validate([
+            'body' => ['required', 'string', 'max:20000'],
+            'page_index' => ['nullable', 'integer', 'min:0'],
+            'anchor_x' => ['nullable', 'numeric', 'min:0', 'max:1'],
+            'anchor_y' => ['nullable', 'numeric', 'min:0', 'max:1'],
+        ]);
+
+        $body = trim((string) $validated['body']);
+        if ($body === '') {
+            return response()->json([
+                'success' => false,
+                'message' => 'A note cannot be empty.',
+            ], 422);
+        }
+
+        [$pageIndex, $anchorX, $anchorY] = $this->normalizeDocumentNoteAnchor($validated);
+        $note->fill([
+            'page_index' => $pageIndex,
+            'anchor_x' => $anchorX,
+            'anchor_y' => $anchorY,
+            'body' => $body,
+        ])->save();
+
+        return response()->json([
+            'success' => true,
+            'note' => $this->serializeDocumentNote($note->fresh()),
+        ]);
+    }
+
+    public function deleteDocumentNote(Request $request, Document $document, DocumentNote $note)
+    {
+        $note = $this->ownedDocumentNoteOrFail($document, $note);
+        $note->delete();
+
+        return response()->json([
+            'success' => true,
         ]);
     }
 
@@ -5948,11 +6117,11 @@ class DocumentController extends Controller
             }
             move_uploaded_file($upload->getRealPath(), $tmpIn);
         } else {
-            if (!$document->original_backup_path || !Storage::exists($document->original_backup_path)) {
+            if (!$document->path || !Storage::exists($document->path)) {
                 @unlink($tmpIn);
-                return response()->json(['error' => 'Original PDF missing'], 404);
+                return response()->json(['error' => 'Current PDF missing'], 404);
             }
-            copy(Storage::path($document->original_backup_path), $tmpIn);
+            copy(Storage::path($document->path), $tmpIn);
         }
         $tmpOut = tempnam(sys_get_temp_dir(), 'editpdfjs_out_') . '.pdf';
         $editsJsonPath = tempnam(sys_get_temp_dir(), 'editpdfjs_edits_') . '.json';
@@ -6025,11 +6194,11 @@ class DocumentController extends Controller
             }
             move_uploaded_file($upload->getRealPath(), $tmpIn);
         } else {
-            if (!$document->original_backup_path || !Storage::exists($document->original_backup_path)) {
+            if (!$document->path || !Storage::exists($document->path)) {
                 @unlink($tmpIn);
-                return response()->json(['error' => 'Original PDF missing'], 404);
+                return response()->json(['error' => 'Current PDF missing'], 404);
             }
-            copy(Storage::path($document->original_backup_path), $tmpIn);
+            copy(Storage::path($document->path), $tmpIn);
         }
 
         $tmpOut = tempnam(sys_get_temp_dir(), 'editpdfjs_redactout_') . '.pdf';
@@ -6115,11 +6284,11 @@ class DocumentController extends Controller
             }
             move_uploaded_file($upload->getRealPath(), $tmpIn);
         } else {
-            if (!$document->original_backup_path || !Storage::exists($document->original_backup_path)) {
+            if (!$document->path || !Storage::exists($document->path)) {
                 @unlink($tmpIn);
-                return response()->json(['error' => 'Original PDF missing'], 404);
+                return response()->json(['error' => 'Current PDF missing'], 404);
             }
-            copy(Storage::path($document->original_backup_path), $tmpIn);
+            copy(Storage::path($document->path), $tmpIn);
         }
 
         $tmpOut = tempnam(sys_get_temp_dir(), 'editpdfjs_moveout_') . '.pdf';
@@ -6204,11 +6373,11 @@ class DocumentController extends Controller
             }
             move_uploaded_file($upload->getRealPath(), $tmpIn);
         } else {
-            if (!$document->original_backup_path || !Storage::exists($document->original_backup_path)) {
+            if (!$document->path || !Storage::exists($document->path)) {
                 @unlink($tmpIn);
-                return response()->json(['error' => 'Original PDF missing'], 404);
+                return response()->json(['error' => 'Current PDF missing'], 404);
             }
-            copy(Storage::path($document->original_backup_path), $tmpIn);
+            copy(Storage::path($document->path), $tmpIn);
         }
 
         $tmpOut = tempnam(sys_get_temp_dir(), 'editpdfjs_reflowout_') . '.pdf';
@@ -10867,8 +11036,8 @@ class DocumentController extends Controller
             $sourcePdfPath = $cleanPath;
             $preservePdfPath = $originalSourcePdfPath;
         } elseif ($usePdfjsVisibleExport) {
-            $sourcePdfPath = $originalSourcePdfPath;
-            $preservePdfPath = $originalSourcePdfPath;
+            $sourcePdfPath = $pdfPath;
+            $preservePdfPath = $pdfPath;
         } elseif ($useOriginalPdf && $document->original_backup_path && Storage::exists($document->original_backup_path)) {
             $originalPath = Storage::path($document->original_backup_path);
             if (file_exists($originalPath)) {
@@ -11564,6 +11733,123 @@ class DocumentController extends Controller
             'success' => true,
             'download_token' => $downloadToken,
             'download_name' => $downloadName,
+        ]);
+    }
+
+    public function encryptPdf(Request $request, Document $document)
+    {
+        $validated = $request->validate([
+            'password' => ['required', 'string', 'min:1', 'max:255', 'confirmed'],
+            'algorithm' => ['required', 'string', 'in:aes-128,aes-256'],
+            'pdf' => ['nullable', 'file', 'mimes:pdf', 'max:51200'],
+        ]);
+
+        if ($response = $this->consumeMonthlyActionQuota($request)) {
+            return $response;
+        }
+
+        $inputPath = null;
+        $uploadedInput = false;
+        if ($request->hasFile('pdf')) {
+            $upload = $request->file('pdf');
+            if (!$upload->isValid()) {
+                return response()->json(['success' => false, 'message' => 'Invalid PDF upload.'], 422);
+            }
+            $inputPath = Storage::path('documents/temp_encrypt_input_' . Str::uuid() . '.pdf');
+            $upload->move(dirname($inputPath), basename($inputPath));
+            $uploadedInput = true;
+        } else {
+            if (!$document->path || !Storage::exists($document->path)) {
+                return response()->json(['success' => false, 'message' => 'Current PDF is missing.'], 404);
+            }
+            $inputPath = Storage::path($document->path);
+        }
+
+        $tempOutputPath = Storage::path('documents/temp_encrypted_' . Str::uuid() . '.pdf');
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+        $pythonScript = base_path('python/pdf-editor/encrypt_pdf.py');
+        $command = sprintf(
+            '%s %s %s %s --password %s --algorithm %s --json 2>&1',
+            escapeshellarg($pythonBinary),
+            escapeshellarg($pythonScript),
+            escapeshellarg($inputPath),
+            escapeshellarg($tempOutputPath),
+            escapeshellarg($validated['password']),
+            escapeshellarg($validated['algorithm'])
+        );
+
+        $output = shell_exec($command);
+        if ($uploadedInput && $inputPath && file_exists($inputPath)) {
+            @unlink($inputPath);
+        }
+
+        $result = null;
+        if ($output) {
+            foreach (explode("\n", trim($output)) as $line) {
+                $decoded = json_decode(trim($line), true);
+                if ($decoded !== null) {
+                    $result = $decoded;
+                    break;
+                }
+            }
+        }
+
+        if (!$result || !($result['success'] ?? false) || !file_exists($tempOutputPath)) {
+            if (file_exists($tempOutputPath)) {
+                @unlink($tempOutputPath);
+            }
+            if (Auth::check()) {
+                UserActivity::create([
+                    'user_id' => Auth::id(),
+                    'action' => 'Encrypt PDF',
+                    'category' => 'pdf_encrypt',
+                    'details' => ['algorithm' => $validated['algorithm'], 'error' => $result['error'] ?? 'Unknown error'],
+                    'document_id' => $document->id,
+                    'status' => 'failed',
+                    'ip_address' => $request->ip(),
+                    'user_agent' => $request->userAgent(),
+                ]);
+            }
+            return response()->json([
+                'success' => false,
+                'message' => $result['error'] ?? 'PDF encryption failed. Output: ' . ($output ?? 'none'),
+            ], 500);
+        }
+
+        $downloadToken = Str::uuid()->toString();
+        $baseName = pathinfo($document->original_name, PATHINFO_FILENAME);
+        $downloadName = $baseName . '_encrypted.pdf';
+
+        session()->put("converted_download_{$downloadToken}", [
+            'path' => $tempOutputPath,
+            'name' => $downloadName,
+            'content_type' => 'application/pdf',
+            'expires' => now()->addMinutes(10),
+        ]);
+
+        if (Auth::check()) {
+            UserActivity::create([
+                'user_id' => Auth::id(),
+                'action' => 'Encrypt PDF',
+                'category' => 'pdf_encrypt',
+                'details' => [
+                    'algorithm' => $validated['algorithm'],
+                    'file_size' => filesize($tempOutputPath),
+                    'page_count' => $result['page_count'] ?? null,
+                ],
+                'document_id' => $document->id,
+                'status' => 'success',
+                'ip_address' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+            ]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'download_token' => $downloadToken,
+            'download_name' => $downloadName,
+            'algorithm' => $validated['algorithm'],
+            'page_count' => $result['page_count'] ?? null,
         ]);
     }
 

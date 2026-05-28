@@ -275,6 +275,23 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         finally:
             doc.close()
 
+    def test_user_created_text_is_not_pdfjs_source_overlay(self):
+        annotation = {
+            "id": "pdfjs_4193_5_new_example",
+            "type": "text",
+            "text": "5-22-2026",
+            "savedTextOverlay": True,
+            "userCreated": True,
+            "userAuthored": True,
+            "skipPdfjsSourceMask": True,
+            "pdfjsSourceX": 396.6,
+            "pdfjsSourceY": 244.5,
+            "pdfjsSourceW": 56.7,
+            "pdfjsSourceH": 15,
+        }
+
+        self.assertFalse(self.module.is_pdfjs_visible_overlay_text(annotation))
+
     def test_pdfjs_visible_export_masks_do_not_punch_moved_replacement_glyphs(self):
         source_pdf = pathlib.Path(__file__).resolve().parents[2] / "public" / "spiders.pdf"
         annotations = [
@@ -1200,7 +1217,35 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
 
         self.assertEqual(pixels[0], (255, 255, 255, 48))
         self.assertEqual(pixels[1], (255, 255, 255, 255))
-        self.assertEqual(pixels[2][3], 0)
+        self.assertEqual(pixels[2], (255, 255, 255, 0))
+
+    def test_normalize_direct_draw_white_image_bytes_preserves_alpha_for_translucent_white_stroke(self):
+        image = Image.new("RGBA", (3, 1))
+        image.putdata([
+            (64, 64, 64, 48),
+            (255, 255, 255, 128),
+            (10, 10, 10, 0),
+        ])
+        encoded = io.BytesIO()
+        image.save(encoded, format="PNG")
+
+        normalized = self.module.normalize_direct_draw_white_image_bytes(
+            {
+                "type": "image",
+                "imageToolSource": "direct-draw",
+                "drawStrokeColor": "#ffffff",
+            },
+            encoded.getvalue(),
+        )
+
+        with Image.open(io.BytesIO(normalized)) as result:
+            rgba = result.convert("RGBA")
+            pixel_access = rgba.load()
+            pixels = [pixel_access[x, 0] for x in range(rgba.width)]
+
+        self.assertEqual(pixels[0], (255, 255, 255, 48))
+        self.assertEqual(pixels[1], (255, 255, 255, 128))
+        self.assertEqual(pixels[2], (255, 255, 255, 0))
 
     def test_normalize_direct_draw_white_image_bytes_infers_legacy_white_stroke_without_color_metadata(self):
         image = Image.new("RGBA", (5, 1))
@@ -1237,6 +1282,74 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
                 (255, 255, 255, 72),
             ],
         )
+
+    def test_direct_draw_image_insert_kwargs_uses_white_stream_and_alpha_mask_for_white_stroke(self):
+        image = Image.new("RGBA", (3, 1))
+        image.putdata([
+            (64, 64, 64, 48),
+            (255, 255, 255, 255),
+            (10, 10, 10, 0),
+        ])
+        encoded = io.BytesIO()
+        image.save(encoded, format="PNG")
+
+        kwargs = self.module.direct_draw_image_insert_kwargs(
+            {
+                "type": "image",
+                "imageToolSource": "direct-draw",
+                "drawStrokeColor": "#ffffff",
+            },
+            encoded.getvalue(),
+        )
+
+        self.assertIn("stream", kwargs)
+        self.assertIn("mask", kwargs)
+
+        with Image.open(io.BytesIO(kwargs["stream"])) as stream_image:
+            rgb = stream_image.convert("RGB")
+            stream_pixels = [rgb.getpixel((x, 0)) for x in range(rgb.width)]
+        with Image.open(io.BytesIO(kwargs["mask"])) as mask_image:
+            mask = mask_image.convert("L")
+            mask_pixels = [mask.getpixel((x, 0)) for x in range(mask.width)]
+
+        self.assertEqual(stream_pixels, [(255, 255, 255), (255, 255, 255), (255, 255, 255)])
+        self.assertEqual(mask_pixels, [48, 255, 0])
+
+    def test_draw_signature_prefers_direct_draw_vector_over_image_payload(self):
+        annotation = {
+            "type": "image",
+            "imageToolSource": "direct-draw",
+            "drawStrokeColor": "#dc2626",
+            "dataUrl": "data:image/png;base64,not-used",
+            "pageIndex": 0,
+            "pdfX": 10,
+            "pdfY": 20,
+            "pdfWidth": 100,
+            "pdfHeight": 50,
+            "directDrawVector": {
+                "version": 1,
+                "width": 50,
+                "height": 25,
+                "strokes": [{
+                    "color": "#dc2626",
+                    "opacity": 0.75,
+                    "brushSize": 4,
+                    "points": [{"x": 5, "y": 5}, {"x": 45, "y": 20}],
+                }],
+            },
+        }
+        page = self.FakePage()
+
+        self.module.draw_signature(page, annotation)
+
+        self.assertEqual(len(page.shape_draw_polyline_calls), 1)
+        self.assertEqual(len(page.shape_finish_calls), 1)
+        finish = page.shape_finish_calls[0]
+        self.assertEqual(finish["color"], self.module.hex_to_rgb("#dc2626"))
+        self.assertAlmostEqual(finish["stroke_opacity"], 0.75, places=3)
+        self.assertEqual(finish["lineCap"], 1)
+        self.assertEqual(finish["lineJoin"], 1)
+        self.assertGreater(finish["width"], 0)
 
     def test_draw_text_with_manual_heading_break_still_wraps_following_paragraph_to_bounds(self):
         annotation = {

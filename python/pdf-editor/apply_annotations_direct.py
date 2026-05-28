@@ -2172,6 +2172,18 @@ def draw_shape(page: fitz.Page, ann: Dict[str, Any]) -> None:
         s.commit(overlay=True)
         return
 
+    if shape_type == "heart":
+        s = page.new_shape()
+        s.draw_bezier(rp(0.50, 0.90), rp(0.18, 0.66), rp(0.06, 0.48), rp(0.06, 0.30))
+        s.draw_bezier(rp(0.06, 0.30), rp(0.06, 0.16), rp(0.17, 0.06), rp(0.31, 0.06))
+        s.draw_bezier(rp(0.31, 0.06), rp(0.40, 0.06), rp(0.47, 0.11), rp(0.50, 0.18))
+        s.draw_bezier(rp(0.50, 0.18), rp(0.53, 0.11), rp(0.60, 0.06), rp(0.69, 0.06))
+        s.draw_bezier(rp(0.69, 0.06), rp(0.83, 0.06), rp(0.94, 0.16), rp(0.94, 0.30))
+        s.draw_bezier(rp(0.94, 0.30), rp(0.94, 0.48), rp(0.82, 0.66), rp(0.50, 0.90))
+        s.finish(color=stroke, fill=fill, width=stroke_width, closePath=True, lineCap=1, lineJoin=1, stroke_opacity=stroke_opacity, fill_opacity=fill_opacity)
+        s.commit(overlay=True)
+        return
+
     if shape_type == "star":
         # Match the frontend canvas star: outerRadius = min(w,h)/2 inscribed in
         # the annotation bounding box, innerRadius = outerRadius * 0.45, first
@@ -2590,6 +2602,9 @@ def draw_signature(page: fitz.Page, ann: Dict[str, Any]) -> None:
     if rect is None:
         return
 
+    if is_direct_draw_annotation(ann) and draw_direct_draw_vector_annotation(page, ann, rect):
+        return
+
     asset_file_path = resolve_annotation_image_path(ann)
     if asset_file_path and not is_direct_draw_annotation(ann):
         try:
@@ -2611,14 +2626,80 @@ def draw_signature(page: fitz.Page, ann: Dict[str, Any]) -> None:
         return
     page.insert_image(
         rect,
-        stream=normalize_direct_draw_white_image_bytes(ann, image_bytes),
         overlay=True,
         keep_proportion=False,
+        **direct_draw_image_insert_kwargs(ann, image_bytes),
     )
 
 
 def is_direct_draw_annotation(ann: Dict[str, Any]) -> bool:
     return str(ann.get("imageToolSource") or "").strip().lower() == "direct-draw"
+
+
+def direct_draw_vector_data(ann: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    vector = ann.get("directDrawVector")
+    return vector if isinstance(vector, dict) else None
+
+
+def draw_direct_draw_vector_annotation(page: fitz.Page, ann: Dict[str, Any], rect: fitz.Rect) -> bool:
+    vector = direct_draw_vector_data(ann)
+    if not vector or rect.is_empty:
+        return False
+    try:
+        vector_width = max(1.0, float(vector.get("width") or 0.0))
+        vector_height = max(1.0, float(vector.get("height") or 0.0))
+    except Exception:
+        return False
+    strokes = vector.get("strokes")
+    if not isinstance(strokes, list) or not strokes:
+        return False
+    rotation = normalize_rotation_degrees(ann.get("rotation", 0.0))
+    morph = build_rotation_morph(rotation, fitz.Point((rect.x0 + rect.x1) / 2.0, (rect.y0 + rect.y1) / 2.0))
+    scale_x = rect.width / vector_width
+    scale_y = rect.height / vector_height
+    stroke_scale = max(0.01, (abs(scale_x) + abs(scale_y)) / 2.0)
+    drew_any = False
+    for stroke in strokes:
+        if not isinstance(stroke, dict):
+            continue
+        raw_points = stroke.get("points")
+        if not isinstance(raw_points, list) or not raw_points:
+            continue
+        points: list[fitz.Point] = []
+        for point in raw_points:
+            if not isinstance(point, dict):
+                continue
+            try:
+                px = float(point.get("x") or 0.0)
+                py = float(point.get("y") or 0.0)
+            except Exception:
+                continue
+            points.append(fitz.Point(rect.x0 + (px * scale_x), rect.y0 + (py * scale_y)))
+        if not points:
+            continue
+        if len(points) == 1:
+            points.append(fitz.Point(points[0].x + 0.01, points[0].y))
+        try:
+            brush_size = max(0.25, float(stroke.get("brushSize") or 1.0)) * stroke_scale
+        except Exception:
+            brush_size = stroke_scale
+        color = hex_to_rgb(stroke.get("color") or ann.get("drawStrokeColor") or "#111827")
+        opacity = normalized_opacity(stroke.get("opacity", ann.get("opacity", 1.0)))
+        shape = page.new_shape()
+        shape.draw_polyline(points)
+        finish_kwargs = {
+            "color": color,
+            "width": brush_size,
+            "lineCap": 1,
+            "lineJoin": 1,
+            "stroke_opacity": opacity,
+        }
+        if morph is not None:
+            finish_kwargs["morph"] = morph
+        shape.finish(**finish_kwargs)
+        shape.commit(overlay=True)
+        drew_any = True
+    return drew_any
 
 
 def load_annotation_image_bytes(ann: Dict[str, Any]) -> Optional[bytes]:
@@ -2654,9 +2735,9 @@ def normalize_direct_draw_white_image_bytes(ann: Dict[str, Any], image_bytes: by
                 for x in range(rgba.width):
                     r, g, b, a = pixels[x, y]
                     if a <= 2:
-                        if a != 0 or r != 0 or g != 0 or b != 0:
+                        if a != 0 or r != 255 or g != 255 or b != 255:
                             changed = True
-                        pixels[x, y] = (0, 0, 0, 0)
+                        pixels[x, y] = (255, 255, 255, 0)
                         continue
                     if r != 255 or g != 255 or b != 255:
                         changed = True
@@ -2668,6 +2749,30 @@ def normalize_direct_draw_white_image_bytes(ann: Dict[str, Any], image_bytes: by
             return output.getvalue()
     except Exception:
         return image_bytes
+
+
+def direct_draw_image_insert_kwargs(ann: Dict[str, Any], image_bytes: bytes) -> Dict[str, bytes]:
+    if Image is None or not image_bytes or not is_direct_draw_annotation(ann):
+        return {"stream": image_bytes}
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            rgba = image.convert("RGBA")
+            if not annotation_uses_white_direct_draw(ann, rgba):
+                return {"stream": image_bytes}
+            alpha = rgba.getchannel("A")
+            alpha_pixels = alpha.load()
+            for y in range(alpha.height):
+                for x in range(alpha.width):
+                    if alpha_pixels[x, y] <= 2 and alpha_pixels[x, y] != 0:
+                        alpha_pixels[x, y] = 0
+            white = Image.new("RGB", rgba.size, (255, 255, 255))
+            stream_output = io.BytesIO()
+            mask_output = io.BytesIO()
+            white.save(stream_output, format="PNG")
+            alpha.save(mask_output, format="PNG")
+            return {"stream": stream_output.getvalue(), "mask": mask_output.getvalue()}
+    except Exception:
+        return {"stream": normalize_direct_draw_white_image_bytes(ann, image_bytes)}
 
 
 def annotation_uses_white_direct_draw(ann: Dict[str, Any], image: "Image.Image") -> bool:

@@ -30,6 +30,10 @@ function approxEqual(left, right, tolerance = 0.02) {
     return Math.abs(Number(left) - Number(right)) <= tolerance;
 }
 
+function collapseWhitespace(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
 function payloadAnnotations(payload) {
     if (Array.isArray(payload?.annotations)) return payload.annotations;
     if (typeof payload?.annotations === 'string') {
@@ -77,21 +81,32 @@ async function main() {
         });
         await page.waitForSelector('body.enpv-viewer-ready .pdfViewer .page[data-page-number="1"]', { timeout: 90000 });
         await page.waitForTimeout(1500);
-        await page.locator('#edit-mode-toggle').click();
+        await page.evaluate(() => {
+            const toggle = document.getElementById('edit-mode-toggle') || document.getElementById('ftb-edit-mode');
+            if (!toggle) throw new Error('Missing PDF.js edit mode toggle');
+            if (!document.body.classList.contains('enpv-edit-on')) toggle.click();
+        });
+        await page.waitForSelector('body.enpv-edit-on', { timeout: 10000 });
         await page.waitForSelector('.enpv-annotation-box-layer .enpv-annotation-box', { timeout: 90000 });
         await page.waitForTimeout(750);
 
-        const rows = await page.evaluate(({ ids, returnTranscriptText }) => Array.from(
-            document.querySelectorAll('.pdfViewer .page[data-page-number="1"] .enpv-annotation-box'),
-        )
-            .filter((box) => ids.includes(box.dataset.annotationId || '')
-                || (box.querySelector('.enpv-text-content')?.textContent || '') === 'a'
-                || (box.querySelector('.enpv-text-content')?.textContent || '') === returnTranscriptText)
-            .map((box) => ({
-                id: box.dataset.annotationId || '',
-                text: box.querySelector('.enpv-text-content')?.textContent || '',
-                original: box.dataset.originalText || '',
-            })), {
+        const rows = await page.evaluate(({ ids, returnTranscriptText }) => {
+            const collapse = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+            return Array.from(
+                document.querySelectorAll('.pdfViewer .page[data-page-number="1"] .enpv-annotation-box'),
+            )
+                .filter((box) => {
+                    const text = box.querySelector('.enpv-text-content')?.textContent || '';
+                    return ids.includes(box.dataset.annotationId || '')
+                        || collapse(text) === 'a'
+                        || collapse(text) === returnTranscriptText;
+                })
+                .map((box) => ({
+                    id: box.dataset.annotationId || '',
+                    text: box.querySelector('.enpv-text-content')?.textContent || '',
+                    original: box.dataset.originalText || '',
+                }));
+        }, {
             ids: Array.from(EXPECTED.keys()),
             returnTranscriptText: RETURN_TRANSCRIPT_TEXT,
         });
@@ -99,7 +114,7 @@ async function main() {
         for (const [id, expectedText] of EXPECTED) {
             const row = rows.find((candidate) => candidate.id === id);
             if (!row) throw new Error(`Missing PDF.js source row ${id}`);
-            if (row.text !== expectedText || row.original !== expectedText) {
+            if (collapseWhitespace(row.text) !== expectedText || row.original !== expectedText) {
                 throw new Error([
                     `Bad grouped text for ${id}`,
                     `expected: ${expectedText}`,
@@ -108,11 +123,11 @@ async function main() {
                 ].join('\n'));
             }
         }
-        const labelRow = rows.find((candidate) => candidate.text === LOWERCASE_LABEL_TEXT);
+        const labelRow = rows.find((candidate) => collapseWhitespace(candidate.text) === LOWERCASE_LABEL_TEXT);
         if (!labelRow || labelRow.original !== LOWERCASE_LABEL_TEXT) {
             throw new Error('Lowercase line label "a" was not preserved as its own PDF.js source row.');
         }
-        const transcriptRow = rows.find((candidate) => candidate.text === RETURN_TRANSCRIPT_TEXT);
+        const transcriptRow = rows.find((candidate) => collapseWhitespace(candidate.text) === RETURN_TRANSCRIPT_TEXT);
         if (!transcriptRow || transcriptRow.original !== RETURN_TRANSCRIPT_TEXT) {
             throw new Error('Return Transcript row was not preserved as its own PDF.js source row.');
         }
@@ -127,11 +142,40 @@ async function main() {
         }));
         const moveBox = await moveProbe.boundingBox();
         if (!moveBox) throw new Error(`Unable to locate move probe box ${MOVE_PROBE_ID}`);
+        await page.evaluate(() => {
+            window.__pdfjsMoveReloadProbe = { loadingToggled: false, redactionRequests: [] };
+            const originalFetch = window.fetch.bind(window);
+            window.fetch = (...args) => {
+                const rawUrl = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
+                if (String(rawUrl).includes('/edit-pdfjs/redact-source-text')) {
+                    window.__pdfjsMoveReloadProbe.redactionRequests.push(String(rawUrl));
+                }
+                return originalFetch(...args);
+            };
+            const observer = new MutationObserver(() => {
+                if (document.body.classList.contains('enpv-viewer-loading')
+                    || !document.body.classList.contains('enpv-viewer-ready')) {
+                    window.__pdfjsMoveReloadProbe.loadingToggled = true;
+                }
+            });
+            observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+            window.__pdfjsMoveReloadProbe.disconnect = () => observer.disconnect();
+        });
         await page.mouse.move(moveBox.x + (moveBox.width / 2), moveBox.y + (moveBox.height / 2));
         await page.mouse.down();
         await page.mouse.move(moveBox.x + (moveBox.width / 2) + 36, moveBox.y + (moveBox.height / 2), { steps: 5 });
         await page.mouse.up();
-        await page.waitForTimeout(300);
+        await page.waitForTimeout(2500);
+        const moveReloadProbe = await page.evaluate(() => {
+            window.__pdfjsMoveReloadProbe?.disconnect?.();
+            return {
+                loadingToggled: Boolean(window.__pdfjsMoveReloadProbe?.loadingToggled),
+                redactionRequests: Array.from(window.__pdfjsMoveReloadProbe?.redactionRequests || []),
+            };
+        });
+        if (moveReloadProbe.loadingToggled || moveReloadProbe.redactionRequests.length) {
+            throw new Error(`Moving a PDF.js annotation triggered a viewer reload/source redaction: ${JSON.stringify(moveReloadProbe)}`);
+        }
         const afterMove = await moveProbe.evaluate((box) => ({
             sourceX: Number(box.dataset.sourceBboxX),
             sourceY: Number(box.dataset.sourceBboxY),

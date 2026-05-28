@@ -39,6 +39,7 @@ test('recognizes PDF.js source-backed text annotations', () => {
     assert.equal(isPdfjsSourceBackedTextAnnotation(baseSourceOverlay), true);
     assert.equal(isPdfjsSourceBackedTextAnnotation({ ...baseSourceOverlay, pdfjsSourceX: null, pdfjsSourceY: null, pdfjsAnchorUid: null, pdfjsSourceText: null }), false);
     assert.equal(isPdfjsSourceBackedTextAnnotation({ ...baseSourceOverlay, type: 'shape' }), false);
+    assert.equal(isPdfjsSourceBackedTextAnnotation({ ...baseSourceOverlay, userCreated: true, skipPdfjsSourceMask: true }), false);
 });
 
 test('uses source box for unmoved saved source overlays in edit mode', () => {

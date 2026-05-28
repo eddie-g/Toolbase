@@ -28,16 +28,20 @@ import {
 } from 'pdfjs-dist/web/pdf_viewer.mjs';
 import { generateUuidV4 } from '../edit-new/util/uuid.js';
 import { sliderValueToFontPt, fontPtToSliderValue } from '../edit-new/text/font-slider.js';
-import { computeLineBoxGeometry, constrainLineEndpointTo45 } from '../edit-new/util/geometry.js';
+import { computeLineBoxGeometry, constrainLineEndpointTo45, normalizeRotationDegrees } from '../edit-new/util/geometry.js';
 import { currentShapeDefaults } from '../edit-new/shapes/defaults.js';
 import { reflectShapeStateToInputs, readShapeInspectorState } from '../edit-new/shapes/inspector-ui.js';
 import { normalizeShapeAnnotation, normalizeImageAnnotation, applyShapeStateToAnnotation } from '../edit-new/annotations/normalize.js';
 import { getImageAnnotationSource } from '../edit-new/annotations/image-source.js';
+import { paintDrawDot, paintDrawSegment } from '../edit-new/draw/primitives.js';
 import {
     normalizeShapeType,
     defaultPolygonUnitPoints,
     normalizePolygonPointList,
 } from '../edit-new/annotations/shape-geometry.js';
+import { getShapePolygonPointsPdf } from '../edit-new/annotations/polygon-points.js';
+import { clipPolygonAgainstInfiniteLine, computePolygonArea, dedupePolygonVertices } from '../edit-new/util/polygon-clip.js';
+import { clamp01 } from '../edit-new/util/math.js';
 import {
     clearImageImportSelection as _clearImageImportSelection,
     openImageImportModal as _openImageImportModal,
@@ -74,6 +78,7 @@ const floatingAddTextButton = document.getElementById('ftb-add-text');
 const addShapeButton = document.getElementById('add-shape-btn');
 const floatingAddShapeButton = document.getElementById('ftb-add-shape');
 const floatingAddImageButton = document.getElementById('ftb-add-image');
+const floatingDrawButton = document.getElementById('ftb-draw-erase');
 const saveStatus = document.getElementById('save-status');
 const saveToast = document.getElementById('save-toast');
 const annFormatBar = document.getElementById('ann-format-bar');
@@ -92,6 +97,7 @@ const afbCopy = document.getElementById('afb-copy');
 const afbDelete = document.getElementById('afb-delete');
 const shapeToolPanel = document.getElementById('shape-tool-panel');
 const shapeTypeButtons = Array.from(document.querySelectorAll('[data-shape-tool]'));
+const shapeMoreToggle = document.getElementById('shape-more-toggle');
 const shapeStrokeColorInput = document.getElementById('shape-stroke-color');
 const shapeStrokeHexInput = document.getElementById('shape-stroke-hex');
 const shapeStrokeTransparentInput = document.getElementById('shape-stroke-transparent');
@@ -104,6 +110,16 @@ const shapeFillHexInput = document.getElementById('shape-fill-hex');
 const shapeFillTransparentInput = document.getElementById('shape-fill-transparent');
 const shapeFillOpacityInput = document.getElementById('shape-fill-opacity');
 const shapeFillOpacityValue = document.getElementById('shape-fill-opacity-value');
+const drawToolPanel = document.getElementById('draw-tool-panel');
+const drawToolClose = document.getElementById('draw-tool-close');
+const drawToolButtons = Array.from(document.querySelectorAll('[data-draw-direct-tool]'));
+const drawToolSizeInput = document.getElementById('draw-tool-size');
+const drawToolSizeValue = document.getElementById('draw-tool-size-value');
+const drawToolOpacityInput = document.getElementById('draw-tool-opacity');
+const drawToolOpacityValue = document.getElementById('draw-tool-opacity-value');
+const drawToolColorInput = document.getElementById('draw-tool-color');
+const drawColorSwatches = Array.from(document.querySelectorAll('[data-draw-color]'));
+const drawToolStatus = document.getElementById('draw-tool-status');
 const imageImportModal = document.getElementById('image-import-modal');
 const imageImportScrim = document.getElementById('image-import-scrim');
 const imageImportClose = document.getElementById('image-import-close');
@@ -155,7 +171,15 @@ const AUTO_SAVE_DELAY_MS = 1800;
 let annotationBoxesLoadPromise = null;
 let viewerLoadGeneration = 0;
 let revealedLoadGeneration = 0;
+let movedSourceLiveRedactionScheduled = false;
+let movedSourceLiveRedactionInFlight = false;
 let hydratingPersistedAnnotations = false;
+let drawModeActive = false;
+let drawToolType = 'pen';
+let drawStrokeColor = '#111827';
+let drawOpacity = 1;
+let drawBrushSize = 10;
+let activeDrawSession = null;
 // AcroForm entries echoed by documentInfo (server-side persisted state).
 // We hold them so loadAcroFormEntriesIntoStorage can re-apply previously
 // saved field values into pdf.js's annotationStorage every time the PDF
@@ -501,6 +525,18 @@ function isImageAnnotation(annotation) {
     return !!annotation && String(annotation.type || '').toLowerCase() === 'image';
 }
 
+function isDirectDrawAnnotation(annotation) {
+    return isImageAnnotation(annotation) && String(annotation.imageToolSource || '').toLowerCase() === 'direct-draw';
+}
+
+function pdfjsAnnotationLayerKey(annotation) {
+    if (isShapeAnnotation(annotation)) return 0;
+    if (isDirectDrawAnnotation(annotation)) return 1;
+    if (String(annotation?.type || '').toLowerCase() === 'text') return 2;
+    if (isSignatureAnnotation(annotation) || isImageAnnotation(annotation)) return 3;
+    return 2;
+}
+
 function isImageBox(box, existingAnnotation = null) {
     return String(box?.dataset?.annotationType || '').toLowerCase() === 'image'
         || isImageAnnotation(existingAnnotation);
@@ -529,6 +565,32 @@ function isEmptyUserCreatedTextAnnotation(annotation) {
         && normalizeComparableText(annotation.richTextHtml || '') === '';
 }
 
+function stripUserCreatedPdfjsSourceMetadata(annotation) {
+    if (!annotation || typeof annotation !== 'object') return annotation;
+    const hasSourceText = String(annotation.pdfjsSourceText || '').trim() !== '';
+    if (!boolish(annotation.userCreated) && !(boolish(annotation.skipPdfjsSourceMask) && !hasSourceText)) return annotation;
+    [
+        'pdfjsSourceX',
+        'pdfjsSourceY',
+        'pdfjsSourceW',
+        'pdfjsSourceH',
+        'pdfjsSourceMaskX',
+        'pdfjsSourceMaskY',
+        'pdfjsSourceMaskW',
+        'pdfjsSourceMaskH',
+        'pdfjsSourceMaskAscenderPadding',
+        'pdfjsSourceText',
+        'pdfjsSourcePageHeight',
+        'pdfjsSourceOccurrence',
+        'pdfjsSourceFidelity',
+        'sourceSpanRuns',
+        'sourceTextLines',
+        'movedTextOverlay',
+    ].forEach((key) => delete annotation[key]);
+    annotation.skipPdfjsSourceMask = true;
+    return annotation;
+}
+
 function isUserCreatedTextBox(box, existingAnnotation = null) {
     if (!box) return false;
     if (isShapeBox(box, existingAnnotation)) return false;
@@ -540,14 +602,70 @@ function isUserCreatedTextBox(box, existingAnnotation = null) {
 
 function textContentForBox(box) {
     const tc = selectedBoxTextElement(box);
-    return String(tc?.textContent ?? '').replace(/[ \t]*\r?\n[ \t]*/g, ' ');
+    const preserveLineBreaks = box?.dataset?.editorMode === 'rich'
+        || box?.dataset?.userForcedRichText === '1'
+        || box?.dataset?.userCreated === '1'
+        || box?.dataset?.userAuthored === '1';
+    const text = preserveLineBreaks ? plainTextFromRichTextElement(tc) : String(tc?.textContent ?? '');
+    return preserveLineBreaks
+        ? normalizeRichPlainText(text)
+        : String(text).replace(/[ \t]*\r?\n[ \t]*/g, ' ');
 }
 
-function normalizeAnnotationTextForDisplay(value) {
-    return String(value || '').replace(/[ \t]*\r?\n[ \t]*/g, ' ');
+function plainTextFromRichTextElement(root) {
+    if (!root) return '';
+    let out = '';
+    const blockTags = new Set(['ADDRESS', 'ARTICLE', 'ASIDE', 'BLOCKQUOTE', 'DIV', 'FIGCAPTION', 'FIGURE', 'FOOTER', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HEADER', 'LI', 'MAIN', 'NAV', 'OL', 'P', 'PRE', 'SECTION', 'TABLE', 'TBODY', 'TD', 'TFOOT', 'TH', 'THEAD', 'TR', 'UL']);
+    const appendNewline = () => {
+        if (out && !out.endsWith('\n')) out += '\n';
+    };
+    const walk = (node) => {
+        if (node.nodeType === Node.TEXT_NODE) {
+            out += node.nodeValue || '';
+            return;
+        }
+        if (node.nodeType !== Node.ELEMENT_NODE) return;
+        if (node.nodeName === 'BR') {
+            out += '\n';
+            return;
+        }
+        const isBlock = blockTags.has(node.nodeName);
+        if (isBlock) appendNewline();
+        const before = out.length;
+        for (const child of node.childNodes) walk(child);
+        if (isBlock && out.length > before) appendNewline();
+    };
+    for (const child of root.childNodes) walk(child);
+    return out;
 }
 
-function sanitizeRichTextHtmlForAnnotation(html) {
+function normalizeRichPlainText(value) {
+    return String(value || '')
+        .replace(/\r\n?/g, '\n')
+        .replace(/\u00a0/g, ' ')
+        .replace(/\u200b/g, '')
+        .replace(/[ \t]+\n/g, '\n')
+        .replace(/\n[ \t]+/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .replace(/\n$/g, '');
+}
+
+function annotationPreservesDisplayLineBreaks(annotation) {
+    return Boolean(
+        boolish(annotation?.userCreated)
+        || boolish(annotation?.userAuthored)
+        || annotation?.userForcedRichText === true
+        || String(annotation?.pdfjsEditorMode || '').toLowerCase() === 'rich'
+    );
+}
+
+function normalizeAnnotationTextForDisplay(value, options = {}) {
+    const text = String(value || '').replace(/\r\n?/g, '\n');
+    if (options.preserveLineBreaks === true) return normalizeRichPlainText(text);
+    return text.replace(/[ \t]*\n[ \t]*/g, ' ');
+}
+
+function sanitizeRichTextHtmlForAnnotation(html, options = {}) {
     const raw = String(html || '').trim();
     if (!raw) return '';
     const template = document.createElement('template');
@@ -590,7 +708,9 @@ function sanitizeRichTextHtmlForAnnotation(html) {
                 }
                 scrub(child);
             } else if (child.nodeType === Node.TEXT_NODE) {
-                child.nodeValue = String(child.nodeValue || '').replace(/[ \t]*\r?\n[ \t]*/g, ' ');
+                child.nodeValue = options.preserveLineBreaks === true
+                    ? normalizeRichPlainText(child.nodeValue || '')
+                    : String(child.nodeValue || '').replace(/[ \t]*\r?\n[ \t]*/g, ' ');
             } else {
                 child.remove();
             }
@@ -606,7 +726,9 @@ function richTextHtmlForBox(box) {
     }
     const tc = selectedBoxTextElement(box);
     if (!tc) return '';
-    const html = sanitizeRichTextHtmlForAnnotation(tc.innerHTML);
+    const html = sanitizeRichTextHtmlForAnnotation(tc.innerHTML, {
+        preserveLineBreaks: /\r|\n/.test(textContentForBox(box)),
+    });
     if (!html) return '';
     const probe = document.createElement('div');
     probe.innerHTML = html;
@@ -685,6 +807,12 @@ function rebuildPersistedAnnotationPageMap() {
         const pageIndex = annotationPageIndex(hydrated);
         if (!byPage.has(pageIndex)) byPage.set(pageIndex, []);
         byPage.get(pageIndex).push(hydrated);
+    }
+    for (const [pageIndex, annotations] of byPage) {
+        byPage.set(pageIndex, annotations
+            .map((annotation, order) => ({ annotation, order, key: pdfjsAnnotationLayerKey(annotation) }))
+            .sort((left, right) => (left.key - right.key) || (left.order - right.order))
+            .map((entry) => entry.annotation));
     }
     annotationBoxesByPage = byPage;
 }
@@ -1100,6 +1228,10 @@ function sourceOwnerPdfBox(annotation) {
 function sourceOwnerForAnnotation(annotation) {
     if (!annotation || String(annotation.type || '').toLowerCase() !== 'text') return null;
     if (isPromotedExtractionAnnotation(annotation)) return null;
+    if (boolish(annotation.userCreated)
+        || (boolish(annotation.skipPdfjsSourceMask) && !String(annotation.pdfjsSourceText || '').trim())) {
+        return null;
+    }
     const rect = sourceOwnerPdfBox(annotation);
     if (!rect) return null;
     const text = sourceOwnerText(annotation);
@@ -1354,6 +1486,10 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         h: heightPx / scale,
     };
     const isUserBox = isUserCreatedTextBox(box, existingAnnotation);
+    const isStandaloneUserTextBox = box.dataset.userCreated === '1'
+        || boolish(existingAnnotation?.userCreated)
+        || (box.dataset.skipPdfjsSourceMask === '1'
+            && !String(existingAnnotation?.pdfjsSourceText || box.dataset.baseText || '').trim());
 
     if (isShapeBox(box, existingAnnotation)) {
         const shape = normalizeShapeAnnotation({
@@ -1382,6 +1518,7 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
             lineEndX: Number.parseFloat(box.dataset.lineEndX || String(existingAnnotation?.lineEndX ?? '1')),
             lineEndY: Number.parseFloat(box.dataset.lineEndY || String(existingAnnotation?.lineEndY ?? '1')),
             lineCap: box.dataset.lineCap || existingAnnotation?.lineCap || 'round',
+            rotation: Number.parseFloat(box.dataset.rotation || String(existingAnnotation?.rotation ?? '0')) || 0,
             polygonPoints: existingAnnotation?.polygonPoints,
             text: '',
             userCreated: true,
@@ -1417,7 +1554,7 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
     const fontSizePts = Number.parseFloat(box.dataset.fontSizePts || '') || (Number.parseFloat(cs.fontSize || '') / scale) || Number(existingAnnotation?.fontSize) || 12;
     const lineHeightPx = Number.parseFloat(cs.lineHeight || '');
     const annotationId = String(existingAnnotation?.id || box.dataset.annotationId || buildPdfjsAnnotationId(pageIndex, box.dataset.uid || '0'));
-    const sourceText = isUserBox ? '' : String(existingAnnotation?.pdfjsSourceText || box.dataset.baseText || box.dataset.originalText || '');
+    const sourceText = isStandaloneUserTextBox ? '' : String(existingAnnotation?.pdfjsSourceText || box.dataset.baseText || box.dataset.originalText || '');
     const textValue = textContentForBox(box);
     const richTextHtml = richTextHtmlForBox(box);
     const visualLines = tc ? readVisualLinesFromBox(tc) : [];
@@ -1519,21 +1656,21 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         imageToPdfOcr: box.dataset.imageToPdfOcr === '1' || boolish(existingAnnotation?.imageToPdfOcr),
         skipPdfjsSourceMask: isUserBox || boolish(existingAnnotation?.skipPdfjsSourceMask),
         savedTextOverlay: true,
-        pdfjsSourceX: isUserBox ? pdfRect.x : immutableSourceNumber(existingAnnotation?.pdfjsSourceX, baseRect.x),
-        pdfjsSourceY: isUserBox ? pdfRect.y : immutableSourceNumber(existingAnnotation?.pdfjsSourceY, baseRect.y),
-        pdfjsSourceW: isUserBox ? pdfRect.w : immutableSourceNumber(existingAnnotation?.pdfjsSourceW, baseRect.w),
-        pdfjsSourceH: isUserBox ? pdfRect.h : immutableSourceNumber(existingAnnotation?.pdfjsSourceH, baseRect.h),
-        pdfjsSourcePageHeight: immutableSourceNumber(existingAnnotation?.pdfjsSourcePageHeight, box.dataset.basePageHeight ?? (Number(viewport.height) / scale)),
-        pdfjsSourceText: isUserBox ? '' : immutableSourceString(existingAnnotation?.pdfjsSourceText, sourceText),
+        pdfjsSourceX: isStandaloneUserTextBox ? undefined : immutableSourceNumber(existingAnnotation?.pdfjsSourceX, baseRect.x),
+        pdfjsSourceY: isStandaloneUserTextBox ? undefined : immutableSourceNumber(existingAnnotation?.pdfjsSourceY, baseRect.y),
+        pdfjsSourceW: isStandaloneUserTextBox ? undefined : immutableSourceNumber(existingAnnotation?.pdfjsSourceW, baseRect.w),
+        pdfjsSourceH: isStandaloneUserTextBox ? undefined : immutableSourceNumber(existingAnnotation?.pdfjsSourceH, baseRect.h),
+        pdfjsSourcePageHeight: isStandaloneUserTextBox ? undefined : immutableSourceNumber(existingAnnotation?.pdfjsSourcePageHeight, box.dataset.basePageHeight ?? (Number(viewport.height) / scale)),
+        pdfjsSourceText: isStandaloneUserTextBox ? undefined : immutableSourceString(existingAnnotation?.pdfjsSourceText, sourceText),
         pdfjsAnchorUid: immutableSourceString(existingAnnotation?.pdfjsAnchorUid, box.dataset.uid || ''),
         pdfjsSourceOccurrence: immutableSourceString(existingAnnotation?.pdfjsSourceOccurrence, box.dataset.occurrence || '0'),
         pdfjsEditorMode: box.dataset.editorMode || editorModeForBox(box),
         userForcedRichText: box.dataset.userForcedRichText === '1' || existingAnnotation?.userForcedRichText === true,
         styleDirty: box.dataset.styleDirty === '1' || boolish(existingAnnotation?.styleDirty),
-        movedTextOverlay: isUserBox ? false : ((Math.abs(dxPts) > 0.01 || Math.abs(dyPts) > 0.01) || (existingAnnotation?.movedTextOverlay === true && sourceGeometryMoved)),
+        movedTextOverlay: isStandaloneUserTextBox ? false : ((Math.abs(dxPts) > 0.01 || Math.abs(dyPts) > 0.01) || (existingAnnotation?.movedTextOverlay === true && sourceGeometryMoved)),
         richTextPromotionReason: box.dataset.richTextPromotionReason || existingAnnotation?.richTextPromotionReason || undefined,
     };
-    const sourceMaskBox = (!isUserBox && sourceGeometryMoved)
+    const sourceMaskBox = (!isStandaloneUserTextBox && sourceGeometryMoved)
         ? (boxSourceMaskPdfBox(box) || annotationSourceMaskPdfBox(existingAnnotation))
         : null;
     if (sourceMaskBox) {
@@ -1546,6 +1683,7 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         }
     }
     copySourceSpanMetricsToAnnotation(annotation, box);
+    if (isStandaloneUserTextBox) stripUserCreatedPdfjsSourceMetadata(annotation);
 
     return shouldPersistPdfjsAnnotation(annotation) ? annotation : null;
 }
@@ -2063,7 +2201,6 @@ function sourceBboxForSpan(spanEl) {
 const SOURCE_MASK_PADDING_PTS = 0.35;
 const SOURCE_BOX_VISUAL_PADDING_PX = 0;
 const MOVED_SOURCE_MASK_VISUAL_PADDING_PX = 1.5;
-const MOVED_SOURCE_MASK_VERTICAL_PADDING_MAX_PX = 36;
 const ENABLE_PDFJS_DOM_SOURCE_MASKS = true;
 
 function inflatePdfRect(pdfRect, paddingPts = SOURCE_MASK_PADDING_PTS) {
@@ -2079,35 +2216,17 @@ function inflatePdfRect(pdfRect, paddingPts = SOURCE_MASK_PADDING_PTS) {
 
 function movedSourceMaskCanvasRect(rect) {
     if (!rect) return null;
-    const padX = MOVED_SOURCE_MASK_VISUAL_PADDING_PX;
-    const padY = Math.max(2, Math.min(MOVED_SOURCE_MASK_VERTICAL_PADDING_MAX_PX, rect.height * 0.18));
-    const left = Math.floor(rect.left - padX);
-    const top = Math.floor(rect.top - padY);
-    const right = Math.ceil(rect.left + rect.width + padX);
-    const bottom = Math.ceil(rect.top + rect.height + padY);
     return {
-        left,
-        top,
-        width: Math.max(1, right - left),
-        height: Math.max(1, bottom - top),
+        left: rect.left,
+        top: rect.top,
+        width: Math.max(1, rect.width),
+        height: Math.max(1, rect.height),
     };
 }
 
 function movedSourceMaskCanvasRectFromTypography(rect, source = null) {
     if (!rect) return null;
-    const out = { ...rect };
-    const dataset = source?.dataset || null;
-    const lineHeightPx = Number.parseFloat(dataset?.sourceLineHeightPx || source?.pdfjsSourceLineHeightPx || '');
-    const fontSizePx = Number.parseFloat(dataset?.sourceFontSizePx || source?.pdfjsSourceFontSizePx || '');
-    const targetHeight = Math.max(
-        out.height,
-        Number.isFinite(lineHeightPx) ? lineHeightPx : 0,
-        Number.isFinite(fontSizePx) ? fontSizePx : 0,
-    );
-    if (Number.isFinite(targetHeight) && targetHeight > out.height + 0.25) {
-        out.height = targetHeight;
-    }
-    return out;
+    return movedSourceMaskCanvasRect(rect);
 }
 
 // Source bboxes captured from PDF text-stream metrics describe the
@@ -2491,7 +2610,7 @@ function refreshAttachedSourceFidelityTextFit(box) {
 
 function copySourceSpanMetricsToAnnotation(annotation, box, options = {}) {
     if (!annotation || !box) return annotation;
-    if (!box.dataset.sourceFontFamily && !box.dataset.sourceTransform && !box.dataset.sourceFontSizePx) return annotation;
+    if (!box.dataset.sourceFontFamily && !box.dataset.sourceTransform && !box.dataset.sourceFontSizePx && !box.dataset.sourceSpanRuns) return annotation;
     const allowSourceRefresh = options.allowSourceRefresh === true;
     const fillMetric = (annotationKey, datasetKey) => {
         const existing = annotation[annotationKey];
@@ -2516,6 +2635,7 @@ function copySourceSpanMetricsToAnnotation(annotation, box, options = {}) {
     fillMetric('pdfjsSourceFontSizePx', 'sourceFontSizePx');
     fillMetric('pdfjsSourceLineHeightPx', 'sourceLineHeightPx');
     fillMetric('pdfjsSourceTextColor', 'sourceTextColor');
+    fillMetric('pdfjsSourceSpanRuns', 'sourceSpanRuns');
     return annotation;
 }
 
@@ -2615,9 +2735,11 @@ function measureStandardSpaceWidthPx(fontFamily, fontWeight, fontStyle, fontSize
 function cssQuoteFontFamily(value) {
     const raw = String(value || '').trim();
     if (!raw) return '';
-    if (raw.includes(',')) return raw;
-    if (/^["'].*["']$/.test(raw)) return raw;
-    return `"${raw.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+    const normalized = raw.replace(/"/g, "'");
+    if (normalized.includes(',')) return normalized;
+    if (/^["'].*["']$/.test(normalized)) return normalized;
+    if (/^[a-zA-Z_][\w-]*$/.test(normalized)) return normalized;
+    return `'${normalized.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
 }
 
 function normalizeSourceRunText(value) {
@@ -2854,8 +2976,12 @@ function applySourceFidelitySpanEditMarkup(box, options = {}) {
     const currentText = String(tc.textContent || '').replace(/\s+/g, ' ').trim();
     reconstructed = reconstructed.replace(/\s+/g, ' ').trim();
     if (currentText && currentText !== reconstructed) {
-        items = remapSourceRunItemsForCurrentText(items, currentText);
-        if (!Array.isArray(items) || items.length < 2) return false;
+        const whitespaceOnlySourceDifference = purpose === 'display'
+            && currentText.replace(/\s+/g, '') === reconstructed.replace(/\s+/g, '');
+        if (!whitespaceOnlySourceDifference) {
+            items = remapSourceRunItemsForCurrentText(items, currentText);
+            if (!Array.isArray(items) || items.length < 2) return false;
+        }
     }
 
     let html = '';
@@ -3075,7 +3201,14 @@ function isStaleCompositePdfjsSourceOverlay(annotation, pageIndex, viewport, sca
 
 function isSuppressedStalePdfjsOverlay(annotation) {
     const id = String(annotation?.id || '');
-    return id !== '' && suppressedStalePdfjsOverlayIds.has(id);
+    if (id === '' || !suppressedStalePdfjsOverlayIds.has(id)) return false;
+    if (boolish(annotation?.movedTextOverlay)
+        || boolish(annotation?.styleDirty)
+        || boolish(annotation?.userForcedRichText)) {
+        suppressedStalePdfjsOverlayIds.delete(id);
+        return false;
+    }
+    return true;
 }
 
 function isNoopMovedPdfjsSourceOverlay(annotation, pageIndex, viewport, scale) {
@@ -3358,10 +3491,23 @@ function prepareBoxForLiveResize(box) {
 
 function onTextContentBeforeInput(ev) {
     const box = ev.currentTarget?.closest?.('.enpv-annotation-box');
-    if (!box || editorModeForBox(box) !== 'source') return;
+    if (!box) return;
     const inputType = String(ev.inputType || '');
     if (inputType === 'insertParagraph' || inputType === 'insertLineBreak') {
-        promoteBoxToRichTextMode(box, 'newline');
+        if (editorModeForBox(box) === 'source') {
+            promoteBoxToRichTextMode(box, 'newline');
+        }
+        if (editorModeForBox(box) === 'rich') {
+            ev.preventDefault();
+            ev.stopPropagation();
+            if (insertHardLineBreakIntoContentEditable(ev.currentTarget)) {
+                ev.currentTarget.dispatchEvent(new InputEvent('input', {
+                    bubbles: true,
+                    inputType,
+                    data: '\n',
+                }));
+            }
+        }
     }
 }
 
@@ -3388,6 +3534,22 @@ function ensureSelectionInsideContentEditable(target) {
     sel?.removeAllRanges();
     sel?.addRange(range);
     return range;
+}
+
+function insertHardLineBreakIntoContentEditable(target) {
+    if (!target) return false;
+    target.focus();
+    const range = ensureSelectionInsideContentEditable(target);
+    if (!range) return false;
+    range.deleteContents();
+    const marker = document.createTextNode('\n\u200b');
+    range.insertNode(marker);
+    range.setStart(marker, marker.nodeValue.length);
+    range.collapse(true);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    return true;
 }
 
 function insertPlainTextIntoContentEditable(target, text) {
@@ -3481,6 +3643,49 @@ function shapeSvgPointList(points, width, height) {
         .join(' ');
 }
 
+function shapeSvgPathFromUnitCommands(commands, width, height) {
+    return commands.map((command) => {
+        if (command[0] === 'Z') return 'Z';
+        const op = command[0];
+        const values = command.slice(1).map((value, index) => {
+            const axisScale = index % 2 === 0 ? width : height;
+            return String((Number(value) || 0) * axisScale);
+        });
+        return `${op}${values.join(' ')}`;
+    }).join(' ');
+}
+
+function heartShapePathD(width, height) {
+    return shapeSvgPathFromUnitCommands([
+        ['M', 0.5, 0.9],
+        ['C', 0.18, 0.66, 0.06, 0.48, 0.06, 0.3],
+        ['C', 0.06, 0.16, 0.17, 0.06, 0.31, 0.06],
+        ['C', 0.4, 0.06, 0.47, 0.11, 0.5, 0.18],
+        ['C', 0.53, 0.11, 0.6, 0.06, 0.69, 0.06],
+        ['C', 0.83, 0.06, 0.94, 0.16, 0.94, 0.3],
+        ['C', 0.94, 0.48, 0.82, 0.66, 0.5, 0.9],
+        ['Z'],
+    ], width, height);
+}
+
+function openIconShapePathD(type, width, height) {
+    if (type === 'arrow') {
+        return shapeSvgPathFromUnitCommands([
+            ['M', 0.1, 0.5], ['L', 0.8, 0.5],
+            ['M', 0.65, 0.35], ['L', 0.8, 0.5], ['L', 0.65, 0.65],
+        ], width, height);
+    }
+    if (type === 'x') {
+        return shapeSvgPathFromUnitCommands([
+            ['M', 0.15, 0.15], ['L', 0.85, 0.85],
+            ['M', 0.85, 0.15], ['L', 0.15, 0.85],
+        ], width, height);
+    }
+    return shapeSvgPathFromUnitCommands([
+        ['M', 0.15, 0.5], ['L', 0.4, 0.75], ['L', 0.85, 0.15],
+    ], width, height);
+}
+
 function ensureShapeSvg(box) {
     let svg = box?.querySelector?.(':scope > svg.enpv-shape-svg') || null;
     if (!svg) {
@@ -3504,7 +3709,8 @@ function updateShapeSvgForBox(box, annotation, scale = 1) {
     const type = normalizeShapeType(ann.shapeType);
     const strokeWidth = Math.max(1, (Number(ann.strokeWidth) || 3) * (Number(scale) || 1));
     const strokeColor = ann.strokeTransparent ? 'none' : (ann.strokeColor || '#0f172a');
-    const fillColor = (ann.fillTransparent || type === 'line') ? 'none' : (ann.fillColor || '#22c55e');
+    const openIconShape = type === 'arrow' || type === 'x' || type === 'checkmark';
+    const fillColor = (ann.fillTransparent || type === 'line' || openIconShape) ? 'none' : (ann.fillColor || '#22c55e');
     const strokeOpacity = normalizeOpacity(ann.strokeOpacity, 1);
     const fillOpacity = normalizeOpacity(ann.fillOpacity, 0.22);
     let el;
@@ -3531,6 +3737,12 @@ function updateShapeSvgForBox(box, annotation, scale = 1) {
         }
         el = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
         el.setAttribute('points', points.join(' '));
+    } else if (type === 'heart') {
+        el = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        el.setAttribute('d', heartShapePathD(width, height));
+    } else if (openIconShape) {
+        el = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        el.setAttribute('d', openIconShapePathD(type, width, height));
     } else if (type === 'polygon') {
         el = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
         el.setAttribute('points', shapeSvgPointList(
@@ -3563,6 +3775,7 @@ function updateShapeSvgForBox(box, annotation, scale = 1) {
         el.setAttribute('transform', `rotate(${Number(ann.rotation) || 0} ${width / 2} ${height / 2})`);
     }
     svg.appendChild(el);
+    updateShapeSelectionChromeForBox(box);
 }
 
 function applyShapeAnnotationToBoxDataset(box, annotation) {
@@ -3577,6 +3790,7 @@ function applyShapeAnnotationToBoxDataset(box, annotation) {
     box.dataset.fillColor = ann.fillColor;
     box.dataset.fillOpacity = String(ann.fillOpacity);
     box.dataset.fillTransparent = ann.fillTransparent ? '1' : '0';
+    box.dataset.rotation = String(normalizeRotationDegrees(ann.rotation || 0));
     box.dataset.lineStartX = String(ann.lineStartX ?? 0);
     box.dataset.lineStartY = String(ann.lineStartY ?? 0);
     box.dataset.lineEndX = String(ann.lineEndX ?? 1);
@@ -3691,6 +3905,388 @@ function updateShapeResizeHandlesForBox(box) {
     }
 }
 
+function isLineShapeBox(box) {
+    return box?.dataset?.annotationType === 'shape'
+        && normalizeShapeType(box.dataset.shapeType) === 'line';
+}
+
+function distanceFromClientPointToSegment(clientX, clientY, startX, startY, endX, endY) {
+    const segmentDx = endX - startX;
+    const segmentDy = endY - startY;
+    const lengthSquared = (segmentDx * segmentDx) + (segmentDy * segmentDy);
+    if (lengthSquared <= 0.0001) {
+        const pointDx = clientX - startX;
+        const pointDy = clientY - startY;
+        return Math.hypot(pointDx, pointDy);
+    }
+    const projectedUnit = Math.max(0, Math.min(1,
+        (((clientX - startX) * segmentDx) + ((clientY - startY) * segmentDy)) / lengthSquared,
+    ));
+    const projectedX = startX + (projectedUnit * segmentDx);
+    const projectedY = startY + (projectedUnit * segmentDy);
+    return Math.hypot(clientX - projectedX, clientY - projectedY);
+}
+
+function lineShapeHitInfoAtPoint(box, clientX, clientY) {
+    if (!isLineShapeBox(box)) return null;
+    if (box.dataset.strokeTransparent === '1') return null;
+    const rect = box.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return null;
+    const startX = rect.left + (clampLineUnit(box.dataset.lineStartX, 0) * rect.width);
+    const startY = rect.top + (clampLineUnit(box.dataset.lineStartY, 0) * rect.height);
+    const endX = rect.left + (clampLineUnit(box.dataset.lineEndX, 1) * rect.width);
+    const endY = rect.top + (clampLineUnit(box.dataset.lineEndY, 1) * rect.height);
+    const scale = Number.parseFloat(box.parentElement?.dataset?.scale || '1') || 1;
+    const strokePx = Math.max(1, (Number.parseFloat(box.dataset.strokeWidth || '3') || 3) * scale);
+    const tolerance = Math.max(6, Math.min(18, (strokePx / 2) + 5));
+    const distance = distanceFromClientPointToSegment(clientX, clientY, startX, startY, endX, endY);
+    return distance <= tolerance ? { distance, tolerance } : null;
+}
+
+function annotationBoxContainsClientPoint(box, clientX, clientY) {
+    if (!box) return false;
+    const rect = box.getBoundingClientRect();
+    return rect
+        && clientX >= rect.left
+        && clientX <= rect.right
+        && clientY >= rect.top
+        && clientY <= rect.bottom;
+}
+
+function annotationBoxStackRank(box) {
+    const zIndex = Number.parseInt(box?.style?.zIndex || box?.dataset?.zIndex || window.getComputedStyle(box).zIndex || '0', 10) || 0;
+    const siblings = Array.from(box?.parentElement?.children || []);
+    return { zIndex, domIndex: siblings.indexOf(box) };
+}
+
+function resolveAnnotationBoxForLinePointerDown(currentBox, ev) {
+    if (!isLineShapeBox(currentBox)) return currentBox;
+    if (ev.target?.closest?.('.enpv-resize-handle')) return currentBox;
+    const layer = currentBox.parentElement;
+    if (!layer) return currentBox;
+    const candidates = [];
+    Array.from(layer.querySelectorAll(':scope > .enpv-annotation-box')).forEach((candidateBox) => {
+        if (!candidateBox?.isConnected || candidateBox.classList.contains('is-readonly')) return;
+        if (window.getComputedStyle(candidateBox).pointerEvents === 'none') return;
+        let distance = 0;
+        if (isLineShapeBox(candidateBox)) {
+            const hitInfo = lineShapeHitInfoAtPoint(candidateBox, ev.clientX, ev.clientY);
+            if (!hitInfo) return;
+            distance = hitInfo.distance;
+        } else if (!annotationBoxContainsClientPoint(candidateBox, ev.clientX, ev.clientY)) {
+            return;
+        }
+        candidates.push({ box: candidateBox, distance, stack: annotationBoxStackRank(candidateBox) });
+    });
+    if (!candidates.length) return null;
+    candidates.sort((leftCandidate, rightCandidate) => {
+        const zDiff = leftCandidate.stack.zIndex - rightCandidate.stack.zIndex;
+        if (zDiff !== 0) return zDiff;
+        const domDiff = leftCandidate.stack.domIndex - rightCandidate.stack.domIndex;
+        if (domDiff !== 0) return domDiff;
+        return rightCandidate.distance - leftCandidate.distance;
+    });
+    return candidates[candidates.length - 1]?.box || null;
+}
+
+function shapeBoxCanRotate(box) {
+    return box?.dataset?.annotationType === 'shape'
+        && normalizeShapeType(box.dataset.shapeType) !== 'line';
+}
+
+const CUTTABLE_SHAPE_TYPES = new Set(['square', 'circle', 'triangle', 'star', 'polygon']);
+
+function canCutShapeBox(box) {
+    if (!shapeBoxCanRotate(box)) return false;
+    if (isAnnBoxLocked(box)) return false;
+    return CUTTABLE_SHAPE_TYPES.has(normalizeShapeType(box.dataset.shapeType));
+}
+
+function isShapeCutModeArmedForBox(box) {
+    return Boolean(shapeCutState?.armed && box && String(shapeCutState.annotationId || '') === String(box.dataset.annotationId || ''));
+}
+
+function currentShapeCutBox() {
+    if (!shapeCutState?.armed) return null;
+    const pageIndex = Number.parseInt(String(shapeCutState.pageIndex ?? '-1'), 10);
+    const annotationId = String(shapeCutState.annotationId || '');
+    const pageDiv = Number.isFinite(pageIndex) && pageIndex >= 0 ? pdfViewer.getPageView(pageIndex)?.div : null;
+    return pageDiv?.querySelector(`.enpv-annotation-box[data-annotation-id="${cssEscape(annotationId)}"]`) || null;
+}
+
+function ensureShapeCutOverlay(layer) {
+    if (!layer) return null;
+    let overlay = layer.querySelector(':scope > svg.enpv-shape-cut-overlay');
+    if (!overlay) {
+        overlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        overlay.classList.add('enpv-shape-cut-overlay');
+        overlay.setAttribute('aria-hidden', 'true');
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        overlay.appendChild(line);
+        layer.appendChild(overlay);
+    }
+    const width = Math.max(1, layer.clientWidth || layer.offsetWidth || 1);
+    const height = Math.max(1, layer.clientHeight || layer.offsetHeight || 1);
+    overlay.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    return overlay;
+}
+
+function updateShapeCutOverlay() {
+    if (!shapeCutState?.armed || !shapeCutState.startPoint || !shapeCutState.currentPoint) return;
+    const layer = currentShapeCutBox()?.parentElement;
+    const overlay = ensureShapeCutOverlay(layer);
+    const line = overlay?.querySelector('line');
+    if (!line) return;
+    line.setAttribute('x1', String(shapeCutState.startPoint.canvasX));
+    line.setAttribute('y1', String(shapeCutState.startPoint.canvasY));
+    line.setAttribute('x2', String(shapeCutState.currentPoint.canvasX));
+    line.setAttribute('y2', String(shapeCutState.currentPoint.canvasY));
+}
+
+function removeShapeCutOverlay() {
+    document.querySelectorAll('svg.enpv-shape-cut-overlay').forEach((overlay) => overlay.remove());
+}
+
+function refreshShapeCutUi() {
+    document.querySelectorAll('.enpv-annotation-box.is-shape-cut-armed').forEach((box) => {
+        box.classList.toggle('is-shape-cut-armed', isShapeCutModeArmedForBox(box));
+    });
+    const box = currentShapeCutBox();
+    if (box) box.classList.add('is-shape-cut-armed');
+    document.body.classList.toggle('enpv-shape-cut-armed', Boolean(shapeCutState?.armed));
+    const selected = findSelectedBox();
+    if (selected) refreshAnnMenuState(selected);
+}
+
+function cancelShapeCutMode(options = {}) {
+    if (!shapeCutState?.armed) return;
+    removeShapeCutOverlay();
+    shapeCutState = null;
+    document.body.classList.remove('enpv-shape-cutting');
+    refreshShapeCutUi();
+    if (options.status) setStatus(options.status, options.error === true);
+}
+
+function armShapeCutModeForBox(box) {
+    if (!box) return false;
+    if (!canCutShapeBox(box)) {
+        setStatus(isAnnBoxLocked(box) ? 'Annotation is locked.' : 'This shape cannot be cut.', true);
+        return false;
+    }
+    if (shapeCutState?.armed) cancelShapeCutMode();
+    const pageIndex = Number.parseInt(box.dataset.pageIndex || '-1', 10);
+    shapeCutState = {
+        armed: true,
+        annotationId: String(box.dataset.annotationId || ''),
+        pageIndex,
+        pointerId: null,
+        startPoint: null,
+        currentPoint: null,
+    };
+    if (!box.classList.contains('is-selected')) selectAnnBox(box);
+    refreshShapeCutUi();
+    positionAnnMenuOver(box);
+    setStatus('Cut mode: drag a line through the selected shape.');
+    return true;
+}
+
+function toggleShapeCutModeForBox(box) {
+    if (isShapeCutModeArmedForBox(box)) {
+        cancelShapeCutMode({ status: 'Shape cut cancelled.' });
+        return;
+    }
+    armShapeCutModeForBox(box);
+}
+
+function createPolygonAnnotationFromPdfPoints(templateAnn, pageIndex, points) {
+    const cleaned = dedupePolygonVertices(points);
+    if (cleaned.length < 3 || Math.abs(computePolygonArea(cleaned)) < 1) return null;
+    const xs = cleaned.map((point) => point.x);
+    const ys = cleaned.map((point) => point.y);
+    const left = Math.min(...xs);
+    const right = Math.max(...xs);
+    const bottom = Math.min(...ys);
+    const top = Math.max(...ys);
+    const width = Math.max(1, right - left);
+    const height = Math.max(1, top - bottom);
+    const uid = `shape_${generateUuidV4()}`;
+    const polygonPoints = cleaned.map((point) => ({
+        x: clamp01((point.x - left) / width, 0.5),
+        y: clamp01((top - point.y) / height, 0.5),
+    }));
+    return normalizeShapeAnnotation({
+        id: buildPdfjsAnnotationId(pageIndex, uid),
+        _uid: uid,
+        pageIndex,
+        type: 'shape',
+        shapeType: 'polygon',
+        pdfX: left,
+        pdfY: bottom,
+        pdfWidth: width,
+        pdfHeight: height,
+        rotation: 0,
+        userCreated: true,
+        strokeColor: templateAnn.strokeColor,
+        strokeOpacity: templateAnn.strokeOpacity,
+        strokeWidth: templateAnn.strokeWidth,
+        strokeTransparent: templateAnn.strokeTransparent,
+        fillColor: templateAnn.fillColor,
+        fillOpacity: templateAnn.fillOpacity,
+        fillTransparent: templateAnn.fillTransparent,
+        polygonPoints,
+        locked: false,
+        zIndex: Number(templateAnn.zIndex) || 2,
+        text: '',
+    });
+}
+
+function cutShapeBoxWithLine(box, startPoint, endPoint) {
+    if (!canCutShapeBox(box)) return { ok: false, message: 'This shape cannot be cut.' };
+    const pageIndex = Number.parseInt(box.dataset.pageIndex || '-1', 10);
+    const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
+    const source = normalizeShapeAnnotation(buildAnnotationFromBox(box, existing) || existing || {});
+    const polygon = getShapePolygonPointsPdf(source);
+    if (polygon.length < 3) return { ok: false, message: 'Shape outline is unavailable.' };
+    const startPt = { x: Number(startPoint?.pdfX), y: Number(startPoint?.pdfY) };
+    const endPt = { x: Number(endPoint?.pdfX), y: Number(endPoint?.pdfY) };
+    const lineDx = endPt.x - startPt.x;
+    const lineDy = endPt.y - startPt.y;
+    if (![startPt.x, startPt.y, endPt.x, endPt.y].every(Number.isFinite) || Math.hypot(lineDx, lineDy) < 4) {
+        return { ok: false, message: 'Drag a longer cut line through the shape.' };
+    }
+    const firstHalf = clipPolygonAgainstInfiniteLine(polygon, startPt, endPt, true);
+    const secondHalf = clipPolygonAgainstInfiniteLine(polygon, startPt, endPt, false);
+    const cutA = createPolygonAnnotationFromPdfPoints(source, pageIndex, firstHalf);
+    const cutB = createPolygonAnnotationFromPdfPoints(source, pageIndex, secondHalf);
+    if (!cutA || !cutB) return { ok: false, message: 'The cut line must pass through the shape.' };
+
+    pushHistorySnapshot('cut shape');
+    rememberDeletedAnnotation(box);
+    if (source.id) deletePersistedAnnotation(source.id);
+    if (box.dataset.annotationId && box.dataset.annotationId !== source.id) deletePersistedAnnotation(box.dataset.annotationId);
+    upsertPersistedAnnotation(cutA);
+    upsertPersistedAnnotation(cutB);
+    selectedAnnBoxUid = cutA._uid || cutA.id || null;
+    selectedAnnBoxIsEditing = false;
+    if (annMenu) annMenu.hidden = true;
+    hideAnnotationFormatBar();
+    renderAnnotationBoxLayer(pageIndex);
+    const cutBox = pdfViewer.getPageView(pageIndex)?.div
+        ?.querySelector(`.enpv-annotation-box[data-annotation-id="${cssEscape(cutA.id)}"]`) || null;
+    if (cutBox) selectAnnBox(cutBox);
+    markManualSaveNeeded();
+    return { ok: true, annotations: [cutA, cutB] };
+}
+
+const NON_LINE_SHAPE_HANDLE_ANCHORS = {
+    nw: { x: 0, y: 0 },
+    ne: { x: 1, y: 0 },
+    sw: { x: 0, y: 1 },
+    se: { x: 1, y: 1 },
+    t: { x: 0.5, y: 0 },
+    b: { x: 0.5, y: 1 },
+    l: { x: 0, y: 0.5 },
+    r: { x: 1, y: 0.5 },
+};
+
+function shapeBoxRotationDegrees(box) {
+    return normalizeRotationDegrees(Number.parseFloat(box?.dataset?.rotation || '0') || 0);
+}
+
+function ensureShapeSelectionFrame(box) {
+    if (!box || box.dataset.annotationType !== 'shape') return null;
+    let frame = box.querySelector(':scope > .enpv-shape-selection-frame');
+    if (frame) return frame;
+    frame = document.createElement('div');
+    frame.className = 'enpv-shape-selection-frame';
+    frame.setAttribute('aria-hidden', 'true');
+    const svg = box.querySelector(':scope > svg.enpv-shape-svg');
+    if (svg?.nextSibling) box.insertBefore(frame, svg.nextSibling);
+    else box.appendChild(frame);
+    return frame;
+}
+
+function rotateShapeLocalPoint(pointX, pointY, width, height, rotationDegrees) {
+    const radians = rotationDegrees * (Math.PI / 180);
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const offsetX = pointX - centerX;
+    const offsetY = pointY - centerY;
+    return {
+        x: centerX + (Math.cos(radians) * offsetX) - (Math.sin(radians) * offsetY),
+        y: centerY + (Math.sin(radians) * offsetX) + (Math.cos(radians) * offsetY),
+    };
+}
+
+function updateNonLineShapeResizeHandlesForBox(box, width, height, rotationDegrees) {
+    Object.entries(NON_LINE_SHAPE_HANDLE_ANCHORS).forEach(([edge, anchor]) => {
+        const handle = box.querySelector(`:scope > .enpv-resize-handle[data-edge="${edge}"]`);
+        if (!handle) return;
+        const point = rotateShapeLocalPoint(anchor.x * width, anchor.y * height, width, height, rotationDegrees);
+        handle.style.left = `${point.x}px`;
+        handle.style.top = `${point.y}px`;
+    });
+}
+
+function updateShapeSelectionChromeForBox(box) {
+    if (!box || box.dataset.annotationType !== 'shape') return;
+    const canRotate = shapeBoxCanRotate(box);
+    const frame = canRotate
+        ? ensureShapeSelectionFrame(box)
+        : box.querySelector(':scope > .enpv-shape-selection-frame');
+    if (frame) frame.hidden = !canRotate;
+    if (canRotate) {
+        const width = Math.max(1, Number.parseFloat(box.style.width || '') || box.offsetWidth || 1);
+        const height = Math.max(1, Number.parseFloat(box.style.height || '') || box.offsetHeight || 1);
+        const rotation = shapeBoxRotationDegrees(box);
+        if (frame) {
+            frame.style.transform = rotation ? `rotate(${rotation}deg)` : 'none';
+            frame.dataset.rotation = String(Math.round(rotation * 10) / 10);
+        }
+        updateNonLineShapeResizeHandlesForBox(box, width, height, rotation);
+    }
+    updateShapeRotateHandleForBox(box);
+}
+
+function ensureShapeRotateHandle(box) {
+    if (!box || box.dataset.annotationType !== 'shape') return null;
+    let handle = box.querySelector(':scope > .enpv-shape-rotate-handle');
+    if (handle) return handle;
+    handle = document.createElement('button');
+    handle.type = 'button';
+    handle.className = 'enpv-shape-rotate-handle';
+    handle.dataset.action = 'rotate-shape';
+    handle.title = 'Rotate shape';
+    handle.setAttribute('aria-label', 'Rotate shape');
+    handle.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"></path><path d="M21 3v6h-6"></path></svg>';
+    handle.addEventListener('pointerdown', onShapeRotateHandlePointerDown);
+    box.appendChild(handle);
+    return handle;
+}
+
+function updateShapeRotateHandleForBox(box) {
+    if (!box || box.dataset.annotationType !== 'shape') return;
+    const canRotate = shapeBoxCanRotate(box);
+    const handle = canRotate
+        ? ensureShapeRotateHandle(box)
+        : box.querySelector(':scope > .enpv-shape-rotate-handle');
+    if (!handle) return;
+    handle.hidden = !canRotate;
+    if (!canRotate) return;
+    const width = Math.max(1, Number.parseFloat(box.style.width || '') || box.offsetWidth || 1);
+    const height = Math.max(1, Number.parseFloat(box.style.height || '') || box.offsetHeight || 1);
+    const rotation = normalizeRotationDegrees(Number.parseFloat(box.dataset.rotation || '0') || 0);
+    const orbitRadius = (height / 2) + (height * 0.15);
+    const handleAngle = normalizeRotationDegrees(rotation + 90) * (Math.PI / 180);
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const handleX = centerX + (Math.cos(handleAngle) * orbitRadius);
+    const handleY = centerY + (Math.sin(handleAngle) * orbitRadius);
+    handle.style.left = `${handleX}px`;
+    handle.style.top = `${handleY}px`;
+    handle.dataset.rotation = String(Math.round(rotation * 10) / 10);
+}
+
 function applyLineGeometryToBox(box, lineBox, viewport, scale) {
     const rect = pdfRectToCanvasRect({
         x: lineBox.left,
@@ -3771,6 +4367,8 @@ function createPersistedOverlayBox(annotation, pageIndex, viewport, scale, editM
     box.dataset.uid = String(annotation.pdfjsAnchorUid || annotation.id || `${pageIndex}:persisted`);
     box.dataset.annotationId = String(annotation.id || buildPdfjsAnnotationId(pageIndex, box.dataset.uid));
     box.dataset.pageIndex = String(pageIndex);
+    const isStandaloneUserTextBox = boolish(annotation.userCreated)
+        || (boolish(annotation.skipPdfjsSourceMask) && !String(annotation.pdfjsSourceText || '').trim());
     box.dataset.originalText = String(annotation.originalText || annotation.pdfjsSourceText || annotation.text || '');
     box.dataset.occurrence = String(annotation.pdfjsSourceOccurrence || '0');
     const sourceSnapshotRect = annotationBaselinePdfBox(annotation) || currentPdfBox;
@@ -3783,7 +4381,7 @@ function createPersistedOverlayBox(annotation, pageIndex, viewport, scale, editM
     box.dataset.baseBboxW = box.dataset.sourceBboxW;
     box.dataset.baseBboxH = box.dataset.sourceBboxH;
     box.dataset.basePageHeight = String(Number(annotation.pdfjsSourcePageHeight || (Number(viewport.height) / scale)));
-    box.dataset.baseText = String(annotation.pdfjsSourceText || annotation.originalText || annotation.text || '');
+    box.dataset.baseText = isStandaloneUserTextBox ? '' : String(annotation.pdfjsSourceText || annotation.originalText || annotation.text || '');
     box.dataset.fontSizePts = String(Number(annotation.fontSize) || 12);
     box.dataset.renderScale = String(scale);
     box.dataset.locked = annotation.locked ? '1' : '0';
@@ -3826,9 +4424,13 @@ function createPersistedOverlayBox(annotation, pageIndex, viewport, scale, editM
     tc.setAttribute('aria-multiline', 'true');
     tc.contentEditable = 'false';
     tc.spellcheck = false;
-    const richTextHtml = sanitizeRichTextHtmlForAnnotation(annotation.richTextHtml || '');
+    const richTextHtml = sanitizeRichTextHtmlForAnnotation(annotation.richTextHtml || '', {
+        preserveLineBreaks: annotationPreservesDisplayLineBreaks(annotation),
+    });
     if (richTextHtml) tc.innerHTML = richTextHtml;
-    else tc.textContent = normalizeAnnotationTextForDisplay(annotation.text || '');
+    else tc.textContent = normalizeAnnotationTextForDisplay(annotation.text || '', {
+        preserveLineBreaks: annotationPreservesDisplayLineBreaks(annotation),
+    });
     box.appendChild(tc);
     if ((annotation.pdfjsSourceFidelity === true || box.dataset.sourceFontFamily || box.dataset.sourceTransform)
         && annotation.userForcedRichText !== true
@@ -3967,6 +4569,10 @@ function deletedMaskAnnotationFromBox(box) {
 
 function sourceMaskRectForBox(box) {
     if (!box) return null;
+    if (box.dataset.skipPdfjsSourceMask === '1'
+        || box.dataset.userCreated === '1') {
+        return null;
+    }
     if (!String(box.dataset.baseText || box.dataset.originalText || '').trim()) return null;
     const layer = box.parentElement;
     const pageIndex = Number.parseInt(box.dataset.pageIndex || '-1', 10);
@@ -4002,6 +4608,7 @@ function sourceMaskRectForBox(box) {
 
 function sourceMaskCanvasRectForAnnotation(annotation, viewport, scale, pageIndex = null) {
     if (!annotation || !viewport || !scale) return null;
+    if (boolish(annotation.skipPdfjsSourceMask) || boolish(annotation.userCreated)) return null;
     const sourceRect = annotationBaselinePdfBox(annotation);
     const moved = boolish(annotation.movedTextOverlay);
     const explicitMaskRect = annotationSourceMaskPdfBox(annotation);
@@ -4075,6 +4682,7 @@ function rememberSourceMaskRectForCurrentBox(box) {
 
 function shouldMaskSourceForAnnotation(annotation) {
     if (!annotation || String(annotation.type || '').toLowerCase() !== 'text') return false;
+    if (annotation._pdfjsSourceRedacted === true) return false;
     if (boolish(annotation.pdfjsDeleted)) return false;
     if (!boolish(annotation.savedTextOverlay)) return false;
     const sourceText = normalizeComparableText(annotation.pdfjsSourceText || annotation.originalText || '');
@@ -4924,6 +5532,7 @@ function addEditableBoxChrome(box) {
         box.appendChild(handle);
     }
     updateShapeResizeHandlesForBox(box);
+    if (box.dataset.annotationType === 'shape') updateShapeSelectionChromeForBox(box);
 }
 
 function ensureAnnotationBoxLayer(pageIndex, scale) {
@@ -4963,6 +5572,304 @@ function pdfjsPointFromPageClient(pageIndex, clientX, clientY) {
         viewport,
         pageDiv,
     };
+}
+
+function setDrawToolStatus(message) {
+    if (drawToolStatus) drawToolStatus.textContent = String(message || '');
+}
+
+function syncDrawToolPanelUi() {
+    if (drawToolPanel) {
+        drawToolPanel.classList.toggle('is-visible', drawModeActive);
+        drawToolPanel.setAttribute('aria-hidden', drawModeActive ? 'false' : 'true');
+    }
+    if (floatingDrawButton) {
+        floatingDrawButton.classList.toggle('is-active', drawModeActive);
+        floatingDrawButton.setAttribute('aria-pressed', drawModeActive ? 'true' : 'false');
+        floatingDrawButton.title = drawModeActive ? 'Draw active — drag on the PDF to draw' : 'Draw — sketch directly on the PDF';
+    }
+    drawToolButtons.forEach((button) => {
+        button.classList.toggle('is-active', button.dataset.drawDirectTool === drawToolType);
+    });
+    drawColorSwatches.forEach((button) => {
+        button.classList.toggle('is-active', cssColorToHex(button.dataset.drawColor, '') === cssColorToHex(drawStrokeColor, '#111827'));
+    });
+    if (drawToolColorInput) drawToolColorInput.value = cssColorToHex(drawStrokeColor, '#111827');
+    if (drawToolSizeInput) drawToolSizeInput.value = String(Math.round(drawBrushSize));
+    if (drawToolSizeValue) drawToolSizeValue.textContent = `${Math.round(drawBrushSize)}px`;
+    if (drawToolOpacityInput) {
+        drawToolOpacityInput.value = String(Math.round(drawOpacity * 100));
+        drawToolOpacityInput.disabled = false;
+    }
+    if (drawToolOpacityValue) drawToolOpacityValue.textContent = `${Math.round(drawOpacity * 100)}%`;
+    setDrawToolStatus('Pen mode is active. Drag directly on the page to draw.');
+}
+
+function clearActiveDrawSession() {
+    activeDrawSession?.layer?.remove?.();
+    activeDrawSession = null;
+}
+
+function directDrawLayerForPage(pageIndex, className, rect = null, intrinsicWidth = null, intrinsicHeight = null) {
+    const pageView = pdfViewer.getPageView(pageIndex);
+    const pageDiv = pageView?.div;
+    const viewport = pageView?.viewport;
+    if (!pageDiv || !viewport) return null;
+    const width = Math.max(1, Number(intrinsicWidth || rect?.width || viewport.width) || 1);
+    const height = Math.max(1, Number(intrinsicHeight || rect?.height || viewport.height) || 1);
+    const layer = document.createElement('canvas');
+    layer.className = className;
+    layer.width = Math.round(width);
+    layer.height = Math.round(height);
+    layer.style.left = `${Math.max(0, Number(rect?.left) || 0)}px`;
+    layer.style.top = `${Math.max(0, Number(rect?.top) || 0)}px`;
+    layer.style.width = `${Math.max(1, Number(rect?.width || viewport.width) || 1)}px`;
+    layer.style.height = `${Math.max(1, Number(rect?.height || viewport.height) || 1)}px`;
+    pageDiv.appendChild(layer);
+    return layer;
+}
+
+function clampDirectDrawVectorNumber(value, fallback = 0) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : fallback;
+}
+
+function directDrawSvgPathFromPoints(points) {
+    const cleanPoints = Array.isArray(points)
+        ? points
+            .map((point) => ({
+                x: clampDirectDrawVectorNumber(point?.x, 0),
+                y: clampDirectDrawVectorNumber(point?.y, 0),
+            }))
+            .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+        : [];
+    if (!cleanPoints.length) return '';
+    if (cleanPoints.length === 1) {
+        const point = cleanPoints[0];
+        return `M ${point.x.toFixed(3)} ${point.y.toFixed(3)} L ${(point.x + 0.01).toFixed(3)} ${point.y.toFixed(3)}`;
+    }
+    const [first, ...rest] = cleanPoints;
+    return `M ${first.x.toFixed(3)} ${first.y.toFixed(3)} ${rest.map((point) => `L ${point.x.toFixed(3)} ${point.y.toFixed(3)}`).join(' ')}`;
+}
+
+function directDrawVectorToSvgDataUrl(vector) {
+    if (!vector || typeof vector !== 'object') return '';
+    const width = Math.max(1, clampDirectDrawVectorNumber(vector.width, 0));
+    const height = Math.max(1, clampDirectDrawVectorNumber(vector.height, 0));
+    const strokes = Array.isArray(vector.strokes) ? vector.strokes : [];
+    const paths = strokes.map((stroke) => {
+        const pathData = directDrawSvgPathFromPoints(stroke?.points);
+        if (!pathData) return '';
+        const color = cssColorToHex(stroke?.color, '#111827');
+        const opacity = clamp01(stroke?.opacity ?? 1, 1);
+        const brushSize = Math.max(0.25, clampDirectDrawVectorNumber(stroke?.brushSize, 1));
+        return `<path d="${pathData}" fill="none" stroke="${color}" stroke-width="${brushSize.toFixed(3)}" stroke-linecap="round" stroke-linejoin="round" opacity="${opacity.toFixed(4)}"/>`;
+    }).filter(Boolean).join('');
+    if (!paths) return '';
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${paths}</svg>`;
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+function directDrawVectorFromSession(session, cropLeft, cropTop, cropWidth, cropHeight) {
+    const points = (Array.isArray(session?.points) ? session.points : [])
+        .map((point) => ({
+            x: Math.max(0, Math.min(cropWidth, clampDirectDrawVectorNumber(point.x, 0) - cropLeft)),
+            y: Math.max(0, Math.min(cropHeight, clampDirectDrawVectorNumber(point.y, 0) - cropTop)),
+        }));
+    if (!points.length) return null;
+    return {
+        version: 1,
+        width: Math.max(1, cropWidth),
+        height: Math.max(1, cropHeight),
+        strokes: [{
+            color: cssColorToHex(session.color, '#111827'),
+            opacity: clamp01(session.opacity ?? 1, 1),
+            brushSize: Math.max(0.25, clampDirectDrawVectorNumber(session.width, 1)),
+            points,
+        }],
+    };
+}
+
+function directDrawAnnotationAtPageBox(pageIndex, asset, box) {
+    if (!asset?.dataUrl || !box) return null;
+    const uid = String(asset.uid || `draw_${generateUuidV4()}`);
+    const annotation = normalizeImageAnnotation({
+        _uid: uid,
+        id: buildPdfjsAnnotationId(pageIndex, uid),
+        pageIndex,
+        type: 'image',
+        pdfX: Math.max(0, Number(box.pdfX) || 0),
+        pdfY: Math.max(0, Number(box.pdfY) || 0),
+        pdfWidth: Math.max(1, Number(box.pdfWidth) || 1),
+        pdfHeight: Math.max(1, Number(box.pdfHeight) || 1),
+        rotation: 0,
+        opacity: 1,
+        userCreated: true,
+        zIndex: 2,
+        dataUrl: asset.dataUrl,
+        src: '',
+        fileName: 'drawing.png',
+        mimeType: 'image/png',
+        intrinsicWidth: Math.max(1, Number(asset.width) || 1),
+        intrinsicHeight: Math.max(1, Number(asset.height) || 1),
+        imageToolSource: 'direct-draw',
+        drawStrokeColor: cssColorToHex(asset.drawStrokeColor, '#111827'),
+        directDrawVector: asset.directDrawVector || null,
+        text: '',
+    });
+    annotation._drawCreatedAt = Date.now();
+    annotation._originalBox = { x: annotation.pdfX, y: annotation.pdfY, w: annotation.pdfWidth, h: annotation.pdfHeight };
+    annotation._originalPdfBox = { ...annotation._originalBox };
+    return annotation;
+}
+
+function upsertDirectDrawAnnotation(annotation, historyLabel = 'add drawing') {
+    if (!annotation) return false;
+    pushHistorySnapshot(historyLabel);
+    upsertPersistedAnnotation(annotation);
+    renderAnnotationBoxLayer(annotationPageIndex(annotation));
+    const pageDiv = pdfViewer.getPageView(annotationPageIndex(annotation))?.div;
+    const box = pageDiv?.querySelector(`.enpv-annotation-box[data-annotation-id="${cssEscape(annotation.id)}"]`) || null;
+    if (box) selectAnnBox(box);
+    markManualSaveNeeded();
+    return true;
+}
+
+function beginDirectPenStroke(event, pageIndex) {
+    const point = pdfjsPointFromPageClient(pageIndex, event.clientX, event.clientY);
+    if (!point) return false;
+    const layer = directDrawLayerForPage(pageIndex, 'enpv-draw-preview-layer');
+    const ctx = layer?.getContext('2d');
+    if (!layer || !ctx) return false;
+    clearActiveDrawSession();
+    event.preventDefault();
+    event.stopPropagation();
+    try { point.pageDiv.setPointerCapture?.(event.pointerId); } catch (_) {}
+    layer.style.opacity = String(drawOpacity);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.imageSmoothingEnabled = true;
+    paintDrawDot(ctx, point.canvasX, point.canvasY, drawBrushSize, drawStrokeColor);
+    activeDrawSession = {
+        kind: 'pen',
+        pageIndex,
+        pageDiv: point.pageDiv,
+        pointerId: event.pointerId,
+        layer,
+        ctx,
+        color: drawStrokeColor,
+        width: drawBrushSize,
+        opacity: drawOpacity,
+        points: [{ x: point.canvasX, y: point.canvasY }],
+        lastMidPoint: { x: point.canvasX, y: point.canvasY },
+        minX: point.canvasX - (drawBrushSize / 2),
+        minY: point.canvasY - (drawBrushSize / 2),
+        maxX: point.canvasX + (drawBrushSize / 2),
+        maxY: point.canvasY + (drawBrushSize / 2),
+        viewport: point.viewport,
+        scale: point.scale,
+    };
+    return true;
+}
+
+function moveDirectPenStroke(event) {
+    const session = activeDrawSession;
+    if (!session || session.kind !== 'pen' || session.pointerId !== event.pointerId) return false;
+    const pointInfo = pdfjsPointFromPageClient(session.pageIndex, event.clientX, event.clientY);
+    if (!pointInfo) return true;
+    event.preventDefault();
+    const point = { x: pointInfo.canvasX, y: pointInfo.canvasY };
+    const lastPoint = session.points[session.points.length - 1];
+    const dx = point.x - lastPoint.x;
+    const dy = point.y - lastPoint.y;
+    if ((dx * dx) + (dy * dy) < 0.5) return true;
+    session.points.push(point);
+    session.minX = Math.min(session.minX, point.x - (session.width / 2));
+    session.minY = Math.min(session.minY, point.y - (session.width / 2));
+    session.maxX = Math.max(session.maxX, point.x + (session.width / 2));
+    session.maxY = Math.max(session.maxY, point.y + (session.width / 2));
+    const midPoint = { x: (lastPoint.x + point.x) / 2, y: (lastPoint.y + point.y) / 2 };
+    paintDrawSegment(session.ctx, session.lastMidPoint, lastPoint, midPoint, session.width, session.color);
+    session.lastMidPoint = midPoint;
+    return true;
+}
+
+function finishDirectPenStroke(event) {
+    const session = activeDrawSession;
+    if (!session || session.kind !== 'pen' || session.pointerId !== event.pointerId) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    try { session.pageDiv?.releasePointerCapture?.(event.pointerId); } catch (_) {}
+    if (session.points.length > 1) {
+        const lastPoint = session.points[session.points.length - 1];
+        paintDrawSegment(session.ctx, session.lastMidPoint, lastPoint, lastPoint, session.width, session.color);
+    }
+    const padding = Math.max(session.width, 8);
+    const cropLeft = Math.max(0, Math.floor(session.minX - padding));
+    const cropTop = Math.max(0, Math.floor(session.minY - padding));
+    const cropRight = Math.min(session.layer.width, Math.ceil(session.maxX + padding));
+    const cropBottom = Math.min(session.layer.height, Math.ceil(session.maxY + padding));
+    if (cropRight <= cropLeft || cropBottom <= cropTop) {
+        clearActiveDrawSession();
+        return true;
+    }
+    const cropWidth = cropRight - cropLeft;
+    const cropHeight = cropBottom - cropTop;
+    const outputScale = 2;
+    const outputCanvas = document.createElement('canvas');
+    outputCanvas.width = Math.max(1, Math.ceil(cropWidth * outputScale));
+    outputCanvas.height = Math.max(1, Math.ceil(cropHeight * outputScale));
+    const outputCtx = outputCanvas.getContext('2d');
+    outputCtx.scale(outputScale, outputScale);
+    outputCtx.globalAlpha = session.opacity;
+    outputCtx.drawImage(session.layer, -cropLeft, -cropTop);
+    const pdfWidth = cropWidth / session.scale;
+    const pdfHeight = cropHeight / session.scale;
+    const annotation = directDrawAnnotationAtPageBox(session.pageIndex, {
+        dataUrl: outputCanvas.toDataURL('image/png'),
+        width: outputCanvas.width,
+        height: outputCanvas.height,
+        drawStrokeColor: session.color,
+        directDrawVector: directDrawVectorFromSession(session, cropLeft, cropTop, cropWidth, cropHeight),
+    }, {
+        pdfX: cropLeft / session.scale,
+        pdfY: ((Number(session.viewport.height) || session.layer.height) - cropBottom) / session.scale,
+        pdfWidth,
+        pdfHeight,
+    });
+    clearActiveDrawSession();
+    if (upsertDirectDrawAnnotation(annotation, 'add drawing')) setDrawToolStatus('Drawing added. Keep drawing on the page.');
+    return true;
+}
+
+function cancelDirectDrawPointer(event) {
+    if (!activeDrawSession) return false;
+    if (event && activeDrawSession.pointerId !== event.pointerId) return false;
+    try { activeDrawSession.pageDiv?.releasePointerCapture?.(activeDrawSession.pointerId); } catch (_) {}
+    clearActiveDrawSession();
+    return true;
+}
+
+function setDrawMode(active) {
+    const nextActive = Boolean(active);
+    if (nextActive && document.body.classList.contains('enpv-edit-on')) setEditMode(false);
+    if (nextActive && document.body.classList.contains('enpv-add-text-on')) setAddTextMode(false);
+    if (nextActive && document.body.classList.contains('enpv-shape-on')) setShapeMode(false);
+    if (!nextActive) clearActiveDrawSession();
+    drawToolType = 'pen';
+    drawModeActive = nextActive;
+    document.body.classList.toggle('enpv-draw-on', drawModeActive);
+    syncDrawToolPanelUi();
+    if (drawModeActive) {
+        deselectAnnBox();
+        setStatus('Draw mode active. Drag on the PDF to draw.');
+    } else if (!document.body.classList.contains('enpv-edit-on')
+        && !document.body.classList.contains('enpv-add-text-on')
+        && !document.body.classList.contains('enpv-shape-on')) {
+        setStatus('Ready.');
+    }
+    renderAllAnnotationBoxLayers();
+    scheduleRenderAllAnnotationBoxLayers();
 }
 
 function createNewTextAnnotation(pageIndex, canvasX, canvasY, canvasWidth = null, canvasHeight = null) {
@@ -5022,12 +5929,6 @@ function createNewTextAnnotation(pageIndex, canvasX, canvasY, canvasWidth = null
         pdfjsEditorMode: 'rich',
         skipPdfjsSourceMask: true,
         pdfjsAnchorUid: uid,
-        pdfjsSourceText: '',
-        pdfjsSourceX: pdfX,
-        pdfjsSourceY: pdfY,
-        pdfjsSourceW: widthPts,
-        pdfjsSourceH: heightPts,
-        pdfjsSourcePageHeight: pageHeightPts,
         _originalBox: { x: pdfX, y: pdfY, w: widthPts, h: heightPts },
         _originalPdfBox: { x: pdfX, y: pdfY, w: widthPts, h: heightPts },
     };
@@ -5109,7 +6010,7 @@ function createImageBoxElement(annotation, pageIndex, viewport, scale, editModeO
     box.dataset.pageIndex = String(pageIndex);
     box.dataset.annotationType = 'image';
     box.dataset.locked = annotation.locked ? '1' : '0';
-    box.dataset.zIndex = String(Number(annotation.zIndex) || 6);
+    box.dataset.zIndex = String(Number(annotation.zIndex) || (isDirectDrawAnnotation(annotation) ? 2 : 6));
     box.dataset.basePageHeight = String(Number(viewport.height) / scale);
     box.style.left = `${rect.left}px`;
     box.style.top = `${rect.top}px`;
@@ -5122,14 +6023,15 @@ function createImageBoxElement(annotation, pageIndex, viewport, scale, editModeO
     const img = document.createElement('img');
     img.className = 'enpv-image-img';
     img.draggable = false;
-    const src = getImageAnnotationSource(annotation);
+    const vectorSrc = isDirectDrawAnnotation(annotation) ? directDrawVectorToSvgDataUrl(annotation.directDrawVector) : '';
+    const src = vectorSrc || getImageAnnotationSource(annotation);
     if (src) img.src = src;
-    img.alt = 'Image';
+    img.alt = isDirectDrawAnnotation(annotation) ? 'Drawing' : 'Image';
     box.appendChild(img);
 
     const label = document.createElement('span');
     label.className = 'enpv-image-selection-label';
-    label.textContent = 'image';
+    label.textContent = isDirectDrawAnnotation(annotation) ? 'drawing' : 'image';
     box.appendChild(label);
 
     if (hooks) {
@@ -5448,6 +6350,8 @@ function promoteSourceBoxToMovedOverlay(box) {
     box.classList.remove('is-source-handle');
     box.classList.add('is-persisted-overlay');
     applySourceFidelityTypography(box);
+    applySourceFidelitySpanEditMarkup(box, { purpose: 'display' });
+    refreshAttachedSourceFidelityTextFit(box);
     attachSourceMaskForBox(box);
     applyMovedSourceVisibilityForBox(box);
 }
@@ -5881,7 +6785,7 @@ function suppressOverlappingSameLineItems(items) {
 function isStandaloneControlGlyphItem(item) {
     const text = String(item?.text || '').trim();
     if (!text || text.length > 2) return false;
-    return /^[\u2022\u25A0-\u25A3\u25AA-\u25AC\u25CF\u25E6\u2610-\u2612\u2713-\u2718\uF0A3\uF0FC\uF0FE]+$/.test(text);
+    return /^[\u2022\u25A0-\u25A3\u25AA-\u25AC\u25CF\u25E6\u2610-\u2612\u2713-\u2718\uF0A3\uF0B7\uF0FC\uF0FE]+$/.test(text);
 }
 
 function isStandaloneLowercaseLineLabelItem(item) {
@@ -5989,7 +6893,7 @@ function normalizedSourceFontWeight(value) {
 function sourceItemsAreInlineTextFlow(previous, item, gapPx, minHeight, centerDelta) {
     const previousText = String(previous?.text || '').trim();
     const itemText = String(item?.text || '').trim();
-    if (!/[A-Za-z0-9]$/.test(previousText) || !/^[A-Za-z0-9]/.test(itemText)) return false;
+    if (!/[A-Za-z0-9)]$/.test(previousText) || !/^[A-Za-z0-9([]/.test(itemText)) return false;
     const lowerGapLimit = -Math.max(3, minHeight * 0.35);
     const upperGapLimit = Math.max(4, minHeight * 0.6);
     return gapPx >= lowerGapLimit && gapPx <= upperGapLimit && centerDelta <= minHeight * 0.25;
@@ -5998,14 +6902,16 @@ function sourceItemsAreInlineTextFlow(previous, item, gapPx, minHeight, centerDe
 function shouldSplitMixedTypography(previous, item, gapPx) {
     if (!previous || !item) return false;
     if (previous.isVertical !== item.isVertical) return true;
-    if (previous.fontStyle !== item.fontStyle) return true;
-    if (Math.abs(previous.fontWeight - item.fontWeight) >= 200) return true;
-    if (previous.fontFamily && item.fontFamily && previous.fontFamily !== item.fontFamily) return true;
     const previousHeight = Number(previous.rect?.height) || 0;
     const itemHeight = Number(item.rect?.height) || 0;
     const minHeight = Math.max(0.0001, Math.min(previousHeight, itemHeight));
     const centerDelta = Math.abs((Number(previous.rect?.centerY) || 0) - (Number(item.rect?.centerY) || 0));
     const isInlineTextFlow = sourceItemsAreInlineTextFlow(previous, item, gapPx, minHeight, centerDelta);
+    if (!isInlineTextFlow) {
+        if (previous.fontStyle !== item.fontStyle) return true;
+        if (Math.abs(previous.fontWeight - item.fontWeight) >= 200) return true;
+        if (previous.fontFamily && item.fontFamily && previous.fontFamily !== item.fontFamily) return true;
+    }
     const previousScaleX = Number(previous.transformScaleX) || 1;
     const itemScaleX = Number(item.transformScaleX) || 1;
     const transformRatio = Math.max(previousScaleX, itemScaleX) / Math.max(0.0001, Math.min(previousScaleX, itemScaleX));
@@ -6863,6 +7769,8 @@ function renderAnnotationBoxLayer(pageIndex) {
     const promotedTextAnnotations = allTextAnnotations.filter((annotation) => isPromotedExtractionAnnotation(annotation));
     const persistedSignatureAnnotations = allAnnotations.filter(isSignatureAnnotation);
     const persistedImageAnnotations = allAnnotations.filter(isImageAnnotation);
+    const directDrawAnnotations = persistedImageAnnotations.filter(isDirectDrawAnnotation);
+    const regularImageAnnotations = persistedImageAnnotations.filter((annotation) => !isDirectDrawAnnotation(annotation));
     const shapeAnnotations = allAnnotations.filter(isShapeAnnotation);
     const visiblePersistedTextAnnotations = persistedTextAnnotations.filter(
         (annotation) => annotation.pdfjsDeleted !== true
@@ -6964,6 +7872,13 @@ function renderAnnotationBoxLayer(pageIndex) {
         persistedOverlayRects.push(rendered.rect);
         layer.appendChild(rendered.box);
     }
+    for (const annotation of directDrawAnnotations) {
+        const imageBox = createImageBoxElement(annotation, pageIndex, viewport, scale, editModeOn, {
+            onAnnBoxPointerDown,
+            onResizeHandlePointerDown,
+        });
+        if (imageBox) layer.appendChild(imageBox);
+    }
     for (const annotation of preRenderedVisibleTextAnnotations) {
         const allowInteraction = editModeOn || (addTextModeOn && isUserCreatedTextAnnotation(annotation));
         const rendered = createPersistedOverlayBox(annotation, pageIndex, viewport, scale, allowInteraction);
@@ -6998,7 +7913,7 @@ function renderAnnotationBoxLayer(pageIndex) {
             if (sigBox) layer.appendChild(sigBox);
         }
     }
-    for (const annotation of persistedImageAnnotations) {
+    for (const annotation of regularImageAnnotations) {
         const imageBox = createImageBoxElement(annotation, pageIndex, viewport, scale, editModeOn, {
             onAnnBoxPointerDown,
             onResizeHandlePointerDown,
@@ -7331,7 +8246,7 @@ function pageIndexFromEventTarget(target) {
 
 function startAddTextCreation(ev) {
     if (!document.body.classList.contains('enpv-add-text-on')) return;
-    if (ev.button !== 0 || dragState || multiDragState || resizeState || marqueeSelectionState) return;
+    if (ev.button !== 0 || dragState || multiDragState || resizeState || shapeRotateState || shapeCutState?.armed || marqueeSelectionState) return;
     if (ev.target?.closest?.('.enpv-ann-menu')) return;
     if (ev.target?.closest?.('.enpv-resize-handle')) return;
     const pageIndex = pageIndexFromEventTarget(ev.target);
@@ -7567,7 +8482,7 @@ function scheduleShapeCreationPreviewUpdate(state = shapeCreationState) {
 
 function startShapeCreation(ev) {
     if (!document.body.classList.contains('enpv-shape-on')) return;
-    if (ev.button !== 0 || dragState || multiDragState || resizeState || marqueeSelectionState) return;
+    if (ev.button !== 0 || dragState || multiDragState || resizeState || shapeRotateState || shapeCutState?.armed || marqueeSelectionState) return;
     if (ev.target?.closest?.('.enpv-annotation-box')) return;
     if (ev.target?.closest?.('.enpv-ann-menu')) return;
     const pageIndex = pageIndexFromEventTarget(ev.target);
@@ -7643,6 +8558,33 @@ function finishShapeCreation(ev) {
     markManualSaveNeeded();
 }
 
+function startDirectDrawGesture(ev) {
+    if (!drawModeActive) return;
+    if (ev.button !== 0) return;
+    if (ev.target?.closest?.('#draw-tool-panel, .floating-tool-bar, .top-bar, .enpv-ann-menu')) return;
+    const pageIndex = pageIndexFromEventTarget(ev.target);
+    if (!Number.isFinite(pageIndex) || pageIndex < 0) return;
+    beginDirectPenStroke(ev, pageIndex);
+}
+
+function updateDirectDrawGesture(ev) {
+    if (!drawModeActive || !activeDrawSession) return;
+    moveDirectPenStroke(ev);
+}
+
+function finishDirectDrawGesture(ev) {
+    if (!drawModeActive || !activeDrawSession) return;
+    finishDirectPenStroke(ev);
+}
+
+container.addEventListener('pointerdown', startDirectDrawGesture, { capture: true });
+container.addEventListener('pointermove', updateDirectDrawGesture, { capture: true });
+container.addEventListener('pointerup', finishDirectDrawGesture, { capture: true });
+container.addEventListener('pointercancel', cancelDirectDrawPointer, { capture: true });
+container.addEventListener('pointerdown', startShapeCutGesture, { capture: true });
+container.addEventListener('pointermove', updateShapeCutGesture, { capture: true });
+container.addEventListener('pointerup', finishShapeCutGesture, { capture: true });
+container.addEventListener('pointercancel', cancelShapeCutGesture, { capture: true });
 container.addEventListener('pointerdown', startAddTextCreation, { capture: true });
 container.addEventListener('pointermove', updateAddTextCreation, { capture: true });
 container.addEventListener('pointerup', finishAddTextCreation, { capture: true });
@@ -7686,6 +8628,8 @@ const annotationOffsetsPts = new Map(); // uid -> { dx, dy } in PDF points
 // glyphs that visually belong to the widget) against being shifted.
 const widgetRectsPtsByPage = new Map(); // pageIndex -> [{x,y,w,h}, ...]
 const annMenu = document.getElementById('enpv-ann-menu');
+const ANN_MENU_LOCKED_ICON_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="9" rx="2"></rect><path d="M8 11V8a4 4 0 1 1 8 0v3"></path></svg>';
+const ANN_MENU_UNLOCKED_ICON_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="9" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 7.88-1"></path></svg>';
 let selectedAnnBoxUid = null;
 const multiSelectedAnnBoxUids = new Set();
 // True while the selected box is in in-place edit mode (.is-editing,
@@ -7700,6 +8644,8 @@ let multiDragState = null;
 let marqueeSelectionState = null;
 let addTextCreationState = null;
 let shapeCreationState = null;
+let shapeRotateState = null;
+let shapeCutState = null;
 let imagePlacementState = null;
 // Signature feature handle — installed below once viewer is wired.
 let signatureFeature = null;
@@ -7860,7 +8806,7 @@ function insertEmbeddedFontsIntoPicker(fonts) {
 
     const header = document.createElement('option');
     header.disabled = true;
-    header.textContent = '───── Embedded Fonts ─────';
+    header.textContent = '───── PDF Embedded Fonts ─────';
     header.dataset.pdfjsEmbeddedFont = 'header';
     afbFont.insertBefore(header, afbFont.firstChild);
 
@@ -7875,7 +8821,7 @@ function insertEmbeddedFontsIntoPicker(fonts) {
         option.dataset.fontFamily = metadata.family || metadata.cleanName;
         option.dataset.fontWeight = metadata.weight || '400';
         option.dataset.fontStyle = metadata.style || 'normal';
-        option.style.fontFamily = cssQuoteFontFamily(metadata.cleanName);
+        option.style.fontFamily = 'system-ui, sans-serif';
         option.style.fontWeight = metadata.weight || '400';
         option.style.fontStyle = metadata.style || 'normal';
         afbFont.insertBefore(option, insertionAnchor.nextSibling);
@@ -8088,6 +9034,21 @@ function stripInlineStylePropertiesFromBox(box, properties) {
             parent.removeChild(element);
         });
     }
+    if (propSet.has('color')) {
+        tc.querySelectorAll('font[color]').forEach((element) => {
+            element.removeAttribute('color');
+            if (!element.attributes.length) unwrapElement(element);
+        });
+    }
+    const stripFormat = (format) => {
+        [tc, ...Array.from(tc.querySelectorAll('*'))].forEach((element) => {
+            if (!element?.isConnected && element !== tc) return;
+            removeFormatFromElement(element, format);
+        });
+    };
+    if (propSet.has('font-weight')) stripFormat('bold');
+    if (propSet.has('font-style')) stripFormat('italic');
+    if (propSet.has('text-decoration') || propSet.has('text-decoration-line')) stripFormat('underline');
 }
 
 function applyStyleToSelectedBox(historyLabel, mutator, options = {}) {
@@ -8164,12 +9125,17 @@ function applyFontSizeToSelectedBox(fontSizePts) {
 
 function applyTextColorToSelectedBox(color) {
     const normalized = cssColorToHex(color, '#000000');
+    const box = findSelectedBox();
+    if (box && selectedInlineTextRange(box)) {
+        const inlineState = inlineSelectionStyleState(box);
+        if (inlineState?.color && cssColorToHex(inlineState.color, '') === normalized) return;
+    }
     if (applyInlineStyleToSelectedText('change selected text color', (span) => {
         span.style.color = normalized;
     }, { reason: 'text-color', fit: false })) return;
     applyStyleToSelectedBox('change annotation color', (box) => {
         box.style.setProperty('--enpv-text-color', normalized);
-    }, { reason: 'text-color', fit: false });
+    }, { reason: 'text-color', fit: false, stripInlineProps: ['color'] });
 }
 
 function applyBackgroundColorToSelectedBox(color) {
@@ -8223,7 +9189,7 @@ function applyBoldToSelectedBox(active) {
     }, { reason: 'font-weight', format: 'bold', active })) return;
     applyStyleToSelectedBox('change annotation bold', (box) => {
         box.style.setProperty('--enpv-font-weight', active ? '700' : '400');
-    }, { reason: 'font-weight' });
+    }, { reason: 'font-weight', stripInlineProps: ['font-weight'] });
 }
 
 function applyItalicToSelectedBox(active) {
@@ -8232,7 +9198,7 @@ function applyItalicToSelectedBox(active) {
     }, { reason: 'font-style', format: 'italic', active })) return;
     applyStyleToSelectedBox('change annotation italic', (box) => {
         box.style.setProperty('--enpv-font-style', active ? 'italic' : 'normal');
-    }, { reason: 'font-style' });
+    }, { reason: 'font-style', stripInlineProps: ['font-style'] });
 }
 
 function applyUnderlineToSelectedBox(active) {
@@ -8244,7 +9210,7 @@ function applyUnderlineToSelectedBox(active) {
         box.dataset.underline = active ? '1' : '0';
         box.style.setProperty('--enpv-text-decoration-line', active ? 'underline' : 'none');
         box.style.setProperty('--enpv-text-decoration', active ? 'underline' : 'none');
-    }, { reason: 'underline', fit: false });
+    }, { reason: 'underline', fit: false, stripInlineProps: ['text-decoration', 'text-decoration-line'] });
 }
 
 function applyTextAlignToSelectedBox(align) {
@@ -8264,13 +9230,21 @@ function applyVerticalAlignToSelectedBox(align) {
 
 function setAnnBoxLocked(box, locked) {
     if (!box) return;
+    const nextLocked = Boolean(locked);
+    if (isAnnBoxLocked(box) === nextLocked && box.dataset.locked === (nextLocked ? '1' : '0')) {
+        refreshAnnMenuState(box);
+        updateAnnotationFormatBarForBox(box);
+        return;
+    }
     pushHistorySnapshot('lock annotation');
-    box.dataset.locked = locked ? '1' : '0';
-    box.classList.toggle('is-locked', locked);
+    box.dataset.locked = nextLocked ? '1' : '0';
+    box.classList.toggle('is-locked', nextLocked);
     const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
     const annotation = buildAnnotationFromBox(box, existing);
     if (annotation) upsertPersistedAnnotation(annotation);
     box.dataset.pendingEdit = '1';
+    refreshAnnMenuState(box);
+    updateAnnotationFormatBarForBox(box);
     markManualSaveNeeded();
 }
 
@@ -8281,13 +9255,15 @@ function refreshAnnMenuState(box) {
     const isImageMenu = annotationType === 'image';
     const isShapeMenu = annotationType === 'shape';
     const compactMenuActions = isShapeMenu
-        ? new Set(['move', 'lock', 'delete'])
+        ? new Set(['move', 'cut', 'lock', 'delete'])
         : new Set(['lock', 'delete']);
     annMenu.classList.toggle('is-image-menu', isImageMenu);
     annMenu.classList.toggle('is-shape-menu', isShapeMenu);
     annMenu.querySelectorAll('[data-action]').forEach((button) => {
         const action = String(button.dataset.action || '');
-        const visible = (!isImageMenu && !isShapeMenu) || compactMenuActions.has(action);
+        const visible = action === 'cut'
+            ? (isShapeMenu && canCutShapeBox(box))
+            : ((!isImageMenu && !isShapeMenu) || compactMenuActions.has(action));
         button.hidden = !visible;
         button.style.display = visible ? '' : 'none';
         button.setAttribute('aria-hidden', visible ? 'false' : 'true');
@@ -8299,9 +9275,24 @@ function refreshAnnMenuState(box) {
     });
     const lockButton = annMenu.querySelector('[data-action="lock"]');
     if (lockButton) {
+        const iconState = locked ? 'locked' : 'unlocked';
+        if (lockButton.dataset.lockIconState !== iconState) {
+            lockButton.innerHTML = locked ? ANN_MENU_LOCKED_ICON_SVG : ANN_MENU_UNLOCKED_ICON_SVG;
+            lockButton.dataset.lockIconState = iconState;
+        }
+        lockButton.classList.toggle('is-active', locked);
+        lockButton.dataset.locked = locked ? '1' : '0';
         lockButton.setAttribute('aria-pressed', locked ? 'true' : 'false');
         lockButton.title = locked ? 'Unlock annotation' : 'Lock annotation';
         lockButton.setAttribute('aria-label', locked ? 'Unlock annotation' : 'Lock annotation');
+    }
+    const cutButton = annMenu.querySelector('[data-action="cut"]');
+    if (cutButton) {
+        const active = isShapeCutModeArmedForBox(box);
+        cutButton.classList.toggle('is-active', active);
+        cutButton.setAttribute('aria-pressed', active ? 'true' : 'false');
+        cutButton.title = active ? 'Cancel cut mode' : 'Cut shape';
+        cutButton.setAttribute('aria-label', active ? 'Cancel cut mode' : 'Cut shape');
     }
 }
 
@@ -8634,11 +9625,17 @@ function transformAnnBoxText(box, transformer) {
     }
     const tc = selectedBoxTextElement(box);
     if (!tc) return;
-    const current = String(tc.textContent || '');
+    const current = textContentForBox(box);
     const next = transformer(current);
     if (next === current) return;
     pushHistorySnapshot('transform annotation text');
-    tc.textContent = next;
+    const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
+    const preserveLineBreaks = box.dataset.editorMode === 'rich'
+        || box.dataset.userForcedRichText === '1'
+        || box.dataset.userCreated === '1'
+        || box.dataset.userAuthored === '1'
+        || annotationPreservesDisplayLineBreaks(existing);
+    tc.textContent = normalizeAnnotationTextForDisplay(next, { preserveLineBreaks });
     syncMenuMutation(box);
 }
 
@@ -8796,12 +9793,6 @@ function pasteAnnotationClipboard() {
         pdfjsEditorMode: 'rich',
         skipPdfjsSourceMask: true,
         pdfjsAnchorUid: uid,
-        pdfjsSourceText: '',
-        pdfjsSourceX: pdfX,
-        pdfjsSourceY: pdfY,
-        pdfjsSourceW: width,
-        pdfjsSourceH: height,
-        pdfjsSourcePageHeight: pageSize.height,
         _originalBox: { x: pdfX, y: pdfY, w: width, h: height },
         _originalPdfBox: { x: pdfX, y: pdfY, w: width, h: height },
         _currentPdfBox: { x: pdfX, y: pdfY, w: width, h: height },
@@ -9213,7 +10204,14 @@ function deselectAnnBox(options = {}) {
 
 function onAnnBoxPointerDown(ev) {
     if (ev.button !== 0) return;
-    const box = ev.currentTarget;
+    let box = ev.currentTarget;
+    box = resolveAnnotationBoxForLinePointerDown(box, ev);
+    if (!box) {
+        ev.stopPropagation();
+        ev.preventDefault();
+        deselectAnnBox();
+        return;
+    }
     const isImageBacked = isImageBackedBox(box);
     const isShape = box?.dataset?.annotationType === 'shape';
     const addTextUserBox = box?.dataset?.userCreated === '1';
@@ -9461,6 +10459,168 @@ function onResizePointerUp() {
     box.dataset.preResizeHeight = String(startHeight);
     syncAnnotationBoxToPersistedAnnotations(box, { preserveEditMode: true });
     markManualSaveNeeded();
+}
+
+function rotationDeltaDegrees(left, right) {
+    return Math.abs(((Number(left) - Number(right) + 540) % 360) - 180);
+}
+
+function shapeRotationCenterClient(box) {
+    if (!box) return null;
+    const rect = box.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return null;
+    return {
+        cx: rect.left + (rect.width / 2),
+        cy: rect.top + (rect.height / 2),
+    };
+}
+
+function pointerAngleDegrees(clientX, clientY, center) {
+    return Math.atan2(clientY - center.cy, clientX - center.cx) * (180 / Math.PI);
+}
+
+function onShapeRotateHandlePointerDown(ev) {
+    if (ev.button !== 0) return;
+    ev.stopPropagation();
+    ev.preventDefault();
+    const handle = ev.currentTarget;
+    const box = handle?.parentElement || null;
+    if (!shapeBoxCanRotate(box)) return;
+    if (isAnnBoxLocked(box)) return;
+    if (!box.classList.contains('is-selected')) selectAnnBox(box);
+    const center = shapeRotationCenterClient(box);
+    if (!center) return;
+    const currentRotation = normalizeRotationDegrees(Number.parseFloat(box.dataset.rotation || '0') || 0);
+    const handleAngle = normalizeRotationDegrees(currentRotation + 90);
+    const pointerAngle = pointerAngleDegrees(ev.clientX, ev.clientY, center);
+    const grabAngleOffset = ((pointerAngle - handleAngle + 540) % 360) - 180;
+    shapeRotateState = {
+        box,
+        handle,
+        pointerId: ev.pointerId,
+        startRotation: currentRotation,
+        currentRotation,
+        grabAngleOffset,
+    };
+    handle.classList.add('is-active');
+    document.body.classList.add('enpv-rotating');
+    if (annMenu) annMenu.hidden = true;
+    try { handle.setPointerCapture(ev.pointerId); } catch (_) {}
+    window.addEventListener('pointermove', onShapeRotatePointerMove);
+    window.addEventListener('pointerup', onShapeRotatePointerUp, { once: true });
+    window.addEventListener('pointercancel', onShapeRotatePointerUp, { once: true });
+}
+
+function onShapeRotatePointerMove(ev) {
+    if (!shapeRotateState) return;
+    if (shapeRotateState.pointerId !== ev.pointerId) return;
+    const { box, grabAngleOffset } = shapeRotateState;
+    if (!box?.isConnected) return;
+    const center = shapeRotationCenterClient(box);
+    if (!center) return;
+    const pointerAngle = pointerAngleDegrees(ev.clientX, ev.clientY, center);
+    const handleAngle = normalizeRotationDegrees(pointerAngle - grabAngleOffset);
+    const nextRotation = normalizeRotationDegrees(handleAngle - 90);
+    shapeRotateState.currentRotation = nextRotation;
+    box.dataset.rotation = String(Math.round(nextRotation * 10) / 10);
+    const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
+    updateShapeSvgForBox(box, buildAnnotationFromBox(box, existing) || existing || {}, Number.parseFloat(box.parentElement?.dataset?.scale || '1') || 1);
+}
+
+function onShapeRotatePointerUp(ev) {
+    if (!shapeRotateState) return;
+    if (shapeRotateState.pointerId !== ev.pointerId) return;
+    const { box, handle, startRotation, currentRotation } = shapeRotateState;
+    window.removeEventListener('pointermove', onShapeRotatePointerMove);
+    document.body.classList.remove('enpv-rotating');
+    handle?.classList?.remove('is-active');
+    shapeRotateState = null;
+    if (!box?.isConnected) return;
+    positionAnnMenuOver(box);
+    if (rotationDeltaDegrees(currentRotation, startRotation) <= 0.5) return;
+    pushHistorySnapshot('rotate shape');
+    box.dataset.pendingEdit = '1';
+    syncAnnotationBoxToPersistedAnnotations(box, { preserveEditMode: true });
+    updateShapeRotateHandleForBox(box);
+    markManualSaveNeeded();
+}
+
+function startShapeCutGesture(ev) {
+    if (!shapeCutState?.armed) return;
+    if (ev.button !== 0) return;
+    if (shapeCutState.pointerId != null) return;
+    if (ev.target?.closest?.('.enpv-ann-menu')) return;
+    if (ev.target?.closest?.('.enpv-resize-handle')) return;
+    if (ev.target?.closest?.('.enpv-shape-rotate-handle')) return;
+    const box = currentShapeCutBox();
+    if (!box?.isConnected || !canCutShapeBox(box)) {
+        cancelShapeCutMode({ status: 'Cut mode cancelled.', error: true });
+        return;
+    }
+    const pageIndex = pageIndexFromEventTarget(ev.target);
+    if (pageIndex !== shapeCutState.pageIndex) return;
+    const point = pdfjsPointFromPageClient(pageIndex, ev.clientX, ev.clientY);
+    if (!point) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    shapeCutState.pointerId = ev.pointerId;
+    shapeCutState.startPoint = point;
+    shapeCutState.currentPoint = point;
+    document.body.classList.add('enpv-shape-cutting');
+    if (annMenu) annMenu.hidden = true;
+    updateShapeCutOverlay();
+    try { container?.setPointerCapture?.(ev.pointerId); } catch (_) {}
+}
+
+function updateShapeCutGesture(ev) {
+    if (!shapeCutState?.armed || shapeCutState.pointerId !== ev.pointerId) return;
+    const point = pdfjsPointFromPageClient(shapeCutState.pageIndex, ev.clientX, ev.clientY);
+    if (!point) return;
+    ev.preventDefault();
+    shapeCutState.currentPoint = point;
+    updateShapeCutOverlay();
+}
+
+function finishShapeCutGesture(ev) {
+    if (!shapeCutState?.armed || shapeCutState.pointerId !== ev.pointerId) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    try {
+        if (container?.hasPointerCapture?.(ev.pointerId)) container.releasePointerCapture(ev.pointerId);
+    } catch (_) {}
+    const box = currentShapeCutBox();
+    const startPoint = shapeCutState.startPoint;
+    const endPoint = pdfjsPointFromPageClient(shapeCutState.pageIndex, ev.clientX, ev.clientY) || shapeCutState.currentPoint;
+    removeShapeCutOverlay();
+    document.body.classList.remove('enpv-shape-cutting');
+    if (!box || !startPoint || !endPoint) {
+        cancelShapeCutMode({ status: 'Cut mode cancelled.', error: true });
+        return;
+    }
+    const result = cutShapeBoxWithLine(box, startPoint, endPoint);
+    if (!result.ok) {
+        shapeCutState.pointerId = null;
+        shapeCutState.startPoint = null;
+        shapeCutState.currentPoint = null;
+        refreshShapeCutUi();
+        positionAnnMenuOver(box);
+        setStatus(result.message || 'Unable to cut shape.', true);
+        return;
+    }
+    shapeCutState = null;
+    refreshShapeCutUi();
+    setStatus('Shape cut into 2 pieces.');
+}
+
+function cancelShapeCutGesture(ev) {
+    if (!shapeCutState?.armed || shapeCutState.pointerId !== ev.pointerId) return;
+    ev.preventDefault();
+    shapeCutState.pointerId = null;
+    shapeCutState.startPoint = null;
+    shapeCutState.currentPoint = null;
+    removeShapeCutOverlay();
+    document.body.classList.remove('enpv-shape-cutting');
+    refreshShapeCutUi();
 }
 
 // Find the textLayer span that originated this annotation box; we use
@@ -9728,7 +10888,7 @@ function editablePageBoxes(pageDiv) {
 function startMarqueeSelection(ev) {
     if (!document.body.classList.contains('enpv-edit-on')) return;
     if (document.body.classList.contains('enpv-add-text-on') || document.body.classList.contains('enpv-shape-on')) return;
-    if (ev.button !== 0 || dragState || multiDragState || resizeState || addTextCreationState || shapeCreationState || imagePlacementState) return;
+    if (ev.button !== 0 || dragState || multiDragState || resizeState || shapeRotateState || shapeCutState?.armed || addTextCreationState || shapeCreationState || imagePlacementState) return;
     if (selectedAnnBoxIsEditing) return;
     if (ev.target?.closest?.('.enpv-annotation-box')) return;
     if (ev.target?.closest?.('.enpv-ann-menu')) return;
@@ -10113,7 +11273,110 @@ function onAnnBoxPointerUp() {
     dragState = null;
     positionAnnMenuOver(box);
     if (moved) markManualSaveNeeded();
+    if (moved && !isUserBox) {
+        redactMovedSourceTextForBox(box).catch((err) => {
+            console.error(err);
+        });
+    }
 
+}
+
+function buildMovedSourceRedactionEdit(annotation, box = null) {
+    if (!REDACT_URL || !annotation) return null;
+    if (!boolish(annotation.movedTextOverlay)) return null;
+    if (boolish(annotation.pdfjsDeleted) || boolish(annotation.skipPdfjsSourceMask)) return null;
+    if (annotation._pdfjsSourceRedacted === true || sourceRedactedAnnotationIds.has(String(annotation.id || ''))) return null;
+    const page = annotationPageIndex(annotation);
+    if (!Number.isFinite(page) || page < 0) return null;
+    const baseline = annotationBaselinePdfBox(annotation) || {
+        x: Number.parseFloat(box?.dataset?.sourceBboxX || box?.dataset?.baseBboxX || 'NaN'),
+        y: Number.parseFloat(box?.dataset?.sourceBboxY || box?.dataset?.baseBboxY || 'NaN'),
+        w: Number.parseFloat(box?.dataset?.sourceBboxW || box?.dataset?.baseBboxW || 'NaN'),
+        h: Number.parseFloat(box?.dataset?.sourceBboxH || box?.dataset?.baseBboxH || 'NaN'),
+    };
+    if (![baseline.x, baseline.y, baseline.w, baseline.h].every(Number.isFinite)
+        || baseline.w <= 0 || baseline.h <= 0) {
+        return null;
+    }
+    const originalText = annotation._pdfjsCanvasRewritten === true
+        ? String(annotation._pdfjsCanvasText || annotation.text || '')
+        : String(annotation.pdfjsSourceText || annotation.originalText || box?.dataset?.baseText || box?.dataset?.originalText || '');
+    const occurrence = Number.parseInt(annotation.pdfjsSourceOccurrence || box?.dataset?.occurrence || '0', 10);
+    return {
+        page,
+        original_text: originalText || undefined,
+        occurrence: Number.isFinite(occurrence) && occurrence >= 0 ? occurrence : 0,
+        source_bbox: {
+            x: baseline.x,
+            y: baseline.y,
+            w: baseline.w,
+            h: baseline.h,
+        },
+        redact_bbox_only: false,
+        remove_graphics: false,
+        fill_white: false,
+    };
+}
+
+async function redactMovedSourceTextForBox(box) {
+    if (!REDACT_URL || !box || box.dataset.sourceRedactionInFlight === '1') return false;
+    const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
+    const annotation = buildAnnotationFromBox(box, existing);
+    const edit = buildMovedSourceRedactionEdit(annotation, box);
+    if (!annotation || !edit) return false;
+    box.dataset.sourceRedactionInFlight = '1';
+    try {
+        upsertPersistedAnnotation(annotation);
+        setStatus('Removing moved source text...');
+        await redactSourceTextForAnnotations([{ annotation, edit }]);
+        removeAnnBoxSourceMasks(box);
+        setStatus('Move applied.');
+        return true;
+    } catch (err) {
+        console.error(err);
+        showError(err.message || 'Moved source cleanup failed.');
+        setStatus('Move saved with fallback mask.', true);
+        return false;
+    } finally {
+        delete box.dataset.sourceRedactionInFlight;
+    }
+}
+
+function movedSourceRedactionEntriesForPersistedAnnotations() {
+    return Array.from(persistedAnnotationsById.values())
+        .map((annotation) => ({ annotation, edit: buildMovedSourceRedactionEdit(annotation) }))
+        .filter((entry) => entry.annotation && entry.edit);
+}
+
+function scheduleMovedSourceLiveRedaction() {
+    if (!REDACT_URL || movedSourceLiveRedactionScheduled || movedSourceLiveRedactionInFlight) return;
+    movedSourceLiveRedactionScheduled = true;
+    window.setTimeout(() => {
+        movedSourceLiveRedactionScheduled = false;
+        redactMovedSourceTextForPersistedAnnotations().catch((err) => {
+            console.error(err);
+        });
+    }, 0);
+}
+
+async function redactMovedSourceTextForPersistedAnnotations() {
+    if (!REDACT_URL || movedSourceLiveRedactionInFlight) return false;
+    const entries = movedSourceRedactionEntriesForPersistedAnnotations();
+    if (!entries.length) return false;
+    movedSourceLiveRedactionInFlight = true;
+    try {
+        setStatus('Removing moved source text...');
+        await redactSourceTextForAnnotations(entries);
+        setStatus('Moved source text removed.');
+        return true;
+    } catch (err) {
+        console.error(err);
+        showError(err.message || 'Moved source cleanup failed.');
+        setStatus('Move cleanup failed.', true);
+        return false;
+    } finally {
+        movedSourceLiveRedactionInFlight = false;
+    }
 }
 
 async function postBboxMove(target, pageIndex, dxPts, dyPtsPdf, box) {
@@ -10247,6 +11510,10 @@ if (annMenu) {
                 if (isAnnBoxLocked(box)) setStatus('Annotation is locked.', true);
                 else beginAnnBoxDrag(box, ev);
             }
+        } else if (action === 'cut') {
+            ev.stopPropagation();
+            ev.preventDefault();
+            if (box) toggleShapeCutModeForBox(box);
         } else if (action === 'lock') {
             ev.stopPropagation();
             ev.preventDefault();
@@ -10292,7 +11559,7 @@ if (annMenu) {
 
 // Click outside any box deselects.
 window.addEventListener('pointerdown', (ev) => {
-    if (dragState || multiDragState || marqueeSelectionState) return;
+    if (dragState || multiDragState || shapeRotateState || shapeCutState?.armed || marqueeSelectionState) return;
     if (ev.target?.closest('.enpv-annotation-box')) return;
     if (ev.target?.closest('.enpv-ann-menu')) return;
     if (ev.target?.closest('#save-btn')) return;
@@ -10333,6 +11600,11 @@ window.addEventListener('keydown', (ev) => {
     if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key === 'v') {
         if (activeElementAcceptsNativeClipboard()) return;
         if (pasteAnnotationClipboard()) ev.preventDefault();
+        return;
+    }
+    if (ev.key === 'Escape' && shapeCutState?.armed) {
+        ev.preventDefault();
+        cancelShapeCutMode({ status: 'Shape cut cancelled.' });
         return;
     }
     if (ev.key === 'Escape' && hasMultiSelection() && !dragState && !multiDragState) {
@@ -10524,6 +11796,11 @@ afbTextColor?.addEventListener('change', () => {
     applyTextColorToSelectedBox(afbTextColor.value);
 });
 afbTextColor?.addEventListener('input', () => {
+    const box = findSelectedBox();
+    if (box && selectedInlineTextRange(box)) {
+        applyTextColorToSelectedBox(afbTextColor.value);
+        return;
+    }
     previewTextColorOnSelectedBox(afbTextColor.value);
 });
 afbBgColor?.addEventListener('change', () => {
@@ -11278,6 +12555,7 @@ async function revealWhenEditedDocumentReady(loadGeneration) {
     setDownloadButtonsDisabled(false, 'Download PDF');
     revealedLoadGeneration = loadGeneration;
     revealViewer();
+    scheduleMovedSourceLiveRedaction();
 }
 
 // Anchor #pages-wrap below the legacy top-bar accurately.
@@ -11314,10 +12592,19 @@ function syncShapePanelUi() {
     }
 }
 
+function setMoreShapesExpanded(expanded) {
+    if (!shapeToolPanel || !shapeMoreToggle) return;
+    const active = Boolean(expanded);
+    shapeToolPanel.classList.toggle('sfb-extra-collapsed', !active);
+    shapeMoreToggle.setAttribute('aria-expanded', active ? 'true' : 'false');
+    shapeMoreToggle.classList.toggle('is-active', active);
+}
+
 function setShapeMode(on, options = {}) {
     const active = Boolean(on);
     if (active && document.body.classList.contains('enpv-edit-on')) setEditMode(false);
     if (active && document.body.classList.contains('enpv-add-text-on')) setAddTextMode(false);
+    if (active && drawModeActive) setDrawMode(false);
     if (!active && shapeCreationState) {
         const pageIndex = shapeCreationState.pageIndex;
         removeShapeCreationPreview(shapeCreationState);
@@ -11347,6 +12634,9 @@ function setAddTextMode(on, options = {}) {
     if (active && document.body.classList.contains('enpv-shape-on')) {
         setShapeMode(false);
     }
+    if (active && drawModeActive) {
+        setDrawMode(false);
+    }
     if (!active) removeAddTextPreview();
     document.body.classList.toggle('enpv-add-text-on', active);
     for (const button of addTextButtons) {
@@ -11372,6 +12662,9 @@ function setEditMode(on) {
     }
     if (on && document.body.classList.contains('enpv-shape-on')) {
         setShapeMode(false);
+    }
+    if (on && drawModeActive) {
+        setDrawMode(false);
     }
     document.body.classList.toggle('enpv-edit-on', on);
     for (const button of editModeButtons) {
@@ -11406,6 +12699,35 @@ for (const button of addShapeButtons) {
     });
 }
 syncShapePanelUi();
+floatingDrawButton?.addEventListener('click', () => {
+    setDrawMode(!drawModeActive);
+});
+drawToolClose?.addEventListener('click', () => setDrawMode(false));
+drawToolButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+        drawToolType = 'pen';
+        syncDrawToolPanelUi();
+    });
+});
+drawColorSwatches.forEach((button) => {
+    button.addEventListener('click', () => {
+        drawStrokeColor = cssColorToHex(button.dataset.drawColor, drawStrokeColor);
+        syncDrawToolPanelUi();
+    });
+});
+drawToolColorInput?.addEventListener('input', () => {
+    drawStrokeColor = cssColorToHex(drawToolColorInput.value, drawStrokeColor);
+    syncDrawToolPanelUi();
+});
+drawToolSizeInput?.addEventListener('input', () => {
+    drawBrushSize = Math.max(2, Number(drawToolSizeInput.value) || 10);
+    syncDrawToolPanelUi();
+});
+drawToolOpacityInput?.addEventListener('input', () => {
+    drawOpacity = clamp01((Number(drawToolOpacityInput.value) || 100) / 100, 1);
+    syncDrawToolPanelUi();
+});
+syncDrawToolPanelUi();
 
 function imageImportRefs() {
     return {
@@ -11546,11 +12868,68 @@ function commitShapeInspectorToSelectedBox(options = {}) {
     return true;
 }
 
+function shapeStateForToolButton(rawShapeType) {
+    const type = normalizeShapeType(rawShapeType);
+    const state = { ...currentShapeDefaults(), shapeType: type };
+    if (type === 'checkmark') {
+        return {
+            ...state,
+            strokeColor: '#16a34a',
+            strokeOpacity: 1,
+            strokeWidth: 4,
+            strokeTransparent: false,
+            fillTransparent: true,
+            fillOpacity: 0,
+        };
+    }
+    if (type === 'x') {
+        return {
+            ...state,
+            strokeColor: '#dc2626',
+            strokeOpacity: 1,
+            strokeWidth: 4,
+            strokeTransparent: false,
+            fillTransparent: true,
+            fillOpacity: 0,
+        };
+    }
+    if (type === 'heart') {
+        return {
+            ...state,
+            strokeColor: '#dc2626',
+            fillColor: '#ef4444',
+            strokeOpacity: 1,
+            fillOpacity: 1,
+            strokeWidth: 3,
+            strokeTransparent: false,
+            fillTransparent: false,
+        };
+    }
+    if (type === 'arrow') {
+        return {
+            ...state,
+            strokeColor: '#111827',
+            strokeOpacity: 1,
+            strokeWidth: 4,
+            strokeTransparent: false,
+            fillTransparent: true,
+            fillOpacity: 0,
+        };
+    }
+    return state;
+}
+
 shapeTypeButtons.forEach((button) => {
     button.addEventListener('click', () => {
-        reflectShapeStateToInputs({ ...currentShapeDefaults(), shapeType: normalizeShapeType(button.dataset.shapeTool) }, shapeInspectorRefs);
+        reflectShapeStateToInputs(shapeStateForToolButton(button.dataset.shapeTool), shapeInspectorRefs);
         commitShapeInspectorToSelectedBox({ pushHistory: true });
     });
+});
+shapeToolPanel?.classList.add('sfb-extra-collapsed');
+shapeMoreToggle?.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setMoreShapesExpanded(shapeMoreToggle.getAttribute('aria-expanded') !== 'true');
 });
 [
     shapeStrokeColorInput,

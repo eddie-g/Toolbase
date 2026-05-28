@@ -812,6 +812,10 @@ def is_pdfjs_visible_overlay_text(ann: Dict[str, Any]) -> bool:
         return False
     if str(ann.get("type") or "").strip().lower() not in {"", "text"}:
         return False
+    if _boolish(ann.get("userCreated")):
+        return False
+    if _boolish(ann.get("skipPdfjsSourceMask")) and not str(ann.get("pdfjsSourceText") or "").strip():
+        return False
     if _boolish(ann.get("promotedFromExtraction")):
         return is_pdfjs_promoted_visible_overlay_text(ann)
     return (
@@ -1243,13 +1247,9 @@ def _clamp_inflated_source_mask_to_neighbors(
     target_rect: fitz.Rect,
     inflated_rect: fitz.Rect,
     neighbor_rects: list[fitz.Rect],
-    minimum_vertical_padding: float = 0.0,
 ) -> fitz.Rect:
     safe = fitz.Rect(inflated_rect)
     gap = PDFJS_SOURCE_MASK_NEIGHBOR_GAP_PTS
-    min_vertical_padding = max(0.0, float(minimum_vertical_padding or 0.0))
-    min_top = max(float(inflated_rect.y0), float(target_rect.y0) - min_vertical_padding)
-    min_bottom = min(float(inflated_rect.y1), float(target_rect.y1) + min_vertical_padding)
     for neighbor in neighbor_rects:
         if neighbor.is_empty or (safe & neighbor).is_empty:
             continue
@@ -1262,13 +1262,13 @@ def _clamp_inflated_source_mask_to_neighbors(
         neighbor_center_y = (neighbor.y0 + neighbor.y1) / 2.0
 
         if neighbor.y1 <= target_rect.y0 and horizontal_overlap > 0:
-            safe.y0 = max(safe.y0, min(neighbor.y1 + gap, min_top))
+            safe.y0 = max(safe.y0, neighbor.y1 + gap)
         elif neighbor.y0 >= target_rect.y1 and horizontal_overlap > 0:
-            safe.y1 = min(safe.y1, max(neighbor.y0 - gap, min_bottom))
+            safe.y1 = min(safe.y1, neighbor.y0 - gap)
         elif neighbor.y0 > target_rect.y0 and neighbor_center_y > target_center_y and horizontal_overlap > 0:
-            safe.y1 = min(safe.y1, max(neighbor.y0 - gap, min_bottom))
+            safe.y1 = min(safe.y1, neighbor.y0 - gap)
         elif neighbor.y1 < target_rect.y1 and neighbor_center_y < target_center_y and horizontal_overlap > 0:
-            safe.y0 = max(safe.y0, min(neighbor.y1 + gap, min_top))
+            safe.y0 = max(safe.y0, neighbor.y1 + gap)
         elif neighbor.x1 <= target_rect.x0 and vertical_overlap > 0:
             safe.x0 = max(safe.x0, neighbor.x1 + gap)
         elif neighbor.x0 >= target_rect.x1 and vertical_overlap > 0:
@@ -1294,7 +1294,6 @@ def calculate_safe_pdfjs_source_mask_with_ignored_rects(
     ignored_source_rects: Optional[list[fitz.Rect]] = None,
     padding_x: Optional[float] = None,
     padding_y: Optional[float] = None,
-    minimum_vertical_padding: float = 0.0,
 ) -> fitz.Rect:
     pad_x = PDFJS_SOURCE_MASK_PADDING_X_PTS if padding_x is None else max(0.0, float(padding_x))
     pad_y = PDFJS_SOURCE_MASK_PADDING_Y_PTS if padding_y is None else max(0.0, float(padding_y))
@@ -1311,7 +1310,7 @@ def calculate_safe_pdfjs_source_mask_with_ignored_rects(
         source_text,
         ignored_source_rects=ignored_source_rects,
     )
-    return _clamp_inflated_source_mask_to_neighbors(target_rect, inflated, neighbors, minimum_vertical_padding) & page.rect
+    return _clamp_inflated_source_mask_to_neighbors(target_rect, inflated, neighbors) & page.rect
 
 
 def pdfjs_source_mask_rect(page: fitz.Page, ann: Dict[str, Any]) -> Optional[fitz.Rect]:
@@ -1325,18 +1324,12 @@ def pdfjs_source_mask_rect(page: fitz.Page, ann: Dict[str, Any]) -> Optional[fit
             source_text = ann.get("pdfjsSourceText") or ann.get("originalText") or ann.get("text") or ""
             ignored_source_rects = ann.get("__pdfjsMovedSourceRects") if isinstance(ann.get("__pdfjsMovedSourceRects"), list) else None
             padding_y = max(PDFJS_SOURCE_MASK_PADDING_Y_PTS, float(explicit_mask_rect.height) * 0.18)
-            minimum_vertical_padding = (
-                min(3.0, max(1.5, float(explicit_mask_rect.height) * 0.10))
-                if ignored_source_rects is not None
-                else 0.0
-            )
             return calculate_safe_pdfjs_source_mask_with_ignored_rects(
                 page,
                 explicit_mask_rect,
                 source_text,
                 ignored_source_rects,
                 padding_y=padding_y,
-                minimum_vertical_padding=minimum_vertical_padding,
             )
         return explicit_mask_rect
     base_rect = _pdfjs_source_base_rect(page, ann)
@@ -1346,18 +1339,12 @@ def pdfjs_source_mask_rect(page: fitz.Page, ann: Dict[str, Any]) -> Optional[fit
         source_text = ann.get("pdfjsSourceText") or ann.get("originalText") or ann.get("text") or ""
         ignored_source_rects = ann.get("__pdfjsMovedSourceRects") if isinstance(ann.get("__pdfjsMovedSourceRects"), list) else None
         padding_y = max(PDFJS_SOURCE_MASK_PADDING_Y_PTS, float(base_rect.height) * 0.18)
-        minimum_vertical_padding = (
-            min(3.0, max(1.5, float(base_rect.height) * 0.10))
-            if ignored_source_rects is not None
-            else 0.0
-        )
         return calculate_safe_pdfjs_source_mask_with_ignored_rects(
             page,
             base_rect,
             source_text,
             ignored_source_rects,
             padding_y=padding_y,
-            minimum_vertical_padding=minimum_vertical_padding,
         )
     return base_rect
 
@@ -1506,11 +1493,19 @@ def sample_pdfjs_mask_fill(page: fitz.Page, rect: fitz.Rect) -> tuple[float, flo
         all_ratio = best_count / max(1, sample_count)
         saturation = max(r, g, b) - min(r, g, b)
         colored_background = saturation >= 28 and (all_ratio >= 0.45 or best_count >= best_light_count * 1.35)
-        dark_background = all_ratio >= 0.62 and best_count >= best_light_count * 1.5
+        dark_background = (all_ratio >= 0.62 or (luminance < 90 and all_ratio >= 0.50)) and best_count >= best_light_count * 1.5
         if not (colored_background or dark_background):
             r, g, b = best_light_key
 
     return (r / 255.0, g / 255.0, b / 255.0)
+
+
+def _pdfjs_rgb_luminance(fill: tuple[float, float, float]) -> float:
+    try:
+        r, g, b = fill
+        return (0.299 * float(r) * 255.0) + (0.587 * float(g) * 255.0) + (0.114 * float(b) * 255.0)
+    except Exception:
+        return 255.0
 
 
 def sample_pdfjs_surrounding_mask_fill(page: fitz.Page, rect: fitz.Rect) -> Optional[tuple[float, float, float]]:
@@ -1537,6 +1532,18 @@ def sample_pdfjs_surrounding_mask_fill(page: fitz.Page, rect: fitz.Rect) -> Opti
         return None
     r, g, b = max(scored.items(), key=lambda item: item[1])[0]
     return (r / 255.0, g / 255.0, b / 255.0)
+
+
+def sample_pdfjs_moved_source_mask_fill(page: fitz.Page, rect: fitz.Rect) -> tuple[float, float, float]:
+    local = sample_pdfjs_mask_fill(page, rect)
+    surrounding = sample_pdfjs_surrounding_mask_fill(page, rect)
+    if surrounding is not None:
+        local_luminance = _pdfjs_rgb_luminance(local)
+        surrounding_luminance = _pdfjs_rgb_luminance(surrounding)
+        if local_luminance < 100 and surrounding_luminance > local_luminance + 80:
+            return local
+        return surrounding
+    return local
 
 
 def _is_thin_page_rule(rule_rect: fitz.Rect, mask_rect: fitz.Rect) -> tuple[str, fitz.Rect] | None:
@@ -1689,17 +1696,20 @@ def draw_pdfjs_source_mask(page: fitz.Page, ann: Dict[str, Any]) -> None:
     # top. Do not use PyMuPDF redaction annotations here. Redactions are applied
     # at page-content level and can erase later replacement glyphs when a moved
     # line lands inside a neighboring source line's redaction rectangle.
+    moved_overlay = _boolish(ann.get("movedTextOverlay"))
+    moved_fill = sample_pdfjs_moved_source_mask_fill(page, rect) if moved_overlay else None
+    preserve_rule_cutouts = not (moved_overlay and moved_fill is not None and _pdfjs_rgb_luminance(moved_fill) < 100)
     pieces = split_pdfjs_source_mask_around_page_rules(page, rect) if (
-        _boolish(ann.get("movedTextOverlay")) or _boolish(ann.get("pdfjsDeleted"))
+        preserve_rule_cutouts and (moved_overlay or _boolish(ann.get("pdfjsDeleted")))
     ) else [rect]
     for piece in pieces:
         if piece is None or piece.is_empty:
             continue
         fill = (
-            sample_pdfjs_surrounding_mask_fill(page, piece)
-            if _boolish(ann.get("movedTextOverlay"))
-            else None
-        ) or sample_pdfjs_mask_fill(page, piece)
+            (moved_fill or sample_pdfjs_moved_source_mask_fill(page, piece))
+            if moved_overlay
+            else sample_pdfjs_mask_fill(page, piece)
+        )
         page.draw_rect(piece, color=None, fill=fill, width=0, overlay=True)
 
 
@@ -6009,7 +6019,13 @@ def normalized_opacity(value: Any) -> float:
     return max(0.0, min(1.0, opacity))
 
 
-def wrap_text_to_width(font: fitz.Font, text: str, font_size: float, max_width: float) -> list[str]:
+def wrap_text_to_width(
+    font: fitz.Font,
+    text: str,
+    font_size: float,
+    max_width: float,
+    preserve_blank_lines: bool = False,
+) -> list[str]:
     # Mirror the edit-new.blade.php renderer (renderPlainEditorHTML):
     #   const normalized = String(text ?? '')
     #       .replace(/\r\n?/g, '\n')
@@ -6021,8 +6037,9 @@ def wrap_text_to_width(font: fitz.Font, text: str, font_size: float, max_width: 
     # inside each paragraph is preserved (white-space: pre-wrap in the editor),
     # which matters for indented numbered lists like "    1. blah".
     safe_text = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
-    while "\n\n" in safe_text:
-        safe_text = safe_text.replace("\n\n", "\n")
+    if not preserve_blank_lines:
+        while "\n\n" in safe_text:
+            safe_text = safe_text.replace("\n\n", "\n")
     paragraphs = safe_text.split("\n")
     lines: list[str] = []
 
@@ -6150,6 +6167,18 @@ def should_drop_preview_side_padding_for_single_line_text(
     raw_text_width = font.text_length(normalized_text, fontsize=font_size)
     padded_width = max(1.0, rect.width - (preview_padding_x * 2.0))
     return raw_text_width <= (rect.width + 0.01) and raw_text_width > (padded_width + 0.01)
+
+
+def should_preserve_user_authored_blank_lines(ann: Dict[str, Any]) -> bool:
+    if _boolish(ann.get("userCreated")) or _boolish(ann.get("userAuthored")):
+        return True
+    if _boolish(ann.get("userForcedRichText")):
+        return True
+    if str(ann.get("pdfjsEditorMode") or "").strip().lower() == "rich":
+        return True
+    if _boolish(ann.get("skipPdfjsSourceMask")) and not str(ann.get("pdfjsSourceText") or "").strip():
+        return True
+    return False
 
 
 def split_text_preserving_manual_line_breaks(text: str) -> list[str]:
@@ -7044,6 +7073,19 @@ def draw_shape(page: fitz.Page, ann: Dict[str, Any]) -> None:
         s.commit(overlay=True)
         return
 
+    if shape_type == "heart":
+        s = page.new_shape()
+        start = rp(0.50, 0.90)
+        s.draw_bezier(start, rp(0.18, 0.66), rp(0.06, 0.48), rp(0.06, 0.30))
+        s.draw_bezier(rp(0.06, 0.30), rp(0.06, 0.16), rp(0.17, 0.06), rp(0.31, 0.06))
+        s.draw_bezier(rp(0.31, 0.06), rp(0.40, 0.06), rp(0.47, 0.11), rp(0.50, 0.18))
+        s.draw_bezier(rp(0.50, 0.18), rp(0.53, 0.11), rp(0.60, 0.06), rp(0.69, 0.06))
+        s.draw_bezier(rp(0.69, 0.06), rp(0.83, 0.06), rp(0.94, 0.16), rp(0.94, 0.30))
+        s.draw_bezier(rp(0.94, 0.30), rp(0.94, 0.48), rp(0.82, 0.66), rp(0.50, 0.90))
+        s.finish(color=stroke, fill=fill, width=stroke_width, closePath=True, lineCap=1, lineJoin=1, stroke_opacity=stroke_opacity, fill_opacity=fill_opacity)
+        s.commit(overlay=True)
+        return
+
     if shape_type == "star":
         # Match the frontend canvas star: outerRadius = min(w,h)/2 inscribed in
         # the annotation bounding box, innerRadius = outerRadius * 0.45, first
@@ -7454,6 +7496,7 @@ def draw_text(
         preview_padding_top = 0.0 if use_flush_preview_padding else min(2.0, max(0.5, rect.height * 0.01))
         preview_available_width = max(1.0, (rect.width - (preview_padding_x * 2.0)) / pdfjs_scale_x)
         use_pdfjs_source_typography = pdfjs_visible_overlay and _boolish(render_ann.get("pdfjsUseSourceTypography"))
+        preserve_user_authored_blank_lines = should_preserve_user_authored_blank_lines(render_ann)
         rich_layout_ops = parse_rich_text_layout_ops(ann)
         rich_layout_text_matches = (
             bool(rich_layout_ops)
@@ -7480,7 +7523,13 @@ def draw_text(
             else (
                 ["" for _ in rich_wrapped_lines]
                 if rich_wrapped_lines
-                else wrap_text_to_width(preview_font, text, size, preview_available_width)
+                else wrap_text_to_width(
+                    preview_font,
+                    text,
+                    size,
+                    preview_available_width,
+                    preserve_blank_lines=preserve_user_authored_blank_lines,
+                )
             )
         )
         ascender, descender = resolve_font_vertical_metrics(preview_font)
@@ -7801,6 +7850,9 @@ def draw_signature(page: fitz.Page, ann: Dict[str, Any]) -> None:
     if rect is None:
         return
 
+    if is_direct_draw_annotation(ann) and draw_direct_draw_vector_annotation(page, ann, rect):
+        return
+
     asset_file_path = resolve_annotation_image_path(ann)
     if asset_file_path and not is_direct_draw_annotation(ann):
         try:
@@ -7830,14 +7882,80 @@ def draw_signature(page: fitz.Page, ann: Dict[str, Any]) -> None:
     # canvas draw order and keeps signatures/regular images on top as before.
     page.insert_image(
         rect,
-        stream=normalize_direct_draw_white_image_bytes(ann, image_bytes),
         overlay=True,
         keep_proportion=False,
+        **direct_draw_image_insert_kwargs(ann, image_bytes),
     )
 
 
 def is_direct_draw_annotation(ann: Dict[str, Any]) -> bool:
     return str(ann.get("imageToolSource") or "").strip().lower() == "direct-draw"
+
+
+def direct_draw_vector_data(ann: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    vector = ann.get("directDrawVector")
+    return vector if isinstance(vector, dict) else None
+
+
+def draw_direct_draw_vector_annotation(page: fitz.Page, ann: Dict[str, Any], rect: fitz.Rect) -> bool:
+    vector = direct_draw_vector_data(ann)
+    if not vector or rect.is_empty:
+        return False
+    try:
+        vector_width = max(1.0, float(vector.get("width") or 0.0))
+        vector_height = max(1.0, float(vector.get("height") or 0.0))
+    except Exception:
+        return False
+    strokes = vector.get("strokes")
+    if not isinstance(strokes, list) or not strokes:
+        return False
+    rotation = normalize_rotation_degrees(ann.get("rotation", 0.0))
+    morph = build_rotation_morph(rotation, fitz.Point((rect.x0 + rect.x1) / 2.0, (rect.y0 + rect.y1) / 2.0))
+    scale_x = rect.width / vector_width
+    scale_y = rect.height / vector_height
+    stroke_scale = max(0.01, (abs(scale_x) + abs(scale_y)) / 2.0)
+    drew_any = False
+    for stroke in strokes:
+        if not isinstance(stroke, dict):
+            continue
+        raw_points = stroke.get("points")
+        if not isinstance(raw_points, list) or not raw_points:
+            continue
+        points: list[fitz.Point] = []
+        for point in raw_points:
+            if not isinstance(point, dict):
+                continue
+            try:
+                px = float(point.get("x") or 0.0)
+                py = float(point.get("y") or 0.0)
+            except Exception:
+                continue
+            points.append(fitz.Point(rect.x0 + (px * scale_x), rect.y0 + (py * scale_y)))
+        if not points:
+            continue
+        if len(points) == 1:
+            points.append(fitz.Point(points[0].x + 0.01, points[0].y))
+        try:
+            brush_size = max(0.25, float(stroke.get("brushSize") or 1.0)) * stroke_scale
+        except Exception:
+            brush_size = stroke_scale
+        color = hex_to_rgb(stroke.get("color") or ann.get("drawStrokeColor") or "#111827")
+        opacity = normalized_opacity(stroke.get("opacity", ann.get("opacity", 1.0)))
+        shape = page.new_shape()
+        shape.draw_polyline(points)
+        finish_kwargs = {
+            "color": color,
+            "width": brush_size,
+            "lineCap": 1,
+            "lineJoin": 1,
+            "stroke_opacity": opacity,
+        }
+        if morph is not None:
+            finish_kwargs["morph"] = morph
+        shape.finish(**finish_kwargs)
+        shape.commit(overlay=True)
+        drew_any = True
+    return drew_any
 
 
 def load_annotation_image_bytes(ann: Dict[str, Any]) -> Optional[bytes]:
@@ -7873,9 +7991,9 @@ def normalize_direct_draw_white_image_bytes(ann: Dict[str, Any], image_bytes: by
                 for x in range(rgba.width):
                     r, g, b, a = pixels[x, y]
                     if a <= 2:
-                        if a != 0 or r != 0 or g != 0 or b != 0:
+                        if a != 0 or r != 255 or g != 255 or b != 255:
                             changed = True
-                        pixels[x, y] = (0, 0, 0, 0)
+                        pixels[x, y] = (255, 255, 255, 0)
                         continue
                     if r != 255 or g != 255 or b != 255:
                         changed = True
@@ -7887,6 +8005,30 @@ def normalize_direct_draw_white_image_bytes(ann: Dict[str, Any], image_bytes: by
             return output.getvalue()
     except Exception:
         return image_bytes
+
+
+def direct_draw_image_insert_kwargs(ann: Dict[str, Any], image_bytes: bytes) -> Dict[str, bytes]:
+    if Image is None or not image_bytes or not is_direct_draw_annotation(ann):
+        return {"stream": image_bytes}
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            rgba = image.convert("RGBA")
+            if not annotation_uses_white_direct_draw(ann, rgba):
+                return {"stream": image_bytes}
+            alpha = rgba.getchannel("A")
+            alpha_pixels = alpha.load()
+            for y in range(alpha.height):
+                for x in range(alpha.width):
+                    if alpha_pixels[x, y] <= 2 and alpha_pixels[x, y] != 0:
+                        alpha_pixels[x, y] = 0
+            white = Image.new("RGB", rgba.size, (255, 255, 255))
+            stream_output = io.BytesIO()
+            mask_output = io.BytesIO()
+            white.save(stream_output, format="PNG")
+            alpha.save(mask_output, format="PNG")
+            return {"stream": stream_output.getvalue(), "mask": mask_output.getvalue()}
+    except Exception:
+        return {"stream": normalize_direct_draw_white_image_bytes(ann, image_bytes)}
 
 
 def annotation_uses_white_direct_draw(ann: Dict[str, Any], image: Any) -> bool:

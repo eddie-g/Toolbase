@@ -68,6 +68,20 @@ export function getShapeUnitVertices(ann) {
         }
         return points;
     }
+    if (type === 'heart') {
+        return [
+            { x: 0.50, y: 0.90 },
+            { x: 0.18, y: 0.66 },
+            { x: 0.06, y: 0.42 },
+            { x: 0.10, y: 0.20 },
+            { x: 0.31, y: 0.06 },
+            { x: 0.50, y: 0.18 },
+            { x: 0.69, y: 0.06 },
+            { x: 0.90, y: 0.20 },
+            { x: 0.94, y: 0.42 },
+            { x: 0.82, y: 0.66 },
+        ];
+    }
     if (type === 'polygon') {
         return normalizePolygonPointList(ann?.polygonPoints, defaultPolygonUnitPoints());
     }

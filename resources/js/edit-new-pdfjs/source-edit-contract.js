@@ -9,6 +9,8 @@ function normalizeComparableText(value) {
 
 export function isPdfjsSourceBackedTextAnnotation(annotation) {
     if (!annotation || String(annotation.type || '').toLowerCase() !== 'text') return false;
+    if (boolish(annotation.userCreated)) return false;
+    if (boolish(annotation.skipPdfjsSourceMask) && !String(annotation.pdfjsSourceText || '').trim()) return false;
     return annotation.pdfjsSourceX != null
         || annotation.pdfjsSourceY != null
         || annotation.pdfjsAnchorUid != null
