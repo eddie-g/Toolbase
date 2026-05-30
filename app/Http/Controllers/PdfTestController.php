@@ -26,6 +26,7 @@ class PdfTestController extends Controller
 {
     protected ?bool $hasTestKeyColumn = null;
     protected ?array $testsOverlayEditorColumns = null;
+    protected ?bool $hasPdfStateAnnotationDebugColumn = null;
 
     private function currentWebUserId(): ?int
     {
@@ -101,6 +102,15 @@ class PdfTestController extends Controller
         }
 
         return $query->whereRaw('1 = 0');
+    }
+
+    private function hasPdfStateAnnotationDebugColumn(): bool
+    {
+        if ($this->hasPdfStateAnnotationDebugColumn === null) {
+            $this->hasPdfStateAnnotationDebugColumn = Schema::hasColumn('pdf_state', 'annotation_debug');
+        }
+
+        return $this->hasPdfStateAnnotationDebugColumn;
     }
 
     private function normalizePromotedComparableText(mixed $value): string
@@ -1279,6 +1289,10 @@ PYTHON;
         if ($sessionId === '') {
             $sessionId = $request->session()->getId();
         }
+        $includeAnnotationDebug = filter_var(
+            $request->input('include_annotation_debug', $request->query('include_annotation_debug', false)),
+            FILTER_VALIDATE_BOOLEAN
+        );
 
         $extractedSessionId = 'document_' . $document->id . '_extracted';
         $statesQuery = PdfState::where('document_id', $document->id)
@@ -1318,7 +1332,7 @@ PYTHON;
 
         $annotationAssets = app(PdfAnnotationAssetService::class);
         $seen = [];
-        $annotations = $states->map(function (PdfState $state) use (&$seen, $fallbackFitzId, $annotationAssets) {
+        $annotations = $states->map(function (PdfState $state) use (&$seen, $fallbackFitzId, $annotationAssets, $includeAnnotationDebug) {
             $data = is_array($state->annotation_data) ? $state->annotation_data : [];
             $fitzId = $state->pdf_extraction_fitz_id ?: $fallbackFitzId;
             if (!empty($data) && $fitzId) {
@@ -1341,8 +1355,19 @@ PYTHON;
                 'db_flag_reason' => $state->flag_reason,
                 'db_flag_images' => $state->flag_images ?? [],
             ];
+            if ($includeAnnotationDebug) {
+                $dbFields['db_annotation_debug'] = $this->pdfStateAnnotationDebugPayload($state, $data);
+            }
             if ($annId !== null) {
-                $seen[$annId] = array_merge($data, $dbFields);
+                $merged = array_merge($data, $dbFields);
+                if (
+                    $includeAnnotationDebug
+                    && !$this->annotationDebugPayloadHasContent($merged['db_annotation_debug'] ?? null)
+                    && $this->annotationDebugPayloadHasContent($seen[$annId]['db_annotation_debug'] ?? null)
+                ) {
+                    $merged['db_annotation_debug'] = $seen[$annId]['db_annotation_debug'];
+                }
+                $seen[$annId] = $merged;
                 return null;
             }
 
@@ -1401,6 +1426,39 @@ PYTHON;
             })
             ->values()
             ->all();
+    }
+
+    private function pdfStateAnnotationDebugPayload(PdfState $state, array $annotationData = []): array
+    {
+        $debug = null;
+        if ($this->hasPdfStateAnnotationDebugColumn()) {
+            $debug = $state->annotation_debug;
+        }
+        if (is_string($debug)) {
+            $decoded = json_decode($debug, true);
+            $debug = is_array($decoded) ? $decoded : null;
+        }
+        if (!is_array($debug) && isset($annotationData['_debug']) && is_array($annotationData['_debug'])) {
+            $debug = $annotationData['_debug'];
+        }
+
+        return is_array($debug) ? $debug : [];
+    }
+
+    private function annotationDebugPayloadHasContent(mixed $debug): bool
+    {
+        if (is_string($debug)) {
+            $decoded = json_decode($debug, true);
+            $debug = is_array($decoded) ? $decoded : null;
+        }
+        if (!is_array($debug)) {
+            return false;
+        }
+
+        return trim((string) ($debug['note'] ?? '')) !== ''
+            || (!empty($debug['mask']) && is_array($debug['mask']))
+            || (!empty($debug['images']) && is_array($debug['images']))
+            || !empty($debug['updated_at']);
     }
 
     /**
@@ -3419,6 +3477,7 @@ PYTHON;
             $pagesExclude = array_keys($pagesExclude);
         }
         $skipMeta = (string) $request->query('skip_meta', '') === '1';
+        $includeAnnotationDebug = filter_var($request->query('include_annotation_debug', false), FILTER_VALIDATE_BOOLEAN);
 
         // Build the scope query: rows owned by the current viewer (by user/admin/session)
         // OR rows materialized from the canonical extraction (which carry the
@@ -3475,7 +3534,7 @@ PYTHON;
         // Deduplicate by annotation `id` field, keeping the highest db_id (most recent save)
         $annotationAssets = app(PdfAnnotationAssetService::class);
         $seen = [];
-        $annotations = $states->map(function (PdfState $state) use (&$seen, $fallbackFitzId, $annotationAssets) {
+        $annotations = $states->map(function (PdfState $state) use (&$seen, $fallbackFitzId, $annotationAssets, $includeAnnotationDebug) {
             $data = is_array($state->annotation_data) ? $state->annotation_data : [];
             $fitzId = $state->pdf_extraction_fitz_id ?: $fallbackFitzId;
             if (!empty($data) && $fitzId) {
@@ -3502,9 +3561,20 @@ PYTHON;
                 'db_flag_reason' => $state->flag_reason,
                 'db_flag_images' => $state->flag_images ?? [],
             ];
+            if ($includeAnnotationDebug) {
+                $dbFields['db_annotation_debug'] = $this->pdfStateAnnotationDebugPayload($state, $data);
+            }
             if ($annId !== null) {
                 // db_* fields always override any stale values in annotation_data JSON
-                $seen[$annId] = array_merge($data, $dbFields);
+                $merged = array_merge($data, $dbFields);
+                if (
+                    $includeAnnotationDebug
+                    && !$this->annotationDebugPayloadHasContent($merged['db_annotation_debug'] ?? null)
+                    && $this->annotationDebugPayloadHasContent($seen[$annId]['db_annotation_debug'] ?? null)
+                ) {
+                    $merged['db_annotation_debug'] = $seen[$annId]['db_annotation_debug'];
+                }
+                $seen[$annId] = $merged;
                 return null; // placeholder, replaced below
             }
             return array_merge($data, $dbFields);

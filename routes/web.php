@@ -53,6 +53,7 @@ Route::patch('/documents/{document}/notes/{note}', [DocumentController::class, '
 Route::delete('/documents/{document}/notes/{note}', [DocumentController::class, 'deleteDocumentNote'])->name('documents.notes.destroy');
 Route::post('/documents/{document}/edit-pdfjs/rewrite-tj', [DocumentController::class, 'editPdfjsRewriteTj'])->name('documents.editPdfjsRewriteTj');
 Route::post('/documents/{document}/edit-pdfjs/redact-source-text', [DocumentController::class, 'editPdfjsRedactSourceText'])->name('documents.editPdfjsRedactSourceText');
+Route::post('/documents/{document}/edit-pdfjs/burn-layer', [DocumentController::class, 'editPdfjsBurnLayer'])->name('documents.editPdfjsBurnLayer');
 Route::post('/documents/{document}/edit-pdfjs/move-tj', [DocumentController::class, 'editPdfjsMoveTj'])->name('documents.editPdfjsMoveTj');
 Route::post('/documents/{document}/edit-pdfjs/reflow-text', [DocumentController::class, 'editPdfjsReflowText'])->name('documents.editPdfjsReflowText');
 Route::get('/documents/{document}/edit2', [DocumentController::class, 'edit2'])->name('documents.edit2');
@@ -78,6 +79,7 @@ Route::delete('/documents/{document}/saved-pdf-option', [DocumentController::cla
 Route::post('/documents/{document}/load-saved-pdf', [DocumentController::class, 'loadSavedPdf'])->name('documents.loadSavedPdf');
 Route::post('/documents/{document}/mark-annotations-saved', [DocumentController::class, 'markAnnotationsSaved'])->name('documents.markAnnotationsSaved');
 Route::post('/documents/{document}/delete-annotations', [DocumentController::class, 'deleteAnnotations'])->name('documents.deleteAnnotations');
+Route::post('/documents/{document}/annotation-debug', [DocumentController::class, 'saveAnnotationDebug'])->name('documents.annotationDebug.save');
 Route::post('/documents/{document}/apply-annotations-direct', [DocumentController::class, 'applyAnnotationsDirect'])->name('documents.applyAnnotationsDirect');
 Route::post('/documents/overwrite-annotation-text', [DocumentController::class, 'overwriteAnnotationText'])->name('documents.overwriteAnnotationText');
 Route::post('/documents/{document}/save-annotation-state', [DocumentController::class, 'saveAnnotationState'])->name('documents.saveAnnotationState');

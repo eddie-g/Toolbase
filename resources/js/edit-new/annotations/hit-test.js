@@ -30,6 +30,8 @@ const shapeHitTestCtx = shapeHitTestCanvas.getContext('2d');
 export function shapeContainsCanvasPoint(ann, x, y, scale, canvasHeight) {
     if (!isShapeAnnotation(ann)) return false;
     if (isLineShape(ann)) {
+        const strokeWidth = Number(ann.strokeWidth);
+        if (ann.strokeTransparent || clamp01(ann.strokeOpacity ?? 1, 1) <= 0 || !(strokeWidth > 0)) return false;
         const box = resolveAnnBox(ann);
         if (!box) return false;
         const width = Math.max(1, box.w * scale);
@@ -44,7 +46,7 @@ export function shapeContainsCanvasPoint(ann, x, y, scale, canvasHeight) {
             x: left + (width * clamp01(ann.lineEndX, 1)),
             y: top + (height * clamp01(ann.lineEndY, 1)),
         };
-        const strokeAllowance = Math.max(6, ((Number(ann.strokeWidth) || 3) * scale / 2) + 4);
+        const strokeAllowance = Math.max(6, (strokeWidth * scale / 2) + 4);
         return distanceToSegment({ x, y }, start, end) <= strokeAllowance;
     }
     const box = resolveAnnBox(ann);
@@ -86,7 +88,8 @@ export function shapeContainsCanvasPoint(ann, x, y, scale, canvasHeight) {
     const hitPadding = Math.max(rect.width, rect.height) + 8;
     shapeHitTestCanvas.width = Math.max(1, Math.ceil(rect.left + rect.width + hitPadding));
     shapeHitTestCanvas.height = Math.max(1, Math.ceil(rect.top + rect.height + hitPadding));
-    hitCtx.lineWidth = Math.max(1, (Number(ann.strokeWidth) || 3) * scale);
+    const strokeWidth = Number(ann.strokeWidth);
+    hitCtx.lineWidth = Math.max(1, (Number.isFinite(strokeWidth) ? strokeWidth : 3) * scale);
     hitCtx.lineJoin = 'round';
     hitCtx.lineCap = (ann.lineCap === 'butt' || ann.lineCap === 'square') ? ann.lineCap : 'round';
     if (userRot) {
@@ -98,7 +101,7 @@ export function shapeContainsCanvasPoint(ann, x, y, scale, canvasHeight) {
         ? { polygonPoints: normalizePolygonPointList(ann.polygonPoints, defaultPolygonUnitPoints()) }
         : null);
     const fillHit = !ann.fillTransparent && clamp01(ann.fillOpacity ?? 0.22, 0.22) > 0 && hitCtx.isPointInPath(x, y);
-    const strokeHit = !ann.strokeTransparent && clamp01(ann.strokeOpacity ?? 1, 1) > 0 && hitCtx.isPointInStroke(x, y);
+    const strokeHit = strokeWidth > 0 && !ann.strokeTransparent && clamp01(ann.strokeOpacity ?? 1, 1) > 0 && hitCtx.isPointInStroke(x, y);
     return fillHit || strokeHit;
 }
 

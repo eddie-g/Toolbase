@@ -111,17 +111,115 @@ class PdfAnnotationContractTests(unittest.TestCase):
 
         self.assertTrue(self.module.pdfjs_source_edit_requires_redaction(annotation))
 
+    def test_pdfjs_source_edit_requires_redaction_for_edited_promoted_source_text(self):
+        # Regression: editing a promoted (extraction) span in place — not
+        # deleting, not moving — must redact the original glyphs or the export
+        # shows both the source and the replacement (double text).
+        annotation = {
+            "id": "promoted_1_9",
+            "type": "text",
+            "promotedFromExtraction": True,
+            "savedTextOverlay": True,
+            "pdfjsSourceX": 523.7,
+            "pdfjsSourceY": 20.7,
+            "pdfjsSourceW": 35.1,
+            "pdfjsSourceH": 12.1,
+            "pdfjsAnchorUid": "u9",
+            "pdfjsSourceText": "USCIS",
+            "text": "ZZZZZ",
+        }
+
+        self.assertTrue(self.module.promoted_source_overlay_text_was_edited(annotation))
+        self.assertTrue(self.module.is_pdfjs_promoted_source_backed_text_annotation(annotation))
+        self.assertTrue(self.module.pdfjs_source_edit_requires_redaction(annotation))
+
+    def test_unedited_promoted_source_text_not_treated_as_source_backed(self):
+        # Unedited promoted overlay (text == source) must keep legacy behaviour:
+        # not source-backed, no redaction, so the original PDF text shows through.
+        annotation = {
+            "id": "promoted_1_9",
+            "type": "text",
+            "promotedFromExtraction": True,
+            "savedTextOverlay": True,
+            "pdfjsSourceX": 523.7,
+            "pdfjsAnchorUid": "u9",
+            "pdfjsSourceText": "USCIS",
+            "text": "USCIS",
+        }
+
+        self.assertFalse(self.module.promoted_source_overlay_text_was_edited(annotation))
+        self.assertFalse(self.module.is_pdfjs_promoted_source_backed_text_annotation(annotation))
+        self.assertFalse(self.module.pdfjs_source_edit_requires_redaction(annotation))
+
+    def test_style_only_promoted_source_text_is_source_backed_without_redaction(self):
+        annotation = {
+            "id": "promoted_1_1",
+            "type": "text",
+            "promotedFromExtraction": True,
+            "savedTextOverlay": True,
+            "userAuthored": True,
+            "styleDirty": True,
+            "pdfjsSourceX": 23.65,
+            "pdfjsSourceY": 716.9,
+            "pdfjsSourceW": 123.97,
+            "pdfjsSourceH": 22.0,
+            "pdfjsSourceText": "1234 Company St.\nCompany Town ST 12345",
+            "text": "1234 Company St.\nCompany Town ST 12345",
+        }
+
+        self.assertTrue(self.module.promoted_source_overlay_has_visible_change(annotation))
+        self.assertTrue(self.module.is_pdfjs_promoted_source_backed_text_annotation(annotation))
+        self.assertFalse(self.module.pdfjs_source_edit_requires_redaction(annotation))
+
     def test_pdfjs_source_edit_skip_mask_disables_redaction(self):
+        # `skipPdfjsSourceMask` only disables redaction when there is NO real
+        # underlying source text to mask (a genuine standalone user text box).
         annotation = {
             "id": "user-text-1",
             "type": "text",
             "savedTextOverlay": True,
             "skipPdfjsSourceMask": True,
             "pdfjsSourceX": 47.953125,
-            "pdfjsSourceText": "Original",
             "text": "Changed",
         }
 
+        self.assertFalse(self.module.pdfjs_source_edit_requires_redaction(annotation))
+
+    def test_pdfjs_source_edit_skip_mask_does_not_block_edited_source_text(self):
+        # Regression (doc 4199, "EVGENIY SLUSAR" -> "sdfdsfsdf"): an edited
+        # source span carrying real `pdfjsSourceText` must STILL redact the
+        # original even though the editor mis-flagged it userCreated /
+        # skipPdfjsSourceMask, or the export shows both (double text).
+        annotation = {
+            "id": "pdfjs_4199_0_0:0",
+            "type": "text",
+            "userCreated": True,
+            "savedTextOverlay": True,
+            "skipPdfjsSourceMask": True,
+            "pdfjsSourceX": 49.026,
+            "pdfjsSourceY": 746.5,
+            "pdfjsSourceW": 192.237,
+            "pdfjsSourceH": 27.577,
+            "pdfjsAnchorUid": "0:0",
+            "pdfjsSourceText": "EVGENIY SLUSAR",
+            "text": "sdfdsfsdf",
+        }
+
+        self.assertTrue(self.module.source_overlay_text_was_edited(annotation))
+        self.assertTrue(self.module.pdfjs_source_edit_requires_redaction(annotation))
+
+    def test_standalone_user_text_box_is_not_edited_source(self):
+        # A genuine user text box (no pdfjsSourceText) is never an edited source
+        # span and must not trigger source redaction.
+        annotation = {
+            "id": "user-text-2",
+            "type": "text",
+            "userCreated": True,
+            "skipPdfjsSourceMask": True,
+            "text": "Hello world",
+        }
+
+        self.assertFalse(self.module.source_overlay_text_was_edited(annotation))
         self.assertFalse(self.module.pdfjs_source_edit_requires_redaction(annotation))
 
     def test_pdfjs_source_edit_replacement_text_uses_saved_text_only(self):

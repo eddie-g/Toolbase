@@ -31,6 +31,9 @@ from pdf_annotation_contract import (
     pdfjs_source_edit_requires_redaction,
     pdfjs_source_edit_source_rect,
     pdfjs_source_edit_transform_scale_x,
+    promoted_source_overlay_has_visible_change,
+    promoted_source_overlay_text_was_edited,
+    source_overlay_text_was_edited,
     sanitize_pdfjs_source_text,
     sanitize_pdf_text,
     sanitize_rich_text_html,
@@ -795,6 +798,35 @@ def to_rect(page: fitz.Page, ann: Dict[str, Any]) -> Optional[fitz.Rect]:
     return fitz.Rect(x, ph - (y + h), x + w, ph - y)
 
 
+SHAPE_EDGE_SNAP_TOLERANCE_PTS = 2.0
+SHAPE_BACKGROUND_FILL_BLEED_PTS = 1.25
+
+
+def snap_rect_to_page_edges(
+    page: fitz.Page,
+    rect: fitz.Rect,
+    tolerance: float = SHAPE_EDGE_SNAP_TOLERANCE_PTS,
+) -> fitz.Rect:
+    snapped = fitz.Rect(rect)
+    page_rect = page.rect
+    tol = max(0.0, float(tolerance or 0.0))
+    if abs(snapped.x0 - page_rect.x0) <= tol:
+        snapped.x0 = page_rect.x0
+    if abs(page_rect.x1 - snapped.x1) <= tol:
+        snapped.x1 = page_rect.x1
+    if abs(snapped.y0 - page_rect.y0) <= tol:
+        snapped.y0 = page_rect.y0
+    if abs(page_rect.y1 - snapped.y1) <= tol:
+        snapped.y1 = page_rect.y1
+    return snapped
+
+
+def expand_rect_clipped_to_page(page: fitz.Page, rect: fitz.Rect, amount: float) -> fitz.Rect:
+    bleed = max(0.0, float(amount or 0.0))
+    expanded = fitz.Rect(rect.x0 - bleed, rect.y0 - bleed, rect.x1 + bleed, rect.y1 + bleed)
+    return expanded & page.rect
+
+
 PDFJS_SOURCE_MASK_PADDING_X_PTS = 2.0
 PDFJS_SOURCE_MASK_PADDING_Y_PTS = 1.0
 PDFJS_SOURCE_MASK_PADDING_PTS = PDFJS_SOURCE_MASK_PADDING_X_PTS
@@ -812,6 +844,12 @@ def is_pdfjs_visible_overlay_text(ann: Dict[str, Any]) -> bool:
         return False
     if str(ann.get("type") or "").strip().lower() not in {"", "text"}:
         return False
+    # A span anchored to REAL source glyphs whose text was changed in place is
+    # an edited source span and MUST mask the original — even if the editor
+    # mis-flagged it `userCreated` / `skipPdfjsSourceMask`. Without this the
+    # original glyphs survive under the replacement (double text).
+    if source_overlay_text_was_edited(ann):
+        return True
     if _boolish(ann.get("userCreated")):
         return False
     if _boolish(ann.get("skipPdfjsSourceMask")) and not str(ann.get("pdfjsSourceText") or "").strip():
@@ -841,7 +879,7 @@ def is_pdfjs_promoted_visible_overlay_text(ann: Dict[str, Any]) -> bool:
     ):
         return False
 
-    return _boolish(ann.get("pdfjsDeleted")) or _boolish(ann.get("movedTextOverlay"))
+    return promoted_source_overlay_has_visible_change(ann)
 
 
 def normalize_pdfjs_compare_text(value: Any) -> str:
@@ -916,6 +954,8 @@ def is_redundant_pdfjs_source_overlay(ann: Dict[str, Any]) -> bool:
     if _boolish(ann.get("pdfjsDeleted")):
         return False
     if _boolish(ann.get("movedTextOverlay")):
+        return False
+    if _boolish(ann.get("promotedFromExtraction")) and promoted_source_overlay_has_visible_change(ann):
         return False
     if (
         _boolish(ann.get("userForcedRichText"))
@@ -1687,30 +1727,178 @@ def split_pdfjs_source_mask_around_page_rules(page: fitz.Page, rect: fitz.Rect) 
     return pieces or [fitz.Rect(rect)]
 
 
+def _subtract_rect_from_rects(
+    rects: list[fitz.Rect],
+    hole: fitz.Rect,
+    gap: float = PDFJS_SOURCE_MASK_NEIGHBOR_GAP_PTS,
+) -> list[fitz.Rect]:
+    """Carve ``hole`` (expanded by ``gap``) out of every rect, yielding up to four
+    bands (top / bottom / left / right) per rect. Used to keep a moved source
+    mask fully covering its own glyphs while leaving an overlapping neighbour
+    (e.g. a subheader nested inside a tall header's bounding box) untouched."""
+    if hole is None or hole.is_empty:
+        return list(rects)
+    h = fitz.Rect(hole.x0 - gap, hole.y0 - gap, hole.x1 + gap, hole.y1 + gap)
+    out: list[fitz.Rect] = []
+    for rect in rects:
+        if rect is None or rect.is_empty:
+            continue
+        inter = rect & h
+        if inter.is_empty:
+            out.append(rect)
+            continue
+        # Top band (above the hole, full width).
+        if inter.y0 > rect.y0 + 0.05:
+            out.append(fitz.Rect(rect.x0, rect.y0, rect.x1, inter.y0))
+        # Bottom band (below the hole, full width).
+        if inter.y1 < rect.y1 - 0.05:
+            out.append(fitz.Rect(rect.x0, inter.y1, rect.x1, rect.y1))
+        # Left band (beside the hole, within the hole's vertical span).
+        if inter.x0 > rect.x0 + 0.05:
+            out.append(fitz.Rect(rect.x0, inter.y0, inter.x0, inter.y1))
+        # Right band (beside the hole, within the hole's vertical span).
+        if inter.x1 < rect.x1 - 0.05:
+            out.append(fitz.Rect(inter.x1, inter.y0, rect.x1, inter.y1))
+    return [r for r in out if not r.is_empty and r.width > 0.05 and r.height > 0.05]
+
+
+def _neighbor_line_rects_for_moved_mask(
+    page: fitz.Page,
+    region_rect: fitz.Rect,
+    source_text: Any,
+) -> list[fitz.Rect]:
+    """Return line-level bounding rects of page text that overlaps ``region_rect``
+    but does not belong to the moved source line itself. These are carved out of
+    the source mask so the mask never paints over a neighbouring line that is
+    nested inside a tall source glyph box."""
+    if region_rect is None or region_rect.is_empty:
+        return []
+    search = fitz.Rect(
+        region_rect.x0 - 3.0,
+        region_rect.y0 - 3.0,
+        region_rect.x1 + 3.0,
+        region_rect.y1 + 3.0,
+    ) & page.rect
+    if search.is_empty:
+        return []
+    has_source = bool(_compact_source_mask_text(source_text))
+    try:
+        blocks = page.get_text("dict").get("blocks", [])
+    except Exception:
+        blocks = []
+    out: list[fitz.Rect] = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        for line in block.get("lines", []) or []:
+            if not isinstance(line, dict):
+                continue
+            line_rect: Optional[fitz.Rect] = None
+            parts: list[str] = []
+            for span in line.get("spans", []) or []:
+                if not isinstance(span, dict):
+                    continue
+                span_rect = _fitz_rect_from_bbox(span.get("bbox"))
+                if span_rect is None or span_rect.is_empty:
+                    continue
+                line_rect = fitz.Rect(span_rect) if line_rect is None else (line_rect | span_rect)
+                parts.append(sanitize_pdf_text(span.get("text") or ""))
+            if line_rect is None or line_rect.is_empty:
+                continue
+            if (line_rect & search).is_empty:
+                continue
+            line_text = "".join(parts)
+            if has_source and _source_mask_line_matches_source_text(line_text, source_text):
+                continue
+            clip = line_rect & region_rect
+            if not clip.is_empty and clip.width > 0.05 and clip.height > 0.05:
+                out.append(clip)
+    return out
+
+
+def pdfjs_moved_source_mask_pieces(page: fitz.Page, ann: Dict[str, Any]) -> list[fitz.Rect]:
+    """Mask geometry for a moved source overlay. Instead of edge-clamping the
+    whole mask up to an overlapping neighbour (which abandons the header's own
+    glyphs that extend past the neighbour horizontally), carve the neighbour out
+    of the full glyph rect so the mask stays L-shaped and fully covers the
+    moved source text."""
+    clamped = pdfjs_source_mask_rect(page, ann)
+    if clamped is None or clamped.is_empty:
+        return []
+    explicit = _pdfjs_explicit_source_mask_rect(page, ann)
+    base = explicit if (explicit is not None and not explicit.is_empty) else _pdfjs_source_base_rect(page, ann)
+    if base is None or base.is_empty:
+        return [clamped]
+    full = fitz.Rect(
+        base.x0 - PDFJS_SOURCE_MASK_PADDING_X_PTS,
+        base.y0 - PDFJS_SOURCE_MASK_PADDING_Y_PTS,
+        base.x1 + PDFJS_SOURCE_MASK_PADDING_X_PTS,
+        base.y1 + PDFJS_SOURCE_MASK_PADDING_Y_PTS,
+    ) & page.rect
+    if full.is_empty:
+        return [clamped]
+    # Union of the (generously-padded) clamped rect and the glyph-extent rect:
+    # keeps the clamped rect's extra top/headroom padding while reclaiming the
+    # side bands the edge-clamp gave up. Bounded below by the glyph rect so it
+    # never extends past the neighbour into unrelated content.
+    region = clamped | full
+    # If the edge-clamp never actually shrank the mask, there is no overlapping
+    # neighbour to work around; keep the original single-rect behaviour.
+    if (
+        abs(region.y0 - clamped.y0) < 0.5
+        and abs(region.y1 - clamped.y1) < 0.5
+        and abs(region.x0 - clamped.x0) < 0.5
+        and abs(region.x1 - clamped.x1) < 0.5
+    ):
+        return [clamped]
+    source_text = ann.get("pdfjsSourceText") or ann.get("originalText") or ann.get("text") or ""
+    neighbors = _neighbor_line_rects_for_moved_mask(page, region, source_text)
+    if not neighbors:
+        return [clamped]
+    pieces = [region]
+    for neighbor in neighbors:
+        pieces = _subtract_rect_from_rects(pieces, neighbor)
+        if not pieces:
+            break
+    pieces = [(p & page.rect) for p in pieces if not (p & page.rect).is_empty]
+    return pieces or [clamped]
+
+
 def draw_pdfjs_source_mask(page: fitz.Page, ann: Dict[str, Any]) -> None:
-    rect = pdfjs_source_mask_rect(page, ann)
-    if rect is None or rect.is_empty:
-        return
     # PDF.js visible export is a paint model: the browser covers the immutable
     # source span with a background-colored box, then paints replacement text on
     # top. Do not use PyMuPDF redaction annotations here. Redactions are applied
     # at page-content level and can erase later replacement glyphs when a moved
     # line lands inside a neighboring source line's redaction rectangle.
     moved_overlay = _boolish(ann.get("movedTextOverlay"))
-    moved_fill = sample_pdfjs_moved_source_mask_fill(page, rect) if moved_overlay else None
+    if moved_overlay:
+        base_pieces = pdfjs_moved_source_mask_pieces(page, ann)
+    else:
+        rect = pdfjs_source_mask_rect(page, ann)
+        base_pieces = [rect] if (rect is not None and not rect.is_empty) else []
+    if not base_pieces:
+        return
+    # Sample the moved fill once from the overall bounding region for a uniform
+    # mask color across all L-shaped pieces.
+    overall = fitz.Rect(base_pieces[0])
+    for piece in base_pieces[1:]:
+        overall = overall | piece
+    moved_fill = sample_pdfjs_moved_source_mask_fill(page, overall) if moved_overlay else None
     preserve_rule_cutouts = not (moved_overlay and moved_fill is not None and _pdfjs_rgb_luminance(moved_fill) < 100)
-    pieces = split_pdfjs_source_mask_around_page_rules(page, rect) if (
-        preserve_rule_cutouts and (moved_overlay or _boolish(ann.get("pdfjsDeleted")))
-    ) else [rect]
-    for piece in pieces:
-        if piece is None or piece.is_empty:
+    do_rule_split = preserve_rule_cutouts and (moved_overlay or _boolish(ann.get("pdfjsDeleted")))
+    for base in base_pieces:
+        if base is None or base.is_empty:
             continue
-        fill = (
-            (moved_fill or sample_pdfjs_moved_source_mask_fill(page, piece))
-            if moved_overlay
-            else sample_pdfjs_mask_fill(page, piece)
-        )
-        page.draw_rect(piece, color=None, fill=fill, width=0, overlay=True)
+        pieces = split_pdfjs_source_mask_around_page_rules(page, base) if do_rule_split else [base]
+        for piece in pieces:
+            if piece is None or piece.is_empty:
+                continue
+            fill = (
+                (moved_fill or sample_pdfjs_moved_source_mask_fill(page, piece))
+                if moved_overlay
+                else sample_pdfjs_mask_fill(page, piece)
+            )
+            page.draw_rect(piece, color=None, fill=fill, width=0, overlay=True)
 
 
 def erase_pdfjs_deleted_source_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
@@ -4620,6 +4808,24 @@ def normalize_exact_source_span_layout(
         normalized = str(value or "").strip()
         return normalized or fallback
 
+    def _source_span_glyph_rect(span: Dict[str, Any], rect: fitz.Rect, baseline_y: Optional[float]) -> fitz.Rect:
+        if baseline_y is None:
+            return rect
+        try:
+            span_font_size = float(span.get("fontSize") or span.get("font_size") or font_size or 0.0)
+            ascender = float(span.get("ascender"))
+            descender = float(span.get("descender"))
+        except Exception:
+            return rect
+        if span_font_size <= 0 or ascender <= 0:
+            return rect
+        descender_below = abs(descender)
+        glyph_top = float(baseline_y) - (ascender * span_font_size) - 0.35
+        glyph_bottom = float(baseline_y) + (descender_below * span_font_size) + 0.35
+        if glyph_bottom <= glyph_top:
+            return rect
+        return fitz.Rect(rect.x0 - 0.35, min(rect.y0, glyph_top), rect.x1 + 0.35, max(rect.y1, glyph_bottom))
+
     normalized_spans = []
     for span in source_spans:
         if not isinstance(span, dict):
@@ -4652,6 +4858,7 @@ def normalize_exact_source_span_layout(
                 baseline_x += translate_x
             if baseline_y is not None:
                 baseline_y += translate_y
+        rect = _source_span_glyph_rect(span, rect, baseline_y)
         normalized_spans.append({
             "text": text_value,
             "rect": rect,
@@ -4725,6 +4932,9 @@ def normalize_exact_source_span_layout(
         )
         if not line_spans:
             continue
+        line_rect = fitz.Rect(line_rect)
+        for span in line_spans:
+            line_rect |= span["rect"]
         current_line_text = line_texts[index] if index < len(line_texts) else ""
         if bool(ann.get("promotedDirty")) and current_line_text:
             if len(line_spans) == 1:
@@ -6575,6 +6785,27 @@ def erase_promoted_source_text_region(
     has_custom_background = bool(background and background != "transparent")
     fill = hex_to_rgb(background) if has_custom_background else (1.0, 1.0, 1.0)
 
+    # Horizontal extent for the per-line erase rects. We must clear the ENTIRE
+    # ORIGINAL source area, not the current overlay box: when the user resizes
+    # (or otherwise reflows) a promoted block, `current_rect` shrinks/shifts to
+    # the new wrapped width while the original glyphs still sit at their captured
+    # positions. Using `current_rect.x0/x1` then leaves the wider/offset original
+    # text uncovered. The supplied `lines` carry the captured source-line rects,
+    # so use their union span (with a small pad) as the erase width. Fall back to
+    # `current_rect` only when no line rects are available (whole-rect erase path).
+    line_rects_for_span = [
+        line_entry.get("rect")
+        for line_entry in lines
+        if isinstance(line_entry.get("rect"), fitz.Rect)
+        and not line_entry.get("rect").is_empty
+    ]
+    if line_rects_for_span:
+        source_x0 = min(r.x0 for r in line_rects_for_span) - 0.75
+        source_x1 = max(r.x1 for r in line_rects_for_span) + 0.75
+    else:
+        source_x0 = current_rect.x0
+        source_x1 = current_rect.x1
+
     if not has_custom_background and morph is None:
         redact_rects: list[fitz.Rect] = []
         if not lines:
@@ -6585,9 +6816,9 @@ def erase_promoted_source_text_region(
                 if not isinstance(line_rect, fitz.Rect):
                     continue
                 erase_rect = fitz.Rect(
-                    current_rect.x0,
+                    source_x0,
                     max(page.rect.y0, line_rect.y0 - 0.75),
-                    current_rect.x1,
+                    source_x1,
                     min(page.rect.y1, line_rect.y1 + 0.75),
                 )
                 if not erase_rect.is_empty:
@@ -6636,9 +6867,9 @@ def erase_promoted_source_text_region(
         if not isinstance(line_rect, fitz.Rect):
             continue
         erase_rect = fitz.Rect(
-            current_rect.x0,
+            source_x0,
             max(page.rect.y0, line_rect.y0 - 0.75),
-            current_rect.x1,
+            source_x1,
             min(page.rect.y1, line_rect.y1 + 0.75),
         )
         if erase_rect.is_empty:
@@ -6812,6 +7043,12 @@ def should_replay_promoted_source_block(ann: Dict[str, Any], rect: Optional[fitz
         return False
     if bool(ann.get("promotedDirty")):
         return False
+    # Guard: an in-place edited promoted span (text changed from its source)
+    # must NOT replay the original source glyphs, or the export shows both the
+    # old and the new text (double text). Such edits are stamped + redacted via
+    # the visible-overlay path instead.
+    if promoted_source_overlay_text_was_edited(ann):
+        return False
     if rect is None or rect.is_empty:
         return False
     if abs(rotation) > 1e-6:
@@ -6953,10 +7190,14 @@ def draw_shape(page: fitz.Page, ann: Dict[str, Any]) -> None:
     rect = to_rect(page, ann)
     if rect is None:
         return
+    rect = snap_rect_to_page_edges(page, rect)
 
     shape_type = (ann.get("shapeType") or "rect").lower()
     opacity = float(ann.get("opacity", 1.0) or 1.0)
-    stroke_width = float(ann.get("strokeWidth", 2.0) or 2.0)
+    try:
+        stroke_width = max(0.0, float(ann.get("strokeWidth", 2.0)))
+    except (TypeError, ValueError):
+        stroke_width = 2.0
     rotation = float(ann.get("rotation", 0.0) or 0.0)
 
     def _clamp01(value: Any, fallback: float) -> float:
@@ -6973,7 +7214,7 @@ def draw_shape(page: fitz.Page, ann: Dict[str, Any]) -> None:
     stroke_opacity = _clamp01(ann.get("strokeOpacity", opacity), opacity)
     fill_opacity = _clamp01(ann.get("fillOpacity", opacity), opacity)
 
-    stroke = None if ann.get("strokeTransparent") else hex_to_rgb(ann.get("strokeColor") or "#000000")
+    stroke = None if ann.get("strokeTransparent") or stroke_width <= 0.0 else hex_to_rgb(ann.get("strokeColor") or "#000000")
     fill = None if ann.get("fillTransparent") else hex_to_rgb(ann.get("fillColor") or "#ffffff")
 
     if stroke is None and fill is None:
@@ -7024,6 +7265,21 @@ def draw_shape(page: fitz.Page, ann: Dict[str, Any]) -> None:
         )
         s.commit(overlay=True)
 
+    def draw_background_fill_bleed() -> None:
+        if fill is None or fill_opacity < 0.99:
+            return
+        if abs(rotation) >= 1e-6:
+            return
+        if stroke is not None and stroke_width > 0.0 and stroke_opacity > 0.15:
+            return
+        bleed_rect = expand_rect_clipped_to_page(page, rect, SHAPE_BACKGROUND_FILL_BLEED_PTS)
+        if bleed_rect.is_empty:
+            return
+        s = page.new_shape()
+        s.draw_rect(bleed_rect)
+        s.finish(color=None, fill=fill, width=0, fill_opacity=fill_opacity)
+        s.commit(overlay=True)
+
     def clamp_line_unit_interval(value: Any, fallback: float) -> float:
         try:
             numeric = float(value)
@@ -7064,6 +7320,8 @@ def draw_shape(page: fitz.Page, ann: Dict[str, Any]) -> None:
         return
 
     if shape_type == "checkmark":
+        if stroke is None:
+            return
         s = page.new_shape()
         p1 = rp(0.15, 0.50)
         p2 = rp(0.40, 0.75)
@@ -7149,6 +7407,8 @@ def draw_shape(page: fitz.Page, ann: Dict[str, Any]) -> None:
     # Default rectangle: use the full annotation bounds. The editor stores the
     # square/rectangle box as the intended final geometry; insetting by 5% on
     # each side shrinks exported bars relative to the DOM preview.
+    if shape_type in ("rect", "rectangle", "square"):
+        draw_background_fill_bleed()
     points = [rp(0.0, 0.0), rp(1.0, 0.0), rp(1.0, 1.0), rp(0.0, 1.0), rp(0.0, 0.0)]
     draw_poly(points, close_path=True, line_join=1)
 
@@ -7212,6 +7472,15 @@ def draw_eraser(page: fitz.Page, ann: Dict[str, Any]) -> None:
         page.draw_rect(rect, color=None, fill=(1, 1, 1), width=0, overlay=True)
 
 
+def should_erase_dirty_promoted_source(ann: Dict[str, Any]) -> bool:
+    return (
+        bool(ann.get("promotedFromExtraction"))
+        and bool(ann.get("promotedDirty"))
+        and not _boolish(ann.get("skipPromotedSourceErase"))
+        and not _boolish(ann.get("movedTextOverlay"))
+    )
+
+
 def draw_text(
     page: fitz.Page,
     ann: Dict[str, Any],
@@ -7231,13 +7500,21 @@ def draw_text(
         return
     if pdfjs_visible_overlay:
         render_ann = resolve_pdfjs_visible_overlay_typography(page, render_ann)
+    dirty_promoted_source_erase = should_erase_dirty_promoted_source(render_ann)
     if pdfjs_visible_overlay:
-        if not source_masks_already_drawn and not _boolish(render_ann.get("skipPdfjsSourceMask")):
+        # An edited source span must mask its original glyphs even when
+        # `skipPdfjsSourceMask` is set, otherwise the source text shows through
+        # under the replacement (double text).
+        allow_source_mask = (
+            not _boolish(render_ann.get("skipPdfjsSourceMask"))
+            or source_overlay_text_was_edited(render_ann)
+        )
+        if not source_masks_already_drawn and allow_source_mask:
             if pdfjs_source_text_needs_redaction(render_ann):
                 erase_pdfjs_deleted_source_text(page, render_ann)
             else:
                 draw_pdfjs_source_mask(page, render_ann)
-        if mask_only:
+        if mask_only and not dirty_promoted_source_erase:
             return
         if _boolish(render_ann.get("pdfjsDeleted")):
             return
@@ -7394,6 +7671,27 @@ def draw_text(
         ) else []
         if exact_source_line_layout and not source_masks_already_drawn:
             erase_promoted_source_text_region(page, ann, rect, exact_source_line_layout, morph)
+        elif (
+            not source_masks_already_drawn
+            and should_erase_dirty_promoted_source(ann)
+        ):
+            # The edited text reflowed to a different line count than the
+            # original extraction (e.g. flattened to a single line or promoted
+            # to rich text), so normalize_exact_source_line_layout could not map
+            # the source lines and returned nothing. Without an erase the
+            # original glyphs survive underneath the re-stamped text and the
+            # paragraph appears duplicated in the download. Fall back to the raw
+            # per-line source bounding boxes so the source region is still
+            # cleared.
+            fallback_source_line_rects = _resolve_promoted_source_line_rects(ann)
+            if fallback_source_line_rects:
+                erase_promoted_source_text_region(
+                    page,
+                    ann,
+                    rect,
+                    [{"rect": line_rect} for line_rect in fallback_source_line_rects],
+                    morph,
+                )
         if mask_only:
             return
         if (
@@ -7872,14 +8170,9 @@ def draw_signature(page: fitz.Page, ann: Dict[str, Any]) -> None:
             return
     if image_bytes is None:
         return
-    # Layering for direct-draw (marker / pen tool) strokes is handled by the
-    # editor — see placeImageBackedAnnotationAtPageBox in edit-new.blade.php,
-    # which inserts the annotation in the array before the first text
-    # annotation. The exporter iterates in array order with overlay=True, so
-    # text annotations (which erase + re-stamp their bbox via draw_text)
-    # naturally render ON TOP of the marker, while shape annotations (drawn
-    # earlier in the loop) end up UNDERNEATH it. This matches the editor
-    # canvas draw order and keeps signatures/regular images on top as before.
+    # Layering for image-backed direct-draw strokes is handled by
+    # annotation_layer_order. Defaults place pen strokes below text and white
+    # eraser strokes on top; an explicit editor zIndex can override either.
     page.insert_image(
         rect,
         overlay=True,
@@ -7890,6 +8183,10 @@ def draw_signature(page: fitz.Page, ann: Dict[str, Any]) -> None:
 
 def is_direct_draw_annotation(ann: Dict[str, Any]) -> bool:
     return str(ann.get("imageToolSource") or "").strip().lower() == "direct-draw"
+
+
+def is_direct_draw_eraser_annotation(ann: Dict[str, Any]) -> bool:
+    return is_direct_draw_annotation(ann) and str(ann.get("directDrawTool") or "").strip().lower() == "eraser"
 
 
 def direct_draw_vector_data(ann: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -8158,30 +8455,40 @@ def candidate_annotation_asset_paths(relative_path: str) -> list[str]:
     return candidates
 
 
-def annotation_layer_order(ann: Dict[str, Any]) -> int:
+def annotation_layer_order(ann: Dict[str, Any]) -> tuple[float, int]:
     """Stable layering key for the export draw order.
 
-    Lower values are processed first (drawn underneath). The editor renders
-    text annotations in a DOM layer (rich-html-layer, z-index 4) that sits
-    above the canvas where direct-draw lives, so direct-draw is forced to be
-    visually below text in the editor. To keep editor and PDF in sync we
-    use the same order in the exporter:
-        0 — shapes / tables / erasers   (background marks)
-        1 — direct-draw (marker / pen)  (above shapes, below text)
-        2 — text                        (above marker, re-stamps its bbox)
-        3 — signatures and regular images (intentional foreground overlays)
-    A stable sort preserves the relative order within each layer so the
-    user's manual "send to back" / "bring to front" within a layer still
-    works.
+    Lower values are processed first (drawn underneath). ``zIndex`` is the
+    editor's persisted manual layer order. The type key preserves the default
+    ordering for annotations that share a layer: shapes, pen strokes, text,
+    foreground images, then eraser strokes.
     """
     if not isinstance(ann, dict):
-        return 2
+        return (2.0, 2)
     kind = str(ann.get("type") or "").lower()
     if kind in ("shape", "table", "eraser"):
-        return 0
-    if kind in ("image", "signature"):
-        return 1 if is_direct_draw_annotation(ann) else 3
-    return 2
+        type_order = 0
+        default_z_index = 2.0
+    elif kind in ("image", "signature"):
+        if is_direct_draw_eraser_annotation(ann):
+            type_order = 4
+            default_z_index = 1000.0
+        elif is_direct_draw_annotation(ann):
+            type_order = 1
+            default_z_index = 2.0
+        else:
+            type_order = 3
+            default_z_index = 6.0
+    else:
+        type_order = 2
+        default_z_index = 2.0
+    try:
+        z_index = float(ann.get("zIndex", default_z_index))
+    except (TypeError, ValueError):
+        z_index = default_z_index
+    if not math.isfinite(z_index):
+        z_index = default_z_index
+    return (z_index, type_order)
 
 
 def _annotations_overlap_in_page_space(a: Dict[str, Any], b: Dict[str, Any]) -> bool:

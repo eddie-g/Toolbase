@@ -136,7 +136,7 @@ async function main() {
                 centerDelta: panel && toolbar ? Math.abs((panel.left + (panel.width / 2)) - (toolbar.left + (toolbar.width / 2))) : 999,
             };
         });
-        assertEqual(panelState.hasEraser, false, 'Draw panel should not include an eraser button');
+        assertEqual(panelState.hasEraser, true, 'Draw panel should include an eraser button');
         assertEqual(panelState.flexDirection, 'row', 'Draw panel should be horizontal');
         assert(panelState.panelTop > panelState.toolbarBottom, `Draw panel should sit below the floating toolbar: ${JSON.stringify(panelState)}`);
         assert(panelState.centerDelta < 4, `Draw panel should be centered under the floating toolbar: ${JSON.stringify(panelState)}`);
@@ -161,17 +161,20 @@ async function main() {
                 imageSrc: box?.querySelector('img.enpv-image-img')?.getAttribute('src') || '',
                 width: rect?.width || 0,
                 height: rect?.height || 0,
+                frontVisible: Boolean(document.querySelector('#enpv-ann-menu [data-action="front"]:not([hidden])')),
+                backVisible: Boolean(document.querySelector('#enpv-ann-menu [data-action="back"]:not([hidden])')),
             };
         });
         assertEqual(drawnBox.label, 'drawing', 'Direct-draw image selection label');
         assertEqual(drawnBox.zIndex, '2', 'Direct-draw image should render on the annotation layer below text');
         assert(drawnBox.imageSrc.startsWith('data:image/svg+xml'), 'Vector-backed direct-draw annotations should render as SVG in the editor');
         assert(drawnBox.width > 20 && drawnBox.height > 10, `Unexpected drawing box size: ${JSON.stringify(drawnBox)}`);
+        assert(drawnBox.frontVisible && drawnBox.backVisible, 'Direct-draw annotation menu should expose layer controls');
 
         const saveUrl = await page.locator('#edit-new-root').getAttribute('data-save-url');
         if (!saveUrl) throw new Error('Could not read PDF.js save URL from edit-new root.');
         const firstSave = await captureNextSavePayload(page, saveUrl);
-        await page.click('#save-btn');
+        await page.evaluate(() => document.getElementById('save-btn')?.click());
         const firstPayload = await firstSave;
         const firstDirectDraws = directDrawAnnotations(firstPayload);
         assert(firstDirectDraws.length >= 1, `Save payload did not include a direct-draw image: ${JSON.stringify(firstPayload).slice(0, 1000)}`);

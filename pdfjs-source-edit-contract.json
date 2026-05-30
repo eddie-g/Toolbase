@@ -121,7 +121,7 @@
       "step": 5,
       "id": "PDFJS-SOURCE-EDIT-005",
       "title": "Edited promoted rows remain visible in edit mode",
-      "rule": "Promoted-from-extraction rows that have changed text, rich/manual styling, movement, reflow, or dirty/user-authored state must render as persisted overlays while Edit PDF is on. Clean unchanged promoted rows may still use the lightweight fallback/source text path to avoid duplicating original PDF text.",
+      "rule": "Promoted-from-extraction rows that have changed text, rich/manual styling, movement, reflow, or dirty/user-authored state must render as persisted overlays while Edit PDF is on. Clean unchanged promoted rows may still use the lightweight fallback/source text path to avoid duplicating original PDF text. Exception: a clean, unchanged multi-line promoted block whose only rich signal is pdfjsEditorMode='rich' (forced by its newlines) stays paragraph-grouped; pdfjsEditorMode='rich' only forces a persisted overlay for single-line promoted rows.",
       "requiredInputs": [
         "promotedFromExtraction or promoted_* id",
         "text differs from pdfjsSourceText or originalText, or dirty/user-authored/rich/manual/reflow state is truthy",

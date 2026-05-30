@@ -39,7 +39,8 @@ test('recognizes PDF.js source-backed text annotations', () => {
     assert.equal(isPdfjsSourceBackedTextAnnotation(baseSourceOverlay), true);
     assert.equal(isPdfjsSourceBackedTextAnnotation({ ...baseSourceOverlay, pdfjsSourceX: null, pdfjsSourceY: null, pdfjsAnchorUid: null, pdfjsSourceText: null }), false);
     assert.equal(isPdfjsSourceBackedTextAnnotation({ ...baseSourceOverlay, type: 'shape' }), false);
-    assert.equal(isPdfjsSourceBackedTextAnnotation({ ...baseSourceOverlay, userCreated: true, skipPdfjsSourceMask: true }), false);
+    assert.equal(isPdfjsSourceBackedTextAnnotation({ ...baseSourceOverlay, userCreated: true, skipPdfjsSourceMask: true }), true);
+    assert.equal(isPdfjsSourceBackedTextAnnotation({ type: 'text', text: 'Standalone', userCreated: true, skipPdfjsSourceMask: true }), false);
 });
 
 test('uses source box for unmoved saved source overlays in edit mode', () => {
@@ -90,6 +91,30 @@ test('keeps edited promoted source text as a visible persisted overlay', () => {
 
 test('does not render clean promoted source text as a persisted overlay', () => {
     assert.equal(pdfjsPromotedOverlayShouldRenderAsPersistedOverlay(basePromotedOverlay), false);
+});
+
+test('keeps a clean multi-line promoted block paragraph-grouped despite inherent rich editor mode', () => {
+    const multiLine = {
+        ...basePromotedOverlay,
+        id: 'promoted_4_3',
+        originalText: 'Box 1.\nBox 2.\nBox 3.\nBox 4.',
+        pdfjsSourceText: 'Box 1.\nBox 2.\nBox 3.\nBox 4.',
+        text: 'Box 1.\nBox 2.\nBox 3.\nBox 4.',
+        sourceLineBBoxes: [{}, {}, {}, {}],
+        pdfjsEditorMode: 'rich',
+    };
+    // Multi-line blocks are inherently forced into rich editor mode by their
+    // newlines, so 'rich' alone must not flip them to a single bounding box.
+    assert.equal(pdfjsPromotedOverlayShouldRenderAsPersistedOverlay(multiLine), false);
+    // A genuine edit/move/style change still flips it to a persisted overlay.
+    assert.equal(pdfjsPromotedOverlayShouldRenderAsPersistedOverlay({ ...multiLine, movedTextOverlay: true }), true);
+});
+
+test('keeps a single-line promoted overlay in rich mode as a persisted overlay', () => {
+    assert.equal(pdfjsPromotedOverlayShouldRenderAsPersistedOverlay({
+        ...basePromotedOverlay,
+        pdfjsEditorMode: 'rich',
+    }), true);
 });
 
 test('keeps style-only promoted edits as visible persisted overlays', () => {

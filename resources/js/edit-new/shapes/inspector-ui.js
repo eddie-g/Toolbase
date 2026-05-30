@@ -30,10 +30,11 @@ import { currentShapeDefaults } from './defaults.js';
 
 export function reflectShapeStateToInputs(shapeState, refs) {
     if (!shapeState || !refs) return;
+    const strokeWidth = Number(shapeState.strokeWidth);
     setCurrentShapeType(normalizeShapeType(shapeState.shapeType));
     setCurrentShapeStrokeColor(normalizeHexColor(shapeState.strokeColor, currentShapeStrokeColor));
     setCurrentShapeStrokeOpacity(clamp01(shapeState.strokeOpacity, currentShapeStrokeOpacity));
-    setCurrentShapeStrokeWidth(Math.max(1, Number(shapeState.strokeWidth) || currentShapeStrokeWidth));
+    setCurrentShapeStrokeWidth(Math.max(0, Number.isFinite(strokeWidth) ? strokeWidth : currentShapeStrokeWidth));
     setCurrentShapeStrokeTransparent(Boolean(shapeState.strokeTransparent));
     setCurrentShapeFillColor(normalizeHexColor(shapeState.fillColor, currentShapeFillColor));
     setCurrentShapeFillOpacity(clamp01(shapeState.fillOpacity, currentShapeFillOpacity));
@@ -87,11 +88,12 @@ export function readShapeInspectorState(refs) {
         shapeFillOpacityInput,
         shapeFillTransparentInput,
     } = refs;
+    const strokeWidth = Number(shapeStrokeWidthInput?.value);
     const state = {
         shapeType: currentShapeType,
         strokeColor: normalizeHexColor(shapeStrokeColorInput?.value || shapeStrokeHexInput?.value, currentShapeStrokeColor),
         strokeOpacity: clamp01((Number(shapeStrokeOpacityInput?.value) || 0) / 100, currentShapeStrokeOpacity),
-        strokeWidth: Math.max(1, Number(shapeStrokeWidthInput?.value) || currentShapeStrokeWidth),
+        strokeWidth: Math.max(0, Number.isFinite(strokeWidth) ? strokeWidth : currentShapeStrokeWidth),
         strokeTransparent: Boolean(shapeStrokeTransparentInput?.checked),
         fillColor: normalizeHexColor(shapeFillColorInput?.value || shapeFillHexInput?.value, currentShapeFillColor),
         fillOpacity: clamp01((Number(shapeFillOpacityInput?.value) || 0) / 100, currentShapeFillOpacity),

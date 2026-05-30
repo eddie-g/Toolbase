@@ -35,7 +35,7 @@
     <input type="hidden" id="shape-stroke-hex" value="#0f172a">
     <input type="checkbox" id="shape-stroke-transparent" style="display:none;">
     <span class="sfb-mini-label" title="Width">W</span>
-    <input type="range" class="sfb-slider" id="shape-stroke-width" min="1" max="24" step="1" value="3" title="Stroke width">
+    <input type="range" class="sfb-slider" id="shape-stroke-width" min="0" max="24" step="1" value="3" title="Stroke width">
     <span class="sfb-readout" id="shape-stroke-width-value">3px</span>
     <span class="sfb-mini-label" title="Opacity">α</span>
     <input type="range" class="sfb-slider" id="shape-stroke-opacity" min="0" max="100" step="1" value="100" title="Stroke opacity">
